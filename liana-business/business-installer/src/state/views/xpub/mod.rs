@@ -1,5 +1,8 @@
 use miniscript::{
-    bitcoin::{bip32::ChildNumber, Network},
+    bitcoin::{
+        bip32::{ChildNumber, DerivationPath, Fingerprint},
+        Network,
+    },
     DescriptorPublicKey,
 };
 use std::str::FromStr;
@@ -62,6 +65,8 @@ pub struct XpubEntryModalState {
 
     /// Actual source of the current xpub input (for audit)
     pub input_source: Option<XpubInputSource>,
+    active_request_id: Option<u64>,
+    next_request_id: u64,
 }
 
 impl XpubEntryModalState {
@@ -85,14 +90,15 @@ impl XpubEntryModalState {
             xpub_input,
             processing: false,
             selected_device: None,
-            selected_account: ChildNumber::from_hardened_idx(0)
-                .expect("hardcoded valid account index"),
+            selected_account: default_account(),
             options_collapsed: true, // Start with options collapsed
             paste_expanded: false,
             step: ModalStep::default(),
             fetch_error: None,
             network,
             input_source: None,
+            active_request_id: None,
+            next_request_id: 0,
         }
     }
 
@@ -102,9 +108,10 @@ impl XpubEntryModalState {
     }
 
     /// Select a hardware wallet device and transition to Details step
-    pub fn select_device(&mut self, fingerprint: miniscript::bitcoin::bip32::Fingerprint) {
+    pub fn select_device(&mut self, fingerprint: Fingerprint) {
         self.selected_device = Some(fingerprint);
         self.fetch_error = None;
+        self.input_source = None;
         self.step = ModalStep::Details;
         self.processing = true;
     }
@@ -115,27 +122,55 @@ impl XpubEntryModalState {
         self.selected_device = None;
         self.fetch_error = None;
         self.processing = false;
+        self.active_request_id = None;
     }
 
     /// Update the derivation account
     pub fn update_account(&mut self, account: ChildNumber) {
         self.selected_account = account;
+        self.input_source = None;
+        self.active_request_id = None;
+    }
+
+    pub fn start_fetch(&mut self) -> u64 {
+        self.processing = true;
+        self.fetch_error = None;
+        let request_id = self.next_request_id;
+        self.next_request_id = self.next_request_id.wrapping_add(1);
+        self.active_request_id = Some(request_id);
+        request_id
+    }
+
+    pub fn matches_fetch_request(
+        &self,
+        request_id: u64,
+        fingerprint: Fingerprint,
+        path: &DerivationPath,
+    ) -> bool {
+        let requested_account = path.as_ref().get(2).copied();
+        self.step == ModalStep::Details
+            && self.selected_device == Some(fingerprint)
+            && requested_account == Some(self.selected_account)
+            && self.active_request_id == Some(request_id)
+    }
+
+    pub fn matches_fetch_error_request(&self, request_id: u64) -> bool {
+        self.step == ModalStep::Details && self.active_request_id == Some(request_id)
     }
 
     /// Set processing state
     pub fn set_processing(&mut self, processing: bool) {
         self.processing = processing;
+        if !processing {
+            self.active_request_id = None;
+        }
     }
 
     /// Set fetch error (shown in details view)
     pub fn set_fetch_error(&mut self, error: String) {
         self.fetch_error = Some(error);
         self.processing = false;
-    }
-
-    /// Clear fetch error
-    pub fn clear_fetch_error(&mut self) {
-        self.fetch_error = None;
+        self.active_request_id = None;
     }
 
     /// Validate and return the parsed xpub if valid (includes network check)
@@ -162,6 +197,10 @@ impl XpubEntryModalState {
             }
         }
     }
+}
+
+fn default_account() -> ChildNumber {
+    ChildNumber::from_hardened_idx(0).expect("hardcoded valid account index")
 }
 
 /// Xpub view state - manages xpub entry for Validated wallets
@@ -296,6 +335,59 @@ mod tests {
         let mut state = XpubEntryModalState::new(1, "Test".to_string(), None, Network::Bitcoin);
         state.update_input("new input".to_string());
         assert_eq!(state.xpub_input, "new input");
+    }
+
+    #[test]
+    fn test_start_fetch_marks_processing() {
+        let mut state = XpubEntryModalState::new(1, "Test".to_string(), None, Network::Bitcoin);
+        state.select_device(Fingerprint::from_str("abcdef01").expect("hardcoded fingerprint"));
+        let request_id = state.start_fetch();
+
+        assert_eq!(request_id, 0);
+        assert!(state.processing);
+        assert!(state.matches_fetch_error_request(request_id));
+    }
+
+    #[test]
+    fn test_matches_fetch_request_checks_request_id() {
+        let mut state = XpubEntryModalState::new(1, "Test".to_string(), None, Network::Bitcoin);
+        let fingerprint = Fingerprint::from_str("abcdef01").expect("hardcoded fingerprint");
+        state.select_device(fingerprint);
+        let request_id = state.start_fetch();
+        let path = DerivationPath::from(vec![
+            ChildNumber::Hardened { index: 48 },
+            ChildNumber::Hardened { index: 0 },
+            ChildNumber::Hardened { index: 0 },
+            ChildNumber::Hardened { index: 2 },
+        ]);
+
+        assert!(state.matches_fetch_request(request_id, fingerprint, &path));
+        assert!(!state.matches_fetch_request(request_id.wrapping_add(1), fingerprint, &path));
+    }
+
+    #[test]
+    fn test_select_device_clears_previous_input_source() {
+        let mut state = XpubEntryModalState::new(1, "Test".to_string(), None, Network::Bitcoin);
+        state.input_source = Some(XpubInputSource::Pasted);
+
+        state.select_device(
+            miniscript::bitcoin::bip32::Fingerprint::from_str("abcdef01")
+                .expect("hardcoded fingerprint"),
+        );
+
+        assert_eq!(state.input_source, None);
+        assert_eq!(state.step, ModalStep::Details);
+        assert!(state.processing);
+    }
+
+    #[test]
+    fn test_update_account_clears_previous_input_source() {
+        let mut state = XpubEntryModalState::new(1, "Test".to_string(), None, Network::Bitcoin);
+        state.input_source = Some(XpubInputSource::Pasted);
+
+        state.update_account(ChildNumber::from_hardened_idx(1).expect("hardcoded account index"));
+
+        assert_eq!(state.input_source, None);
     }
 
     #[test]

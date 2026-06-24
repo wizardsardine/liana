@@ -1,6 +1,8 @@
 use super::{
-    app::AppState, fetch_key_modal_signer_users, message::Msg, refresh_key_modal_signers,
-    signer_options_for_key_modal, views, State, View,
+    app::AppState,
+    fetch_key_modal_signer_users,
+    message::{HardwareWalletRequestId, Msg},
+    refresh_key_modal_signers, signer_options_for_key_modal, views, State, View,
 };
 use crate::{
     backend::{Backend, Error, Notification},
@@ -114,7 +116,9 @@ impl State {
             Msg::XpubUpdateInput(input) => self.on_xpub_update_input(input),
             Msg::XpubSelectDevice(fingerprint) => return self.on_xpub_select_device(fingerprint),
             Msg::XpubDeviceBack => self.on_xpub_device_back(),
-            Msg::XpubFetchFromDevice(fingerprint, account) => return self.on_xpub_fetch_from_device(fingerprint, account),
+            Msg::XpubFetchFromDevice(fingerprint, account, request_id) => {
+                return self.on_xpub_fetch_from_device(fingerprint, account, request_id)
+            }
             Msg::XpubRetry => return self.on_xpub_retry(),
             Msg::XpubLoadFromFile => return self.on_xpub_load_from_file(),
             Msg::XpubFileLoaded(result) => self.on_xpub_file_loaded(result),
@@ -1731,7 +1735,10 @@ impl State {
 // Hardware wallet handlers
 impl State {
     /// Handle hardware wallet messages from async-hwi service
-    fn on_hw_message(&mut self, msg: async_hwi::service::SigningDeviceMsg) -> Task<Msg> {
+    fn on_hw_message(
+        &mut self,
+        msg: async_hwi::service::SigningDeviceMsg<HardwareWalletRequestId>,
+    ) -> Task<Msg> {
         use async_hwi::service::SigningDeviceMsg;
         use miniscript::bitcoin::bip32::DerivationPath;
         use miniscript::descriptor::{DescriptorPublicKey, DescriptorXKey, Wildcard};
@@ -1740,7 +1747,7 @@ impl State {
             SigningDeviceMsg::Update => {
                 // Device list changed - UI will redraw automatically with new state.hw content
             }
-            SigningDeviceMsg::XPub(_id, fingerprint, path, xpub) => {
+            SigningDeviceMsg::XPub(request_id, fingerprint, path, xpub) => {
                 // xpub fetch completed - populate input
                 // Look up device info for audit
                 let device_info = self.hw.list().values().find_map(|dev| {
@@ -1772,6 +1779,9 @@ impl State {
                 );
 
                 if let Some(modal) = self.views.xpub.modal_mut() {
+                    if !modal.matches_fetch_request(request_id, fingerprint, &path) {
+                        return Task::none();
+                    }
                     modal.set_processing(false);
                     // Convert xpub to DescriptorPublicKey and populate input
                     let desc_xpub = DescriptorPublicKey::XPub(DescriptorXKey {
@@ -1792,13 +1802,14 @@ impl State {
                     });
                 }
             }
-            SigningDeviceMsg::Error(_id, e) => {
-                // Show error in modal (use fetch_error for Details step)
+            SigningDeviceMsg::Error(Some(request_id), e) => {
                 if let Some(modal) = self.views.xpub.modal_mut() {
-                    modal.set_processing(false);
-                    modal.set_fetch_error(e);
+                    if modal.matches_fetch_error_request(request_id) {
+                        modal.set_fetch_error(e);
+                    }
                 }
             }
+            SigningDeviceMsg::Error(None, _) => {}
             // Ignore other messages (Version, WalletRegistered, etc.)
             _ => {}
         }
@@ -1831,14 +1842,14 @@ impl State {
         &mut self,
         fingerprint: miniscript::bitcoin::bip32::Fingerprint,
     ) -> Task<Msg> {
-        let account = if let Some(modal) = self.views.xpub.modal_mut() {
+        let (account, request_id) = if let Some(modal) = self.views.xpub.modal_mut() {
             modal.select_device(fingerprint); // This sets step to Details and processing=true
-            modal.selected_account
+            (modal.selected_account, modal.start_fetch())
         } else {
             return Task::none();
         };
         // Trigger the initial fetch with default account
-        Task::done(Msg::XpubFetchFromDevice(fingerprint, account))
+        Task::done(Msg::XpubFetchFromDevice(fingerprint, account, request_id))
     }
 
     /// Go back from Details to Select step
@@ -1852,10 +1863,9 @@ impl State {
     fn on_xpub_retry(&mut self) -> Task<Msg> {
         if let Some(modal) = self.views.xpub.modal_mut() {
             if let Some(fp) = modal.selected_device {
-                modal.clear_fetch_error();
-                modal.set_processing(true);
                 let account = modal.selected_account;
-                return Task::done(Msg::XpubFetchFromDevice(fp, account));
+                let request_id = modal.start_fetch();
+                return Task::done(Msg::XpubFetchFromDevice(fp, account, request_id));
             }
         }
         Task::none()
@@ -1866,16 +1876,11 @@ impl State {
         &mut self,
         fingerprint: miniscript::bitcoin::bip32::Fingerprint,
         account: miniscript::bitcoin::bip32::ChildNumber,
+        request_id: HardwareWalletRequestId,
     ) -> Task<Msg> {
         use async_hwi::service::SigningDevice;
         #[allow(unused_imports)]
         use miniscript::bitcoin::bip32::{ChildNumber, DerivationPath};
-
-        // Set processing state
-        if let Some(modal) = self.views.xpub.modal_mut() {
-            modal.set_processing(true);
-            modal.clear_fetch_error();
-        }
 
         // Find supported device with matching fingerprint
         let devices = self.hw.list();
@@ -1901,7 +1906,7 @@ impl State {
                 ]);
 
                 // Non-blocking! Result comes via SigningDeviceMsg::XPub
-                supported.get_extended_pubkey((), &derivation_path);
+                supported.get_extended_pubkey(request_id, &derivation_path);
             }
             Some(SigningDevice::Locked { .. }) => {
                 if let Some(modal) = self.views.xpub.modal_mut() {
@@ -2043,13 +2048,15 @@ impl State {
         account: miniscript::bitcoin::bip32::ChildNumber,
     ) -> Task<Msg> {
         if let Some(modal) = self.views.xpub.modal_mut() {
+            if modal.processing {
+                return Task::none();
+            }
             modal.update_account(account);
             // If in Details step with a selected device, trigger re-fetch
             if modal.step == crate::state::views::ModalStep::Details {
                 if let Some(fp) = modal.selected_device {
-                    modal.clear_fetch_error();
-                    modal.set_processing(true);
-                    return Task::done(Msg::XpubFetchFromDevice(fp, account));
+                    let request_id = modal.start_fetch();
+                    return Task::done(Msg::XpubFetchFromDevice(fp, account, request_id));
                 }
             }
         }
