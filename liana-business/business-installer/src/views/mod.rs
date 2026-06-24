@@ -321,7 +321,7 @@ pub fn menu_key_entry(
 ) -> Container<'static, Msg> {
     let identity_str = short_email(&key.identity.to_string(), 40);
     let identity_display = (!identity_str.is_empty())
-        .then(|| text::p2_medium(identity_str).style(theme::text::accent));
+        .then_some(text::p2_medium(identity_str).style(theme::text::accent));
 
     let alias = truncate(&key.alias, 25);
     let alias = text::h3(alias).style(theme::text::primary);

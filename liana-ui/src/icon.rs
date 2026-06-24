@@ -7,20 +7,38 @@ pub const ICON_SIZE_M: u16 = 24;
 pub const ICON_SIZE_S: u16 = 16;
 
 const BOOTSTRAP_ICONS: Font = Font::with_name("bootstrap-icons");
+const ICONEX_ICONS: Font = Font::with_name("Untitled1");
+const LIANA_ICONS: Font = Font::with_name("liana-icons");
 
-fn bootstrap_icon<'a>(unicode: char) -> Text<'a> {
+fn font_icon<'a>(font: Font, unicode: char) -> Text<'a> {
     Text::new(unicode.to_string())
-        .font(BOOTSTRAP_ICONS)
+        .font(font)
         .width(Length::Fixed(20.0))
         .align_x(alignment::Horizontal::Center)
         .size(P1_SIZE)
 }
 
-fn bootstrap_icon_no_padding<'a>(unicode: char) -> Text<'a> {
+fn font_icon_no_padding<'a>(font: Font, unicode: char) -> Text<'a> {
     Text::new(unicode.to_string())
-        .font(BOOTSTRAP_ICONS)
+        .font(font)
         .size(P1_SIZE)
         .line_height(LineHeight::Relative(1.0))
+}
+
+fn bootstrap_icon<'a>(unicode: char) -> Text<'a> {
+    font_icon(BOOTSTRAP_ICONS, unicode)
+}
+
+fn bootstrap_icon_no_padding<'a>(unicode: char) -> Text<'a> {
+    font_icon_no_padding(BOOTSTRAP_ICONS, unicode)
+}
+
+fn iconex_icon<'a>(unicode: char) -> Text<'a> {
+    font_icon(ICONEX_ICONS, unicode)
+}
+
+fn liana_icon<'a>(unicode: char) -> Text<'a> {
+    font_icon(LIANA_ICONS, unicode)
 }
 
 pub fn cross_icon<'a>() -> Text<'a> {
@@ -63,11 +81,11 @@ pub fn reload_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F130}')
 }
 
-pub fn import_icon() -> Text<'static> {
+pub fn import_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F30A}')
 }
 
-pub fn wallet_icon() -> Text<'static> {
+pub fn wallet_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F615}')
 }
 
@@ -83,7 +101,7 @@ pub fn dot_icon() -> Text<'static> {
     bootstrap_icon('\u{F287}')
 }
 
-pub fn person_icon() -> Text<'static> {
+pub fn person_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F4DA}')
 }
 
@@ -99,8 +117,16 @@ pub fn minus_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F63B}')
 }
 
-pub fn warning_icon() -> Text<'static> {
+pub fn warning_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F33B}')
+}
+
+pub fn shield_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F53F}')
+}
+
+pub fn lock_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F47B}')
 }
 
 pub fn warning_fill_icon() -> Text<'static> {
@@ -151,7 +177,7 @@ pub fn check_mark_icon<'a>() -> Text<'a> {
     bootstrap_icon_no_padding('\u{F633}')
 }
 
-pub fn round_key_icon() -> Text<'static> {
+pub fn round_key_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F44E}')
 }
 
@@ -163,7 +189,7 @@ pub fn restore_icon() -> Text<'static> {
     bootstrap_icon('\u{F358}')
 }
 
-pub fn wrench_icon() -> Text<'static> {
+pub fn wrench_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F621}')
 }
 
@@ -171,7 +197,7 @@ pub fn link_icon() -> Text<'static> {
     bootstrap_icon('\u{F470}')
 }
 
-pub fn paste_icon() -> Text<'static> {
+pub fn paste_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F290}')
 }
 
@@ -179,7 +205,7 @@ pub fn usb_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F6DC}')
 }
 
-pub fn usb_drive_icon() -> Text<'static> {
+pub fn usb_drive_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F6F2}')
 }
 
@@ -193,6 +219,10 @@ pub fn enter_box_icon() -> Text<'static> {
 
 pub fn collection_icon() -> Text<'static> {
     bootstrap_icon('\u{F2CC}')
+}
+
+pub fn org_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F876}')
 }
 
 pub fn coins_icon() -> Text<'static> {
@@ -231,16 +261,6 @@ pub fn copy_icon<'a>() -> Text<'a> {
     bootstrap_icon_no_padding('\u{F759}')
 }
 
-const ICONEX_ICONS: Font = Font::with_name("Untitled1");
-
-fn iconex_icon<'a>(unicode: char) -> Text<'a> {
-    Text::new(unicode.to_string())
-        .font(ICONEX_ICONS)
-        .width(Length::Fixed(20.0))
-        .align_x(alignment::Horizontal::Center)
-        .size(P1_SIZE)
-}
-
 pub fn arrow_repeat() -> Text<'static> {
     iconex_icon('\u{46BB}')
 }
@@ -267,4 +287,8 @@ pub fn circle_check_icon() -> Text<'static> {
 
 pub fn circle_cross_icon() -> Text<'static> {
     iconex_icon('\u{19DA}')
+}
+
+pub fn scale_icon<'a>() -> Text<'a> {
+    liana_icon('\u{E001}')
 }

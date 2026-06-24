@@ -54,6 +54,7 @@ pub const MANROPE_BOLD_BYTES: &[u8] = include_bytes!("../static/fonts/Manrope-Bo
 
 pub const ICONEX_ICONS_BYTES: &[u8] = include_bytes!("../static/icons/iconex/iconex-icons.ttf");
 pub const BOOTSTRAP_ICONS_BYTE: &[u8] = include_bytes!("../static/icons/bootstrap-icons.ttf");
+pub const LIANA_ICONS_BYTES: &[u8] = include_bytes!("../static/icons/liana-icons/liana-icons.ttf");
 
 pub fn load() -> Vec<Cow<'static, [u8]>> {
     vec![
@@ -66,5 +67,6 @@ pub fn load() -> Vec<Cow<'static, [u8]>> {
         MANROPE_BOLD_BYTES.into(),
         ICONEX_ICONS_BYTES.into(),
         BOOTSTRAP_ICONS_BYTE.into(),
+        LIANA_ICONS_BYTES.into(),
     ]
 }
