@@ -14,11 +14,12 @@ use coincube_ui::{
         text::*,
     },
     icon::{arrow_down_up_icon, warning_icon},
+    image::asset_network_logo,
     theme,
     widget::{Column, Container, Element, Row},
 };
 use iced::{
-    widget::{container, Space},
+    widget::{button as iced_button, container, Space},
     Alignment, Background, Length,
 };
 
@@ -118,22 +119,50 @@ fn fmt_rate_value(to_asset: SendAsset, rate: f64, unit: BitcoinDisplayUnit) -> S
     }
 }
 
+fn asset_slug(asset: SendAsset) -> &'static str {
+    match asset {
+        SendAsset::Lbtc => "lbtc",
+        SendAsset::Usdt => "usdt",
+    }
+}
+
+/// A rounded filled card (matches the Liquid → Send "YOU SEND" cards).
 fn card<'a>(
     content: impl Into<Element<'a, LiquidSwapMessage>>,
 ) -> Container<'a, LiquidSwapMessage> {
     Container::new(content)
         .padding(20)
         .width(Length::Fill)
-        .style(|t| container::Style {
-            background: Some(Background::Color(t.colors.cards.simple.background)),
+        .style(theme::card::simple)
+}
+
+/// Small bordered "LIQUID" pill, as on the Send cards (both swap assets
+/// live on the Liquid network).
+fn liquid_pill<'a>() -> Element<'a, LiquidSwapMessage> {
+    Container::new(text("LIQUID").size(11).color(color::ORANGE))
+        .padding([2, 8])
+        .style(|_: &theme::Theme| container::Style {
             border: iced::Border {
-                radius: 20.0.into(),
-                ..Default::default()
+                color: color::ORANGE,
+                width: 1.0,
+                radius: 8.0.into(),
             },
             ..Default::default()
         })
+        .into()
 }
 
+/// Asset badge: circular network logo + ticker, mirroring the Send cards.
+fn asset_badge<'a>(asset: SendAsset) -> Element<'a, LiquidSwapMessage> {
+    Row::new()
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .push(asset_network_logo(asset_slug(asset), "liquid", 32.0))
+        .push(text(ticker(asset)).size(H4_SIZE).bold())
+        .into()
+}
+
+/// "Balance: …" line shown under each card's amount.
 fn balance_row<'a>(
     asset: SendAsset,
     base: u64,
@@ -150,6 +179,69 @@ fn balance_row<'a>(
         .into()
 }
 
+/// Circular ⇅ flip button between the two cards (Aqua-style).
+fn flip_button<'a>() -> Element<'a, LiquidSwapMessage> {
+    iced_button(
+        Container::new(arrow_down_up_icon().size(18).color(color::ORANGE))
+            .width(Length::Fixed(40.0))
+            .height(Length::Fixed(40.0))
+            .center_x(Length::Fixed(40.0))
+            .center_y(Length::Fixed(40.0)),
+    )
+    .padding(0)
+    .on_press(LiquidSwapMessage::FlipAssets)
+    .style(|t: &theme::Theme, _| iced_button::Style {
+        background: Some(Background::Color(t.colors.cards.simple.background)),
+        border: iced::Border {
+            color: color::ORANGE,
+            width: 1.0,
+            radius: 20.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
+}
+
+/// One asset card: a header row, then an amount (left) beside the asset
+/// badge (right), then the balance + LIQUID pill. Mirrors the Send cards.
+fn asset_card<'a>(
+    header: &'a str,
+    header_accessory: Option<Element<'a, LiquidSwapMessage>>,
+    amount: Element<'a, LiquidSwapMessage>,
+    asset: SendAsset,
+    balance_base_units: u64,
+    unit: BitcoinDisplayUnit,
+) -> Element<'a, LiquidSwapMessage> {
+    let mut header_row = Row::new()
+        .align_y(Alignment::Center)
+        .push(text(header).size(P2_SIZE).style(theme::text::secondary))
+        .push(Space::new().width(Length::Fill));
+    if let Some(accessory) = header_accessory {
+        header_row = header_row.push(accessory);
+    }
+
+    let amount_row = Row::new()
+        .spacing(12)
+        .align_y(Alignment::Center)
+        .push(Container::new(amount).width(Length::Fill))
+        .push(asset_badge(asset));
+
+    let balance_row = Row::new()
+        .align_y(Alignment::Center)
+        .push(balance_row(asset, balance_base_units, unit))
+        .push(Space::new().width(Length::Fill))
+        .push(liquid_pill());
+
+    card(
+        Column::new()
+            .spacing(14)
+            .push(header_row)
+            .push(amount_row)
+            .push(balance_row),
+    )
+    .into()
+}
+
 /// The single-input swap screen.
 fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMessage> {
     let from_balance = balance_base(config.from_asset, config.btc_balance, config.usdt_balance);
@@ -162,38 +254,27 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
             q.from_total_base(),
             config.bitcoin_unit,
         ))
-        .size(H4_SIZE)
+        .size(H2_SIZE)
         .bold()
         .into(),
-        None => text(format!("— {}", ticker(config.from_asset)))
-            .size(H4_SIZE)
-            .style(theme::text::secondary)
-            .into(),
+        None => text("0").size(H2_SIZE).style(theme::text::secondary).into(),
     };
 
-    let from_card = card(
-        Column::new()
-            .spacing(10)
-            .push(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .push(text("You pay").size(P2_SIZE).style(theme::text::secondary))
-                    .push(Space::new().width(Length::Fill))
-                    .push(
-                        button::secondary(None, "Swap All")
-                            .on_press(LiquidSwapMessage::SwapAll)
-                            .width(Length::Fixed(110.0)),
-                    ),
-            )
-            .push(pay_value)
-            .push(balance_row(
-                config.from_asset,
-                from_balance,
-                config.bitcoin_unit,
-            )),
+    let swap_all = button::secondary(None, "Swap All")
+        .on_press(LiquidSwapMessage::SwapAll)
+        .width(Length::Fixed(110.0))
+        .into();
+
+    let from_card = asset_card(
+        "YOU PAY",
+        Some(swap_all),
+        pay_value,
+        config.from_asset,
+        from_balance,
+        config.bitcoin_unit,
     );
 
-    // ── Flip control + rate chip ─────────────────────────────────────────
+    // ── Rate chip + flip control (Aqua middle row) ───────────────────────
     let rate_chip: Element<'a, LiquidSwapMessage> = match config.quote {
         Some(q) => Container::new(
             text(format!(
@@ -202,32 +283,27 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
                 fmt_rate_value(config.to_asset, q.rate_to_per_from(), config.bitcoin_unit)
             ))
             .size(P2_SIZE)
-            .style(theme::text::secondary),
+            .color(color::ORANGE),
         )
-        .padding([4, 12])
-        .style(|t| container::Style {
-            background: Some(Background::Color(t.colors.cards.simple.background)),
+        .padding([6, 12])
+        .style(|_: &theme::Theme| container::Style {
             border: iced::Border {
-                radius: 14.0.into(),
-                ..Default::default()
+                color: color::ORANGE,
+                width: 1.0,
+                radius: 16.0.into(),
             },
             ..Default::default()
         })
         .into(),
-        None => Space::new().height(Length::Fixed(0.0)).into(),
+        None => Space::new().width(Length::Fixed(0.0)).into(),
     };
 
     let flip_row = Row::new()
         .spacing(12)
         .align_y(Alignment::Center)
-        .push(Space::new().width(Length::Fill))
-        .push(
-            button::secondary(Some(arrow_down_up_icon()), "Flip")
-                .on_press(LiquidSwapMessage::FlipAssets)
-                .width(Length::Fixed(90.0)),
-        )
         .push(rate_chip)
-        .push(Space::new().width(Length::Fill));
+        .push(Space::new().width(Length::Fill))
+        .push(flip_button());
 
     // ── You receive (to) — the editable amount ───────────────────────────
     // Match the input mode to the asset/unit: whole sats for L-BTC in SATS
@@ -249,29 +325,17 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
     };
     let amount_field = amount_form
         .maybe_warning(config.entered_amount.warning)
+        .size(H3_SIZE)
         .padding(10)
         .into_container();
 
-    let to_card = card(
-        Column::new()
-            .spacing(10)
-            .push(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .push(
-                        text("You receive")
-                            .size(P2_SIZE)
-                            .style(theme::text::secondary),
-                    )
-                    .push(Space::new().width(Length::Fill))
-                    .push(text(ticker(config.to_asset)).size(P1_SIZE).bold()),
-            )
-            .push(amount_field)
-            .push(balance_row(
-                config.to_asset,
-                to_balance,
-                config.bitcoin_unit,
-            )),
+    let to_card = asset_card(
+        "YOU RECEIVE",
+        None,
+        amount_field.into(),
+        config.to_asset,
+        to_balance,
+        config.bitcoin_unit,
     );
 
     // ── Fee / status line ────────────────────────────────────────────────
