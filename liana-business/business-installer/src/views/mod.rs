@@ -78,21 +78,21 @@ fn admin_name_from_email(mail: &str) -> Option<String> {
 
 const EMAIL_HEADER_SPACER: u32 = 30;
 
-/// Create a breadcrumb element from path segments.
-/// Renders as "Segment1 > Segment2 > Segment3" with styled separators.
-/// All segments have the same font size (h3), with `>` separators in secondary style.
 fn breadcrumb_header<'a>(segments: &[String]) -> Element<'a, Msg> {
-    let mut row = Row::new().spacing(8).align_y(Alignment::Center);
+    let mut row = Row::new().spacing(10).align_y(Alignment::Center);
 
     for (i, segment) in segments.iter().enumerate() {
         if i > 0 {
-            // Add separator
-            row = row.push(text::h3(">").style(theme::text::secondary));
+            row = row.push(list::breadcrumb_chevron());
         }
-        row = row.push(text::h3(segment));
+        row = row.push(if i + 1 == segments.len() {
+            text::new::h3_semi(segment).style(theme::text::primary)
+        } else {
+            text::new::h3(segment).style(theme::text::muted)
+        });
     }
 
-    row.into()
+    row.wrap().into()
 }
 
 enum LayoutContent<'a> {

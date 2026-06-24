@@ -73,6 +73,8 @@ impl Palette {
             text: Text {
                 primary: color::BUSINESS_BLACK,
                 secondary: color::DARK_TEXT_SECONDARY,
+                muted: color::DARK_TEXT_TERTIARY,
+                border: color::LIGHT_BORDER,
                 warning: color::ORANGE,
                 success: color::DARK_GREEN,
                 error: color::RED,
@@ -153,7 +155,13 @@ impl Palette {
                         border: color::BUSINESS_BLUE.into(),
                         shadow: Default::default(),
                     }),
-                    disabled: btn_disabled(),
+                    // Disabled looks identical to active (the button is inert, not greyed).
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_PRIMARY_PRESSED,
+                        border: Some(INPUT_BORDER),
+                        shadow: Default::default(),
+                    }),
                 },
                 feerate: feerate_button(color::BUSINESS_LIGHT_BLUE, color::BUSINESS_BLACK),
                 feerate_unselected: feerate_unselected_button(
@@ -223,6 +231,33 @@ impl Palette {
                         shadow: Default::default(),
                     }),
                     disabled: btn_disabled(),
+                },
+                remove: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLACK,
+                        border: None,
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLUE,
+                        border: None,
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLUE,
+                        border: None,
+                        shadow: Default::default(),
+                    }),
+                    // Inert (disabled) keeps the active look.
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLACK,
+                        border: None,
+                        shadow: Default::default(),
+                    }),
                 },
                 transparent_border: Button {
                     active: ButtonPalette {

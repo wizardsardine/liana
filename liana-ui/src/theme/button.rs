@@ -43,6 +43,7 @@ button_styles!(
     container_border,
     menu,
     transparent,
+    remove,
     transparent_border,
     clickable_section,
     link,

@@ -51,6 +51,8 @@ impl Palette {
             text: Text {
                 primary: color::WHITE,
                 secondary: color::GREY_2,
+                muted: color::GREY_3,
+                border: color::GREY_7,
                 warning: color::ORANGE,
                 success: color::GREEN,
                 error: color::RED,
@@ -206,6 +208,32 @@ impl Palette {
                             a: 0.5,
                             ..color::GREY_2
                         },
+                        border: None,
+                        shadow: Default::default(),
+                    }),
+                },
+                remove: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: None,
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: None,
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: None,
+                        shadow: Default::default(),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
                         border: None,
                         shadow: Default::default(),
                     }),

@@ -34,6 +34,8 @@ pub struct Palette {
 pub struct Text {
     pub primary: iced::Color,
     pub secondary: iced::Color,
+    pub muted: iced::Color,
+    pub border: iced::Color,
     pub warning: iced::Color,
     pub success: iced::Color,
     pub error: iced::Color,
@@ -69,6 +71,8 @@ pub struct General {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Buttons {
     pub transparent: Button,
+    /// Transparent icon button that keeps its active look while inert (e.g. the remove cross).
+    pub remove: Button,
     pub transparent_border: Button,
     pub list_entry: Button,
     pub list_entry_radius: Option<f32>,
