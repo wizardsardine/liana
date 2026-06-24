@@ -5,7 +5,7 @@ use crate::state::{
 use async_hwi::service::SigningDevice;
 use iced::{
     alignment::Vertical,
-    widget::{container, row, Space},
+    widget::{column, container, row, Space},
     Alignment, Length,
 };
 use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, UnsupportedReason};
@@ -15,7 +15,7 @@ use liana_ui::{
         form,
         modal::{self, modal_view, ModalWidth},
         pick_list, scrollable,
-        text::{self, capitalize_first, p1_bold, truncate},
+        text::{self, capitalize_first, truncate},
         tooltip,
     },
     icon, theme,
@@ -60,11 +60,11 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
                 .spacing(10)
                 .push(icon::tooltip_icon().size(16))
                 .push(
-                text::p2_medium(
+                text::new::caption(
                     "This key already has an xpub. You can replace it by fetching from a device, \
                     importing from file, or pasting. Use the Clear button to remove it completely.",
                 )
-                .style(theme::text::primary),
+                .style(theme::text::secondary),
             ),
         )
         .padding(10)
@@ -75,7 +75,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
     // Validation error display - show validation result when input is present
     let validation_error = if !modal_state.xpub_input.is_empty() {
         modal_state.validate().err().map(|error| {
-            text::p2_medium(error)
+            text::new::caption(error)
                 .style(theme::text::warning)
                 .width(Length::Fill)
         })
@@ -85,14 +85,14 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
 
     // Show input field if paste was used or file loaded
     let input_display = (!modal_state.xpub_input.is_empty()).then_some({
-        let input_header = Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(text::p2_medium("Current xpub:").style(theme::text::primary))
-            .push(Space::with_width(Length::Fill));
+        let input_header = row![
+            text::new::b5_bold("Current xpub:").style(theme::text::primary),
+            Space::fill_width()
+        ]
+        .align_y(Alignment::Center);
 
         let input_value = Container::new(scrollable::horizontal_thin(
-            text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary),
+            text::new::small_caption(&modal_state.xpub_input).style(theme::text::secondary),
         ))
         .padding(10)
         .style(theme::card::simple)
@@ -140,7 +140,8 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
     let pick_enabled = !modal_state.processing;
 
     let info = "Switch account if you already uses the same hardware in other configurations";
-    let account_label = row![p1_bold("Key path account:"), tooltip(info)].align_y(Vertical::Center);
+    let account_label =
+        row![text::new::b5_bold("Key path account:"), tooltip(info)].align_y(Vertical::Center);
 
     let account = if pick_enabled {
         container(
@@ -153,23 +154,21 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         )
     } else {
         container(
-            text::p1_medium(format_account(modal_state.selected_account))
+            text::new::small_caption(format_account(modal_state.selected_account))
                 .style(theme::text::primary)
                 .width(Length::Fill),
         )
     }
     .width(180);
 
-    let fetching_label = modal_state.processing.then_some(
-        Row::new()
-            .spacing(10)
-            .push(Space::with_width(Length::Fill))
-            .push(text::p1_medium("Fetching from device...").style(theme::text::primary))
-            .push(Space::with_width(Length::Fill)),
-    );
+    let fetching_label = modal_state.processing.then_some(row![
+        Space::fill_width(),
+        text::new::caption("Fetching from device...").style(theme::text::secondary),
+        Space::fill_width()
+    ]);
 
     let error = modal_state.fetch_error.as_ref().map(|error| {
-        text::p2_medium(error)
+        text::new::caption(error)
             .style(theme::text::warning)
             .width(Length::Fill)
     });
@@ -195,7 +194,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
     // Validation error (e.g., wrong network)
     let validation_error = if !modal_state.xpub_input.is_empty() && !modal_state.processing {
         modal_state.validate().err().map(|error| {
-            text::p2_medium(error)
+            text::new::caption(error)
                 .style(theme::text::warning)
                 .width(Length::Fill)
         })
@@ -210,7 +209,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         && validation_error.is_none())
     .then_some({
         Container::new(scrollable::horizontal_thin(
-            text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary),
+            text::new::small_caption(&modal_state.xpub_input).style(theme::text::secondary),
         ))
         .padding(10)
         .style(theme::card::simple)
@@ -252,9 +251,7 @@ fn hw_section(state: &State) -> Element<'_, Msg> {
     } else {
         // Show device list - extract data to avoid lifetime issues with local BTreeMap
         let device_data: Vec<_> = devices.values().map(extract_device_data).collect();
-        let mut list = Column::new()
-            .spacing(10)
-            .push(text::p1_bold("Detected Devices:"));
+        let mut list = column![text::new::h3_semi("Detected Devices:")].spacing(10);
         for data in device_data {
             list = list.push(device_card(data));
         }

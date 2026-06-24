@@ -1,16 +1,14 @@
 use crate::{
     state::{Msg, State},
-    views::{layout, INSTALLER_STEPS},
+    views::{intro_prompt, layout, screen_intro, INSTALLER_STEPS},
 };
-use iced::{
-    widget::{row, Space},
-    Length,
-};
+use iced::{widget::column, Length};
 use liana_ui::{
-    component::{button::btn_send_token, form, text},
-    theme,
+    component::{button::btn_send_token, form},
     widget::*,
 };
+
+use super::LOGIN_WIDTH;
 
 pub fn login_email_view(state: &State) -> Element<'_, Msg> {
     let can_submit = state.views.login.email.can_send();
@@ -31,30 +29,32 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
 
     let btn = btn_send_token(can_submit.then_some(Msg::LoginSendToken));
 
-    let liana_business = row![
-        Space::with_width(Length::Fill),
-        text::h2("Liana Business"),
-        Space::with_width(Length::Fill),
-    ];
-
-    let content = Column::new()
-        .push(liana_business)
-        .push(Space::with_height(20))
-        .push(
-            text::p1_medium("Enter the email associated with your account")
-                .style(theme::text::primary),
-        )
-        .push(form)
-        .push(btn)
+    let content = Container::new(
+        column![
+            screen_intro(
+                "Liana Business",
+                Some(intro_prompt(
+                    "Enter the email associated with your account",
+                    None,
+                )),
+            ),
+            form,
+            btn,
+        ]
         .spacing(20)
-        .padding(40);
+        .width(LOGIN_WIDTH),
+    )
+    .padding(40)
+    .center_x(Length::Fill);
 
+    let previous =
+        (!state.views.login.account_select.accounts.is_empty()).then_some(Msg::NavigateBack);
     layout(
         (1, INSTALLER_STEPS),
         None,
         &["Login".to_string()],
         content,
         true,
-        None,
+        previous,
     )
 }

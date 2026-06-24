@@ -11,7 +11,7 @@ use liana_ui::{
 };
 
 pub fn conflict_modal_view(modal_state: &ConflictModalState) -> Element<'_, Msg> {
-    let message = text::p1_medium(&modal_state.message).style(theme::text::primary);
+    let message = text::new::caption(&modal_state.message).style(theme::text::secondary);
 
     // Buttons - different based on whether this is a choice or info-only
     let footer = if modal_state.is_choice() {

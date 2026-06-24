@@ -1,5 +1,8 @@
 use crate::state::message::Msg;
-use iced::{widget::Space, Alignment, Length};
+use iced::{
+    widget::{column, Space},
+    Alignment, Length,
+};
 use liana_ui::{component::text, theme, widget::*};
 
 use super::layout;
@@ -23,20 +26,17 @@ pub fn loading_view(has_error: bool) -> Element<'static, Msg> {
         None,
         &[],
         Container::new(
-            Column::new()
-                .align_x(Alignment::Center)
-                .width(Length::Fill)
-                .push(text::h2("Liana Business"))
-                .push(Space::with_height(30))
-                .push(text::p1_bold(status_text).style(theme::text::secondary))
-                .push_maybe(
-                    status_detail
-                        .as_ref()
-                        .map(|d| text::p1_medium(d.0.to_string()).style(theme::text::secondary)),
-                )
-                .push_maybe(
-                    status_detail.map(|d| text::p1_medium(d.1).style(theme::text::secondary)),
-                ),
+            column![
+                text::new::d3("Liana Business"),
+                Space::with_height(30),
+                text::new::caption(status_text).style(theme::text::secondary),
+                status_detail
+                    .as_ref()
+                    .map(|d| text::new::caption(d.0.to_string()).style(theme::text::secondary)),
+                status_detail.map(|d| text::new::caption(d.1).style(theme::text::secondary))
+            ]
+            .align_x(Alignment::Center)
+            .width(Length::Fill),
         ),
         true,
         previous_msg,
