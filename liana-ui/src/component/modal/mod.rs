@@ -28,7 +28,7 @@ use crate::{
     theme::{self, Theme},
 };
 
-use crate::widget::{Button, CheckBox, Column, Element, SpaceExt, Text};
+use crate::widget::{Button, CheckBox, Column, Element, PickList, SpaceExt, Text};
 
 pub const BTN_W: u32 = 500;
 pub const V_SPACING: u32 = 10;
@@ -460,18 +460,12 @@ where
     button::device(row, on_press)
 }
 
-pub fn account_device_entry<'a, M, K, A>(
+/// Derivation-account picker: a dropdown over accounts 0..10 for the given device.
+pub fn account_pick_list<'a, Message: Clone + 'a>(
     fingerprint: Fingerprint,
-    kind: Option<K>,
-    alias: Option<A>,
     selected: Option<ChildNumber>,
-    on_press: Option<M>,
-) -> Element<'a, M>
-where
-    M: 'static + Clone + From<(Fingerprint, ChildNumber)>,
-    K: Display + 'a,
-    A: Display + 'a,
-{
+    on_select: impl Fn(Account) -> Message + 'a,
+) -> PickList<'a, Account, Vec<Account>, Account, Message> {
     let accounts: Vec<Account> = (0..10)
         .map(|i| {
             Account::new(
@@ -484,7 +478,22 @@ where
         selected.unwrap_or(ChildNumber::from_hardened_idx(0).expect("hardcoded")),
         fingerprint,
     );
-    let picker = pick_list::pick_list(accounts, Some(selected), |a: Account| {
+    pick_list::pick_list(accounts, Some(selected), on_select)
+}
+
+pub fn account_device_entry<'a, M, K, A>(
+    fingerprint: Fingerprint,
+    kind: Option<K>,
+    alias: Option<A>,
+    selected: Option<ChildNumber>,
+    on_press: Option<M>,
+) -> Element<'a, M>
+where
+    M: 'static + Clone + From<(Fingerprint, ChildNumber)>,
+    K: Display + 'a,
+    A: Display + 'a,
+{
+    let picker = account_pick_list(fingerprint, selected, |a: Account| {
         (a.fingerprint, a.index).into()
     });
     let icon = device_icon(kind.is_some());

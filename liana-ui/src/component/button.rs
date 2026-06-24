@@ -566,6 +566,10 @@ pub fn btn_send_token<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "Send token", BtnWidth::L, msg)
 }
 
+pub fn btn_paste_icon<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    clickable_icon_with_size(icon::paste_icon(), msg, 20)
+}
+
 pub fn subtle_link<'a, T: Clone + 'a>(label: impl Display, msg: Option<T>) -> Element<'a, T> {
     let link = Button::new(caption(label).size(14))
         .padding(0)

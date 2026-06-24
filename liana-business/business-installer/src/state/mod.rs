@@ -12,7 +12,7 @@ use crossbeam::channel;
 use liana_connect::ws_business::{self, KeyIdentity, PolicyTemplate, Wallet};
 use liana_gui::{app::settings::global::PersistedBitboxNoiseConfig, dir::LianaDirectory};
 use liana_ui::widget::{modal::Modal, Element};
-pub use message::{Message, Msg};
+pub use message::{HardwareWalletRequestId, Message, Msg};
 use miniscript::bitcoin::Network;
 use std::{
     collections::BTreeSet,
@@ -55,7 +55,7 @@ pub struct State {
     pub notif_receiver: channel::Receiver<Message>,
     /// Shared waker for the notification stream - wake this after sending to notif_sender
     pub notif_waker: SharedWaker,
-    pub hw: HwiService<Message>,
+    pub hw: HwiService<Message, HardwareWalletRequestId>,
     /// Track if HW listener is running (to make stop_hw idempotent)
     hw_running: bool,
     /// Bitcoin network (mainnet, testnet, signet, regtest)

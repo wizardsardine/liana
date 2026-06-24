@@ -69,16 +69,6 @@ fn format_last_edit_info_string_helper(
     Some((edited, relative_time))
 }
 
-pub fn format_last_edit_info_string(
-    last_edited: Option<u64>,
-    last_editor: Option<Uuid>,
-    state: &State,
-    current_user_email_lower: &str,
-) -> Option<String> {
-    format_last_edit_info_string_helper(last_edited, last_editor, state, current_user_email_lower)
-        .map(|(a, b)| format!("{a}{b}"))
-}
-
 pub fn format_last_edit_info<'a, M>(
     last_edited: Option<u64>,
     last_editor: Option<Uuid>,
