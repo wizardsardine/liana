@@ -42,12 +42,12 @@ pub const MENU_ENTRY_WIDTH: u32 = 600;
 pub const MENU_ENTRY_HEIGHT: u32 = 100;
 const TOP_STRIP_HEIGHT: u32 = 44;
 
-pub fn format_last_edit_info(
+fn format_last_edit_info_string_helper(
     last_edited: Option<u64>,
     last_editor: Option<Uuid>,
     state: &State,
     current_user_email_lower: &str,
-) -> Option<String> {
+) -> Option<(String, String)> {
     let timestamp = last_edited?;
     let editor_str = last_editor
         .and_then(|editor_id| {
@@ -58,14 +58,45 @@ pub fn format_last_edit_info(
                     let name = admin_name_from_email(&user.email).unwrap_or_default();
                     format!("Admin{name}")
                 } else {
-                    user.email.clone()
+                    short_email(&user.email, 25)
                 }
             })
         })
         .map(|name| format!(" by {name}"))
         .unwrap_or_default();
     let relative_time = state.app.format_relative_time(timestamp);
-    Some(format!("Edited{editor_str} {relative_time}"))
+    let edited = format!("Edited{editor_str} ");
+    Some((edited, relative_time))
+}
+
+pub fn format_last_edit_info_string(
+    last_edited: Option<u64>,
+    last_editor: Option<Uuid>,
+    state: &State,
+    current_user_email_lower: &str,
+) -> Option<String> {
+    format_last_edit_info_string_helper(last_edited, last_editor, state, current_user_email_lower)
+        .map(|(a, b)| format!("{a}{b}"))
+}
+
+pub fn format_last_edit_info<'a, M>(
+    last_edited: Option<u64>,
+    last_editor: Option<Uuid>,
+    state: &State,
+    current_user_email_lower: &str,
+) -> Option<Element<'a, M>>
+where
+    M: 'a + Clone,
+{
+    format_last_edit_info_string_helper(last_edited, last_editor, state, current_user_email_lower)
+        .map(|(a, b)| {
+            row![
+                text::new::caption(a).style(theme::text::secondary),
+                text::new::caption(b).style(theme::text::secondary)
+            ]
+            .wrap()
+            .into()
+        })
 }
 
 fn admin_name_from_email(mail: &str) -> Option<String> {

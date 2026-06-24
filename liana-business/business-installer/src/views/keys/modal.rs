@@ -1,6 +1,6 @@
 use crate::{
     state::{views::keys::EditKeyModalState, Message, State},
-    views::format_last_edit_info,
+    views::format_last_edit_info_string as format_last_edit_info,
 };
 use iced::{
     widget::{column, row, Space},

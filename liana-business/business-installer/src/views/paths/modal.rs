@@ -54,29 +54,15 @@ pub fn edit_path_modal_view<'a>(
             state,
             &current_user_email_lower,
         )
-        .map(|info| {
-            text::new::caption(info)
-                .style(theme::text::secondary)
-                .into()
-        })
     } else if let Some(idx) = modal_state.path_index {
-        state
-            .app
-            .secondary_paths
-            .get(idx)
-            .and_then(|secondary| {
-                format_last_edit_info(
-                    secondary.path.last_edited,
-                    secondary.path.last_editor,
-                    state,
-                    &current_user_email_lower,
-                )
-            })
-            .map(|info| {
-                text::new::caption(info)
-                    .style(theme::text::secondary)
-                    .into()
-            })
+        state.app.secondary_paths.get(idx).and_then(|secondary| {
+            format_last_edit_info(
+                secondary.path.last_edited,
+                secondary.path.last_editor,
+                state,
+                &current_user_email_lower,
+            )
+        })
     } else {
         None
     };

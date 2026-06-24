@@ -19,7 +19,8 @@ use liana_ui::{
 };
 
 use super::{
-    delete_btn, format_last_edit_info, layout_with_scrollable_list, menu_entry, menu_key_entry,
+    delete_btn, format_last_edit_info_string as format_last_edit_info, layout_with_scrollable_list,
+    menu_entry, menu_key_entry,
 };
 
 pub fn pill<'a, T: 'a>(key_type: &KeyType) -> Container<'a, T> {

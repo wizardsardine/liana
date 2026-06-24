@@ -2,7 +2,10 @@ use crate::{
     backend::Backend,
     state::{Msg, State},
 };
-use iced::{widget::row, Alignment, Length};
+use iced::{
+    widget::{column, row, Space},
+    Alignment, Length,
+};
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
 use liana_ui::{
     component::{
@@ -15,10 +18,7 @@ use liana_ui::{
 
 use uuid::Uuid;
 
-use super::{
-    format_last_edit_info, menu_entry, select_list_view, SelectListView, SelectSearch,
-    INSTALLER_STEPS,
-};
+use super::{menu_entry, select_list_view, SelectListView, SelectSearch, INSTALLER_STEPS};
 
 /// Derive the user's role for a specific wallet based on wallet data and global role
 /// Returns None if the user has no access to this wallet
@@ -78,30 +78,22 @@ fn is_wallet_accessible(
     true
 }
 
-pub fn org_card<'a>(
-    name: String,
-    count: usize,
-    id: Uuid,
-    last_edit_info: Option<String>,
-) -> Element<'a, Msg> {
-    let wallets = match count {
-        0 => None,
-        1 => Some("(1 wallet)".to_string()),
-        c => Some(format!("({c} wallets)")),
-    };
-    let wallets = wallets.map(|wallets| text::h4_bold(wallets).into());
-
+pub fn org_card<'a>(name: String, id: Uuid, subtitle: Option<String>) -> Element<'a, Msg> {
     let name = truncate(&name, 30);
+    let trailing = list::entry_chevron();
 
     let message = Some(Msg::OrgSelected(id));
 
-    list::entry_organization(name, last_edit_info, wallets, message)
+    list::entry_organization(name, subtitle, Some(trailing), message)
 }
 
 pub fn no_org_card() -> Container<'static, Msg> {
-    let content = row![text::h5_regular(
-        "Contact Wizardsardine to create an account."
-    )]
+    let content = row![
+        Space::fill_width(),
+        text::h5_regular("Contact Wizardsardine to create an account."),
+        Space::fill_width(),
+    ]
+    .align_y(Alignment::Center)
     .width(Length::Fill)
     .height(Length::Fill);
     menu_entry(content, None)
@@ -118,10 +110,10 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
     );
 
     // Scrollable list content: organization cards
-    let mut list_content = Column::new()
-        .spacing(10)
-        .align_x(Alignment::Center)
-        .padding([0, 20]);
+    let mut list_content = column![]
+        .spacing(12)
+        .width(Length::Fill)
+        .align_x(Alignment::Center);
 
     // Filter organizations by search text (case-insensitive)
     let search_filter = state.views.org_select.search_filter.to_lowercase();
@@ -145,7 +137,6 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
     } else if orgs.is_empty() {
         list_content = list_content.push(no_org_card());
     } else {
-        let current_user_email_lower = current_user_email.to_lowercase();
         // Use global role from User record for filtering
         let global_role = state.app.global_user_role;
         // Get hide_finalized setting for WS Admin wallet count filtering
@@ -184,14 +175,12 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
                 continue;
             }
 
-            let last_edit_info = format_last_edit_info(
-                org.last_edited,
-                org.last_editor,
-                state,
-                &current_user_email_lower,
+            let wallet_label = format!(
+                "{wallet_count} wallet{}",
+                if wallet_count == 1 { "" } else { "s" }
             );
 
-            let card = org_card(org.name.clone(), wallet_count, **id, last_edit_info);
+            let card = org_card(org.name.clone(), **id, Some(wallet_label));
             list_content = list_content.push(card);
         }
     }

@@ -2,8 +2,8 @@ use crate::{
     backend::Backend,
     state::{Msg, State},
     views::{
-        entry_key_kind, format_last_edit_info, layout_with_scrollable_list, screen_intro,
-        MENU_ENTRY_WIDTH,
+        entry_key_kind, format_last_edit_info_string as format_last_edit_info,
+        layout_with_scrollable_list, screen_intro, MENU_ENTRY_WIDTH,
     },
 };
 use iced::{

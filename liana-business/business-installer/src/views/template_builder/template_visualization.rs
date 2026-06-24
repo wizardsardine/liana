@@ -1,7 +1,7 @@
 use crate::{
     backend::Backend,
     state::{message::Msg, State},
-    views::{delete_btn, format_last_edit_info},
+    views::{delete_btn, format_last_edit_info_string as format_last_edit_info},
 };
 use iced::{widget::Space, Length};
 use liana_connect::ws_business::{
