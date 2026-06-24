@@ -11,7 +11,7 @@ use liana_ui::{
 };
 
 pub fn warning_modal_view(modal_state: &WarningModalState) -> Element<'_, Msg> {
-    let message = text::p1_medium(&modal_state.message).style(theme::text::primary);
+    let message = text::new::caption(&modal_state.message).style(theme::text::secondary);
 
     let footer = Row::new()
         .spacing(10)

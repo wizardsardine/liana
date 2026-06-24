@@ -2,7 +2,10 @@ use crate::{
     state::{views::keys::EditKeyModalState, Message, State},
     views::format_last_edit_info,
 };
-use iced::{widget::Space, Alignment, Length};
+use iced::{
+    widget::{column, row, Space},
+    Alignment, Length,
+};
 use liana_connect::ws_business;
 use liana_ui::{
     component::{
@@ -48,7 +51,11 @@ pub fn edit_key_modal_view<'a>(
                     &current_user_email_lower,
                 )
             })
-            .map(|info| text::caption(info).style(theme::text::secondary).into())
+            .map(|info| {
+                text::new::caption(info)
+                    .style(theme::text::secondary)
+                    .into()
+            })
     } else {
         None
     };
@@ -60,14 +67,11 @@ pub fn edit_key_modal_view<'a>(
         warning: None,
         valid: alias_valid || modal_state.alias.trim().is_empty(),
     };
-    let alias_input = Column::new()
-        .spacing(5)
-        .push(text::p1_medium("Key Alias").style(theme::text::primary))
-        .push(form::Form::new(
-            "Enter key alias",
-            &alias_value,
-            Message::KeyUpdateAlias,
-        ));
+    let alias_input = column![
+        text::new::b5_bold("Key Alias").style(theme::text::primary),
+        form::Form::new("Enter key alias", &alias_value, Message::KeyUpdateAlias,)
+    ]
+    .spacing(5);
 
     // Key type picker (placed before identity input)
     let key_types: &[ws_business::KeyType] = &[
@@ -76,16 +80,17 @@ pub fn edit_key_modal_view<'a>(
         ws_business::KeyType::Cosigner,
         ws_business::KeyType::SafetyNet,
     ];
-    let key_type_label = Row::new()
-        .spacing(5)
-        .align_y(Alignment::Center)
-        .push(text::p1_medium("Key Type").style(theme::text::primary))
-        .push(tooltip::tooltip(
+    let key_type_label = row![
+        text::new::b5_bold("Key Type").style(theme::text::primary),
+        tooltip::tooltip(
             "Internal: key held by your organization.\n \
                 External: key held by third parties.\n \
                 Cosigner: Professional third party co-signing key.\n \
                 SafetyNet: Professional third party recovery key.",
-        ));
+        )
+    ]
+    .spacing(5)
+    .align_y(Alignment::Center);
     let key_type_picker = Column::new().spacing(5).push(key_type_label).push(
         pick_list::pick_list(
             key_types,
@@ -119,7 +124,8 @@ pub fn edit_key_modal_view<'a>(
             Column::new()
                 .spacing(5)
                 .push(
-                    text::p1_medium("Email Address of the Key Manager").style(theme::text::primary),
+                    text::new::b5_bold("Email Address of the Key Manager")
+                        .style(theme::text::primary),
                 )
                 .push(form::Form::new(
                     "Enter email address",
@@ -145,15 +151,16 @@ pub fn edit_key_modal_view<'a>(
             valid: (token_valid && modal_state.token_warning.is_none()) || is_empty,
         };
         Some(
-            Column::new()
-                .spacing(5)
-                .push(text::p1_medium("Token").style(theme::text::primary))
-                .push(form::Form::new(
+            column![
+                text::new::b5_bold("Token").style(theme::text::primary),
+                form::Form::new(
                     "Enter token (e.g., 42-absent-cake-eagle)",
                     &token_value,
                     Message::KeyUpdateToken,
-                ))
-                .into(),
+                )
+            ]
+            .spacing(5)
+            .into(),
         )
     } else {
         None

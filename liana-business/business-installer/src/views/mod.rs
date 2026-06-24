@@ -22,7 +22,7 @@ pub use xpub::xpub_view;
 
 use crate::{backend::Backend, state::message::Msg, state::State};
 use iced::{
-    widget::{container, Space},
+    widget::{column, container, row, Space},
     Alignment, Length,
 };
 use liana_ui::{
@@ -34,6 +34,7 @@ use liana_ui::{
     icon, theme,
     widget::*,
 };
+use std::fmt::Display;
 use uuid::Uuid;
 
 pub const INSTALLER_STEPS: usize = 5;
@@ -77,6 +78,7 @@ fn admin_name_from_email(mail: &str) -> Option<String> {
 }
 
 const EMAIL_HEADER_SPACER: u32 = 30;
+const SCREEN_INTRO_SUB_WIDTH: u32 = 620;
 
 fn breadcrumb_header<'a>(segments: &[String]) -> Element<'a, Msg> {
     let mut row = Row::new().spacing(10).align_y(Alignment::Center);
@@ -135,7 +137,7 @@ fn layout_inner<'a>(
 
     if let Some(e) = email {
         email_row = email_row
-            .push(Container::new(text::p1_medium(e).style(theme::text::accent)).padding(20));
+            .push(Container::new(text::new::caption(e).style(theme::text::accent)).padding(20));
     } else {
         email_row = email_row.push(Space::with_height(EMAIL_ROW_HEIGHT));
     }
@@ -293,6 +295,33 @@ pub fn layout_with_scrollable_list<'a>(
     )
 }
 
+pub fn screen_intro<'a, M: 'a>(
+    title: impl Display + 'a,
+    sub: Option<Element<'a, M>>,
+    extra_spacing: bool,
+) -> Element<'a, M> {
+    let spacing = if extra_spacing { 60 } else { 15 };
+    column![text::new::d3(title), sub]
+        .align_x(Alignment::Center)
+        .spacing(spacing)
+        .into()
+}
+
+pub fn intro_description<'a, M: 'a>(text: &'a str) -> Element<'a, M> {
+    Container::new(text::new::caption(text).style(theme::text::secondary))
+        .width(Length::Shrink)
+        .max_width(SCREEN_INTRO_SUB_WIDTH)
+        .align_x(Alignment::Center)
+        .into()
+}
+
+pub fn intro_prompt<'a, M: 'a>(prompt: &'a str, accent: Option<&'a str>) -> Element<'a, M> {
+    let accent = accent.map(|accent| text::new::h3_semi(accent).style(theme::text::accent));
+    Container::new(row![text::new::h3_semi(prompt), accent].wrap())
+        .center_x(Length::Fill)
+        .into()
+}
+
 // NOTE: content MUST have width and height to Length::Fill
 pub fn menu_entry(content: Row<'_, Msg>, message: Option<Msg>) -> Container<'_, Msg> {
     let content = content.width(Length::Fill).height(Length::Fill);
@@ -360,14 +389,7 @@ pub struct SelectListView<'a> {
 }
 
 pub fn select_list_view(cfg: SelectListView<'_>) -> Element<'_, Msg> {
-    let title_row = Row::new()
-        .push(Space::with_width(Length::Fill))
-        .push(text::h2(cfg.title))
-        .push(Space::with_width(Length::Fill));
-
-    let mut header = Column::new()
-        .push(title_row)
-        .push(Space::with_height(30))
+    let mut header = column![screen_intro(cfg.title, None, false)]
         .spacing(10)
         .align_x(Alignment::Center)
         .padding([0, 20]);

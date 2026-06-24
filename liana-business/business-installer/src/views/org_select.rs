@@ -139,8 +139,8 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
     if filtered_orgs.is_empty() && !orgs.is_empty() {
         // Show message when search filter returns no results
         list_content = list_content.push(
-            text::p1_medium("No organizations found matching your search.")
-                .style(theme::text::primary),
+            text::new::caption("No organizations found matching your search.")
+                .style(theme::text::secondary),
         );
     } else if orgs.is_empty() {
         list_content = list_content.push(no_org_card());
@@ -201,7 +201,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         email: current_user_email,
         is_ws_admin,
         breadcrumb: vec!["Organizations".to_string()],
-        title: "Select an Organization".to_string(),
+        title: "Organizations".to_string(),
         search: (is_ws_admin && !orgs.is_empty()).then_some(SelectSearch {
             placeholder: "Filter organizations...",
             value: &state.views.org_select.search_filter,

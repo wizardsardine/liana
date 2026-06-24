@@ -3,7 +3,7 @@ pub mod modal;
 use crate::{
     backend::Backend,
     state::{message::Msg, State},
-    views::layout_with_scrollable_list,
+    views::{intro_description, layout_with_scrollable_list, screen_intro},
 };
 use async_hwi::service::{is_compatible_with_tapminiscript, SigningDevice};
 use iced::{
@@ -14,9 +14,8 @@ use liana_connect::ws_business::Wallet;
 use liana_ui::{
     component::{
         button::{btn_skip, BtnWidth},
-        list, modal as ui_modal, text,
+        list, modal as ui_modal,
     },
-    theme,
     widget::*,
 };
 use miniscript::bitcoin::bip32::Fingerprint;
@@ -46,17 +45,13 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
     let current_user_email = &state.views.login.email.form.value;
 
     // Header content
-    let header_content = Column::new()
-        .spacing(10)
-        .align_x(Alignment::Center)
-        .padding(20)
-        .push(text::h2("Register Wallet on Devices"))
-        .push(
-            text::p1_medium(
-                "Register the wallet descriptor on each device, or skip if unavailable.",
-            )
-            .style(theme::text::secondary),
-        );
+    let header_content = screen_intro(
+        "Register Wallet on Devices",
+        Some(intro_description(
+            "Register the wallet descriptor on each device, or skip if unavailable.",
+        )),
+        false,
+    );
     let header_content = row![
         Space::with_width(Length::Fill),
         header_content,

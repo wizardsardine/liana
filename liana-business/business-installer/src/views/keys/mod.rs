@@ -89,9 +89,9 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
 fn keys_visualization(state: &State) -> Element<'static, Msg> {
     let current_user_email_lower = state.views.login.email.form.value.to_lowercase();
 
-    let instruction = text::p1_medium(
+    let instruction = text::new::caption(
                             "Add the keys that will be part of this wallet and link each one to its owner's email address.",
-                        ).style(theme::text::primary);
+                        ).style(theme::text::secondary);
     let instruction: Element<'_, Msg> =
         Container::new(Row::new().align_y(Alignment::Center).push(instruction))
             .align_x(Alignment::Center)
@@ -123,7 +123,7 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
 
     // "Add a key" card
     let add_key_content =
-        row![text::p1_medium("+ Add a key").style(liana_ui::theme::text::secondary)]
+        row![text::new::caption("+ Add a key").style(liana_ui::theme::text::secondary)]
             .width(Length::Fill)
             .height(Length::Fill);
 
