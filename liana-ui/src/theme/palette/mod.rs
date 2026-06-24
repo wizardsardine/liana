@@ -13,6 +13,7 @@ pub struct Palette {
     pub cards: Cards,
     pub banners: Banners,
     pub badges: Badges,
+    pub tile_tones: Tiles,
     pub pills: Pills,
     pub notifications: Notifications,
     pub text_inputs: TextInputs,
@@ -182,7 +183,23 @@ pub struct Badges {
     pub simple: ContainerPalette,
     pub bitcoin: ContainerPalette,
     pub success: ContainerPalette,
+    pub avatar: ContainerPalette,
     pub danger: Option<ContainerPalette>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Tiles {
+    pub background: iced::Color,
+    pub accent: Tile,
+    pub neutral: Tile,
+    pub muted: Tile,
+    pub danger: Tile,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Tile {
+    pub fg: iced::Color,
+    pub bg: Option<iced::Color>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
