@@ -35,7 +35,10 @@ pub struct LiquidSwapConfig<'a> {
     pub to_asset: SendAsset,
     pub btc_balance: Amount,
     pub usdt_balance: u64,
-    pub entered_amount: &'a form::Value<String>,
+    /// "You pay" (from-asset) input.
+    pub pay_input: &'a form::Value<String>,
+    /// "You receive" (to-asset) input.
+    pub receive_input: &'a form::Value<String>,
     pub quote: Option<&'a SwapQuote>,
     /// Latest known rate (`to` per `from`), from a quote or the background
     /// probe — drives the rate chip even before the user enters an amount.
@@ -248,23 +251,43 @@ fn asset_card<'a>(
     .into()
 }
 
-/// The single-input swap screen.
+/// An editable amount field whose input mode matches the asset/unit:
+/// whole sats for L-BTC in SATS mode, decimal BTC for L-BTC in BTC mode,
+/// decimal for USDt.
+fn amount_input_field<'a>(
+    value: &'a form::Value<String>,
+    asset: SendAsset,
+    unit: BitcoinDisplayUnit,
+    on_edit: impl Fn(String) -> LiquidSwapMessage + 'static,
+) -> Element<'a, LiquidSwapMessage> {
+    let form = match (asset, unit) {
+        (SendAsset::Lbtc, BitcoinDisplayUnit::Sats) => {
+            form::Form::new_amount_sats("0", value, on_edit)
+        }
+        (SendAsset::Lbtc, BitcoinDisplayUnit::BTC) => {
+            form::Form::new_amount_btc("0.00000000", value, on_edit)
+        }
+        (SendAsset::Usdt, _) => form::Form::new_amount_numeric("0.00", value, on_edit),
+    };
+    form.maybe_warning(value.warning)
+        .size(H3_SIZE)
+        .padding(10)
+        .into_container()
+        .into()
+}
+
+/// The swap input screen — editable "You pay" and "You receive" cards.
 fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMessage> {
     let from_balance = balance_base(config.from_asset, config.btc_balance, config.usdt_balance);
     let to_balance = balance_base(config.to_asset, config.btc_balance, config.usdt_balance);
 
-    // ── You pay (from) — read-only quote output ──────────────────────────
-    let pay_value: Element<'a, LiquidSwapMessage> = match config.quote {
-        Some(q) => text(fmt_amount(
-            config.from_asset,
-            q.from_total_base(),
-            config.bitcoin_unit,
-        ))
-        .size(H2_SIZE)
-        .bold()
-        .into(),
-        None => text("0").size(H2_SIZE).style(theme::text::secondary).into(),
-    };
+    // ── You pay (from) — editable ────────────────────────────────────────
+    let pay_field = amount_input_field(
+        config.pay_input,
+        config.from_asset,
+        config.bitcoin_unit,
+        LiquidSwapMessage::AmountEditedPay,
+    );
 
     let swap_all = button::secondary(None, "Swap All")
         .on_press(LiquidSwapMessage::SwapAll)
@@ -274,7 +297,7 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
     let from_card = asset_card(
         "YOU PAY",
         Some(swap_all),
-        pay_value,
+        pay_field,
         config.from_asset,
         from_balance,
         config.bitcoin_unit,
@@ -311,34 +334,18 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
         .push(Space::new().width(Length::Fill))
         .push(flip_button());
 
-    // ── You receive (to) — the editable amount ───────────────────────────
-    // Match the input mode to the asset/unit: whole sats for L-BTC in SATS
-    // mode, decimal BTC for L-BTC in BTC mode, decimal for USDt.
-    let amount_form = match (config.to_asset, config.bitcoin_unit) {
-        (SendAsset::Lbtc, BitcoinDisplayUnit::Sats) => {
-            form::Form::new_amount_sats("0", config.entered_amount, LiquidSwapMessage::AmountEdited)
-        }
-        (SendAsset::Lbtc, BitcoinDisplayUnit::BTC) => form::Form::new_amount_btc(
-            "0.00000000",
-            config.entered_amount,
-            LiquidSwapMessage::AmountEdited,
-        ),
-        (SendAsset::Usdt, _) => form::Form::new_amount_numeric(
-            "0.00",
-            config.entered_amount,
-            LiquidSwapMessage::AmountEdited,
-        ),
-    };
-    let amount_field = amount_form
-        .maybe_warning(config.entered_amount.warning)
-        .size(H3_SIZE)
-        .padding(10)
-        .into_container();
+    // ── You receive (to) — editable ──────────────────────────────────────
+    let receive_field = amount_input_field(
+        config.receive_input,
+        config.to_asset,
+        config.bitcoin_unit,
+        LiquidSwapMessage::AmountEditedReceive,
+    );
 
     let to_card = asset_card(
         "YOU RECEIVE",
         None,
-        amount_field.into(),
+        receive_field,
         config.to_asset,
         to_balance,
         config.bitcoin_unit,

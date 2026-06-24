@@ -725,8 +725,11 @@ pub enum LiquidSwapMessage {
     /// (`to`-base per `from`-base) so the rate chip + "Swap All" work
     /// before the user has entered an amount. Failures are ignored.
     RateProbeReady(Result<f64, String>),
-    /// Receiver-amount input edited (decimal `to`-asset string).
-    AmountEdited(String),
+    /// "You pay" (from-asset) amount edited — the receive side is derived
+    /// from the rate and the quote re-fetched.
+    AmountEditedPay(String),
+    /// "You receive" (to-asset) amount edited — quoted directly.
+    AmountEditedReceive(String),
     /// Swap the `from` / `to` assets and invalidate the stale quote.
     FlipAssets,
     /// Pre-fill the max receivable amount from the current rate, netting

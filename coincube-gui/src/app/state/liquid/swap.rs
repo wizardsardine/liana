@@ -159,21 +159,63 @@ fn can_confirm(quote_actionable: bool, synced: bool) -> bool {
     quote_actionable && synced
 }
 
-/// Parse the receive-amount input into `to`-asset base units, honouring
-/// the display unit. For L-BTC the base unit *is* the sat, so in SATS
-/// mode the input is whole integers; otherwise (USDt, or L-BTC in BTC
-/// mode) it's an 8-dp decimal. Returns `Some(0)` for a literal zero and
-/// `None` for empty/malformed input — callers filter zero where needed.
-fn parse_receiver_amount(
+/// Validate an amount field in place: empty is valid (cleared), zero and
+/// malformed are flagged, and — when `max_base` is given (the pay side,
+/// where we know the spendable balance) — over-balance is flagged too.
+fn validate_amount_field(
+    field: &mut form::Value<String>,
     value: &str,
-    to_asset: SendAsset,
+    asset: SendAsset,
     unit: BitcoinDisplayUnit,
-) -> Option<u64> {
+    max_base: Option<u64>,
+) {
+    field.value = value.to_string();
+    if value.trim().is_empty() {
+        field.valid = true;
+        field.warning = None;
+        return;
+    }
+    match parse_asset_amount(value, asset, unit) {
+        Some(0) => {
+            field.valid = false;
+            field.warning = Some("Amount must be greater than zero");
+        }
+        Some(base) => {
+            if max_base.is_some_and(|max| base > max) {
+                field.valid = false;
+                field.warning = Some("Insufficient balance");
+            } else {
+                field.valid = true;
+                field.warning = None;
+            }
+        }
+        None => {
+            field.valid = false;
+            field.warning = Some("Invalid amount");
+        }
+    }
+}
+
+/// Which side of the swap the user is editing. The other side is derived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwapSide {
+    /// The "You pay" (from-asset) amount.
+    Pay,
+    /// The "You receive" (to-asset) amount.
+    Receive,
+}
+
+/// Parse an amount input into the given asset's base units, honouring the
+/// display unit. For L-BTC the base unit *is* the sat, so in SATS mode the
+/// input is whole integers; otherwise (USDt, or L-BTC in BTC mode) it's an
+/// 8-dp decimal. Returns `Some(0)` for a literal zero and `None` for
+/// empty/malformed input — callers filter zero where needed.
+fn parse_asset_amount(value: &str, asset: SendAsset, unit: BitcoinDisplayUnit) -> Option<u64> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return None;
     }
-    match (to_asset, unit) {
+    match (asset, unit) {
         (SendAsset::Lbtc, BitcoinDisplayUnit::Sats) => {
             // Whole sats only — reject decimals.
             if trimmed.contains('.') {
@@ -205,9 +247,14 @@ pub struct LiquidSwap {
     to_asset: SendAsset,
     btc_balance: Amount,
     usdt_balance: u64,
-    /// Receive-amount input. Interpreted per `bitcoin_unit` when the
-    /// `to` asset is L-BTC (whole sats in SATS mode), else an 8-dp decimal.
-    entered_amount: form::Value<String>,
+    /// "You pay" (from-asset) amount input.
+    pay_input: form::Value<String>,
+    /// "You receive" (to-asset) amount input.
+    receive_input: form::Value<String>,
+    /// Which side the user last edited. The other side is computed from the
+    /// quote; only the SDK's receiver amount can be pinned, so editing the
+    /// pay side estimates the receiver via the rate.
+    edit_side: SwapSide,
     /// User's BTC/SATS display preference, synced from the cache on each
     /// update. Drives both amount rendering and input parsing for L-BTC.
     bitcoin_unit: BitcoinDisplayUnit,
@@ -256,7 +303,9 @@ impl LiquidSwap {
             to_asset: SendAsset::Usdt,
             btc_balance: Amount::from_sat(0),
             usdt_balance: 0,
-            entered_amount: form::Value::default(),
+            pay_input: form::Value::default(),
+            receive_input: form::Value::default(),
+            edit_side: SwapSide::Receive,
             bitcoin_unit: BitcoinDisplayUnit::BTC,
             self_address: None,
             pending_quote: false,
@@ -425,11 +474,26 @@ impl LiquidSwap {
         )
     }
 
-    /// Parse the entered receive amount into `to`-asset base units.
-    /// Returns `None` for empty/zero/malformed input.
-    fn entered_receiver_base(&self) -> Option<u64> {
-        parse_receiver_amount(&self.entered_amount.value, self.to_asset, self.bitcoin_unit)
-            .filter(|&v| v > 0)
+    /// The receiver (`to`-asset) base amount to quote for, derived from the
+    /// side the user is editing. Editing the receive side is direct; editing
+    /// the pay side converts the entered from-amount via the current rate
+    /// (so it needs a rate). Returns `None` for empty/zero/malformed input
+    /// or a missing rate.
+    fn receiver_base_to_quote(&self) -> Option<u64> {
+        match self.edit_side {
+            SwapSide::Receive => {
+                parse_asset_amount(&self.receive_input.value, self.to_asset, self.bitcoin_unit)
+                    .filter(|&v| v > 0)
+            }
+            SwapSide::Pay => {
+                let from_base =
+                    parse_asset_amount(&self.pay_input.value, self.from_asset, self.bitcoin_unit)
+                        .filter(|&v| v > 0)?;
+                let rate = self.last_rate.filter(|r| *r > 0.0)?;
+                let receiver = (from_base as f64 * rate).floor() as u64;
+                (receiver > 0).then_some(receiver)
+            }
+        }
     }
 
     /// Bump the sequence, clear the stale quote, and schedule a debounced
@@ -441,7 +505,7 @@ impl LiquidSwap {
         let seq = self.quote_seq;
 
         // Only schedule when the input is a usable amount.
-        if self.entered_receiver_base().is_none() {
+        if self.receiver_base_to_quote().is_none() {
             self.quoting = false;
             return Task::none();
         }
@@ -459,7 +523,7 @@ impl LiquidSwap {
     /// Issue the actual `prepare_send_asset` quote for the current input,
     /// tagged with `seq` so stale responses can be discarded.
     fn request_quote(&mut self, seq: u64) -> Task<Message> {
-        let Some(receiver_base) = self.entered_receiver_base() else {
+        let Some(receiver_base) = self.receiver_base_to_quote() else {
             self.quoting = false;
             return Task::none();
         };
@@ -531,6 +595,25 @@ impl LiquidSwap {
             fee_base,
         };
         self.last_rate = Some(quote.rate_to_per_from());
+
+        // Fill the *other* side from the quote (the side the user isn't
+        // editing). Editing receive → show the computed pay; editing pay →
+        // show the quoted receive.
+        match self.edit_side {
+            SwapSide::Receive => {
+                self.pay_input.value =
+                    self.format_asset_input(quote.from_total_base(), self.from_asset);
+                self.pay_input.valid = true;
+                self.pay_input.warning = None;
+            }
+            SwapSide::Pay => {
+                self.receive_input.value =
+                    self.format_asset_input(quote.receiver_base, self.to_asset);
+                self.receive_input.valid = true;
+                self.receive_input.warning = None;
+            }
+        }
+
         self.quote = Some(quote);
         self.quote_remaining = QUOTE_TTL_SECS;
         self.quoting = false;
@@ -564,12 +647,16 @@ impl LiquidSwap {
         friendly_quote_error(raw)
     }
 
-    /// Swap the `from`/`to` assets and invalidate the stale rate. The
-    /// caller re-quotes (so the quote itself is cleared there).
+    /// Swap the `from`/`to` assets and invalidate the stale rate and inputs
+    /// (the amounts no longer mean anything in the new direction). The caller
+    /// re-quotes (so the quote itself is cleared there).
     fn flip_assets(&mut self) {
         std::mem::swap(&mut self.from_asset, &mut self.to_asset);
         self.last_rate = None;
         self.error = None;
+        self.pay_input = form::Value::default();
+        self.receive_input = form::Value::default();
+        self.edit_side = SwapSide::Receive;
     }
 
     /// Pre-fill the entered amount with (almost) the max receivable from
@@ -598,16 +685,19 @@ impl LiquidSwap {
         if est_receiver == 0 {
             return Err("Balance too low to swap.".to_string());
         }
-        self.entered_amount.value = self.format_entered(est_receiver);
-        self.entered_amount.valid = true;
-        self.entered_amount.warning = None;
+        // "Swap All" is a receive-side fill: set the receive amount and let
+        // the pay side fill from the quote.
+        self.edit_side = SwapSide::Receive;
+        self.receive_input.value = self.format_asset_input(est_receiver, self.to_asset);
+        self.receive_input.valid = true;
+        self.receive_input.warning = None;
         Ok(())
     }
 
-    /// Format a `to`-asset base amount as the input string would hold it:
-    /// whole sats for L-BTC in SATS mode, else an 8-dp decimal.
-    fn format_entered(&self, base: u64) -> String {
-        match (self.to_asset, self.bitcoin_unit) {
+    /// Format an asset base amount as its input field would hold it: whole
+    /// sats for L-BTC in SATS mode, else an 8-dp decimal.
+    fn format_asset_input(&self, base: u64, asset: SendAsset) -> String {
+        match (asset, self.bitcoin_unit) {
             (SendAsset::Lbtc, BitcoinDisplayUnit::Sats) => base.to_string(),
             _ => format_asset_amount(base, AssetKind::Usdt.precision()),
         }
@@ -633,7 +723,8 @@ impl State for LiquidSwap {
             to_asset: self.to_asset,
             btc_balance: self.btc_balance,
             usdt_balance: self.usdt_balance,
-            entered_amount: &self.entered_amount,
+            pay_input: &self.pay_input,
+            receive_input: &self.receive_input,
             quote: self.quote.as_ref(),
             rate: self.last_rate,
             quoting: self.quoting,
@@ -744,31 +835,43 @@ impl State for LiquidSwap {
                                     }),
                             );
                         }
+                    } else if self.edit_side == SwapSide::Pay
+                        && self.quote.is_none()
+                        && self.receiver_base_to_quote().is_some()
+                    {
+                        // The user typed a pay amount before the rate landed —
+                        // quote it now that we can convert.
+                        return self.schedule_quote();
                     }
                 }
-                view::LiquidSwapMessage::AmountEdited(value) => {
-                    self.entered_amount.value = value.clone();
+                view::LiquidSwapMessage::AmountEditedPay(value) => {
+                    self.edit_side = SwapSide::Pay;
                     self.error = None;
-                    if value.trim().is_empty() {
-                        self.entered_amount.valid = true;
-                        self.entered_amount.warning = None;
-                    } else {
-                        match parse_receiver_amount(value, self.to_asset, self.bitcoin_unit) {
-                            Some(0) => {
-                                self.entered_amount.valid = false;
-                                self.entered_amount.warning =
-                                    Some("Amount must be greater than zero");
-                            }
-                            Some(_) => {
-                                self.entered_amount.valid = true;
-                                self.entered_amount.warning = None;
-                            }
-                            None => {
-                                self.entered_amount.valid = false;
-                                self.entered_amount.warning = Some("Invalid amount");
-                            }
-                        }
-                    }
+                    let max = self.balance_base(self.from_asset);
+                    validate_amount_field(
+                        &mut self.pay_input,
+                        value,
+                        self.from_asset,
+                        self.bitcoin_unit,
+                        Some(max),
+                    );
+                    // Pay-side quoting converts via the rate, so make sure one
+                    // is being fetched (no-op if we already have it).
+                    return Task::batch([
+                        self.schedule_quote(),
+                        self.probe_rate(cache.btc_usd_price),
+                    ]);
+                }
+                view::LiquidSwapMessage::AmountEditedReceive(value) => {
+                    self.edit_side = SwapSide::Receive;
+                    self.error = None;
+                    validate_amount_field(
+                        &mut self.receive_input,
+                        value,
+                        self.to_asset,
+                        self.bitcoin_unit,
+                        None,
+                    );
                     return self.schedule_quote();
                 }
                 view::LiquidSwapMessage::FlipAssets => {
@@ -812,7 +915,7 @@ impl State for LiquidSwap {
                     self.quoting = false;
                     match result {
                         Ok(prepare) => {
-                            if let Some(receiver_base) = self.entered_receiver_base() {
+                            if let Some(receiver_base) = self.receiver_base_to_quote() {
                                 self.accept_quote(prepare.clone(), receiver_base);
                             }
                         }
@@ -922,7 +1025,7 @@ impl State for LiquidSwap {
                         .quote
                         .as_ref()
                         .map(|q| q.receiver_base)
-                        .or_else(|| self.entered_receiver_base())
+                        .or_else(|| self.receiver_base_to_quote())
                         .unwrap_or(0);
                     // Honour the user's BTC/SATS preference for L-BTC; USDt
                     // is always a decimal.
@@ -949,7 +1052,9 @@ impl State for LiquidSwap {
                     self.is_sending = false;
                     self.quote = None;
                     self.quote_remaining = 0;
-                    self.entered_amount = form::Value::default();
+                    self.pay_input = form::Value::default();
+                    self.receive_input = form::Value::default();
+                    self.edit_side = SwapSide::Receive;
                     // Refresh balances after settlement so both sides reconcile.
                     let breez_client = self.breez_client.clone();
                     return Task::perform(async move { breez_client.sync().await }, |_| {
@@ -971,7 +1076,9 @@ impl State for LiquidSwap {
                 }
                 view::LiquidSwapMessage::Done => {
                     self.phase = SwapPhase::Input;
-                    self.entered_amount = form::Value::default();
+                    self.pay_input = form::Value::default();
+                    self.receive_input = form::Value::default();
+                    self.edit_side = SwapSide::Receive;
                     self.quote = None;
                     self.quote_remaining = 0;
                     self.error = None;
@@ -1003,7 +1110,9 @@ impl State for LiquidSwap {
     ) -> Task<Message> {
         // Reset transient flow state on entry.
         self.phase = SwapPhase::Input;
-        self.entered_amount = form::Value::default();
+        self.pay_input = form::Value::default();
+        self.receive_input = form::Value::default();
+        self.edit_side = SwapSide::Receive;
         self.quote = None;
         self.quote_remaining = 0;
         self.error = None;
@@ -1085,17 +1194,17 @@ mod tests {
     fn amount_parsing_honors_precision_and_zero() {
         let mut s = panel();
         // 8-dp ok.
-        s.entered_amount.value = "1.50000000".to_string();
-        assert_eq!(s.entered_receiver_base(), Some(150_000_000));
+        s.receive_input.value = "1.50000000".to_string();
+        assert_eq!(s.receiver_base_to_quote(), Some(150_000_000));
         // 9 dp rejected.
-        s.entered_amount.value = "1.000000001".to_string();
-        assert_eq!(s.entered_receiver_base(), None);
+        s.receive_input.value = "1.000000001".to_string();
+        assert_eq!(s.receiver_base_to_quote(), None);
         // zero rejected (must be > 0).
-        s.entered_amount.value = "0".to_string();
-        assert_eq!(s.entered_receiver_base(), None);
+        s.receive_input.value = "0".to_string();
+        assert_eq!(s.receiver_base_to_quote(), None);
         // empty → None.
-        s.entered_amount.value = String::new();
-        assert_eq!(s.entered_receiver_base(), None);
+        s.receive_input.value = String::new();
+        assert_eq!(s.receiver_base_to_quote(), None);
     }
 
     #[test]
@@ -1152,44 +1261,64 @@ mod tests {
         s.last_rate = None;
         let err = s.swap_all_amount().unwrap_err();
         assert!(err.contains("rate"));
-        assert!(s.entered_amount.value.is_empty());
+        assert!(s.receive_input.value.is_empty());
     }
 
     #[test]
-    fn parse_receiver_amount_is_unit_aware() {
+    fn parse_asset_amount_is_unit_aware() {
         use BitcoinDisplayUnit::{Sats, BTC};
         // USDt: always 8-dp decimal.
         assert_eq!(
-            parse_receiver_amount("1.50000000", SendAsset::Usdt, BTC),
+            parse_asset_amount("1.50000000", SendAsset::Usdt, BTC),
             Some(150_000_000)
         );
         // L-BTC in BTC mode: 8-dp decimal BTC → sats base units.
         assert_eq!(
-            parse_receiver_amount("0.08066584", SendAsset::Lbtc, BTC),
+            parse_asset_amount("0.08066584", SendAsset::Lbtc, BTC),
             Some(8_066_584)
         );
         // L-BTC in SATS mode: whole sats (== base units), decimals rejected.
         assert_eq!(
-            parse_receiver_amount("8066584", SendAsset::Lbtc, Sats),
+            parse_asset_amount("8066584", SendAsset::Lbtc, Sats),
             Some(8_066_584)
         );
-        assert_eq!(parse_receiver_amount("1.5", SendAsset::Lbtc, Sats), None);
+        assert_eq!(parse_asset_amount("1.5", SendAsset::Lbtc, Sats), None);
         // Zero parses to Some(0) (callers reject it); empty → None.
-        assert_eq!(parse_receiver_amount("0", SendAsset::Lbtc, Sats), Some(0));
-        assert_eq!(parse_receiver_amount("", SendAsset::Lbtc, Sats), None);
+        assert_eq!(parse_asset_amount("0", SendAsset::Lbtc, Sats), Some(0));
+        assert_eq!(parse_asset_amount("", SendAsset::Lbtc, Sats), None);
     }
 
     #[test]
-    fn format_entered_round_trips_per_unit() {
+    fn format_asset_input_round_trips_per_unit() {
         let mut s = panel();
-        s.to_asset = SendAsset::Lbtc;
         s.bitcoin_unit = BitcoinDisplayUnit::Sats;
         // L-BTC SATS → whole-sats string the sats input expects.
-        assert_eq!(s.format_entered(8_066_584), "8066584");
+        assert_eq!(s.format_asset_input(8_066_584, SendAsset::Lbtc), "8066584");
         s.bitcoin_unit = BitcoinDisplayUnit::BTC;
-        assert_eq!(s.format_entered(8_066_584), "0.08066584");
+        assert_eq!(
+            s.format_asset_input(8_066_584, SendAsset::Lbtc),
+            "0.08066584"
+        );
+        assert_eq!(
+            s.format_asset_input(150_000_000, SendAsset::Usdt),
+            "1.50000000"
+        );
+    }
+
+    #[test]
+    fn pay_side_input_converts_via_rate() {
+        let mut s = panel();
+        // from = L-BTC, to = USDt, rate 60000 USDt-base per L-BTC-base.
+        s.from_asset = SendAsset::Lbtc;
         s.to_asset = SendAsset::Usdt;
-        assert_eq!(s.format_entered(150_000_000), "1.50000000");
+        s.last_rate = Some(60_000.0);
+        s.edit_side = SwapSide::Pay;
+        // Pay 0.001 L-BTC (100_000 sats) → receiver ≈ 100_000 * 60_000 base.
+        s.pay_input.value = "0.00100000".to_string();
+        assert_eq!(s.receiver_base_to_quote(), Some(6_000_000_000));
+        // Without a rate, the pay side can't be converted.
+        s.last_rate = None;
+        assert_eq!(s.receiver_base_to_quote(), None);
     }
 
     #[test]
@@ -1227,6 +1356,8 @@ mod tests {
         s.swap_all_amount().unwrap();
         // floor(100_000_000 * 0.95 * 0.995) = 94_525_000 base = 0.94525 USDt —
         // just under the full estimate so the re-quote stays affordable.
-        assert_eq!(s.entered_receiver_base(), Some(94_525_000));
+        // (Swap All sets the receive side.)
+        assert_eq!(s.edit_side, SwapSide::Receive);
+        assert_eq!(s.receiver_base_to_quote(), Some(94_525_000));
     }
 }
