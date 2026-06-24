@@ -48,6 +48,11 @@ const QUOTE_TTL_SECS: u32 = 30;
 /// don't hammer the SDK on every character.
 const QUOTE_DEBOUNCE: Duration = Duration::from_millis(450);
 
+/// Fraction of the estimated max that "Swap All" actually requests, leaving
+/// headroom for fees / rounding / price drift between the rate estimate and
+/// the re-quote (a zero-margin estimate reliably trips "insufficient").
+const SWAP_ALL_SAFETY_MARGIN: f64 = 0.995;
+
 /// Swap is only available where SideSwap is — i.e. mainnet. Mirrors the
 /// `cross_asset_supported` predicate in [`crate::app::state::liquid::send`]
 /// so the Swap entry points and quote engine share one capability gate.
@@ -441,10 +446,17 @@ impl LiquidSwap {
         self.error = None;
     }
 
-    /// Pre-fill the entered amount with the max receivable from the
-    /// current rate, netting fees. Returns `Err` with an inline message
-    /// when no rate is available yet or the balance is too low. On `Ok`
-    /// the caller re-quotes the freshly-set amount.
+    /// Pre-fill the entered amount with (almost) the max receivable from
+    /// the current rate. Returns `Err` with an inline message when no rate
+    /// is available yet or the balance is too low. On `Ok` the caller
+    /// re-quotes the freshly-set amount.
+    ///
+    /// The estimate is shaved by [`SWAP_ALL_SAFETY_MARGIN`]: the rate comes
+    /// from a prior quote, and the actual cost is only known once the SDK
+    /// re-prepares against the *current* SideSwap price. Targeting the exact
+    /// balance leaves zero headroom, so any fixed fee, rounding, or small
+    /// price drift tips the re-quote into "insufficient balance". The margin
+    /// keeps the swap affordable; the user can still nudge the amount up.
     fn swap_all_amount(&mut self) -> Result<(), String> {
         let rate = self
             .last_rate
@@ -454,9 +466,9 @@ impl LiquidSwap {
         if from_balance == 0 {
             return Err("No balance to swap.".to_string());
         }
-        // `rate` already nets fees (receiver per total paid), so spending
-        // the whole from-balance yields ~this receiver amount.
-        let est_receiver = (from_balance as f64 * rate).floor() as u64;
+        // `rate` is receiver-per-from-paid; scale the whole balance by it,
+        // then shave the safety margin so the re-quote stays affordable.
+        let est_receiver = (from_balance as f64 * rate * SWAP_ALL_SAFETY_MARGIN).floor() as u64;
         if est_receiver == 0 {
             return Err("Balance too low to swap.".to_string());
         }
@@ -977,15 +989,16 @@ mod tests {
     }
 
     #[test]
-    fn swap_all_nets_fees_into_estimate() {
+    fn swap_all_applies_safety_margin() {
         let mut s = panel();
-        // 1 L-BTC balance, rate 0.95 USDt-base per L-BTC-base (fees baked in).
+        // 1 L-BTC balance, rate 0.95 USDt-base per L-BTC-base.
         s.from_asset = SendAsset::Lbtc;
         s.to_asset = SendAsset::Usdt;
         s.btc_balance = Amount::from_sat(100_000_000);
         s.last_rate = Some(0.95);
         s.swap_all_amount().unwrap();
-        // floor(100_000_000 * 0.95) = 95_000_000 base = 0.95 USDt.
-        assert_eq!(s.entered_receiver_base(), Some(95_000_000));
+        // floor(100_000_000 * 0.95 * 0.995) = 94_525_000 base = 0.94525 USDt —
+        // just under the full estimate so the re-quote stays affordable.
+        assert_eq!(s.entered_receiver_base(), Some(94_525_000));
     }
 }
