@@ -19,7 +19,13 @@ use std::time::Duration;
 
 use breez_sdk_liquid::prelude::PrepareSendResponse;
 use coincube_core::miniscript::bitcoin::{Amount, Network};
-use coincube_ui::{component::form, widget::Element};
+use coincube_ui::{
+    component::{
+        amount::{BitcoinDisplayUnit, DisplayAmount},
+        form,
+    },
+    widget::Element,
+};
 use iced::{Subscription, Task};
 
 use super::send::SendAsset;
@@ -432,6 +438,7 @@ impl State for LiquidSwap {
             quote_remaining: self.quote_remaining,
             quote_actionable: self.quote_actionable(),
             is_sending: self.is_sending,
+            bitcoin_unit: cache.bitcoin_unit,
             error: self.error.as_deref(),
             sent_amount_display: &self.sent_amount_display,
             sent_quote: &self.sent_quote,
@@ -623,11 +630,26 @@ impl State for LiquidSwap {
                         .map(|q| q.receiver_base)
                         .or_else(|| self.entered_receiver_base())
                         .unwrap_or(0);
-                    self.sent_amount_display = format!(
-                        "{} {}",
-                        format_asset_amount(received, AssetKind::Usdt.precision()),
-                        Self::asset_kind(self.to_asset).ticker()
-                    );
+                    // Honour the user's BTC/SATS preference for L-BTC; USDt
+                    // is always a decimal.
+                    self.sent_amount_display = match self.to_asset {
+                        SendAsset::Usdt => format!(
+                            "{} USDt",
+                            format_asset_amount(received, AssetKind::Usdt.precision())
+                        ),
+                        SendAsset::Lbtc => {
+                            let unit = cache.bitcoin_unit;
+                            let label = match unit {
+                                BitcoinDisplayUnit::BTC => "BTC",
+                                BitcoinDisplayUnit::Sats => "SATS",
+                            };
+                            format!(
+                                "{} {}",
+                                Amount::from_sat(received).to_formatted_string_with_unit(unit),
+                                label
+                            )
+                        }
+                    };
                     let context = "liquid-send";
                     self.sent_quote = coincube_ui::component::quote_display::random_quote(context);
                     self.sent_image_handle =
@@ -656,9 +678,6 @@ impl State for LiquidSwap {
                 }
             }
         }
-        // Keep the success amount display unit-consistent if the cache's
-        // bitcoin unit changes mid-flight (no-op for USDt receives).
-        let _ = cache;
         Task::none()
     }
 

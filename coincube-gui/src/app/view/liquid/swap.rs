@@ -8,7 +8,11 @@
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
-    component::{button, form, text::*},
+    component::{
+        amount::{BitcoinDisplayUnit, DisplayAmount},
+        button, form,
+        text::*,
+    },
     icon::arrow_down_up_icon,
     theme,
     widget::{Column, Container, Element, Row},
@@ -36,6 +40,9 @@ pub struct LiquidSwapConfig<'a> {
     pub quote_remaining: u32,
     pub quote_actionable: bool,
     pub is_sending: bool,
+    /// Display unit for L-BTC amounts (BTC vs SATS). USDt always renders
+    /// as a decimal regardless of this setting.
+    pub bitcoin_unit: BitcoinDisplayUnit,
     pub error: Option<&'a str>,
     pub sent_amount_display: &'a str,
     pub sent_quote: &'a coincube_ui::component::quote_display::Quote,
@@ -57,19 +64,50 @@ fn balance_base(asset: SendAsset, btc_balance: Amount, usdt_balance: u64) -> u64
     }
 }
 
-/// Format an asset base-unit amount for display (8-dp, trimmed).
-fn fmt_asset(base: u64) -> String {
+/// Format a USDt base-unit amount as a decimal string (8-dp).
+fn fmt_usdt(base: u64) -> String {
     format_asset_amount(base, AssetKind::Usdt.precision())
 }
 
-/// Format a swap rate (`to` per 1 `from`), widening precision for small rates.
-fn fmt_rate(rate: f64) -> String {
-    if rate >= 1.0 {
-        format!("{rate:.2}")
-    } else if rate > 0.0 {
-        format!("{rate:.8}")
-    } else {
-        "—".to_string()
+/// The unit suffix shown after an L-BTC amount, per the user's setting.
+fn lbtc_unit_label(unit: BitcoinDisplayUnit) -> &'static str {
+    match unit {
+        BitcoinDisplayUnit::BTC => "BTC",
+        BitcoinDisplayUnit::Sats => "SATS",
+    }
+}
+
+/// Format an asset base-unit amount with its unit. L-BTC honours the
+/// user's BTC/SATS preference (matching the rest of the app); USDt is
+/// always a decimal.
+fn fmt_amount(asset: SendAsset, base: u64, unit: BitcoinDisplayUnit) -> String {
+    match asset {
+        SendAsset::Lbtc => format!(
+            "{} {}",
+            Amount::from_sat(base).to_formatted_string_with_unit(unit),
+            lbtc_unit_label(unit)
+        ),
+        SendAsset::Usdt => format!("{} USDt", fmt_usdt(base)),
+    }
+}
+
+/// Format the `to`-side of a rate ("1 from = …"). USDt is kept concise;
+/// L-BTC honours the BTC/SATS preference.
+fn fmt_rate_value(to_asset: SendAsset, rate: f64, unit: BitcoinDisplayUnit) -> String {
+    match to_asset {
+        SendAsset::Usdt => {
+            let v = if rate >= 1.0 {
+                format!("{rate:.2}")
+            } else if rate > 0.0 {
+                format!("{rate:.8}")
+            } else {
+                "—".to_string()
+            };
+            format!("{v} USDt")
+        }
+        // `rate` is `to`-base per `from`-base; per 1 whole `from` (1e8 base)
+        // that's `rate * 1e8` `to`-base units.
+        SendAsset::Lbtc => fmt_amount(SendAsset::Lbtc, (rate * 1e8).round() as u64, unit),
     }
 }
 
@@ -89,12 +127,16 @@ fn card<'a>(
         })
 }
 
-fn balance_row<'a>(label: &'a str, base: u64) -> Element<'a, LiquidSwapMessage> {
+fn balance_row<'a>(
+    asset: SendAsset,
+    base: u64,
+    unit: BitcoinDisplayUnit,
+) -> Element<'a, LiquidSwapMessage> {
     Row::new()
         .spacing(6)
-        .push(text(label).size(P2_SIZE).style(theme::text::secondary))
+        .push(text("Balance:").size(P2_SIZE).style(theme::text::secondary))
         .push(
-            text(fmt_asset(base))
+            text(fmt_amount(asset, base, unit))
                 .size(P2_SIZE)
                 .style(theme::text::secondary),
         )
@@ -108,10 +150,10 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
 
     // ── You pay (from) — read-only quote output ──────────────────────────
     let pay_value: Element<'a, LiquidSwapMessage> = match config.quote {
-        Some(q) => text(format!(
-            "{} {}",
-            fmt_asset(q.from_total_base()),
-            ticker(config.from_asset)
+        Some(q) => text(fmt_amount(
+            config.from_asset,
+            q.from_total_base(),
+            config.bitcoin_unit,
         ))
         .size(H4_SIZE)
         .bold()
@@ -137,17 +179,20 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
                     ),
             )
             .push(pay_value)
-            .push(balance_row("Balance:", from_balance)),
+            .push(balance_row(
+                config.from_asset,
+                from_balance,
+                config.bitcoin_unit,
+            )),
     );
 
     // ── Flip control + rate chip ─────────────────────────────────────────
     let rate_chip: Element<'a, LiquidSwapMessage> = match config.quote {
         Some(q) => Container::new(
             text(format!(
-                "1 {} = {} {}",
+                "1 {} = {}",
                 ticker(config.from_asset),
-                fmt_rate(q.rate_to_per_from()),
-                ticker(config.to_asset)
+                fmt_rate_value(config.to_asset, q.rate_to_per_from(), config.bitcoin_unit)
             ))
             .size(P2_SIZE)
             .style(theme::text::secondary),
@@ -200,7 +245,11 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
                     .push(text(ticker(config.to_asset)).size(P1_SIZE).bold()),
             )
             .push(amount_field)
-            .push(balance_row("Balance:", to_balance)),
+            .push(balance_row(
+                config.to_asset,
+                to_balance,
+                config.bitcoin_unit,
+            )),
     );
 
     // ── Fee / status line ────────────────────────────────────────────────
@@ -211,10 +260,10 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
                 .spacing(6)
                 .push(text("Fee:").size(P2_SIZE).style(theme::text::secondary))
                 .push(
-                    text(format!(
-                        "{} {}",
-                        fmt_asset(q.fee_base),
-                        ticker(config.from_asset)
+                    text(fmt_amount(
+                        config.from_asset,
+                        q.fee_base,
+                        config.bitcoin_unit,
                     ))
                     .size(P2_SIZE)
                     .style(theme::text::secondary),
@@ -293,28 +342,23 @@ fn review_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMes
             .spacing(12)
             .push(line(
                 "You pay",
-                format!(
-                    "{} {}",
-                    fmt_asset(q.from_total_base()),
-                    ticker(config.from_asset)
-                ),
+                fmt_amount(config.from_asset, q.from_total_base(), config.bitcoin_unit),
             ))
             .push(line(
                 "You receive",
-                format!("{} {}", fmt_asset(q.receiver_base), ticker(config.to_asset)),
+                fmt_amount(config.to_asset, q.receiver_base, config.bitcoin_unit),
             ))
             .push(line(
                 "Rate",
                 format!(
-                    "1 {} = {} {}",
+                    "1 {} = {}",
                     ticker(config.from_asset),
-                    fmt_rate(q.rate_to_per_from()),
-                    ticker(config.to_asset)
+                    fmt_rate_value(config.to_asset, q.rate_to_per_from(), config.bitcoin_unit)
                 ),
             ))
             .push(line(
                 "SideSwap + network fee",
-                format!("{} {}", fmt_asset(q.fee_base), ticker(config.from_asset)),
+                fmt_amount(config.from_asset, q.fee_base, config.bitcoin_unit),
             ))
             .push(line(
                 "Quote expires in",
