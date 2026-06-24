@@ -1,7 +1,7 @@
 use crate::{
     backend::Backend,
     state::{Msg, State},
-    views::{format_last_edit_info, layout_with_scrollable_list, menu_key_entry, MENU_ENTRY_WIDTH},
+    views::{entry_key_kind, format_last_edit_info, layout_with_scrollable_list, MENU_ENTRY_WIDTH},
 };
 use iced::{
     widget::{row, Space},
@@ -10,6 +10,7 @@ use iced::{
 use liana_connect::ws_business::{self, UserRole};
 use liana_ui::{
     component::{
+        list::{self, EntrySetKeyOwner},
         pill,
         text::{self},
     },
@@ -31,12 +32,19 @@ fn xpub_key_card(
     key_id: u8,
     key: &ws_business::Key,
     last_edit_info: Option<String>,
-) -> Container<'static, Msg> {
-    let icon = icon::key_icon();
+    owner: EntrySetKeyOwner,
+) -> Element<'static, Msg> {
     let pill = xpub_status_badge(key.xpub.is_some());
     let msg = Some(Msg::XpubSelectKey(key_id));
 
-    menu_key_entry(key, last_edit_info, icon, pill, msg)
+    list::entry_set_key(
+        entry_key_kind(&key.key_type),
+        owner,
+        text::truncate(&key.alias, 25),
+        last_edit_info,
+        Some(pill),
+        msg,
+    )
 }
 
 pub fn xpub_view(state: &State) -> Element<'_, Msg> {
@@ -152,7 +160,12 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
                 &current_user_email_lower,
             );
 
-            list_content = list_content.push(xpub_key_card(*key_id, key, last_edit_info));
+            list_content = list_content.push(xpub_key_card(
+                *key_id,
+                key,
+                last_edit_info,
+                EntrySetKeyOwner::Own,
+            ));
         }
     }
 
@@ -174,7 +187,12 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
                 &current_user_email_lower,
             );
 
-            list_content = list_content.push(xpub_key_card(*key_id, key, last_edit_info));
+            list_content = list_content.push(xpub_key_card(
+                *key_id,
+                key,
+                last_edit_info,
+                EntrySetKeyOwner::Other,
+            ));
         }
     }
 

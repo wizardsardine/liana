@@ -20,7 +20,7 @@ use crate::{
     component::{
         badge, button,
         form::{self, Value},
-        pick_list,
+        list, pick_list,
         text::new::{b1_bold, b4_medium, b5_bold, b5_medium, caption},
         tooltip,
     },
@@ -500,6 +500,7 @@ pub fn registration_key_entry<'a, Message, M>(
     fingerprint: String,
     kind: Option<String>,
     alias: Option<String>,
+    entry_status: list::EntryRegisterStatus,
     status: Option<String>,
     on_press: Option<M>,
 ) -> Element<'a, Message>
@@ -507,20 +508,12 @@ where
     M: 'static + Fn() -> Message,
     Message: Clone + 'static,
 {
-    let icon = device_icon(kind.is_some());
-    let status = status.map(b5_medium);
-    let designation = device_designation(kind, alias, Some(fingerprint));
-    let row = row![
-        icon,
-        designation,
-        Space::fill_width(),
-        status,
-        Space::fill_width()
-    ]
-    .align_y(Vertical::Center)
-    .spacing(H_SPACING);
     let msg = on_press.map(|f| f());
-    button::device(row, msg)
+    let title = alias.unwrap_or_else(|| kind.unwrap_or_else(|| fingerprint.clone()));
+    let subtitle = Some(fingerprint);
+    let status = status.map(|status| b5_medium(status).into());
+
+    list::entry_register(entry_status, title, subtitle, status, msg)
 }
 
 pub fn button_entry<'a, Message, M>(

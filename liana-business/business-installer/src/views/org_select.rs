@@ -2,13 +2,13 @@ use crate::{
     backend::Backend,
     state::{Msg, State},
 };
-use iced::{
-    widget::{row, Space},
-    Alignment, Length,
-};
+use iced::{widget::row, Alignment, Length};
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
 use liana_ui::{
-    component::text::{self, truncate},
+    component::{
+        list,
+        text::{self, truncate},
+    },
     theme,
     widget::*,
 };
@@ -83,34 +83,19 @@ pub fn org_card<'a>(
     count: usize,
     id: Uuid,
     last_edit_info: Option<String>,
-) -> Container<'a, Msg> {
+) -> Element<'a, Msg> {
     let wallets = match count {
-        0 => "".to_string(),
-        1 => "(1 wallet)".to_string(),
-        c => format!("({c} wallets)"),
+        0 => None,
+        1 => Some("(1 wallet)".to_string()),
+        c => Some(format!("({c} wallets)")),
     };
+    let wallets = wallets.map(|wallets| text::h4_bold(wallets).into());
 
     let name = truncate(&name, 30);
-    let header = row![text::h3(name), text::h4_bold(wallets)]
-        .spacing(10)
-        .align_y(Alignment::End);
-
-    let content: Element<'_, Msg> = if let Some(info) = last_edit_info {
-        Column::new()
-            .spacing(5)
-            .push(header)
-            .push(text::caption(info).style(liana_ui::theme::text::secondary))
-            .into()
-    } else {
-        header.into()
-    };
 
     let message = Some(Msg::OrgSelected(id));
 
-    let content = row![content, Space::with_width(Length::Fill)]
-        .width(Length::Fill)
-        .width(Length::Fill);
-    menu_entry(content, message)
+    list::entry_organization(name, last_edit_info, wallets, message)
 }
 
 pub fn no_org_card() -> Container<'static, Msg> {

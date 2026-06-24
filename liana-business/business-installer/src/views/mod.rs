@@ -22,13 +22,13 @@ pub use xpub::xpub_view;
 
 use crate::{backend::Backend, state::message::Msg, state::State};
 use iced::{
-    widget::{column, container, row, Space},
+    widget::{container, Space},
     Alignment, Length,
 };
 use liana_ui::{
     component::{
         button::{self, icon_btn, EntryWidth},
-        form, scrollable,
+        form, list, scrollable,
         text::{self, short_email, truncate},
     },
     icon, theme,
@@ -38,7 +38,6 @@ use uuid::Uuid;
 
 pub const INSTALLER_STEPS: usize = 5;
 pub const MENU_ENTRY_WIDTH: u32 = 600;
-pub const ACCOUNT_ENTRY_WIDTH: u32 = MENU_ENTRY_WIDTH - 80;
 pub const MENU_ENTRY_HEIGHT: u32 = 100;
 const EMAIL_ROW_HEIGHT: u32 = 56;
 
@@ -296,23 +295,11 @@ pub fn layout_with_scrollable_list<'a>(
 
 // NOTE: content MUST have width and height to Length::Fill
 pub fn menu_entry(content: Row<'_, Msg>, message: Option<Msg>) -> Container<'_, Msg> {
-    menu_entry_with_width(content, EntryWidth::Standard, message)
-}
-
-fn menu_entry_with_width(
-    content: Row<'_, Msg>,
-    width: EntryWidth,
-    message: Option<Msg>,
-) -> Container<'_, Msg> {
     let content = content.width(Length::Fill).height(Length::Fill);
-    let card = button::list_entry(content, None, width, message);
+    let card = button::list_entry(content, None, EntryWidth::Standard, message);
     container(card)
         .width(MENU_ENTRY_WIDTH)
         .height(MENU_ENTRY_HEIGHT)
-}
-
-fn account_entry(content: Row<'_, Msg>, message: Option<Msg>) -> Container<'_, Msg> {
-    menu_entry_with_width(content, EntryWidth::Account, message).width(ACCOUNT_ENTRY_WIDTH)
 }
 
 fn delete_btn(message: Option<Msg>) -> Button<'static, Msg> {
@@ -322,31 +309,35 @@ fn delete_btn(message: Option<Msg>) -> Button<'static, Msg> {
 pub fn menu_key_entry(
     key: &ws_business::Key,
     last_edit_info: Option<String>,
-    icon: Text<'static>,
     pill: Element<'static, Msg>,
     msg: Option<Msg>,
-) -> Container<'static, Msg> {
+) -> Element<'static, Msg> {
     let identity_str = short_email(&key.identity.to_string(), 40);
-    let identity_display = (!identity_str.is_empty())
-        .then_some(text::p2_medium(identity_str).style(theme::text::accent));
+    let subtitle = if !identity_str.is_empty() {
+        Some(identity_str)
+    } else {
+        last_edit_info
+    };
 
     let alias = truncate(&key.alias, 25);
-    let alias = text::h3(alias).style(theme::text::primary);
 
-    let _last_edit =
-        last_edit_info.map(|info| text::caption(info).style(liana_ui::theme::text::secondary));
+    list::entry_key(
+        entry_key_kind(&key.key_type),
+        alias,
+        subtitle,
+        Some(pill),
+        msg,
+    )
+}
 
-    let left = column![row![icon, alias].spacing(10).align_y(Alignment::Center)]
-        .push_maybe(identity_display)
-        // .push_maybe(last_edit)
-        .spacing(5);
-
-    let content = row![left, Space::fill_width(), pill]
-        .align_y(Alignment::Center)
-        .width(Length::Fill)
-        .height(Length::Fill);
-
-    menu_entry(content, msg)
+pub(crate) fn entry_key_kind(key_type: &ws_business::KeyType) -> list::EntryKeyKind {
+    match key_type {
+        ws_business::KeyType::Internal => list::EntryKeyKind::Internal,
+        ws_business::KeyType::External => list::EntryKeyKind::External,
+        ws_business::KeyType::Cosigner | ws_business::KeyType::SafetyNet => {
+            list::EntryKeyKind::SafetyNet
+        }
+    }
 }
 
 /// Optional centered search bar inside a select list view.

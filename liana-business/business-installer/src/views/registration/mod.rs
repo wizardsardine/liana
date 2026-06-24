@@ -14,9 +14,9 @@ use liana_connect::ws_business::Wallet;
 use liana_ui::{
     component::{
         button::{btn_skip, BtnWidth},
-        modal as ui_modal, text,
+        list, modal as ui_modal, text,
     },
-    icon, theme,
+    theme,
     widget::*,
 };
 use miniscript::bitcoin::bip32::Fingerprint;
@@ -107,18 +107,10 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
 }
 
 fn no_devices_view<'a>() -> Element<'a, Msg> {
-    Column::new()
-        .spacing(20)
-        .align_x(Alignment::Center)
-        .push(icon::tooltip_icon().size(60))
-        .push(text::h3("No devices to register"))
-        .push(
-            text::p1_medium("You don't have any devices assigned in this wallet.")
-                .style(theme::text::secondary),
-        )
-        .width(Length::Fill)
-        .padding([40, 20])
-        .into()
+    list::entry_no_devices(
+        "No devices to register",
+        Some("You don't have any devices assigned in this wallet."),
+    )
 }
 
 fn alias_from_fg(wallet: &Wallet, fg: Fingerprint) -> Option<String> {
@@ -206,6 +198,7 @@ pub fn registration_key_entry(
         format!("#{fingerprint}"),
         kind_name,
         alias,
+        list::EntryRegisterStatus::Unregistered,
         Some(status.to_string()),
         on_press,
     )

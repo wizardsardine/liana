@@ -1,7 +1,11 @@
+use std::fmt::Display;
+
 use async_hwi::{DeviceKind, Version};
+use iced::{widget::tooltip::Position, Alignment};
 use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::bip32::Fingerprint};
 use liana_ui::{
-    component::modal::{self, DeviceMark},
+    component::{list, modal::DeviceMark, tooltip_custom},
+    icon,
     widget::*,
 };
 
@@ -130,7 +134,7 @@ pub fn unusable_device_entry<M: 'static + Clone>(hw: &HardwareWallet) -> Element
             DeviceMark::Locked(pairing_code.clone()),
         ),
     };
-    modal::device_entry(
+    device_list_row(
         fingerprint,
         Some(kind),
         None::<&str>,
@@ -167,7 +171,7 @@ fn signing_entry<'a, M: Clone + 'static>(
     } else {
         (alias, None, None, select_msg)
     };
-    modal::device_entry(
+    device_list_row(
         Some(format!("#{fingerprint}")),
         Some(kind),
         alias,
@@ -213,12 +217,65 @@ fn registration_entry<'a, M: Clone + 'static>(
     } else {
         (alias, None, None, select_msg)
     };
-    modal::device_entry(
+    device_list_row(
         Some(format!("#{fingerprint}")),
         Some(kind),
         alias,
         mark,
         warning,
+        on_press,
+    )
+}
+
+fn device_list_row<'a, M, F, K, A>(
+    fingerprint: Option<F>,
+    kind: Option<K>,
+    alias: Option<A>,
+    mark: Option<DeviceMark>,
+    warning: Option<&'static str>,
+    on_press: Option<M>,
+) -> Element<'a, M>
+where
+    M: 'static + Clone,
+    F: Display + 'a,
+    K: Display + 'a,
+    A: Display + 'a,
+{
+    let fingerprint = fingerprint.map(|fingerprint| fingerprint.to_string());
+    let kind = kind.map(|kind| kind.to_string());
+    let alias = alias.map(|alias| alias.to_string());
+    let warning = warning.or_else(|| mark.as_ref().and_then(DeviceMark::warning));
+
+    let title = alias
+        .or_else(|| kind.clone())
+        .unwrap_or_else(|| fingerprint.clone().unwrap_or_else(|| " - ".to_string()));
+    let subtitle = match (kind, fingerprint) {
+        (Some(kind), Some(fingerprint)) => Some(format!("{kind} {fingerprint}")),
+        (Some(kind), None) => Some(kind),
+        (None, Some(fingerprint)) => Some(fingerprint),
+        (None, None) => None,
+    };
+    let mark = mark.map(|mark| mark.element());
+    let warning =
+        warning.map(|warning| tooltip_custom(warning, icon::warning_icon(), Position::Bottom));
+    let trailing = if mark.is_some() || warning.is_some() {
+        Some(
+            Row::new()
+                .push_maybe(mark)
+                .push_maybe(warning)
+                .align_y(Alignment::Center)
+                .spacing(10)
+                .into(),
+        )
+    } else {
+        None
+    };
+
+    list::entry_device_list(
+        title,
+        subtitle,
+        trailing,
+        liana_ui::component::button::EntryWidth::Fill,
         on_press,
     )
 }

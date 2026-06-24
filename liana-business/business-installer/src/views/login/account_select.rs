@@ -1,13 +1,13 @@
 use crate::{
     state::{Msg, State},
-    views::{account_entry, delete_btn, layout_with_scrollable_list, INSTALLER_STEPS},
+    views::{layout_with_scrollable_list, INSTALLER_STEPS},
 };
 use iced::{
     widget::{row, Space},
     Alignment, Length,
 };
 use liana_ui::{
-    component::{button::btn_connect_another_email, text},
+    component::{button::btn_connect_another_email, list, text},
     widget::*,
 };
 
@@ -45,25 +45,17 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
             .map(|e| e == &account.email)
             .unwrap_or(false);
 
-        let card_content = if processing && is_selected {
-            // Show loading state for selected account
-            Row::new()
-                .push(Space::with_width(Length::Fill))
-                .push(text::p2_medium("Connecting..."))
-                .push(Space::with_width(Length::Fill))
+        let title = if processing && is_selected {
+            "Connecting...".to_string()
         } else {
-            let email = liana_ui::component::text::short_email(&account.email, 55);
-            row![text::p1_medium(email)]
-        }
-        .align_y(iced::Alignment::Center);
+            liana_ui::component::text::short_email(&account.email, 55)
+        };
 
         let card_message = if processing {
-            None // Disable all cards while connecting
+            None
         } else {
             Some(Msg::AccountSelectConnect(account.email.clone()))
         };
-
-        let account_card_element = account_entry(card_content, card_message);
 
         let delete_msg = if processing {
             None
@@ -71,19 +63,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
             Some(Msg::AccountSelectDelete(account.email.clone()))
         };
 
-        let delete_btn = delete_btn(delete_msg);
-
-        // Row with account card and delete button
-        let account_row = Row::new()
-            .spacing(15)
-            .align_y(Alignment::Center)
-            .push(account_card_element)
-            .push(delete_btn)
-            // for an obscure reason we have to add a small
-            // spacer, else the scrollable padding is not applied
-            .push(Space::with_width(1));
-
-        list_content = list_content.push(account_row);
+        list_content = list_content.push(list::account_entry(title, card_message, delete_msg));
     }
 
     // Separator
