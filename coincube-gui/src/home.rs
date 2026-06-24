@@ -1438,6 +1438,31 @@ impl Home {
                 Task::none()
             }
 
+            // Heir clicked "Recover" on an actionable row: launch the installer's
+            // inheritance-recovery flow (COIN-377 PR 3). Intercepted here (not
+            // forwarded to the panel) because launching the installer is a
+            // home-level action — the heir's authenticated Connect client is
+            // threaded into the installer Context so the decrypt step can fetch
+            // the envelopes + build the gRPC relay client.
+            Message::View(ViewMessage::RecoverVault(RecoverVaultMessage::Launch {
+                cube_id,
+                full_cube,
+            })) => {
+                let datadir_path = self.datadir_path.clone();
+                let network = self.network;
+                let client = self.connect_account.authenticated_client();
+                Task::perform(
+                    async move { (datadir_path, network, client) },
+                    move |(d, n, c)| {
+                        Message::Install(
+                            d,
+                            n,
+                            UserFlow::RecoverInheritedVault { cube_id, full_cube },
+                            c,
+                        )
+                    },
+                )
+            }
             Message::View(ViewMessage::RecoverVault(msg)) => {
                 // Forward to the discovery panel with the heir's authenticated
                 // Connect client; map the panel's task back into home messages.

@@ -1,11 +1,30 @@
+use std::convert::TryFrom;
+
 use tonic::transport::Channel;
 
 use super::connect_v1::{
     session_service_client::SessionServiceClient, CancelSigningSessionRequest,
-    CreateSigningSessionRequest, GetSigningSessionRequest, GetSigningSessionResponse,
+    CreateDecryptRequestRequest, CreateSigningSessionRequest, DecryptRequestStatus,
+    GetDecryptResultRequest, GetSigningSessionRequest, GetSigningSessionResponse,
     ListPendingSessionsResponse, ResolveSignersRequest, ResolveSignersResponse, SigningSession,
 };
 use super::interceptor::AuthInterceptor;
+
+/// Terminal-or-pending outcome of an inheritance decrypt-relay request,
+/// translated from the proto `DecryptRequestStatus` so callers don't depend on
+/// generated types. `Completed` carries the opaque `wrapped_shared_key` to
+/// unwrap (SPEC-ecies-v1 §4b).
+#[derive(Debug, Clone)]
+pub enum DecryptOutcome {
+    /// Still awaiting the heir's Keychain approval — poll again.
+    Pending,
+    /// Keychain approved; carries the ECIES-wrapped key to unwrap locally.
+    Completed(Vec<u8>),
+    /// Keychain declined (approval denied or the heir is under duress).
+    Rejected,
+    /// The request TTL elapsed without a Keychain answer.
+    Expired,
+}
 
 type InterceptedSessionClient =
     SessionServiceClient<tonic::service::interceptor::InterceptedService<Channel, AuthInterceptor>>;
@@ -87,5 +106,49 @@ impl GrpcSessionClient {
             .resolve_signers(request)
             .await
             .map(|r| r.into_inner())
+    }
+
+    /// Heir desktop — inheritance decrypt relay, step 1. Brokers a decrypt of
+    /// the envelope addressed to us for (`cube_id`, `artifact_kind`); the server
+    /// applies the recovery gate and notifies the heir's Keychain, which (after
+    /// biometric/PIN approval) ECIES-**wraps** the derived key to
+    /// `transport_pubkey` (compressed SEC1) — the server never sees the key.
+    /// Idempotent on `request_id`.
+    pub async fn create_decrypt_request(
+        &mut self,
+        request_id: String,
+        cube_id: String,
+        artifact_kind: String,
+        transport_pubkey: Vec<u8>,
+    ) -> Result<(), tonic::Status> {
+        let request = CreateDecryptRequestRequest {
+            request_id,
+            cube_id,
+            artifact_kind,
+            desktop_transport_pubkey: transport_pubkey,
+        };
+        self.inner.create_decrypt_request(request).await.map(|_| ())
+    }
+
+    /// Heir desktop — inheritance decrypt relay, step 4 (poll). Fetches the
+    /// current [`DecryptOutcome`] of a request; the companion to the best-effort
+    /// `decrypt_result` stream push. On `Completed`, the wrapped key is unwrapped
+    /// locally with the per-recovery transport private key (SPEC §4b).
+    pub async fn get_decrypt_result(
+        &mut self,
+        request_id: String,
+    ) -> Result<DecryptOutcome, tonic::Status> {
+        let request = GetDecryptResultRequest { request_id };
+        let resp = self.inner.get_decrypt_result(request).await?.into_inner();
+        let status = DecryptRequestStatus::try_from(resp.status)
+            .map_err(|_| tonic::Status::internal("GetDecryptResult returned an unknown status"))?;
+        Ok(match status {
+            DecryptRequestStatus::Completed => DecryptOutcome::Completed(resp.wrapped_shared_key),
+            DecryptRequestStatus::Rejected => DecryptOutcome::Rejected,
+            DecryptRequestStatus::Expired => DecryptOutcome::Expired,
+            DecryptRequestStatus::Pending | DecryptRequestStatus::Unspecified => {
+                DecryptOutcome::Pending
+            }
+        })
     }
 }

@@ -3,6 +3,7 @@ pub mod import_descriptor;
 
 mod backend;
 mod coincube_connect;
+pub mod inheritance_restore;
 mod mnemonic;
 pub(crate) mod node;
 pub mod recovery_kit_restore;
@@ -24,6 +25,7 @@ pub use descriptor::{
 
 pub use backend::{ChooseBackend, ImportRemoteWallet, RemoteBackendLogin};
 pub use coincube_connect::CoincubeConnectStep;
+pub use inheritance_restore::InheritanceRestoreStep;
 pub use mnemonic::{BackupMnemonic, RecoverMnemonic};
 pub use recovery_kit_restore::{RecoveryKitRestoreStep, RestoreScope};
 pub use restore_pin_setup::RestorePinSetupStep;

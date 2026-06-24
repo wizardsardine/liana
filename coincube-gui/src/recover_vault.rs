@@ -12,24 +12,25 @@
 //! Connect-client foundation:
 //! [`CoincubeClient::list_recoverable_vaults`](crate::services::coincube::CoincubeClient::list_recoverable_vaults)
 //! for the list and
-//! [`fetch_recovery_descriptor`](crate::services::recovery::fetch_recovery_descriptor)
-//! for the keyholder release. The release returns a plaintext descriptor; the
-//! watch-only install + bridge into the recovery screen is PR 2 / PR 3 (see the
-//! `TODO(PR 2)` seam in [`RecoverVaultPanel::update`]).
+//! [`CoincubeClient::get_recovery_envelope`](crate::services::coincube::CoincubeClient::get_recovery_envelope)
+//! for the gated ECIES release. Under the ECIES pivot the release returns the
+//! caller's **ciphertext** envelope(s); the heir's Keychain does the ECDH and
+//! the desktop opens + restores via the tested heir core
+//! ([`crate::services::inheritance::heir::decrypt_envelopes`] → `DecryptedKit`
+//! → the existing Recovery-Kit restore). Rows are labelled by escrow tier and
+//! marked **Beta**.
 
 use iced::widget::{scrollable, Space};
 use iced::{Alignment, Length, Task};
 
 use coincube_ui::{
-    component::{button as btn, card, text::*},
+    component::{badge, button as btn, card, text::*},
     theme,
     widget::{Column, Container, Element, Row},
 };
 
-use crate::services::coincube::{
-    CoincubeClient, RecoverableVault, RecoveryState, VaultMonitoringLevel,
-};
-use crate::services::recovery::fetch_recovery_descriptor;
+use crate::services::coincube::{CoincubeClient, RecoverableVault, RecoveryState};
+use crate::services::recovery::KeyholderRecoveryError;
 
 /// Shown when the heir isn't signed in: both for a `Load` attempted without a
 /// Connect client and for the reset (`Idle`) state the panel returns to after
@@ -38,43 +39,41 @@ use crate::services::recovery::fetch_recovery_descriptor;
 const SIGNED_OUT_PROMPT: &str = "Sign in to your account to see vaults you can recover.";
 
 /// How a discovery row should present, encoding invariants I1 (state gating)
-/// and I7 (tier honesty). Password-required (Heartbeat) rows take precedence:
-/// they are never actionable in v1 regardless of window state, and must show
-/// the deferred-path copy rather than a broken "Recover" button.
+/// and I7 (tier honesty). Under the ECIES pivot there is no recovery-password
+/// path: a row is actionable iff the window is open on-chain, the caller is a
+/// keyholder, and the owner escrowed material to their key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
-    /// Window open **and** Full-tier (password-free) **and** the caller is a
-    /// keyholder → the "Recover" button is live.
+    /// Window open **and** the caller is a keyholder **and** something is
+    /// escrowed for them → the "Recover" button is live. The button label
+    /// reflects the tier (full Cube vs Vault).
     Actionable,
     /// Window open, but the caller is a beneficiary, not a keyholder → the
-    /// descriptor pull-down is keyholder-only (the release endpoint 403s
-    /// non-keyholders), so show "a keyholder completes this", never a button.
+    /// release endpoint serves envelopes only to keyholders (403s everyone
+    /// else), so show "a keyholder completes this", never a button.
     KeyholderOnly,
-    /// Window not open yet (Full-tier) → visible but not actionable; show the
-    /// expected-open date and "we'll email you".
+    /// Window open and the caller is a keyholder, but the owner escrowed
+    /// nothing to their key → there is nothing this heir can decrypt. Show a
+    /// neutral "not set up for you" line, never a button.
+    NotEscrowed,
+    /// Window not open yet → visible but not actionable; show the expected-open
+    /// date and "we'll email you".
     NotYetOpen,
-    /// Heartbeat tier (`requires_recovery_password`) → deferred to COIN-375;
-    /// show the "recovery password required — coming later" copy, never a
-    /// button. Takes precedence over the window state.
-    PasswordDeferred,
 }
 
 /// Classifies a recoverable-vault row. Pure — the unit tests below pin the
-/// invariants. Heartbeat/password-required is checked first so an open
-/// (`available`/`reminding`) Heartbeat vault still routes to the deferred copy;
-/// then the keyholder gate, so an open vault the caller can't pull down (they're
-/// a beneficiary) shows the keyholder-only copy rather than a 403'ing button.
+/// invariants. Window state first (a closed window is never actionable); then
+/// the keyholder gate (a beneficiary can't decrypt); then whether anything is
+/// escrowed for this caller.
 pub fn classify(v: &RecoverableVault) -> RowKind {
-    if v.requires_recovery_password {
-        RowKind::PasswordDeferred
-    } else if v.recovery_state().is_open() {
-        if v.is_keyholder() {
-            RowKind::Actionable
-        } else {
-            RowKind::KeyholderOnly
-        }
-    } else {
+    if !v.recovery_state().is_open() {
         RowKind::NotYetOpen
+    } else if !v.is_keyholder() {
+        RowKind::KeyholderOnly
+    } else if v.has_descriptor_tier() {
+        RowKind::Actionable
+    } else {
+        RowKind::NotEscrowed
     }
 }
 
@@ -86,8 +85,8 @@ pub fn status_copy(v: &RecoverableVault) -> Option<String> {
         RowKind::KeyholderOnly => {
             Some("Recovery is open — a keyholder of this vault can complete it.".to_string())
         }
-        RowKind::PasswordDeferred => {
-            Some("Recovery password required — coming in a later update.".to_string())
+        RowKind::NotEscrowed => {
+            Some("Recovery is open, but this vault isn't set up for you to recover.".to_string())
         }
         RowKind::NotYetOpen => Some(match v.expected_open_at {
             Some(at) => format!(
@@ -99,12 +98,27 @@ pub fn status_copy(v: &RecoverableVault) -> Option<String> {
     }
 }
 
-/// Short, display-only label for a vault's monitoring tier.
-fn tier_label(level: VaultMonitoringLevel) -> &'static str {
-    match level {
-        VaultMonitoringLevel::Full => "Full monitoring",
-        VaultMonitoringLevel::Heartbeat => "Alerts only",
-        VaultMonitoringLevel::Off => "Not monitored",
+/// Short, display-only label for what this heir can recover (invariant I7).
+/// Keys off the escrowed tiers, not the owner's monitoring level: Full-Cube
+/// (seed escrowed) restores the whole Cube; Vault-only (descriptor) recovers
+/// the watch-only Vault. When nothing is escrowed for the caller (beneficiary
+/// or not-escrowed), fall back to a neutral label.
+fn tier_label(v: &RecoverableVault) -> &'static str {
+    if v.is_full_cube() {
+        "Full Cube"
+    } else if v.has_descriptor_tier() {
+        "Vault only"
+    } else {
+        "Assisted recovery"
+    }
+}
+
+/// The "Recover" button label for an actionable row — honest about scope.
+fn recover_button_label(v: &RecoverableVault) -> &'static str {
+    if v.is_full_cube() {
+        "Recover full Cube"
+    } else {
+        "Recover Vault"
     }
 }
 
@@ -119,9 +133,10 @@ fn state_label(state: RecoveryState) -> &'static str {
 /// In-flight status for the row the heir clicked "Recover" on.
 #[derive(Debug, Clone)]
 pub enum RecoverStatus {
-    /// Pulling the descriptor from the keyholder release endpoint.
+    /// Downloading the caller's ECIES envelope(s) from the gated release.
     Fetching,
-    /// Descriptor fetched. PR 2 picks up here (watch-only install).
+    /// Ciphertext received. The Keychain ECDH-decrypt + restore handoff
+    /// (`heir::decrypt_envelopes` → existing Recovery-Kit restore) picks up here.
     Ready,
     /// Gate/error copy (already neutralised by `KeyholderRecoveryError`'s
     /// `Display`, so it is safe to show verbatim — never explains duress).
@@ -162,13 +177,20 @@ pub enum RecoverVaultMessage {
     /// fetch was fired in — a stale value (logout / account switch landed
     /// first) is dropped rather than painting the prior account's vaults.
     Loaded(Result<Vec<RecoverableVault>, String>, u64),
-    /// Heir clicked "Recover" on the given cube — pull its descriptor.
+    /// Heir clicked "Recover" on the given cube — pull its ECIES envelope set
+    /// from the gated release endpoint.
     Recover(u64),
-    /// Descriptor fetch resolved (cube id, plaintext descriptor | display copy,
-    /// session generation the fetch was fired in). The `u64` lets a fetch from a
-    /// prior session (account switch, same cube) be dropped instead of painting
-    /// its result onto the new session's row.
-    Fetched(u64, Result<String, String>, u64),
+    /// Envelope fetch resolved (cube id, number of envelopes received | neutral
+    /// display copy, session generation the fetch was fired in). The `u64` lets
+    /// a fetch from a prior session (account switch, same cube) be dropped
+    /// instead of painting its result onto the new session's row.
+    Fetched(u64, Result<usize, String>, u64),
+    /// Heir clicked "Recover" on an actionable row — launch the installer's
+    /// inheritance-recovery flow (COIN-377 PR 3). `full_cube` selects the scope
+    /// (Full-Cube vs Vault-only). **Home intercepts this** and emits
+    /// `home::Message::Install(UserFlow::RecoverInheritedVault { .. })`; it is a
+    /// no-op inside this panel (the installer owns the decrypt + restore).
+    Launch { cube_id: u64, full_cube: bool },
 }
 
 impl RecoverVaultPanel {
@@ -249,12 +271,15 @@ impl RecoverVaultPanel {
                 self.active = Some((cube_id, RecoverStatus::Fetching));
                 Task::perform(
                     async move {
-                        // The keyholder release returns the PLAINTEXT descriptor;
-                        // gate failures are already mapped to neutral, display-safe
-                        // copy by `KeyholderRecoveryError`'s `Display`.
-                        let res = fetch_recovery_descriptor(&client, cube_id)
+                        // The ECIES release returns the caller's ciphertext
+                        // envelope(s); gate failures (403/423/404/503) are mapped
+                        // to neutral, display-safe copy by `KeyholderRecoveryError`
+                        // (the duress 423 never explains why — invariant I3).
+                        let res = client
+                            .get_recovery_envelope(cube_id)
                             .await
-                            .map_err(|e| e.to_string());
+                            .map(|envelopes| envelopes.len())
+                            .map_err(|e| KeyholderRecoveryError::from(e).to_string());
                         (cube_id, res)
                     },
                     move |(cube_id, res)| {
@@ -263,7 +288,7 @@ impl RecoverVaultPanel {
                 )
             }
             RecoverVaultMessage::Fetched(cube_id, res, gen) => {
-                // Drop a descriptor fetch the user (or session) has moved on
+                // Drop an envelope fetch the user (or session) has moved on
                 // from: a stale generation means a prior session fired it (an
                 // account switch — even the same cube id), and a non-matching
                 // `active` id means recovery started on another row. Either way
@@ -274,20 +299,23 @@ impl RecoverVaultPanel {
                     return Task::none();
                 }
                 let status = match res {
-                    Ok(_descriptor) => {
-                        // TODO(PR 2): hand the plaintext `_descriptor` to the
-                        // installer's `install_local_wallet()` path (a new
-                        // `UserFlow::RecoverKeyholderVault { cube_id }`) to create
-                        // the watch-only "Recovered Vault — [label]", then bridge
-                        // into `vault/recovery.rs` for the sweep (PR 3). For PR 1
-                        // we confirm the gated fetch succeeded.
-                        RecoverStatus::Ready
-                    }
+                    // The gated ciphertext is in hand. The Keychain ECDH-decrypt
+                    // + existing Recovery-Kit restore is the app-level handoff
+                    // (`services::inheritance::heir::decrypt_envelopes` →
+                    // `DecryptedKit` → `RestoreScope::Full`/`DescriptorOnly`),
+                    // which needs the heir's Keychain online (regtest E2E gate).
+                    Ok(0) => RecoverStatus::Failed(
+                        "There's nothing escrowed for you to recover here.".to_string(),
+                    ),
+                    Ok(_n) => RecoverStatus::Ready,
                     Err(copy) => RecoverStatus::Failed(copy),
                 };
                 self.active = Some((cube_id, status));
                 Task::none()
             }
+            // Home intercepts `Launch` before delegating here (it launches the
+            // installer flow), so reaching this arm is a no-op backstop.
+            RecoverVaultMessage::Launch { .. } => Task::none(),
         }
     }
 }
@@ -296,11 +324,18 @@ impl RecoverVaultPanel {
 pub fn view(panel: &RecoverVaultPanel) -> Element<'_, RecoverVaultMessage> {
     let header = Column::new()
         .spacing(6)
-        .push(h4_bold("Recover a Vault"))
+        .push(
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(h4_bold("Recover a Vault"))
+                .push(badge::beta()),
+        )
         .push(
             p2_regular(
                 "Vaults you're a keyholder for appear here. When a vault's \
-                 recovery window opens, you can recover it — no password needed.",
+                 recovery window opens, you can recover it with your Keychain — \
+                 no password needed.",
             )
             .style(theme::text::secondary),
         );
@@ -362,11 +397,7 @@ fn vault_row<'a>(
         .clone()
         .unwrap_or_else(|| format!("Vault #{}", v.cube_id));
 
-    let meta = format!(
-        "{} • {}",
-        tier_label(v.monitoring_level),
-        state_label(v.recovery_state())
-    );
+    let meta = format!("{} • {}", tier_label(v), state_label(v.recovery_state()));
 
     let mut left = Column::new()
         .spacing(4)
@@ -383,8 +414,11 @@ fn vault_row<'a>(
     let cta: Element<RecoverVaultMessage> = if classify(v) == RowKind::Actionable {
         match active {
             Some((id, status)) if *id == v.cube_id => recover_status_view(status),
-            _ => btn::primary(None, "Recover")
-                .on_press(RecoverVaultMessage::Recover(v.cube_id))
+            _ => btn::primary(None, recover_button_label(v))
+                .on_press(RecoverVaultMessage::Launch {
+                    cube_id: v.cube_id,
+                    full_cube: v.is_full_cube(),
+                })
                 .into(),
         }
     } else {
@@ -409,7 +443,7 @@ fn recover_status_view(status: &RecoverStatus) -> Element<'_, RecoverVaultMessag
         RecoverStatus::Fetching => p2_regular("Preparing recovery…")
             .style(theme::text::secondary)
             .into(),
-        RecoverStatus::Ready => p2_bold("Recovery ready").into(),
+        RecoverStatus::Ready => p2_bold("Recovery data received — approve on your Keychain").into(),
         RecoverStatus::Failed(copy) => p2_regular(copy.clone())
             .style(theme::text::secondary)
             .into(),
@@ -419,98 +453,99 @@ fn recover_status_view(status: &RecoverStatus) -> Element<'_, RecoverVaultMessag
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::coincube::VaultMonitoringLevel;
 
-    fn vault_role(
-        level: VaultMonitoringLevel,
-        state: &str,
-        pw: bool,
-        role: &str,
-    ) -> RecoverableVault {
+    fn vault_role(state: &str, tiers: &[&str], role: &str) -> RecoverableVault {
         RecoverableVault {
             cube_id: 1,
             owner_label: None,
-            monitoring_level: level,
+            // Display-only post-pivot; the heartbeat gate drives availability.
+            monitoring_level: VaultMonitoringLevel::Heartbeat,
             state: state.to_string(),
             role: role.to_string(),
-            requires_recovery_password: pw,
+            // Deprecated under ECIES; never consulted by `classify`.
+            requires_recovery_password: false,
             owner_last_active: None,
             expected_open_at: None,
             gap_limit: None,
+            available_tiers: tiers.iter().map(|t| t.to_string()).collect(),
         }
     }
 
-    /// The common case: the caller is a keyholder (the only role that can pull
-    /// the descriptor down). Beneficiary cases construct via `vault_role`.
-    fn vault(level: VaultMonitoringLevel, state: &str, pw: bool) -> RecoverableVault {
-        vault_role(level, state, pw, "keyholder")
+    /// The common case: the caller is a keyholder. Beneficiary cases construct
+    /// via `vault_role`. `tiers` are the artifact kinds escrowed for the caller.
+    fn vault(state: &str, tiers: &[&str]) -> RecoverableVault {
+        vault_role(state, tiers, "keyholder")
     }
 
     #[test]
-    fn full_open_is_actionable() {
-        let v = vault(VaultMonitoringLevel::Full, "available", false);
+    fn full_cube_open_is_actionable_with_full_cube_button() {
+        let v = vault("available", &["descriptor", "seed"]);
         assert_eq!(classify(&v), RowKind::Actionable);
+        assert!(v.is_recoverable_now());
+        assert!(v.is_full_cube());
+        assert_eq!(recover_button_label(&v), "Recover full Cube");
+        assert_eq!(tier_label(&v), "Full Cube");
         assert!(status_copy(&v).is_none());
     }
 
     #[test]
-    fn beneficiary_open_full_is_keyholder_only_not_actionable() {
-        // Same open + Full-tier state as `full_open_is_actionable`, but the
-        // caller is a beneficiary: the descriptor pull-down is keyholder-only
-        // (the release endpoint 403s non-keyholders), so this must NOT be a live
-        // button — it shows the keyholder-only copy instead.
-        let v = vault_role(
-            VaultMonitoringLevel::Full,
-            "available",
-            false,
-            "beneficiary",
-        );
+    fn vault_only_open_is_actionable_with_vault_button() {
+        // Descriptor escrowed but no seed → Vault-only tier (watch-only sweep).
+        let v = vault("available", &["descriptor"]);
+        assert_eq!(classify(&v), RowKind::Actionable);
+        assert!(v.is_recoverable_now());
+        assert!(!v.is_full_cube());
+        assert_eq!(recover_button_label(&v), "Recover Vault");
+        assert_eq!(tier_label(&v), "Vault only");
+    }
+
+    #[test]
+    fn beneficiary_open_is_keyholder_only_not_actionable() {
+        // Open window, but the caller is a beneficiary: the release endpoint
+        // serves envelopes only to keyholders (403s everyone else), so this must
+        // NOT be a live button — it shows the keyholder-only copy instead.
+        let v = vault_role("available", &[], "beneficiary");
         assert_eq!(classify(&v), RowKind::KeyholderOnly);
         assert!(!v.is_recoverable_now());
         assert!(status_copy(&v).unwrap().contains("keyholder"));
     }
 
     #[test]
-    fn full_reminding_is_actionable() {
+    fn keyholder_open_but_nothing_escrowed_is_not_escrowed() {
+        // Tier honesty (I7): an open window where the owner escrowed nothing to
+        // this keyholder's key is NOT a live button — there is nothing to decrypt.
+        let v = vault("available", &[]);
+        assert_eq!(classify(&v), RowKind::NotEscrowed);
+        assert!(!v.is_recoverable_now());
+        assert!(status_copy(&v).unwrap().contains("isn't set up for you"));
+    }
+
+    #[test]
+    fn reminding_is_actionable() {
         // `reminding` is a later "still open" state — also actionable.
-        let v = vault(VaultMonitoringLevel::Full, "reminding", false);
+        let v = vault("reminding", &["descriptor"]);
         assert_eq!(classify(&v), RowKind::Actionable);
     }
 
     #[test]
-    fn full_approaching_is_not_yet_open() {
-        let v = vault(VaultMonitoringLevel::Full, "approaching", false);
+    fn approaching_is_not_yet_open() {
+        let v = vault("approaching", &["descriptor", "seed"]);
         assert_eq!(classify(&v), RowKind::NotYetOpen);
         assert!(status_copy(&v).unwrap().contains("isn't open yet"));
     }
 
     #[test]
-    fn full_none_is_not_yet_open() {
-        let v = vault(VaultMonitoringLevel::Full, "none", false);
+    fn none_is_not_yet_open() {
+        let v = vault("none", &["descriptor"]);
         assert_eq!(classify(&v), RowKind::NotYetOpen);
     }
 
     #[test]
-    fn heartbeat_requires_password_is_deferred_even_when_open() {
-        // Tier honesty (I7): an open Heartbeat vault is NOT a live button —
-        // it must show the deferred-path copy.
-        let v = vault(VaultMonitoringLevel::Heartbeat, "available", true);
-        assert_eq!(classify(&v), RowKind::PasswordDeferred);
-        assert_eq!(
-            status_copy(&v).unwrap(),
-            "Recovery password required — coming in a later update."
-        );
-    }
-
-    #[test]
-    fn password_required_takes_precedence_over_not_open() {
-        let v = vault(VaultMonitoringLevel::Heartbeat, "approaching", true);
-        assert_eq!(classify(&v), RowKind::PasswordDeferred);
-    }
-
-    #[test]
     fn unknown_state_fails_closed_to_not_open() {
-        // An unrecognised wire state must never become a live Recover button.
-        let v = vault(VaultMonitoringLevel::Full, "weird-future-state", false);
+        // An unrecognised wire state must never become a live Recover button,
+        // even with material escrowed.
+        let v = vault("weird-future-state", &["descriptor", "seed"]);
         assert_eq!(classify(&v), RowKind::NotYetOpen);
     }
 
@@ -546,7 +581,7 @@ mod tests {
     #[test]
     fn loaded_stores_rows() {
         let mut panel = RecoverVaultPanel::new();
-        let rows = vec![vault(VaultMonitoringLevel::Full, "available", false)];
+        let rows = vec![vault("available", &["descriptor"])];
         let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows), 0), None, 0);
         assert!(matches!(panel.list, ListState::Loaded(ref r) if r.len() == 1));
     }
@@ -557,7 +592,7 @@ mod tests {
         // advanced (logout / account switch → generation 2) must not paint the
         // prior account's vaults: the panel's `list` is left untouched.
         let mut panel = RecoverVaultPanel::new();
-        let rows = vec![vault(VaultMonitoringLevel::Full, "available", false)];
+        let rows = vec![vault("available", &["descriptor"])];
         let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows), 1), None, 2);
         assert!(
             matches!(panel.list, ListState::Idle),
@@ -574,7 +609,7 @@ mod tests {
         // loaded, blocking refetch on reopen).
         let mut panel = RecoverVaultPanel::new();
         panel.list = ListState::Loading(1);
-        let rows = vec![vault(VaultMonitoringLevel::Full, "available", false)];
+        let rows = vec![vault("available", &["descriptor"])];
         let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows), 1), None, 2);
         assert!(
             matches!(panel.list, ListState::Idle),
@@ -591,7 +626,7 @@ mod tests {
         // `Loading`, never a later session's request.
         let mut panel = RecoverVaultPanel::new();
         panel.list = ListState::Loading(2);
-        let rows = vec![vault(VaultMonitoringLevel::Full, "available", false)];
+        let rows = vec![vault("available", &["descriptor"])];
         let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows), 1), None, 2);
         assert!(
             matches!(panel.list, ListState::Loading(2)),
@@ -605,8 +640,8 @@ mod tests {
         // A stale drop must leave an already-populated current-session list
         // intact (don't reset a good `Loaded` back to `Idle`).
         let mut panel = RecoverVaultPanel::new();
-        panel.list = ListState::Loaded(vec![vault(VaultMonitoringLevel::Full, "available", false)]);
-        let rows = vec![vault(VaultMonitoringLevel::Heartbeat, "approaching", true)];
+        panel.list = ListState::Loaded(vec![vault("available", &["descriptor"])]);
+        let rows = vec![vault("approaching", &[])];
         let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows), 1), None, 2);
         assert!(matches!(panel.list, ListState::Loaded(ref r) if r.len() == 1));
     }
@@ -616,7 +651,7 @@ mod tests {
         // The matching-generation path still stores rows (regression guard for
         // the stale-session check above).
         let mut panel = RecoverVaultPanel::new();
-        let rows = vec![vault(VaultMonitoringLevel::Full, "available", false)];
+        let rows = vec![vault("available", &["descriptor"])];
         let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows), 5), None, 5);
         assert!(matches!(panel.list, ListState::Loaded(ref r) if r.len() == 1));
     }
@@ -651,11 +686,7 @@ mod tests {
         // not paint its result onto cube 8's in-flight row.
         let mut panel = RecoverVaultPanel::new();
         panel.active = Some((8, RecoverStatus::Fetching));
-        let _ = panel.update(
-            RecoverVaultMessage::Fetched(7, Ok("wsh(...)".to_string()), 0),
-            None,
-            0,
-        );
+        let _ = panel.update(RecoverVaultMessage::Fetched(7, Ok(1), 0), None, 0);
         assert!(
             matches!(panel.active, Some((8, RecoverStatus::Fetching))),
             "stale cube-7 fetch must leave cube-8's row untouched, got {:?}",
@@ -671,11 +702,7 @@ mod tests {
         // would miss this; the generation check catches it.
         let mut panel = RecoverVaultPanel::new();
         panel.active = Some((7, RecoverStatus::Fetching));
-        let _ = panel.update(
-            RecoverVaultMessage::Fetched(7, Ok("wsh(...)".to_string()), 1),
-            None,
-            2,
-        );
+        let _ = panel.update(RecoverVaultMessage::Fetched(7, Ok(1), 1), None, 2);
         assert!(
             matches!(panel.active, Some((7, RecoverStatus::Fetching))),
             "stale-session fetch must not overwrite the new session's row, got {:?}",

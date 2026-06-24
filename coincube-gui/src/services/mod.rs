@@ -7,6 +7,7 @@ pub mod keys;
 
 pub mod coincube;
 pub mod duress;
+pub mod inheritance;
 pub mod mavapay;
 pub mod meld;
 pub mod passkey;

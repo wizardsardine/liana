@@ -2125,11 +2125,11 @@ pub struct RecoverableVault {
     /// heir-facing collapse.
     #[serde(default)]
     pub state: String,
-    /// True when recovering this vault needs the owner's recovery password
-    /// (Heartbeat tier). v1 shows the deferred-path copy for these rows; the
-    /// Alerts-only heir path is COIN-375. Defaults to `true` (fails closed) if
-    /// an older/partial server omits it: an absent field must never downgrade a
-    /// password-required row into a live, password-free "Recover" button.
+    /// **Deprecated under the ECIES pivot (rev 3).** The old KEK model had a
+    /// "recovery password" path; ECIES heir-escrow has none — the heir's
+    /// Keychain decrypts. Retained only so a pre-pivot server payload still
+    /// deserialises; actionability now keys off [`Self::available_tiers`], not
+    /// this field. Defaults `true` (fails closed) when absent.
     #[serde(default = "default_requires_recovery_password")]
     pub requires_recovery_password: bool,
     /// "Owner last active" hint, when the server exposes it (display only).
@@ -2139,11 +2139,18 @@ pub struct RecoverableVault {
     #[serde(default)]
     pub expected_open_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Optional address gap-limit hint for the recovered watch-only sync. The
-    /// descriptor-release endpoint returns no gap hint (it's owner-only), so if
-    /// the API surfaces one it rides on this list row; otherwise the recovered
-    /// vault syncs with a generous default gap.
+    /// release endpoint returns no gap hint (it's owner-only), so if the API
+    /// surfaces one it rides on this list row; otherwise the recovered vault
+    /// syncs with a generous default gap.
     #[serde(default)]
     pub gap_limit: Option<u32>,
+    /// Which ECIES artifact kinds are escrowed **for this caller** (PR C):
+    /// `["descriptor"]` → Vault-only (heir recovers the watch-only Vault and
+    /// sweeps); `["descriptor","seed"]` → Full-Cube (heir restores the whole
+    /// Cube). Empty/absent → nothing escrowed for me, so not recoverable.
+    /// Drives the row label ("Recover Vault" vs "Recover full Cube").
+    #[serde(default)]
+    pub available_tiers: Vec<String>,
 }
 
 impl RecoverableVault {
@@ -2152,17 +2159,37 @@ impl RecoverableVault {
         RecoveryState::from_wire(&self.state)
     }
 
-    /// Whether the caller is a keyholder (the only role that may pull the
-    /// descriptor down — beneficiaries are 403'd by the release endpoint).
+    /// Whether the caller is a keyholder (the only role the release endpoint
+    /// serves envelopes to — beneficiaries are 403'd).
     pub fn is_keyholder(&self) -> bool {
         self.role == "keyholder"
     }
 
+    /// Whether a descriptor envelope is escrowed for this caller. Every
+    /// escrowed tier carries the descriptor, so this is the "anything to
+    /// recover" check.
+    pub fn has_descriptor_tier(&self) -> bool {
+        self.available_tiers.iter().any(|t| t == "descriptor")
+    }
+
+    /// Whether the master seed is escrowed for this caller — the Full-Cube
+    /// tier, which restores the entire Cube (Liquid + Spark + Vault) rather
+    /// than just the watch-only Vault.
+    pub fn has_seed_tier(&self) -> bool {
+        self.available_tiers.iter().any(|t| t == "seed")
+    }
+
+    /// Full-Cube (seed escrowed) vs Vault-only (descriptor only). Drives the
+    /// row label and which restore scope the heir flow uses.
+    pub fn is_full_cube(&self) -> bool {
+        self.has_seed_tier()
+    }
+
     /// Whether the heir can act on this row now: the caller is a keyholder AND
-    /// the window is open AND it isn't a password-required (Heartbeat) row
-    /// deferred to COIN-375.
+    /// the window is open on-chain AND something is escrowed for them. Under
+    /// ECIES there is no password gate — the heir's Keychain decrypts.
     pub fn is_recoverable_now(&self) -> bool {
-        self.is_keyholder() && self.recovery_state().is_open() && !self.requires_recovery_password
+        self.is_keyholder() && self.recovery_state().is_open() && self.has_descriptor_tier()
     }
 }
 
@@ -2177,9 +2204,78 @@ fn default_requires_recovery_password() -> bool {
 /// 200 — the **plaintext** descriptor. The server decrypts the escrowed copy
 /// under its KEK and returns it directly; the keyholder path carries no
 /// password and does no client-side decryption.
+///
+/// **Superseded by the ECIES pivot (rev 3):** the server is now blind and
+/// returns *ciphertext* envelopes via the recovery-envelope endpoint
+/// ([`InheritanceEnvelopeWire`]); the heir's Keychain decrypts. Retained while
+/// the pre-pivot endpoint is still deployed.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RecoveryDescriptorResponse {
     pub descriptor: String,
+}
+
+/// One ECIES heir-escrow envelope on the wire (camelCase JSON; byte fields
+/// lowercase hex, SPEC §5). The desktop **defines** this contract; `coincube-api` stores the
+/// bytes opaquely (it never parses or decrypts them) and `keychain-app`
+/// decrypts. Shared by owner upload (`PUT …/vault/escrow`) and gated heir
+/// release (`GET …/vault/recovery-envelope`, which returns only the caller's
+/// own envelopes). `keyholderKeyId` is bound into the ECIES AAD at seal time
+/// (SPEC §1), so it MUST be present in **both** directions — the heir needs it
+/// to rebuild the AAD and open the envelope (see the field doc).
+///
+/// `Debug` is manual: `ciphertext` is encrypted, but we still avoid dumping
+/// the blob; the other fields are non-secret (public key, path, scheme).
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InheritanceEnvelopeWire {
+    /// Which keyholder's xpub this is sealed to (`models.Key` id). Bound into
+    /// the ECIES AAD at seal time (SPEC §1), so the heir **requires** it on the
+    /// gated release to rebuild the AAD and open the envelope — `coincube-api`
+    /// MUST include it on `GET …/vault/recovery-envelope` (the caller's own key
+    /// id), not just echo it on upload. `Option` because the wire field can be
+    /// absent (e.g. an older server); [`crate::services::inheritance`]'s
+    /// `heir::open_blob` then fails closed with a clear error rather than
+    /// silently producing a wrong AAD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyholder_key_id: Option<u64>,
+    /// `"descriptor"` | `"seed"`.
+    pub artifact_kind: String,
+    /// ECIES scheme tag, e.g. `"ecies-secp256k1-hkdf-sha256-aes256gcm-v1"`.
+    pub scheme: String,
+    /// Lowercase hex (SPEC §5) of the 33-byte compressed ephemeral secp256k1
+    /// public key.
+    pub ephemeral_pubkey: String,
+    /// Lowercase hex (SPEC §5) of `ciphertext || GCM tag`.
+    pub ciphertext: String,
+    /// Lowercase hex (SPEC §5) of the 12-byte GCM nonce.
+    pub nonce: String,
+    /// The non-hardened encryption child path (relative to the keyholder xpub).
+    pub derivation: String,
+}
+
+impl std::fmt::Debug for InheritanceEnvelopeWire {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InheritanceEnvelopeWire")
+            .field("keyholder_key_id", &self.keyholder_key_id)
+            .field("artifact_kind", &self.artifact_kind)
+            .field("scheme", &self.scheme)
+            .field("ephemeral_pubkey", &self.ephemeral_pubkey)
+            .field("derivation", &self.derivation)
+            .field("ciphertext", &"<redacted>")
+            .field("nonce", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Body of `PUT /api/v1/connect/cubes/{cubeId}/vault/escrow` — the owner
+/// uploads the **whole** envelope set for the cube's current keyholders. The
+/// server idempotently replaces the stored set (handles keyholder
+/// add/remove/key-rotate), validating structure + that each `keyholderKeyId`
+/// is a current member; it never decrypts.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutVaultEscrowRequest {
+    pub envelopes: Vec<InheritanceEnvelopeWire>,
 }
 
 #[cfg(test)]
@@ -2221,18 +2317,66 @@ mod vault_monitoring_tests {
     }
 
     #[test]
-    fn recoverable_vault_requires_password_fails_closed_when_absent() {
-        // A payload that omits `requiresRecoveryPassword` must default to `true`
-        // (fail closed) so the row is never treated as a password-free, live
-        // "Recover" button. Even open + keyholder, it stays non-actionable.
+    fn recoverable_vault_without_escrowed_tiers_is_not_recoverable() {
+        // Under the ECIES pivot, actionability keys off `availableTiers` (what's
+        // escrowed for the caller), not a recovery password. A payload that omits
+        // it (older server, or nothing escrowed for this keyholder) must never
+        // present a live "Recover" button — even open + keyholder.
         let v = serde_json::json!({
             "cubeId": 7,
             "role": "keyholder",
             "state": "available"
         });
         let row: RecoverableVault = serde_json::from_value(v).unwrap();
-        assert!(row.requires_recovery_password);
+        assert!(row.available_tiers.is_empty());
+        assert!(!row.has_descriptor_tier());
         assert!(!row.is_recoverable_now());
+    }
+
+    #[test]
+    fn recoverable_vault_tier_flags_drive_actionability() {
+        // Vault-only: descriptor escrowed → recoverable, not full-cube.
+        let vault_only: RecoverableVault = serde_json::from_value(serde_json::json!({
+            "cubeId": 7,
+            "role": "keyholder",
+            "state": "reminding",
+            "availableTiers": ["descriptor"]
+        }))
+        .unwrap();
+        assert!(vault_only.is_recoverable_now());
+        assert!(vault_only.has_descriptor_tier());
+        assert!(!vault_only.is_full_cube());
+
+        // Full-Cube: seed escrowed too → recoverable and full-cube.
+        let full_cube: RecoverableVault = serde_json::from_value(serde_json::json!({
+            "cubeId": 8,
+            "role": "keyholder",
+            "state": "available",
+            "availableTiers": ["descriptor", "seed"]
+        }))
+        .unwrap();
+        assert!(full_cube.is_recoverable_now());
+        assert!(full_cube.is_full_cube());
+
+        // Escrowed but window not open → not recoverable yet.
+        let not_open: RecoverableVault = serde_json::from_value(serde_json::json!({
+            "cubeId": 9,
+            "role": "keyholder",
+            "state": "approaching",
+            "availableTiers": ["descriptor", "seed"]
+        }))
+        .unwrap();
+        assert!(!not_open.is_recoverable_now());
+
+        // Escrowed + open, but caller is a beneficiary → not recoverable.
+        let beneficiary: RecoverableVault = serde_json::from_value(serde_json::json!({
+            "cubeId": 10,
+            "role": "beneficiary",
+            "state": "available",
+            "availableTiers": ["descriptor"]
+        }))
+        .unwrap();
+        assert!(!beneficiary.is_recoverable_now());
     }
 
     #[test]

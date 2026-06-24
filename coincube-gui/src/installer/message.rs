@@ -122,6 +122,8 @@ pub enum Message {
     RestorePinSetup(RestorePinSetupMsg),
     /// Cube Recovery Kit restore step (W13 / W14 / W15).
     RecoveryKitRestore(RecoveryKitRestoreMsg),
+    /// Heir inheritance-recovery decrypt step (ECIES pivot, COIN-377 PR 3).
+    InheritanceRestore(InheritanceRestoreMsg),
     BorderWalletWizard(
         super::step::descriptor::editor::border_wallet_wizard::BorderWalletWizardMessage,
     ),
@@ -326,6 +328,39 @@ impl std::fmt::Debug for RecoveryKitRestoreMsg {
                 .finish(),
             Self::RetryFromStart => write!(f, "RetryFromStart"),
             Self::Skip => write!(f, "Skip"),
+        }
+    }
+}
+
+/// Message driving the heir inheritance-recovery decrypt step (ECIES pivot).
+/// Manual `Debug` redacts the decrypt result: its `Ok` arm carries the
+/// decrypted `SeedBlob`/`DescriptorBlob` (the seed half is the master secret),
+/// so a tracing dump of a parent message must never render it. The blobs are
+/// `ZeroizeOnDrop`; the redaction keeps them off the heap-dump surface too.
+#[derive(Clone)]
+pub enum InheritanceRestoreMsg {
+    /// Async result of the fetch + Keychain relay decrypt + AEAD open: the
+    /// opened blobs, or a display-safe error string (gate failures already
+    /// neutralised — the duress 423 never explains why).
+    DecryptResult(
+        Result<
+            (
+                Option<crate::services::recovery::SeedBlob>,
+                Option<crate::services::recovery::DescriptorBlob>,
+            ),
+            String,
+        >,
+    ),
+}
+
+impl std::fmt::Debug for InheritanceRestoreMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DecryptResult(Ok(_)) => write!(f, "DecryptResult(Ok(<redacted>))"),
+            Self::DecryptResult(Err(e)) => f
+                .debug_tuple("DecryptResult")
+                .field(&Err::<(), _>(e))
+                .finish(),
         }
     }
 }

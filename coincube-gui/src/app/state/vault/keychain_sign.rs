@@ -754,6 +754,8 @@ impl KeychainSignModal {
                     nanos: 0,
                 }),
                 require_user_presence: false,
+                // Owner-branch signing; the heir recovery sweep sets this true.
+                is_recovery_spend: false,
             };
             let tokens = tokens.clone();
             let grpc_url = grpc_url.clone();
@@ -1330,6 +1332,8 @@ impl KeychainSignModal {
                         nanos: 0,
                     }),
                     require_user_presence: false,
+                    // Owner-branch signing; the heir recovery sweep sets this true.
+                    is_recovery_spend: false,
                 };
                 client
                     .create_signing_session(req)

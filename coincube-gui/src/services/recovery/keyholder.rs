@@ -248,7 +248,7 @@ mod integration_tests {
     //! End-to-end against a mocked Connect API, exercising the client's URL +
     //! status handling together with this module's gate mapping.
     use super::*;
-    use crate::services::coincube::{RecoveryState, VaultMonitoringLevel};
+    use crate::services::coincube::RecoveryState;
     use httpmock::{Method as MockMethod, MockServer};
     use serde_json::json;
 
@@ -371,35 +371,31 @@ mod integration_tests {
                     "data": [
                         {
                             "cubeId": 7,
-                            "ownerLabel": "Dad's Vault",
+                            "ownerLabel": "Dad's Cube",
                             "role": "keyholder",
-                            "monitoringLevel": "full",
                             "state": "available",
-                            "requiresRecoveryPassword": false
+                            "availableTiers": ["descriptor", "seed"]
                         },
                         {
                             "cubeId": 8,
                             "ownerLabel": "Mum's Vault",
                             "role": "keyholder",
-                            "monitoringLevel": "heartbeat",
                             "state": "approaching",
-                            "requiresRecoveryPassword": true
+                            "availableTiers": ["descriptor"]
                         },
                         {
                             "cubeId": 9,
-                            "ownerLabel": "Open but pw-gated",
+                            "ownerLabel": "Open, keyholder, nothing escrowed for me",
                             "role": "keyholder",
-                            "monitoringLevel": "heartbeat",
                             "state": "reminding",
-                            "requiresRecoveryPassword": true
+                            "availableTiers": []
                         },
                         {
                             "cubeId": 10,
                             "ownerLabel": "Open but beneficiary",
                             "role": "beneficiary",
-                            "monitoringLevel": "full",
                             "state": "available",
-                            "requiresRecoveryPassword": false
+                            "availableTiers": []
                         }
                     ],
                     "error": null
@@ -414,26 +410,26 @@ mod integration_tests {
         mock.assert();
         assert_eq!(rows.len(), 4);
 
-        // Row 0: Full + available + keyholder → open + actionable now.
+        // Row 0: Full-Cube escrow + available + keyholder → actionable now.
         assert_eq!(rows[0].cube_id, 7);
-        assert_eq!(rows[0].monitoring_level, VaultMonitoringLevel::Full);
         assert_eq!(rows[0].recovery_state(), RecoveryState::Open);
         assert!(rows[0].is_keyholder());
+        assert!(rows[0].is_full_cube());
         assert!(rows[0].is_recoverable_now());
 
-        // Row 1: Heartbeat + approaching → not open, not actionable.
+        // Row 1: Vault-only escrow but approaching → not open, not actionable.
         assert_eq!(rows[1].recovery_state(), RecoveryState::Approaching);
+        assert!(rows[1].has_descriptor_tier());
         assert!(!rows[1].is_recoverable_now());
-        assert!(rows[1].requires_recovery_password);
 
-        // Row 2: open (`reminding`) but password-required → NOT actionable in
-        // v1 (deferred to COIN-375), even though the window is open.
+        // Row 2: open (`reminding`) + keyholder, but nothing escrowed for this
+        // caller → NOT actionable (there's nothing they can decrypt).
         assert_eq!(rows[2].recovery_state(), RecoveryState::Open);
+        assert!(!rows[2].has_descriptor_tier());
         assert!(!rows[2].is_recoverable_now());
 
-        // Row 3: Full + available but the caller is a beneficiary → open, yet
-        // NOT actionable: the descriptor pull-down is keyholder-only (the
-        // release endpoint 403s non-keyholders).
+        // Row 3: open but the caller is a beneficiary → NOT actionable: the
+        // release endpoint serves envelopes only to keyholders.
         assert_eq!(rows[3].recovery_state(), RecoveryState::Open);
         assert!(!rows[3].is_keyholder());
         assert!(!rows[3].is_recoverable_now());

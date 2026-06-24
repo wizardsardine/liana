@@ -22,7 +22,9 @@
 
 use std::sync::Arc;
 
-use coincube_core::{descriptors::CoincubeDescriptor, signer::MasterSigner};
+use coincube_core::{
+    descriptors::CoincubeDescriptor, miniscript::bitcoin::Network, signer::MasterSigner,
+};
 use coincube_ui::{component::form, widget::Element};
 use iced::Task;
 use zeroize::Zeroizing;
@@ -323,6 +325,59 @@ fn validate_blobs_match_selected(
         }
     }
     Ok(())
+}
+
+/// The installer-context material derived from a decrypted kit: the parsed
+/// descriptor (any scope) and, for `Full`, the seed signer. Shared by the owner
+/// Recovery-Kit restore and the heir inheritance restore (`InheritanceRestoreStep`)
+/// so the descriptor-parse + seed-derive path is audited in one place.
+pub(crate) struct StagedRestore {
+    pub descriptor: Option<CoincubeDescriptor>,
+    pub signer: Option<Signer>,
+}
+
+/// Convert decrypted kit halves into [`StagedRestore`], applying the scope's
+/// all-or-nothing discipline (Full needs the seed; DescriptorOnly ignores any
+/// seed half). Returns a user-visible error string on descriptor-parse or
+/// signer-derive failure; the caller surfaces it and leaves its context
+/// untouched. Pure (no context mutation) so it's unit-testable in isolation and
+/// reusable across both restore sources.
+pub(crate) fn stage_restore(
+    network: Network,
+    scope: RestoreScope,
+    seed: Option<&SeedBlob>,
+    descriptor: Option<&DescriptorBlob>,
+) -> Result<StagedRestore, String> {
+    // Parse the descriptor into an owned value first; an error here aborts
+    // before we touch any seed, so a partial result is never committed.
+    let descriptor = match descriptor {
+        Some(desc_blob) => Some(
+            desc_blob
+                .vault
+                .descriptor
+                .parse::<CoincubeDescriptor>()
+                .map_err(|e| {
+                    format!(
+                        "Recovery Kit descriptor failed to parse: {}. Kit may be from a newer \
+                         client version.",
+                        e
+                    )
+                })?,
+        ),
+        None => None,
+    };
+
+    // Derive the seed signer (Full only). DescriptorOnly ignores any seed half.
+    let signer = if matches!(scope, RestoreScope::Full) {
+        let seed_blob = seed.ok_or_else(|| "Seed blob missing from decrypted kit.".to_string())?;
+        let master = MasterSigner::from_str(network, &seed_blob.mnemonic.phrase)
+            .map_err(|e| format!("Restored mnemonic failed to derive a signer: {}", e))?;
+        Some(Signer::new(master))
+    } else {
+        None
+    };
+
+    Ok(StagedRestore { descriptor, signer })
 }
 
 /// Does `c` carry the specific encrypted half this restore flow
@@ -714,66 +769,32 @@ impl Step for RecoveryKitRestoreStep {
             return false;
         };
 
-        // Stage 1 — parse the descriptor into a local. If this fails
-        // we transition to `Phase::Error` and bail without touching
-        // `ctx`. Keeping the parse result in a local instead of
-        // writing it straight through to `ctx.descriptor` means a
-        // subsequent seed-derivation failure won't leave a partially-
-        // applied context behind, which would survive until the user
-        // re-enters the step and could be picked up by a downstream
-        // step that wasn't expecting a populated `ctx.descriptor`.
-        let staged_descriptor: Option<CoincubeDescriptor> = match descriptor {
-            Some(desc_blob) => match desc_blob.vault.descriptor.parse::<CoincubeDescriptor>() {
-                Ok(parsed) => Some(parsed),
-                Err(e) => {
-                    self.set_phase(Phase::Error {
-                        message: format!(
-                            "Recovery Kit descriptor failed to parse: {}. Kit may be from a \
-                             newer client version.",
-                            e
-                        ),
-                    });
-                    return false;
-                }
-            },
-            None => None,
-        };
-
-        // Stage 2 — derive the seed signer into a local (W13 only).
-        // Same all-or-nothing discipline as stage 1.
-        let staged_signer: Option<Signer> = if matches!(self.scope, RestoreScope::Full) {
-            let Some(seed_blob) = seed else {
-                // `Ready` phase should have had the seed already —
-                // defensive check in case the phase was populated
-                // with a DescriptorOnly kit.
-                self.set_phase(Phase::Error {
-                    message: "Seed blob missing from decrypted kit.".to_string(),
-                });
+        // Stage 1+2 — parse the descriptor and derive the seed signer (Full
+        // only) into locals via the shared [`stage_restore`] seam. All-or-
+        // nothing: any failure transitions to `Phase::Error` and bails without
+        // touching `ctx`, so a partial result never survives into a later step.
+        let staged = match stage_restore(
+            ctx.bitcoin_config.network,
+            self.scope,
+            seed.as_ref(),
+            descriptor.as_ref(),
+        ) {
+            Ok(staged) => staged,
+            Err(message) => {
+                self.set_phase(Phase::Error { message });
                 return false;
-            };
-            match MasterSigner::from_str(ctx.bitcoin_config.network, &seed_blob.mnemonic.phrase) {
-                Ok(master) => Some(Signer::new(master)),
-                Err(e) => {
-                    self.set_phase(Phase::Error {
-                        message: format!("Restored mnemonic failed to derive a signer: {}", e),
-                    });
-                    return false;
-                }
             }
-        } else {
-            None
         };
 
-        // Stage 3 — commit both results atomically. We only reach
-        // here after every fallible step above succeeded, so `ctx`
-        // transitions from "nothing applied" to "fully applied" in
-        // one go. `Arc::new` happens here rather than at staging so
-        // we don't allocate the refcounted handle for a signer that
-        // ultimately gets dropped on the error path.
-        if let Some(d) = staged_descriptor {
+        // Stage 3 — commit both results atomically. We only reach here after
+        // every fallible step above succeeded, so `ctx` transitions from
+        // "nothing applied" to "fully applied" in one go. `Arc::new` happens
+        // here rather than at staging so we don't allocate the refcounted handle
+        // for a signer that ultimately gets dropped on the error path.
+        if let Some(d) = staged.descriptor {
             ctx.descriptor = Some(d);
         }
-        if let Some(s) = staged_signer {
+        if let Some(s) = staged.signer {
             ctx.recovered_signer = Some(Arc::new(s));
         }
 
@@ -1180,5 +1201,91 @@ mod tests {
             Phase::CubePicker { cubes, .. } => assert!(cubes.is_empty()),
             other => panic!("expected CubePicker, got {:?}", other),
         }
+    }
+
+    // ── stage_restore: the shared DecryptedKit → installer-context seam ──
+    // Reused by both the owner CRK restore (apply, above) and the heir
+    // inheritance restore. These pin the scope discipline + error mapping
+    // without standing up a full installer Context.
+
+    /// A SeedBlob carrying a specific (valid) BIP39 phrase.
+    fn seed_blob_with(phrase: &str) -> SeedBlob {
+        use crate::services::recovery::{SeedBlobCube, SeedBlobMnemonic};
+        SeedBlob {
+            version: crate::services::recovery::plaintext::BLOB_VERSION,
+            cube: SeedBlobCube {
+                uuid: "uuid".to_string(),
+                name: "n".to_string(),
+                network: "bitcoin".to_string(),
+                created_at: "2026-04-23T00:00:00Z".to_string(),
+                lightning_address: None,
+            },
+            mnemonic: SeedBlobMnemonic {
+                phrase: phrase.to_string(),
+                language: "en".to_string(),
+            },
+        }
+    }
+
+    const VALID_MNEMONIC: &str =
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+    #[test]
+    fn stage_restore_descriptor_only_with_nothing_is_empty() {
+        let staged =
+            stage_restore(Network::Bitcoin, RestoreScope::DescriptorOnly, None, None).unwrap();
+        assert!(staged.descriptor.is_none());
+        assert!(staged.signer.is_none());
+    }
+
+    #[test]
+    fn stage_restore_full_without_seed_errors() {
+        // `StagedRestore` holds a `Signer` (no `Debug`), so match instead of
+        // `unwrap_err`.
+        let Err(err) = stage_restore(Network::Bitcoin, RestoreScope::Full, None, None) else {
+            panic!("expected an error");
+        };
+        assert!(err.contains("Seed blob missing"), "got: {}", err);
+    }
+
+    #[test]
+    fn stage_restore_unparseable_descriptor_errors() {
+        // `descriptor_blob_for` uses the placeholder descriptor "d", which is
+        // not a valid CoincubeDescriptor → parse failure.
+        let d = descriptor_blob_for("uuid", "bitcoin");
+        let Err(err) = stage_restore(
+            Network::Bitcoin,
+            RestoreScope::DescriptorOnly,
+            None,
+            Some(&d),
+        ) else {
+            panic!("expected an error");
+        };
+        assert!(err.contains("descriptor failed to parse"), "got: {}", err);
+    }
+
+    #[test]
+    fn stage_restore_full_derives_signer_from_valid_mnemonic() {
+        let seed = seed_blob_with(VALID_MNEMONIC);
+        let staged =
+            stage_restore(Network::Bitcoin, RestoreScope::Full, Some(&seed), None).unwrap();
+        assert!(staged.signer.is_some(), "Full scope must derive a signer");
+        assert!(staged.descriptor.is_none());
+    }
+
+    #[test]
+    fn stage_restore_descriptor_only_ignores_present_seed() {
+        let seed = seed_blob_with(VALID_MNEMONIC);
+        let staged = stage_restore(
+            Network::Bitcoin,
+            RestoreScope::DescriptorOnly,
+            Some(&seed),
+            None,
+        )
+        .unwrap();
+        assert!(
+            staged.signer.is_none(),
+            "DescriptorOnly must ignore the seed half"
+        );
     }
 }

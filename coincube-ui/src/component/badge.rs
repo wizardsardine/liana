@@ -89,6 +89,13 @@ pub fn spent<'a, T: 'a>() -> Container<'a, T> {
     )
 }
 
+pub fn beta<'a, T: 'a>() -> Container<'a, T> {
+    badge_pill(
+        "  Beta  ",
+        "This feature is in beta — review carefully and expect changes.",
+    )
+}
+
 pub fn badge_pill<'a, T: 'a>(label: &'a str, tooltip: &'a str) -> Container<'a, T> {
     Container::new({
         tooltip::Tooltip::new(
