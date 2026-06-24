@@ -14,7 +14,6 @@
 //! The prepared response is held and passed straight to `send_payment`
 //! on confirm, so the executed quote is exactly the reviewed one.
 
-use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -421,7 +420,6 @@ impl LiquidSwap {
 
 impl State for LiquidSwap {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
         let swap_view = view::liquid::liquid_swap_view(view::liquid::LiquidSwapConfig {
             phase: self.phase,
             from_asset: self.from_asset,
@@ -434,8 +432,6 @@ impl State for LiquidSwap {
             quote_remaining: self.quote_remaining,
             quote_actionable: self.quote_actionable(),
             is_sending: self.is_sending,
-            fiat_converter,
-            bitcoin_unit: cache.bitcoin_unit,
             error: self.error.as_deref(),
             sent_amount_display: &self.sent_amount_display,
             sent_quote: &self.sent_quote,
@@ -575,6 +571,12 @@ impl State for LiquidSwap {
                     }
                 }
                 view::LiquidSwapMessage::Confirm => {
+                    // Duress (I6): no swap-specific guard is needed here. The
+                    // confirm path is only reachable inside `State::App`, which
+                    // the tab shell wholly replaces with `State::DuressActive`
+                    // while duress is active (see `gui/tab.rs`). So this
+                    // `send_payment` is structurally unreachable under duress,
+                    // exactly like the Send path it shares.
                     if self.phase != SwapPhase::Review || self.is_sending {
                         return Task::none();
                     }

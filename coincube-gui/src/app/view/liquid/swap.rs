@@ -8,7 +8,7 @@
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
-    component::{amount::*, button, form, text::*},
+    component::{button, form, text::*},
     icon::arrow_down_up_icon,
     theme,
     widget::{Column, Container, Element, Row},
@@ -21,7 +21,7 @@ use iced::{
 use crate::app::breez_liquid::assets::{format_asset_amount, AssetKind};
 use crate::app::state::liquid::send::SendAsset;
 use crate::app::state::liquid::swap::{SwapPhase, SwapQuote};
-use crate::app::view::{FiatAmountConverter, LiquidSwapMessage};
+use crate::app::view::LiquidSwapMessage;
 
 /// Inputs the Swap view needs to render.
 pub struct LiquidSwapConfig<'a> {
@@ -36,8 +36,6 @@ pub struct LiquidSwapConfig<'a> {
     pub quote_remaining: u32,
     pub quote_actionable: bool,
     pub is_sending: bool,
-    pub fiat_converter: Option<FiatAmountConverter>,
-    pub bitcoin_unit: BitcoinDisplayUnit,
     pub error: Option<&'a str>,
     pub sent_amount_display: &'a str,
     pub sent_quote: &'a coincube_ui::component::quote_display::Quote,
