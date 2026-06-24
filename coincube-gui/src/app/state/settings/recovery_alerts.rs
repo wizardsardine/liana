@@ -171,6 +171,23 @@ impl RecoveryAlerts {
             }
         }
     }
+
+    /// Fold a successful `LoadStatus` into state.
+    ///
+    /// The monitoring status reports on/off (`level`) — **not** which escrow
+    /// tier. So we reset our session-tracked tier on every (re)load: the status
+    /// can't confirm it, and another device may have changed it (e.g. upgraded
+    /// Vault-only → Full-Cube) while monitoring stayed on. [`Self::tier`] then
+    /// reports an on vault as `None` ("on, tier unknown") until *this* device
+    /// performs an enrol/disable, so the card never re-asserts a stale tier (and
+    /// its false seed-escrow copy) it can't actually confirm.
+    fn apply_status_loaded(&mut self, vault_id: u64, status: VaultMonitoringStatus) {
+        self.vault_id = Some(vault_id);
+        self.status = Some(status);
+        self.no_vault = false;
+        self.error = None;
+        self.tier = EscrowTier::Off;
+    }
 }
 
 /// Wrap a [`RecoveryAlertsMessage`] in the settings-message envelope.
@@ -266,21 +283,10 @@ pub fn update(
             ra.loaded_once = true;
             match res {
                 Ok((vid, status)) => {
-                    let level_off = matches!(status.level, VaultMonitoringLevel::Off);
-                    ra.vault_id = Some(vid);
-                    ra.status = Some(status);
-                    ra.no_vault = false;
-                    ra.error = None;
-                    // The monitoring status reports on/off, not which escrow
-                    // tier. Reconcile our tracked tier: clear it to Off when
-                    // monitoring is off; otherwise leave it untouched. We do NOT
-                    // guess a tier for an "on" vault we didn't enrol this
-                    // session — `tier()` reports that as `None` ("on, tier
-                    // unknown") so the card never asserts a tier (and false
-                    // seed-escrow copy) it can't actually confirm.
-                    if level_off {
-                        ra.tier = EscrowTier::Off;
-                    }
+                    // Cache the freshly-loaded status and reset our tracked tier
+                    // (the status confirms on/off only, not the tier — so we
+                    // never re-assert a tier we can't confirm). See the method.
+                    ra.apply_status_loaded(vid, status);
                 }
                 Err(e) => {
                     // A missing Connect vault (the cube has no vault yet, or a
@@ -753,5 +759,40 @@ mod tests {
         ra.apply_change(Err("network".to_string()), Some(EscrowTier::VaultOnly));
         assert!(!ra.awaiting_pin);
         assert_eq!(ra.error.as_deref(), Some("network"));
+    }
+
+    #[test]
+    fn reload_clears_stale_session_tier_for_on_vault() {
+        // This device thinks it's Full-Cube from an earlier enrol...
+        let mut ra = RecoveryAlerts::new();
+        ra.tier = EscrowTier::FullCube;
+        // ...but a reload only confirms monitoring is *on* (level), not the tier
+        // — another device may have changed it. The card must NOT keep asserting
+        // Full-Cube ("seed is escrowed"); it must report "on, tier unknown".
+        ra.apply_status_loaded(
+            7,
+            VaultMonitoringStatus {
+                level: VaultMonitoringLevel::Heartbeat,
+                ..VaultMonitoringStatus::default()
+            },
+        );
+        assert_eq!(ra.tier(), None);
+        assert_eq!(ra.vault_id, Some(7));
+        assert!(!ra.no_vault);
+    }
+
+    #[test]
+    fn reload_reports_off_when_monitoring_off() {
+        // A stale tracked tier must collapse to Off when the load says off.
+        let mut ra = RecoveryAlerts::new();
+        ra.tier = EscrowTier::FullCube;
+        ra.apply_status_loaded(
+            7,
+            VaultMonitoringStatus {
+                level: VaultMonitoringLevel::Off,
+                ..VaultMonitoringStatus::default()
+            },
+        );
+        assert_eq!(ra.tier(), Some(EscrowTier::Off));
     }
 }

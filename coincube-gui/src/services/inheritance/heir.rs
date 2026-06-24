@@ -228,7 +228,6 @@ mod tests {
     use crate::services::recovery::{
         DescriptorBlobCube, DescriptorBlobVault, SeedBlobCube, SeedBlobMnemonic,
     };
-    use base64::Engine;
     use coincube_core::miniscript::bitcoin::bip32::{ChildNumber, DerivationPath, Xpriv, Xpub};
     use coincube_core::miniscript::bitcoin::secp256k1::{PublicKey, Secp256k1};
     use coincube_core::miniscript::bitcoin::Network;
@@ -258,12 +257,9 @@ mod tests {
         let secp = Secp256k1::new();
         let child = ChildNumber::from_normal_idx(ENCRYPTION_CHILD_INDEX).unwrap();
         let child_sk = k.xpriv.derive_priv(&secp, &[child]).unwrap().private_key;
-        let eph_pk = PublicKey::from_slice(
-            &base64::engine::general_purpose::STANDARD
-                .decode(&wire.ephemeral_pubkey)
-                .unwrap(),
-        )
-        .unwrap();
+        // The wire encodes byte fields as lowercase hex (SPEC §5), matching
+        // production / `coincube-api` — decode the same way `wire_to_envelope` does.
+        let eph_pk = PublicKey::from_slice(&hex::decode(&wire.ephemeral_pubkey).unwrap()).unwrap();
         keychain_shared_key(&child_sk, &eph_pk)
     }
 
