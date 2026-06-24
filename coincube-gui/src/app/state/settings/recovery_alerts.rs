@@ -315,11 +315,20 @@ pub fn update(
                     };
                     ra.submitting = true;
                     ra.error = None;
+                    // Preserve the vault's current download policy across the
+                    // enrol (omitting it would reset to the server default).
+                    let download_policy = ra.download_policy();
                     Task::perform(
                         async move {
-                            enroll_escrow(&client, server_cube_id, descriptor_json, None)
-                                .await
-                                .map_err(|e| e.to_string())
+                            enroll_escrow(
+                                &client,
+                                server_cube_id,
+                                descriptor_json,
+                                None,
+                                download_policy,
+                            )
+                            .await
+                            .map_err(|e| e.to_string())
                         },
                         move |res| {
                             ra_msg(RecoveryAlertsMessage::ChangeResult(
@@ -401,6 +410,9 @@ pub fn update(
             ra.submitting = true;
             ra.awaiting_pin = false;
             ra.error = None;
+            // Preserve the vault's current download policy across the enrol
+            // (omitting it would reset to the server default).
+            let download_policy = ra.download_policy();
             Task::perform(
                 async move {
                     let seed_json = tokio::task::spawn_blocking(move || {
@@ -415,9 +427,15 @@ pub fn update(
                     })
                     .await
                     .map_err(|e| format!("PIN task failed: {}", e))??;
-                    enroll_escrow(&client, server_cube_id, descriptor_json, Some(seed_json))
-                        .await
-                        .map_err(|e| e.to_string())
+                    enroll_escrow(
+                        &client,
+                        server_cube_id,
+                        descriptor_json,
+                        Some(seed_json),
+                        download_policy,
+                    )
+                    .await
+                    .map_err(|e| e.to_string())
                 },
                 move |res| {
                     ra_msg(RecoveryAlertsMessage::ChangeResult(
