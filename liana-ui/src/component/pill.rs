@@ -303,6 +303,17 @@ pub fn path_always_available<'a, T: 'a>() -> Container<'a, T> {
     )
 }
 
+pub fn registered<'a, T: 'a>() -> Container<'a, T> {
+    pill_with_icon(
+        Some(crate::icon::check_icon().style(theme::text::success)),
+        "Registered",
+        "",
+        PillWidth::Shrink,
+        theme::pill::success,
+        true,
+    )
+}
+
 pub fn compact_metric<'a, T: 'a, L: Display>(
     text: L,
     style: fn(&Theme) -> Style,

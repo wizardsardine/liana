@@ -123,7 +123,7 @@ pub fn entry_organization<'a, M: Clone + 'a>(
 ) -> Element<'a, M> {
     list_entry_row(
         Some(badge::tile(Tile::Org).into()),
-        container_body(title, subtitle),
+        section_body(title, subtitle),
         trailing,
         None,
         EntryWidth::Standard,
@@ -131,10 +131,9 @@ pub fn entry_organization<'a, M: Clone + 'a>(
     )
 }
 
-/// Width of the delete-button slot on a login account row (also a spacer to align siblings).
-pub const ACCOUNT_DELETE_SLOT_WIDTH: f32 = 40.0;
-
-/// A login account row: the account entry (tile + email + chevron) followed by a delete button.
+/// A login account row: the account entry (tile + email + chevron) followed by a delete
+/// button. While `connecting`, the email is replaced by a centered "Connecting..." label
+/// and the row is inert (both buttons disabled).
 pub fn account_entry<'a, M: Clone + 'a>(
     email: impl Display,
     connecting: bool,
@@ -146,29 +145,32 @@ pub fn account_entry<'a, M: Clone + 'a>(
     } else {
         (on_select, on_delete)
     };
-    let entry = leaf_entry(
-        Tile::Account,
-        email,
-        None::<String>,
-        Some(
-            icon::chevron_right()
-                .size(18)
-                .style(theme::text::secondary)
-                .into(),
-        ),
+
+    let body: Element<'a, M> = if connecting {
+        text::new::b5_medium("Connecting...")
+            .width(Length::Fill)
+            .align_x(Horizontal::Center)
+            .into()
+    } else {
+        item_body(email, None::<String>)
+    };
+
+    let entry = list_entry_row(
+        Some(badge::tile(Tile::Account).into()),
+        body,
+        Some(entry_chevron()),
         None,
-        EntryWidth::Fill,
+        EntryWidth::Deletable,
         on_select,
     );
 
     row![
         entry,
-        Container::new(button::btn_remove(on_delete))
-            .center_x(Length::Fixed(ACCOUNT_DELETE_SLOT_WIDTH))
+        Container::new(button::btn_remove(on_delete)).center_x(button::ENTRY_DELETE_SLOT)
     ]
-    .spacing(10)
+    .spacing(button::ENTRY_DELETE_GAP)
     .align_y(Alignment::Center)
-    .width(Length::Fill)
+    .width(Length::Shrink)
     .into()
 }
 
@@ -260,20 +262,39 @@ pub fn entry_set_key<'a, M: Clone + 'a>(
 
 pub fn entry_register<'a, M: Clone + 'a>(
     status: EntryRegisterStatus,
-    title: impl Display,
-    subtitle: Option<impl Display>,
+    body: impl Into<Element<'a, M>>,
     trailing: Option<Element<'a, M>>,
+    enabled: bool,
     msg: Option<M>,
 ) -> Element<'a, M> {
-    leaf_entry(
-        Tile::Device,
-        title,
-        subtitle,
+    list_entry_row_with_enabled(
+        Some(badge::tile(Tile::Device).into()),
+        body,
         trailing,
         Some(register_accent(status)),
         EntryWidth::Standard,
+        enabled,
         msg,
     )
+}
+
+fn list_entry_row_with_enabled<'a, M: Clone + 'a>(
+    tile: Option<Element<'a, M>>,
+    body: impl Into<Element<'a, M>>,
+    trailing: Option<Element<'a, M>>,
+    accent: Option<ListEntryAccent>,
+    width: EntryWidth,
+    enabled: bool,
+    msg: Option<M>,
+) -> Element<'a, M> {
+    let body = Container::new(body).width(Length::Fill);
+    let trailing = trailing.map(|trailing| Container::new(trailing).align_y(Alignment::Center));
+    let content = row![tile, body, trailing]
+        .spacing(16)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+
+    button::list_entry_with_enabled(content, accent, width, enabled, msg)
 }
 
 pub fn entry_device_list<'a, M: Clone + 'a>(
@@ -357,7 +378,7 @@ fn leaf_entry<'a, M: Clone + 'a>(
 ) -> Element<'a, M> {
     list_entry_row(
         Some(badge::tile(tile).into()),
-        leaf_body(title, subtitle),
+        item_body(title, subtitle),
         trailing,
         accent,
         width,
@@ -365,14 +386,11 @@ fn leaf_entry<'a, M: Clone + 'a>(
     )
 }
 
-fn container_body<'a, M: 'a>(
-    title: impl Display,
-    subtitle: Option<impl Display>,
-) -> Element<'a, M> {
+fn section_body<'a, M: 'a>(title: impl Display, subtitle: Option<impl Display>) -> Element<'a, M> {
     body(text::new::h3_semi(title), subtitle)
 }
 
-fn leaf_body<'a, M: 'a>(title: impl Display, subtitle: Option<impl Display>) -> Element<'a, M> {
+fn item_body<'a, M: 'a>(title: impl Display, subtitle: Option<impl Display>) -> Element<'a, M> {
     body(text::new::b5_medium(title), subtitle)
 }
 
@@ -431,9 +449,9 @@ fn path_body<'a, M: 'a>(
         Container::new(caption(summary).style(theme::text::tertiary)).padding(iced::Padding {
             top: 2.0,
             ..iced::Padding::ZERO
-        })
+        }),
     ];
-    let trailing = Container::new(trailing.unwrap_or_else(|| Row::new().into()))
+    let trailing = Container::new(trailing.unwrap_or_else(|| row![].into()))
         .width(PATH_DELETE_SLOT)
         .align_x(Horizontal::Center)
         .align_y(Alignment::Center);
