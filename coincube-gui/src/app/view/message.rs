@@ -702,9 +702,11 @@ pub enum LiquidSendMessage {
     ),
 }
 
-/// Messages for the Liquid cross-asset Swap panel (PR 1: routing +
-/// entry points only — the quote engine and review/confirm flow land in
-/// later PRs and will extend this enum).
+/// Messages for the Liquid cross-asset Swap panel.
+///
+/// The input is the amount the user wants to *receive* (the `to` asset);
+/// the SideSwap quote returns the `from`-asset cost. See
+/// [`crate::app::state::liquid::swap`].
 #[derive(Debug, Clone)]
 pub enum LiquidSwapMessage {
     /// Balances loaded for the Swap screen.
@@ -716,6 +718,37 @@ pub enum LiquidSwapMessage {
     Error(String),
     /// Re-fetch balances (e.g. after an SDK sync).
     RefreshRequested,
+    /// Self-targeted Liquid receive address generated (or failed) — the
+    /// destination every cross-asset prepare/send is pointed at.
+    SelfAddressReady(Result<String, String>),
+    /// Receiver-amount input edited (decimal `to`-asset string).
+    AmountEdited(String),
+    /// Swap the `from` / `to` assets and invalidate the stale quote.
+    FlipAssets,
+    /// Pre-fill the max receivable amount from the current rate, netting
+    /// fees, then re-quote (resolves the "cross-asset max needs a quote"
+    /// gap noted in send.rs).
+    SwapAll,
+    /// Debounced trigger to request a quote. Carries the sequence number
+    /// it was issued for so stale debounce timers are discarded.
+    QuoteRequested(u64),
+    /// Quote (or quote error) returned. Tagged with the sequence number
+    /// so stale async responses are discarded.
+    QuoteReady(u64, Result<PrepareSendResponse, String>),
+    /// Advance from the input screen to the locked-quote review.
+    Continue,
+    /// Return from review to the input screen.
+    BackToInput,
+    /// Execute the locked quote via `send_payment`.
+    Confirm,
+    /// Re-fetch the quote (e.g. after expiry on the review screen).
+    RefreshQuote,
+    /// Per-second countdown tick for the quote-expiry timer.
+    QuoteTick,
+    /// Swap settled — transition to the success screen.
+    SwapComplete,
+    /// Dismiss the success screen and return to a fresh input.
+    Done,
 }
 
 #[derive(Debug, Clone)]
