@@ -34,10 +34,17 @@ impl fmt::Display for EciesError {
             Self::Cipher(e) => write!(f, "AES-GCM key init failed: {}", e),
             Self::Seal => write!(f, "AES-GCM seal failed"),
             Self::BadKeyOrCorrupt => {
-                write!(f, "recovery envelope could not be decrypted (wrong key or corrupted)")
+                write!(
+                    f,
+                    "recovery envelope could not be decrypted (wrong key or corrupted)"
+                )
             }
             Self::UnsupportedScheme(s) => {
-                write!(f, "recovery envelope scheme '{}' is not supported by this client", s)
+                write!(
+                    f,
+                    "recovery envelope scheme '{}' is not supported by this client",
+                    s
+                )
             }
             Self::MalformedEnvelope(field) => {
                 write!(f, "recovery envelope is malformed: {}", field)

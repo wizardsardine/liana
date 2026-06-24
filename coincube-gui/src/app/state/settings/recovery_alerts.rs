@@ -29,7 +29,7 @@ use crate::{
     services::recovery::{SeedBlob, SeedBlobCube, SeedBlobMnemonic, BLOB_VERSION},
 };
 
-use view::{RecoveryAlertsMessage, SettingsMessage};
+use view::{EscrowPin, RecoveryAlertsMessage, SettingsMessage};
 
 /// Settings-card state for Vault Recovery Alerts. Held on `SettingsState`.
 #[derive(Debug)]
@@ -53,19 +53,21 @@ pub struct RecoveryAlerts {
     /// True once at least one load has been attempted — lets the card pick
     /// the right loading vs. empty copy.
     pub loaded_once: bool,
-    /// The escrow tier currently applied (best-effort: the monitoring status
-    /// reports on/off, not which tier, so this tracks the last applied/loaded
-    /// tier). `Off` when escrow is off.
+    /// The escrow tier this session tracked from an enrol/disable we performed.
+    /// The owner monitoring status reports on/off, not which tier, so this is
+    /// the only tier signal we have — and it resets to `Off` on restart. `Off`
+    /// therefore means *either* escrow is off *or* it's on but untracked on this
+    /// device; use [`Self::tier`] (the method), which combines this with
+    /// [`Self::level`], to disambiguate (it returns `None` for the latter).
     pub tier: EscrowTier,
     /// True while the card is collecting the owner's PIN to unlock the seed for
     /// a Full-Cube enrolment (the only tier that escrows the seed).
     pub awaiting_pin: bool,
-    /// PIN digits being entered for a Full-Cube enrolment. Cleared as soon as
-    /// it's consumed (or the flow is cancelled).
-    pub pin: String,
-    /// The tier a change is in flight for, applied to `tier` only once the
-    /// server confirms (so a failed change doesn't mislabel the selector).
-    pub pending_tier: Option<EscrowTier>,
+    /// PIN digits being entered for a Full-Cube enrolment. Held in a redacting,
+    /// zeroizing [`EscrowPin`] so it never prints via the struct's `Debug` and
+    /// each keystroke's previous buffer is wiped. Cleared as soon as it's
+    /// consumed (or the flow is cancelled).
+    pub pin: EscrowPin,
 }
 
 impl Default for RecoveryAlerts {
@@ -88,19 +90,25 @@ impl RecoveryAlerts {
             loaded_once: false,
             tier: EscrowTier::Off,
             awaiting_pin: false,
-            pin: String::new(),
-            pending_tier: None,
+            pin: EscrowPin::default(),
         }
     }
 
-    /// Best-effort current tier for the view. `Off` when monitoring is off;
-    /// otherwise the last tier we applied/loaded (escrow status doesn't report
-    /// which tier, so a freshly-loaded "on" vault shows the tracked tier).
-    pub fn tier(&self) -> EscrowTier {
+    /// Current tier for the view and the no-op guards:
+    /// - `Some(Off)` when monitoring is off;
+    /// - `Some(tier)` when this session tracked the enrolled tier;
+    /// - `None` when escrow is on but this device doesn't know which tier —
+    ///   e.g. after a restart, since the owner monitoring status doesn't report
+    ///   it. We surface "on, tier unknown" rather than guess: guessing
+    ///   Vault-only for a Full-Cube vault would print a false claim (its copy
+    ///   says "the seed is never escrowed") for a seed that *is* escrowed.
+    pub fn tier(&self) -> Option<EscrowTier> {
         if matches!(self.level(), VaultMonitoringLevel::Off) {
-            EscrowTier::Off
+            Some(EscrowTier::Off)
+        } else if self.tier == EscrowTier::Off {
+            None
         } else {
-            self.tier
+            Some(self.tier)
         }
     }
 
@@ -221,14 +229,14 @@ pub fn update(
                     ra.no_vault = false;
                     ra.error = None;
                     // The monitoring status reports on/off, not which escrow
-                    // tier. Reconcile our tracked tier: Off when monitoring is
-                    // off; otherwise keep the tracked tier, defaulting an
-                    // unknown "on" vault to Vault-only (the safe minimum — we
-                    // never imply the seed is escrowed unless we set it).
+                    // tier. Reconcile our tracked tier: clear it to Off when
+                    // monitoring is off; otherwise leave it untouched. We do NOT
+                    // guess a tier for an "on" vault we didn't enrol this
+                    // session — `tier()` reports that as `None` ("on, tier
+                    // unknown") so the card never asserts a tier (and false
+                    // seed-escrow copy) it can't actually confirm.
                     if level_off {
                         ra.tier = EscrowTier::Off;
-                    } else if ra.tier == EscrowTier::Off {
-                        ra.tier = EscrowTier::VaultOnly;
                     }
                 }
                 Err(e) => {
@@ -259,7 +267,10 @@ pub fn update(
                 ra.error = Some("Recovery alerts require an Estate plan.".to_string());
                 return Task::none();
             }
-            if ra.tier() == tier {
+            // Skip a no-op re-select of the *known* current tier. When the tier
+            // is unknown on this device (`None`), any selection proceeds so the
+            // owner can confirm/change it.
+            if ra.tier() == Some(tier) {
                 return Task::none();
             }
             let (Some(client), Some(vault_id), Some(server_cube_id)) =
@@ -274,7 +285,6 @@ pub fn update(
                 EscrowTier::Off => {
                     ra.submitting = true;
                     ra.error = None;
-                    ra.pending_tier = Some(EscrowTier::Off);
                     Task::perform(
                         async move {
                             disable_escrow(&client, server_cube_id, vault_id)
@@ -282,7 +292,11 @@ pub fn update(
                                 .map_err(|e| e.to_string())
                         },
                         move |res| {
-                            ra_msg(RecoveryAlertsMessage::ChangeResult(res, session_generation))
+                            ra_msg(RecoveryAlertsMessage::ChangeResult(
+                                res,
+                                session_generation,
+                                Some(EscrowTier::Off),
+                            ))
                         },
                     )
                 }
@@ -301,15 +315,18 @@ pub fn update(
                     };
                     ra.submitting = true;
                     ra.error = None;
-                    ra.pending_tier = Some(EscrowTier::VaultOnly);
                     Task::perform(
                         async move {
-                            enroll_escrow(&client, server_cube_id, vault_id, descriptor_json, None)
+                            enroll_escrow(&client, server_cube_id, descriptor_json, None)
                                 .await
                                 .map_err(|e| e.to_string())
                         },
                         move |res| {
-                            ra_msg(RecoveryAlertsMessage::ChangeResult(res, session_generation))
+                            ra_msg(RecoveryAlertsMessage::ChangeResult(
+                                res,
+                                session_generation,
+                                Some(EscrowTier::VaultOnly),
+                            ))
                         },
                     )
                 }
@@ -345,7 +362,10 @@ pub fn update(
             if !entitled || !ra.awaiting_pin {
                 return Task::none();
             }
-            let (Some(client), Some(vault_id), Some(server_cube_id)) =
+            // We still require a resolved vault as a fast precondition, but
+            // `enroll_escrow` re-fetches and uses that vault's id, so we don't
+            // thread a (possibly stale) cached id through.
+            let (Some(client), Some(_), Some(server_cube_id)) =
                 (client, ra.vault_id, server_cube_id)
             else {
                 ra.error = Some(
@@ -363,7 +383,10 @@ pub fn update(
             // Unlock the seed with the entered PIN, build the seed blob, then
             // enrol descriptor + seed. The mnemonic is wrapped in `Zeroizing`
             // at the async boundary and never rides a message.
-            let pin = Zeroizing::new(std::mem::take(&mut ra.pin));
+            // `EscrowPin` is already zeroizing-backed; take it out (leaving an
+            // empty buffer) and let it drop inside the blocking task, wiping the
+            // PIN once the seed blob is built.
+            let pin = std::mem::take(&mut ra.pin);
             let seed_cube = match seed_blob_cube(cache, local_cube_id) {
                 Ok(c) => c,
                 Err(e) => {
@@ -378,25 +401,31 @@ pub fn update(
             ra.submitting = true;
             ra.awaiting_pin = false;
             ra.error = None;
-            ra.pending_tier = Some(EscrowTier::FullCube);
             Task::perform(
                 async move {
                     let seed_json = tokio::task::spawn_blocking(move || {
-                        build_seed_blob_json(&network_dir, &datadir, network, &local_cube_id, &pin, seed_cube)
+                        build_seed_blob_json(
+                            &network_dir,
+                            &datadir,
+                            network,
+                            &local_cube_id,
+                            pin.as_str(),
+                            seed_cube,
+                        )
                     })
                     .await
                     .map_err(|e| format!("PIN task failed: {}", e))??;
-                    enroll_escrow(
-                        &client,
-                        server_cube_id,
-                        vault_id,
-                        descriptor_json,
-                        Some(seed_json),
-                    )
-                    .await
-                    .map_err(|e| e.to_string())
+                    enroll_escrow(&client, server_cube_id, descriptor_json, Some(seed_json))
+                        .await
+                        .map_err(|e| e.to_string())
                 },
-                move |res| ra_msg(RecoveryAlertsMessage::ChangeResult(res, session_generation)),
+                move |res| {
+                    ra_msg(RecoveryAlertsMessage::ChangeResult(
+                        res,
+                        session_generation,
+                        Some(EscrowTier::FullCube),
+                    ))
+                },
             )
         }
         RecoveryAlertsMessage::SetDownloadPolicy(policy) => {
@@ -421,10 +450,19 @@ pub fn update(
                         .await
                         .map_err(|e| e.to_string())
                 },
-                move |res| ra_msg(RecoveryAlertsMessage::ChangeResult(res, session_generation)),
+                // A policy save carries no tier change (`None`) so its result
+                // never touches the tracked escrow tier — even if it resolves
+                // while a tier change is still in flight.
+                move |res| {
+                    ra_msg(RecoveryAlertsMessage::ChangeResult(
+                        res,
+                        session_generation,
+                        None,
+                    ))
+                },
             )
         }
-        RecoveryAlertsMessage::ChangeResult(res, gen) => {
+        RecoveryAlertsMessage::ChangeResult(res, gen, tier_change) => {
             // Drop a change that resolved after the session changed so a stale
             // result can't clobber a newer session's state.
             if gen != session_generation {
@@ -433,16 +471,16 @@ pub fn update(
             ra.submitting = false;
             match res {
                 Ok(status) => {
-                    // Apply the tier we just enrolled/disabled (tracked in
-                    // `pending_tier`) now that the server confirmed it.
-                    if let Some(t) = ra.pending_tier.take() {
+                    // Apply the tier this operation enrolled/disabled now that
+                    // the server confirmed it. `None` for a policy save, which
+                    // must never relabel the tier selector.
+                    if let Some(t) = tier_change {
                         ra.tier = t;
                     }
                     ra.status = Some(status);
                     ra.error = None;
                 }
                 Err(e) => {
-                    ra.pending_tier = None;
                     ra.error = Some(e);
                 }
             }
@@ -492,7 +530,9 @@ fn seed_blob_cube(cache: &Cache, local_cube_id: &str) -> Result<SeedBlobCube, St
 /// Verifies the PIN, unlocks the mnemonic, and serialises the full seed blob
 /// JSON for Full-Cube escrow. Runs on a blocking thread (Argon2 PIN verify +
 /// disk read). The mnemonic is wiped (`Zeroizing`) as soon as the phrase string
-/// is built.
+/// is built, and the serialised JSON — which itself contains the plaintext seed
+/// — is returned in a `Zeroizing` buffer so it's wiped once escrow sealing is
+/// done rather than lingering on the heap.
 fn build_seed_blob_json(
     network_dir: &crate::dir::NetworkDirectory,
     datadir: &std::path::Path,
@@ -500,7 +540,7 @@ fn build_seed_blob_json(
     local_cube_id: &str,
     pin: &str,
     cube: SeedBlobCube,
-) -> Result<Vec<u8>, String> {
+) -> Result<Zeroizing<Vec<u8>>, String> {
     let s =
         settings::Settings::from_file(network_dir).map_err(|_| "Failed to read settings file.")?;
     let cube_settings = s
@@ -524,5 +564,67 @@ fn build_seed_blob_json(
             language: "en".to_string(),
         },
     };
-    serde_json::to_vec(&blob).map_err(|e| format!("seed blob: {}", e))
+    serde_json::to_vec(&blob)
+        .map(Zeroizing::new)
+        .map_err(|e| format!("seed blob: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn monitoring_on() -> VaultMonitoringStatus {
+        VaultMonitoringStatus {
+            level: VaultMonitoringLevel::Heartbeat,
+            ..VaultMonitoringStatus::default()
+        }
+    }
+
+    #[test]
+    fn tier_is_off_when_monitoring_off() {
+        // No status loaded yet → level Off → tier is a confirmed Off.
+        assert_eq!(RecoveryAlerts::new().tier(), Some(EscrowTier::Off));
+    }
+
+    #[test]
+    fn tier_is_unknown_when_on_but_untracked() {
+        // Monitoring on but `tier` still at its default (e.g. fresh after a
+        // restart): we must report `None` ("on, tier unknown"), NOT guess
+        // Vault-only — guessing would render the false "the seed is never
+        // escrowed" copy for a vault that may be Full-Cube.
+        let mut ra = RecoveryAlerts::new();
+        ra.status = Some(monitoring_on());
+        assert_eq!(ra.tier(), None);
+    }
+
+    #[test]
+    fn tier_is_reported_when_on_and_tracked() {
+        // A tier we applied this session is reported as-is while monitoring is on.
+        let mut ra = RecoveryAlerts::new();
+        ra.status = Some(monitoring_on());
+        ra.tier = EscrowTier::FullCube;
+        assert_eq!(ra.tier(), Some(EscrowTier::FullCube));
+    }
+
+    #[test]
+    fn pin_is_redacted_in_debug_output() {
+        // Canary PIN unlikely to collide with any other field's Debug.
+        let mut ra = RecoveryAlerts::new();
+        ra.pin = EscrowPin::from("9173".to_string());
+
+        // The wrapper redacts itself...
+        assert_eq!(format!("{:?}", ra.pin), "EscrowPin(<redacted>)");
+        // ...so the struct's derived Debug can't leak the PIN.
+        let dump = format!("{:?}", ra);
+        assert!(!dump.contains("9173"), "PIN leaked in Debug: {}", dump);
+        assert!(dump.contains("<redacted>"));
+    }
+
+    #[test]
+    fn pin_clear_empties_the_buffer() {
+        let mut pin = EscrowPin::from("1234".to_string());
+        assert_eq!(pin.as_str(), "1234");
+        pin.clear();
+        assert_eq!(pin.as_str(), "");
+    }
 }

@@ -141,7 +141,10 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
         return card::simple(body).width(Length::Fill).into();
     }
 
+    // `None` = escrow is on but this device doesn't know which tier (e.g. after
+    // a restart). Escrow is "on" for anything that isn't a confirmed Off.
     let tier = ra.tier();
+    let is_on = !matches!(tier, Some(EscrowTier::Off));
     let busy = ra.submitting;
 
     // Inheritance escrow tier selector (ECIES pivot). Picking a tier turns the
@@ -150,7 +153,13 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
     // gone — COINCUBE never sees the descriptor or seed.
     let tier_row = Row::new()
         .spacing(8)
-        .push(tier_button("Off", EscrowTier::Off, tier, busy, ra.awaiting_pin))
+        .push(tier_button(
+            "Off",
+            EscrowTier::Off,
+            tier,
+            busy,
+            ra.awaiting_pin,
+        ))
         .push(tier_button(
             "Vault only",
             EscrowTier::VaultOnly,
@@ -167,8 +176,17 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
         ));
     body = body.push(tier_row);
 
-    // The honest trade-off copy for the selected tier.
-    body = body.push(text(tier_copy(tier)).size(13));
+    // The honest trade-off copy for the selected tier. While the PIN is being
+    // collected for a Full-Cube enrolment, `ra.tier()` still reports the prior
+    // tier (it only advances on a confirmed change) but the Full Cube button is
+    // already highlighted — show its copy to match (same condition the button
+    // uses for its highlight).
+    let display_tier = if ra.awaiting_pin {
+        Some(EscrowTier::FullCube)
+    } else {
+        tier
+    };
+    body = body.push(text(tier_copy(display_tier)).size(13));
 
     // Full-Cube re-confirms the PIN before exporting the seed into escrow.
     if ra.awaiting_pin {
@@ -177,12 +195,14 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
             text("Enter your PIN to include this Cube's seed in the encrypted escrow.").size(13),
         );
         body = body.push(
-            iced::widget::text_input("PIN", &ra.pin)
+            iced::widget::text_input("PIN", ra.pin.as_str())
                 .secure(true)
                 .padding(8)
                 .on_input(|s| {
-                    SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::EscrowPinChanged(s))
-                        .into()
+                    SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::EscrowPinChanged(
+                        s.into(),
+                    ))
+                    .into()
                 })
                 .on_submit(
                     SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::ConfirmFullCube).into(),
@@ -192,12 +212,16 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
             Row::new()
                 .spacing(8)
                 .push(
-                    button::primary(None, "Confirm").padding([8, 14]).on_press_maybe(
-                        (!busy).then_some(
-                            SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::ConfirmFullCube)
+                    button::primary(None, "Confirm")
+                        .padding([8, 14])
+                        .on_press_maybe(
+                            (!busy).then_some(
+                                SettingsMessage::RecoveryAlerts(
+                                    RecoveryAlertsMessage::ConfirmFullCube,
+                                )
                                 .into(),
+                            ),
                         ),
-                    ),
                 )
                 .push(
                     button::secondary(None, "Cancel")
@@ -211,7 +235,7 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
     }
 
     // Keyholder list + download policy only make sense when escrow is on.
-    if tier.is_on() {
+    if is_on {
         // Who would be notified.
         body = body.push(Space::new().height(Length::Fixed(4.0)));
         body = body.push(text("Keyholders who'd be notified").bold().size(14));
@@ -268,14 +292,15 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
 fn tier_button<'a>(
     label: &'static str,
     this: EscrowTier,
-    active: EscrowTier,
+    active: Option<EscrowTier>,
     busy: bool,
     awaiting_pin: bool,
 ) -> Element<'a, Message> {
-    let is_active = this == active || (awaiting_pin && this == EscrowTier::FullCube);
-    let on_press = (!busy && !is_active).then_some(
-        SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::SelectTier(this)).into(),
-    );
+    // `active == None` (tier on but unknown on this device) highlights nothing,
+    // leaving every tier pressable so the owner can confirm/change it.
+    let is_active = active == Some(this) || (awaiting_pin && this == EscrowTier::FullCube);
+    let on_press = (!busy && !is_active)
+        .then_some(SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::SelectTier(this)).into());
     if is_active {
         button::primary(None, label)
             .padding([8, 14])
@@ -316,19 +341,28 @@ fn policy_button<'a>(
 /// self-custody trust model demands it; see the ECIES decision record).
 /// Everything is encrypted to the keyholders' own keys: COINCUBE can read
 /// neither the descriptor nor the seed.
-fn tier_copy(tier: EscrowTier) -> &'static str {
+fn tier_copy(tier: Option<EscrowTier>) -> &'static str {
     match tier {
-        EscrowTier::Off => {
+        // Escrow is on, but this device didn't enrol it this session and the
+        // owner monitoring status doesn't report the tier — so we state that
+        // honestly rather than assert (and possibly mis-state) descriptor-only
+        // vs seed escrow.
+        None => {
+            "Recovery escrow is on, but this device can't tell which tier is active (it isn't \
+             reported after a restart). Reselect Vault only or Full Cube to confirm or change it, \
+             or Off to turn recovery off."
+        }
+        Some(EscrowTier::Off) => {
             "Off: heirs can't recover this Vault. No encrypted copy is kept and COINCUBE watches \
              nothing."
         }
-        EscrowTier::VaultOnly => {
+        Some(EscrowTier::VaultOnly) => {
             "Vault only: an encrypted copy of this Vault's descriptor is sealed to each \
              keyholder's own key — only they can open it, never COINCUBE. When the recovery \
              window opens, a keyholder recovers the watch-only Vault and sweeps the funds. The \
              seed is never escrowed."
         }
-        EscrowTier::FullCube => {
+        Some(EscrowTier::FullCube) => {
             "Full Cube: seals this Cube's seed AND descriptor to each keyholder's own key. A \
              keyholder can restore the entire Cube — Liquid, Spark and Vault. COINCUBE can never \
              read either; only the keyholder's key can. You'll re-confirm your PIN to include the \

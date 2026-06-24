@@ -185,6 +185,12 @@ pub enum RecoverVaultMessage {
     /// a fetch from a prior session (account switch, same cube) be dropped
     /// instead of painting its result onto the new session's row.
     Fetched(u64, Result<usize, String>, u64),
+    /// Heir clicked "Recover" on an actionable row — launch the installer's
+    /// inheritance-recovery flow (COIN-377 PR 3). `full_cube` selects the scope
+    /// (Full-Cube vs Vault-only). **Home intercepts this** and emits
+    /// `home::Message::Install(UserFlow::RecoverInheritedVault { .. })`; it is a
+    /// no-op inside this panel (the installer owns the decrypt + restore).
+    Launch { cube_id: u64, full_cube: bool },
 }
 
 impl RecoverVaultPanel {
@@ -307,6 +313,9 @@ impl RecoverVaultPanel {
                 self.active = Some((cube_id, status));
                 Task::none()
             }
+            // Home intercepts `Launch` before delegating here (it launches the
+            // installer flow), so reaching this arm is a no-op backstop.
+            RecoverVaultMessage::Launch { .. } => Task::none(),
         }
     }
 }
@@ -406,7 +415,10 @@ fn vault_row<'a>(
         match active {
             Some((id, status)) if *id == v.cube_id => recover_status_view(status),
             _ => btn::primary(None, recover_button_label(v))
-                .on_press(RecoverVaultMessage::Recover(v.cube_id))
+                .on_press(RecoverVaultMessage::Launch {
+                    cube_id: v.cube_id,
+                    full_cube: v.is_full_cube(),
+                })
                 .into(),
         }
     } else {
@@ -674,11 +686,7 @@ mod tests {
         // not paint its result onto cube 8's in-flight row.
         let mut panel = RecoverVaultPanel::new();
         panel.active = Some((8, RecoverStatus::Fetching));
-        let _ = panel.update(
-            RecoverVaultMessage::Fetched(7, Ok(1), 0),
-            None,
-            0,
-        );
+        let _ = panel.update(RecoverVaultMessage::Fetched(7, Ok(1), 0), None, 0);
         assert!(
             matches!(panel.active, Some((8, RecoverStatus::Fetching))),
             "stale cube-7 fetch must leave cube-8's row untouched, got {:?}",
@@ -694,11 +702,7 @@ mod tests {
         // would miss this; the generation check catches it.
         let mut panel = RecoverVaultPanel::new();
         panel.active = Some((7, RecoverStatus::Fetching));
-        let _ = panel.update(
-            RecoverVaultMessage::Fetched(7, Ok(1), 1),
-            None,
-            2,
-        );
+        let _ = panel.update(RecoverVaultMessage::Fetched(7, Ok(1), 1), None, 2);
         assert!(
             matches!(panel.active, Some((7, RecoverStatus::Fetching))),
             "stale-session fetch must not overwrite the new session's row, got {:?}",

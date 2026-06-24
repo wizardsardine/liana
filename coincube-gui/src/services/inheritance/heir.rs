@@ -9,12 +9,14 @@
 //! The seed (if any) is reconstructed only here, transiently, on the heir's
 //! desktop. Keychain never returns the seed or the recovery private key.
 
+use std::time::Duration;
+
 use super::ecies::ArtifactKind;
 use super::error::EciesError;
 use super::wire::wire_to_envelope;
-use super::{open_with_shared_key, SCHEME};
+use super::{open_with_shared_key, transport_keypair, unwrap_shared_key, SCHEME};
 use crate::services::coincube::InheritanceEnvelopeWire;
-use crate::services::connect::grpc::session::GrpcSessionClient;
+use crate::services::connect::grpc::session::{DecryptOutcome, GrpcSessionClient};
 use crate::services::recovery::{DecryptedKit, DescriptorBlob, SeedBlob, BLOB_VERSION};
 
 /// Length of the HKDF-derived symmetric key Keychain returns.
@@ -34,6 +36,12 @@ pub enum HeirDecryptError {
     /// Decrypted cleanly but the plaintext JSON wasn't a blob we understand
     /// (or a newer blob version this client must refuse).
     BlobParse(String),
+    /// The heir's Keychain declined the decrypt — approval denied, or the
+    /// heir's own account is under duress.
+    Rejected,
+    /// The decrypt request expired before the Keychain answered (TTL elapsed,
+    /// Keychain offline, or the local wait timed out).
+    Expired,
     /// The release returned no envelopes at all, or none of the kind a given
     /// restore needs (e.g. Full-Cube with no seed envelope).
     MissingMaterial,
@@ -48,6 +56,11 @@ impl std::fmt::Display for HeirDecryptError {
                 write!(f, "The recovery data couldn't be decrypted on this device.")
             }
             Self::BlobParse(m) => write!(f, "The recovery data wasn't recognised: {}", m),
+            Self::Rejected => write!(f, "The recovery was declined on the Keychain."),
+            Self::Expired => write!(
+                f,
+                "The recovery request expired before it was approved. Please try again."
+            ),
             Self::MissingMaterial => write!(f, "There's nothing escrowed for you to recover here."),
         }
     }
@@ -91,9 +104,16 @@ fn check_blob_version(kind: &str, seen: u8) -> Result<(), HeirDecryptError> {
 pub fn open_blob(
     wire: &InheritanceEnvelopeWire,
     shared_key: &[u8; SHARED_KEY_LEN],
+    cube_id: u64,
 ) -> Result<OpenedArtifact, HeirDecryptError> {
+    // The AAD binds the envelope to (kind, cube_id, keyholder_key_id) — SPEC §1.
+    // The server must have stamped the keyholder key id on the released row; a
+    // missing one means we can't rebuild the AAD, so fail closed.
+    let keyholder_key_id = wire.keyholder_key_id.ok_or_else(|| {
+        HeirDecryptError::Envelope("recovery envelope is missing keyholderKeyId".to_string())
+    })?;
     let env = wire_to_envelope(wire)?;
-    let pt = open_with_shared_key(shared_key, &env)?;
+    let pt = open_with_shared_key(shared_key, &env, cube_id, keyholder_key_id)?;
     match env.artifact_kind {
         ArtifactKind::Seed => {
             let blob: SeedBlob = serde_json::from_slice(&pt)
@@ -125,11 +145,13 @@ pub fn assemble(artifacts: Vec<OpenedArtifact>) -> DecryptedKit {
     DecryptedKit { seed, descriptor }
 }
 
-/// Full heir decrypt: for each envelope, ask the heir's Keychain (via the API
-/// relay) for `K`, then open + parse locally. Returns the assembled
-/// [`DecryptedKit`] for the existing restore machinery. The `grpc` client is
-/// the authenticated Connect SessionService client; `cube_id` selects the
-/// recovery key on the heir's Keychain.
+/// Full heir decrypt over the async Connect relay (SPEC-ecies-v1 §4 + §4b).
+/// Generates a per-recovery transport keypair, then for each envelope brokers a
+/// decrypt to the heir's Keychain (which wraps the symmetric key `K` to our
+/// transport pubkey), unwraps `K` locally, and opens + parses the envelope.
+/// Returns the assembled [`DecryptedKit`] for the existing restore machinery.
+/// `grpc` is the authenticated Connect SessionService client; `cube_id` selects
+/// the recovery key on the heir's Keychain and is bound into each envelope's AAD.
 pub async fn decrypt_envelopes(
     grpc: &mut GrpcSessionClient,
     cube_id: u64,
@@ -138,6 +160,11 @@ pub async fn decrypt_envelopes(
     if wires.is_empty() {
         return Err(HeirDecryptError::MissingMaterial);
     }
+    // Fresh transport keypair for this recovery — in memory only, never
+    // persisted. The Keychain wraps each `K` to its pubkey; we unwrap with the
+    // private scalar. Reused across the descriptor + seed requests; the
+    // per-request `request_id` keeps each wrap bound to its own request (§4b).
+    let transport = transport_keypair();
     let cube_id_str = cube_id.to_string();
     let mut artifacts = Vec::with_capacity(wires.len());
     for wire in wires {
@@ -148,41 +175,68 @@ pub async fn decrypt_envelopes(
                 wire.scheme
             )));
         }
-        let env = wire_to_envelope(wire)?;
-        let shared = grpc
-            .decrypt_inheritance_envelope(
-                cube_id_str.clone(),
-                env.ephemeral_pubkey.clone(),
-                env.derivation.clone(),
-            )
-            .await
-            .map_err(|s| HeirDecryptError::Keychain(s.message().to_string()))?;
-        if shared.len() != SHARED_KEY_LEN {
-            return Err(HeirDecryptError::Keychain(
-                "Keychain returned a key of the wrong length".into(),
-            ));
-        }
-        let mut key = [0u8; SHARED_KEY_LEN];
-        key.copy_from_slice(&shared);
-        artifacts.push(open_blob(wire, &key)?);
+        // 1. Broker the decrypt; 2–4. wait for the Keychain's wrapped key.
+        let request_id = uuid::Uuid::new_v4().to_string();
+        grpc.create_decrypt_request(
+            request_id.clone(),
+            cube_id_str.clone(),
+            wire.artifact_kind.clone(),
+            transport.public_key().to_vec(),
+        )
+        .await
+        .map_err(|s| HeirDecryptError::Keychain(s.message().to_string()))?;
+        let wrapped = await_wrapped_key(grpc, &request_id).await?;
+
+        // 5. Unwrap `K` with the transport key, then open + parse the envelope.
+        let k = unwrap_shared_key(&transport, &request_id, &wrapped)?;
+        artifacts.push(open_blob(wire, &k, cube_id)?);
     }
     Ok(assemble(artifacts))
+}
+
+/// Polls `GetDecryptResult` until the Keychain answers or the wait elapses. The
+/// Keychain step needs a human (biometric/PIN) approval, so the deadline is
+/// generous; the best-effort `decrypt_result` stream push (not yet wired into
+/// the realtime handler) will later let this resolve promptly instead of at the
+/// poll cadence.
+async fn await_wrapped_key(
+    grpc: &mut GrpcSessionClient,
+    request_id: &str,
+) -> Result<Vec<u8>, HeirDecryptError> {
+    const POLL_INTERVAL: Duration = Duration::from_secs(2);
+    const MAX_ATTEMPTS: u32 = 150; // ~5 minutes of human-approval headroom
+    for _ in 0..MAX_ATTEMPTS {
+        match grpc
+            .get_decrypt_result(request_id.to_string())
+            .await
+            .map_err(|s| HeirDecryptError::Keychain(s.message().to_string()))?
+        {
+            DecryptOutcome::Completed(wrapped) => return Ok(wrapped),
+            DecryptOutcome::Rejected => return Err(HeirDecryptError::Rejected),
+            DecryptOutcome::Expired => return Err(HeirDecryptError::Expired),
+            DecryptOutcome::Pending => tokio::time::sleep(POLL_INTERVAL).await,
+        }
+    }
+    Err(HeirDecryptError::Expired)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::inheritance::ecies::shared_key_from_ecdh;
+    use crate::services::inheritance::ecies::{keychain_shared_key, ENCRYPTION_CHILD_INDEX};
     use crate::services::inheritance::{build_escrow_set, KeyholderXpub};
     use crate::services::recovery::{
         DescriptorBlobCube, DescriptorBlobVault, SeedBlobCube, SeedBlobMnemonic,
     };
     use base64::Engine;
-    use coincube_core::miniscript::bitcoin::bip32::{DerivationPath, Xpriv, Xpub};
+    use coincube_core::miniscript::bitcoin::bip32::{ChildNumber, DerivationPath, Xpriv, Xpub};
     use coincube_core::miniscript::bitcoin::secp256k1::{PublicKey, Secp256k1};
     use coincube_core::miniscript::bitcoin::Network;
     use std::str::FromStr;
     use zeroize::Zeroizing;
+
+    // Connect cube id bound into the AAD; the open side must match the seal.
+    const CUBE: u64 = 1;
 
     struct Kh {
         xpub: Xpub,
@@ -198,17 +252,19 @@ mod tests {
         Kh { xpub, xpriv }
     }
 
+    /// Stands in for Keychain. The test xpriv is at the account level, so the
+    /// dedicated enc child is the single relative step `/7000`.
     fn recover_key(k: &Kh, wire: &InheritanceEnvelopeWire) -> Zeroizing<[u8; 32]> {
         let secp = Secp256k1::new();
-        let path = DerivationPath::from_str(&wire.derivation).unwrap();
-        let child_sk = k.xpriv.derive_priv(&secp, &path).unwrap().private_key;
+        let child = ChildNumber::from_normal_idx(ENCRYPTION_CHILD_INDEX).unwrap();
+        let child_sk = k.xpriv.derive_priv(&secp, &[child]).unwrap().private_key;
         let eph_pk = PublicKey::from_slice(
             &base64::engine::general_purpose::STANDARD
                 .decode(&wire.ephemeral_pubkey)
                 .unwrap(),
         )
         .unwrap();
-        shared_key_from_ecdh(&eph_pk, &child_sk)
+        keychain_shared_key(&child_sk, &eph_pk)
     }
 
     fn sample_seed_blob() -> SeedBlob {
@@ -254,18 +310,19 @@ mod tests {
         let khs = vec![KeyholderXpub {
             key_id: 5,
             xpub: heir.xpub,
+            account_derivation: "m/48'/0'/0'/2'".to_string(),
         }];
         let descriptor_json = serde_json::to_vec(&sample_descriptor_blob()).unwrap();
         let seed_json = serde_json::to_vec(&sample_seed_blob()).unwrap();
 
-        let set = build_escrow_set(&khs, &descriptor_json, Some(&seed_json)).unwrap();
+        let set = build_escrow_set(&khs, CUBE, &descriptor_json, Some(&seed_json)).unwrap();
 
         let opened: Vec<OpenedArtifact> = set
             .iter()
             .map(|w| {
                 let heir2 = kh(b"heir-full-cube-seed-vector-0000000000000000");
                 let k = recover_key(&heir2, w);
-                open_blob(w, &k).unwrap()
+                open_blob(w, &k, CUBE).unwrap()
             })
             .collect();
 
@@ -283,13 +340,14 @@ mod tests {
         let khs = vec![KeyholderXpub {
             key_id: 7,
             xpub: heir.xpub,
+            account_derivation: "m/48'/0'/0'/2'".to_string(),
         }];
         let descriptor_json = serde_json::to_vec(&sample_descriptor_blob()).unwrap();
-        let set = build_escrow_set(&khs, &descriptor_json, None).unwrap();
+        let set = build_escrow_set(&khs, CUBE, &descriptor_json, None).unwrap();
 
         let heir2 = kh(b"heir-vault-only-seed-vector-000000000000000");
         let k = recover_key(&heir2, &set[0]);
-        let kit = assemble(vec![open_blob(&set[0], &k).unwrap()]);
+        let kit = assemble(vec![open_blob(&set[0], &k, CUBE).unwrap()]);
         assert!(kit.descriptor.is_some());
         assert!(kit.seed.is_none());
     }
@@ -302,13 +360,14 @@ mod tests {
         let khs = vec![KeyholderXpub {
             key_id: 1,
             xpub: owner_heir.xpub,
+            account_derivation: "m/48'/0'/0'/2'".to_string(),
         }];
         let descriptor_json = serde_json::to_vec(&sample_descriptor_blob()).unwrap();
-        let set = build_escrow_set(&khs, &descriptor_json, None).unwrap();
+        let set = build_escrow_set(&khs, CUBE, &descriptor_json, None).unwrap();
 
         let wrong = recover_key(&attacker, &set[0]);
         assert!(matches!(
-            open_blob(&set[0], &wrong),
+            open_blob(&set[0], &wrong, CUBE),
             Err(HeirDecryptError::BadKeyOrCorrupt)
         ));
     }
@@ -320,16 +379,17 @@ mod tests {
         let khs = vec![KeyholderXpub {
             key_id: 1,
             xpub: heir.xpub,
+            account_derivation: "m/48'/0'/0'/2'".to_string(),
         }];
         let mut blob = sample_descriptor_blob();
         blob.version = BLOB_VERSION + 1;
         let descriptor_json = serde_json::to_vec(&blob).unwrap();
-        let set = build_escrow_set(&khs, &descriptor_json, None).unwrap();
+        let set = build_escrow_set(&khs, CUBE, &descriptor_json, None).unwrap();
 
         let heir2 = kh(b"version-heir-seed-vector-00000000000000000");
         let k = recover_key(&heir2, &set[0]);
         assert!(matches!(
-            open_blob(&set[0], &k),
+            open_blob(&set[0], &k, CUBE),
             Err(HeirDecryptError::BlobParse(_))
         ));
     }

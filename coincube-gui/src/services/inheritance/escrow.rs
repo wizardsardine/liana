@@ -9,14 +9,12 @@
 
 use std::str::FromStr;
 
-use coincube_core::miniscript::bitcoin::bip32::{DerivationPath, Xpub};
+use coincube_core::miniscript::bitcoin::bip32::Xpub;
 
-use super::ecies::{seal_to_xpub, ArtifactKind, ENCRYPTION_CHILD_DERIVATION};
+use super::ecies::{seal_to_xpub, ArtifactKind, ENCRYPTION_CHILD_INDEX};
 use super::error::EciesError;
 use super::wire::envelope_to_wire;
-use crate::services::coincube::{
-    ConnectVaultResponse, InheritanceEnvelopeWire, VaultMemberRole,
-};
+use crate::services::coincube::{ConnectVaultResponse, InheritanceEnvelopeWire, VaultMemberRole};
 
 /// The owner's chosen escrow tier for a Vault (the single selector decided for
 /// the ECIES pivot). Heartbeat monitoring (the server-blind release gate) is on
@@ -50,6 +48,10 @@ impl EscrowTier {
 pub struct KeyholderXpub {
     pub key_id: u64,
     pub xpub: Xpub,
+    /// The keyholder's registered account derivation path (`models.Key
+    /// .DerivationPath`). The envelope's full enc-child path is this + `/7000`
+    /// (SPEC §2), so Keychain can derive the matching private child from root.
+    pub account_derivation: String,
 }
 
 /// Errors from building the escrow set.
@@ -115,6 +117,7 @@ pub fn keyholders_from_vault(
         out.push(KeyholderXpub {
             key_id: key.id,
             xpub,
+            account_derivation: key.derivation_path.clone(),
         });
     }
     if out.is_empty() {
@@ -131,23 +134,39 @@ pub fn keyholders_from_vault(
 ///
 /// `seed_json` must be `Some` iff `tier.includes_seed()`. Returns
 /// `2 * keyholders` envelopes for Full-Cube, `keyholders` for Vault-only.
+/// `cube_id` is the Connect vault's cube id, bound into each envelope's AAD
+/// (SPEC §1) so a relayed envelope can't be re-targeted at another cube.
 pub fn build_escrow_set(
     keyholders: &[KeyholderXpub],
+    cube_id: u64,
     descriptor_json: &[u8],
     seed_json: Option<&[u8]>,
 ) -> Result<Vec<InheritanceEnvelopeWire>, EscrowError> {
-    // The constant is a fixed non-hardened path; parse once.
-    let derivation = DerivationPath::from_str(ENCRYPTION_CHILD_DERIVATION)
-        .expect("ENCRYPTION_CHILD_DERIVATION is a valid non-hardened path");
-
-    let mut envelopes = Vec::with_capacity(keyholders.len() * if seed_json.is_some() { 2 } else { 1 });
+    let mut envelopes =
+        Vec::with_capacity(keyholders.len() * if seed_json.is_some() { 2 } else { 1 });
     for kh in keyholders {
-        let descriptor_env =
-            seal_to_xpub(&kh.xpub, &derivation, ArtifactKind::Descriptor, descriptor_json)?;
+        // Full path from the seed root to the dedicated enc child (SPEC §2),
+        // stored in the envelope so Keychain derives the matching `d`.
+        let full_derivation = format!("{}/{}", kh.account_derivation, ENCRYPTION_CHILD_INDEX);
+        let descriptor_env = seal_to_xpub(
+            &kh.xpub,
+            &full_derivation,
+            ArtifactKind::Descriptor,
+            cube_id,
+            kh.key_id,
+            descriptor_json,
+        )?;
         envelopes.push(envelope_to_wire(&descriptor_env, kh.key_id));
 
         if let Some(seed) = seed_json {
-            let seed_env = seal_to_xpub(&kh.xpub, &derivation, ArtifactKind::Seed, seed)?;
+            let seed_env = seal_to_xpub(
+                &kh.xpub,
+                &full_derivation,
+                ArtifactKind::Seed,
+                cube_id,
+                kh.key_id,
+                seed,
+            )?;
             envelopes.push(envelope_to_wire(&seed_env, kh.key_id));
         }
     }
@@ -158,12 +177,15 @@ pub fn build_escrow_set(
 mod tests {
     use super::*;
     use crate::services::coincube::{VaultMemberKeySummary, VaultMemberResponse, VaultStatus};
-    use crate::services::inheritance::ecies::shared_key_from_ecdh;
+    use crate::services::inheritance::ecies::keychain_shared_key;
     use crate::services::inheritance::{open_with_shared_key, wire_to_envelope};
-    use coincube_core::miniscript::bitcoin::bip32::Xpriv;
+    use coincube_core::miniscript::bitcoin::bip32::{ChildNumber, DerivationPath, Xpriv};
     use coincube_core::miniscript::bitcoin::secp256k1::{PublicKey, Secp256k1};
     use coincube_core::miniscript::bitcoin::Network;
     use zeroize::Zeroizing;
+
+    // Connect cube id bound into the AAD; the open side must match the seal.
+    const CUBE: u64 = 1;
 
     /// A test keyholder: account xpub (registered) + account xpriv (Keychain).
     struct TestKeyholder {
@@ -184,17 +206,23 @@ mod tests {
     }
 
     /// Recompute `K` the way the heir's Keychain would, to open an envelope.
+    /// The test keyholder's xpriv is at the account level, so it derives the
+    /// dedicated enc child by the single relative step `/7000`.
     fn recover_key(kh: &TestKeyholder, wire: &InheritanceEnvelopeWire) -> Zeroizing<[u8; 32]> {
         let secp = Secp256k1::new();
-        let path = DerivationPath::from_str(&wire.derivation).unwrap();
-        let child_sk = kh.account_xpriv.derive_priv(&secp, &path).unwrap().private_key;
+        let child = ChildNumber::from_normal_idx(ENCRYPTION_CHILD_INDEX).unwrap();
+        let child_sk = kh
+            .account_xpriv
+            .derive_priv(&secp, &[child])
+            .unwrap()
+            .private_key;
         let eph_pk = PublicKey::from_slice(
             &base64::engine::general_purpose::STANDARD
                 .decode(&wire.ephemeral_pubkey)
                 .unwrap(),
         )
         .unwrap();
-        shared_key_from_ecdh(&eph_pk, &child_sk)
+        keychain_shared_key(&child_sk, &eph_pk)
     }
 
     fn member(role: VaultMemberRole, key: Option<VaultMemberKeySummary>) -> VaultMemberResponse {
@@ -239,11 +267,17 @@ mod tests {
         let alice = keyholder(b"alice-seed-vector-000000000000000000000000");
         let bob = keyholder(b"bob-seed-vector-00000000000000000000000000");
         let vault = vault_with(vec![
-            member(VaultMemberRole::Keyholder, Some(key_summary(10, &alice.account_xpub))),
+            member(
+                VaultMemberRole::Keyholder,
+                Some(key_summary(10, &alice.account_xpub)),
+            ),
             // A keyholder with no registered key yet (pending invite) — skipped.
             member(VaultMemberRole::Keyholder, None),
             // A beneficiary — not an inheritance keyholder.
-            member(VaultMemberRole::Beneficiary, Some(key_summary(11, &bob.account_xpub))),
+            member(
+                VaultMemberRole::Beneficiary,
+                Some(key_summary(11, &bob.account_xpub)),
+            ),
         ]);
         let khs = keyholders_from_vault(&vault).unwrap();
         assert_eq!(khs.len(), 1);
@@ -260,7 +294,10 @@ mod tests {
         };
         let vault = vault_with(vec![member(VaultMemberRole::Keyholder, Some(bad))]);
         let err = keyholders_from_vault(&vault).unwrap_err();
-        assert!(matches!(err, EscrowError::BadKeyholderXpub { key_id: 99, .. }));
+        assert!(matches!(
+            err,
+            EscrowError::BadKeyholderXpub { key_id: 99, .. }
+        ));
     }
 
     #[test]
@@ -277,45 +314,57 @@ mod tests {
         let alice = keyholder(b"vo-alice-seed-vector-0000000000000000000000");
         let bob = keyholder(b"vo-bob-seed-vector-000000000000000000000000");
         let khs = vec![
-            KeyholderXpub { key_id: 10, xpub: alice.account_xpub },
-            KeyholderXpub { key_id: 20, xpub: bob.account_xpub },
+            KeyholderXpub {
+                key_id: 10,
+                xpub: alice.account_xpub,
+                account_derivation: "m/48'/0'/0'/2'".to_string(),
+            },
+            KeyholderXpub {
+                key_id: 20,
+                xpub: bob.account_xpub,
+                account_derivation: "m/48'/0'/0'/2'".to_string(),
+            },
         ];
         let descriptor = b"wsh(or_d(multi(2,A,B),and_v(...)))#cksum";
 
-        let set = build_escrow_set(&khs, descriptor, None).unwrap();
+        let set = build_escrow_set(&khs, CUBE, descriptor, None).unwrap();
         // One descriptor envelope per keyholder, no seed envelopes.
         assert_eq!(set.len(), 2);
         assert!(set.iter().all(|e| e.artifact_kind == "descriptor"));
         assert_eq!(set[0].keyholder_key_id, Some(10));
         assert_eq!(set[1].keyholder_key_id, Some(20));
 
-        // Alice's Keychain opens her descriptor envelope.
+        // Alice's Keychain opens her descriptor envelope (AAD = CUBE + key 10).
         let alice_kh = keyholder(b"vo-alice-seed-vector-0000000000000000000000");
         let k = recover_key(&alice_kh, &set[0]);
         let env = wire_to_envelope(&set[0]).unwrap();
-        let pt = open_with_shared_key(&k, &env).unwrap();
+        let pt = open_with_shared_key(&k, &env, CUBE, 10).unwrap();
         assert_eq!(pt.as_slice(), descriptor.as_slice());
     }
 
     #[test]
     fn full_cube_builds_descriptor_and_seed_per_keyholder() {
         let alice = keyholder(b"fc-alice-seed-vector-0000000000000000000000");
-        let khs = vec![KeyholderXpub { key_id: 10, xpub: alice.account_xpub }];
+        let khs = vec![KeyholderXpub {
+            key_id: 10,
+            xpub: alice.account_xpub,
+            account_derivation: "m/48'/0'/0'/2'".to_string(),
+        }];
         let descriptor = b"wsh(...)#ck";
         let seed = br#"{"version":1,"mnemonic":{"phrase":"abandon ... about","language":"en"}}"#;
 
-        let set = build_escrow_set(&khs, descriptor, Some(seed)).unwrap();
+        let set = build_escrow_set(&khs, CUBE, descriptor, Some(seed)).unwrap();
         assert_eq!(set.len(), 2);
         let kinds: Vec<&str> = set.iter().map(|e| e.artifact_kind.as_str()).collect();
         assert!(kinds.contains(&"descriptor"));
         assert!(kinds.contains(&"seed"));
 
-        // The seed envelope round-trips to the exact seed JSON.
+        // The seed envelope round-trips to the exact seed JSON (AAD = CUBE + 10).
         let alice_kh = keyholder(b"fc-alice-seed-vector-0000000000000000000000");
         let seed_wire = set.iter().find(|e| e.artifact_kind == "seed").unwrap();
         let k = recover_key(&alice_kh, seed_wire);
         let env = wire_to_envelope(seed_wire).unwrap();
-        let pt = open_with_shared_key(&k, &env).unwrap();
+        let pt = open_with_shared_key(&k, &env, CUBE, 10).unwrap();
         assert_eq!(pt.as_slice(), seed.as_slice());
     }
 }

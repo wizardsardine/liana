@@ -20,8 +20,8 @@ pub mod owner;
 pub mod wire;
 
 pub use ecies::{
-    open_with_shared_key, seal_to_xpub, ArtifactKind, Envelope, ENCRYPTION_CHILD_DERIVATION,
-    HKDF_INFO, SCHEME,
+    open_with_shared_key, seal_to_xpub, transport_keypair, unwrap_shared_key, ArtifactKind,
+    Envelope, TransportKeypair, ENCRYPTION_CHILD_INDEX, SCHEME, WRAP_SCHEME,
 };
 pub use error::EciesError;
 pub use escrow::{build_escrow_set, keyholders_from_vault, EscrowError, EscrowTier, KeyholderXpub};
