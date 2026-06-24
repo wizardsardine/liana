@@ -4,7 +4,7 @@ use crate::{
     state::{message::Msg, State},
     views::entry_key_kind,
 };
-use iced::{widget::column, Length};
+use iced::{widget::column, Alignment, Length};
 use liana_connect::ws_business::{self, BLOCKS_PER_DAY, BLOCKS_PER_HOUR, BLOCKS_PER_MONTH};
 use liana_ui::{
     component::{
@@ -141,5 +141,6 @@ pub fn entry_path_list<'a>(state: &'a State, editable: bool) -> Element<'a, Msg>
     .fold(column![], |col, entry| col.push(entry))
     .spacing(12)
     .width(Length::Fill)
+    .align_x(Alignment::Center)
     .into()
 }

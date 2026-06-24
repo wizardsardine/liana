@@ -24,25 +24,20 @@ pub fn loading_view(has_error: bool) -> Element<'static, Msg> {
             ("Loading wallet...", None, None)
         };
 
-    layout(
-        (0, 0),
-        None,
-        &[],
-        Container::new(
-            column![
-                text::new::d3("Liana Business"),
-                Space::with_height(30),
-                text::new::caption(status_text).style(theme::text::secondary),
-                status_detail
-                    .as_ref()
-                    .map(|details| text::new::caption(details[0]).style(theme::text::secondary)),
-                status_detail
-                    .map(|details| text::new::caption(details[1]).style(theme::text::secondary))
-            ]
-            .align_x(Alignment::Center)
-            .width(Length::Fill),
-        ),
-        true,
-        previous_msg,
-    )
+    let content = Container::new(
+        column![
+            text::new::d3("Liana Business"),
+            Space::with_height(30),
+            text::new::caption(status_text).style(theme::text::secondary),
+            status_detail
+                .as_ref()
+                .map(|details| text::new::caption(details[0]).style(theme::text::secondary)),
+            status_detail
+                .map(|details| text::new::caption(details[1]).style(theme::text::secondary))
+        ]
+        .align_x(Alignment::Center)
+        .width(Length::Fill),
+    );
+
+    layout((0, 0), None, &[], content, previous_msg)
 }

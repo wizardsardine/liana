@@ -12,7 +12,7 @@ pub mod xpub;
 
 pub use keys::keys_view;
 use liana_connect::ws_business::{self, UserRole};
-use liana_ui::component::{button::btn_breadcrumb_previous, text::capitalize_first};
+use liana_ui::component::{button::btn_breadcrumb_previous, pill, text::capitalize_first};
 pub use loading::loading_view;
 pub use login::login_view;
 pub use org_select::org_select_view;
@@ -27,9 +27,10 @@ use crate::{
 };
 use iced::{
     widget::{column, container, row, rule, Space},
-    Alignment, Length, Padding,
+    Alignment, Length,
 };
 use liana_ui::{
+    color,
     component::{
         button::{self, EntryWidth},
         form, list, scrollable,
@@ -42,9 +43,11 @@ use std::fmt::Display;
 use uuid::Uuid;
 
 pub const INSTALLER_STEPS: usize = 7;
-pub const MENU_ENTRY_WIDTH: u32 = 600;
 pub const MENU_ENTRY_HEIGHT: u32 = 100;
-const TOP_STRIP_HEIGHT: u32 = 44;
+const CONTENT_WIDTH: f32 = button::STANDARD_ENTRY_WIDTH;
+const USERBAR_HEIGHT: u32 = 44;
+const MAX_SCROLL_HEIGHT: u32 = 500;
+const HEADER_HEIGHT: u32 = 88;
 
 pub fn format_last_edit_info(
     last_edited: Option<u64>,
@@ -111,8 +114,83 @@ enum LayoutContent<'a> {
     },
 }
 
-fn thin_separator<'a>() -> Element<'a, Msg> {
-    rule::horizontal(1).style(theme::rule::separator).into()
+fn thin_separator<'a>() -> Container<'a, Msg> {
+    Container::new(rule::horizontal(1).style(theme::rule::separator))
+}
+
+fn user_bar<'a>(is_ws_admin: bool, email: Option<&'a str>) -> Element<'a, Msg> {
+    let ws_admin_pill = is_ws_admin.then_some(pill::ws_admin());
+    let user = email.map(|e| {
+        row![
+            icon::person_icon().size(16).style(theme::text::tertiary),
+            text::new::caption(e).style(theme::text::accent)
+        ]
+        .spacing(12)
+    });
+    let user_bar = row![Space::fill_width(), ws_admin_pill, user]
+        .spacing(12)
+        .align_y(Alignment::Center);
+
+    Container::new(user_bar)
+        .height(USERBAR_HEIGHT)
+        .padding([0, 28])
+        .align_y(Alignment::Center)
+        .style(theme::container::top_bar)
+        .into()
+}
+
+fn step_dots<'a>((step, total): (usize, usize)) -> Element<'a, Msg> {
+    let mut dots = row![].spacing(4).align_y(Alignment::Center);
+    for i in 0..total {
+        let filled = i < step;
+        let width = if i + 1 == step { 20.0 } else { 8.0 };
+        dots = dots.push(
+            Container::new(Space::new())
+                .width(width)
+                .height(8)
+                .style(if filled {
+                    theme::container::step_dot_filled
+                } else {
+                    theme::container::step_dot_track
+                }),
+        );
+    }
+    dots.push(Space::with_width(4))
+        .push(
+            text::new::small_caption(format!("{step}/{total}"))
+                .style(move |_: &theme::Theme| theme::text::custom(color::BUSINESS_STEP_LABEL)),
+        )
+        .into()
+}
+
+fn header<'a>(
+    breadcrumb: &[String],
+    msg: Option<Msg>,
+    has_left_button: bool,
+    progress: (usize, usize),
+) -> Element<'a, Msg> {
+    let left_button = btn_breadcrumb_previous(msg);
+
+    let progress = if progress.1 > 0 {
+        step_dots(progress)
+    } else {
+        row![].into()
+    };
+    let left_width = 200;
+    let left = if has_left_button {
+        Container::new(left_button).center_x(left_width)
+    } else {
+        Container::new(Space::with_width(left_width))
+    };
+
+    row![
+        left,
+        Container::new(breadcrumb_header(breadcrumb)).width(Length::FillPortion(8)),
+        Container::new(progress).center_x(Length::FillPortion(2)),
+    ]
+    .align_y(Alignment::Center)
+    .height(HEADER_HEIGHT)
+    .into()
 }
 
 fn layout_inner<'a>(
@@ -121,10 +199,12 @@ fn layout_inner<'a>(
     is_ws_admin: bool,
     breadcrumb: &[String],
     content: LayoutContent<'a>,
-    padding_left: bool,
     previous_message: Option<Msg>,
 ) -> Element<'a, Msg> {
+    let user_bar = user_bar(is_ws_admin, email);
+
     let has_left_button = previous_message.is_some() || email.is_some();
+
     let msg = if let Some(msg) = previous_message {
         Some(msg)
     } else if email.is_some() {
@@ -132,145 +212,59 @@ fn layout_inner<'a>(
     } else {
         None
     };
-    let left_button = btn_breadcrumb_previous(msg);
+    let header = header(breadcrumb, msg, has_left_button, progress);
 
-    let mut user = row![].spacing(12).align_y(Alignment::Center);
+    let top = column![user_bar, thin_separator(), header];
 
-    if is_ws_admin {
-        user = user.push(liana_ui::component::pill::ws_admin());
-    }
-
-    if let Some(e) = email {
-        user = user
-            .push(icon::person_icon().size(16).style(theme::text::tertiary))
-            .push(text::new::caption(e).style(theme::text::accent));
-    }
-
-    let top_strip = Container::new(row![Space::fill_width(), user])
-        .height(TOP_STRIP_HEIGHT)
-        .width(Length::Fill)
-        .padding([0, 28])
-        .align_y(Alignment::Center)
-        .style(theme::container::top_bar);
-
-    let progress = if progress.1 > 0 {
-        Element::from(
-            row![
-                text::new::caption(progress.0.to_string()).style(theme::text::accent),
-                text::new::caption(format!(" | {}", progress.1)),
-            ]
-            .align_y(Alignment::Center),
-        )
-    } else {
-        Element::from(Space::fill_width())
-    };
-    let left_slot: Element<'a, Msg> = if has_left_button {
-        Container::new(left_button)
-            .center_x(Length::FillPortion(2))
-            .into()
-    } else {
-        Space::with_width(Length::FillPortion(2)).into()
-    };
-    let header = Container::new(
-        row![
-            left_slot,
-            Container::new(breadcrumb_header(breadcrumb)).width(Length::FillPortion(8)),
-            Container::new(progress).center_x(Length::FillPortion(2)),
-        ]
-        .align_y(Alignment::Center),
-    )
-    .padding([20, 0]);
-
-    let layout_header = column![top_strip, thin_separator(), header];
-
-    let fill_portion = if padding_left { 8 } else { 10 };
-    let right_spacer = || -> Option<Space> {
-        if padding_left {
-            Some(Space::with_width(Length::FillPortion(2)))
-        } else {
-            None
-        }
-    };
-
-    match content {
+    let content = match content {
         LayoutContent::Scrollable(inner) => {
             let content_body = Container::new(column![
                 Space::with_height(CONTENT_TOP_SPACING as f32),
                 inner,
             ])
-            .width(Length::FillPortion(fill_portion));
-            let left_spacer = Space::with_width(Length::FillPortion(2));
-            let content_row = row![left_spacer, content_body, right_spacer()];
+            .width(CONTENT_WIDTH);
 
-            Container::new(
-                column![
-                    layout_header,
-                    scrollable::vertical(content_row).height(Length::Fill),
-                ]
-                .width(Length::Fill)
-                .height(Length::Fill),
-            )
-            .center_x(Length::Fill)
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .style(theme::container::background)
-            .into()
+            column![
+                top,
+                scrollable::vertical(content_body)
+                    .height(Length::Fill)
+                    .width(Length::Shrink),
+            ]
         }
         LayoutContent::ScrollableList {
-            header: header_content,
+            header,
             list,
             pinned,
             footer,
         } => {
-            let header_area = header_content.map(|header_content| {
-                let body = Container::new(header_content)
-                    .width(Length::FillPortion(fill_portion))
-                    .padding(Padding {
-                        top: 22.0,
-                        bottom: 14.0,
-                        ..Padding::ZERO
-                    });
-                let left = Space::with_width(Length::FillPortion(2));
-                row![left, body, right_spacer()]
-            });
-
-            let list_body = Container::new(scrollable::vertical(list).height(Length::Fill))
-                .width(Length::FillPortion(fill_portion))
-                .height(Length::Fill)
-                .align_x(Alignment::Center);
-            let list_left = Space::with_width(Length::FillPortion(2));
-            let list_area = row![list_left, list_body, right_spacer()].height(Length::Fill);
-
-            let pinned_area: Option<Row<'a, Msg>> = pinned.map(|p| {
-                let body = Container::new(p).width(Length::FillPortion(fill_portion));
-                let left = Space::with_width(Length::FillPortion(2));
-                row![left, body, right_spacer()]
-            });
-            let footer_area: Option<Row<'a, Msg>> = footer.map(|f| {
-                let body = Container::new(f).width(Length::FillPortion(fill_portion));
-                let left = Space::with_width(Length::FillPortion(2));
-                row![left, body, right_spacer()]
-            });
-
-            Container::new(
+            let header = Container::new(header).center_x(Length::Fill);
+            let list_body =
+                Container::new(scrollable::vertical(list)).max_height(MAX_SCROLL_HEIGHT);
+            let footer = footer.map(|f| {
                 column![
-                    layout_header,
-                    header_area,
-                    list_area,
-                    pinned_area,
-                    footer_area,
-                    Space::with_height(1)
+                    thin_separator(),
+                    Space::with_height(8),
+                    f,
+                    Space::with_height(8),
                 ]
-                .width(Length::Fill)
-                .height(Length::Fill),
-            )
-            .center_x(Length::Fill)
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .style(theme::container::background)
-            .into()
+            });
+
+            let body = column![header, list_body, pinned, Space::fill_height(), footer,]
+                .spacing(12)
+                .width(CONTENT_WIDTH);
+
+            column![top, body].width(Length::Fill)
         }
     }
+    .align_x(Alignment::Center)
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    Container::new(content)
+        .center_x(Length::Fill)
+        .height(Length::Fill)
+        .style(theme::container::background)
+        .into()
 }
 
 pub fn layout<'a>(
@@ -278,7 +272,6 @@ pub fn layout<'a>(
     email: Option<&'a str>,
     breadcrumb: &[String],
     content: impl Into<Element<'a, Msg>>,
-    padding_left: bool,
     previous_message: Option<Msg>,
 ) -> Element<'a, Msg> {
     layout_inner(
@@ -287,7 +280,6 @@ pub fn layout<'a>(
         false,
         breadcrumb,
         LayoutContent::Scrollable(content.into()),
-        padding_left,
         previous_message,
     )
 }
@@ -305,7 +297,6 @@ pub fn layout_with_scrollable_list<'a>(
     list_content: impl Into<Element<'a, Msg>>,
     pinned_content: Option<Element<'a, Msg>>,
     footer_content: Option<Element<'a, Msg>>,
-    padding_left: bool,
     previous_message: Option<Msg>,
 ) -> Element<'a, Msg> {
     layout_inner(
@@ -319,7 +310,6 @@ pub fn layout_with_scrollable_list<'a>(
             pinned: pinned_content,
             footer: footer_content,
         },
-        padding_left,
         previous_message,
     )
 }
@@ -356,7 +346,7 @@ pub fn menu_entry(content: Row<'_, Msg>, message: Option<Msg>) -> Container<'_, 
     let content = content.width(Length::Fill).height(Length::Fill);
     let card = button::list_entry(content, None, EntryWidth::Standard, message);
     container(card)
-        .width(MENU_ENTRY_WIDTH)
+        .width(button::STANDARD_ENTRY_WIDTH)
         .height(MENU_ENTRY_HEIGHT)
 }
 
@@ -454,7 +444,6 @@ pub fn select_list_view(cfg: SelectListView<'_>) -> Element<'_, Msg> {
         list,
         None,
         None,
-        true,
         cfg.previous_message,
     )
 }

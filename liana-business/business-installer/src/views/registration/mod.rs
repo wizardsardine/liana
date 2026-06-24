@@ -50,7 +50,6 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
         )),
         false,
     );
-    let header_content = row![Space::fill_width(), header_content, Space::fill_width()];
 
     // List content: device cards or info message
     let list_content = if !reg_state.has_visible_devices() {
@@ -69,15 +68,14 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
     );
 
     layout_with_scrollable_list(
-        (5, INSTALLER_STEPS),
+        (7, INSTALLER_STEPS),
         Some(current_user_email),
         false,
         &breadcrumb,
-        Some(header_content.into()),
+        Some(header_content),
         list_content,
         None,
         footer,
-        true,
         Some(Msg::NavigateToWalletSelect),
     )
 }

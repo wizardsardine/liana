@@ -2,13 +2,10 @@ use crate::{
     state::{views::login::CachedAccount, Msg, State},
     views::{intro_prompt, layout_with_scrollable_list, screen_intro, INSTALLER_STEPS},
 };
-use iced::{
-    widget::{column, row, Space},
-    Alignment, Length,
-};
+use iced::widget::column;
 use liana_ui::{
     component::{
-        button::{btn_connect_another_email, EntryWidth, ENTRY_DELETE_GAP, ENTRY_DELETE_SLOT},
+        button::{btn_connect_another_email, EntryWidth},
         list, text,
     },
     widget::*,
@@ -34,22 +31,12 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
         list_content = list_content.push(account_entry(account, processing, is_selected));
     }
 
-    // Separator
-    list_content = list_content.push(Space::with_height(20));
-
-    let new_email = btn_connect_another_email((!processing).then_some(Msg::AccountSelectNewEmail));
-
-    // Connect button fills the row, with a spacer the size of the delete-button slot so it
-    // lines up with the account entries above.
-    let new_email_row = row![
-        Container::new(new_email).width(EntryWidth::Deletable),
-        Space::with_width(ENTRY_DELETE_SLOT),
-    ]
-    .spacing(ENTRY_DELETE_GAP)
-    .align_y(Alignment::Center)
-    .width(Length::Shrink);
-
-    list_content = list_content.push(new_email_row);
+    let new_email = btn_connect_another_email((!processing).then_some(Msg::AccountSelectNewEmail))
+        .width(if processing || accounts.is_empty() {
+            EntryWidth::Standard
+        } else {
+            EntryWidth::Deletable
+        });
 
     layout_with_scrollable_list(
         (1, INSTALLER_STEPS),
@@ -58,9 +45,8 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
         &["Login".to_string()],
         Some(header_content),
         list_content,
+        Some(new_email.into()),
         None,
-        None,
-        true,
         None,
     )
 }
