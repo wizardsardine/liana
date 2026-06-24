@@ -402,26 +402,35 @@ fn delete_btn(message: Option<Msg>) -> Button<'static, Msg> {
 
 pub fn menu_key_entry(
     key: &ws_business::Key,
-    last_edit_info: Option<String>,
-    pill: Element<'static, Msg>,
+    signer: String,
+    kind_pill: Element<'static, Msg>,
+    trailing: Element<'static, Msg>,
     msg: Option<Msg>,
 ) -> Element<'static, Msg> {
-    let identity_str = short_email(&key.identity.to_string(), 40);
-    let subtitle = if !identity_str.is_empty() {
-        Some(identity_str)
-    } else {
-        last_edit_info
-    };
-
     let alias = truncate(&key.alias, 25);
 
     list::entry_key(
         entry_key_kind(&key.key_type),
         alias,
-        subtitle,
-        Some(pill),
+        kind_pill,
+        short_email(&signer, 40),
+        Some(trailing),
         msg,
     )
+}
+
+pub(crate) const KEY_KIND_LABEL: [(ws_business::KeyType, &str); 4] = [
+    (ws_business::KeyType::Internal, "Internal"),
+    (ws_business::KeyType::External, "External"),
+    (ws_business::KeyType::Cosigner, "Cosigner"),
+    (ws_business::KeyType::SafetyNet, "Safety Net"),
+];
+
+pub(crate) fn key_kind_label(key_type: &ws_business::KeyType) -> &'static str {
+    KEY_KIND_LABEL
+        .iter()
+        .find_map(|(kind, label)| (kind == key_type).then_some(*label))
+        .expect("every key type must have a label")
 }
 
 pub(crate) fn entry_key_kind(key_type: &ws_business::KeyType) -> list::EntryKeyKind {
