@@ -71,6 +71,87 @@
             builtins.foldl' (a: b: "${a}:${b}/lib") "${pkgs.vulkan-loader}/lib" buildInputs;
         };
 
+        guiRuntimeInputs = commonBuildInputs ++ (with pkgs; [
+          expat
+          mesa
+          vulkan-loader
+        ]);
+
+        guiTestPython = pkgs.python3.withPackages (ps:
+          let
+            bip380 = ps.buildPythonPackage rec {
+              pname = "bip380";
+              version = "0.2.0-fb61971";
+              pyproject = true;
+
+              src = pkgs.fetchzip {
+                url = "https://github.com/darosior/python-bip380/archive/fb61971d9128e663f110ea2734c1d023e7e0266b.zip";
+                sha256 = "0qhnczv7ndvgw18s6mds892l4kmgj3grvk5zj7xbpmq1p264f9mi";
+              };
+
+              pythonRelaxDeps = [
+                "bip32"
+                "coincurve"
+              ];
+
+              nativeBuildInputs = with ps; [
+                setuptools
+              ];
+
+              propagatedBuildInputs = with ps; [
+                bip32
+                coincurve
+              ];
+
+              doCheck = false;
+              pythonImportsCheck = [ "bip380" ];
+            };
+          in
+          with ps; [
+            bip32
+            bip380
+            ephemeral-port-reserve
+            numpy
+            opencv4
+            pillow
+            pytest
+            pytest-timeout
+            pytest-xdist
+          ]);
+
+        guiTestShell = pkgs.mkShell {
+          packages = guiRuntimeInputs ++ (with pkgs; [
+            bitcoin
+            dbus
+            electrs
+            imagemagick
+            openbox
+            tesseract
+            tigervnc
+            x11vnc
+            xdg-desktop-portal
+            xdg-desktop-portal-gtk
+            xdotool
+            xauth
+            xdpyinfo
+            xev
+            xvfb
+            xwininfo
+            zenity
+          ]) ++ [
+            guiTestPython
+          ];
+
+          BITCOIND_PATH = "${pkgs.bitcoin}/bin/bitcoind";
+          ELECTRS_PATH = "${pkgs.electrs}/bin/electrs";
+          GUI_TEST_RUNTIME_LIBRARY_PATH = lib.makeLibraryPath guiRuntimeInputs;
+
+          shellHook = ''
+            export LD_LIBRARY_PATH="$GUI_TEST_RUNTIME_LIBRARY_PATH''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export WINIT_X11_SCALE_FACTOR=1
+          '';
+        };
+
         releaseShell = pkgs.mkShell {
           buildInputs = [
             pkgs.zip
@@ -88,6 +169,7 @@
         };
 
         devShells = {
+          gui-tests = guiTestShell;
           minimal = minimalShell;
           release = releaseShell;
           default = devShell;

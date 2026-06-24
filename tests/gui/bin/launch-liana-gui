@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export WINIT_UNIX_BACKEND="${WINIT_UNIX_BACKEND:-x11}"
+export WINIT_X11_SCALE_FACTOR="${WINIT_X11_SCALE_FACTOR:-1}"
+export ICED_BACKEND="${ICED_BACKEND:-tiny-skia}"
+export NO_AT_BRIDGE="${NO_AT_BRIDGE:-1}"
+export GTK_USE_PORTAL="${GTK_USE_PORTAL:-0}"
+export LC_ALL="${LC_ALL:-C}"
+export TZ="${TZ:-UTC}"
+unset WAYLAND_DISPLAY
+
+if [ -n "${GUI_TEST_RUNTIME_LIBRARY_PATH:-}" ]; then
+  export LD_LIBRARY_PATH="${GUI_TEST_RUNTIME_LIBRARY_PATH}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+fi
+
+exec "${LIANA_GUI_PATH:-liana-gui}" "$@"
