@@ -747,6 +747,9 @@ pub enum LiquidSwapMessage {
     QuoteTick,
     /// Swap settled — transition to the success screen.
     SwapComplete,
+    /// `send_payment` failed — surface the error, drop the now-stale
+    /// committed quote, and (on review) re-fetch so a retry is fresh.
+    SwapFailed(String),
     /// Dismiss the success screen and return to a fresh input.
     Done,
 }

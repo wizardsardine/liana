@@ -323,16 +323,23 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
 /// Locked-quote review + confirm step.
 fn review_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMessage> {
     let Some(q) = config.quote else {
-        // Quote expired out from under the review — show a re-fetch prompt.
-        let content = Column::new()
+        // No live quote on the review screen — either it expired or the
+        // previous swap failed and we're fetching a fresh one. Surface the
+        // error (if any) so a failed swap isn't silent.
+        let mut content = Column::new()
             .spacing(16)
             .max_width(480)
-            .push(h4_bold("Review swap"))
-            .push(
-                text("Quote expired — fetching a fresh one…")
-                    .size(P1_SIZE)
-                    .style(theme::text::secondary),
-            )
+            .push(h4_bold("Review swap"));
+        if let Some(err) = config.error {
+            content = content.push(error_card(err));
+        }
+        let status = if config.quoting {
+            "Fetching a fresh quote…"
+        } else {
+            "Quote expired."
+        };
+        content = content
+            .push(text(status).size(P1_SIZE).style(theme::text::secondary))
             .push(
                 button::secondary(None, "Back")
                     .on_press(LiquidSwapMessage::BackToInput)
@@ -377,7 +384,11 @@ fn review_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMes
             ))
             .push(line(
                 "Quote expires in",
-                format!("{}s", config.quote_remaining),
+                if config.is_sending {
+                    "processing…".to_string()
+                } else {
+                    format!("{}s", config.quote_remaining)
+                },
             )),
     );
 

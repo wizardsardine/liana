@@ -459,6 +459,17 @@ impl LiquidSwap {
             _ => format_asset_amount(base, AssetKind::Usdt.precision()),
         }
     }
+
+    /// Clear in-flight/quote state after a failed `send_payment` so the
+    /// user can retry: stop the spinner, surface the error, and drop the
+    /// now-stale committed quote (the caller re-quotes on review).
+    fn mark_swap_failed(&mut self, msg: String) {
+        self.is_sending = false;
+        self.quoting = false;
+        self.error = Some(msg);
+        self.quote = None;
+        self.quote_remaining = 0;
+    }
 }
 
 impl State for LiquidSwap {
@@ -507,6 +518,10 @@ impl State for LiquidSwap {
                 }
                 view::LiquidSwapMessage::Error(err) => {
                     self.error = Some(err.clone());
+                    // Defensive: any error clears in-flight state so the UI
+                    // never gets stuck on "Swapping…".
+                    self.is_sending = false;
+                    self.quoting = false;
                 }
                 view::LiquidSwapMessage::RefreshRequested => {
                     return self.load_balance();
@@ -604,6 +619,13 @@ impl State for LiquidSwap {
                     return self.request_quote(seq);
                 }
                 view::LiquidSwapMessage::QuoteTick => {
+                    // Freeze the countdown while a send is in flight: the
+                    // committed quote is already executing at SideSwap, so
+                    // expiring/clearing it here would clobber the in-progress
+                    // swap's UI (and a re-quote would fight the send).
+                    if self.is_sending {
+                        return Task::none();
+                    }
                     if self.quote_remaining > 0 {
                         self.quote_remaining -= 1;
                         if self.quote_remaining == 0 {
@@ -659,7 +681,7 @@ impl State for LiquidSwap {
                                 view::LiquidSwapMessage::SwapComplete,
                             )),
                             Err(e) => Message::View(view::Message::LiquidSwap(
-                                view::LiquidSwapMessage::Error(format!("Swap failed: {e}")),
+                                view::LiquidSwapMessage::SwapFailed(format!("Swap failed: {e}")),
                             )),
                         },
                     );
@@ -708,6 +730,17 @@ impl State for LiquidSwap {
                             view::LiquidSwapMessage::RefreshRequested,
                         ))
                     });
+                }
+                view::LiquidSwapMessage::SwapFailed(msg) => {
+                    self.mark_swap_failed(msg.clone());
+                    // The committed quote is stale now (price has moved and the
+                    // SideSwap order is gone). On the review screen, fetch a
+                    // fresh quote so the user can retry against a current price.
+                    if self.phase == SwapPhase::Review {
+                        let seq = self.quote_seq.wrapping_add(1);
+                        self.quote_seq = seq;
+                        return self.request_quote(seq);
+                    }
                 }
                 view::LiquidSwapMessage::Done => {
                     self.phase = SwapPhase::Input;
@@ -888,6 +921,20 @@ mod tests {
         assert_eq!(s.format_entered(8_066_584), "0.08066584");
         s.to_asset = SendAsset::Usdt;
         assert_eq!(s.format_entered(150_000_000), "1.50000000");
+    }
+
+    #[test]
+    fn mark_swap_failed_resets_in_flight_state() {
+        let mut s = panel();
+        s.is_sending = true;
+        s.quoting = true;
+        s.quote_remaining = 18;
+        s.mark_swap_failed("Swap failed: boom".to_string());
+        assert!(!s.is_sending);
+        assert!(!s.quoting);
+        assert_eq!(s.quote_remaining, 0);
+        assert!(s.quote.is_none());
+        assert_eq!(s.error.as_deref(), Some("Swap failed: boom"));
     }
 
     #[test]
