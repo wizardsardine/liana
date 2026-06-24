@@ -499,6 +499,7 @@ impl Palette {
                     text: color::WHITE.into(),
                     border: color::GREY_7.into(),
                 },
+                success: None,
                 error: ContainerPalette {
                     background: color::LIGHT_BLACK,
                     text: color::RED.into(),
@@ -543,6 +544,7 @@ impl Palette {
                     text: color::BLACK.into(),
                     border: color::TRANSPARENT.into(),
                 },
+                danger: None,
             },
             pills: Pills {
                 simple: ContainerPalette {
@@ -565,6 +567,8 @@ impl Palette {
                     text: color::AMBER.into(),
                     border: color::AMBER.into(),
                 },
+                role_manager: None,
+                role_participant: None,
                 success: ContainerPalette {
                     background: color::SUCCESS_GREEN,
                     text: color::WHITE.into(),
