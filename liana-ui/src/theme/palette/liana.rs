@@ -567,8 +567,16 @@ impl Palette {
                     text: color::AMBER.into(),
                     border: color::AMBER.into(),
                 },
-                role_manager: None,
-                role_participant: None,
+                role_manager: ContainerPalette {
+                    background: color::GREY_5,
+                    text: color::GREY_2.into(),
+                    border: color::GREY_5.into(),
+                },
+                role_participant: ContainerPalette {
+                    background: color::GREY_5,
+                    text: color::GREY_2.into(),
+                    border: color::GREY_5.into(),
+                },
                 success: ContainerPalette {
                     background: color::SUCCESS_GREEN,
                     text: color::WHITE.into(),
