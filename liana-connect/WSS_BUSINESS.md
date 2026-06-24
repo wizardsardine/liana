@@ -412,12 +412,14 @@ Clients should fetch and cache User objects separately.
     "<string>": <Key>
   },
   "primary_path": <SpendingPath>,
-  "secondary_paths": [<SecondaryPath>]
+  "secondary_paths": [<SecondaryPath>],
+  "keys_ready": <boolean>
 }
 ```
 
 **Note:** See [Key Object](#key-object), [SpendingPath Object](#spendingpath-object),
 and [SecondaryPath Object](#secondarypath-object) for nested structure definitions.
+The `keys_ready` field defaults to `false` when omitted.
 
 ### Key Object
 

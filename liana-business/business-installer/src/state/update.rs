@@ -327,6 +327,7 @@ impl State {
             self.app.keys = app_state.keys;
             self.app.primary_path = app_state.primary_path;
             self.app.secondary_paths = app_state.secondary_paths;
+            self.app.keys_ready = app_state.keys_ready;
             self.app.next_key_id = app_state.next_key_id;
         }
 
@@ -494,6 +495,7 @@ impl State {
                             keys,
                             primary_path: self.app.primary_path.clone(),
                             secondary_paths: self.app.secondary_paths.clone(),
+                            keys_ready: self.app.keys_ready,
                         };
                         self.backend.edit_wallet(Wallet {
                             id: wallet.id,
@@ -527,6 +529,7 @@ impl State {
             keys: self.app.keys.clone(),
             primary_path: self.app.primary_path.clone(),
             secondary_paths: self.app.secondary_paths.clone(),
+            keys_ready: self.app.keys_ready,
         };
 
         Some(Wallet {
@@ -1498,6 +1501,7 @@ impl State {
             self.app.keys = template.keys.clone();
             self.app.primary_path = template.primary_path.clone();
             self.app.secondary_paths = template.secondary_paths.clone();
+            self.app.keys_ready = template.keys_ready;
             self.app.next_key_id = template.keys.keys().copied().max().unwrap_or(0) + 1;
         } else {
             self.app.keys.clear();
@@ -1509,6 +1513,7 @@ impl State {
                 last_editor: None,
             };
             self.app.secondary_paths.clear();
+            self.app.keys_ready = false;
             self.app.next_key_id = 0;
         }
     }

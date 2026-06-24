@@ -850,7 +850,8 @@ mod protocol_tests {
                             "threshold_n": 2,
                             "key_ids": [0, 1]
                         },
-                        "secondary_paths": []
+                        "secondary_paths": [],
+                        "keys_ready": false
                     }
                 }
             }
@@ -896,6 +897,7 @@ mod protocol_tests {
             keys,
             primary_path: SpendingPath::new(true, 2, vec![0, 1]),
             secondary_paths: vec![],
+            keys_ready: false,
         };
 
         let wallet = Wallet {
@@ -962,7 +964,8 @@ mod protocol_tests {
                                 "key_ids": [1],
                                 "timelock": {"blocks": 52560}
                             }
-                        ]
+                        ],
+                        "keys_ready": false
                     },
                     "last_edited": 1700000000,
                     "last_editor": "12345678-1234-1234-1234-123456789004"
@@ -1013,6 +1016,7 @@ mod protocol_tests {
                 path: SpendingPath::new(false, 1, vec![1]),
                 timelock: Timelock::new(52560),
             }],
+            keys_ready: false,
         };
 
         let wallet = Wallet {
@@ -1519,7 +1523,8 @@ mod protocol_tests {
                         "threshold_n": 1,
                         "key_ids": [0]
                     },
-                    "secondary_paths": []
+                    "secondary_paths": [],
+                    "keys_ready": false
                 }
             }
         }"#;
@@ -1553,6 +1558,7 @@ mod protocol_tests {
                 keys,
                 primary_path: SpendingPath::new(true, 1, vec![0]),
                 secondary_paths: vec![],
+                keys_ready: false,
             }),
             last_edited: None,
             last_editor: None,
