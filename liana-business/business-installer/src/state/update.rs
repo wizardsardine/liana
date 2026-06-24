@@ -62,6 +62,7 @@ impl State {
             Msg::KeyEdit(key_id) => self.on_key_edit(key_id),
             Msg::KeyDelete(key_id) => self.on_key_delete(key_id),
             Msg::KeySave => self.on_key_save(),
+            Msg::MarkKeysReady(ready) => self.on_mark_keys_ready(ready),
 
             // Template management
             Msg::TemplateCancelPathModal => self.views.paths.on_template_cancel_path_modal(),
@@ -511,6 +512,26 @@ impl State {
                         });
                     }
                 }
+            }
+        }
+    }
+
+    fn on_mark_keys_ready(&mut self, ready: bool) {
+        if !matches!(self.app.current_user_role, Some(UserRole::WalletManager)) {
+            return;
+        }
+
+        self.app.keys_ready = ready;
+
+        // Push the toggle through edit_wallet, preserving the current status.
+        let status = self
+            .app
+            .selected_wallet
+            .and_then(|id| self.backend.get_wallet(id))
+            .map(|w| w.status);
+        if let Some(status) = status {
+            if let Some(wallet) = self.build_wallet_from_app_state(status) {
+                self.backend.edit_wallet(wallet);
             }
         }
     }
