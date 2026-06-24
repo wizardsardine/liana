@@ -686,10 +686,16 @@ impl State for LiquidSwap {
                 },
                 view::LiquidSwapMessage::RateProbeReady(result) => {
                     self.rate_probe_inflight = false;
-                    // Only seed the rate if a real quote hasn't set it since.
-                    if let Ok(rate) = result {
-                        if *rate > 0.0 && self.last_rate.is_none() {
-                            self.last_rate = Some(*rate);
+                    match result {
+                        Ok(rate) if *rate > 0.0 => {
+                            // Only seed if a real quote hasn't set it since.
+                            if self.last_rate.is_none() {
+                                self.last_rate = Some(*rate);
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            log::warn!(target: "breez_swap", "swap rate probe failed: {e}");
                         }
                     }
                     // Complete a "Swap All" that was waiting on the rate.
@@ -702,8 +708,17 @@ impl State for LiquidSwap {
                                 Err(msg) => self.error = Some(msg),
                             }
                         } else {
+                            // Surface the real reason (below-minimum,
+                            // insufficient, etc.) rather than a generic note.
                             self.error = Some(
-                                "Couldn't fetch a rate for Swap All. Please try again.".to_string(),
+                                result
+                                    .as_ref()
+                                    .err()
+                                    .map(|e| friendly_quote_error(e))
+                                    .unwrap_or_else(|| {
+                                        "Couldn't fetch a rate for Swap All. Please try again."
+                                            .to_string()
+                                    }),
                             );
                         }
                     }
