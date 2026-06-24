@@ -529,11 +529,35 @@ impl Palette {
                     text: color::WHITE.into(),
                     border: color::TRANSPARENT.into(),
                 },
+                avatar: ContainerPalette {
+                    background: BLUE_TINT_LIGHT,
+                    text: BTN_PRIMARY_PRESSED.into(),
+                    border: color::TRANSPARENT.into(),
+                },
                 danger: Some(ContainerPalette {
                     background: RED_TINT_LIGHT,
                     text: color::RED.into(),
                     border: color::TRANSPARENT.into(),
                 }),
+            },
+            tile_tones: Tiles {
+                background: INPUT_BG,
+                accent: Tile {
+                    fg: color::BUSINESS_BLUE,
+                    bg: None,
+                },
+                neutral: Tile {
+                    fg: SAFETY_NET,
+                    bg: None,
+                },
+                muted: Tile {
+                    fg: color::LIGHT_BORDER,
+                    bg: None,
+                },
+                danger: Tile {
+                    fg: color::RED,
+                    bg: Some(RED_TINT_LIGHT),
+                },
             },
             pills: Pills {
                 simple: ContainerPalette {
