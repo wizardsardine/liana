@@ -20,7 +20,7 @@ use iced::{
         button::{Status, Style},
         container, row, Space,
     },
-    Background, Color, Length,
+    Background, Border, Color, Length, Padding,
 };
 
 const MENU_BTN_PADDING: [u16; 2] = [4 /* Top/Bottom */, 12 /* Left/Right */];
@@ -29,6 +29,7 @@ const MENU_TEXT_COMPACT_SIZE: u32 = 18;
 const MENU_ICON_SIZE: u32 = ICON_SIZE_L as u32;
 const AUXILIARY_PADDING: [u16; 2] = [14, 20];
 const LIST_ENTRY_ACCENT_WIDTH: f32 = 4.0;
+const LIST_ENTRY_PADDING: [u16; 2] = [14, 20];
 
 const ICON_BTN_SIZE: f32 = 40.0;
 const ICON_BTN_PADDING: f32 = 10.0;
@@ -176,22 +177,78 @@ pub fn list_entry<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
     width: EntryWidth,
     msg: Option<M>,
 ) -> Element<'a, M> {
+    list_entry_with_state(content, accent, width, msg.is_some(), msg.is_some(), msg)
+}
+
+pub fn list_entry_with_enabled<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
+    content: T,
+    accent: Option<ListEntryAccent>,
+    width: EntryWidth,
+    enabled: bool,
+    msg: Option<M>,
+) -> Element<'a, M> {
+    list_entry_with_state(content, accent, width, enabled, msg.is_some(), msg)
+}
+
+pub fn list_entry_with_state<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
+    content: T,
+    accent: Option<ListEntryAccent>,
+    width: EntryWidth,
+    enabled: bool,
+    clickable: bool,
+    msg: Option<M>,
+) -> Element<'a, M> {
     let button = Button::new(content.into())
-        .style(theme::button::list_entry)
+        .style(move |theme, status| {
+            let status = if !clickable && enabled && status == Status::Disabled {
+                Status::Active
+            } else {
+                status
+            };
+            let mut style = theme::button::list_entry(theme, status);
+            if let Some(color) = accent {
+                // The accent card behind carries the shadow; keep the inner card flat.
+                style.shadow = Default::default();
+                if status == Status::Hovered {
+                    // Hover border matches the entry's accent stripe.
+                    style.border.color = color(theme);
+                }
+            }
+            style
+        })
         .on_press_maybe(msg)
+        .padding(LIST_ENTRY_PADDING)
         .width(Length::Fill);
 
     let entry: Element<'a, M> = if let Some(color) = accent {
-        row![
-            container(Space::fill_height())
-                .width(LIST_ENTRY_ACCENT_WIDTH)
-                .style(move |theme| container::Style {
-                    background: Some(Background::Color(color(theme))),
+        let accent_card = Container::new(Space::with_height(Length::Fill))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |theme| {
+                let mut bg = color(theme);
+                if !enabled {
+                    bg.a *= 0.5;
+                }
+                container::Style {
+                    background: Some(Background::Color(bg)),
+                    border: Border {
+                        radius: theme.colors.buttons.list_entry_radius.unwrap_or(0.0).into(),
+                        ..Default::default()
+                    },
+                    shadow: theme.colors.buttons.list_entry.active.shadow,
                     ..Default::default()
-                }),
-            button
-        ]
-        .into()
+                }
+            });
+        // White card inset on the left by the accent width so the accent card behind shows as a
+        // stripe that wraps the left rounded corners.
+        Stack::new()
+            .width(Length::Fill)
+            .push(Container::new(button).padding(Padding {
+                left: LIST_ENTRY_ACCENT_WIDTH,
+                ..Padding::ZERO
+            }))
+            .push_under(accent_card)
+            .into()
     } else {
         button.into()
     };
@@ -732,7 +789,9 @@ pub fn btn_edit<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn btn_remove<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    clickable_icon_with_size(icon::cross_icon(), msg, CLICKABLE_ICON_SIZE)
+    Button::new(icon::cross_icon().size(CLICKABLE_ICON_SIZE))
+        .on_press_maybe(msg)
+        .style(theme::button::remove)
 }
 
 pub fn btn_delete<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
