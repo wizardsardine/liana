@@ -650,6 +650,13 @@ impl Palette {
                     border: color::FINGERPRINT_BORDER.into(),
                 },
             },
+            tabs: Tabs {
+                active: color::GREEN,
+                inactive: color::GREY_2,
+                strip: color::GREY_7,
+                dot_ready: color::GREEN,
+                dot_pending: color::AMBER,
+            },
             notifications: Notifications {
                 pending: ContainerPalette {
                     background: color::GREEN,

@@ -630,6 +630,13 @@ impl Palette {
                     border: FINGERPRINT_BACKGROUND.into(),
                 },
             },
+            tabs: Tabs {
+                active: color::BUSINESS_BLUE,
+                inactive: color::DARK_TEXT_TERTIARY,
+                strip: color::LIGHT_BG_SECONDARY,
+                dot_ready: color::SUCCESS_GREEN,
+                dot_pending: color::AMBER,
+            },
             notifications: Notifications {
                 pending: ContainerPalette {
                     background: color::BUSINESS_BLUE,

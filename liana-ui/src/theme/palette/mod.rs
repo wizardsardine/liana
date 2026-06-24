@@ -15,6 +15,7 @@ pub struct Palette {
     pub badges: Badges,
     pub tile_tones: Tiles,
     pub pills: Pills,
+    pub tabs: Tabs,
     pub notifications: Notifications,
     pub text_inputs: TextInputs,
     pub combobox: Combobox,
@@ -219,6 +220,15 @@ pub struct Pills {
     pub external: ContainerPalette,
     pub safety_net: ContainerPalette,
     pub fingerprint: ContainerPalette,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Tabs {
+    pub active: iced::Color,
+    pub inactive: iced::Color,
+    pub strip: iced::Color,
+    pub dot_ready: iced::Color,
+    pub dot_pending: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
