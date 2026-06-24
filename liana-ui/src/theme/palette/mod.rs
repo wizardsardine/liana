@@ -163,6 +163,7 @@ pub struct Cards {
     pub warning: ContainerPalette,
     pub soft_warning: ContainerPalette,
     pub info: ContainerPalette,
+    pub success: Option<ContainerPalette>,
     pub error: ContainerPalette,
     /// Section header card: no shadow, accent background.
     pub section: ContainerPalette,
@@ -181,6 +182,7 @@ pub struct Badges {
     pub simple: ContainerPalette,
     pub bitcoin: ContainerPalette,
     pub success: ContainerPalette,
+    pub danger: Option<ContainerPalette>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -190,6 +192,8 @@ pub struct Pills {
     pub success: ContainerPalette,
     pub warning: ContainerPalette,
     pub soft_warning: ContainerPalette,
+    pub role_manager: Option<ContainerPalette>,
+    pub role_participant: Option<ContainerPalette>,
     pub internal: ContainerPalette,
     pub external: ContainerPalette,
     pub safety_net: ContainerPalette,

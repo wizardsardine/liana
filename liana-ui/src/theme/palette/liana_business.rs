@@ -42,6 +42,11 @@ const CARD_SHADOW_HOVER: Shadow = Shadow {
 
 color!(INPUT_BG, 0xF3F4F5);
 color!(INPUT_BORDER, 0xCED4DA);
+color!(GREEN_TINT_LIGHT, 0xF1FBF4);
+color!(GREEN_BORDER_LIGHT, 0xC9EBD4);
+color!(AMBER_TINT_LIGHT, 0xFFF8EB);
+color!(AMBER_BORDER_LIGHT, 0xFCE3B4);
+color!(RED_TINT_LIGHT, 0xFEECEC);
 
 pub const MENU_BG: Color = color::WHITE;
 color!(MENU_BG_HOVER, 0xE9ECEF);
@@ -49,6 +54,9 @@ color!(MENU_BG_HOVER, 0xE9ECEF);
 color!(EXTERNAL, 0x0F172A);
 color!(SAFETY_NET, 0x475569);
 color!(FINGERPRINT_BACKGROUND, 0xE9F4FF);
+const BLUE_TINT_LIGHT: Color = FINGERPRINT_BACKGROUND;
+color!(BUSINESS_BLUE_SECTION, 0xC1E9F7);
+const ROLE_MANAGER_TEXT: Color = BTN_PRIMARY_PRESSED;
 
 impl Palette {
     pub fn business() -> Self {
@@ -463,22 +471,27 @@ impl Palette {
                     border: color::TRANSPARENT.into(),
                 },
                 soft_warning: ContainerPalette {
-                    background: color::TRANSPARENT,
+                    background: AMBER_TINT_LIGHT,
                     text: color::ORANGE.into(),
-                    border: color::LIGHT_BORDER.into(),
+                    border: AMBER_BORDER_LIGHT.into(),
                 },
                 info: ContainerPalette {
                     background: color::TRANSPARENT,
                     text: color::DARK_TEXT_SECONDARY.into(),
                     border: color::LIGHT_BORDER.into(),
                 },
+                success: Some(ContainerPalette {
+                    background: GREEN_TINT_LIGHT,
+                    text: None,
+                    border: GREEN_BORDER_LIGHT.into(),
+                }),
                 error: ContainerPalette {
                     background: color::LIGHT_BG,
                     text: color::RED.into(),
                     border: color::RED.into(),
                 },
                 section: ContainerPalette {
-                    background: color::BUSINESS_BLUE_SECTION,
+                    background: BUSINESS_BLUE_SECTION,
                     text: None,
                     border: Some(color::TRANSPARENT),
                 },
@@ -516,6 +529,11 @@ impl Palette {
                     text: color::WHITE.into(),
                     border: color::TRANSPARENT.into(),
                 },
+                danger: Some(ContainerPalette {
+                    background: RED_TINT_LIGHT,
+                    text: color::RED.into(),
+                    border: color::TRANSPARENT.into(),
+                }),
             },
             pills: Pills {
                 simple: ContainerPalette {
@@ -538,6 +556,16 @@ impl Palette {
                     text: color::AMBER.into(),
                     border: color::AMBER.into(),
                 },
+                role_manager: Some(ContainerPalette {
+                    background: BLUE_TINT_LIGHT,
+                    text: ROLE_MANAGER_TEXT.into(),
+                    border: BLUE_TINT_LIGHT.into(),
+                }),
+                role_participant: Some(ContainerPalette {
+                    background: INPUT_BG,
+                    text: color::DARK_TEXT_TERTIARY.into(),
+                    border: INPUT_BG.into(),
+                }),
                 success: ContainerPalette {
                     background: color::SUCCESS_GREEN,
                     text: color::WHITE.into(),
@@ -664,7 +692,7 @@ impl Palette {
                     text: color::BLACK,
                     selected_text: color::BLACK,
                     background: color::WHITE,
-                    selected_background: MENU_BG_HOVER,
+                    selected_background: BLUE_TINT_LIGHT,
                 },
             },
             spinner: Spinner {
