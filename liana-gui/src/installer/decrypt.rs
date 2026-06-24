@@ -402,7 +402,7 @@ impl DecryptModal {
                 batch.push(self.fetch(device.clone(), *fingerprint, name));
             }
         }
-        (!batch.is_empty()).then(|| Task::batch(batch))
+        (!batch.is_empty()).then_some(Task::batch(batch))
     }
     fn update_xpub(&mut self, xpub: String) -> Task<installer::Message> {
         if self.xpub_busy {

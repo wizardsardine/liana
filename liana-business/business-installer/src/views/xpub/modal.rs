@@ -84,7 +84,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
     };
 
     // Show input field if paste was used or file loaded
-    let input_display = (!modal_state.xpub_input.is_empty()).then(|| {
+    let input_display = (!modal_state.xpub_input.is_empty()).then_some({
         let input_header = Row::new()
             .spacing(10)
             .align_y(Alignment::Center)
@@ -433,7 +433,7 @@ fn other_options(modal_state: &XpubEntryModalState, is_wallet_manager: bool) -> 
         || Msg::XpubToggleOptions,
     );
 
-    let expanded_content = (!collapsed).then(|| {
+    let expanded_content = (!collapsed).then_some({
         let file_button: Element<'_, Msg> = modal::button_entry(
             Some(icon::import_icon()),
             "Import extended public key file",
@@ -442,7 +442,7 @@ fn other_options(modal_state: &XpubEntryModalState, is_wallet_manager: bool) -> 
             Some(|| Msg::XpubLoadFromFile),
         );
 
-        let paste_input = is_wallet_manager.then(|| {
+        let paste_input = is_wallet_manager.then_some({
             let form_xpub = form::Value {
                 value: modal_state.xpub_input.clone(),
                 warning: None,

@@ -445,7 +445,7 @@ impl SelectKeySource {
         self.processing = true;
         let ua = BackendType::LianaConnect.user_agent();
         let url = (self.network != Network::Bitcoin)
-            .then(|| std::env::var("LIANA_KEYS_SIGNET_API_URL").ok())
+            .then_some(std::env::var("LIANA_KEYS_SIGNET_API_URL").ok())
             .flatten();
         let client = keys::Client::new_with_optional_url(url.as_deref(), &ua);
         Task::perform(
@@ -1354,7 +1354,7 @@ where
 
     let error = error.clone().map(|e| p1_regular(e).color(color::ORANGE));
 
-    let spacer = replace_message.is_some().then(|| Space::with_width(10));
+    let spacer = replace_message.is_some().then_some(Space::with_width(10));
     let replace_btn = replace_message.map(|m| {
         let mut btn = button::secondary(None, "Replace");
         if alias.valid {
