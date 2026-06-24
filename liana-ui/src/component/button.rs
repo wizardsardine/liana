@@ -689,7 +689,7 @@ pub fn btn_remove<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn btn_delete<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Delete", BtnWidth::L, msg)
+    btn_destructive(None, "Delete", BtnWidth::M, msg)
 }
 
 pub fn btn_previous<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
