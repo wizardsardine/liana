@@ -82,6 +82,8 @@ pub enum ImportExportMessage {
     TimedOut,
     UserStop,
     Path(Option<PathBuf>),
+    PathEdited(String),
+    ConfirmPath,
     Close,
     Overwrite,
     Ignore,
@@ -99,6 +101,7 @@ impl From<ImportExportMessage> for view::Message {
 pub enum ImportExportState {
     Init,
     ChoosePath,
+    ManualPath,
     Path(PathBuf),
     Started,
     Progress(f32),

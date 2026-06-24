@@ -5,7 +5,7 @@ use iced::{
 };
 use liana_ui::{
     component::{
-        button, card,
+        button, card, form,
         text::{h4_bold, text},
     },
     icon,
@@ -21,6 +21,7 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
     error: Option<&'a Error>,
     title: &str,
     import_export_type: &ImportExportType,
+    manual_path: &'a form::Value<String>,
 ) -> Element<'a, Message> {
     let cancel = match state {
         ImportExportState::Started | ImportExportState::Progress(_) => {
@@ -47,6 +48,9 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
             ImportExportState::Init => "".to_string(),
             ImportExportState::ChoosePath => {
                 "Select the path you want to export in the popup window...".into()
+            }
+            ImportExportState::ManualPath => {
+                "The file picker returned no path. Enter one manually or close this dialog.".into()
             }
             ImportExportState::Path(_) => "".into(),
             ImportExportState::Started => "Starting export...".into(),
@@ -103,12 +107,34 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
             .align_x(Horizontal::Center)
             .width(Length::Fill)
     });
+    let manual_path_form = matches!(state, ImportExportState::ManualPath).then(|| {
+        form::Form::<Message>::new_trimmed("Path", manual_path, |path| {
+            Message::from(ImportExportMessage::PathEdited(path))
+        })
+        .warning("Please enter a filesystem path")
+        .padding(10)
+    });
+    let manual_path_actions = matches!(state, ImportExportState::ManualPath).then(|| {
+        Container::new(
+            Row::new()
+                .spacing(10)
+                .push(Space::with_width(Length::Fill))
+                .push(button::secondary(None, "Close").on_press(ImportExportMessage::Close.into()))
+                .push(
+                    button::secondary(None, "Use path")
+                        .on_press(ImportExportMessage::ConfirmPath.into()),
+                ),
+        )
+        .align_x(Horizontal::Center)
+        .width(Length::Fill)
+    });
 
     let mut p = match state {
         ImportExportState::Init => 0.0,
-        ImportExportState::ChoosePath | ImportExportState::Path(_) | ImportExportState::Started => {
-            5.0
-        }
+        ImportExportState::ChoosePath
+        | ImportExportState::ManualPath
+        | ImportExportState::Path(_)
+        | ImportExportState::Started => 5.0,
         ImportExportState::Progress(p) => *p,
         ImportExportState::TimedOut
         | ImportExportState::Aborted
@@ -138,7 +164,9 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
             .push(progress_bar_row)
             .push(Space::with_height(Length::Fill))
             .push(Row::new().push(text(msg)))
+            .push_maybe(manual_path_form)
             .push(Space::with_height(Length::Fill))
+            .push_maybe(manual_path_actions)
             .push_maybe(button)
             .push(Space::with_height(5)),
     )
