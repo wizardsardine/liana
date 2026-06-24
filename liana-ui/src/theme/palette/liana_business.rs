@@ -133,6 +133,27 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                auxiliary: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_PRIMARY_PRESSED,
+                        border: Some(INPUT_BORDER),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLUE,
+                        border: color::BUSINESS_BLUE.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLUE,
+                        border: color::BUSINESS_BLUE.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: btn_disabled(),
+                },
                 feerate: feerate_button(color::BUSINESS_LIGHT_BLUE, color::BUSINESS_BLACK),
                 feerate_unselected: feerate_unselected_button(
                     color::WHITE,
@@ -244,7 +265,7 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
-                clickable_card: Button {
+                list_entry: Button {
                     active: ButtonPalette {
                         background: BTN_TERTIARY_BG,
                         text: BTN_TERTIARY_FG,
@@ -254,12 +275,14 @@ impl Palette {
                     hovered: ButtonPalette {
                         background: BTN_TERTIARY_BG,
                         text: BTN_TERTIARY_FG,
-                        border: BTN_TERTIARY_BG.into(),
+                        border: color::BUSINESS_BLUE.into(),
                         shadow: CARD_SHADOW_HOVER,
                     },
                     pressed: None,
                     disabled: None,
                 },
+                list_entry_radius: Some(16.0),
+                list_entry_hover_border_width: Some(2.0),
                 container: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
@@ -409,29 +432,19 @@ impl Palette {
                 },
                 signing_devices: Button {
                     active: ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: BTN_PRIMARY_BG,
-                        border: BTN_PRIMARY_BG.into(),
-                        shadow: Default::default(),
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_TERTIARY_FG,
+                        border: BTN_TERTIARY_BG.into(),
+                        shadow: CARD_SHADOW,
                     },
                     hovered: ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: BTN_PRIMARY_BG,
-                        border: BTN_PRIMARY_BG.into(),
-                        shadow: BTN_SHADOW,
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_TERTIARY_FG,
+                        border: color::BUSINESS_BLUE.into(),
+                        shadow: CARD_SHADOW_HOVER,
                     },
-                    pressed: Some(ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: BTN_PRIMARY_PRESSED,
-                        border: BTN_PRIMARY_PRESSED.into(),
-                        shadow: BTN_SHADOW,
-                    }),
-                    disabled: Some(ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: BTN_DISABLED,
-                        border: BTN_DISABLED.into(),
-                        shadow: Default::default(),
-                    }),
+                    pressed: None,
+                    disabled: None,
                 },
             },
             cards: Cards {

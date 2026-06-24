@@ -1,10 +1,14 @@
+use iced::border::Dash;
 use iced::widget::button::{Catalog, Status, Style, StyleFn};
 use iced::{Background, Border, Color};
 
+use super::card::CARD_RADIUS;
 use super::palette::Button;
 use super::Theme;
 
 pub const BUTTON_RADIUS: f32 = 12.0;
+/// On/off length of the auxiliary button's dashed border, in logical pixels.
+const AUXILIARY_DASH: f32 = 6.0;
 
 impl Catalog for Theme {
     type Class<'a> = StyleFn<'a, Self>;
@@ -40,11 +44,36 @@ button_styles!(
     menu,
     transparent,
     transparent_border,
-    clickable_card,
     clickable_section,
     link,
     signing_devices,
 );
+
+pub fn auxiliary(theme: &Theme, status: Status) -> Style {
+    let mut style = button(&theme.colors.buttons.auxiliary, status, 1.0);
+    style.border.radius = CARD_RADIUS.into();
+    style.border = style
+        .border
+        .dashes(Dash::new(AUXILIARY_DASH, AUXILIARY_DASH));
+    style
+}
+
+pub fn list_entry(theme: &Theme, status: Status) -> Style {
+    let mut style = button(
+        &theme.colors.buttons.list_entry,
+        status,
+        theme.button_border_width,
+    );
+    if let Some(radius) = theme.colors.buttons.list_entry_radius {
+        style.border.radius = radius.into();
+    }
+    if status == Status::Hovered {
+        if let Some(width) = theme.colors.buttons.list_entry_hover_border_width {
+            style.border.width = width;
+        }
+    }
+    style
+}
 
 pub fn tab_menu(theme: &Theme, status: Status) -> Style {
     let mut style = button(
@@ -117,7 +146,7 @@ fn round_button(p: &Button, status: Status, width: f32, radius: f32) -> Style {
 
 pub fn round_icon_btn(theme: &Theme, status: Status, radius: f32) -> Style {
     round_button(
-        &theme.colors.buttons.clickable_card,
+        &theme.colors.buttons.list_entry,
         status,
         theme.button_border_width,
         radius,
@@ -134,6 +163,7 @@ fn button(p: &Button, status: Status, width: f32) -> Style {
                     radius: BUTTON_RADIUS.into(),
                     width,
                     color,
+                    ..Default::default()
                 }
             } else {
                 Border {
@@ -153,6 +183,7 @@ fn button(p: &Button, status: Status, width: f32) -> Style {
                             radius: BUTTON_RADIUS.into(),
                             width,
                             color,
+                            ..Default::default()
                         }
                     } else {
                         Border {
@@ -174,6 +205,7 @@ fn button(p: &Button, status: Status, width: f32) -> Style {
                     radius: BUTTON_RADIUS.into(),
                     width,
                     color,
+                    ..Default::default()
                 }
             } else {
                 Border {
@@ -193,6 +225,7 @@ fn button(p: &Button, status: Status, width: f32) -> Style {
                             radius: BUTTON_RADIUS.into(),
                             width,
                             color,
+                            ..Default::default()
                         }
                     } else {
                         Border {

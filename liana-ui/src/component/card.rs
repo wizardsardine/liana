@@ -91,14 +91,14 @@ pub fn error<'a, T: 'a>(message: &'static str, error: String) -> Container<'a, T
     .style(theme::card::error)
 }
 
-pub fn clickable_card<'a, M>(content: Row<'a, M>, msg: Option<M>) -> Element<'a, M>
+pub fn list_entry<'a, M>(content: Row<'a, M>, msg: Option<M>) -> Element<'a, M>
 where
     M: Clone + 'a,
 {
-    clickable_card_with_padding(content, msg, CARD_PADDING)
+    list_entry_with_padding(content, msg, CARD_PADDING)
 }
 
-pub fn clickable_card_with_padding<'a, M>(
+pub fn list_entry_with_padding<'a, M>(
     content: Row<'a, M>,
     msg: Option<M>,
     padding: impl Into<Padding>,
@@ -108,7 +108,7 @@ where
 {
     button(content.align_y(Alignment::Center).padding(padding.into()))
         .on_press_maybe(msg)
-        .style(theme::button::clickable_card)
+        .style(theme::button::list_entry)
         .into()
 }
 

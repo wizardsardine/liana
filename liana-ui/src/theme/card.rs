@@ -23,6 +23,7 @@ fn card(palette: &ContainerPalette) -> Style {
             radius: CARD_RADIUS.into(),
             width: palette.border.map(|_| 1.0).unwrap_or_default(),
             color: palette.border.unwrap_or_default(),
+            ..Default::default()
         },
         ..Default::default()
     }
@@ -36,6 +37,7 @@ fn card_note(palette: &ContainerPalette) -> Style {
             radius: NOTE_CARD_RADIUS.into(),
             width: palette.border.map(|_| 1.0).unwrap_or_default(),
             color: palette.border.unwrap_or_default(),
+            ..Default::default()
         },
         ..Default::default()
     }
@@ -51,6 +53,7 @@ fn card_with_shadow(palette: &ContainerPalette, btn: bool) -> Style {
                 radius,
                 width: 1.0,
                 color,
+                ..Default::default()
             }
         } else {
             Border {

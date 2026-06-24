@@ -36,6 +36,7 @@ pub fn primary(theme: &Theme, status: Status) -> Style {
                 radius: PICK_LIST_RADIUS.into(),
                 width: 1.0,
                 color,
+                ..Default::default()
             }
         } else {
             Border {
@@ -58,6 +59,7 @@ impl From<Menu> for MenuStyle {
                 color: value.border,
                 width: 1.0,
                 radius: PICK_LIST_RADIUS.into(),
+                ..Default::default()
             },
             text_color: value.text,
             selected_text_color: value.selected_text,

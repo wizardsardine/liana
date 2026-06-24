@@ -30,6 +30,7 @@ pub fn primary(theme: &Theme, status: Status) -> Style {
                 radius: 8.0.into(),
                 width: 0.0,
                 color: Color::TRANSPARENT,
+                ..Default::default()
             },
         },
     };
@@ -43,6 +44,7 @@ pub fn primary(theme: &Theme, status: Status) -> Style {
                     radius: 8.0.into(),
                     width: 1.0,
                     color: Color::TRANSPARENT,
+                    ..Default::default()
                 },
                 shadow: Shadow::default(),
                 snap: false,

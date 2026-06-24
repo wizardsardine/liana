@@ -68,11 +68,14 @@ pub struct General {
 pub struct Buttons {
     pub transparent: Button,
     pub transparent_border: Button,
-    pub clickable_card: Button,
+    pub list_entry: Button,
+    pub list_entry_radius: Option<f32>,
+    pub list_entry_hover_border_width: Option<f32>,
     // previously theme::button::transparent_border wrapped into theme::card::simple
     pub clickable_section: Button,
     pub primary: Button,
     pub secondary: Button,
+    pub auxiliary: Button,
     pub feerate: Button,
     pub feerate_unselected: Button,
     pub tertiary: Button,

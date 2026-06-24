@@ -112,6 +112,27 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                auxiliary: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_SECONDARY_TEXT,
+                        border: color::GREY_2.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_SECONDARY_HOVER_TEXT,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_SECONDARY_PRESSED_TEXT,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: btn_disabled(),
+                },
                 feerate: feerate_button(color::GREEN, BTN_PRIMARY_TEXT),
                 feerate_unselected: feerate_unselected_button(
                     color::GREY_5,
@@ -231,7 +252,7 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
-                clickable_card: Button {
+                list_entry: Button {
                     active: ButtonPalette {
                         background: color::GREY_6,
                         text: color::GREY_2,
@@ -252,6 +273,8 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                list_entry_radius: None,
+                list_entry_hover_border_width: None,
                 container: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
