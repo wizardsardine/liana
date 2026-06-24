@@ -2215,7 +2215,7 @@ pub struct RecoveryDescriptorResponse {
 }
 
 /// One ECIES heir-escrow envelope on the wire (camelCase JSON; byte fields
-/// base64). The desktop **defines** this contract; `coincube-api` stores the
+/// lowercase hex, SPEC §5). The desktop **defines** this contract; `coincube-api` stores the
 /// bytes opaquely (it never parses or decrypts them) and `keychain-app`
 /// decrypts. Shared by owner upload (`PUT …/vault/escrow`) and gated heir
 /// release (`GET …/vault/recovery-envelope`, which returns only the caller's
@@ -2240,13 +2240,14 @@ pub struct InheritanceEnvelopeWire {
     pub keyholder_key_id: Option<u64>,
     /// `"descriptor"` | `"seed"`.
     pub artifact_kind: String,
-    /// ECIES scheme tag, e.g. `"ecies-secp256k1-hkdf-aes256gcm-v1"`.
+    /// ECIES scheme tag, e.g. `"ecies-secp256k1-hkdf-sha256-aes256gcm-v1"`.
     pub scheme: String,
-    /// base64 of the 33-byte compressed ephemeral secp256k1 public key.
+    /// Lowercase hex (SPEC §5) of the 33-byte compressed ephemeral secp256k1
+    /// public key.
     pub ephemeral_pubkey: String,
-    /// base64 of `ciphertext || GCM tag`.
+    /// Lowercase hex (SPEC §5) of `ciphertext || GCM tag`.
     pub ciphertext: String,
-    /// base64 of the 12-byte GCM nonce.
+    /// Lowercase hex (SPEC §5) of the 12-byte GCM nonce.
     pub nonce: String,
     /// The non-hardened encryption child path (relative to the keyholder xpub).
     pub derivation: String,
