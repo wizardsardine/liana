@@ -16,6 +16,7 @@ use liana_connect::ws_business::{
 use liana_ui::widget::text_input;
 use miniscript::bitcoin::bip32::Fingerprint;
 use tracing::{debug, error, trace};
+use url::form_urlencoded::Serializer;
 use uuid::Uuid;
 
 // Update routing logic
@@ -89,6 +90,9 @@ impl State {
             Msg::TemplateLock => self.on_template_lock(),
             Msg::TemplateUnlock => self.on_template_unlock(),
             Msg::TemplateValidate => self.on_template_validate(),
+            Msg::TemplateHelpShowModal => self.on_template_help_show_modal(),
+            Msg::TemplateHelpCloseModal => self.on_template_help_close_modal(),
+            Msg::TemplateHelpEmailWs => self.on_template_help_email_ws(),
 
             // Navigation
             Msg::NavigateToHome => self.on_navigate_to_home(),
@@ -905,6 +909,47 @@ impl State {
         // Push template to server with status = Validated
         if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Validated) {
             self.backend.edit_wallet(wallet);
+        }
+    }
+
+    fn on_template_help_show_modal(&mut self) {
+        let wallet_name = self
+            .selected_wallet()
+            .map(|wallet| wallet.alias)
+            .unwrap_or_else(|| "this wallet".to_string());
+        self.views.modals.template_help = Some(
+            crate::state::views::modals::TemplateHelpModalState::new(wallet_name),
+        );
+    }
+
+    fn on_template_help_close_modal(&mut self) {
+        self.views.modals.template_help = None;
+    }
+
+    fn on_template_help_email_ws(&mut self) {
+        let wallet_name = self
+            .views
+            .modals
+            .template_help
+            .as_ref()
+            .map(|modal| modal.wallet_name.as_str())
+            .unwrap_or("this wallet");
+        let subject = format!("Changes needed before I can approve \"{wallet_name}\"");
+        let body = format!(
+            "Hi,\n\nI reviewed the template for {wallet_name} and can't approve it as-is. Could you adjust:\n\n<your requirements>\n\nThanks."
+        );
+        let query = Serializer::new(String::new())
+            .append_pair("subject", &subject)
+            .append_pair("body", &body)
+            .finish();
+        let url = format!("mailto:hello@lianawallet.com?{query}");
+
+        if let Err(error) = open::that_detached(&url) {
+            error!("Error opening '{}': {}", url, error);
+            self.on_warning_show_modal(
+                "Couldn't open your email app",
+                "Open your email client and contact Wizardsardine to request template edits.",
+            );
         }
     }
 }

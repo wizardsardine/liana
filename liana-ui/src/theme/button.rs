@@ -2,9 +2,7 @@ use iced::border::Dash;
 use iced::widget::button::{Catalog, Status, Style, StyleFn};
 use iced::{Background, Border, Color};
 
-use super::card::CARD_RADIUS;
-use super::palette::Button;
-use super::Theme;
+use super::{card::CARD_RADIUS, palette::Button, Theme};
 
 pub const BUTTON_RADIUS: f32 = 12.0;
 /// On/off length of the auxiliary button's dashed border, in logical pixels.
@@ -47,6 +45,7 @@ button_styles!(
     transparent_border,
     clickable_section,
     link,
+    link_subtle,
     signing_devices,
 );
 

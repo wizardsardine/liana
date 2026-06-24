@@ -1,13 +1,16 @@
 use crate::{
     state::{views::login::CachedAccount, Msg, State},
-    views::{layout_with_scrollable_list, INSTALLER_STEPS},
+    views::{intro_prompt, layout_with_scrollable_list, screen_intro, INSTALLER_STEPS},
 };
 use iced::{
-    widget::{row, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
 use liana_ui::{
-    component::{button::btn_connect_another_email, list, text},
+    component::{
+        button::{btn_connect_another_email, EntryWidth, ENTRY_DELETE_GAP, ENTRY_DELETE_SLOT},
+        list, text,
+    },
     widget::*,
 };
 
@@ -16,27 +19,13 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     let processing = state.views.login.account_select.processing;
     let selected_email = &state.views.login.account_select.selected_email;
 
-    // Header content
-    let liana_business = row![
-        Space::with_width(Length::Fill),
-        text::new::d3("Liana Business"),
-        Space::with_width(Length::Fill),
-    ];
-
-    let select_account_text = row![
-        Space::with_width(Length::Fill),
-        text::new::h3_semi("Select an account to continue"),
-        Space::with_width(Length::Fill),
-    ];
-
-    let header_content = Column::new()
-        .push(liana_business)
-        .push(Space::with_height(30))
-        .push(select_account_text)
-        .push(Space::with_height(30));
+    let header_content = screen_intro(
+        "Liana Business",
+        Some(intro_prompt("Select an account to continue", None)),
+    );
 
     // Scrollable list of accounts
-    let mut list_content = Column::new().spacing(15).align_x(iced::Alignment::Center);
+    let mut list_content = column![].spacing(15).align_x(iced::Alignment::Center);
 
     // One row per cached account: the account entry plus a delete button after it.
     for account in accounts {
@@ -52,12 +41,12 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     // Connect button fills the row, with a spacer the size of the delete-button slot so it
     // lines up with the account entries above.
     let new_email_row = row![
-        new_email,
-        Space::with_width(list::ACCOUNT_DELETE_SLOT_WIDTH)
+        Container::new(new_email).width(EntryWidth::Deletable),
+        Space::with_width(ENTRY_DELETE_SLOT),
     ]
-    .spacing(10)
+    .spacing(ENTRY_DELETE_GAP)
     .align_y(Alignment::Center)
-    .width(Length::Fill);
+    .width(Length::Shrink);
 
     list_content = list_content.push(new_email_row);
 
@@ -66,7 +55,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
         None,
         false,
         &["Login".to_string()],
-        header_content,
+        Some(header_content),
         list_content,
         None,
         None,
@@ -80,13 +69,9 @@ fn account_entry(
     processing: bool,
     is_selected: bool,
 ) -> Element<'static, Msg> {
-    let email = if processing && is_selected {
-        "Connecting...".to_string()
-    } else {
-        text::short_email(&account.email, 55)
-    };
     list::account_entry(
-        email,
+        text::short_email(&account.email, 55),
+        processing && is_selected,
         (!processing).then_some(Msg::AccountSelectConnect(account.email.clone())),
         (!processing).then_some(Msg::AccountSelectDelete(account.email.clone())),
     )

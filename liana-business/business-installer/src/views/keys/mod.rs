@@ -16,7 +16,7 @@ use liana_ui::{
     widget::*,
 };
 
-use super::{key_kind_label, layout_with_scrollable_list, menu_key_entry};
+use super::{key_kind_label, layout_with_scrollable_list, menu_key_entry, INSTALLER_STEPS};
 
 fn key_signer(key: &ws_business::Key) -> String {
     let signer = match &key.key_type {
@@ -232,11 +232,11 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
     let breadcrumb = vec![org_name, wallet_name, "Keys".to_string()];
 
     layout_with_scrollable_list(
-        (0, 0),
+        (5, INSTALLER_STEPS),
         Some(current_user_email),
         is_ws_admin,
         &breadcrumb,
-        header_content,
+        Some(header_content),
         keys_list,
         pinned_content,
         footer_content,

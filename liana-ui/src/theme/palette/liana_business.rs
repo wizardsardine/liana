@@ -445,6 +445,27 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                link_subtle: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_PILL_SIMPLE,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: SAFETY_NET,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: SAFETY_NET,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: btn_disabled(),
+                },
                 pick_list: Button {
                     active: ButtonPalette {
                         background: INPUT_BG,

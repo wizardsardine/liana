@@ -63,6 +63,9 @@ pub enum Msg {
     TemplateLock,                                               // Lock template (Draft → Locked)
     TemplateUnlock,                                             // Unlock template (Locked → Draft)
     TemplateValidate,                                           // Validate template
+    TemplateHelpShowModal,                                      // Open the contact-admin template-help modal
+    TemplateHelpCloseModal,                                     // Close the contact-admin template-help modal
+    TemplateHelpEmailWs,                                        // Open an email draft for Wizardsardine
 
     // Navigation
     NavigateToHome,         // Navigate to home view

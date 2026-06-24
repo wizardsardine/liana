@@ -813,6 +813,7 @@ dependencies = [
  "liana-gui",
  "liana-ui",
  "miniscript",
+ "open",
  "reqwest",
  "rfd",
  "rustls 0.23.36",
