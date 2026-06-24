@@ -14,7 +14,7 @@ use crate::{
             amount_with_fiat, amount_with_font, amount_with_font_blink, AmountSize, FiatAmount,
         },
         button::{btn_dismiss, btn_go_to_rescan, btn_reset_timelock},
-        card::{self, info, warning},
+        card::{self, warning},
         spinner,
         text::{
             new::{self, D2_SPEC},
@@ -22,7 +22,7 @@ use crate::{
         },
     },
     icon, theme,
-    widget::{Element, SpaceExt},
+    widget::{Container, Element, SpaceExt},
 };
 
 const RESCAN_WARNING: &str = "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions.";
@@ -45,7 +45,7 @@ pub fn rescan_warning<'a, M: Clone + 'static>(go_to_rescan: M, dismiss: M) -> El
     ]
     .spacing(5);
 
-    card::soft_warning(column![msg, buttons].spacing(10))
+    card::soft_warning(column![msg, buttons].spacing(10)).into()
 }
 
 /// Unconfirmed balance line: `+ <amount> unconfirmed`, with optional fiat value.
@@ -137,7 +137,10 @@ pub fn recovery_hint<'a, M: Clone + 'a>(units_left: String) -> Element<'a, M> {
     .spacing(15)
     .align_y(Alignment::Center)
     .width(Length::Fill);
-    info(content)
+    Container::new(content)
+        .padding(card::SOFT_CARD_PADDING)
+        .style(theme::card::info)
+        .into()
 }
 
 /// Warning that a recovery path is or will soon be available, with a button

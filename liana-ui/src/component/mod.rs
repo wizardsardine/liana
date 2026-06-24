@@ -59,15 +59,14 @@ pub fn network_banner<'a, T: 'a>(network: Network) -> Container<'a, T> {
 }
 
 pub fn section<'a, T: 'a>(title: impl std::fmt::Display) -> Row<'a, T> {
-    let title = Container::new(text::new::d4(title))
+    let title = card::section(text::new::d4(title))
         .padding(Padding {
             top: 10.0,
             right: 24.0,
             bottom: 10.0,
             left: 18.0,
         })
-        .align_y(Alignment::Center)
-        .style(theme::card::section);
+        .align_y(Alignment::Center);
     row![title, separator()]
         .align_y(Alignment::Center)
         .spacing(10)

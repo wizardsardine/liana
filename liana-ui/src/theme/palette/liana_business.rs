@@ -472,13 +472,13 @@ impl Palette {
                 },
                 soft_warning: ContainerPalette {
                     background: AMBER_TINT_LIGHT,
-                    text: color::ORANGE.into(),
+                    text: None,
                     border: AMBER_BORDER_LIGHT.into(),
                 },
                 info: ContainerPalette {
-                    background: color::TRANSPARENT,
-                    text: color::DARK_TEXT_SECONDARY.into(),
-                    border: color::LIGHT_BORDER.into(),
+                    background: INPUT_BG,
+                    text: None,
+                    border: color::LIGHT_BG_SECONDARY.into(),
                 },
                 success: Some(ContainerPalette {
                     background: GREEN_TINT_LIGHT,
@@ -493,12 +493,12 @@ impl Palette {
                 section: ContainerPalette {
                     background: BUSINESS_BLUE_SECTION,
                     text: None,
-                    border: Some(color::TRANSPARENT),
+                    border: None,
                 },
                 flat: ContainerPalette {
                     background: BTN_TERTIARY_BG,
                     text: None,
-                    border: Some(color::TRANSPARENT),
+                    border: None,
                 },
             },
             banners: Banners {
