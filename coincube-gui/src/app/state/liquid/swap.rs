@@ -187,6 +187,12 @@ pub struct LiquidSwap {
     quote_remaining: u32,
     phase: SwapPhase,
     is_sending: bool,
+    /// Whether a Liquid sync has completed since this screen was entered.
+    /// Until the first `Synced` event lands the wallet may still be catching
+    /// up, and a swap can fail server-side because its inputs aren't ready —
+    /// so we surface a hint. Set on the `RefreshRequested` that an SDK
+    /// `Synced` event drives (see `App`'s `active_liquid_refresh`).
+    synced: bool,
     error: Option<String>,
     /// Success-screen celebration assets.
     sent_amount_display: String,
@@ -213,6 +219,7 @@ impl LiquidSwap {
             quote_remaining: 0,
             phase: SwapPhase::Input,
             is_sending: false,
+            synced: false,
             error: None,
             sent_amount_display: String::new(),
             sent_quote: coincube_ui::component::quote_display::random_quote("liquid-send"),
@@ -486,6 +493,7 @@ impl State for LiquidSwap {
             quote_remaining: self.quote_remaining,
             quote_actionable: self.quote_actionable(),
             is_sending: self.is_sending,
+            syncing: !self.synced,
             bitcoin_unit: cache.bitcoin_unit,
             error: self.error.as_deref(),
             sent_amount_display: &self.sent_amount_display,
@@ -524,6 +532,9 @@ impl State for LiquidSwap {
                     self.quoting = false;
                 }
                 view::LiquidSwapMessage::RefreshRequested => {
+                    // A completed SDK sync drives this (or our own post-swap
+                    // sync) — the wallet is caught up, so clear the hint.
+                    self.synced = true;
                     return self.load_balance();
                 }
                 view::LiquidSwapMessage::SelfAddressReady(result) => match result {
@@ -782,6 +793,8 @@ impl State for LiquidSwap {
         self.error = None;
         self.is_sending = false;
         self.pending_quote = false;
+        // Assume catching up until the sync we kick below reports `Synced`.
+        self.synced = false;
 
         let breez = self.breez_client.clone();
         Task::batch(vec![

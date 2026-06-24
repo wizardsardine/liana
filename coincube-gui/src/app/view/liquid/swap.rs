@@ -13,7 +13,7 @@ use coincube_ui::{
         button, form,
         text::*,
     },
-    icon::arrow_down_up_icon,
+    icon::{arrow_down_up_icon, warning_icon},
     theme,
     widget::{Column, Container, Element, Row},
 };
@@ -40,6 +40,9 @@ pub struct LiquidSwapConfig<'a> {
     pub quote_remaining: u32,
     pub quote_actionable: bool,
     pub is_sending: bool,
+    /// Whether the Liquid wallet is still catching up. While true a swap
+    /// can fail server-side (its inputs aren't ready), so we warn the user.
+    pub syncing: bool,
     /// Display unit for L-BTC amounts (BTC vs SATS). USDt always renders
     /// as a decimal regardless of this setting.
     pub bitcoin_unit: BitcoinDisplayUnit,
@@ -303,7 +306,11 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
     let mut content = Column::new()
         .spacing(16)
         .max_width(560)
-        .push(h4_bold("Swap"))
+        .push(h4_bold("Swap"));
+    if config.syncing {
+        content = content.push(sync_hint());
+    }
+    content = content
         .push(from_card)
         .push(flip_row)
         .push(to_card)
@@ -413,10 +420,11 @@ fn review_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMes
     let mut content = Column::new()
         .spacing(16)
         .max_width(480)
-        .push(h4_bold("Review swap"))
-        .push(summary)
-        .push(confirm_btn)
-        .push(back_btn);
+        .push(h4_bold("Review swap"));
+    if config.syncing {
+        content = content.push(sync_hint());
+    }
+    content = content.push(summary).push(confirm_btn).push(back_btn);
 
     if let Some(err) = config.error {
         content = content.push(error_card(err));
@@ -426,6 +434,33 @@ fn review_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMes
         .width(Length::Fill)
         .center_x(Length::Fill)
         .into()
+}
+
+/// Non-blocking banner shown while the Liquid wallet is still catching up.
+fn sync_hint<'a>() -> Element<'a, LiquidSwapMessage> {
+    Container::new(
+        Row::new()
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .push(warning_icon().size(16).color(color::ORANGE))
+            .push(
+                text("Wallet is still syncing — swaps may fail until it finishes.")
+                    .size(P2_SIZE)
+                    .style(theme::text::secondary),
+            ),
+    )
+    .padding([8, 12])
+    .width(Length::Fill)
+    .style(|t| container::Style {
+        background: Some(Background::Color(t.colors.cards.simple.background)),
+        border: iced::Border {
+            color: color::ORANGE,
+            width: 1.0,
+            radius: 12.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 fn error_card(err: &str) -> Element<'_, LiquidSwapMessage> {
