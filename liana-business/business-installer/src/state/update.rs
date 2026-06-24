@@ -21,6 +21,17 @@ use tracing::{debug, error, trace};
 use url::form_urlencoded::Serializer;
 use uuid::Uuid;
 
+fn navigate_back_target(current_view: View) -> Option<View> {
+    match current_view {
+        View::WalletSelect => Some(View::OrgSelect),
+        View::TemplateEdit | View::Keys | View::Xpub | View::Registration => {
+            Some(View::WalletSelect)
+        }
+        View::OrgSelect => Some(View::Login),
+        View::Login | View::Loading => None,
+    }
+}
+
 // Update routing logic
 impl State {
     #[rustfmt::skip]
@@ -387,11 +398,11 @@ impl State {
             | Some(WalletStatus::Drafted)
             | Some(WalletStatus::Locked) => {
                 // Draft/Locked + (WS Admin|Wallet Manager) -> Edit Template
-                self.current_view = View::WalletEdit;
+                self.current_view = View::TemplateEdit;
             }
             None => {
                 // Fallback -> Edit Template
-                self.current_view = View::WalletEdit;
+                self.current_view = View::TemplateEdit;
             }
         }
         Task::none()
@@ -977,7 +988,7 @@ impl State {
 // Navigation
 impl State {
     fn on_navigate_to_home(&mut self) {
-        self.current_view = View::WalletEdit;
+        self.current_view = View::TemplateEdit;
     }
 
     fn on_navigate_to_keys(&mut self) {
@@ -1002,44 +1013,41 @@ impl State {
 
     fn on_navigate_back(&mut self) -> Task<Msg> {
         match self.current_view {
-            View::WalletSelect => {
-                self.current_view = View::OrgSelect;
-                Task::none()
-            }
-            View::WalletEdit => {
-                self.current_view = View::WalletSelect;
-                Task::none()
-            }
-            View::Keys => {
-                self.current_view = View::WalletEdit;
-                Task::none()
-            }
-            View::Xpub => {
-                self.current_view = View::WalletSelect;
-                Task::none()
-            }
             View::OrgSelect => {
                 self.current_view = View::Login;
                 // Focus email input when returning to login
                 text_input::focus("login_email")
             }
-            View::Login => {
-                if self.views.login.current == views::LoginState::CodeEntry {
+            View::Login => match self.views.login.current {
+                views::LoginState::CodeEntry => {
                     self.views.login.email.processing = false;
                     self.views.login.current = views::LoginState::EmailEntry;
                     // Focus email input when going back from code entry
                     text_input::focus("login_email")
-                } else {
+                }
+                // From the email step, go back to the account list when there is one.
+                views::LoginState::EmailEntry
+                    if !self.views.login.account_select.accounts.is_empty() =>
+                {
+                    self.views.login.current = views::LoginState::AccountSelect;
                     Task::none()
                 }
-            }
+                _ => Task::none(),
+            },
             View::Registration => {
                 self.stop_hw();
-                self.current_view = View::WalletSelect;
+                self.current_view =
+                    navigate_back_target(self.current_view).expect("registration back target");
                 Task::none()
             }
             View::Loading => {
                 // Cannot navigate back from loading state
+                Task::none()
+            }
+            current_view => {
+                if let Some(previous_view) = navigate_back_target(current_view) {
+                    self.current_view = previous_view;
+                }
                 Task::none()
             }
         }
@@ -1334,10 +1342,10 @@ impl State {
                     UserRole::WalletManager => match (self.current_view, status) {
                         (View::Keys, WalletStatus::Locked) => {
                             debug!("on_backend_wallet: wallet locked while on Keys view, redirecting to wallet edit");
-                            self.current_view = View::WalletEdit;
+                            self.current_view = View::TemplateEdit;
                             return Task::none();
                         }
-                        (View::WalletEdit, WalletStatus::Validated) => {
+                        (View::TemplateEdit, WalletStatus::Validated) => {
                             debug!("on_backend_wallet: wallet validated, redirecting to Xpub view");
                             self.current_view = View::Xpub;
                             return Task::none();
@@ -1345,7 +1353,7 @@ impl State {
                         _ => {}
                     },
                     UserRole::WizardSardineAdmin => {
-                        if let (View::WalletEdit, WalletStatus::Validated) =
+                        if let (View::TemplateEdit, WalletStatus::Validated) =
                             (self.current_view, status)
                         {
                             debug!(
@@ -2505,5 +2513,20 @@ impl State {
         self.current_view = View::Loading;
         self.app.exit = true;
         Task::done(Msg::Update)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::navigate_back_target;
+    use crate::state::View;
+
+    #[test]
+    fn wallet_edit_and_keys_back_to_wallet_select() {
+        assert_eq!(
+            navigate_back_target(View::TemplateEdit),
+            Some(View::WalletSelect)
+        );
+        assert_eq!(navigate_back_target(View::Keys), Some(View::WalletSelect));
     }
 }

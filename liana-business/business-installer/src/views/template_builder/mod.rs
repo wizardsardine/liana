@@ -17,7 +17,7 @@ use liana_ui::{
     widget::*,
 };
 
-use super::{layout_with_scrollable_list, INSTALLER_STEPS};
+use super::{layout_with_scrollable_list, wallet_edit::wallet_edit_tab_header, INSTALLER_STEPS};
 
 pub mod entry_path_list;
 
@@ -30,7 +30,7 @@ fn banner_card(
 ) -> Element<'static, Msg> {
     let content = row![
         tooltip::tooltip_with_style(body, icon_style),
-        text::new::caption(body).style(icon_style)
+        text::new::caption(body).style(icon_style),
     ]
     .spacing(10)
     .align_y(Alignment::Center);
@@ -111,7 +111,12 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     let editable = is_ws_admin && !is_locked;
 
     let list_content = entry_path_list(state, editable);
-    let header_content = header_content(is_ws_admin, is_manager, is_locked);
+    let header_content = column![
+        wallet_edit_tab_header(state),
+        header_content(is_ws_admin, is_manager, is_locked)
+    ]
+    .align_x(Alignment::Center)
+    .into();
     let pinned_content =
         editable.then_some(btn_add_recovery_path(Some(Msg::TemplateNewPathModal)).into());
     let footer_content = footer_content(
@@ -133,14 +138,14 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
         .and_then(|wallet_id| state.backend.get_wallet(wallet_id))
         .map(|wallet| wallet.alias.clone())
         .unwrap_or_else(|| "Wallet".to_string());
-    let breadcrumb = vec![org_name, wallet_name, "Template".to_string()];
+    let breadcrumb = vec![org_name, wallet_name];
 
     layout_with_scrollable_list(
         (5, INSTALLER_STEPS),
         Some(current_user_email),
         is_ws_admin,
         &breadcrumb,
-        header_content,
+        Some(header_content),
         list_content,
         pinned_content,
         footer_content,

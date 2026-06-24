@@ -4,11 +4,15 @@ use crate::{
     backend::Backend,
     state::{Msg, State},
 };
-use iced::{alignment::Horizontal, widget::row, Alignment, Length};
+use iced::{
+    alignment::Horizontal,
+    widget::{column, row, Space},
+    Alignment, Length,
+};
 use liana_connect::ws_business::{self, KeyIdentity, KeyType, UserRole, WalletStatus};
 use liana_ui::{
     component::{
-        button::{btn_add_key, btn_edit_keys, btn_mark_keys_ready},
+        button::{btn_add_key, btn_edit_keys, btn_mark_keys_ready, EntryWidth},
         card, pill,
         text::{self},
     },
@@ -16,7 +20,10 @@ use liana_ui::{
     widget::*,
 };
 
-use super::{key_kind_label, layout_with_scrollable_list, menu_key_entry, INSTALLER_STEPS};
+use super::{
+    key_kind_label, layout_with_scrollable_list, menu_key_entry,
+    wallet_edit::wallet_edit_tab_header, INSTALLER_STEPS,
+};
 
 fn key_signer(key: &ws_business::Key) -> String {
     let signer = match &key.key_type {
@@ -31,71 +38,70 @@ fn key_signer(key: &ws_business::Key) -> String {
     };
 
     if signer.is_empty() {
-        "—".to_string()
+        "-".to_string()
     } else {
         signer
     }
 }
 
+const NOTICE_ICON_SIZE: u32 = 16;
+
 fn notice_card(
     variant: fn(Element<'static, Msg>) -> Container<'static, Msg>,
-    icon: Element<'static, Msg>,
+    icon: Text<'static>,
     body: &'static str,
 ) -> Element<'static, Msg> {
-    let content = row![icon, text::new::caption(body).style(theme::text::primary),]
-        .spacing(11)
-        .align_y(Alignment::Start);
+    let content = row![
+        icon.size(NOTICE_ICON_SIZE),
+        text::new::caption(body).style(theme::text::primary),
+    ]
+    .spacing(11)
+    .align_y(Alignment::Center);
 
     variant(content.into()).width(Length::Fill).into()
 }
 
 fn notice_content(is_manager: bool, keys_ready: bool, locked: bool) -> Element<'static, Msg> {
-    let mut cards = Vec::new();
-
-    if is_manager {
+    let cards = if is_manager {
         if keys_ready {
-            cards.push(notice_card(
+            column![notice_card(
                 card::success,
-                icon::check_icon().style(theme::text::success).into(),
+                icon::check_icon().style(theme::text::success),
                 if locked {
                     "Keys & signers marked as ready. The spending policy will be crafted from these keys."
                 } else {
                     "Keys & signers marked as ready. The spending policy will be crafted from these keys. You can still edit keys if anything needs to change."
                 },
-            ));
+            )]
         } else {
-            cards.push(card::info(
+            column![card::info(
                 "List the keys that will be part of this wallet and assign a signer to each. The spending policy will be crafted from these keys."
-            ).into());
+            )]
         }
     } else if keys_ready {
-        cards.push(notice_card(
-            card::success,
-            icon::check_icon()
-                .size(16)
-                .style(theme::text::success)
-                .into(),
-            "Marked as ready by the Wallet Manager. They've finished adding keys & signers.",
-        ));
-        cards.push(card::info(
-            "These keys are shared with the Spending policy tab, where you arrange them into spending paths."
-        ).into());
+        column![
+            notice_card(
+                card::success,
+                icon::check_icon().style(theme::text::success),
+                "Marked as ready by the Wallet Manager. They've finished adding keys & signers.",
+            ),
+            card::info(
+                "These keys are shared with the Spending policy tab, where you arrange them into spending paths."
+            ),
+        ]
     } else {
-        cards.push(notice_card(
+        column![notice_card(
             card::soft_warning,
-            icon::tooltip_icon()
-                .size(16)
-                .style(theme::text::warning)
-                .into(),
+            icon::tooltip_icon().style(theme::text::warning),
             "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet.",
-        ));
-    }
+        )]
+    };
 
-    Column::with_children(cards).spacing(12).into()
+    cards.spacing(12).into()
 }
 
-fn keys_visualization(state: &State, editable: bool) -> Element<'static, Msg> {
-    let key_rows: Vec<Element<'static, Msg>> = state
+fn keys_list(state: &State, editable: bool) -> Element<'static, Msg> {
+    let keys_column = state
         .app
         .keys
         .iter()
@@ -120,13 +126,13 @@ fn keys_visualization(state: &State, editable: bool) -> Element<'static, Msg> {
                 .into(),
                 trailing,
                 editable.then_some(Msg::KeyEdit(*key_id)),
+                editable.then_some(Msg::KeyDelete(*key_id)),
             )
         })
-        .collect();
+        .fold(column![], |col, entry| col.push(entry))
+        .spacing(12);
 
-    Container::new(Column::with_children(key_rows).spacing(12))
-        .width(Length::Fill)
-        .into()
+    Container::new(keys_column).width(Length::Fill).into()
 }
 
 fn footer_content(
@@ -148,10 +154,12 @@ fn footer_content(
             .width(Length::Shrink)
             .into()
         });
-        let footer = row![
-            hint,
-            btn_mark_keys_ready(enough_keys.then_some(Msg::MarkKeysReady(true)),)
-        ]
+        let mark_ready = btn_mark_keys_ready(enough_keys.then_some(Msg::MarkKeysReady(true)));
+        let footer = if let Some(hint) = hint {
+            row![hint, mark_ready]
+        } else {
+            row![mark_ready]
+        }
         .spacing(16)
         .align_y(Alignment::Center);
 
@@ -207,9 +215,23 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
     let locked = matches!(wallet_status, Some(WalletStatus::Locked));
     let editable = !(locked || (is_manager && state.app.keys_ready));
 
-    let header_content = notice_content(is_manager, state.app.keys_ready, locked);
-    let keys_list = keys_visualization(state, editable);
-    let pinned_content = editable.then_some(btn_add_key(Some(Msg::KeyAdd)).into());
+    let header_content = column![
+        wallet_edit_tab_header(state),
+        notice_content(is_manager, state.app.keys_ready, locked),
+    ]
+    .into();
+    let keys_list = keys_list(state, editable);
+    let add_key = editable.then_some(
+        column![
+            btn_add_key(Some(Msg::KeyAdd)).width(if state.app.keys.is_empty() {
+                EntryWidth::Standard
+            } else {
+                EntryWidth::Deletable
+            }),
+            Space::with_height(12)
+        ]
+        .into(),
+    );
     let footer_content = footer_content(
         is_manager,
         locked,
@@ -229,7 +251,7 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
         .and_then(|wallet_id| state.backend.get_wallet(wallet_id))
         .map(|wallet| wallet.alias.clone())
         .unwrap_or_else(|| "Wallet".to_string());
-    let breadcrumb = vec![org_name, wallet_name, "Keys".to_string()];
+    let breadcrumb = vec![org_name, wallet_name];
 
     layout_with_scrollable_list(
         (5, INSTALLER_STEPS),
@@ -238,7 +260,7 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
         &breadcrumb,
         Some(header_content),
         keys_list,
-        pinned_content,
+        add_key,
         footer_content,
         true,
         Some(Msg::NavigateBack),

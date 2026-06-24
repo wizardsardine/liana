@@ -4,7 +4,7 @@ use crate::{
     state::app::AppState,
     views::{
         keys_view, loading_view, login_view, modals, org_select_view, registration_view,
-        template_builder_view, wallet_select_view, xpub_view,
+        template_builder_view, wallet_edit::wallet_edit_route, wallet_select_view, xpub_view,
     },
 };
 use async_hwi::{bitbox::NoiseConfig, service::HwiService};
@@ -38,7 +38,7 @@ pub enum View {
     Login,
     OrgSelect,
     WalletSelect,
-    WalletEdit,
+    TemplateEdit,
     Xpub,
     Keys,
     Registration,
@@ -156,7 +156,7 @@ impl State {
         {
             View::OrgSelect
         } else {
-            self.current_view
+            wallet_edit_route(self)
         }
     }
 
@@ -167,7 +167,7 @@ impl State {
             View::Login => login_view(self),
             View::OrgSelect => org_select_view(self),
             View::WalletSelect => wallet_select_view(self),
-            View::WalletEdit => template_builder_view(self),
+            View::TemplateEdit => template_builder_view(self),
             View::Xpub => xpub_view(self),
             View::Keys => keys_view(self),
             View::Registration => registration_view(self),
