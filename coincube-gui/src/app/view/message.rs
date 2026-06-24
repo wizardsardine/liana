@@ -721,6 +721,10 @@ pub enum LiquidSwapMessage {
     /// Self-targeted Liquid receive address generated (or failed) — the
     /// destination every cross-asset prepare/send is pointed at.
     SelfAddressReady(Result<String, String>),
+    /// Background rate probe finished — carries the SideSwap rate
+    /// (`to`-base per `from`-base) so the rate chip + "Swap All" work
+    /// before the user has entered an amount. Failures are ignored.
+    RateProbeReady(Result<f64, String>),
     /// Receiver-amount input edited (decimal `to`-asset string).
     AmountEdited(String),
     /// Swap the `from` / `to` assets and invalidate the stale quote.

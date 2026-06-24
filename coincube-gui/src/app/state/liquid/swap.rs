@@ -53,6 +53,26 @@ const QUOTE_DEBOUNCE: Duration = Duration::from_millis(450);
 /// the re-quote (a zero-margin estimate reliably trips "insufficient").
 const SWAP_ALL_SAFETY_MARGIN: f64 = 0.995;
 
+/// Fraction of the balance the background rate probe quotes for — small
+/// enough to stay affordable (so the probe's balance check passes) while
+/// being well above the SideSwap minimum for any non-dust balance.
+const RATE_PROBE_FRACTION: f64 = 0.5;
+
+/// Approximate mid-market rate (`to`-base per `from`-base) from the cached
+/// BTC/USD price, used only to size an affordable rate probe. Both assets
+/// are 8-dp, so for L-BTC→USDt the rate is the price and the inverse for
+/// the other direction.
+fn cached_seed_rate(from: SendAsset, to: SendAsset, btc_usd_price: f64) -> Option<f64> {
+    if btc_usd_price <= 0.0 {
+        return None;
+    }
+    match (from, to) {
+        (SendAsset::Lbtc, SendAsset::Usdt) => Some(btc_usd_price),
+        (SendAsset::Usdt, SendAsset::Lbtc) => Some(1.0 / btc_usd_price),
+        _ => None,
+    }
+}
+
 /// Swap is only available where SideSwap is — i.e. mainnet. Mirrors the
 /// `cross_asset_supported` predicate in [`crate::app::state::liquid::send`]
 /// so the Swap entry points and quote engine share one capability gate.
@@ -188,9 +208,11 @@ pub struct LiquidSwap {
     pending_quote: bool,
     /// Current locked/last quote, if any.
     quote: Option<SwapQuote>,
-    /// Most recent successful rate (`to` per `from` base unit), kept so
-    /// "Swap All" can estimate a max without a fresh round-trip.
+    /// Most recent SideSwap rate (`to` per `from` base unit) — from a real
+    /// quote or the background probe. Drives the rate chip and "Swap All".
     last_rate: Option<f64>,
+    /// Whether a background rate probe is in flight (de-dupes triggers).
+    rate_probe_inflight: bool,
     /// Whether a quote request is in flight.
     quoting: bool,
     /// Monotonic sequence guarding debounce timers and async results
@@ -227,6 +249,7 @@ impl LiquidSwap {
             pending_quote: false,
             quote: None,
             last_rate: None,
+            rate_probe_inflight: false,
             quoting: false,
             quote_seq: 0,
             quote_remaining: 0,
@@ -316,6 +339,72 @@ impl LiquidSwap {
             |result| {
                 Message::View(view::Message::LiquidSwap(
                     view::LiquidSwapMessage::SelfAddressReady(result),
+                ))
+            },
+        )
+    }
+
+    /// Fire a background rate probe so the rate chip and "Swap All" work
+    /// before the user types anything. Quotes a fraction of the balance
+    /// (sized via the cached price so it's affordable) and stores only the
+    /// resulting rate — never a visible quote. No-op when a rate already
+    /// exists, a probe is in flight, the destination/balance/price aren't
+    /// ready, or the probe amount rounds to zero (dust balance).
+    fn probe_rate(&mut self, btc_usd_price: Option<f64>) -> Task<Message> {
+        if self.last_rate.is_some() || self.rate_probe_inflight {
+            return Task::none();
+        }
+        let Some(destination) = self.self_address.clone() else {
+            return Task::none();
+        };
+        let from_balance = self.balance_base(self.from_asset);
+        if from_balance == 0 {
+            return Task::none();
+        }
+        let Some(cached_rate) =
+            btc_usd_price.and_then(|p| cached_seed_rate(self.from_asset, self.to_asset, p))
+        else {
+            return Task::none();
+        };
+        let probe_receiver =
+            (from_balance as f64 * cached_rate * RATE_PROBE_FRACTION).floor() as u64;
+        if probe_receiver == 0 {
+            return Task::none();
+        }
+        let network = self.breez_client.network();
+        let (Some(to_id), Some(from_id)) = (
+            Self::asset_kind(self.to_asset).asset_id(network),
+            Self::asset_kind(self.from_asset).asset_id(network),
+        ) else {
+            return Task::none();
+        };
+        let (to_id, from_id) = (to_id.to_string(), from_id.to_string());
+
+        self.rate_probe_inflight = true;
+        let breez_client = self.breez_client.clone();
+        Task::perform(
+            async move {
+                breez_client
+                    .prepare_send_asset(
+                        destination,
+                        &to_id,
+                        probe_receiver,
+                        LBTC_PRECISION,
+                        Some(&from_id),
+                    )
+                    .await
+                    .map_err(|e| e.to_string())
+                    .map(|resp| {
+                        let total = resp
+                            .exchange_amount_sat
+                            .unwrap_or(0)
+                            .saturating_add(resp.fees_sat.unwrap_or(0));
+                        rate_to_per_from(probe_receiver, total)
+                    })
+            },
+            |result| {
+                Message::View(view::Message::LiquidSwap(
+                    view::LiquidSwapMessage::RateProbeReady(result),
                 ))
             },
         )
@@ -509,6 +598,7 @@ impl State for LiquidSwap {
             usdt_balance: self.usdt_balance,
             entered_amount: &self.entered_amount,
             quote: self.quote.as_ref(),
+            rate: self.last_rate,
             quoting: self.quoting,
             quote_remaining: self.quote_remaining,
             quote_actionable: self.quote_actionable(),
@@ -544,6 +634,9 @@ impl State for LiquidSwap {
                     self.error = None;
                     self.btc_balance = *btc_balance;
                     self.usdt_balance = *usdt_balance;
+                    // Now that a balance is known, pre-fetch the rate so the
+                    // rate chip + "Swap All" work without the user typing.
+                    return self.probe_rate(cache.btc_usd_price);
                 }
                 view::LiquidSwapMessage::Error(err) => {
                     self.error = Some(err.clone());
@@ -566,6 +659,9 @@ impl State for LiquidSwap {
                             let seq = self.quote_seq;
                             return self.request_quote(seq);
                         }
+                        // Destination is ready — pre-fetch the rate if we
+                        // don't have one yet.
+                        return self.probe_rate(cache.btc_usd_price);
                     }
                     Err(e) => {
                         self.pending_quote = false;
@@ -573,6 +669,15 @@ impl State for LiquidSwap {
                         self.error = Some(format!("Couldn't prepare swap address: {e}"));
                     }
                 },
+                view::LiquidSwapMessage::RateProbeReady(result) => {
+                    self.rate_probe_inflight = false;
+                    // Only seed the rate if a real quote hasn't set it since.
+                    if let Ok(rate) = result {
+                        if *rate > 0.0 && self.last_rate.is_none() {
+                            self.last_rate = Some(*rate);
+                        }
+                    }
+                }
                 view::LiquidSwapMessage::AmountEdited(value) => {
                     self.entered_amount.value = value.clone();
                     self.error = None;
@@ -600,7 +705,12 @@ impl State for LiquidSwap {
                 }
                 view::LiquidSwapMessage::FlipAssets => {
                     self.flip_assets();
-                    return self.schedule_quote();
+                    // Re-quote any entered amount, and re-probe the rate for
+                    // the new direction (flip cleared it).
+                    return Task::batch([
+                        self.schedule_quote(),
+                        self.probe_rate(cache.btc_usd_price),
+                    ]);
                 }
                 view::LiquidSwapMessage::SwapAll => {
                     self.error = None;
@@ -821,6 +931,9 @@ impl State for LiquidSwap {
         self.error = None;
         self.is_sending = false;
         self.pending_quote = false;
+        // Drop any stale rate so we re-probe a fresh one on entry.
+        self.last_rate = None;
+        self.rate_probe_inflight = false;
         // Assume catching up until the sync we kick below reports `Synced`.
         self.synced = false;
 
@@ -916,6 +1029,23 @@ mod tests {
         assert!(!is_quote_actionable(true, 5, true));
         // Fresh quote, idle → actionable.
         assert!(is_quote_actionable(true, 5, false));
+    }
+
+    #[test]
+    fn cached_seed_rate_directions() {
+        // 1 L-BTC ≈ price USDt; 1 USDt ≈ 1/price L-BTC (both 8-dp, so the
+        // base-unit rate equals the whole-unit rate).
+        assert_eq!(
+            cached_seed_rate(SendAsset::Lbtc, SendAsset::Usdt, 60_000.0),
+            Some(60_000.0)
+        );
+        let inv = cached_seed_rate(SendAsset::Usdt, SendAsset::Lbtc, 60_000.0).unwrap();
+        assert!((inv - 1.0 / 60_000.0).abs() < 1e-12);
+        // Non-positive price → no seed.
+        assert_eq!(
+            cached_seed_rate(SendAsset::Lbtc, SendAsset::Usdt, 0.0),
+            None
+        );
     }
 
     #[test]

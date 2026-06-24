@@ -37,6 +37,9 @@ pub struct LiquidSwapConfig<'a> {
     pub usdt_balance: u64,
     pub entered_amount: &'a form::Value<String>,
     pub quote: Option<&'a SwapQuote>,
+    /// Latest known rate (`to` per `from`), from a quote or the background
+    /// probe — drives the rate chip even before the user enters an amount.
+    pub rate: Option<f64>,
     pub quoting: bool,
     pub quote_remaining: u32,
     /// Whether Continue (advance to review) is enabled.
@@ -275,12 +278,12 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
     );
 
     // ── Rate chip + flip control (Aqua middle row) ───────────────────────
-    let rate_chip: Element<'a, LiquidSwapMessage> = match config.quote {
-        Some(q) => Container::new(
+    let rate_chip: Element<'a, LiquidSwapMessage> = match config.rate {
+        Some(rate) => Container::new(
             text(format!(
                 "1 {} = {}",
                 ticker(config.from_asset),
-                fmt_rate_value(config.to_asset, q.rate_to_per_from(), config.bitcoin_unit)
+                fmt_rate_value(config.to_asset, rate, config.bitcoin_unit)
             ))
             .size(P2_SIZE)
             .color(color::ORANGE),
