@@ -9,6 +9,7 @@ pub struct AppState {
     pub keys: BTreeMap<u8, Key>,
     pub primary_path: SpendingPath,
     pub secondary_paths: Vec<SecondaryPath>,
+    pub keys_ready: bool,
     pub next_key_id: u8,
     // Backend-related state
     pub selected_org: Option<Uuid>,
@@ -103,6 +104,7 @@ impl AppState {
             keys: BTreeMap::new(),
             primary_path: SpendingPath::new(true, 0, Vec::new()),
             secondary_paths: Vec::new(),
+            keys_ready: false,
             next_key_id: 0,
             selected_org: None,
             selected_wallet: None,
@@ -128,6 +130,7 @@ impl From<AppState> for PolicyTemplate {
             keys: app_state.keys,
             primary_path: app_state.primary_path,
             secondary_paths: app_state.secondary_paths,
+            keys_ready: app_state.keys_ready,
         }
     }
 }
@@ -146,6 +149,7 @@ impl From<PolicyTemplate> for AppState {
             keys: template.keys,
             primary_path: template.primary_path,
             secondary_paths: template.secondary_paths,
+            keys_ready: template.keys_ready,
             next_key_id,
             selected_org: None,
             selected_wallet: None,
