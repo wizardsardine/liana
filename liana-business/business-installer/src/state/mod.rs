@@ -9,15 +9,18 @@ use crate::{
 };
 use async_hwi::{bitbox::NoiseConfig, service::HwiService};
 use crossbeam::channel;
-use liana_connect::ws_business::{PolicyTemplate, Wallet};
+use liana_connect::ws_business::{self, KeyIdentity, PolicyTemplate, Wallet};
 use liana_gui::{app::settings::global::PersistedBitboxNoiseConfig, dir::LianaDirectory};
 use liana_ui::widget::{modal::Modal, Element};
 pub use message::{Message, Msg};
 use miniscript::bitcoin::Network;
 use std::{
+    collections::BTreeSet,
     sync::{Arc, Mutex},
     task::Waker,
 };
+use uuid::Uuid;
+use views::keys::SignerOption;
 
 /// Shared waker for the notification stream.
 /// When a message is sent to notif_sender, the sender should wake this
@@ -66,6 +69,7 @@ pub struct State {
     bitbox_config: Arc<dyn NoiseConfig>,
     /// Error from RunLianaBusiness connection failure
     pub connection_error: Option<String>,
+    pending_user_fetches: BTreeSet<Uuid>,
 }
 
 impl State {
@@ -118,6 +122,7 @@ impl State {
             _hw_bridge_handle: Some(hw_bridge_handle),
             bitbox_config,
             connection_error: None,
+            pending_user_fetches: BTreeSet::new(),
         }
     }
 
@@ -225,6 +230,116 @@ impl State {
         let wallet_id = self.app.selected_wallet?;
         self.backend.get_wallet(wallet_id)
     }
+}
+
+fn signer_options_for_key_modal(
+    app: &AppState,
+    backend: &impl Backend,
+    editing_key_id: Option<u8>,
+    key_type: ws_business::KeyType,
+) -> Vec<SignerOption> {
+    let used_emails = app
+        .keys
+        .iter()
+        .filter_map(|(&key_id, key)| {
+            (Some(key_id) != editing_key_id).then_some(match &key.identity {
+                KeyIdentity::Email(email) | KeyIdentity::Other(email) => email.clone(),
+                _ => return None,
+            })
+        })
+        .map(|email| email.to_lowercase())
+        .collect::<BTreeSet<_>>();
+
+    let mut options = Vec::new();
+
+    // Internal keys are held by an org member, so only then list the org directory.
+    if key_type == ws_business::KeyType::Internal {
+        let user_ids = app
+            .selected_org
+            .and_then(|org_id| backend.get_org(org_id))
+            .map(|org| org.users.clone())
+            .unwrap_or_default();
+        for user_id in user_ids {
+            if let Some(user) = backend.get_user(user_id) {
+                options.push(SignerOption {
+                    name: user.name,
+                    already_used: used_emails.contains(&user.email.to_lowercase()),
+                    email: user.email,
+                });
+            }
+        }
+        options.sort_by(|left, right| {
+            left.name
+                .to_lowercase()
+                .cmp(&right.name.to_lowercase())
+                .then_with(|| left.email.to_lowercase().cmp(&right.email.to_lowercase()))
+        });
+        options.dedup_by(|left, right| left.email.eq_ignore_ascii_case(&right.email));
+    }
+
+    // Emails already assigned to other keys of the same type but not org members:
+    // offer them for reuse, labeled by the key's alias (or the bare email when empty).
+    let member_emails = options
+        .iter()
+        .map(|option| option.email.to_lowercase())
+        .collect::<BTreeSet<_>>();
+    let mut extra = app
+        .keys
+        .iter()
+        .filter(|(&key_id, _)| Some(key_id) != editing_key_id)
+        .filter(|(_, key)| key.key_type == key_type)
+        .filter_map(|(_, key)| match &key.identity {
+            KeyIdentity::Email(email) | KeyIdentity::Other(email) => {
+                Some((key.alias.clone(), email.clone()))
+            }
+            _ => None,
+        })
+        .filter(|(_, email)| !member_emails.contains(&email.to_lowercase()))
+        .collect::<Vec<_>>();
+    extra.sort_unstable_by(|left, right| left.1.to_lowercase().cmp(&right.1.to_lowercase()));
+    extra.dedup_by(|left, right| left.1.eq_ignore_ascii_case(&right.1));
+    options.extend(extra.into_iter().map(|(alias, email)| SignerOption {
+        name: alias,
+        email,
+        already_used: true,
+    }));
+
+    options
+}
+
+fn fetch_key_modal_signer_users(
+    app: &AppState,
+    backend: &mut impl Backend,
+    pending_user_fetches: &mut BTreeSet<Uuid>,
+) {
+    let Some(org_id) = app.selected_org else {
+        return;
+    };
+    let Some(org) = backend.get_org(org_id) else {
+        return;
+    };
+
+    for user_id in org.users {
+        if backend.get_user(user_id).is_none() && pending_user_fetches.insert(user_id) {
+            backend.fetch_user(user_id);
+        }
+    }
+}
+
+fn refresh_key_modal_signers(
+    app: &AppState,
+    backend: &impl Backend,
+    keys: &mut views::KeysViewState,
+) {
+    let Some((key_id, key_type)) = keys
+        .edit_key_modal
+        .as_ref()
+        .map(|modal_state| (modal_state.key_id, modal_state.key_type))
+    else {
+        return;
+    };
+    let signer_options = signer_options_for_key_modal(app, backend, Some(key_id), key_type);
+    keys.refresh_signer_options(signer_options);
 }
 
 // NOTE: implementation of State::update() is in src/state/update.rs
