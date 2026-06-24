@@ -22,7 +22,7 @@ use iced::{
     Alignment, Background, Length,
 };
 
-use crate::app::breez_liquid::assets::{format_asset_amount, AssetKind};
+use crate::app::breez_liquid::assets::format_usdt_display;
 use crate::app::state::liquid::send::SendAsset;
 use crate::app::state::liquid::swap::{SwapPhase, SwapQuote};
 use crate::app::view::LiquidSwapMessage;
@@ -67,9 +67,10 @@ fn balance_base(asset: SendAsset, btc_balance: Amount, usdt_balance: u64) -> u64
     }
 }
 
-/// Format a USDt base-unit amount as a decimal string (8-dp).
+/// Format a USDt base-unit amount for display (2-dp, matching the rest
+/// of the app — USDt is a stablecoin shown to the cent).
 fn fmt_usdt(base: u64) -> String {
-    format_asset_amount(base, AssetKind::Usdt.precision())
+    format_usdt_display(base)
 }
 
 /// The unit suffix shown after an L-BTC amount, per the user's setting.

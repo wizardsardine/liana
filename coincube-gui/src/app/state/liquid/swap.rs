@@ -30,7 +30,8 @@ use iced::{Subscription, Task};
 
 use super::send::SendAsset;
 use crate::app::breez_liquid::assets::{
-    format_asset_amount, parse_asset_to_minor_units, usdt_asset_id, AssetKind, LBTC_PRECISION,
+    format_asset_amount, format_usdt_display, parse_asset_to_minor_units, usdt_asset_id, AssetKind,
+    LBTC_PRECISION,
 };
 use crate::app::cache::Cache;
 use crate::app::menu::Menu;
@@ -708,10 +709,7 @@ impl State for LiquidSwap {
                     // Honour the user's BTC/SATS preference for L-BTC; USDt
                     // is always a decimal.
                     self.sent_amount_display = match self.to_asset {
-                        SendAsset::Usdt => format!(
-                            "{} USDt",
-                            format_asset_amount(received, AssetKind::Usdt.precision())
-                        ),
+                        SendAsset::Usdt => format!("{} USDt", format_usdt_display(received)),
                         SendAsset::Lbtc => {
                             let unit = cache.bitcoin_unit;
                             let label = match unit {
