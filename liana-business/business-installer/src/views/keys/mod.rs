@@ -5,9 +5,8 @@ use crate::{
     state::{Msg, State},
 };
 use iced::{
-    alignment::Horizontal,
     widget::{column, row, Space},
-    Alignment, Length,
+    Alignment, Length, Padding,
 };
 use liana_connect::ws_business::{self, KeyIdentity, KeyType, UserRole, WalletStatus};
 use liana_ui::{
@@ -145,7 +144,7 @@ fn footer_content(
         return None;
     }
 
-    if is_manager && !keys_ready {
+    let content = if is_manager && !keys_ready {
         let enough_keys = key_count >= 2;
         let hint: Option<Element<'static, Msg>> = (!enough_keys).then_some({
             Container::new(
@@ -162,42 +161,29 @@ fn footer_content(
         }
         .spacing(16)
         .align_y(Alignment::Center);
+        footer
+    } else if is_manager && keys_ready {
+        row![btn_edit_keys(Some(Msg::MarkKeysReady(false)))].align_y(Alignment::Center)
+    } else if !keys_ready {
+        row![
+            text::new::caption("These keys are shared with the Spending policy tab")
+                .style(theme::text::secondary)
+        ]
+    } else {
+        return None;
+    };
 
-        return Some(
-            Container::new(footer)
-                .width(Length::Fill)
-                .align_x(Horizontal::Right)
-                .padding(20)
-                .into(),
-        );
-    }
-
-    if is_manager && keys_ready {
-        let footer =
-            row![btn_edit_keys(Some(Msg::MarkKeysReady(false)))].align_y(Alignment::Center);
-        return Some(
-            Container::new(footer)
-                .width(Length::Fill)
-                .align_x(Horizontal::Right)
-                .padding(20)
-                .into(),
-        );
-    }
-
-    if !keys_ready {
-        return Some(
-            Container::new(
-                text::new::caption("These keys are shared with the Spending policy tab")
-                    .style(theme::text::secondary),
-            )
-            .width(Length::Fill)
+    Some(
+        Container::new(content)
             .center_x(Length::Fill)
-            .padding(20)
+            .padding(Padding {
+                top: 0.0,
+                right: 20.0,
+                bottom: 20.0,
+                left: 20.0,
+            })
             .into(),
-        );
-    }
-
-    None
+    )
 }
 
 pub fn keys_view(state: &State) -> Element<'_, Msg> {
@@ -262,7 +248,6 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
         keys_list,
         add_key,
         footer_content,
-        true,
         Some(Msg::NavigateBack),
     )
 }

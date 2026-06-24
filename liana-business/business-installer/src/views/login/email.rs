@@ -54,7 +54,6 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
         None,
         &["Login".to_string()],
         content,
-        true,
         previous,
     )
 }

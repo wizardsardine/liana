@@ -3,7 +3,7 @@ use crate::{
     state::{Msg, State},
     views::{
         entry_key_kind, intro_description, key_kind_label, layout_with_scrollable_list,
-        screen_intro, INSTALLER_STEPS, MENU_ENTRY_WIDTH,
+        screen_intro, INSTALLER_STEPS,
     },
 };
 use iced::{
@@ -97,7 +97,7 @@ fn short_identity(key: &ws_business::Key) -> String {
 
 fn section_heading<'a>(label: &'a str, top_padding: f32) -> Element<'a, Msg> {
     Container::new(text::new::h3_semi(label).style(theme::text::primary))
-        .width(MENU_ENTRY_WIDTH)
+        .width(button::STANDARD_ENTRY_WIDTH)
         .padding(iced::Padding {
             top: top_padding,
             left: 4.0,
@@ -176,14 +176,14 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     let owned_entries = if owned_keys.is_empty() {
         column![text::new::caption("No keys assigned to you.").style(theme::text::secondary)]
             .spacing(12)
-            .width(MENU_ENTRY_WIDTH)
+            .width(button::STANDARD_ENTRY_WIDTH)
     } else {
         owned_keys
             .iter()
             .fold(column![].spacing(12), |column, (key_id, key)| {
                 column.push(xpub_key_card(**key_id, key, EntrySetKeyOwner::Own))
             })
-            .width(MENU_ENTRY_WIDTH)
+            .width(button::STANDARD_ENTRY_WIDTH)
     };
 
     let mut list_content = column![
@@ -201,7 +201,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
             .fold(column![].spacing(12), |column, (key_id, key)| {
                 column.push(xpub_key_card(**key_id, key, EntrySetKeyOwner::Other))
             })
-            .width(MENU_ENTRY_WIDTH);
+            .width(button::STANDARD_ENTRY_WIDTH);
         list_content = list_content
             .push(section_heading("Other participants' keys", 0.0))
             .push(entries)
@@ -214,7 +214,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
             .fold(column![].spacing(12), |column, (key_id, key)| {
                 column.push(xpub_key_card(**key_id, key, EntrySetKeyOwner::Other))
             })
-            .width(MENU_ENTRY_WIDTH);
+            .width(button::STANDARD_ENTRY_WIDTH);
         list_content = list_content
             .push(section_heading("External keys", 0.0))
             .push(entries)
@@ -230,7 +230,6 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         list_content,
         None,
         None,
-        true,
         Some(Msg::NavigateBack),
     )
 }
