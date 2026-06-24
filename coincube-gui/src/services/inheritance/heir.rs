@@ -393,4 +393,34 @@ mod tests {
             Err(HeirDecryptError::BlobParse(_))
         ));
     }
+
+    #[test]
+    fn open_blob_fails_closed_without_keyholder_key_id() {
+        // The AAD (SPEC §1) binds keyholder_key_id, so the gated release MUST
+        // carry it. If `coincube-api` omits it, we must fail closed with a clear
+        // error — never attempt an open with a guessed/missing id.
+        let heir = kh(b"missing-keyid-heir-seed-vector-0000000000000");
+        let khs = vec![KeyholderXpub {
+            key_id: 1,
+            xpub: heir.xpub,
+            account_derivation: "m/48'/0'/0'/2'".to_string(),
+        }];
+        let descriptor_json = serde_json::to_vec(&sample_descriptor_blob()).unwrap();
+        let mut set = build_escrow_set(&khs, CUBE, &descriptor_json, None).unwrap();
+
+        // Simulate a release response that dropped keyholderKeyId.
+        set[0].keyholder_key_id = None;
+
+        let heir2 = kh(b"missing-keyid-heir-seed-vector-0000000000000");
+        let k = recover_key(&heir2, &set[0]);
+        match open_blob(&set[0], &k, CUBE) {
+            Err(HeirDecryptError::Envelope(msg)) => {
+                assert!(msg.contains("keyholderKeyId"), "got: {}", msg)
+            }
+            other => panic!(
+                "expected a missing-keyholderKeyId envelope error, got {:?}",
+                other
+            ),
+        }
+    }
 }

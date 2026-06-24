@@ -128,6 +128,49 @@ impl RecoveryAlerts {
             .map(|s| s.crk_keyholder_download)
             .unwrap_or_default()
     }
+
+    /// Fold a change result into state.
+    ///
+    /// **Ok:** apply the confirmed `tier_change` (if any) and cache `status`. On
+    /// a **disable** (`Some(Off)`), `status` is the synthetic Off status
+    /// [`disable_escrow`](crate::services::inheritance::disable_escrow) returns,
+    /// which carries the *default* download policy — so we carry the owner's
+    /// prior keyholder download choice forward instead, keeping it for a later
+    /// re-enrol (the policy is an independent vault setting, not reset by turning
+    /// escrow off).
+    ///
+    /// **Err:** surface the (display-safe) error. A failed **Full-Cube** enrol
+    /// also restores `awaiting_pin`: `ConfirmFullCube` clears it before the
+    /// blocking verify, so a wrong PIN would otherwise hide the PIN entry and
+    /// force the owner to re-pick Full Cube. Restoring it re-shows the (now
+    /// empty — the buffer was taken) PIN field alongside the error for an inline
+    /// retry.
+    fn apply_change(
+        &mut self,
+        res: Result<VaultMonitoringStatus, String>,
+        tier_change: Option<EscrowTier>,
+    ) {
+        match res {
+            Ok(mut status) => {
+                if let Some(t) = tier_change {
+                    self.tier = t;
+                }
+                if matches!(tier_change, Some(EscrowTier::Off)) {
+                    if let Some(prev) = self.status.as_ref() {
+                        status.crk_keyholder_download = prev.crk_keyholder_download;
+                    }
+                }
+                self.status = Some(status);
+                self.error = None;
+            }
+            Err(e) => {
+                self.error = Some(e);
+                if matches!(tier_change, Some(EscrowTier::FullCube)) {
+                    self.awaiting_pin = true;
+                }
+            }
+        }
+    }
 }
 
 /// Wrap a [`RecoveryAlertsMessage`] in the settings-message envelope.
@@ -487,21 +530,10 @@ pub fn update(
                 return Task::none();
             }
             ra.submitting = false;
-            match res {
-                Ok(status) => {
-                    // Apply the tier this operation enrolled/disabled now that
-                    // the server confirmed it. `None` for a policy save, which
-                    // must never relabel the tier selector.
-                    if let Some(t) = tier_change {
-                        ra.tier = t;
-                    }
-                    ra.status = Some(status);
-                    ra.error = None;
-                }
-                Err(e) => {
-                    ra.error = Some(e);
-                }
-            }
+            // Fold the result into state: caches the status (preserving the
+            // download policy across a disable) on success, or surfaces the
+            // error and re-shows the PIN entry on a failed Full-Cube enrol.
+            ra.apply_change(res, tier_change);
             Task::none()
         }
     }
@@ -644,5 +676,82 @@ mod tests {
         assert_eq!(pin.as_str(), "1234");
         pin.clear();
         assert_eq!(pin.as_str(), "");
+    }
+
+    #[test]
+    fn disable_preserves_prior_download_policy() {
+        // Owner had escrow on with a non-default (Anytime) download policy.
+        let mut ra = RecoveryAlerts::new();
+        ra.status = Some(VaultMonitoringStatus {
+            level: VaultMonitoringLevel::Heartbeat,
+            crk_keyholder_download: KeyholderDownloadPolicy::Anytime,
+            ..VaultMonitoringStatus::default()
+        });
+        ra.tier = EscrowTier::VaultOnly;
+
+        // disable_escrow returns a synthetic Off status carrying the *default*
+        // (AtApproaching) policy.
+        let synthetic_off = VaultMonitoringStatus {
+            level: VaultMonitoringLevel::Off,
+            ..VaultMonitoringStatus::default()
+        };
+        ra.apply_change(Ok(synthetic_off), Some(EscrowTier::Off));
+
+        // Tier goes Off, but the owner's Anytime choice must survive so a later
+        // re-enrol forwards it — not silently revert to the default.
+        assert_eq!(ra.tier, EscrowTier::Off);
+        assert_eq!(ra.download_policy(), KeyholderDownloadPolicy::Anytime);
+    }
+
+    #[test]
+    fn enroll_caches_returned_download_policy_verbatim() {
+        // A (re-)enrol returns the real monitoring status; it is cached as-is
+        // (no disable-preservation override for non-Off changes).
+        let mut ra = RecoveryAlerts::new();
+        ra.status = Some(VaultMonitoringStatus {
+            level: VaultMonitoringLevel::Heartbeat,
+            crk_keyholder_download: KeyholderDownloadPolicy::Anytime,
+            ..VaultMonitoringStatus::default()
+        });
+        let returned = VaultMonitoringStatus {
+            level: VaultMonitoringLevel::Heartbeat,
+            crk_keyholder_download: KeyholderDownloadPolicy::AtApproaching,
+            ..VaultMonitoringStatus::default()
+        };
+        ra.apply_change(Ok(returned), Some(EscrowTier::FullCube));
+        assert_eq!(ra.tier, EscrowTier::FullCube);
+        assert_eq!(ra.download_policy(), KeyholderDownloadPolicy::AtApproaching);
+    }
+
+    #[test]
+    fn failed_full_cube_enrol_reshows_pin_entry() {
+        // ConfirmFullCube clears `awaiting_pin` before the blocking PIN verify;
+        // a wrong PIN surfaces as an Err here and must re-show the PIN entry for
+        // an inline retry (not force the owner to re-pick Full Cube).
+        let mut ra = RecoveryAlerts::new();
+        ra.awaiting_pin = false;
+        ra.apply_change(
+            Err("Incorrect PIN. Please try again.".to_string()),
+            Some(EscrowTier::FullCube),
+        );
+        assert!(
+            ra.awaiting_pin,
+            "a failed Full-Cube enrol must re-show the PIN entry"
+        );
+        assert_eq!(
+            ra.error.as_deref(),
+            Some("Incorrect PIN. Please try again.")
+        );
+    }
+
+    #[test]
+    fn failed_non_full_cube_change_leaves_pin_hidden() {
+        // Off / Vault-only have no PIN entry, so a failure must not flip
+        // `awaiting_pin` on.
+        let mut ra = RecoveryAlerts::new();
+        ra.awaiting_pin = false;
+        ra.apply_change(Err("network".to_string()), Some(EscrowTier::VaultOnly));
+        assert!(!ra.awaiting_pin);
+        assert_eq!(ra.error.as_deref(), Some("network"));
     }
 }

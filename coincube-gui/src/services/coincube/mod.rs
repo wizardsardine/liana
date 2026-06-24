@@ -2217,18 +2217,25 @@ pub struct RecoveryDescriptorResponse {
 /// One ECIES heir-escrow envelope on the wire (camelCase JSON; byte fields
 /// base64). The desktop **defines** this contract; `coincube-api` stores the
 /// bytes opaquely (it never parses or decrypts them) and `keychain-app`
-/// decrypts. Shared by owner upload (`PUT …/vault/escrow`, with
-/// `keyholderKeyId`) and gated heir release (`GET …/vault/recovery-envelope`,
-/// where the server returns only the caller's own envelopes, no
-/// `keyholderKeyId`).
+/// decrypts. Shared by owner upload (`PUT …/vault/escrow`) and gated heir
+/// release (`GET …/vault/recovery-envelope`, which returns only the caller's
+/// own envelopes). `keyholderKeyId` is bound into the ECIES AAD at seal time
+/// (SPEC §1), so it MUST be present in **both** directions — the heir needs it
+/// to rebuild the AAD and open the envelope (see the field doc).
 ///
 /// `Debug` is manual: `ciphertext` is encrypted, but we still avoid dumping
 /// the blob; the other fields are non-secret (public key, path, scheme).
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InheritanceEnvelopeWire {
-    /// Which keyholder's xpub this is sealed to (`models.Key` id). Present on
-    /// upload; omitted on release (the caller's own envelopes only).
+    /// Which keyholder's xpub this is sealed to (`models.Key` id). Bound into
+    /// the ECIES AAD at seal time (SPEC §1), so the heir **requires** it on the
+    /// gated release to rebuild the AAD and open the envelope — `coincube-api`
+    /// MUST include it on `GET …/vault/recovery-envelope` (the caller's own key
+    /// id), not just echo it on upload. `Option` because the wire field can be
+    /// absent (e.g. an older server); [`crate::services::inheritance`]'s
+    /// `heir::open_blob` then fails closed with a clear error rather than
+    /// silently producing a wrong AAD.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyholder_key_id: Option<u64>,
     /// `"descriptor"` | `"seed"`.
