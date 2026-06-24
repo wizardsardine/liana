@@ -225,6 +225,7 @@ pub enum SelectBitcoindTypeMsg {
 #[derive(Clone)]
 pub enum CoincubeConnectMsg {
     EmailEdited(String),
+    EmailNotVerified { email: String },
     ToggleMode,
     RequestOtp,
     OtpRequested(Result<(), String>),
@@ -239,6 +240,7 @@ impl std::fmt::Debug for CoincubeConnectMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::EmailEdited(s) => f.debug_tuple("EmailEdited").field(s).finish(),
+            Self::EmailNotVerified { email } => f.debug_tuple("EmailNotVerified").field(email).finish(),
             Self::ToggleMode => write!(f, "ToggleMode"),
             Self::RequestOtp => write!(f, "RequestOtp"),
             Self::OtpRequested(r) => f.debug_tuple("OtpRequested").field(r).finish(),

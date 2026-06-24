@@ -214,15 +214,54 @@ impl Step for CoincubeConnectStep {
                             self.error = None;
                         }
                         Err(e) => {
+                            // When the user tries to sign in with a registered-but-unverified
+                            // email, the backend returns "Email not verified". Re-route to the
+                            // same resend flow the app-level ConnectAccountPanel uses: switch
+                            // to signup mode, fire resend_signup_otp, and advance to OTP entry.
+                            if !self.is_signup && e.contains("Email not verified") {
+                                return Task::done(Message::CoincubeConnect(
+                                    CoincubeConnectMsg::EmailNotVerified {
+                                        email: self.email.value.clone(),
+                                    },
+                                ));
+                            }
                             self.error = Some(e);
                         }
                     }
                 }
                 CoincubeConnectMsg::OtpResent(res) => {
-                    self.processing = false;
-                    if let Err(e) = res {
-                        self.error = Some(e);
+                   self.processing = false;
+                    match res {
+                        Ok(()) => {
+                            // Works for both the resend-button path (otp_sent already
+                            // true) and the EmailNotVerified recovery path (needs to
+                            // flip otp_sent to show the OTP entry screen).
+                            self.otp_sent = true;
+                            self.otp = form::Value::default();
+                            self.error = None;
+                        }
+                        Err(e) => {
+                            self.error = Some(e);
+                        }
                     }
+                }
+                CoincubeConnectMsg::EmailNotVerified { email } => {
+                    // The email exists but signup was never completed. Switch to
+                    // signup mode, fire resend_signup_otp, and land on OTP entry —
+                    // identical to the app-level ConnectAccountPanel recovery path.
+                    self.is_signup = true;
+                    self.processing = true;
+                    self.error = None;
+                    let client = self.client.clone();
+                    return Task::perform(
+                        async move {
+                            client
+                                .resend_signup_otp(&email)
+                                .await
+                                .map_err(|e| e.to_string())
+                        },
+                        |res| Message::CoincubeConnect(CoincubeConnectMsg::OtpResent(res)),
+                    );
                 }
                 CoincubeConnectMsg::OtpEdited(value) => {
                     self.otp.value = value.trim().to_string();
