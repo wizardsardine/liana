@@ -4,6 +4,11 @@ pub mod warning;
 
 use crate::state::{Msg, State};
 use liana_ui::widget::{modal::Modal, Element};
+use liana_ui::{component::text, theme, widget::Text};
+
+pub fn installer_modal<'a>(message: &'a str) -> Text<'a> {
+    text::new::caption(message).style(theme::text::secondary)
+}
 
 pub fn modals_view(state: &State) -> Option<Element<'_, Msg>> {
     // First, get the underlying modal (key, path, xpub, or registration modal)
