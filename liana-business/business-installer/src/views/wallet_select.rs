@@ -2,7 +2,10 @@ use crate::{
     backend::Backend,
     state::{Msg, State},
 };
-use iced::{widget::row, Alignment};
+use iced::{
+    widget::{column, row},
+    Alignment, Length,
+};
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
 use liana_ui::{
     component::{
@@ -10,7 +13,7 @@ use liana_ui::{
         pill,
         text::{self, truncate},
     },
-    icon, theme,
+    theme,
     widget::*,
 };
 
@@ -92,22 +95,23 @@ pub fn wallet_card<'a>(
 ) -> Element<'a, Msg> {
     let alias = truncate(&wallet.alias, 25);
     let key_count = list::key_count(wallet.template.as_ref().map(|t| t.keys.len()).unwrap_or(0));
-    let trailing = row![
-        key_count,
-        role_badge(role),
-        status_badge(wallet, user_email),
-        icon::chevron_right()
-            .size(18)
-            .color(liana_ui::color::LIGHT_BORDER)
-    ]
-    .spacing(10)
-    .align_y(Alignment::Center);
+    let role = role_badge(role);
+    let title_extras = (key_count.is_some() || role.is_some()).then_some({
+        row![key_count, role]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into()
+    });
+    let trailing = row![status_badge(wallet, user_email), list::entry_chevron()]
+        .spacing(12)
+        .align_y(Alignment::Center);
 
     let message = Some(Msg::OrgWalletSelected(wallet.id));
 
     list::entry_wallet(
         wallet_entry_status(wallet, user_email),
         alias,
+        title_extras,
         last_edit_info,
         Some(trailing.into()),
         message,
@@ -148,10 +152,10 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
     );
 
     // Scrollable list content: wallet cards
-    let mut list_content = Column::new()
-        .spacing(10)
-        .align_x(Alignment::Center)
-        .padding([0, 20]);
+    let mut list_content = column![]
+        .spacing(12)
+        .width(Length::Fill)
+        .align_x(Alignment::Center);
 
     // Filter wallets by search text (case-insensitive)
     let search_filter = state.views.wallet_select.search_filter.to_lowercase();
