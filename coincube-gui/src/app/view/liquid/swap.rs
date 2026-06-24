@@ -50,6 +50,9 @@ pub struct LiquidSwapConfig<'a> {
     /// Whether the Liquid wallet is still catching up. While true the swap
     /// would fail server-side (its inputs aren't ready), so Confirm is paused.
     pub syncing: bool,
+    /// Paying USDt with zero L-BTC — the swap can't fund the Liquid network
+    /// fee (paid in L-BTC), so we warn up front.
+    pub needs_lbtc_for_fees: bool,
     /// Display unit for L-BTC amounts (BTC vs SATS). USDt always renders
     /// as a decimal regardless of this setting.
     pub bitcoin_unit: BitcoinDisplayUnit,
@@ -379,7 +382,14 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
         .max_width(560)
         .push(h4_bold("Swap"));
     if config.syncing {
-        content = content.push(sync_hint());
+        content = content.push(hint_banner(
+            "Wallet is still syncing — swaps are paused until it finishes.",
+        ));
+    }
+    if config.needs_lbtc_for_fees {
+        content = content.push(hint_banner(
+            "You need a little L-BTC to pay network fees for this swap. Receive some L-BTC first.",
+        ));
     }
     content = content
         .push(from_card)
@@ -496,7 +506,9 @@ fn review_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMes
         .max_width(480)
         .push(h4_bold("Review swap"));
     if config.syncing {
-        content = content.push(sync_hint());
+        content = content.push(hint_banner(
+            "Wallet is still syncing — swaps are paused until it finishes.",
+        ));
     }
     content = content.push(summary).push(confirm_btn).push(back_btn);
 
@@ -510,18 +522,14 @@ fn review_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMes
         .into()
 }
 
-/// Non-blocking banner shown while the Liquid wallet is still catching up.
-fn sync_hint<'a>() -> Element<'a, LiquidSwapMessage> {
+/// Non-blocking orange banner with a warning icon.
+fn hint_banner<'a>(message: &'a str) -> Element<'a, LiquidSwapMessage> {
     Container::new(
         Row::new()
             .spacing(8)
             .align_y(Alignment::Center)
             .push(warning_icon().size(16).color(color::ORANGE))
-            .push(
-                text("Wallet is still syncing — swaps are paused until it finishes.")
-                    .size(P2_SIZE)
-                    .style(theme::text::secondary),
-            ),
+            .push(text(message).size(P2_SIZE).style(theme::text::secondary)),
     )
     .padding([8, 12])
     .width(Length::Fill)

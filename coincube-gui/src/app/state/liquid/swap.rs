@@ -542,6 +542,28 @@ impl LiquidSwap {
         is_quote_actionable(self.quote.is_some(), self.quote_remaining, self.is_sending)
     }
 
+    /// Paying USDt with no L-BTC: a cross-asset swap pays the Liquid network
+    /// fee in L-BTC (it can't use asset fees, unlike a same-asset USDt send),
+    /// so a zero L-BTC balance can't fund the fee.
+    fn needs_lbtc_for_fees(&self) -> bool {
+        self.from_asset == SendAsset::Usdt && self.btc_balance.to_sat() == 0
+    }
+
+    /// Map a raw SDK quote error to a user message, special-casing the
+    /// "no L-BTC for fees" situation so it's actionable.
+    fn swap_error_message(&self, raw: &str) -> String {
+        let insufficient = raw.contains("not enough funds")
+            || raw.contains("InsufficientFunds")
+            || raw.contains("insufficient")
+            || raw.contains("Cannot pay");
+        if insufficient && self.needs_lbtc_for_fees() {
+            return "This swap needs a little L-BTC to pay Liquid network fees. \
+                    Receive some L-BTC first, then swap."
+                .to_string();
+        }
+        friendly_quote_error(raw)
+    }
+
     /// Swap the `from`/`to` assets and invalidate the stale rate. The
     /// caller re-quotes (so the quote itself is cleared there).
     fn flip_assets(&mut self) {
@@ -620,6 +642,7 @@ impl State for LiquidSwap {
             confirm_enabled: can_confirm(self.quote_actionable(), self.synced),
             is_sending: self.is_sending,
             syncing: !self.synced,
+            needs_lbtc_for_fees: self.needs_lbtc_for_fees(),
             bitcoin_unit: cache.bitcoin_unit,
             error: self.error.as_deref(),
             sent_amount_display: &self.sent_amount_display,
@@ -714,7 +737,7 @@ impl State for LiquidSwap {
                                 result
                                     .as_ref()
                                     .err()
-                                    .map(|e| friendly_quote_error(e))
+                                    .map(|e| self.swap_error_message(e))
                                     .unwrap_or_else(|| {
                                         "Couldn't fetch a rate for Swap All. Please try again."
                                             .to_string()
@@ -796,7 +819,7 @@ impl State for LiquidSwap {
                         Err(e) => {
                             self.quote = None;
                             self.quote_remaining = 0;
-                            self.error = Some(friendly_quote_error(e));
+                            self.error = Some(self.swap_error_message(e));
                         }
                     }
                 }
@@ -1085,6 +1108,25 @@ mod tests {
         assert!(!is_quote_actionable(true, 5, true));
         // Fresh quote, idle → actionable.
         assert!(is_quote_actionable(true, 5, false));
+    }
+
+    #[test]
+    fn lbtc_fee_error_when_paying_usdt_with_no_lbtc() {
+        let mut s = panel();
+        s.from_asset = SendAsset::Usdt;
+        s.to_asset = SendAsset::Lbtc;
+        s.btc_balance = Amount::from_sat(0);
+        s.usdt_balance = 2_843_000_000; // 28.43 USDt, plenty
+        assert!(s.needs_lbtc_for_fees());
+        // The SDK's "not enough funds" really means "no L-BTC for fees" here.
+        let msg = s.swap_error_message("SDK request failed: Cannot pay: not enough funds");
+        assert!(msg.contains("L-BTC"));
+
+        // With some L-BTC, fall back to the generic insufficient message.
+        s.btc_balance = Amount::from_sat(10_000);
+        assert!(!s.needs_lbtc_for_fees());
+        let generic = s.swap_error_message("not enough funds");
+        assert!(generic.contains("Insufficient"));
     }
 
     #[test]
