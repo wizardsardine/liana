@@ -167,13 +167,14 @@ pub fn account_entry<'a, M: Clone + 'a>(
 pub fn entry_wallet<'a, M: Clone + 'a>(
     status: EntryStatus,
     title: impl Display,
+    role: Option<Element<'a, M>>,
     subtitle: Option<impl Display>,
     trailing: Option<Element<'a, M>>,
     msg: Option<M>,
 ) -> Element<'a, M> {
     list_entry_row(
         Some(badge::tile(Tile::Wallet).into()),
-        container_body(title, subtitle),
+        wallet_body(title, role, subtitle),
         trailing,
         Some(status_accent(status)),
         EntryWidth::Standard,
@@ -365,6 +366,27 @@ fn container_body<'a, M: 'a>(
 
 fn leaf_body<'a, M: 'a>(title: impl Display, subtitle: Option<impl Display>) -> Element<'a, M> {
     body(text::new::b5_medium(title), subtitle)
+}
+
+fn wallet_body<'a, M: 'a>(
+    title: impl Display,
+    role: Option<Element<'a, M>>,
+    subtitle: Option<impl Display>,
+) -> Element<'a, M> {
+    let title = row![text::new::h3_semi(title), role]
+        .spacing(10)
+        .align_y(Alignment::Start);
+    let subtitle: Option<Element<'a, M>> = subtitle.map(|subtitle| {
+        Container::new(text::new::caption(subtitle).style(theme::text::tertiary))
+            .padding(iced::Padding {
+                top: 2.0,
+                ..iced::Padding::ZERO
+            })
+            .into()
+    });
+    let content = column![title, subtitle].width(Length::Fill);
+
+    Container::new(content).width(Length::Fill).into()
 }
 
 fn body<'a, M: 'a>(
