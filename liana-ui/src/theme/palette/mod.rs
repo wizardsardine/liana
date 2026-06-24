@@ -17,6 +17,7 @@ pub struct Palette {
     pub pills: Pills,
     pub notifications: Notifications,
     pub text_inputs: TextInputs,
+    pub combobox: Combobox,
     pub checkboxes: Checkboxes,
     pub radio_buttons: RadioButtons,
     pub sliders: Sliders,
@@ -246,6 +247,12 @@ pub struct TextInputPalette {
     pub value: iced::Color,
     pub selection: iced::Color,
     pub border: Option<iced::Color>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Combobox {
+    pub selected: iced::Color,
+    pub header: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

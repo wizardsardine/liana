@@ -5,6 +5,7 @@ pub mod button;
 pub mod card;
 pub mod checkbox;
 pub mod collapse;
+pub mod combobox;
 pub mod form;
 pub mod label;
 pub mod list;
