@@ -164,7 +164,7 @@ pub fn auxiliary<'a, T: 'a + Clone>(
     Button::new(auxiliary_content(icon, t))
         .style(theme::button::auxiliary)
         .on_press_maybe(msg)
-        .width(Length::Fill)
+        .width(STANDARD_ENTRY_WIDTH)
 }
 
 pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
@@ -268,14 +268,11 @@ fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>, compact: bool) -> 
 
 fn auxiliary_content<'a, T: 'a>(icon: Option<Text<'a>>, t: impl Display) -> Container<'a, T> {
     let text = Text::new(t.to_string()).size(16).font(MANROPE_SEMIBOLD);
-    match icon {
-        None => container(text),
-        Some(icon) => container(
-            row![icon.size(16), text]
-                .spacing(10)
-                .align_y(Vertical::Center),
-        ),
-    }
+    container(
+        row![icon.map(|icon| icon.size(16)), text]
+            .spacing(10)
+            .align_y(Vertical::Center),
+    )
     .align_x(Horizontal::Center)
     .padding(AUXILIARY_PADDING)
     .width(Length::Fill)
@@ -287,16 +284,13 @@ fn content_with_tooltip<'a, T: 'a>(
     tooltip: Option<&'a str>,
     compact: bool,
 ) -> Container<'a, T> {
-    let mut row: Row<'a, T> = Row::new().spacing(10).align_y(Vertical::Center);
-    if let Some(icon) = icon {
-        row = row.push(icon);
-    }
-    row = row.push(text);
-    if let Some(tt) = tooltip {
-        row = row.push(tooltip::tooltip(tt));
-    }
+    let content = row![icon, text, tooltip.map(tooltip::tooltip)]
+        .spacing(10)
+        .align_y(Vertical::Center);
     let padding = if compact { 2 } else { 4 };
-    container(row).align_x(Horizontal::Center).padding(padding)
+    container(content)
+        .align_x(Horizontal::Center)
+        .padding(padding)
 }
 
 pub fn device<'a, T: 'a + std::clone::Clone, C: Into<Element<'a, T>>>(
