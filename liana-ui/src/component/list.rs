@@ -105,6 +105,14 @@ pub fn entry_chevron<'a, M: 'a>() -> Element<'a, M> {
         .into()
 }
 
+/// The smaller, lighter chevron used as a breadcrumb separator.
+pub fn breadcrumb_chevron<'a, M: 'a>() -> Element<'a, M> {
+    icon::chevron_right()
+        .size(13)
+        .style(theme::text::border)
+        .into()
+}
+
 pub fn entry_organization<'a, M: Clone + 'a>(
     title: impl Display,
     subtitle: Option<impl Display>,

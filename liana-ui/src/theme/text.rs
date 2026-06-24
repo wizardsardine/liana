@@ -30,6 +30,18 @@ pub fn secondary(theme: &Theme) -> Style {
     }
 }
 
+pub fn muted(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.text.muted),
+    }
+}
+
+pub fn border(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.text.border),
+    }
+}
+
 pub fn success(theme: &Theme) -> Style {
     Style {
         color: Some(theme.colors.text.success),
