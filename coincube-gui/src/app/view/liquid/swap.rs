@@ -38,10 +38,13 @@ pub struct LiquidSwapConfig<'a> {
     pub quote: Option<&'a SwapQuote>,
     pub quoting: bool,
     pub quote_remaining: u32,
+    /// Whether Continue (advance to review) is enabled.
     pub quote_actionable: bool,
+    /// Whether Confirm (execute) is enabled — also requires a synced wallet.
+    pub confirm_enabled: bool,
     pub is_sending: bool,
-    /// Whether the Liquid wallet is still catching up. While true a swap
-    /// can fail server-side (its inputs aren't ready), so we warn the user.
+    /// Whether the Liquid wallet is still catching up. While true the swap
+    /// would fail server-side (its inputs aren't ready), so Confirm is paused.
     pub syncing: bool,
     /// Display unit for L-BTC amounts (BTC vs SATS). USDt always renders
     /// as a decimal regardless of this setting.
@@ -403,12 +406,15 @@ fn review_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMes
     let confirm_btn = {
         let label = if config.is_sending {
             "Swapping…"
+        } else if config.syncing {
+            "Waiting for sync…"
         } else {
             "Confirm swap"
         };
         let mut b = button::primary(None, label).width(Length::Fill);
-        // Never confirm an expired quote or while a send is in flight.
-        if config.quote_actionable {
+        // Disabled for an expired quote, a send in flight, or a wallet that
+        // hasn't finished syncing (the swap would fail server-side).
+        if config.confirm_enabled {
             b = b.on_press(LiquidSwapMessage::Confirm);
         }
         b
@@ -445,7 +451,7 @@ fn sync_hint<'a>() -> Element<'a, LiquidSwapMessage> {
             .align_y(Alignment::Center)
             .push(warning_icon().size(16).color(color::ORANGE))
             .push(
-                text("Wallet is still syncing — swaps may fail until it finishes.")
+                text("Wallet is still syncing — swaps are paused until it finishes.")
                     .size(P2_SIZE)
                     .style(theme::text::secondary),
             ),

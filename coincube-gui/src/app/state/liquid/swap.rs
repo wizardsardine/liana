@@ -111,10 +111,17 @@ fn rate_to_per_from(receiver_base: u64, from_total_base: u64) -> f64 {
     }
 }
 
-/// Continue/Confirm are enabled only for a fresh, unexpired quote while
-/// no send is in flight.
+/// Continue is enabled for a fresh, unexpired quote while no send is in
+/// flight.
 fn is_quote_actionable(has_quote: bool, quote_remaining: u32, is_sending: bool) -> bool {
     has_quote && quote_remaining > 0 && !is_sending
+}
+
+/// Confirm additionally requires a synced wallet: SideSwap orders fail
+/// server-side (`ClientError`) when the Liquid wallet is mid-scan and
+/// can't fund/sign the swap tx within the order's short window.
+fn can_confirm(quote_actionable: bool, synced: bool) -> bool {
+    quote_actionable && synced
 }
 
 /// Parse the receive-amount input into `to`-asset base units, honouring
@@ -493,6 +500,7 @@ impl State for LiquidSwap {
             quoting: self.quoting,
             quote_remaining: self.quote_remaining,
             quote_actionable: self.quote_actionable(),
+            confirm_enabled: can_confirm(self.quote_actionable(), self.synced),
             is_sending: self.is_sending,
             syncing: !self.synced,
             bitcoin_unit: cache.bitcoin_unit,
@@ -661,6 +669,16 @@ impl State for LiquidSwap {
                     // `send_payment` is structurally unreachable under duress,
                     // exactly like the Send path it shares.
                     if self.phase != SwapPhase::Review || self.is_sending {
+                        return Task::none();
+                    }
+                    // Block while the wallet is still catching up — the swap
+                    // would fail server-side (the button is also disabled, so
+                    // this is defence-in-depth).
+                    if !self.synced {
+                        self.error = Some(
+                            "Wallet is still syncing — please wait until it finishes before swapping."
+                                .to_string(),
+                        );
                         return Task::none();
                     }
                     // Never execute an expired quote — re-fetch instead.
@@ -932,6 +950,16 @@ mod tests {
         assert_eq!(s.format_entered(8_066_584), "0.08066584");
         s.to_asset = SendAsset::Usdt;
         assert_eq!(s.format_entered(150_000_000), "1.50000000");
+    }
+
+    #[test]
+    fn confirm_requires_synced_wallet() {
+        // An actionable quote is necessary but not sufficient — the wallet
+        // must be synced, or the SideSwap order fails server-side.
+        assert!(!can_confirm(true, false));
+        assert!(can_confirm(true, true));
+        // No actionable quote → never confirmable, synced or not.
+        assert!(!can_confirm(false, true));
     }
 
     #[test]
