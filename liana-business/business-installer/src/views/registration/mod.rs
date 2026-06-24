@@ -65,8 +65,8 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
         device_list_view(state)
     };
 
-    // Footer with Skip button (only if there are devices to skip)
-    let footer_content = if reg_state.user_devices.is_empty() {
+    // Pinned Skip button (only if there are devices to skip)
+    let pinned_content = if reg_state.user_devices.is_empty() {
         None
     } else {
         let spacer = MENU_ENTRY_WIDTH - BtnWidth::XL as u32;
@@ -95,7 +95,8 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
         &breadcrumb,
         header_content,
         list_content,
-        footer_content,
+        pinned_content,
+        None,
         true,
         Some(Msg::NavigateToWalletSelect),
     )

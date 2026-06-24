@@ -22,8 +22,8 @@ pub use xpub::xpub_view;
 
 use crate::{backend::Backend, state::message::Msg, state::State};
 use iced::{
-    widget::{column, container, row, Space},
-    Alignment, Length,
+    widget::{column, container, row, rule, Space},
+    Alignment, Length, Padding,
 };
 use liana_ui::{
     component::{
@@ -37,10 +37,10 @@ use liana_ui::{
 use std::fmt::Display;
 use uuid::Uuid;
 
-pub const INSTALLER_STEPS: usize = 5;
+pub const INSTALLER_STEPS: usize = 7;
 pub const MENU_ENTRY_WIDTH: u32 = 600;
 pub const MENU_ENTRY_HEIGHT: u32 = 100;
-const EMAIL_ROW_HEIGHT: u32 = 56;
+const TOP_STRIP_HEIGHT: u32 = 44;
 
 pub fn format_last_edit_info(
     last_edited: Option<u64>,
@@ -77,7 +77,7 @@ fn admin_name_from_email(mail: &str) -> Option<String> {
     Some(format!("({})", capitalize_first(n)))
 }
 
-const EMAIL_HEADER_SPACER: u32 = 30;
+const CONTENT_TOP_SPACING: u32 = 72;
 const SCREEN_INTRO_SUB_WIDTH: u32 = 620;
 
 fn breadcrumb_header<'a>(segments: &[String]) -> Element<'a, Msg> {
@@ -102,8 +102,13 @@ enum LayoutContent<'a> {
     ScrollableList {
         header: Element<'a, Msg>,
         list: Element<'a, Msg>,
+        pinned: Option<Element<'a, Msg>>,
         footer: Option<Element<'a, Msg>>,
     },
+}
+
+fn thin_separator<'a>() -> Element<'a, Msg> {
+    rule::horizontal(1).style(theme::rule::separator).into()
 }
 
 fn layout_inner<'a>(
@@ -125,42 +130,53 @@ fn layout_inner<'a>(
     };
     let left_button = btn_breadcrumb_previous(msg);
 
-    // Build the top-right row with optional role badge and email
-    let mut email_row = Row::new()
-        .push(Space::with_width(Length::Fill))
-        .spacing(10)
-        .align_y(Alignment::Center);
+    let mut user = row![].spacing(12).align_y(Alignment::Center);
 
     if is_ws_admin {
-        email_row = email_row.push(liana_ui::component::pill::ws_admin());
+        user = user.push(liana_ui::component::pill::ws_admin());
     }
 
     if let Some(e) = email {
-        email_row = email_row
-            .push(Container::new(text::new::caption(e).style(theme::text::accent)).padding(20));
-    } else {
-        email_row = email_row.push(Space::with_height(EMAIL_ROW_HEIGHT));
+        user = user
+            .push(icon::person_icon().size(16).style(theme::text::tertiary))
+            .push(text::new::caption(e).style(theme::text::accent));
     }
 
-    let header = Row::new()
-        .height(EMAIL_ROW_HEIGHT)
+    let top_strip = Container::new(row![Space::fill_width(), user])
+        .height(TOP_STRIP_HEIGHT)
+        .width(Length::Fill)
+        .padding([0, 28])
         .align_y(Alignment::Center)
-        .push(if has_left_button {
-            Container::new(left_button)
-                .center_x(Length::FillPortion(2))
-                .into()
-        } else {
-            Element::from(Space::with_width(Length::FillPortion(2)))
-        })
-        .push(Container::new(breadcrumb_header(breadcrumb)).width(Length::FillPortion(8)))
-        .push_maybe(if progress.1 > 0 {
-            Some(
-                Container::new(text::text(format!("{} | {}", progress.0, progress.1)))
-                    .center_x(Length::FillPortion(2)),
-            )
-        } else {
-            None
-        });
+        .style(theme::container::top_bar);
+
+    let progress = if progress.1 > 0 {
+        Element::from(
+            row![
+                text::new::caption(progress.0.to_string()).style(theme::text::accent),
+                text::new::caption(format!(" | {}", progress.1))
+            ]
+            .align_y(Alignment::Center),
+        )
+    } else {
+        Element::from(Space::fill_width())
+    };
+    let header = Container::new(
+        row![
+            if has_left_button {
+                Container::new(left_button)
+                    .center_x(Length::FillPortion(2))
+                    .into()
+            } else {
+                Element::from(Space::with_width(Length::FillPortion(2)))
+            },
+            Container::new(breadcrumb_header(breadcrumb)).width(Length::FillPortion(8)),
+            Container::new(progress).center_x(Length::FillPortion(2))
+        ]
+        .align_y(Alignment::Center),
+    )
+    .padding([20, 0]);
+
+    let layout_header = column![top_strip, thin_separator(), header];
 
     let fill_portion = if padding_left { 8 } else { 10 };
     let right_spacer = || -> Option<Space> {
@@ -176,23 +192,22 @@ fn layout_inner<'a>(
             let content_row = Row::new()
                 .push(Space::with_width(Length::FillPortion(2)))
                 .push(
-                    Container::new(
-                        Column::new()
-                            .push(Space::with_height(Length::Fixed(100.0)))
-                            .push(inner),
-                    )
+                    Container::new(column![
+                        Space::with_height(CONTENT_TOP_SPACING as f32,),
+                        inner
+                    ])
                     .width(Length::FillPortion(fill_portion)),
                 )
                 .push_maybe(right_spacer());
 
-            Container::new(scrollable::vertical(
-                Column::new()
-                    .width(Length::Fill)
-                    .push(email_row)
-                    .push(Space::with_height(EMAIL_HEADER_SPACER))
-                    .push(header)
-                    .push(content_row),
-            ))
+            Container::new(
+                column![
+                    layout_header,
+                    scrollable::vertical(content_row).height(Length::Fill)
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill),
+            )
             .center_x(Length::Fill)
             .height(Length::Fill)
             .width(Length::Fill)
@@ -202,23 +217,39 @@ fn layout_inner<'a>(
         LayoutContent::ScrollableList {
             header: header_content,
             list,
+            pinned,
             footer,
         } => {
-            let header_area = Row::new()
-                .push(Space::with_width(Length::FillPortion(2)))
-                .push(Container::new(header_content).width(Length::FillPortion(fill_portion)))
-                .push_maybe(right_spacer());
+            let header_area = row![
+                Space::with_width(Length::FillPortion(2)),
+                Container::new(header_content)
+                    .width(Length::FillPortion(fill_portion))
+                    .padding(Padding {
+                        top: 22.0,
+                        bottom: 14.0,
+                        ..Padding::ZERO
+                    }),
+                right_spacer()
+            ];
 
             let list_area = Row::new()
                 .push(Space::with_width(Length::FillPortion(2)))
                 .push(
                     Container::new(scrollable::vertical(list).height(Length::Fill))
                         .width(Length::FillPortion(fill_portion))
+                        .height(Length::Fill)
                         .align_x(Alignment::Center),
                 )
                 .push_maybe(right_spacer())
                 .height(Length::Fill);
 
+            let pinned_area: Option<Row<'a, Msg>> = pinned.map(|p| {
+                row![
+                    Space::with_width(Length::FillPortion(2)),
+                    Container::new(p).width(Length::FillPortion(fill_portion)),
+                    right_spacer()
+                ]
+            });
             let footer_area: Option<Row<'a, Msg>> = footer.map(|f| {
                 Row::new()
                     .push(Space::with_width(Length::FillPortion(2)))
@@ -227,15 +258,16 @@ fn layout_inner<'a>(
             });
 
             Container::new(
-                Column::new()
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .push(email_row)
-                    .push(Space::with_height(EMAIL_HEADER_SPACER))
-                    .push(header)
-                    .push(header_area)
-                    .push(list_area)
-                    .push_maybe(footer_area),
+                column![
+                    layout_header,
+                    header_area,
+                    list_area,
+                    pinned_area,
+                    footer_area,
+                    Space::with_height(1)
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill),
             )
             .center_x(Length::Fill)
             .height(Length::Fill)
@@ -267,7 +299,7 @@ pub fn layout<'a>(
 
 /// Layout variant with fixed header content and a scrollable list section.
 /// The header_content stays fixed at top, only the list_content scrolls.
-/// An optional footer_content can be placed below the scrollable area.
+/// Optional pinned_content and footer_content can be placed below the scrollable area.
 #[allow(clippy::too_many_arguments)]
 pub fn layout_with_scrollable_list<'a>(
     progress: (usize, usize),
@@ -276,6 +308,7 @@ pub fn layout_with_scrollable_list<'a>(
     breadcrumb: &[String],
     header_content: impl Into<Element<'a, Msg>>,
     list_content: impl Into<Element<'a, Msg>>,
+    pinned_content: Option<Element<'a, Msg>>,
     footer_content: Option<Element<'a, Msg>>,
     padding_left: bool,
     previous_message: Option<Msg>,
@@ -288,6 +321,7 @@ pub fn layout_with_scrollable_list<'a>(
         LayoutContent::ScrollableList {
             header: header_content.into(),
             list: list_content.into(),
+            pinned: pinned_content,
             footer: footer_content,
         },
         padding_left,
@@ -416,6 +450,7 @@ pub fn select_list_view(cfg: SelectListView<'_>) -> Element<'_, Msg> {
         &cfg.breadcrumb,
         header,
         list,
+        None,
         None,
         true,
         cfg.previous_message,

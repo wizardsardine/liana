@@ -102,6 +102,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
         &breadcrumb,
         header_content,
         visualization,
+        None,
         Some(footer_content),
         true,
         Some(Msg::NavigateBack),

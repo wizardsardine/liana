@@ -80,10 +80,20 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
         &breadcrumb,
         header_content,
         keys_list,
-        None, // No footer needed
+        Some(add_key_card()),
+        None,
         true,
         Some(Msg::NavigateBack),
     )
+}
+
+fn add_key_card() -> Element<'static, Msg> {
+    let add_key_content =
+        row![text::new::caption("+ Add a key").style(liana_ui::theme::text::secondary)]
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+    menu_entry(add_key_content, Some(Msg::KeyAdd)).into()
 }
 
 fn keys_visualization(state: &State) -> Element<'static, Msg> {
@@ -121,14 +131,6 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
         })
         .collect();
 
-    // "Add a key" card
-    let add_key_content =
-        row![text::new::caption("+ Add a key").style(liana_ui::theme::text::secondary)]
-            .width(Length::Fill)
-            .height(Length::Fill);
-
-    let add_key_card = menu_entry(add_key_content, Some(Msg::KeyAdd));
-
     // Build the column with all elements
     let mut column = Column::new()
         .push(Space::with_height(50))
@@ -140,7 +142,6 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
     for row in key_rows {
         column = column.push(row);
     }
-    column = column.push(add_key_card);
 
     Container::new(column)
         .center_x(Length::Shrink)

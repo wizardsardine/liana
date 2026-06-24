@@ -50,6 +50,13 @@ pub fn foreground(theme: &Theme) -> Style {
     }
 }
 
+pub fn top_bar(theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(theme.colors.general.menu_background)),
+        ..Default::default()
+    }
+}
+
 pub fn sidebar(theme: &Theme) -> Style {
     Style {
         background: Some(Background::Color(theme.colors.general.menu_background)),

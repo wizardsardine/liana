@@ -36,6 +36,12 @@ pub fn muted(theme: &Theme) -> Style {
     }
 }
 
+pub fn tertiary(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.text.muted),
+    }
+}
+
 pub fn border(theme: &Theme) -> Style {
     Style {
         color: Some(theme.colors.text.border),
