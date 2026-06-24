@@ -37,6 +37,7 @@ pub fn panel_background(theme: &Theme) -> Style {
                 bottom_right: 0.0,
                 bottom_left: 0.0,
             },
+            ..Default::default()
         },
         ..Default::default()
     }
@@ -76,6 +77,7 @@ pub fn tab_menu_panel(theme: &Theme) -> Style {
                 bottom_right: 6.0,
                 bottom_left: 6.0,
             },
+            ..Default::default()
         },
         shadow: CARD_SHADOW,
         ..Default::default()

@@ -12,6 +12,7 @@ fn badge(palette: &ContainerPalette) -> Style {
             radius: 25.0.into(),
             width: 1.0,
             color: iced::Color::TRANSPARENT,
+            ..Default::default()
         },
         ..Default::default()
     }

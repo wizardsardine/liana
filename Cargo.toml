@@ -91,3 +91,20 @@ flate2 = { version = "1.0", default-features = false }
 winresource = "0.1.24"
 unicode-segmentation = "1.0"
 bitcoin = "0.32"
+
+# Routed to our fork for native dashed/dotted border styles.
+[patch.crates-io]
+iced = { git = "https://github.com/pythcoiner/iced", branch = "14_dash" }
+iced_core = { git = "https://github.com/pythcoiner/iced", branch = "14_dash" }
+iced_runtime = { git = "https://github.com/pythcoiner/iced", branch = "14_dash" }
+iced_widget = { git = "https://github.com/pythcoiner/iced", branch = "14_dash" }
+iced_graphics = { git = "https://github.com/pythcoiner/iced", branch = "14_dash" }
+iced_renderer = { git = "https://github.com/pythcoiner/iced", branch = "14_dash" }
+iced_futures = { git = "https://github.com/pythcoiner/iced", branch = "14_dash" }
+iced_winit = { git = "https://github.com/pythcoiner/iced", branch = "14_dash" }
+iced_wgpu = { git = "https://github.com/pythcoiner/iced", branch = "14_dash" }
+iced_tiny_skia = { git = "https://github.com/pythcoiner/iced", branch = "14_dash" }
+iced_program = { git = "https://github.com/pythcoiner/iced", branch = "14_dash" }
+iced_debug = { git = "https://github.com/pythcoiner/iced", branch = "14_dash" }
+# iced_aw constructs Border literals exhaustively, so it needs the same fork's Border style field.
+iced_aw = { git = "https://github.com/pythcoiner/iced_aw", branch = "13.1_dash" }

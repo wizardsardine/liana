@@ -27,8 +27,7 @@ use iced::{
 };
 use liana_ui::{
     component::{
-        button::icon_btn,
-        card::clickable_card,
+        button::{self, icon_btn, EntryWidth},
         form, scrollable,
         text::{self, short_email, truncate},
     },
@@ -297,15 +296,23 @@ pub fn layout_with_scrollable_list<'a>(
 
 // NOTE: content MUST have width and height to Length::Fill
 pub fn menu_entry(content: Row<'_, Msg>, message: Option<Msg>) -> Container<'_, Msg> {
+    menu_entry_with_width(content, EntryWidth::Standard, message)
+}
+
+fn menu_entry_with_width(
+    content: Row<'_, Msg>,
+    width: EntryWidth,
+    message: Option<Msg>,
+) -> Container<'_, Msg> {
     let content = content.width(Length::Fill).height(Length::Fill);
-    let card = clickable_card(content, message);
+    let card = button::list_entry(content, None, width, message);
     container(card)
         .width(MENU_ENTRY_WIDTH)
         .height(MENU_ENTRY_HEIGHT)
 }
 
 fn account_entry(content: Row<'_, Msg>, message: Option<Msg>) -> Container<'_, Msg> {
-    menu_entry(content, message).width(ACCOUNT_ENTRY_WIDTH)
+    menu_entry_with_width(content, EntryWidth::Account, message).width(ACCOUNT_ENTRY_WIDTH)
 }
 
 fn delete_btn(message: Option<Msg>) -> Button<'static, Msg> {
