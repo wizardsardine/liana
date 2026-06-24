@@ -55,6 +55,7 @@ color!(EXTERNAL, 0x0F172A);
 color!(SAFETY_NET, 0x475569);
 color!(FINGERPRINT_BACKGROUND, 0xE9F4FF);
 const BLUE_TINT_LIGHT: Color = FINGERPRINT_BACKGROUND;
+color!(LIGHT_BLUE_TINT, 0xE5F5FF);
 color!(BUSINESS_BLUE_SECTION, 0xC1E9F7);
 const ROLE_MANAGER_TEXT: Color = BTN_PRIMARY_PRESSED;
 
@@ -678,6 +679,10 @@ impl Palette {
                         border: Some(color::RED),
                     },
                 },
+            },
+            combobox: Combobox {
+                selected: LIGHT_BLUE_TINT,
+                header: color::LIGHT_BORDER,
             },
             checkboxes: Checkboxes {
                 icon: color::BUSINESS_BLUE,

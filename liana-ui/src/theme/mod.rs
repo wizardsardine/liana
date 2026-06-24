@@ -4,6 +4,7 @@ pub mod banner;
 pub mod button;
 pub mod card;
 pub mod checkbox;
+pub mod combobox;
 pub mod container;
 pub mod context_menu;
 pub mod notification;

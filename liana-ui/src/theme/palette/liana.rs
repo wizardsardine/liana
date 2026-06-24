@@ -700,6 +700,10 @@ impl Palette {
                     },
                 },
             },
+            combobox: Combobox {
+                selected: color::FINGERPRINT_BACKGROUND,
+                header: color::GREY_7,
+            },
             checkboxes: Checkboxes {
                 icon: color::GREEN,
                 text: color::GREY_2,
