@@ -187,7 +187,7 @@ impl Step for CoincubeConnectStep {
                     let email = self.email.value.clone();
                     return Task::perform(
                         send_otp(self.client.clone(), email.clone(), self.is_signup),
-                         move |result| {
+                        move |result| {
                             Message::CoincubeConnect(CoincubeConnectMsg::OtpRequested {
                                 email: email.clone(),
                                 result,
@@ -226,7 +226,7 @@ impl Step for CoincubeConnectStep {
                     }
                 }
                 CoincubeConnectMsg::OtpResent(res) => {
-                   self.processing = false;
+                    self.processing = false;
                     match res {
                         Ok(()) => {
                             self.otp_sent = true;
