@@ -818,6 +818,17 @@ impl State for LiquidSwap {
                     self.synced = true;
                     return self.load_balance();
                 }
+                view::LiquidSwapMessage::SyncFinished(ok) => {
+                    // The entry sync resolved (it awaits the wallet catching
+                    // up). Clear the syncing gate regardless of outcome so
+                    // Confirm can't stay stuck; a failed sync is logged and
+                    // the swap itself surfaces any error on confirm.
+                    if !ok {
+                        log::warn!(target: "breez_swap", "swap entry sync failed");
+                    }
+                    self.synced = true;
+                    return self.load_balance();
+                }
                 view::LiquidSwapMessage::SelfAddressReady(result) => match result {
                     Ok(addr) => {
                         self.self_address = Some(addr.clone());
@@ -1175,17 +1186,18 @@ impl State for LiquidSwap {
         self.last_rate = None;
         self.rate_probe_inflight = false;
         self.pending_swap_all = false;
-        // Assume catching up until the sync we kick below reports `Synced`.
+        // Assume catching up until the sync below resolves (it awaits the
+        // wallet catching up). `SyncFinished` drives `synced` so Confirm
+        // can't get stuck if no separate `Synced` event follows.
         self.synced = false;
 
         let breez = self.breez_client.clone();
         Task::batch(vec![
-            Task::perform(
-                async move {
-                    let _ = breez.sync().await;
-                },
-                |_| Message::CacheUpdated,
-            ),
+            Task::perform(async move { breez.sync().await.is_ok() }, |ok| {
+                Message::View(view::Message::LiquidSwap(
+                    view::LiquidSwapMessage::SyncFinished(ok),
+                ))
+            }),
             self.load_balance(),
             // Pre-generate the destination so the first quote is instant.
             self.generate_self_address(),

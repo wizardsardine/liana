@@ -719,6 +719,10 @@ pub enum LiquidSwapMessage {
     Error(String),
     /// Re-fetch balances (e.g. after an SDK sync).
     RefreshRequested,
+    /// The sync kicked on screen entry finished (`ok` = succeeded). Drives
+    /// the `synced` gate directly so Confirm can't get stuck disabled when
+    /// no separate `Synced` event follows (or the sync errored).
+    SyncFinished(bool),
     /// A "Last swaps" row was tapped — open it in Transactions.
     SelectSwap(usize),
     /// Self-targeted Liquid receive address generated (or failed) — the
