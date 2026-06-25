@@ -184,13 +184,15 @@ impl Step for CoincubeConnectStep {
                 CoincubeConnectMsg::RequestOtp => {
                     self.processing = true;
                     self.error = None;
+                    let email = self.email.value.clone();
                     return Task::perform(
-                        send_otp(
-                            self.client.clone(),
-                            self.email.value.clone(),
-                            self.is_signup,
-                        ),
-                        |res| Message::CoincubeConnect(CoincubeConnectMsg::OtpRequested(res)),
+                        send_otp(self.client.clone(), email.clone(), self.is_signup),
+                         move |result| {
+                            Message::CoincubeConnect(CoincubeConnectMsg::OtpRequested {
+                                email: email.clone(),
+                                result,
+                            })
+                        },
                     );
                 }
                 CoincubeConnectMsg::ResendOtp => {
@@ -205,8 +207,26 @@ impl Step for CoincubeConnectStep {
                         |res| Message::CoincubeConnect(CoincubeConnectMsg::OtpResent(res)),
                     );
                 }
-                CoincubeConnectMsg::OtpRequested(res) => {
+                CoincubeConnectMsg::OtpRequested { email, result } => {
                     self.processing = false;
+                    match result {
+                        Ok(()) => {
+                            self.otp_sent = true;
+                            self.otp = form::Value::default();
+                            self.error = None;
+                        }
+                        Err(e) => {
+                            if !self.is_signup && e.contains("Email not verified") {
+                                return Task::done(Message::CoincubeConnect(
+                                    CoincubeConnectMsg::EmailNotVerified { email },
+                                ));
+                            }
+                            self.error = Some(e);
+                        }
+                    }
+                }
+                CoincubeConnectMsg::OtpResent(res) => {
+                   self.processing = false;
                     match res {
                         Ok(()) => {
                             self.otp_sent = true;
@@ -218,11 +238,23 @@ impl Step for CoincubeConnectStep {
                         }
                     }
                 }
-                CoincubeConnectMsg::OtpResent(res) => {
-                    self.processing = false;
-                    if let Err(e) = res {
-                        self.error = Some(e);
-                    }
+                CoincubeConnectMsg::EmailNotVerified { email } => {
+                    // The email exists but signup was never completed. Switch to
+                    // signup mode, fire resend_signup_otp, and land on OTP entry —
+                    // identical to the app-level ConnectAccountPanel recovery path.
+                    self.is_signup = true;
+                    self.processing = true;
+                    self.error = None;
+                    let client = self.client.clone();
+                    return Task::perform(
+                        async move {
+                            client
+                                .resend_signup_otp(&email)
+                                .await
+                                .map_err(|e| e.to_string())
+                        },
+                        |res| Message::CoincubeConnect(CoincubeConnectMsg::OtpResent(res)),
+                    );
                 }
                 CoincubeConnectMsg::OtpEdited(value) => {
                     self.otp.value = value.trim().to_string();
