@@ -396,6 +396,10 @@ impl State for LiquidTransactions {
                 }
                 self.loading = false;
                 self.processing = false;
+                // Re-read the swap log so swaps recorded elsewhere since the
+                // last load get labelled — covers the SDK-event BackgroundRefresh
+                // and pagination, not just a full reload.
+                self.swap_tx_ids = SwapHistory::load(self.swaps_path.clone()).tx_ids();
                 // Commit the page navigation now that the fetch succeeded.
                 // `pending_page` is `None` for a reload/initial fetch, where
                 // `current_page` was already set to 0 by `reload`.
@@ -881,8 +885,9 @@ impl State for LiquidTransactions {
         self.pending_page = None;
         self.is_last_page = false;
         self.processing = false;
-        // Pick up any swaps recorded since we last loaded so their rows label.
-        self.swap_tx_ids = SwapHistory::load(self.swaps_path.clone()).tx_ids();
+        // (swap_tx_ids is refreshed in the PaymentsLoaded handler the fetch
+        // below dispatches, so it stays current on every refresh — not just
+        // reload.)
         self.payments.clear();
         self.last_reload = Instant::now();
         let client2 = self.breez_client.clone();

@@ -216,6 +216,10 @@ impl State for LiquidOverview {
                     self.error = None;
                     self.btc_balance = *balance;
                     self.usdt_balance = *usdt_balance;
+                    // Re-read the swap log so swaps recorded elsewhere since the
+                    // last load get labelled — covers reload + the SDK-event
+                    // refresh path, not just a full reload.
+                    self.swap_tx_ids = SwapHistory::load(self.swaps_path.clone()).tx_ids();
 
                     let recent: Vec<DomainPayment> =
                         recent_payment.iter().take(5).cloned().collect();
@@ -331,8 +335,8 @@ impl State for LiquidOverview {
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.selected_payment = None;
-        // Pick up any swaps recorded since we last loaded so their rows label.
-        self.swap_tx_ids = SwapHistory::load(self.swaps_path.clone()).tx_ids();
+        // (swap_tx_ids is refreshed in the DataLoaded handler the load below
+        // dispatches, so it stays current on every refresh — not just reload.)
         // Load balance immediately for fast display, and trigger an SDK sync
         // in the background. When the sync completes the SDK fires
         // SdkEvent::Synced which will refresh the active panel automatically.
