@@ -19,6 +19,7 @@ use liana_ui::{
 
 use super::{
     format_last_edit_info, select_list_view, SelectListView, SelectSearch, INSTALLER_STEPS,
+    SEARCH_ENTRY_THRESHOLD,
 };
 
 /// Derive the user's role for a specific wallet based on wallet data and global role
@@ -123,15 +124,13 @@ fn wallet_entry_status(wallet: &Wallet, user_email: &str) -> EntryStatus {
 
 pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
     // Determine if there are wallets and get wallet count
-    let has_wallets = if let Some(org_id) = state.app.selected_org {
-        if let Some(org) = state.backend.get_org(org_id) {
-            !org.wallets.is_empty()
-        } else {
-            false
-        }
-    } else {
-        false
-    };
+    let wallet_count = state
+        .app
+        .selected_org
+        .and_then(|org_id| state.backend.get_org(org_id))
+        .map(|org| org.wallets.len())
+        .unwrap_or(0);
+    let has_wallets = wallet_count > 0;
 
     // Set title based on whether wallets exist
     // Get current user email for role derivation
@@ -252,7 +251,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         is_ws_admin,
         breadcrumb,
         title: "Wallets".to_string(),
-        search: has_wallets.then_some(SelectSearch {
+        search: (wallet_count > SEARCH_ENTRY_THRESHOLD).then_some(SelectSearch {
             placeholder: "Filter wallets...",
             value: &state.views.wallet_select.search_filter,
             on_change: Msg::WalletSelectUpdateSearchFilter,
