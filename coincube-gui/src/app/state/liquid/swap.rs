@@ -290,6 +290,9 @@ pub struct LiquidSwap {
     last_rate: Option<f64>,
     /// Whether a background rate probe is in flight (de-dupes triggers).
     rate_probe_inflight: bool,
+    /// Generation for rate probes — bumped on flip and reload so a probe
+    /// from a prior direction/session can't apply its (now-wrong) rate.
+    rate_probe_seq: u64,
     /// "Swap All" was pressed before a rate was known — fill the max as soon
     /// as the in-flight probe lands.
     pending_swap_all: bool,
@@ -339,6 +342,7 @@ impl LiquidSwap {
             quote: None,
             last_rate: None,
             rate_probe_inflight: false,
+            rate_probe_seq: 0,
             pending_swap_all: false,
             quoting: false,
             quote_seq: 0,
@@ -489,6 +493,7 @@ impl LiquidSwap {
         let (to_id, from_id) = (to_id.to_string(), from_id.to_string());
 
         self.rate_probe_inflight = true;
+        let seq = self.rate_probe_seq;
         let breez_client = self.breez_client.clone();
         Task::perform(
             async move {
@@ -510,9 +515,9 @@ impl LiquidSwap {
                         rate_to_per_from(probe_receiver, total)
                     })
             },
-            |result| {
+            move |result| {
                 Message::View(view::Message::LiquidSwap(
-                    view::LiquidSwapMessage::RateProbeReady(result),
+                    view::LiquidSwapMessage::RateProbeReady(seq, result),
                 ))
             },
         )
@@ -701,6 +706,10 @@ impl LiquidSwap {
         self.pay_input = form::Value::default();
         self.receive_input = form::Value::default();
         self.edit_side = SwapSide::Receive;
+        // New direction: invalidate any in-flight probe (its rate is for the
+        // old pair) and clear the inflight flag so the re-probe can fire.
+        self.rate_probe_seq = self.rate_probe_seq.wrapping_add(1);
+        self.rate_probe_inflight = false;
     }
 
     /// Pre-fill the entered amount with (almost) the max receivable from
@@ -885,7 +894,13 @@ impl State for LiquidSwap {
                         self.error = Some(format!("Couldn't prepare swap address: {e}"));
                     }
                 },
-                view::LiquidSwapMessage::RateProbeReady(result) => {
+                view::LiquidSwapMessage::RateProbeReady(seq, result) => {
+                    // Ignore a probe from a prior direction/session — its rate
+                    // would be for the wrong pair. Leave the current probe's
+                    // inflight flag untouched so it can still land.
+                    if *seq != self.rate_probe_seq {
+                        return Task::none();
+                    }
                     self.rate_probe_inflight = false;
                     match result {
                         Ok(rate) if *rate > 0.0 => {
@@ -1233,9 +1248,11 @@ impl State for LiquidSwap {
         self.error = None;
         self.is_sending = false;
         self.pending_quote = false;
-        // Drop any stale rate so we re-probe a fresh one on entry.
+        // Drop any stale rate so we re-probe a fresh one on entry; bump the
+        // probe generation so a prior session's in-flight probe can't apply.
         self.last_rate = None;
         self.rate_probe_inflight = false;
+        self.rate_probe_seq = self.rate_probe_seq.wrapping_add(1);
         self.pending_swap_all = false;
         // Assume catching up until the sync below resolves (it awaits the
         // wallet catching up). `SyncFinished` drives `sync_state` so Confirm

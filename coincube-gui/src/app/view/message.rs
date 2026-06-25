@@ -735,8 +735,10 @@ pub enum LiquidSwapMessage {
     SelfAddressReady(Result<String, String>),
     /// Background rate probe finished — carries the SideSwap rate
     /// (`to`-base per `from`-base) so the rate chip + "Swap All" work
-    /// before the user has entered an amount. Failures are ignored.
-    RateProbeReady(Result<f64, String>),
+    /// before the user has entered an amount. Failures are ignored. Tagged
+    /// with the probe generation so a stale probe (from a prior direction or
+    /// session) can't apply its rate.
+    RateProbeReady(u64, Result<f64, String>),
     /// "You pay" (from-asset) amount edited — the receive side is derived
     /// from the rate and the quote re-fetched.
     AmountEditedPay(String),
