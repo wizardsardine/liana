@@ -710,6 +710,11 @@ impl LiquidSwap {
         // old pair) and clear the inflight flag so the re-probe can fire.
         self.rate_probe_seq = self.rate_probe_seq.wrapping_add(1);
         self.rate_probe_inflight = false;
+        // Cancel any pending Swap All / "fetching" state from the old
+        // direction — otherwise the post-flip probe would auto-fill amounts
+        // in the new direction (or leave it stuck "fetching").
+        self.pending_swap_all = false;
+        self.quoting = false;
     }
 
     /// Pre-fill the entered amount with (almost) the max receivable from
@@ -1257,6 +1262,7 @@ impl State for LiquidSwap {
         self.rate_probe_inflight = false;
         self.rate_probe_seq = self.rate_probe_seq.wrapping_add(1);
         self.pending_swap_all = false;
+        self.quoting = false;
         // Assume catching up until the sync below resolves (it awaits the
         // wallet catching up). `SyncFinished` drives `sync_state` so Confirm
         // can't get stuck if no separate `Synced` event follows. Bump the
