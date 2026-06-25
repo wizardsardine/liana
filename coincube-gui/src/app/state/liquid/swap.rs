@@ -865,14 +865,17 @@ impl State for LiquidSwap {
                         return Task::none();
                     }
                     // The entry sync resolved (it awaits the wallet catching
-                    // up). Success → caught up; failure → distinct `Failed`
-                    // (banner reflects it, Confirm stays paused) so we neither
-                    // get stuck on "syncing" nor falsely claim "synced".
-                    self.sync_state = if *ok {
-                        SyncState::Synced
-                    } else {
-                        log::warn!(target: "breez_swap", "swap entry sync failed");
-                        SyncState::Failed
+                    // up). Success → caught up. Failure → `Failed`, *unless* an
+                    // SDK `Synced` event already marked us caught up (via
+                    // `RefreshRequested`) — don't let a failed entry sync
+                    // downgrade a wallet that's genuinely synced.
+                    self.sync_state = match (*ok, self.sync_state) {
+                        (true, _) => SyncState::Synced,
+                        (false, SyncState::Synced) => SyncState::Synced,
+                        (false, _) => {
+                            log::warn!(target: "breez_swap", "swap entry sync failed");
+                            SyncState::Failed
+                        }
                     };
                     return self.load_balance();
                 }
