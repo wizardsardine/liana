@@ -228,7 +228,10 @@ pub enum CoincubeConnectMsg {
     EmailNotVerified { email: String },
     ToggleMode,
     RequestOtp,
-    OtpRequested(Result<(), String>),
+    OtpRequested {
+        email: String,
+        result: Result<(), String>,
+    },
     OtpEdited(String),
     OtpVerified(Result<zeroize::Zeroizing<String>, String>),
     ResendOtp,
@@ -243,7 +246,11 @@ impl std::fmt::Debug for CoincubeConnectMsg {
             Self::EmailNotVerified { email } => f.debug_tuple("EmailNotVerified").field(email).finish(),
             Self::ToggleMode => write!(f, "ToggleMode"),
             Self::RequestOtp => write!(f, "RequestOtp"),
-            Self::OtpRequested(r) => f.debug_tuple("OtpRequested").field(r).finish(),
+            Self::OtpRequested { email, result } => f
+                .debug_struct("OtpRequested")
+                .field("email", email)
+                .field("result", result)
+                .finish(),
             Self::OtpEdited(s) => f.debug_tuple("OtpEdited").field(s).finish(),
             Self::OtpVerified(Ok(_)) => write!(f, "OtpVerified(Ok(<redacted>))"),
             Self::OtpVerified(Err(e)) => f

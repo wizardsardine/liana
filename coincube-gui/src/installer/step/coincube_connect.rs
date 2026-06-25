@@ -184,13 +184,15 @@ impl Step for CoincubeConnectStep {
                 CoincubeConnectMsg::RequestOtp => {
                     self.processing = true;
                     self.error = None;
+                    let email = self.email.value.clone();
                     return Task::perform(
-                        send_otp(
-                            self.client.clone(),
-                            self.email.value.clone(),
-                            self.is_signup,
-                        ),
-                        |res| Message::CoincubeConnect(CoincubeConnectMsg::OtpRequested(res)),
+                        send_otp(self.client.clone(), email.clone(), self.is_signup),
+                         move |result| {
+                            Message::CoincubeConnect(CoincubeConnectMsg::OtpRequested {
+                                email: email.clone(),
+                                result,
+                            })
+                        },
                     );
                 }
                 CoincubeConnectMsg::ResendOtp => {
@@ -205,24 +207,18 @@ impl Step for CoincubeConnectStep {
                         |res| Message::CoincubeConnect(CoincubeConnectMsg::OtpResent(res)),
                     );
                 }
-                CoincubeConnectMsg::OtpRequested(res) => {
+                CoincubeConnectMsg::OtpRequested { email, result } => {
                     self.processing = false;
-                    match res {
+                    match result {
                         Ok(()) => {
                             self.otp_sent = true;
                             self.otp = form::Value::default();
                             self.error = None;
                         }
                         Err(e) => {
-                            // When the user tries to sign in with a registered-but-unverified
-                            // email, the backend returns "Email not verified". Re-route to the
-                            // same resend flow the app-level ConnectAccountPanel uses: switch
-                            // to signup mode, fire resend_signup_otp, and advance to OTP entry.
                             if !self.is_signup && e.contains("Email not verified") {
                                 return Task::done(Message::CoincubeConnect(
-                                    CoincubeConnectMsg::EmailNotVerified {
-                                        email: self.email.value.clone(),
-                                    },
+                                    CoincubeConnectMsg::EmailNotVerified { email },
                                 ));
                             }
                             self.error = Some(e);
@@ -233,9 +229,6 @@ impl Step for CoincubeConnectStep {
                    self.processing = false;
                     match res {
                         Ok(()) => {
-                            // Works for both the resend-button path (otp_sent already
-                            // true) and the EmailNotVerified recovery path (needs to
-                            // flip otp_sent to show the OTP entry screen).
                             self.otp_sent = true;
                             self.otp = form::Value::default();
                             self.error = None;
