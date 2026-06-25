@@ -241,6 +241,23 @@ pub enum SwapPhase {
     Sent,
 }
 
+/// Wallet sync readiness for the swap. Confirm is gated on `Synced`
+/// (SideSwap orders fail mid-scan). A failed sync is distinct from
+/// in-progress so the UI doesn't claim "synced" on a failure (which would
+/// let a confirm run against an un-caught-up wallet) nor get stuck showing
+/// "still syncing".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncState {
+    /// A sync is in flight (initial scan); Confirm paused.
+    Syncing,
+    /// The wallet is caught up; Confirm allowed.
+    Synced,
+    /// The last sync errored; Confirm stays paused, but the banner reflects
+    /// the failure rather than implying progress. Recovers on the next
+    /// successful sync (SDK `Synced` event or a re-entry).
+    Failed,
+}
+
 /// Cross-asset swap flow state. Initialised L-BTC → USDt (Aqua default).
 pub struct LiquidSwap {
     breez_client: Arc<LiquidBackend>,
@@ -285,12 +302,10 @@ pub struct LiquidSwap {
     quote_remaining: u32,
     phase: SwapPhase,
     is_sending: bool,
-    /// Whether a Liquid sync has completed since this screen was entered.
-    /// Until the first `Synced` event lands the wallet may still be catching
-    /// up, and a swap can fail server-side because its inputs aren't ready —
-    /// so we surface a hint. Set on the `RefreshRequested` that an SDK
-    /// `Synced` event drives (see `App`'s `active_liquid_refresh`).
-    synced: bool,
+    /// Wallet sync readiness. A swap can fail server-side while the wallet is
+    /// mid-scan, so Confirm is gated on `Synced`. Driven by the entry sync's
+    /// completion (`SyncFinished`) and SDK `Synced` events (`RefreshRequested`).
+    sync_state: SyncState,
     error: Option<String>,
     /// Success-screen celebration assets.
     sent_amount_display: String,
@@ -327,7 +342,7 @@ impl LiquidSwap {
             quote_remaining: 0,
             phase: SwapPhase::Input,
             is_sending: false,
-            synced: false,
+            sync_state: SyncState::Syncing,
             error: None,
             sent_amount_display: String::new(),
             sent_quote: coincube_ui::component::quote_display::random_quote("liquid-send"),
@@ -755,9 +770,13 @@ impl State for LiquidSwap {
             quoting: self.quoting,
             quote_remaining: self.quote_remaining,
             quote_actionable: self.quote_actionable(),
-            confirm_enabled: can_confirm(self.quote_actionable(), self.synced),
+            confirm_enabled: can_confirm(
+                self.quote_actionable(),
+                self.sync_state == SyncState::Synced,
+            ),
             is_sending: self.is_sending,
-            syncing: !self.synced,
+            syncing: self.sync_state == SyncState::Syncing,
+            sync_failed: self.sync_state == SyncState::Failed,
             needs_lbtc_for_fees: self.needs_lbtc_for_fees(),
             bitcoin_unit: cache.bitcoin_unit,
             error: self.error.as_deref(),
@@ -813,20 +832,29 @@ impl State for LiquidSwap {
                     self.quoting = false;
                 }
                 view::LiquidSwapMessage::RefreshRequested => {
-                    // A completed SDK sync drives this (or our own post-swap
-                    // sync) — the wallet is caught up, so clear the hint.
-                    self.synced = true;
+                    // Driven by the SDK `Synced` event (success only — the SDK
+                    // fires `SyncFailed` separately), so the wallet is caught
+                    // up. Recovers from a prior `Failed`.
+                    self.sync_state = SyncState::Synced;
+                    return self.load_balance();
+                }
+                view::LiquidSwapMessage::RefreshBalances => {
+                    // Plain balance refresh (e.g. post-settlement) that must
+                    // NOT assert sync readiness — leave `sync_state` as-is so a
+                    // failed refresh-sync can't falsely enable Confirm.
                     return self.load_balance();
                 }
                 view::LiquidSwapMessage::SyncFinished(ok) => {
                     // The entry sync resolved (it awaits the wallet catching
-                    // up). Clear the syncing gate regardless of outcome so
-                    // Confirm can't stay stuck; a failed sync is logged and
-                    // the swap itself surfaces any error on confirm.
-                    if !ok {
+                    // up). Success → caught up; failure → distinct `Failed`
+                    // (banner reflects it, Confirm stays paused) so we neither
+                    // get stuck on "syncing" nor falsely claim "synced".
+                    self.sync_state = if *ok {
+                        SyncState::Synced
+                    } else {
                         log::warn!(target: "breez_swap", "swap entry sync failed");
-                    }
-                    self.synced = true;
+                        SyncState::Failed
+                    };
                     return self.load_balance();
                 }
                 view::LiquidSwapMessage::SelfAddressReady(result) => match result {
@@ -1023,10 +1051,10 @@ impl State for LiquidSwap {
                     if self.phase != SwapPhase::Review || self.is_sending {
                         return Task::none();
                     }
-                    // Block while the wallet is still catching up — the swap
-                    // would fail server-side (the button is also disabled, so
-                    // this is defence-in-depth).
-                    if !self.synced {
+                    // Block unless the wallet is caught up — the swap would
+                    // fail server-side otherwise (the button is also disabled,
+                    // so this is defence-in-depth).
+                    if self.sync_state != SyncState::Synced {
                         self.error = Some(
                             "Wallet is still syncing — please wait until it finishes before swapping."
                                 .to_string(),
@@ -1120,10 +1148,13 @@ impl State for LiquidSwap {
                     self.receive_input = form::Value::default();
                     self.edit_side = SwapSide::Receive;
                     // Refresh balances after settlement so both sides reconcile.
+                    // Use `RefreshBalances` (not `RefreshRequested`) so a failed
+                    // post-swap sync doesn't flip `sync_state` to `Synced` — the
+                    // wallet was already synced to confirm; leave it untouched.
                     let breez_client = self.breez_client.clone();
                     return Task::perform(async move { breez_client.sync().await }, |_| {
                         Message::View(view::Message::LiquidSwap(
-                            view::LiquidSwapMessage::RefreshRequested,
+                            view::LiquidSwapMessage::RefreshBalances,
                         ))
                     });
                 }
@@ -1187,9 +1218,9 @@ impl State for LiquidSwap {
         self.rate_probe_inflight = false;
         self.pending_swap_all = false;
         // Assume catching up until the sync below resolves (it awaits the
-        // wallet catching up). `SyncFinished` drives `synced` so Confirm
+        // wallet catching up). `SyncFinished` drives `sync_state` so Confirm
         // can't get stuck if no separate `Synced` event follows.
-        self.synced = false;
+        self.sync_state = SyncState::Syncing;
 
         let breez = self.breez_client.clone();
         Task::batch(vec![

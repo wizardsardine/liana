@@ -56,6 +56,9 @@ pub struct LiquidSwapConfig<'a> {
     /// Whether the Liquid wallet is still catching up. While true the swap
     /// would fail server-side (its inputs aren't ready), so Confirm is paused.
     pub syncing: bool,
+    /// Whether the last wallet sync failed. Confirm stays paused, but the
+    /// banner reflects the failure rather than implying progress.
+    pub sync_failed: bool,
     /// Paying USDt with zero L-BTC — the swap can't fund the Liquid network
     /// fee (paid in L-BTC), so we warn up front.
     pub needs_lbtc_for_fees: bool,
@@ -504,6 +507,10 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
         content = content.push(hint_banner(
             "Wallet is still syncing — swaps are paused until it finishes.",
         ));
+    } else if config.sync_failed {
+        content = content.push(hint_banner(
+            "Couldn't sync the wallet — swaps are paused. It'll retry automatically.",
+        ));
     }
     if config.needs_lbtc_for_fees {
         content = content.push(hint_banner(
@@ -615,6 +622,8 @@ fn review_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMes
             "Swapping…"
         } else if config.syncing {
             "Waiting for sync…"
+        } else if config.sync_failed {
+            "Sync failed"
         } else {
             "Confirm swap"
         };
@@ -638,6 +647,10 @@ fn review_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMes
     if config.syncing {
         content = content.push(hint_banner(
             "Wallet is still syncing — swaps are paused until it finishes.",
+        ));
+    } else if config.sync_failed {
+        content = content.push(hint_banner(
+            "Couldn't sync the wallet — swaps are paused. It'll retry automatically.",
         ));
     }
     content = content.push(summary).push(confirm_btn).push(back_btn);

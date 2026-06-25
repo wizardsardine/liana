@@ -717,8 +717,12 @@ pub enum LiquidSwapMessage {
     },
     /// Balance/transaction load failed.
     Error(String),
-    /// Re-fetch balances (e.g. after an SDK sync).
+    /// Re-fetch balances on a confirmed SDK `Synced` event (also clears the
+    /// sync gate).
     RefreshRequested,
+    /// Re-fetch balances only, without asserting sync readiness (e.g. the
+    /// post-settlement refresh, whose sync may fail).
+    RefreshBalances,
     /// The sync kicked on screen entry finished (`ok` = succeeded). Drives
     /// the `synced` gate directly so Confirm can't get stuck disabled when
     /// no separate `Synced` event follows (or the sync errored).
