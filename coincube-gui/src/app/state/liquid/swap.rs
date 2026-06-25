@@ -14,6 +14,7 @@
 //! The prepared response is held and passed straight to `send_payment`
 //! on confirm, so the executed quote is exactly the reviewed one.
 
+use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,9 +36,10 @@ use crate::app::breez_liquid::assets::{
     LBTC_PRECISION,
 };
 use crate::app::cache::Cache;
-use crate::app::menu::Menu;
+use crate::app::menu::{LiquidSubMenu, Menu};
+use crate::app::state::redirect;
 use crate::app::state::State;
-use crate::app::wallets::LiquidBackend;
+use crate::app::wallets::{DomainPayment, LiquidBackend};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 
@@ -297,6 +299,9 @@ pub struct LiquidSwap {
     /// Persisted local log of completed swaps (the SDK doesn't mark swaps,
     /// so we keep our own record for "Last Swaps" + history labelling).
     history: SwapHistory,
+    /// Recent payment legs that match a recorded swap — rendered as the
+    /// "Last swaps" list and selectable into the Transactions detail view.
+    recent_swap_payments: Vec<DomainPayment>,
 }
 
 impl LiquidSwap {
@@ -330,6 +335,7 @@ impl LiquidSwap {
                 "liquid-send",
             ),
             history: SwapHistory::load(swaps_path),
+            recent_swap_payments: Vec::new(),
         }
     }
 
@@ -350,6 +356,9 @@ impl LiquidSwap {
 
     fn load_balance(&self) -> Task<Message> {
         let breez_client = self.breez_client.clone();
+        // Snapshot the known swap tx ids so the async task can filter payments
+        // down to swap legs for the "Last swaps" list.
+        let swap_tx_ids = self.history.tx_ids();
         Task::perform(
             async move {
                 let info = breez_client.info().await;
@@ -374,18 +383,29 @@ impl LiquidSwap {
                     })
                     .unwrap_or(0);
 
+                // Recent payment legs that belong to a recorded swap.
+                let recent_swaps: Vec<DomainPayment> = breez_client
+                    .list_payments(Some(30), None, None)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|p| p.tx_id.as_ref().is_some_and(|id| swap_tx_ids.contains(id)))
+                    .take(8)
+                    .collect();
+
                 match info {
-                    Ok(_) => Ok((btc_balance, usdt_balance)),
+                    Ok(_) => Ok((btc_balance, usdt_balance, recent_swaps)),
                     Err(_) => Err("Couldn't fetch account balance".to_string()),
                 }
             },
             |result| match result {
-                Ok((btc_balance, usdt_balance)) => Message::View(view::Message::LiquidSwap(
-                    view::LiquidSwapMessage::DataLoaded {
+                Ok((btc_balance, usdt_balance, recent_swaps)) => Message::View(
+                    view::Message::LiquidSwap(view::LiquidSwapMessage::DataLoaded {
                         btc_balance,
                         usdt_balance,
-                    },
-                )),
+                        recent_swaps,
+                    }),
+                ),
                 Err(err) => Message::View(view::Message::LiquidSwap(
                     view::LiquidSwapMessage::Error(err),
                 )),
@@ -744,7 +764,9 @@ impl State for LiquidSwap {
             sent_amount_display: &self.sent_amount_display,
             sent_quote: &self.sent_quote,
             sent_image_handle: &self.sent_image_handle,
-            last_swaps: self.history.records(),
+            recent_swaps: &self.recent_swap_payments,
+            usdt_id: usdt_asset_id(self.breez_client.network()).unwrap_or(""),
+            fiat_converter: cache.fiat_price.as_ref().and_then(|p| p.try_into().ok()),
         })
         .map(view::Message::LiquidSwap);
 
@@ -765,13 +787,23 @@ impl State for LiquidSwap {
                 view::LiquidSwapMessage::DataLoaded {
                     btc_balance,
                     usdt_balance,
+                    recent_swaps,
                 } => {
                     self.error = None;
                     self.btc_balance = *btc_balance;
                     self.usdt_balance = *usdt_balance;
+                    self.recent_swap_payments = recent_swaps.clone();
                     // Now that a balance is known, pre-fetch the rate so the
                     // rate chip + "Swap All" work without the user typing.
                     return self.probe_rate(cache.btc_usd_price);
+                }
+                view::LiquidSwapMessage::SelectSwap(idx) => {
+                    if let Some(payment) = self.recent_swap_payments.get(*idx).cloned() {
+                        return Task::batch(vec![
+                            redirect(Menu::Liquid(LiquidSubMenu::Transactions(None))),
+                            Task::done(Message::View(view::Message::PreselectPayment(payment))),
+                        ]);
+                    }
                 }
                 view::LiquidSwapMessage::Error(err) => {
                     self.error = Some(err.clone());

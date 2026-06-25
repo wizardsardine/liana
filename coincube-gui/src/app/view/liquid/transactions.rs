@@ -321,13 +321,18 @@ fn transaction_row<'a>(
         }
     };
 
+    let is_pending = matches!(payment.status, DomainPaymentStatus::Pending);
+
     if let Some(ref usdt_display) = usdt_str {
-        let item = TransactionListItem::new(direction, &Amount::ZERO, bitcoin_unit)
+        let mut item = TransactionListItem::new(direction, &Amount::ZERO, bitcoin_unit)
             .with_label(description.clone())
             .with_time_ago(time_ago)
             .with_custom_icon(combo_icon)
             .with_show_direction_badge(show_direction_badges)
             .with_amount_override(usdt_display.clone());
+        if is_pending {
+            item = item.with_custom_status(pending_badge());
+        }
         return item.view(Message::Select(i)).into();
     }
 
@@ -349,7 +354,43 @@ fn transaction_row<'a>(
         item = item.with_fiat_amount(fiat_amount);
     }
 
+    if is_pending {
+        item = item.with_custom_status(pending_badge());
+    }
+
     item.view(Message::Select(i)).into()
+}
+
+/// "Pending" status pill, matching the one Overview shows on unconfirmed
+/// payments (so the two screens agree).
+fn pending_badge() -> Element<'static, Message> {
+    let fg = coincube_ui::color::BLACK;
+    Container::new(
+        Row::new()
+            .spacing(4)
+            .align_y(Alignment::Center)
+            .push(
+                icon::warning_icon()
+                    .size(14)
+                    .style(move |_| iced::widget::text::Style { color: Some(fg) }),
+            )
+            .push(
+                text("Pending")
+                    .bold()
+                    .size(14)
+                    .style(move |_| iced::widget::text::Style { color: Some(fg) }),
+            ),
+    )
+    .padding([2, 8])
+    .style(move |_: &theme::Theme| iced::widget::container::Style {
+        background: Some(iced::Background::Color(coincube_ui::color::GREY_3)),
+        border: iced::Border {
+            radius: 12.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 fn refundable_row<'a>(

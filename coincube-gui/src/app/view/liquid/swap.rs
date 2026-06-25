@@ -12,6 +12,7 @@ use coincube_ui::{
         amount::{BitcoinDisplayUnit, DisplayAmount},
         button, form,
         text::*,
+        transaction::{TransactionDirection, TransactionListItem},
     },
     icon::{left_right_icon, warning_icon},
     image::asset_network_logo,
@@ -26,8 +27,8 @@ use iced::{
 use crate::app::breez_liquid::assets::format_usdt_display;
 use crate::app::state::liquid::send::SendAsset;
 use crate::app::state::liquid::swap::{SwapPhase, SwapQuote};
-use crate::app::state::liquid::swap_history::SwapRecord;
-use crate::app::view::LiquidSwapMessage;
+use crate::app::view::{FiatAmountConverter, LiquidSwapMessage};
+use crate::app::wallets::{DomainPayment, DomainPaymentDetails, DomainPaymentStatus};
 use crate::utils::format_time_ago;
 
 /// Inputs the Swap view needs to render.
@@ -65,8 +66,11 @@ pub struct LiquidSwapConfig<'a> {
     pub sent_amount_display: &'a str,
     pub sent_quote: &'a coincube_ui::component::quote_display::Quote,
     pub sent_image_handle: &'a iced::widget::image::Handle,
-    /// Locally-recorded completed swaps, newest first.
-    pub last_swaps: &'a [SwapRecord],
+    /// Recent swap-leg payments (rendered as "Last swaps", selectable into
+    /// the Transactions detail), newest first.
+    pub recent_swaps: &'a [DomainPayment],
+    pub usdt_id: &'a str,
+    pub fiat_converter: Option<FiatAmountConverter>,
 }
 
 fn ticker(asset: SendAsset) -> &'static str {
@@ -280,43 +284,109 @@ fn amount_input_field<'a>(
         .into()
 }
 
-/// "Last Swaps" list rendered under the swap cards (empty when there are
-/// no recorded swaps).
-fn last_swaps_section<'a>(
-    records: &'a [SwapRecord],
-    unit: BitcoinDisplayUnit,
-) -> Option<Element<'a, LiquidSwapMessage>> {
-    if records.is_empty() {
+/// "Last swaps" list — swap-leg payments rendered with the same
+/// `TransactionListItem` as Overview/Transactions, clickable into the
+/// Transactions detail. Empty when there are no recorded swaps.
+fn last_swaps_section<'a>(config: &LiquidSwapConfig<'a>) -> Option<Element<'a, LiquidSwapMessage>> {
+    if config.recent_swaps.is_empty() {
         return None;
     }
     let mut col = Column::new().spacing(10).push(h4_bold("Last swaps"));
-    for rec in records.iter().take(8) {
-        let from = rec.from_asset.to_send_asset();
-        let to = rec.to_asset.to_send_asset();
-        let summary = format!(
-            "{} → {}",
-            fmt_amount(from, rec.from_base, unit),
-            fmt_amount(to, rec.to_base, unit),
-        );
-        let row = Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(left_right_icon().size(16).color(color::ORANGE))
-            .push(text(summary).size(P2_SIZE))
-            .push(Space::new().width(Length::Fill))
-            .push(
-                text(format_time_ago(rec.timestamp.into()))
-                    .size(P2_SIZE)
-                    .style(theme::text::secondary),
-            );
-        col = col.push(
-            Container::new(row)
-                .padding([10, 14])
-                .width(Length::Fill)
-                .style(theme::card::simple),
-        );
+    for (idx, payment) in config.recent_swaps.iter().enumerate() {
+        col = col.push(swap_leg_row(idx, payment, config));
     }
     Some(col.into())
+}
+
+/// A single swap-leg row, mirroring the Transactions row but labelled
+/// "Swap" and selecting into the Transactions detail.
+fn swap_leg_row<'a>(
+    idx: usize,
+    payment: &'a DomainPayment,
+    config: &LiquidSwapConfig<'a>,
+) -> Element<'a, LiquidSwapMessage> {
+    let unit = config.bitcoin_unit;
+    let is_incoming = payment.is_incoming();
+
+    // USDt leg → its asset amount; otherwise the L-BTC (sat) amount.
+    let usdt_minor = match &payment.details {
+        DomainPaymentDetails::LiquidAsset {
+            asset_id,
+            asset_info,
+            ..
+        } if !config.usdt_id.is_empty() && asset_id == config.usdt_id => {
+            asset_info.as_ref().map(|i| i.amount_minor)
+        }
+        _ => None,
+    };
+    let is_usdt = usdt_minor.is_some();
+
+    let amount = match usdt_minor {
+        Some(minor) => Amount::from_sat(minor),
+        None if is_incoming => Amount::from_sat(payment.amount_sat),
+        None => Amount::from_sat(payment.amount_sat) + Amount::from_sat(payment.fees_sat),
+    };
+
+    let direction = if is_incoming {
+        TransactionDirection::Incoming
+    } else {
+        TransactionDirection::Outgoing
+    };
+
+    let icon = if is_usdt {
+        asset_network_logo("usdt", "liquid", 40.0)
+    } else {
+        asset_network_logo("lbtc", "liquid", 40.0)
+    };
+
+    let mut item = TransactionListItem::new(direction, &amount, unit)
+        .with_custom_icon(icon)
+        .with_label("Swap".to_owned())
+        .with_time_ago(format_time_ago(payment.timestamp.into()));
+
+    if is_usdt {
+        item = item.with_amount_override(format!("{} USDt", format_usdt_display(amount.to_sat())));
+    } else if let Some(fiat) = config.fiat_converter.as_ref().map(|c| c.convert(amount)) {
+        item = item.with_fiat_amount(format!("{} {}", fiat.to_rounded_string(), fiat.currency()));
+    }
+
+    if matches!(payment.status, DomainPaymentStatus::Pending) {
+        item = item.with_custom_status(swap_pending_badge());
+    }
+
+    item.view(LiquidSwapMessage::SelectSwap(idx)).into()
+}
+
+/// "Pending" status pill for unconfirmed swap legs (matches Overview /
+/// Transactions).
+fn swap_pending_badge() -> Element<'static, LiquidSwapMessage> {
+    let fg = color::BLACK;
+    Container::new(
+        Row::new()
+            .spacing(4)
+            .align_y(Alignment::Center)
+            .push(
+                warning_icon()
+                    .size(14)
+                    .style(move |_| iced::widget::text::Style { color: Some(fg) }),
+            )
+            .push(
+                text("Pending")
+                    .bold()
+                    .size(14)
+                    .style(move |_| iced::widget::text::Style { color: Some(fg) }),
+            ),
+    )
+    .padding([2, 8])
+    .style(move |_: &theme::Theme| container::Style {
+        background: Some(Background::Color(color::GREY_3)),
+        border: iced::Border {
+            radius: 12.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 /// The swap input screen — editable "You pay" and "You receive" cards.
@@ -459,7 +529,7 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
         content = content.push(error_card(err));
     }
 
-    if let Some(last_swaps) = last_swaps_section(config.last_swaps, config.bitcoin_unit) {
+    if let Some(last_swaps) = last_swaps_section(config) {
         content = content
             .push(Space::new().height(Length::Fixed(8.0)))
             .push(last_swaps);

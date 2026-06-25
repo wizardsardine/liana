@@ -709,15 +709,18 @@ pub enum LiquidSendMessage {
 /// [`crate::app::state::liquid::swap`].
 #[derive(Debug, Clone)]
 pub enum LiquidSwapMessage {
-    /// Balances loaded for the Swap screen.
+    /// Balances + recorded-swap payments loaded for the Swap screen.
     DataLoaded {
         btc_balance: Amount,
         usdt_balance: u64,
+        recent_swaps: Vec<DomainPayment>,
     },
     /// Balance/transaction load failed.
     Error(String),
     /// Re-fetch balances (e.g. after an SDK sync).
     RefreshRequested,
+    /// A "Last swaps" row was tapped — open it in Transactions.
+    SelectSwap(usize),
     /// Self-targeted Liquid receive address generated (or failed) — the
     /// destination every cross-asset prepare/send is pointed at.
     SelfAddressReady(Result<String, String>),
