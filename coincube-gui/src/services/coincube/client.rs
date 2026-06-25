@@ -1542,6 +1542,97 @@ impl CoincubeClient {
 }
 
 // =============================================================================
+// Owner keychain recovery — "protect with my phone" (PLAN-owner-keychain-recovery)
+// =============================================================================
+//
+// Net-new endpoints (coincube-api counterpart plan), behind
+// `OWNER_KEYCHAIN_RECOVERY_ENABLED`. See the DTO block in `mod.rs` for the
+// trust posture (owner-self recipient, server-blind envelope relay).
+
+impl CoincubeClient {
+    /// `POST /api/v1/connect/cubes/{cubeId}/recovery-kit/recipients`
+    /// (authenticated, owner-only). Registers the freshly-minted `owner-self`
+    /// key as a recovery recipient (PR 1). `coincube-api` validates the role and
+    /// refuses to treat the key as a Vault signer (invariant I2). Returns the
+    /// stored recipient row.
+    pub async fn register_recovery_kit_recipient(
+        &self,
+        cube_id: u64,
+        key_id: u64,
+        tier: super::OwnerRecoveryTier,
+    ) -> Result<super::RecoveryKitRecipient, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/recovery-kit/recipients",
+            self.base_url, cube_id
+        );
+        let req = super::RegisterRecoveryRecipientRequest {
+            key_id,
+            role: super::RECOVERY_RECIPIENT_ROLE_OWNER_SELF.to_string(),
+            tier,
+        };
+        let res = self.client.post(&url).json(&req).send().await?;
+        Self::parse_recovery_response(res).await
+    }
+
+    /// `GET /api/v1/connect/cubes/{cubeId}/recovery-kit/recipients`
+    /// (authenticated, owner-only). Lists the cube's recovery recipients (PR 2)
+    /// so the desktop can read the `owner-self` row's xpub + derivation path to
+    /// seal to. `404` → `NotFound` (no recipient registered yet).
+    pub async fn list_recovery_kit_recipients(
+        &self,
+        cube_id: u64,
+    ) -> Result<Vec<super::RecoveryKitRecipient>, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/recovery-kit/recipients",
+            self.base_url, cube_id
+        );
+        let res = self.client.get(&url).send().await?;
+        Self::parse_recovery_response(res).await
+    }
+
+    /// `PUT /api/v1/connect/cubes/{cubeId}/recovery-kit/envelope` (authenticated,
+    /// owner-only). Uploads the owner's own ECIES envelope set sealed to the
+    /// `owner-self` key (PR 2). The server idempotently replaces the stored set
+    /// and stores the bytes opaquely — it never decrypts.
+    pub async fn put_recovery_kit_envelope(
+        &self,
+        cube_id: u64,
+        envelopes: Vec<super::InheritanceEnvelopeWire>,
+    ) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/recovery-kit/envelope",
+            self.base_url, cube_id
+        );
+        let req = super::PutRecoveryKitEnvelopeRequest { envelopes };
+        let res = self.client.put(&url).json(&req).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// `GET /api/v1/connect/cubes/{cubeId}/recovery-kit/envelope` (authenticated;
+    /// the caller is the **owner**). Returns the owner's own ECIES envelope set
+    /// as ciphertext (PR 3); the server is blind and decrypts nothing. The
+    /// owner's Keychain does the ECDH; the desktop opens the AES-GCM ciphertext.
+    ///
+    /// Gate matrix (mapped by
+    /// [`OwnerKeychainRecoveryError`](crate::services::recovery::OwnerKeychainRecoveryError)):
+    /// `404`/`429` short-circuit via `parse_recovery_response`; `403` (not the
+    /// owner), `423` (`DURESS_LOCKED` — neutral copy, invariant I3) and `503`
+    /// arrive as `Unsuccessful` with the body preserved.
+    pub async fn get_recovery_kit_envelope(
+        &self,
+        cube_id: u64,
+    ) -> Result<Vec<super::InheritanceEnvelopeWire>, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/recovery-kit/envelope",
+            self.base_url, cube_id
+        );
+        let res = self.client.get(&url).send().await?;
+        Self::parse_recovery_response(res).await
+    }
+}
+
+// =============================================================================
 // Duress alert contacts (Estate Notifications — PR 1)
 // =============================================================================
 //
@@ -3343,5 +3434,208 @@ mod duress_tests {
             .await
             .expect_err("expected invalid");
         assert!(matches!(err, DownloadError::Invalid), "got {:?}", err);
+    }
+}
+
+#[cfg(test)]
+mod owner_keychain_recovery_tests {
+    //! Owner keychain recovery client methods (PLAN-owner-keychain-recovery):
+    //! recipient registration/read + the owner's own envelope upload/download.
+    use crate::services::coincube::{CoincubeClient, CoincubeError, OwnerRecoveryTier};
+    use httpmock::{Method as MockMethod, MockServer};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn register_recipient_posts_owner_self_role_and_tier() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::POST)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients")
+                .json_body_partial(
+                    r#"{ "keyId": 77, "role": "owner-self", "tier": "full_cube" }"#,
+                );
+            then.status(200).json_body(json!({
+                "success": true,
+                "data": {
+                    "id": 1,
+                    "keyId": 77,
+                    "role": "owner-self",
+                    "tier": "full_cube",
+                    "key": {
+                        "id": 77,
+                        "xpub": "xpub6EuX7TBEwhFgifQY24vFeMRqeWHGyGCupztDxk7G2ECAqGQ22Fik8E811p8GrM2LfajQzLidXy4qECxhdcxChkjiKhnq2fiVMVjdfSoZQwg",
+                        "derivationPath": "m/48h/1h/0h/2h"
+                    }
+                }
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let row = client
+            .register_recovery_kit_recipient(42, 77, OwnerRecoveryTier::FullCube)
+            .await
+            .expect("register should succeed");
+        mock.assert();
+        assert!(row.is_owner_self());
+        assert_eq!(row.key_id, 77);
+        assert_eq!(row.tier, Some(OwnerRecoveryTier::FullCube));
+        assert_eq!(row.key.unwrap().derivation_path, "m/48h/1h/0h/2h");
+    }
+
+    #[tokio::test]
+    async fn list_recipients_returns_owner_self_row_with_key() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
+            then.status(200).json_body(json!({
+                "success": true,
+                "data": [{
+                    "id": 1,
+                    "keyId": 77,
+                    "role": "owner-self",
+                    "tier": "vault_only",
+                    "key": {
+                        "id": 77,
+                        "xpub": "xpubABC",
+                        "derivationPath": "m/48h/1h/0h/2h"
+                    }
+                }]
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let rows = client
+            .list_recovery_kit_recipients(42)
+            .await
+            .expect("list should parse");
+        mock.assert();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].is_owner_self());
+        assert_eq!(rows[0].tier, Some(OwnerRecoveryTier::VaultOnly));
+        assert_eq!(rows[0].key.as_ref().unwrap().xpub, "xpubABC");
+    }
+
+    #[tokio::test]
+    async fn list_recipients_404_maps_to_not_found() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
+            then.status(404);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .list_recovery_kit_recipients(42)
+            .await
+            .expect_err("no recipient yet");
+        mock.assert();
+        assert!(matches!(err, CoincubeError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn put_envelope_uploads_set() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::PUT)
+                .path("/api/v1/connect/cubes/42/recovery-kit/envelope")
+                .json_body_partial(
+                    r#"{ "envelopes": [ { "artifactKind": "descriptor", "keyholderKeyId": 77 } ] }"#,
+                );
+            then.status(200)
+                .json_body(json!({ "success": true, "data": {} }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let env = crate::services::coincube::InheritanceEnvelopeWire {
+            keyholder_key_id: Some(77),
+            artifact_kind: "descriptor".to_string(),
+            scheme: "ecies-secp256k1-hkdf-sha256-aes256gcm-v1".to_string(),
+            ephemeral_pubkey: "02".repeat(33),
+            ciphertext: "ab".repeat(48),
+            nonce: "11".repeat(12),
+            derivation: "m/48h/1h/0h/2h/7000".to_string(),
+        };
+        client
+            .put_recovery_kit_envelope(42, vec![env])
+            .await
+            .expect("upload should succeed");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_envelope_200_returns_wires() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/envelope");
+            then.status(200).json_body(json!({
+                "success": true,
+                "data": [{
+                    "keyholderKeyId": 77,
+                    "artifactKind": "seed",
+                    "scheme": "ecies-secp256k1-hkdf-sha256-aes256gcm-v1",
+                    "ephemeralPubkey": "0202020202020202020202020202020202020202020202020202020202020202020",
+                    "ciphertext": "abcd",
+                    "nonce": "111111111111111111111111",
+                    "derivation": "m/48h/1h/0h/2h/7000"
+                }]
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let wires = client
+            .get_recovery_kit_envelope(42)
+            .await
+            .expect("download should parse");
+        mock.assert();
+        assert_eq!(wires.len(), 1);
+        assert_eq!(wires[0].artifact_kind, "seed");
+        assert_eq!(wires[0].keyholder_key_id, Some(77));
+    }
+
+    #[tokio::test]
+    async fn get_envelope_404_maps_to_not_found() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/envelope");
+            then.status(404);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .get_recovery_kit_envelope(42)
+            .await
+            .expect_err("no envelope set");
+        mock.assert();
+        assert!(matches!(err, CoincubeError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn get_envelope_423_preserves_body_for_gate_mapping() {
+        // 423 DURESS_LOCKED must arrive as `Unsuccessful` with the body intact so
+        // `OwnerKeychainRecoveryError::from` can map it to neutral copy.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/envelope");
+            then.status(423).json_body(json!({
+                "success": false,
+                "error": { "code": "DURESS_LOCKED", "message": "locked" }
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .get_recovery_kit_envelope(42)
+            .await
+            .expect_err("expected 423");
+        mock.assert();
+        assert!(matches!(
+            err,
+            CoincubeError::Unsuccessful(info) if info.status_code == 423
+        ));
     }
 }

@@ -19,7 +19,9 @@ use iced::widget::{progress_bar, Column, Row, Space};
 use iced::{Alignment, Length};
 
 use crate::app::state::settings::recovery_kit::RecoveryKitState;
-use crate::app::view::message::{Message, RecoveryKitMessage, SettingsMessage};
+use crate::app::view::message::{
+    Message, RecoveryKitMessage, RecoveryProtectionMode, SettingsMessage,
+};
 use crate::pin_input::PinInput;
 use crate::services::recovery::{score_password, MIN_PASSWORD_LEN};
 use zeroize::Zeroizing;
@@ -316,6 +318,151 @@ pub fn password_entry_view<'a>(
     col.into()
 }
 
+/// Protection-mode choice (PLAN-owner-keychain-recovery PR 2). Three options —
+/// password / phone / both — plus a one-time "set up phone protection"
+/// provisioning action (PR 1). Only reached when `OWNER_KEYCHAIN_RECOVERY_ENABLED`.
+pub fn protection_choice_view<'a>(
+    provisioning: bool,
+    error: Option<&'a str>,
+) -> Element<'a, Message> {
+    let intro = Container::new(
+        text(
+            "Back up with a recovery password (something you type to restore), with your \
+             phone (your Keychain — restore by approving on the phone, no password to \
+             remember), or both so either one restores.",
+        )
+        .size(18)
+        .align_x(iced::alignment::Horizontal::Center),
+    )
+    .width(Length::Fixed(600.0))
+    .align_x(iced::alignment::Horizontal::Center);
+
+    let mut col = Column::new()
+        .spacing(16)
+        .width(Length::Fill)
+        .push(header())
+        .push(Space::new().height(Length::Fixed(8.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .push(Space::new().width(Length::Fill))
+                .push(icon::key_icon().size(80).color(color::ORANGE))
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .push(Space::new().width(Length::Fill))
+                .push(text("Choose how to protect your Recovery Kit").size(22).bold())
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .push(Space::new().width(Length::Fill))
+                .push(intro)
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(8.0)));
+
+    for (label, mode, primary) in [
+        (
+            "Use a recovery password",
+            RecoveryProtectionMode::Password,
+            true,
+        ),
+        ("Use my phone", RecoveryProtectionMode::Phone, false),
+        ("Use both", RecoveryProtectionMode::Both, false),
+    ] {
+        let btn = if primary {
+            ui_button::primary(None, label)
+        } else {
+            ui_button::secondary(None, label)
+        }
+        .on_press(wrap(RecoveryKitMessage::SelectProtectionMode(mode)))
+        .padding([12, 16])
+        .width(Length::Fixed(380.0));
+        col = col.push(
+            Row::new()
+                .width(Length::Fill)
+                .push(Space::new().width(Length::Fill))
+                .push(btn)
+                .push(Space::new().width(Length::Fill)),
+        );
+    }
+
+    // Provisioning action (PR 1) — mint + register the owner-self recovery key.
+    let provision_label = if provisioning {
+        "Setting up phone protection…"
+    } else {
+        "Set up phone protection"
+    };
+    let provision_btn = {
+        let b = ui_button::secondary(None, provision_label)
+            .padding([8, 16])
+            .width(Length::Fixed(380.0));
+        if provisioning {
+            b
+        } else {
+            b.on_press(wrap(RecoveryKitMessage::ProvisionPhone))
+        }
+    };
+    col = col
+        .push(Space::new().height(Length::Fixed(8.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .push(Space::new().width(Length::Fill))
+                .push(provision_btn)
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    Container::new(
+                        text(
+                            "First time? Set up phone protection once to register a recovery \
+                             key on your phone, then choose “Use my phone”. You'll need this \
+                             phone (or its recovery phrase) to restore.",
+                        )
+                        .size(12),
+                    )
+                    .width(Length::Fixed(600.0)),
+                )
+                .push(Space::new().width(Length::Fill)),
+        );
+
+    if let Some(err) = error {
+        col = col.push(
+            Row::new()
+                .width(Length::Fill)
+                .push(Space::new().width(Length::Fill))
+                .push(text(err).size(16).color(color::RED))
+                .push(Space::new().width(Length::Fill)),
+        );
+    }
+
+    col.into()
+}
+
+/// Indeterminate "sealing to phone" state (PR 2).
+pub fn phone_sealing_view() -> Element<'static, Message> {
+    Column::new()
+        .spacing(20)
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .push(Space::new().height(Length::Fixed(80.0)))
+        .push(icon::key_icon().size(100).color(color::ORANGE))
+        .push(Space::new().height(Length::Fixed(16.0)))
+        .push(text("Sealing to your phone…").size(20))
+        .push(
+            text("Encrypting your recovery material to your Keychain key and uploading.").size(14),
+        )
+        .into()
+}
+
 /// Indeterminate "uploading" state. Kept simple — the upload is
 /// usually sub-second so a full spinner widget is overkill.
 pub fn uploading_view() -> Element<'static, Message> {
@@ -428,6 +575,12 @@ pub fn dispatch<'a>(
     match state {
         RecoveryKitState::None => None,
         RecoveryKitState::PinEntry { error, .. } => Some(pin_entry_view(pin, error.as_deref())),
+        RecoveryKitState::ProtectionChoice {
+            provisioning,
+            error,
+            ..
+        } => Some(protection_choice_view(*provisioning, error.as_deref())),
+        RecoveryKitState::PhoneSealing { .. } => Some(phone_sealing_view()),
         RecoveryKitState::PasswordEntry {
             password,
             confirm,

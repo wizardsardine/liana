@@ -2278,6 +2278,116 @@ pub struct PutVaultEscrowRequest {
     pub envelopes: Vec<InheritanceEnvelopeWire>,
 }
 
+// =============================================================================
+// Owner keychain recovery — "protect with my phone" (PLAN-owner-keychain-recovery)
+// =============================================================================
+//
+// Distinct from the inheritance heir-escrow above: here the recovery recipient
+// is the **owner's own** Keychain (role `owner-self`), not a designated heir.
+// The owner mints + attaches an `owner-self` key, registers it as a recovery
+// recipient, then seals their own seed/descriptor to it (ECIES, reusing
+// `services::inheritance`). On a wiped install the owner pulls their own
+// envelope set and decrypts it by approving on the Keychain — no password.
+//
+// Net-new endpoints (owned by the coincube-api counterpart plan), behind the
+// `OWNER_KEYCHAIN_RECOVERY_ENABLED` flag until they ship:
+//
+//   POST /api/v1/connect/cubes/{cubeId}/recovery-kit/recipients   (register key)
+//   GET  /api/v1/connect/cubes/{cubeId}/recovery-kit/recipients   (read xpub)
+//   PUT  /api/v1/connect/cubes/{cubeId}/recovery-kit/envelope      (owner uploads set)
+//   GET  /api/v1/connect/cubes/{cubeId}/recovery-kit/envelope      (owner downloads set)
+
+/// Wire role string for an owner self-recovery recipient. Bound by the API plan;
+/// `coincube-api` validates that this row is **not** a Vault signer (invariant
+/// I2) — the desktop only ever registers this exact value.
+pub const RECOVERY_RECIPIENT_ROLE_OWNER_SELF: &str = "owner-self";
+
+/// Which artifacts the owner intends to seal to their `owner-self` key. Mirrors
+/// the inheritance escrow tier but without an `Off` state (registering a
+/// recipient is always "on"). Wire values `vault_only` / `full_cube` match the
+/// coincube-api `recovery_recipient.tier` column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnerRecoveryTier {
+    /// Descriptor only — the owner can restore the watch-only Vault.
+    VaultOnly,
+    /// Seed + descriptor — the owner can restore the entire Cube.
+    FullCube,
+}
+
+impl OwnerRecoveryTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::VaultOnly => "vault_only",
+            Self::FullCube => "full_cube",
+        }
+    }
+
+    /// Whether this tier escrows the master seed (Full-Cube only).
+    pub fn includes_seed(self) -> bool {
+        matches!(self, Self::FullCube)
+    }
+}
+
+/// Body for `POST /connect/cubes/{cubeId}/recovery-kit/recipients` — registers
+/// the freshly-minted `owner-self` key as a recovery recipient (PR 1). `role` is
+/// always [`RECOVERY_RECIPIENT_ROLE_OWNER_SELF`]; the server rejects anything
+/// else and refuses to treat the key as a Vault signer (invariant I2).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterRecoveryRecipientRequest {
+    pub key_id: u64,
+    pub role: String,
+    pub tier: OwnerRecoveryTier,
+}
+
+/// The registered key behind a recovery recipient — the xpub + derivation path
+/// the owner needs to seal envelopes (PR 2). The owner derives the dedicated
+/// encryption child **xpub-only** from this (SPEC §2, child 7000); no private
+/// material is ever on the owner side.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryRecipientKey {
+    pub id: u64,
+    pub xpub: String,
+    pub derivation_path: String,
+}
+
+/// One recovery recipient row returned by
+/// `GET /connect/cubes/{cubeId}/recovery-kit/recipients`. For owner self-recovery
+/// there is a single `owner-self` row; the desktop reads its `key` to seal to.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryKitRecipient {
+    pub id: u64,
+    pub key_id: u64,
+    pub role: String,
+    #[serde(default)]
+    pub tier: Option<OwnerRecoveryTier>,
+    /// The registered key (xpub + derivation). `Option` because an older server
+    /// could omit the join; the seal path then fails closed with a clear error
+    /// rather than guessing an xpub.
+    #[serde(default)]
+    pub key: Option<RecoveryRecipientKey>,
+}
+
+impl RecoveryKitRecipient {
+    /// True when this row is the owner's own self-recovery recipient.
+    pub fn is_owner_self(&self) -> bool {
+        self.role == RECOVERY_RECIPIENT_ROLE_OWNER_SELF
+    }
+}
+
+/// Body for `PUT /connect/cubes/{cubeId}/recovery-kit/envelope` — the owner
+/// uploads their own ECIES envelope set sealed to the `owner-self` key (PR 2).
+/// Shares the opaque [`InheritanceEnvelopeWire`] shape with the heir escrow; the
+/// server stores the bytes blind and never decrypts.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutRecoveryKitEnvelopeRequest {
+    pub envelopes: Vec<InheritanceEnvelopeWire>,
+}
+
 #[cfg(test)]
 mod vault_monitoring_tests {
     use super::*;

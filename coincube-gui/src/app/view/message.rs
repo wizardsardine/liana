@@ -970,6 +970,21 @@ pub enum RecoveryKitMode {
     Rotate,
 }
 
+/// How the owner chooses to protect their Recovery Kit, after the seed is
+/// unlocked (PLAN-owner-keychain-recovery PR 2). Only shown when
+/// `OWNER_KEYCHAIN_RECOVERY_ENABLED`; with the flag off the wizard goes straight
+/// to the password path as before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryProtectionMode {
+    /// The existing Argon2id recovery-password path, unchanged.
+    Password,
+    /// Seal to the owner's `owner-self` Keychain key (ECIES). No password — the
+    /// owner restores by approving a decrypt on their phone.
+    Phone,
+    /// Both: password blobs **and** phone envelopes; either restores.
+    Both,
+}
+
 /// Messages driving the Cube Recovery Kit flow. Mirrors the shape of
 /// `BackupWalletMessage` — a Debug impl below redacts every variant
 /// that carries key material (mnemonic, password, ciphertext) so the
@@ -1017,6 +1032,18 @@ pub enum RecoveryKitMessage {
     /// `Zeroizing`-at-message-level discipline as
     /// `PasswordChanged` above.
     ConfirmChanged(zeroize::Zeroizing<String>),
+    /// User picked a protection mode on the choice screen (PR 2). Routes to the
+    /// password path (`Password`/`Both`) or runs the phone seal (`Phone`).
+    SelectProtectionMode(RecoveryProtectionMode),
+    /// User clicked "Set up phone protection" on the choice screen (PR 1) —
+    /// mint + attach an `owner-self` Keychain key and register it as a recovery
+    /// recipient. (The Keychain mint is stubbed until keychain-app PR 1 lands.)
+    ProvisionPhone,
+    /// Async result of [`Self::ProvisionPhone`].
+    ProvisionResult(Result<(), String>),
+    /// Async result of the phone seal+upload (PR 2). `Ok(())` on success; the
+    /// error string is display-safe.
+    PhoneSealResult(Result<(), String>),
     /// User toggled the "I've written this down" gate on the password
     /// screen. Submit is inert until this is true.
     AcknowledgeToggled(bool),
@@ -1105,6 +1132,12 @@ impl std::fmt::Debug for RecoveryKitMessage {
                 .debug_tuple("ConfirmChanged")
                 .field(&"<redacted>")
                 .finish(),
+            Self::SelectProtectionMode(m) => {
+                f.debug_tuple("SelectProtectionMode").field(m).finish()
+            }
+            Self::ProvisionPhone => write!(f, "ProvisionPhone"),
+            Self::ProvisionResult(r) => f.debug_tuple("ProvisionResult").field(r).finish(),
+            Self::PhoneSealResult(r) => f.debug_tuple("PhoneSealResult").field(r).finish(),
             Self::AcknowledgeToggled(b) => f.debug_tuple("AcknowledgeToggled").field(b).finish(),
             Self::SubmitPassword => write!(f, "SubmitPassword"),
             Self::UploadResult(Ok(o)) => f.debug_tuple("UploadResult(Ok)").field(o).finish(),

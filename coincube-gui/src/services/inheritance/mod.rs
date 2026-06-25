@@ -17,6 +17,7 @@ pub mod error;
 pub mod escrow;
 pub mod heir;
 pub mod owner;
+pub mod owner_self;
 pub mod wire;
 
 pub use ecies::{
@@ -27,4 +28,8 @@ pub use error::EciesError;
 pub use escrow::{build_escrow_set, keyholders_from_vault, EscrowError, EscrowTier, KeyholderXpub};
 pub use heir::{decrypt_envelopes, HeirDecryptError};
 pub use owner::{disable_escrow, enroll_escrow, OwnerEscrowError};
+pub use owner_self::{
+    build_owner_self_envelope_set, find_owner_self_recipient, mint_owner_self_key,
+    register_owner_self_recipient, seal_and_upload_owner_self, OwnerSelfError,
+};
 pub use wire::{envelope_to_wire, wire_to_envelope};
