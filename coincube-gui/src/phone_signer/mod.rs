@@ -184,6 +184,7 @@ impl HWI for PhoneSigner {
             created_by_device_id: String::new(),
             note: String::new(),
             submitted_signatures: Vec::new(),
+            is_recovery_spend: false,
         };
 
         let envelope = present_session_envelope(session);

@@ -826,7 +826,11 @@ fn should_nudge_for_status(status: Option<&RecoveryKitStatus>) -> bool {
         .unwrap_or(true)
 }
 
-fn descriptor_blob_from_wallet(wallet: &Wallet, cube_uuid: &str, network: &str) -> DescriptorBlob {
+pub(crate) fn descriptor_blob_from_wallet(
+    wallet: &Wallet,
+    cube_uuid: &str,
+    network: &str,
+) -> DescriptorBlob {
     // The descriptor string embeds the full signer xpubs inline, so
     // restore is self-contained from `vault.descriptor` alone. The
     // separate `signers` array is metadata the UI can show pre-restore

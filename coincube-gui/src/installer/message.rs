@@ -122,6 +122,8 @@ pub enum Message {
     RestorePinSetup(RestorePinSetupMsg),
     /// Cube Recovery Kit restore step (W13 / W14 / W15).
     RecoveryKitRestore(RecoveryKitRestoreMsg),
+    /// Heir inheritance-recovery decrypt step (ECIES pivot, COIN-377 PR 3).
+    InheritanceRestore(InheritanceRestoreMsg),
     BorderWalletWizard(
         super::step::descriptor::editor::border_wallet_wizard::BorderWalletWizardMessage,
     ),
@@ -225,9 +227,13 @@ pub enum SelectBitcoindTypeMsg {
 #[derive(Clone)]
 pub enum CoincubeConnectMsg {
     EmailEdited(String),
+    EmailNotVerified { email: String },
     ToggleMode,
     RequestOtp,
-    OtpRequested(Result<(), String>),
+    OtpRequested {
+        email: String,
+        result: Result<(), String>,
+    },
     OtpEdited(String),
     OtpVerified(Result<zeroize::Zeroizing<String>, String>),
     ResendOtp,
@@ -239,9 +245,14 @@ impl std::fmt::Debug for CoincubeConnectMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::EmailEdited(s) => f.debug_tuple("EmailEdited").field(s).finish(),
+            Self::EmailNotVerified { email } => f.debug_tuple("EmailNotVerified").field(email).finish(),
             Self::ToggleMode => write!(f, "ToggleMode"),
             Self::RequestOtp => write!(f, "RequestOtp"),
-            Self::OtpRequested(r) => f.debug_tuple("OtpRequested").field(r).finish(),
+            Self::OtpRequested { email, result } => f
+                .debug_struct("OtpRequested")
+                .field("email", email)
+                .field("result", result)
+                .finish(),
             Self::OtpEdited(s) => f.debug_tuple("OtpEdited").field(s).finish(),
             Self::OtpVerified(Ok(_)) => write!(f, "OtpVerified(Ok(<redacted>))"),
             Self::OtpVerified(Err(e)) => f
@@ -326,6 +337,39 @@ impl std::fmt::Debug for RecoveryKitRestoreMsg {
                 .finish(),
             Self::RetryFromStart => write!(f, "RetryFromStart"),
             Self::Skip => write!(f, "Skip"),
+        }
+    }
+}
+
+/// Message driving the heir inheritance-recovery decrypt step (ECIES pivot).
+/// Manual `Debug` redacts the decrypt result: its `Ok` arm carries the
+/// decrypted `SeedBlob`/`DescriptorBlob` (the seed half is the master secret),
+/// so a tracing dump of a parent message must never render it. The blobs are
+/// `ZeroizeOnDrop`; the redaction keeps them off the heap-dump surface too.
+#[derive(Clone)]
+pub enum InheritanceRestoreMsg {
+    /// Async result of the fetch + Keychain relay decrypt + AEAD open: the
+    /// opened blobs, or a display-safe error string (gate failures already
+    /// neutralised — the duress 423 never explains why).
+    DecryptResult(
+        Result<
+            (
+                Option<crate::services::recovery::SeedBlob>,
+                Option<crate::services::recovery::DescriptorBlob>,
+            ),
+            String,
+        >,
+    ),
+}
+
+impl std::fmt::Debug for InheritanceRestoreMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DecryptResult(Ok(_)) => write!(f, "DecryptResult(Ok(<redacted>))"),
+            Self::DecryptResult(Err(e)) => f
+                .debug_tuple("DecryptResult")
+                .field(&Err::<(), _>(e))
+                .finish(),
         }
     }
 }

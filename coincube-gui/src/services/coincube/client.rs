@@ -1479,6 +1479,66 @@ impl CoincubeClient {
         let resp: super::RecoveryDescriptorResponse = Self::parse_recovery_response(res).await?;
         Ok(resp.descriptor)
     }
+
+    /// `PUT /api/v1/connect/cubes/{cubeId}/vault/escrow` (authenticated,
+    /// **owner-only**). Uploads the full ECIES envelope set for the cube's
+    /// current keyholders (ECIES pivot PR 2). The server idempotently replaces
+    /// the stored set and stores the bytes opaquely — it never decrypts. Re-run
+    /// on any keyholder add/remove/key-rotate.
+    pub async fn put_vault_escrow(
+        &self,
+        cube_id: u64,
+        envelopes: Vec<super::InheritanceEnvelopeWire>,
+    ) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/vault/escrow",
+            self.base_url, cube_id
+        );
+        let req = super::PutVaultEscrowRequest { envelopes };
+        let res = self.client.put(&url).json(&req).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// `DELETE /api/v1/connect/cubes/{cubeId}/vault/escrow` (authenticated,
+    /// owner-only). True-delete of the cube's escrow set when the owner turns
+    /// inheritance escrow off. Idempotent: a `404` (nothing stored) is success.
+    pub async fn delete_vault_escrow(&self, cube_id: u64) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/vault/escrow",
+            self.base_url, cube_id
+        );
+        let res = self.client.delete(&url).send().await?;
+        if res.status().as_u16() == 404 {
+            return Ok(());
+        }
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// `GET /api/v1/connect/cubes/{cubeId}/vault/recovery-envelope`
+    /// (authenticated; the caller is the heir keyholder). Returns **only the
+    /// caller's own** ECIES envelopes as ciphertext (ECIES pivot PR 3); the
+    /// server is blind and decrypts nothing. The heir's Keychain does the ECDH;
+    /// the desktop opens the AES-GCM ciphertext.
+    ///
+    /// Same gate matrix and error plumbing as [`Self::get_recovery_descriptor`]:
+    /// `404`/`429` short-circuit via `parse_recovery_response`; the gate
+    /// failures `403` (`RECOVERY_ACCESS_DENIED` / `RECOVERY_NOT_AVAILABLE`),
+    /// `423` (`DURESS_LOCKED`), and `503` arrive as `Unsuccessful` with the body
+    /// preserved, so `KeyholderRecoveryError::from` maps them. A 200 triggers a
+    /// server-side owner notification (invariant I4).
+    pub async fn get_recovery_envelope(
+        &self,
+        cube_id: u64,
+    ) -> Result<Vec<super::InheritanceEnvelopeWire>, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/vault/recovery-envelope",
+            self.base_url, cube_id
+        );
+        let res = self.client.get(&url).send().await?;
+        Self::parse_recovery_response(res).await
+    }
 }
 
 // =============================================================================

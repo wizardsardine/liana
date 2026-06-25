@@ -97,6 +97,10 @@ message SigningSession {
   string created_by_device_id = 13;
   string note = 14;
   repeated SubmittedSignature submitted_signatures = 15;
+  // is_recovery_spend records that this session spends the vault's recovery
+  // branch (inheritance recovery). Server-recorded at creation after the
+  // recovery gate passes; lets clients render recovery sessions distinctly.
+  bool is_recovery_spend = 16;
 }
 
 message CreateSigningSessionRequest {
@@ -108,6 +112,12 @@ message CreateSigningSessionRequest {
   string note = 6;
   google.protobuf.Duration ttl = 7;
   bool require_user_presence = 8;
+  // is_recovery_spend declares that this PSBT spends the vault's recovery
+  // branch. The server cannot infer the spent branch from the PSBT, so the
+  // client must declare it; the server then gates creation on the recovery
+  // path being open (keyholder caller + monitoring state available/reminding +
+  // owner not under duress). Ignored (false) for ordinary owner-branch spends.
+  bool is_recovery_spend = 9;
 }
 
 message CreateSigningSessionResponse {
@@ -196,6 +206,10 @@ message StreamEnvelope {
     Pong pong = 6;
     DuressActivatedEvent duress_activated = 7;
     DuressClearedEvent duress_cleared = 8;
+    // Inheritance decrypt relay (best-effort live push; backed by the
+    // ListPendingDecryptRequests / GetDecryptResult fetches for reliability).
+    DecryptRequestedEvent decrypt_requested = 9; // → heir's Keychain
+    DecryptResultEvent decrypt_result = 10;      // → heir's desktop
   }
 }
 
@@ -275,6 +289,116 @@ message Pong {
   int64 ts_unix_ms = 1;
 }
 
+// ─── Inheritance heir-escrow ECIES decrypt relay (COIN-377, rev 3) ──────────
+//
+// The heir's Keychain holds the recovery private key and is the ONLY party that
+// can derive the envelope's symmetric key (ECDH against the ephemeral pubkey +
+// HKDF). The Keychain is a stream CLIENT (RealtimeService.Connect), not a
+// callable server, so the decrypt is brokered async over the Connect rail,
+// mirroring the signing event→fetch→submit pattern:
+//
+//   1. heir desktop  → CreateDecryptRequest        (picks the envelope; supplies
+//                                                    a per-recovery transport pubkey)
+//   2. server        → DecryptRequestedEvent       (stream-pushed to the Keychain;
+//                                                    also fetchable via ListPending…)
+//   3. heir Keychain → SubmitDecryptResult         (approves; ECDH+HKDF → K; wraps
+//                                                    K to the desktop transport pubkey)
+//                      or RejectDecryptRequest
+//   4. server        → DecryptResultEvent          (stream-pushed to the desktop;
+//                                                    also fetchable via GetDecryptResult)
+//   5. heir desktop  unwraps K with its transport priv key, AES-256-GCM-opens
+//                    the envelope, and restores — all locally.
+//
+// SERVER-BLIND (invariant I1): K is never relayed in the clear. The Keychain
+// ECIES-WRAPS K to the desktop's transport pubkey, so the API only ever stores /
+// relays an opaque blob it has no key to open — even though it also holds the
+// envelope ciphertext. The wrap format is SPEC-ecies-v1.md (same ECIES as the
+// envelope). See keychain-app + coincube desktop plans.
+
+enum DecryptRequestStatus {
+  DECRYPT_REQUEST_STATUS_UNSPECIFIED = 0;
+  DECRYPT_REQUEST_STATUS_PENDING = 1;   // awaiting the heir's Keychain
+  DECRYPT_REQUEST_STATUS_COMPLETED = 2; // wrapped_shared_key is available
+  DECRYPT_REQUEST_STATUS_REJECTED = 3;  // Keychain declined (approval denied / heir duress)
+  DECRYPT_REQUEST_STATUS_EXPIRED = 4;   // not answered within the TTL
+}
+
+// CreateDecryptRequest is called by the heir's DESKTOP. The server identifies the
+// envelope addressed to the caller's keyholder key for (cube_id, artifact_kind),
+// applies the same gate as the recovery-envelope endpoint (keyholder + recovery
+// path open on-chain + owner not in duress), and notifies the heir's Keychain.
+message CreateDecryptRequestRequest {
+  string request_id = 1;   // client-generated idempotency key
+  string cube_id = 2;
+  string artifact_kind = 3; // "descriptor" | "seed" — which envelope to decrypt
+  // Per-recovery transport public key (compressed 33-byte secp256k1) that the
+  // Keychain wraps the derived key to. Lets the server stay blind: it relays only
+  // a blob encrypted to the desktop. The desktop holds the matching private key
+  // in memory for this recovery only.
+  bytes desktop_transport_pubkey = 4;
+}
+message CreateDecryptRequestResponse {
+  string request_id = 1;
+  DecryptRequestStatus status = 2;
+}
+
+// DecryptRequestedEvent is delivered to the heir's Keychain (stream push +
+// ListPendingDecryptRequests fetch). It carries the envelope params the Keychain
+// needs to ECDH/HKDF — all already held by the server; the server never holds the
+// heir's private key.
+message DecryptRequestedEvent {
+  string request_id = 1;
+  string cube_id = 2;
+  string artifact_kind = 3;
+  bytes ephemeral_pubkey = 4;          // 33-byte compressed, from the envelope
+  string derivation = 5;               // dedicated-child path (invariant I5)
+  string purpose = 6;                  // ECIES scheme tag (SPEC-ecies-v1.md)
+  bytes desktop_transport_pubkey = 7;  // wrap target — see CreateDecryptRequest
+}
+
+message ListPendingDecryptRequestsRequest {}
+message ListPendingDecryptRequestsResponse {
+  repeated DecryptRequestedEvent requests = 1;
+}
+
+// SubmitDecryptResult is called by the heir's Keychain after biometric/PIN
+// approval. wrapped_shared_key is the derived symmetric key ECIES-wrapped to the
+// request's desktop_transport_pubkey — OPAQUE to the server (SPEC-ecies-v1.md
+// wrap format). The Keychain NEVER returns the private key, the raw shared key,
+// or any plaintext.
+message SubmitDecryptResultRequest {
+  string request_id = 1;
+  bytes wrapped_shared_key = 2;
+}
+message SubmitDecryptResultResponse {
+  DecryptRequestStatus status = 1;
+}
+
+// RejectDecryptRequest is called by the Keychain when the heir declines or is
+// under duress. reason is a non-sensitive machine tag ("declined" | "duress").
+message RejectDecryptRequestRequest {
+  string request_id = 1;
+  string reason = 2;
+}
+message RejectDecryptRequestResponse {}
+
+// DecryptResultEvent is delivered to the heir's DESKTOP (stream push +
+// GetDecryptResult fetch). wrapped_shared_key is present only when COMPLETED and
+// is opaque to the server.
+message DecryptResultEvent {
+  string request_id = 1;
+  DecryptRequestStatus status = 2;
+  bytes wrapped_shared_key = 3;
+}
+
+message GetDecryptResultRequest {
+  string request_id = 1;
+}
+message GetDecryptResultResponse {
+  DecryptRequestStatus status = 1;
+  bytes wrapped_shared_key = 2;
+}
+
 service SessionService {
   rpc CreateSigningSession(CreateSigningSessionRequest) returns (CreateSigningSessionResponse);
   rpc GetSigningSession(GetSigningSessionRequest) returns (GetSigningSessionResponse);
@@ -286,6 +410,15 @@ service SessionService {
   rpc RejectSession(RejectSessionRequest) returns (RejectSessionResponse);
   rpc SubmitPartialSignature(SubmitPartialSignatureRequest) returns (SubmitPartialSignatureResponse);
   rpc ResolveSigners(ResolveSignersRequest) returns (ResolveSignersResponse);
+
+  // Heir-escrow ECIES decrypt relay (server-blind; see the message block above).
+  // The server brokers the request to the heir's Keychain and relays back only
+  // an opaque wrapped key — it never sees the derived key or any plaintext.
+  rpc CreateDecryptRequest(CreateDecryptRequestRequest) returns (CreateDecryptRequestResponse);                   // heir desktop
+  rpc ListPendingDecryptRequests(ListPendingDecryptRequestsRequest) returns (ListPendingDecryptRequestsResponse); // heir Keychain
+  rpc SubmitDecryptResult(SubmitDecryptResultRequest) returns (SubmitDecryptResultResponse);                      // heir Keychain
+  rpc RejectDecryptRequest(RejectDecryptRequestRequest) returns (RejectDecryptRequestResponse);                   // heir Keychain
+  rpc GetDecryptResult(GetDecryptResultRequest) returns (GetDecryptResultResponse);                               // heir desktop
 }
 
 service DeviceService {

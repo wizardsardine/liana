@@ -107,9 +107,9 @@ pub use message::Message;
 use step::{
     BackupDescriptor, BackupMnemonic, ChooseBackend, ChooseDescriptorTemplate, CoincubeConnectStep,
     DefineDescriptor, DefineNode, DescriptorTemplateDescription, Final, ImportDescriptor,
-    ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic, RecoveryKitRestoreStep,
-    RegisterDescriptor, RemoteBackendLogin, RestorePinSetupStep, RestoreScope,
-    SelectBitcoindTypeStep, Step, WalletAlias,
+    ImportRemoteWallet, InheritanceRestoreStep, InternalBitcoindStep, RecoverMnemonic,
+    RecoveryKitRestoreStep, RegisterDescriptor, RemoteBackendLogin, RestorePinSetupStep,
+    RestoreScope, SelectBitcoindTypeStep, Step, WalletAlias,
 };
 
 #[derive(Debug, Clone)]
@@ -128,6 +128,16 @@ pub enum UserFlow {
     /// just needs to rehydrate the vault). Launched from the
     /// running app's "Create Vault" menu.
     RestoreVaultFromRecoveryKit,
+    /// Heir inheritance recovery (ECIES pivot, COIN-377 PR 3). Launched from
+    /// the pre-Cube "Recover a Vault" surface. `InheritanceRestoreStep`
+    /// fetches + relay-decrypts the heir's escrowed envelope(s) and stages the
+    /// seed/descriptor; the rest reuses the existing restore machinery.
+    /// `full_cube` picks the scope: Full (seed + descriptor → a real Cube, with
+    /// a PIN-setup step) vs descriptor-only (watch-only Vault recovery).
+    RecoverInheritedVault {
+        cube_id: u64,
+        full_cube: bool,
+    },
 }
 
 pub struct Installer {
@@ -245,7 +255,8 @@ impl Installer {
                         // `Undefined` and the `Message::Install` match panics
                         // with `unreachable!("Must be defined at this point")`.
                         (UserFlow::RestoreFromRecoveryKit, _)
-                        | (UserFlow::RestoreVaultFromRecoveryKit, _) => RemoteBackend::None,
+                        | (UserFlow::RestoreVaultFromRecoveryKit, _)
+                        | (UserFlow::RecoverInheritedVault { .. }, _) => RemoteBackend::None,
                         // AddWallet still has ChooseBackend which transitions away from Undefined.
                         (_, Network::Bitcoin | Network::Signet) => RemoteBackend::Undefined,
                         // Non-mainnet/signet AddWallet skips backend choice.
@@ -357,6 +368,41 @@ impl Installer {
                         WalletAlias::default().into(),
                         Final::new().into(),
                     ],
+                    // Heir inheritance recovery (COIN-377 PR 3). Same shape as
+                    // the owner restore flows, but `InheritanceRestoreStep`
+                    // (ECIES relay) is the decrypt source instead of the
+                    // owner-password Recovery-Kit step.
+                    UserFlow::RecoverInheritedVault { cube_id, full_cube } => {
+                        if full_cube {
+                            // Full-Cube: seed + descriptor → a real Cube. Mirror
+                            // RestoreFromRecoveryKit (incl. PIN setup for the
+                            // restored seed).
+                            vec![
+                                InheritanceRestoreStep::new(RestoreScope::Full, cube_id).into(),
+                                RestorePinSetupStep::new().into(),
+                                CoincubeConnectStep::new().into(),
+                                SelectBitcoindTypeStep::new().into(),
+                                InternalBitcoindStep::new(&context.coincube_directory).into(),
+                                DefineNode::new(crate::node::NodeType::Esplora).into(),
+                                WalletAlias::default().into(),
+                                Final::new().into(),
+                            ]
+                        } else {
+                            // Vault-only: descriptor → watch-only Vault. Mirror
+                            // RestoreVaultFromRecoveryKit (descriptor import, no
+                            // seed on disk).
+                            vec![
+                                InheritanceRestoreStep::new(RestoreScope::DescriptorOnly, cube_id)
+                                    .into(),
+                                RegisterDescriptor::new_import_wallet().into(),
+                                SelectBitcoindTypeStep::new().into(),
+                                InternalBitcoindStep::new(&context.coincube_directory).into(),
+                                DefineNode::default().into(),
+                                WalletAlias::default().into(),
+                                Final::new().into(),
+                            ]
+                        }
+                    }
                 }
             },
             context,

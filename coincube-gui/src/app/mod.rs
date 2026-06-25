@@ -3977,6 +3977,7 @@ impl App {
                 let entitled = self.panels.connect.account.is_recovery_alerts_entitled();
                 let members = self.panels.connect.cube.members.members.clone();
                 let session_generation = self.panels.connect.account.session_generation();
+                let local_cube_id = self.cube_settings.id.clone();
                 return crate::app::state::settings::recovery_alerts::update(
                     &mut self.panels.global_settings.recovery_alerts,
                     msg,
@@ -3986,6 +3987,8 @@ impl App {
                     entitled,
                     &members,
                     session_generation,
+                    &self.cache,
+                    &local_cube_id,
                 );
             }
 
