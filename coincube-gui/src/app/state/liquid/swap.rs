@@ -991,11 +991,21 @@ impl State for LiquidSwap {
                     }
                     self.quoting = false;
                     match result {
-                        Ok(prepare) => {
-                            if let Some(receiver_base) = self.receiver_base_to_quote() {
-                                self.accept_quote(prepare.clone(), receiver_base);
+                        Ok(prepare) => match self.receiver_base_to_quote() {
+                            Some(receiver_base) => {
+                                self.accept_quote(prepare.clone(), receiver_base)
                             }
-                        }
+                            // The amount became unusable since this request was
+                            // issued (e.g. the field was cleared, or a pay-side
+                            // edit lost its rate). Nothing to lock — leave the
+                            // (already-cleared) quote empty rather than showing
+                            // a stale one. Not an error: there's simply no
+                            // amount to quote.
+                            None => {
+                                self.quote = None;
+                                self.quote_remaining = 0;
+                            }
+                        },
                         Err(e) => {
                             self.quote = None;
                             self.quote_remaining = 0;
