@@ -327,13 +327,6 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
         None => Space::new().width(Length::Fixed(0.0)).into(),
     };
 
-    let flip_row = Row::new()
-        .spacing(12)
-        .align_y(Alignment::Center)
-        .push(rate_chip)
-        .push(Space::new().width(Length::Fill))
-        .push(flip_button());
-
     // ── You receive (to) — editable ──────────────────────────────────────
     let receive_field = amount_input_field(
         config.receive_input,
@@ -384,10 +377,16 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
         b
     };
 
-    let mut content = Column::new()
-        .spacing(16)
-        .max_width(560)
-        .push(h4_bold("Swap"));
+    // ── Horizontal "You pay → ⇅ → You receive" cards (Send/Receive style) ──
+    let cards_row = Row::new()
+        .spacing(12)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .push(Container::new(from_card).width(Length::FillPortion(1)))
+        .push(flip_button())
+        .push(Container::new(to_card).width(Length::FillPortion(1)));
+
+    let mut content = Column::new().spacing(16).width(Length::Fill);
     if config.syncing {
         content = content.push(hint_banner(
             "Wallet is still syncing — swaps are paused until it finishes.",
@@ -399,20 +398,25 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
         ));
     }
     content = content
-        .push(from_card)
-        .push(flip_row)
-        .push(to_card)
-        .push(status)
+        .push(cards_row)
+        // Rate chip + fee, centered under the cards.
+        .push(
+            Container::new(rate_chip)
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+        )
+        .push(
+            Container::new(status)
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+        )
         .push(continue_btn);
 
     if let Some(err) = config.error {
         content = content.push(error_card(err));
     }
 
-    Container::new(content)
-        .width(Length::Fill)
-        .center_x(Length::Fill)
-        .into()
+    Container::new(content).width(Length::Fill).into()
 }
 
 /// Locked-quote review + confirm step.
