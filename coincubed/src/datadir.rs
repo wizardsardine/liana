@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 
 pub struct DataDirectory(PathBuf);
 
@@ -42,13 +42,25 @@ impl DataDirectory {
         dir
     }
     pub fn coincubed_rpc_socket_path(&self) -> PathBuf {
-        // On macOS/iOS, SUN_LEN is 104 bytes. The full datadir path easily
-        // exceeds this, so we derive a short stable socket path in temp_dir()
-        // by hashing the datadir path. This keeps the socket name to ~18 chars
-        // (e.g. /tmp/cc1a2b3c4d5e6f78.sock) which is always safe.
         let mut hasher = DefaultHasher::new();
         self.0.hash(&mut hasher);
         let hash = hasher.finish();
-        std::env::temp_dir().join(format!("cc{:016x}.sock", hash))
+
+        let socket_name = format!("cc{:016x}.sock", hash);
+
+        let path = std::env::temp_dir().join(&socket_name);
+
+        #[cfg(unix)]
+        {
+            // macOS uses 104 bytes, Linux usually 108.
+            // Use the stricter limit so the path is always safe.
+            const MAX_SUN_PATH: usize = 104;
+
+            if path.as_os_str().as_encoded_bytes().len() >= MAX_SUN_PATH {
+                return PathBuf::from("/tmp").join(socket_name);
+            }
+        }
+
+        path
     }
 }
