@@ -29,6 +29,7 @@ use coincube_ui::{
 use iced::{Subscription, Task};
 
 use super::send::SendAsset;
+use super::swap_history::{SwapHistory, SwapRecord};
 use crate::app::breez_liquid::assets::{
     format_asset_amount, format_usdt_display, parse_asset_to_minor_units, usdt_asset_id, AssetKind,
     LBTC_PRECISION,
@@ -293,10 +294,13 @@ pub struct LiquidSwap {
     sent_amount_display: String,
     sent_quote: coincube_ui::component::quote_display::Quote,
     sent_image_handle: iced::widget::image::Handle,
+    /// Persisted local log of completed swaps (the SDK doesn't mark swaps,
+    /// so we keep our own record for "Last Swaps" + history labelling).
+    history: SwapHistory,
 }
 
 impl LiquidSwap {
-    pub fn new(breez_client: Arc<LiquidBackend>) -> Self {
+    pub fn new(breez_client: Arc<LiquidBackend>, swaps_path: std::path::PathBuf) -> Self {
         Self {
             breez_client,
             from_asset: SendAsset::Lbtc,
@@ -325,6 +329,7 @@ impl LiquidSwap {
             sent_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
                 "liquid-send",
             ),
+            history: SwapHistory::load(swaps_path),
         }
     }
 
@@ -739,6 +744,7 @@ impl State for LiquidSwap {
             sent_amount_display: &self.sent_amount_display,
             sent_quote: &self.sent_quote,
             sent_image_handle: &self.sent_image_handle,
+            last_swaps: self.history.records(),
         })
         .map(view::Message::LiquidSwap);
 
@@ -1010,8 +1016,11 @@ impl State for LiquidSwap {
                                 .map_err(|e| e.to_string())
                         },
                         |result| match result {
-                            Ok(_) => Message::View(view::Message::LiquidSwap(
-                                view::LiquidSwapMessage::SwapComplete,
+                            Ok(resp) => Message::View(view::Message::LiquidSwap(
+                                view::LiquidSwapMessage::SwapComplete {
+                                    tx_id: resp.payment.tx_id,
+                                    timestamp: resp.payment.timestamp,
+                                },
                             )),
                             Err(e) => Message::View(view::Message::LiquidSwap(
                                 view::LiquidSwapMessage::SwapFailed(format!("Swap failed: {e}")),
@@ -1019,7 +1028,19 @@ impl State for LiquidSwap {
                         },
                     );
                 }
-                view::LiquidSwapMessage::SwapComplete => {
+                view::LiquidSwapMessage::SwapComplete { tx_id, timestamp } => {
+                    // Record the completed swap locally (the SDK doesn't mark
+                    // swaps, so this is our source of truth for history).
+                    if let Some(q) = self.quote.as_ref() {
+                        self.history.record(SwapRecord {
+                            tx_id: tx_id.clone(),
+                            from_asset: self.from_asset.into(),
+                            to_asset: self.to_asset.into(),
+                            from_base: q.from_total_base(),
+                            to_base: q.receiver_base,
+                            timestamp: *timestamp,
+                        });
+                    }
                     // Build the success-screen amount display before clearing.
                     let received = self
                         .quote
@@ -1150,7 +1171,9 @@ mod tests {
         let client = Arc::new(crate::app::breez_liquid::BreezClient::disconnected(
             Network::Bitcoin,
         ));
-        LiquidSwap::new(Arc::new(LiquidBackend::new(client)))
+        // A path that won't exist → empty history; tests don't persist.
+        let path = std::env::temp_dir().join("coincube-swap-history-test-missing.json");
+        LiquidSwap::new(Arc::new(LiquidBackend::new(client)), path)
     }
 
     #[test]

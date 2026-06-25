@@ -124,6 +124,20 @@ impl Panels {
             })
     }
 
+    /// Path to this cube's local swap-history log (the SDK doesn't mark
+    /// swaps, so we keep our own record). Lives alongside the cube's other
+    /// per-network state.
+    fn swaps_path(
+        datadir: &CoincubeDirectory,
+        network: bitcoin::Network,
+        cube_id: &str,
+    ) -> std::path::PathBuf {
+        datadir
+            .network_directory(network)
+            .path()
+            .join(format!("liquid-swaps-{cube_id}.json"))
+    }
+
     /// Read the cube's persisted `balance_masked` eye-icon preference.
     fn initial_balance_masked(
         datadir: &CoincubeDirectory,
@@ -158,6 +172,7 @@ impl Panels {
 
         let default_fiat_currency = Self::default_fiat_currency(datadir, network, &cube_id);
         let liquid_backend = Arc::new(LiquidBackend::new(breez_client.clone()));
+        let swaps_path = Self::swaps_path(datadir, network, &cube_id);
         let initial_balance_masked = Self::initial_balance_masked(datadir, network, &cube_id);
 
         Self {
@@ -185,7 +200,7 @@ impl Panels {
             },
             liquid_overview: LiquidOverview::new(liquid_backend.clone()),
             liquid_send: LiquidSend::new(liquid_backend.clone()),
-            liquid_swap: LiquidSwap::new(liquid_backend.clone()),
+            liquid_swap: LiquidSwap::new(liquid_backend.clone(), swaps_path.clone()),
             liquid_receive: LiquidReceive::new(liquid_backend.clone()),
             liquid_transactions: LiquidTransactions::new(liquid_backend.clone()),
             liquid_settings: LiquidSettings::new(liquid_backend.clone()),
@@ -272,6 +287,7 @@ impl Panels {
 
         let default_fiat_currency = Self::default_fiat_currency(&data_dir, cache.network, &cube_id);
         let liquid_backend = Arc::new(LiquidBackend::new(breez_client.clone()));
+        let swaps_path = Self::swaps_path(&data_dir, cache.network, &cube_id);
         let initial_balance_masked =
             Self::initial_balance_masked(&data_dir, cache.network, &cube_id);
 
@@ -301,7 +317,7 @@ impl Panels {
             )),
             liquid_overview: LiquidOverview::new(liquid_backend.clone()),
             liquid_send: LiquidSend::new(liquid_backend.clone()),
-            liquid_swap: LiquidSwap::new(liquid_backend.clone()),
+            liquid_swap: LiquidSwap::new(liquid_backend.clone(), swaps_path.clone()),
             liquid_receive: LiquidReceive::new(liquid_backend.clone()),
             liquid_transactions: LiquidTransactions::new(liquid_backend.clone()),
             liquid_settings: LiquidSettings::new(liquid_backend.clone()),

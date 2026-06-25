@@ -26,7 +26,9 @@ use iced::{
 use crate::app::breez_liquid::assets::format_usdt_display;
 use crate::app::state::liquid::send::SendAsset;
 use crate::app::state::liquid::swap::{SwapPhase, SwapQuote};
+use crate::app::state::liquid::swap_history::SwapRecord;
 use crate::app::view::LiquidSwapMessage;
+use crate::utils::format_time_ago;
 
 /// Inputs the Swap view needs to render.
 pub struct LiquidSwapConfig<'a> {
@@ -63,6 +65,8 @@ pub struct LiquidSwapConfig<'a> {
     pub sent_amount_display: &'a str,
     pub sent_quote: &'a coincube_ui::component::quote_display::Quote,
     pub sent_image_handle: &'a iced::widget::image::Handle,
+    /// Locally-recorded completed swaps, newest first.
+    pub last_swaps: &'a [SwapRecord],
 }
 
 fn ticker(asset: SendAsset) -> &'static str {
@@ -276,6 +280,45 @@ fn amount_input_field<'a>(
         .into()
 }
 
+/// "Last Swaps" list rendered under the swap cards (empty when there are
+/// no recorded swaps).
+fn last_swaps_section<'a>(
+    records: &'a [SwapRecord],
+    unit: BitcoinDisplayUnit,
+) -> Option<Element<'a, LiquidSwapMessage>> {
+    if records.is_empty() {
+        return None;
+    }
+    let mut col = Column::new().spacing(10).push(h4_bold("Last swaps"));
+    for rec in records.iter().take(8) {
+        let from = rec.from_asset.to_send_asset();
+        let to = rec.to_asset.to_send_asset();
+        let summary = format!(
+            "{} → {}",
+            fmt_amount(from, rec.from_base, unit),
+            fmt_amount(to, rec.to_base, unit),
+        );
+        let row = Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(arrow_down_up_icon().size(16).color(color::ORANGE))
+            .push(text(summary).size(P2_SIZE))
+            .push(Space::new().width(Length::Fill))
+            .push(
+                text(format_time_ago(rec.timestamp.into()))
+                    .size(P2_SIZE)
+                    .style(theme::text::secondary),
+            );
+        col = col.push(
+            Container::new(row)
+                .padding([10, 14])
+                .width(Length::Fill)
+                .style(theme::card::simple),
+        );
+    }
+    Some(col.into())
+}
+
 /// The swap input screen — editable "You pay" and "You receive" cards.
 fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMessage> {
     let from_balance = balance_base(config.from_asset, config.btc_balance, config.usdt_balance);
@@ -414,6 +457,12 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
 
     if let Some(err) = config.error {
         content = content.push(error_card(err));
+    }
+
+    if let Some(last_swaps) = last_swaps_section(config.last_swaps, config.bitcoin_unit) {
+        content = content
+            .push(Space::new().height(Length::Fixed(8.0)))
+            .push(last_swaps);
     }
 
     Container::new(content).width(Length::Fill).into()

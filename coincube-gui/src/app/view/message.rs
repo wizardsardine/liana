@@ -752,8 +752,12 @@ pub enum LiquidSwapMessage {
     RefreshQuote,
     /// Per-second countdown tick for the quote-expiry timer.
     QuoteTick,
-    /// Swap settled — transition to the success screen.
-    SwapComplete,
+    /// Swap settled — transition to the success screen. Carries the send
+    /// leg's tx id + timestamp so the swap can be recorded locally.
+    SwapComplete {
+        tx_id: Option<String>,
+        timestamp: u32,
+    },
     /// `send_payment` failed — surface the error, drop the now-stale
     /// committed quote, and (on review) re-fetch so a retry is fresh.
     SwapFailed(String),
