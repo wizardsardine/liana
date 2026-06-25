@@ -306,6 +306,9 @@ pub struct LiquidSwap {
     /// mid-scan, so Confirm is gated on `Synced`. Driven by the entry sync's
     /// completion (`SyncFinished`) and SDK `Synced` events (`RefreshRequested`).
     sync_state: SyncState,
+    /// Generation for the entry sync — bumped each `reload` so a stale older
+    /// sync's completion can't re-gate a newer entry.
+    sync_seq: u64,
     error: Option<String>,
     /// Success-screen celebration assets.
     sent_amount_display: String,
@@ -343,6 +346,7 @@ impl LiquidSwap {
             phase: SwapPhase::Input,
             is_sending: false,
             sync_state: SyncState::Syncing,
+            sync_seq: 0,
             error: None,
             sent_amount_display: String::new(),
             sent_quote: coincube_ui::component::quote_display::random_quote("liquid-send"),
@@ -844,7 +848,13 @@ impl State for LiquidSwap {
                     // failed refresh-sync can't falsely enable Confirm.
                     return self.load_balance();
                 }
-                view::LiquidSwapMessage::SyncFinished(ok) => {
+                view::LiquidSwapMessage::SyncFinished(seq, ok) => {
+                    // Ignore a stale older sync — a newer `reload` has since
+                    // started its own; letting this through could re-gate the
+                    // newer entry (e.g. flip Syncing → Synced prematurely).
+                    if *seq != self.sync_seq {
+                        return Task::none();
+                    }
                     // The entry sync resolved (it awaits the wallet catching
                     // up). Success → caught up; failure → distinct `Failed`
                     // (banner reflects it, Confirm stays paused) so we neither
@@ -1229,14 +1239,17 @@ impl State for LiquidSwap {
         self.pending_swap_all = false;
         // Assume catching up until the sync below resolves (it awaits the
         // wallet catching up). `SyncFinished` drives `sync_state` so Confirm
-        // can't get stuck if no separate `Synced` event follows.
+        // can't get stuck if no separate `Synced` event follows. Bump the
+        // generation so a prior entry's still-running sync is ignored.
         self.sync_state = SyncState::Syncing;
+        self.sync_seq = self.sync_seq.wrapping_add(1);
+        let sync_seq = self.sync_seq;
 
         let breez = self.breez_client.clone();
         Task::batch(vec![
-            Task::perform(async move { breez.sync().await.is_ok() }, |ok| {
+            Task::perform(async move { breez.sync().await.is_ok() }, move |ok| {
                 Message::View(view::Message::LiquidSwap(
-                    view::LiquidSwapMessage::SyncFinished(ok),
+                    view::LiquidSwapMessage::SyncFinished(sync_seq, ok),
                 ))
             }),
             self.load_balance(),

@@ -724,9 +724,10 @@ pub enum LiquidSwapMessage {
     /// post-settlement refresh, whose sync may fail).
     RefreshBalances,
     /// The sync kicked on screen entry finished (`ok` = succeeded). Drives
-    /// the `synced` gate directly so Confirm can't get stuck disabled when
-    /// no separate `Synced` event follows (or the sync errored).
-    SyncFinished(bool),
+    /// the sync gate directly so Confirm can't get stuck disabled when no
+    /// separate `Synced` event follows (or the sync errored). Tagged with the
+    /// reload generation so a stale older sync can't re-gate a newer entry.
+    SyncFinished(u64, bool),
     /// A "Last swaps" row was tapped — open it in Transactions.
     SelectSwap(usize),
     /// Self-targeted Liquid receive address generated (or failed) — the
