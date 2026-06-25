@@ -127,6 +127,7 @@ pub fn liquid_transactions_view<'a>(
     current_page: u32,
     is_last_page: bool,
     processing: bool,
+    swap_tx_ids: &'a std::collections::HashSet<String>,
 ) -> Element<'a, Message> {
     let mut content = Column::new().spacing(20).width(Length::Fill);
 
@@ -219,6 +220,10 @@ pub fn liquid_transactions_view<'a>(
                 .iter()
                 .enumerate()
                 .fold(Column::new().spacing(10), |col, (i, payment)| {
+                    let is_swap = payment
+                        .tx_id
+                        .as_ref()
+                        .is_some_and(|id| swap_tx_ids.contains(id));
                     col.push(transaction_row(
                         i,
                         payment,
@@ -226,6 +231,7 @@ pub fn liquid_transactions_view<'a>(
                         bitcoin_unit,
                         usdt_id,
                         show_direction_badges,
+                        is_swap,
                     ))
                 });
         content = content.push(list);
@@ -270,6 +276,7 @@ pub fn liquid_transactions_view<'a>(
     content.into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn transaction_row<'a>(
     i: usize,
     payment: &'a DomainPayment,
@@ -277,13 +284,17 @@ fn transaction_row<'a>(
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     usdt_id: &str,
     show_direction_badges: bool,
+    is_swap: bool,
 ) -> Element<'a, Message> {
     let is_receive = payment.is_incoming();
     let usdt_str = usdt_amount_str(payment, usdt_id);
 
-    // Extract description — prefer payer_note/description, fall back to "USDt Transfer"
+    // Extract description — prefer payer_note/description, fall back to "USDt
+    // Transfer". A locally-recorded swap overrides the label with "Swap".
     let is_usdt = usdt_str.is_some();
-    let description: String = if is_usdt {
+    let description: String = if is_swap {
+        "Swap".to_owned()
+    } else if is_usdt {
         usdt_description(payment)
     } else {
         payment.details.description().to_owned()
