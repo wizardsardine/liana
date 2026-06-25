@@ -13,7 +13,7 @@ use coincube_ui::{
         button, form,
         text::*,
     },
-    icon::{arrow_down_up_icon, warning_icon},
+    icon::{left_right_icon, warning_icon},
     image::asset_network_logo,
     theme,
     widget::{Column, Container, Element, Row},
@@ -192,10 +192,10 @@ fn balance_row<'a>(
         .into()
 }
 
-/// Circular ⇅ flip button between the two cards (Aqua-style).
+/// Circular ⇄ flip button between the two (horizontal) cards.
 fn flip_button<'a>() -> Element<'a, LiquidSwapMessage> {
     iced_button(
-        Container::new(arrow_down_up_icon().size(18).color(color::ORANGE))
+        Container::new(left_right_icon().size(18).color(color::ORANGE))
             .width(Length::Fixed(40.0))
             .height(Length::Fixed(40.0))
             .center_x(Length::Fixed(40.0))
@@ -301,7 +301,7 @@ fn last_swaps_section<'a>(
         let row = Row::new()
             .spacing(10)
             .align_y(Alignment::Center)
-            .push(arrow_down_up_icon().size(16).color(color::ORANGE))
+            .push(left_right_icon().size(16).color(color::ORANGE))
             .push(text(summary).size(P2_SIZE))
             .push(Space::new().width(Length::Fill))
             .push(
