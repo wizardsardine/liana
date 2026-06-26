@@ -406,15 +406,34 @@ impl LiquidSwap {
                     })
                     .unwrap_or(0);
 
-                // Recent payment legs that belong to a recorded swap.
-                let recent_swaps: Vec<DomainPayment> = breez_client
+                // Recent payment legs that belong to a recorded swap. A swap's
+                // two asset legs share one tx id, so collapse to one row per
+                // swap — preferring the incoming (received) leg so it reads as
+                // "you got X".
+                let mut recent_swaps: Vec<DomainPayment> = Vec::new();
+                let mut seen: std::collections::HashMap<String, usize> =
+                    std::collections::HashMap::new();
+                for p in breez_client
                     .list_payments(Some(30), None, None)
                     .await
                     .unwrap_or_default()
-                    .into_iter()
-                    .filter(|p| p.tx_id.as_ref().is_some_and(|id| swap_tx_ids.contains(id)))
-                    .take(8)
-                    .collect();
+                {
+                    let Some(id) = p.tx_id.clone().filter(|id| swap_tx_ids.contains(id)) else {
+                        continue;
+                    };
+                    match seen.get(&id).copied() {
+                        Some(idx) => {
+                            if p.is_incoming() && !recent_swaps[idx].is_incoming() {
+                                recent_swaps[idx] = p;
+                            }
+                        }
+                        None => {
+                            seen.insert(id, recent_swaps.len());
+                            recent_swaps.push(p);
+                        }
+                    }
+                }
+                recent_swaps.truncate(8);
 
                 match info {
                     Ok(_) => Ok((btc_balance, usdt_balance, recent_swaps)),
