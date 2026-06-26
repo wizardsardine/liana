@@ -1893,9 +1893,7 @@ mod duress_alert_contact_tests {
             "id": 7,
             "displayName": "Sam",
             "email": "sam@example.com",
-            "channels": 4,
-            "createdAt": "2026-06-11T00:00:00Z",
-            "updatedAt": "2026-06-11T00:00:00Z"
+            "channels": [DURESS_CHANNEL_EMAIL],
         });
         let c: DuressAlertContact = serde_json::from_value(v).unwrap();
         assert_eq!(c.display_name, "Sam");
@@ -1903,6 +1901,8 @@ mod duress_alert_contact_tests {
         assert_eq!(c.email.as_deref(), Some("sam@example.com"));
         assert!(c.has_channel(DURESS_CHANNEL_EMAIL));
         assert!(c.intro_sent_at.is_none());
+        assert!(c.created_at.is_none());
+        assert!(c.updated_at.is_none());
     }
 }
 
