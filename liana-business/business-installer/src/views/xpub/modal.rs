@@ -258,7 +258,6 @@ enum DeviceState {
 
 fn device_card(data: DeviceRenderData, in_use: bool) -> Element<'static, Msg> {
     let title = device_title(data.kind, data.version.as_ref());
-    let fingerprint = data.fingerprint;
 
     if in_use {
         return list::entry_device_list(
@@ -270,21 +269,18 @@ fn device_card(data: DeviceRenderData, in_use: bool) -> Element<'static, Msg> {
         );
     }
 
+    let fingerprint = data
+        .fingerprint
+        .map(list::DeviceStatus::Fingerprint)
+        .unwrap_or(list::DeviceStatus::None);
+
     match data.state {
         DeviceState::Supported => {
             let fingerprint = data.fingerprint.expect("supported device has fingerprint");
-            let trailing = row![
-                text::new::small_caption(format!("#{fingerprint}")).style(theme::text::secondary),
-                icon::chevron_right().size(16).style(theme::text::secondary)
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .into();
-
             list::entry_device_list(
                 title,
                 None::<String>,
-                Some(trailing),
+                list::DeviceStatus::Selectable(fingerprint),
                 button::EntryWidth::Standard,
                 Some(Msg::XpubSelectDevice(fingerprint)),
             )
@@ -292,14 +288,14 @@ fn device_card(data: DeviceRenderData, in_use: bool) -> Element<'static, Msg> {
         DeviceState::Locked { pairing_code } => list::entry_device_list(
             title,
             Some(locked_message(data.kind, pairing_code)),
-            fingerprint.map(fingerprint_trailing),
+            fingerprint,
             button::EntryWidth::Standard,
             None,
         ),
         DeviceState::Unsupported { reason } => list::entry_device_list(
             title,
             Some(unsupported_message(data.kind, &reason)),
-            fingerprint.map(fingerprint_trailing),
+            fingerprint,
             button::EntryWidth::Standard,
             None,
         ),
@@ -312,14 +308,6 @@ fn device_title(kind: async_hwi::DeviceKind, version: Option<&async_hwi::Version
         Some(version) => format!("{kind_name} {version}"),
         None => kind_name,
     }
-}
-
-fn fingerprint_trailing(
-    fingerprint: miniscript::bitcoin::bip32::Fingerprint,
-) -> Element<'static, Msg> {
-    text::new::small_caption(format!("#{fingerprint}"))
-        .style(theme::text::secondary)
-        .into()
 }
 
 fn locked_message(kind: async_hwi::DeviceKind, pairing_code: Option<String>) -> String {
