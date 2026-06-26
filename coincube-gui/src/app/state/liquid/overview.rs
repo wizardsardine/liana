@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::convert::TryInto;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::Amount;
@@ -8,6 +10,7 @@ use iced::Task;
 use crate::app::breez_liquid::assets::usdt_asset_id;
 use crate::app::cache::Cache;
 use crate::app::menu::{LiquidSubMenu, Menu};
+use crate::app::state::liquid::swap_history::SwapHistory;
 use crate::app::state::{redirect, State};
 use crate::app::wallets::{DomainPayment, DomainPaymentDetails, LiquidBackend};
 use crate::app::{message::Message, view, wallet::Wallet};
@@ -23,10 +26,15 @@ pub struct LiquidOverview {
     recent_payments: Vec<DomainPayment>,
     selected_payment: Option<DomainPayment>,
     error: Option<String>,
+    /// Local swap log path + its send-leg tx ids, used to label swap rows
+    /// (the SDK doesn't mark swaps). Re-read on reload so new swaps show.
+    swaps_path: PathBuf,
+    swap_tx_ids: HashSet<String>,
 }
 
 impl LiquidOverview {
-    pub fn new(breez_client: Arc<LiquidBackend>) -> Self {
+    pub fn new(breez_client: Arc<LiquidBackend>, swaps_path: PathBuf) -> Self {
+        let swap_tx_ids = SwapHistory::load(swaps_path.clone()).tx_ids();
         Self {
             breez_client,
             btc_balance: Amount::from_sat(0),
@@ -35,6 +43,8 @@ impl LiquidOverview {
             recent_payments: Vec::new(),
             selected_payment: None,
             error: None,
+            swaps_path,
+            swap_tx_ids,
         }
     }
 
@@ -127,6 +137,7 @@ impl State for LiquidOverview {
                 cache.btc_usd_price,
                 cache.show_direction_badges,
                 cache.display_mode,
+                crate::app::state::liquid::swap::swap_supported(self.breez_client.network()),
             )
             .map(view::Message::LiquidOverview);
 
@@ -182,6 +193,9 @@ impl State for LiquidOverview {
                         ))),
                     ]);
                 }
+                view::LiquidOverviewMessage::Swap => {
+                    return redirect(Menu::Liquid(LiquidSubMenu::Swap));
+                }
                 view::LiquidOverviewMessage::History => {
                     return redirect(Menu::Liquid(LiquidSubMenu::Transactions(None)));
                 }
@@ -202,6 +216,10 @@ impl State for LiquidOverview {
                     self.error = None;
                     self.btc_balance = *balance;
                     self.usdt_balance = *usdt_balance;
+                    // Re-read the swap log so swaps recorded elsewhere since the
+                    // last load get labelled — covers reload + the SDK-event
+                    // refresh path, not just a full reload.
+                    self.swap_tx_ids = SwapHistory::load(self.swaps_path.clone()).tx_ids();
 
                     let recent: Vec<DomainPayment> =
                         recent_payment.iter().take(5).cloned().collect();
@@ -247,9 +265,13 @@ impl State for LiquidOverview {
                                         .map(|c: &view::FiatAmountConverter| c.convert(amount))
                                 };
 
+                                let is_swap = payment
+                                    .tx_id
+                                    .as_ref()
+                                    .is_some_and(|id| self.swap_tx_ids.contains(id));
                                 let (desc, usdt_display) = if is_usdt {
                                     (
-                                        "USDt Transfer".to_owned(),
+                                        if is_swap { "Swap" } else { "USDt Transfer" }.to_owned(),
                                         Some(format!(
                                             "{} USDt",
                                             crate::app::breez_liquid::assets::format_usdt_display(
@@ -257,6 +279,8 @@ impl State for LiquidOverview {
                                             )
                                         )),
                                     )
+                                } else if is_swap {
+                                    ("Swap".to_owned(), None)
                                 } else {
                                     (payment.details.description().to_owned(), None)
                                 };
@@ -311,6 +335,8 @@ impl State for LiquidOverview {
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.selected_payment = None;
+        // (swap_tx_ids is refreshed in the DataLoaded handler the load below
+        // dispatches, so it stays current on every refresh — not just reload.)
         // Load balance immediately for fast display, and trigger an SDK sync
         // in the background. When the sync completes the SDK fires
         // SdkEvent::Synced which will refresh the active panel automatically.

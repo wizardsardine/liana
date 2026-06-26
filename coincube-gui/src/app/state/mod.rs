@@ -28,6 +28,7 @@ pub use liquid::overview::LiquidOverview;
 pub use liquid::receive::LiquidReceive;
 pub use liquid::send::LiquidSend;
 pub use liquid::settings::LiquidSettings;
+pub use liquid::swap::LiquidSwap;
 pub use liquid::transactions::LiquidTransactions;
 pub use spark::{SparkOverview, SparkReceive, SparkSend, SparkSettings, SparkTransactions};
 pub use vault::coins::CoinsPanel;

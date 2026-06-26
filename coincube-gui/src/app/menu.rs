@@ -75,6 +75,10 @@ pub enum P2PSubMenu {
 pub enum LiquidSubMenu {
     Overview,
     Send,
+    /// Cross-asset swap (L-BTC ↔ USDt) via SideSwap. Mainnet only — the
+    /// nav item and Overview entry point are hidden off-mainnet because
+    /// SideSwap is unavailable there (see `LiquidSwap::swap_supported`).
+    Swap,
     Receive,
     Transactions(Option<Txid>),
     Settings(Option<SettingsOption>),

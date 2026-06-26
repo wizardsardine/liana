@@ -34,7 +34,7 @@ pub use message::Message;
 
 use state::{
     CoinsPanel, ConnectPanel, CreateSpendPanel, GlobalHome, LiquidOverview, LiquidReceive,
-    LiquidSend, LiquidSettings, LiquidTransactions, PsbtsPanel, State, VaultOverview,
+    LiquidSend, LiquidSettings, LiquidSwap, LiquidTransactions, PsbtsPanel, State, VaultOverview,
     VaultReceivePanel, VaultTransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
@@ -68,6 +68,7 @@ struct Panels {
     global_home: GlobalHome,
     liquid_overview: LiquidOverview,
     liquid_send: LiquidSend,
+    liquid_swap: LiquidSwap,
     liquid_receive: LiquidReceive,
     liquid_transactions: LiquidTransactions,
     liquid_settings: LiquidSettings,
@@ -123,6 +124,20 @@ impl Panels {
             })
     }
 
+    /// Path to this cube's local swap-history log (the SDK doesn't mark
+    /// swaps, so we keep our own record). Lives alongside the cube's other
+    /// per-network state.
+    fn swaps_path(
+        datadir: &CoincubeDirectory,
+        network: bitcoin::Network,
+        cube_id: &str,
+    ) -> std::path::PathBuf {
+        datadir
+            .network_directory(network)
+            .path()
+            .join(format!("liquid-swaps-{cube_id}.json"))
+    }
+
     /// Read the cube's persisted `balance_masked` eye-icon preference.
     fn initial_balance_masked(
         datadir: &CoincubeDirectory,
@@ -157,6 +172,7 @@ impl Panels {
 
         let default_fiat_currency = Self::default_fiat_currency(datadir, network, &cube_id);
         let liquid_backend = Arc::new(LiquidBackend::new(breez_client.clone()));
+        let swaps_path = Self::swaps_path(datadir, network, &cube_id);
         let initial_balance_masked = Self::initial_balance_masked(datadir, network, &cube_id);
 
         Self {
@@ -182,10 +198,14 @@ impl Panels {
                     initial_balance_masked,
                 )
             },
-            liquid_overview: LiquidOverview::new(liquid_backend.clone()),
+            liquid_overview: LiquidOverview::new(liquid_backend.clone(), swaps_path.clone()),
             liquid_send: LiquidSend::new(liquid_backend.clone()),
+            liquid_swap: LiquidSwap::new(liquid_backend.clone(), swaps_path.clone()),
             liquid_receive: LiquidReceive::new(liquid_backend.clone()),
-            liquid_transactions: LiquidTransactions::new(liquid_backend.clone()),
+            liquid_transactions: LiquidTransactions::new(
+                liquid_backend.clone(),
+                swaps_path.clone(),
+            ),
             liquid_settings: LiquidSettings::new(liquid_backend.clone()),
             spark_overview: state::SparkOverview::new(spark_backend.clone()),
             spark_send: state::SparkSend::new(spark_backend.clone()),
@@ -270,6 +290,7 @@ impl Panels {
 
         let default_fiat_currency = Self::default_fiat_currency(&data_dir, cache.network, &cube_id);
         let liquid_backend = Arc::new(LiquidBackend::new(breez_client.clone()));
+        let swaps_path = Self::swaps_path(&data_dir, cache.network, &cube_id);
         let initial_balance_masked =
             Self::initial_balance_masked(&data_dir, cache.network, &cube_id);
 
@@ -297,10 +318,14 @@ impl Panels {
                 cache.blockheight(),
                 show_rescan_warning,
             )),
-            liquid_overview: LiquidOverview::new(liquid_backend.clone()),
+            liquid_overview: LiquidOverview::new(liquid_backend.clone(), swaps_path.clone()),
             liquid_send: LiquidSend::new(liquid_backend.clone()),
+            liquid_swap: LiquidSwap::new(liquid_backend.clone(), swaps_path.clone()),
             liquid_receive: LiquidReceive::new(liquid_backend.clone()),
-            liquid_transactions: LiquidTransactions::new(liquid_backend.clone()),
+            liquid_transactions: LiquidTransactions::new(
+                liquid_backend.clone(),
+                swaps_path.clone(),
+            ),
             liquid_settings: LiquidSettings::new(liquid_backend.clone()),
             spark_overview: state::SparkOverview::new(spark_backend.clone()),
             spark_send: state::SparkSend::new(spark_backend.clone()),
@@ -493,6 +518,7 @@ impl Panels {
             Menu::Liquid(submenu) => match submenu {
                 crate::app::menu::LiquidSubMenu::Overview => Some(&self.liquid_overview),
                 crate::app::menu::LiquidSubMenu::Send => Some(&self.liquid_send),
+                crate::app::menu::LiquidSubMenu::Swap => Some(&self.liquid_swap),
                 crate::app::menu::LiquidSubMenu::Receive => Some(&self.liquid_receive),
                 crate::app::menu::LiquidSubMenu::Transactions(_) => Some(&self.liquid_transactions),
                 crate::app::menu::LiquidSubMenu::Settings(_) => Some(&self.liquid_settings),
@@ -557,6 +583,7 @@ impl Panels {
             Menu::Liquid(submenu) => match submenu {
                 crate::app::menu::LiquidSubMenu::Overview => Some(&mut self.liquid_overview),
                 crate::app::menu::LiquidSubMenu::Send => Some(&mut self.liquid_send),
+                crate::app::menu::LiquidSubMenu::Swap => Some(&mut self.liquid_swap),
                 crate::app::menu::LiquidSubMenu::Receive => Some(&mut self.liquid_receive),
                 crate::app::menu::LiquidSubMenu::Transactions(_) => {
                     Some(&mut self.liquid_transactions)
@@ -630,6 +657,9 @@ impl Panels {
                 )),
                 crate::app::menu::LiquidSubMenu::Send => Some(Message::View(
                     view::Message::LiquidSend(view::LiquidSendMessage::RefreshRequested),
+                )),
+                crate::app::menu::LiquidSubMenu::Swap => Some(Message::View(
+                    view::Message::LiquidSwap(view::LiquidSwapMessage::RefreshRequested),
                 )),
                 crate::app::menu::LiquidSubMenu::Receive => Some(Message::View(
                     view::Message::LiquidReceive(view::LiquidReceiveMessage::RefreshRequested),

@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -11,6 +12,7 @@ use coincube_ui::widget::{Column, Element};
 use iced::{widget::image, Task};
 
 use crate::app::breez_liquid::assets::{lbtc_asset_id, usdt_asset_id};
+use crate::app::state::liquid::swap_history::SwapHistory;
 use crate::app::view::FeeratePriority;
 use crate::app::wallets::{
     DomainPayment, DomainPaymentDetails, DomainPaymentDirection, DomainRefundableSwap,
@@ -107,6 +109,10 @@ pub struct LiquidTransactions {
     /// `reload`, on SDK-event-driven `Reload`, and on each Tick-initiated
     /// background fetch.
     last_reload: Instant,
+    /// Local swap log path + its send-leg tx ids, used to label swap rows
+    /// (the SDK doesn't mark swaps). Re-read on reload so new swaps show.
+    swaps_path: PathBuf,
+    swap_tx_ids: HashSet<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,9 +123,10 @@ pub enum AssetFilter {
 }
 
 impl LiquidTransactions {
-    pub fn new(breez_client: Arc<LiquidBackend>) -> Self {
+    pub fn new(breez_client: Arc<LiquidBackend>, swaps_path: PathBuf) -> Self {
         let empty_state_quote = quote_display::random_quote("empty-wallet");
         let empty_state_image_handle = quote_display::image_handle_for_context("empty-wallet");
+        let swap_tx_ids = SwapHistory::load(swaps_path.clone()).tx_ids();
         Self {
             breez_client,
             payments: Vec::new(),
@@ -146,6 +153,8 @@ impl LiquidTransactions {
             is_last_page: false,
             processing: false,
             last_reload: Instant::now(),
+            swaps_path,
+            swap_tx_ids,
         }
     }
 
@@ -338,6 +347,7 @@ impl State for LiquidTransactions {
                     self.current_page,
                     self.is_last_page,
                     self.processing,
+                    &self.swap_tx_ids,
                 ),
             )
         };
@@ -386,6 +396,10 @@ impl State for LiquidTransactions {
                 }
                 self.loading = false;
                 self.processing = false;
+                // Re-read the swap log so swaps recorded elsewhere since the
+                // last load get labelled — covers the SDK-event BackgroundRefresh
+                // and pagination, not just a full reload.
+                self.swap_tx_ids = SwapHistory::load(self.swaps_path.clone()).tx_ids();
                 // Commit the page navigation now that the fetch succeeded.
                 // `pending_page` is `None` for a reload/initial fetch, where
                 // `current_page` was already set to 0 by `reload`.
@@ -871,6 +885,9 @@ impl State for LiquidTransactions {
         self.pending_page = None;
         self.is_last_page = false;
         self.processing = false;
+        // (swap_tx_ids is refreshed in the PaymentsLoaded handler the fetch
+        // below dispatches, so it stays current on every refresh — not just
+        // reload.)
         self.payments.clear();
         self.last_reload = Instant::now();
         let client2 = self.breez_client.clone();
@@ -901,7 +918,8 @@ mod tests {
 
     fn new_state() -> LiquidTransactions {
         let client = Arc::new(BreezClient::disconnected(Network::Bitcoin));
-        LiquidTransactions::new(Arc::new(LiquidBackend::new(client)))
+        let path = std::env::temp_dir().join("coincube-tx-test-missing-swaps.json");
+        LiquidTransactions::new(Arc::new(LiquidBackend::new(client)), path)
     }
 
     #[test]

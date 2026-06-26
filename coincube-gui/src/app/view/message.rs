@@ -188,6 +188,7 @@ pub enum Message {
     LiquidReceive(LiquidReceiveMessage),
     VaultReceive(VaultReceiveMessage),
     LiquidSend(LiquidSendMessage),
+    LiquidSwap(LiquidSwapMessage),
     LiquidSettings(LiquidSettingsMessage),
     PreselectPayment(DomainPayment),
     SetAssetFilter(crate::app::state::liquid::transactions::AssetFilter),
@@ -685,6 +686,9 @@ pub enum LiquidOverviewMessage {
     ReceiveLbtc,
     SendUsdt,
     ReceiveUsdt,
+    /// Navigate to the Liquid Swap screen. Only emitted on mainnet (the
+    /// button is hidden off-mainnet, where SideSwap is unavailable).
+    Swap,
     History,
     SelectTransaction(usize),
     /// Forwarded to the top-level handler to flip the global
@@ -746,6 +750,83 @@ pub enum LiquidSendMessage {
         crate::app::state::liquid::send::SendAsset,
         crate::app::state::liquid::send::ReceiveNetwork,
     ),
+}
+
+/// Messages for the Liquid cross-asset Swap panel.
+///
+/// The input is the amount the user wants to *receive* (the `to` asset);
+/// the SideSwap quote returns the `from`-asset cost. See
+/// [`crate::app::state::liquid::swap`].
+#[derive(Debug, Clone)]
+pub enum LiquidSwapMessage {
+    /// Balances + recorded-swap payments loaded for the Swap screen.
+    DataLoaded {
+        btc_balance: Amount,
+        usdt_balance: u64,
+        recent_swaps: Vec<DomainPayment>,
+    },
+    /// Balance/transaction load failed.
+    Error(String),
+    /// Re-fetch balances on a confirmed SDK `Synced` event (also clears the
+    /// sync gate).
+    RefreshRequested,
+    /// Re-fetch balances only, without asserting sync readiness (e.g. the
+    /// post-settlement refresh, whose sync may fail).
+    RefreshBalances,
+    /// The sync kicked on screen entry finished (`ok` = succeeded). Drives
+    /// the sync gate directly so Confirm can't get stuck disabled when no
+    /// separate `Synced` event follows (or the sync errored). Tagged with the
+    /// reload generation so a stale older sync can't re-gate a newer entry.
+    SyncFinished(u64, bool),
+    /// A "Last swaps" row was tapped — open it in Transactions.
+    SelectSwap(usize),
+    /// Self-targeted Liquid receive address generated (or failed) — the
+    /// destination every cross-asset prepare/send is pointed at.
+    SelfAddressReady(Result<String, String>),
+    /// Background rate probe finished — carries the SideSwap rate
+    /// (`to`-base per `from`-base) so the rate chip + "Swap All" work
+    /// before the user has entered an amount. Failures are ignored. Tagged
+    /// with the probe generation so a stale probe (from a prior direction or
+    /// session) can't apply its rate.
+    RateProbeReady(u64, Result<f64, String>),
+    /// "You pay" (from-asset) amount edited — the receive side is derived
+    /// from the rate and the quote re-fetched.
+    AmountEditedPay(String),
+    /// "You receive" (to-asset) amount edited — quoted directly.
+    AmountEditedReceive(String),
+    /// Swap the `from` / `to` assets and invalidate the stale quote.
+    FlipAssets,
+    /// Pre-fill the max receivable amount from the current rate, netting
+    /// fees, then re-quote (resolves the "cross-asset max needs a quote"
+    /// gap noted in send.rs).
+    SwapAll,
+    /// Debounced trigger to request a quote. Carries the sequence number
+    /// it was issued for so stale debounce timers are discarded.
+    QuoteRequested(u64),
+    /// Quote (or quote error) returned. Tagged with the sequence number
+    /// so stale async responses are discarded.
+    QuoteReady(u64, Result<PrepareSendResponse, String>),
+    /// Advance from the input screen to the locked-quote review.
+    Continue,
+    /// Return from review to the input screen.
+    BackToInput,
+    /// Execute the locked quote via `send_payment`.
+    Confirm,
+    /// Re-fetch the quote (e.g. after expiry on the review screen).
+    RefreshQuote,
+    /// Per-second countdown tick for the quote-expiry timer.
+    QuoteTick,
+    /// Swap settled — transition to the success screen. Carries the send
+    /// leg's tx id + timestamp so the swap can be recorded locally.
+    SwapComplete {
+        tx_id: Option<String>,
+        timestamp: u32,
+    },
+    /// `send_payment` failed — surface the error, drop the now-stale
+    /// committed quote, and (on review) re-fetch so a retry is fresh.
+    SwapFailed(String),
+    /// Dismiss the success screen and return to a fresh input.
+    Done,
 }
 
 #[derive(Debug, Clone)]

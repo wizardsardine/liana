@@ -127,6 +127,7 @@ pub fn liquid_transactions_view<'a>(
     current_page: u32,
     is_last_page: bool,
     processing: bool,
+    swap_tx_ids: &'a std::collections::HashSet<String>,
 ) -> Element<'a, Message> {
     let mut content = Column::new().spacing(20).width(Length::Fill);
 
@@ -219,6 +220,10 @@ pub fn liquid_transactions_view<'a>(
                 .iter()
                 .enumerate()
                 .fold(Column::new().spacing(10), |col, (i, payment)| {
+                    let is_swap = payment
+                        .tx_id
+                        .as_ref()
+                        .is_some_and(|id| swap_tx_ids.contains(id));
                     col.push(transaction_row(
                         i,
                         payment,
@@ -226,6 +231,7 @@ pub fn liquid_transactions_view<'a>(
                         bitcoin_unit,
                         usdt_id,
                         show_direction_badges,
+                        is_swap,
                     ))
                 });
         content = content.push(list);
@@ -270,6 +276,7 @@ pub fn liquid_transactions_view<'a>(
     content.into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn transaction_row<'a>(
     i: usize,
     payment: &'a DomainPayment,
@@ -277,13 +284,17 @@ fn transaction_row<'a>(
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     usdt_id: &str,
     show_direction_badges: bool,
+    is_swap: bool,
 ) -> Element<'a, Message> {
     let is_receive = payment.is_incoming();
     let usdt_str = usdt_amount_str(payment, usdt_id);
 
-    // Extract description — prefer payer_note/description, fall back to "USDt Transfer"
+    // Extract description — prefer payer_note/description, fall back to "USDt
+    // Transfer". A locally-recorded swap overrides the label with "Swap".
     let is_usdt = usdt_str.is_some();
-    let description: String = if is_usdt {
+    let description: String = if is_swap {
+        "Swap".to_owned()
+    } else if is_usdt {
         usdt_description(payment)
     } else {
         payment.details.description().to_owned()
@@ -310,13 +321,18 @@ fn transaction_row<'a>(
         }
     };
 
+    let is_pending = matches!(payment.status, DomainPaymentStatus::Pending);
+
     if let Some(ref usdt_display) = usdt_str {
-        let item = TransactionListItem::new(direction, &Amount::ZERO, bitcoin_unit)
+        let mut item = TransactionListItem::new(direction, &Amount::ZERO, bitcoin_unit)
             .with_label(description.clone())
             .with_time_ago(time_ago)
             .with_custom_icon(combo_icon)
             .with_show_direction_badge(show_direction_badges)
             .with_amount_override(usdt_display.clone());
+        if is_pending {
+            item = item.with_custom_status(pending_badge());
+        }
         return item.view(Message::Select(i)).into();
     }
 
@@ -338,7 +354,43 @@ fn transaction_row<'a>(
         item = item.with_fiat_amount(fiat_amount);
     }
 
+    if is_pending {
+        item = item.with_custom_status(pending_badge());
+    }
+
     item.view(Message::Select(i)).into()
+}
+
+/// "Pending" status pill, matching the one Overview shows on unconfirmed
+/// payments (so the two screens agree).
+fn pending_badge() -> Element<'static, Message> {
+    let fg = coincube_ui::color::BLACK;
+    Container::new(
+        Row::new()
+            .spacing(4)
+            .align_y(Alignment::Center)
+            .push(
+                icon::warning_icon()
+                    .size(14)
+                    .style(move |_| iced::widget::text::Style { color: Some(fg) }),
+            )
+            .push(
+                text("Pending")
+                    .bold()
+                    .size(14)
+                    .style(move |_| iced::widget::text::Style { color: Some(fg) }),
+            ),
+    )
+    .padding([2, 8])
+    .style(move |_: &theme::Theme| iced::widget::container::Style {
+        background: Some(iced::Background::Color(coincube_ui::color::GREY_3)),
+        border: iced::Border {
+            radius: 12.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 fn refundable_row<'a>(
