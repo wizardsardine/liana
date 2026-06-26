@@ -548,33 +548,44 @@ pub fn update(
             Task::none()
         }
 
-        RecoveryKitMessage::PhoneSealResult(res) => match res {
-            Ok(()) => {
-                rk.reset_flow();
-                let reload = load_status(rk, client, server_cube_id);
-                let toast = Task::done(Message::View(view::Message::ShowToast(
-                    log::Level::Info,
-                    "Backed up to your phone. You can restore this Cube by approving on \
-                     your Keychain."
-                        .to_string(),
-                )));
-                Task::batch([toast, reload])
+        RecoveryKitMessage::PhoneSealResult(res) => {
+            // Ignore a stale result: the seal runs async, so the user may have
+            // cancelled or started a new flow while it was in flight. Only a
+            // wizard still in `PhoneSealing` should react — otherwise a late
+            // result would show a false "backed up" toast or replace an
+            // unrelated in-progress wizard with an error screen. Mirrors the
+            // `ProvisionResult` staleness guard.
+            if !matches!(rk.flow, RecoveryKitState::PhoneSealing { .. }) {
+                return Task::none();
             }
-            Err(e) => {
-                rk.flow = RecoveryKitState::Error { message: e.clone() };
-                // "Both" mode chains this seal *after* a successful password
-                // upload, so the kit on Connect has already changed even though
-                // the phone half failed. Refresh status now (it only updates
-                // `rk.status`, not the `Error` flow) so the inline card reflects
-                // the real server state once the user dismisses the error —
-                // otherwise it keeps showing the pre-upload cache.
-                let reload = load_status(rk, client, server_cube_id);
-                Task::batch([
-                    Task::done(Message::View(view::Message::ShowError(e))),
-                    reload,
-                ])
+            match res {
+                Ok(()) => {
+                    rk.reset_flow();
+                    let reload = load_status(rk, client, server_cube_id);
+                    let toast = Task::done(Message::View(view::Message::ShowToast(
+                        log::Level::Info,
+                        "Backed up to your phone. You can restore this Cube by approving on \
+                         your Keychain."
+                            .to_string(),
+                    )));
+                    Task::batch([toast, reload])
+                }
+                Err(e) => {
+                    rk.flow = RecoveryKitState::Error { message: e.clone() };
+                    // "Both" mode chains this seal *after* a successful password
+                    // upload, so the kit on Connect has already changed even though
+                    // the phone half failed. Refresh status now (it only updates
+                    // `rk.status`, not the `Error` flow) so the inline card reflects
+                    // the real server state once the user dismisses the error —
+                    // otherwise it keeps showing the pre-upload cache.
+                    let reload = load_status(rk, client, server_cube_id);
+                    Task::batch([
+                        Task::done(Message::View(view::Message::ShowError(e))),
+                        reload,
+                    ])
+                }
             }
-        },
+        }
 
         RecoveryKitMessage::SubmitPassword => {
             submit_password(rk, cache, local_cube_id, client, server_cube_id, wallet)
@@ -1021,6 +1032,7 @@ fn gather_cube_meta(cache: &Cache, local_cube_id: &str) -> Option<(SeedBlobCube,
 ///     escrow the seed instead of silently downgrading to descriptor-only.
 ///   * "Both" chain — the flow is `Uploading` (the password kit already
 ///     uploaded); the lifted mnemonic is no longer needed and is dropped.
+///
 /// `set_protection_error` then shows the message inline on the choice screen, or
 /// routes the `Uploading` flow to the terminal error state so the wizard isn't
 /// stranded mid-upload.

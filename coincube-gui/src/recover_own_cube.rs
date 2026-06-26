@@ -13,8 +13,10 @@
 //! Gated behind [`crate::feature_flags`]'s `OWNER_KEYCHAIN_RECOVERY_ENABLED`.
 //! Discovery uses the tested Connect-client foundation: `list_cubes` for the
 //! owner's cubes, then `list_recovery_kit_recipients` per cube to find the
-//! `owner-self` recipient and read its tier (Full-Cube vs Vault-only). Rows are
-//! marked **Beta**.
+//! `owner-self` recipient (and its tier — Full-Cube vs Vault-only), and finally
+//! `get_recovery_kit_envelope` to confirm an envelope set was actually uploaded
+//! before listing the cube — the phone can register the recipient before the
+//! desktop seals, so a recipient alone isn't recoverable. Rows are marked **Beta**.
 
 use iced::widget::scrollable;
 use iced::{Alignment, Length, Task};
@@ -26,6 +28,7 @@ use coincube_ui::{
 };
 
 use crate::services::coincube::{CoincubeClient, CoincubeError};
+use crate::services::recovery::{fetch_owner_recovery_envelope, OwnerKeychainRecoveryError};
 
 const SIGNED_OUT_PROMPT: &str =
     "Sign in to your account to see Cubes you can recover with your phone.";
@@ -151,12 +154,33 @@ async fn fetch_recoverable_own_cubes(
             Ok(rows) => {
                 if let Some(r) = rows.iter().find(|r| r.is_owner_self()) {
                     let full_cube = r.tier.map(|t| t.includes_seed()).unwrap_or(false);
-                    out.push(RecoverableOwnCube {
-                        cube_id: cube.id,
-                        name: cube.name,
-                        network: cube.network,
-                        full_cube,
-                    });
+                    // A registered recipient is necessary but not sufficient: the
+                    // phone can register the `owner-self` key (PR 1) before the
+                    // desktop seals + uploads the envelope set (PR 2). Confirm an
+                    // envelope actually exists, or the "Recover" action would
+                    // dead-end on the installer's empty-envelope fetch.
+                    let has_envelope = match fetch_owner_recovery_envelope(&client, cube.id).await {
+                        Ok(wires) => !wires.is_empty(),
+                        // No envelope uploaded yet → not recoverable.
+                        Err(OwnerKeychainRecoveryError::NoEnvelope) => false,
+                        // Duress (423) stays neutral — never reveal it; just omit
+                        // the cube (invariant I3).
+                        Err(OwnerKeychainRecoveryError::Unavailable { .. }) => false,
+                        Err(e) => {
+                            return Err(format!(
+                                "Couldn't check phone recovery for \"{}\": {}",
+                                cube.name, e
+                            ));
+                        }
+                    };
+                    if has_envelope {
+                        out.push(RecoverableOwnCube {
+                            cube_id: cube.id,
+                            name: cube.name,
+                            network: cube.network,
+                            full_cube,
+                        });
+                    }
                 }
             }
             // No recipients registered for this cube → not phone-recoverable.
@@ -356,5 +380,75 @@ mod tests {
             5,
         );
         assert!(matches!(panel.list, ListState::Loaded(ref r) if r.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn lists_only_cubes_with_an_uploaded_envelope() {
+        use httpmock::{Method, MockServer};
+        use serde_json::json;
+
+        let server = MockServer::start();
+        // Two owned cubes, both with an `owner-self` recipient registered…
+        server.mock(|when, then| {
+            when.method(Method::GET).path("/api/v1/connect/cubes");
+            then.status(200).json_body(json!({
+                "success": true,
+                "data": [
+                    { "id": 1, "uuid": "u1", "name": "Sealed", "network": "mainnet", "status": "active" },
+                    { "id": 2, "uuid": "u2", "name": "Recipient only", "network": "mainnet", "status": "active" }
+                ]
+            }));
+        });
+        let owner_self = json!({
+            "success": true,
+            "data": [{ "id": 1, "keyId": 77, "role": "owner-self", "tier": "full_cube" }]
+        });
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/api/v1/connect/cubes/1/recovery-kit/recipients");
+            then.status(200).json_body(owner_self.clone());
+        });
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/api/v1/connect/cubes/2/recovery-kit/recipients");
+            then.status(200).json_body(owner_self);
+        });
+        // …but only cube 1 has actually uploaded an envelope set.
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/api/v1/connect/cubes/1/recovery-kit/envelope");
+            then.status(200).json_body(json!({
+                "success": true,
+                "data": [{
+                    "keyholderKeyId": 77,
+                    "artifactKind": "seed",
+                    "scheme": "ecies-secp256k1-hkdf-sha256-aes256gcm-v1",
+                    "ephemeralPubkey": "020202020202020202020202020202020202020202020202020202020202020202",
+                    "ciphertext": "abcd",
+                    "nonce": "111111111111111111111111",
+                    "derivation": "m/48h/1h/0h/2h/7000"
+                }]
+            }));
+        });
+        // Cube 2: recipient registered but no envelope → 404.
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/api/v1/connect/cubes/2/recovery-kit/envelope");
+            then.status(404);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let rows = fetch_recoverable_own_cubes(client, "mainnet".to_string())
+            .await
+            .expect("discovery should succeed");
+        // Only the cube with an uploaded envelope is recoverable.
+        assert_eq!(
+            rows.len(),
+            1,
+            "recipient-only cube must be excluded: {:?}",
+            rows
+        );
+        assert_eq!(rows[0].cube_id, 1);
+        assert!(rows[0].full_cube);
     }
 }
