@@ -1091,15 +1091,17 @@ impl State for LiquidSwap {
                     if self.quote_remaining > 0 {
                         self.quote_remaining -= 1;
                         if self.quote_remaining == 0 {
-                            // Expired: drop the stale quote. On the review
-                            // screen, auto re-fetch; never execute an expired
-                            // quote.
+                            // Expired: drop the stale quote and auto re-fetch
+                            // for the current input on both the input and
+                            // review screens, so the displayed pay/receive
+                            // figures never linger stale while Continue is
+                            // disabled. `request_quote` no-ops if the input is
+                            // no longer a usable amount. Never execute an
+                            // expired quote — re-fetching always re-locks.
                             self.quote = None;
-                            if self.phase == SwapPhase::Review {
-                                let seq = self.quote_seq.wrapping_add(1);
-                                self.quote_seq = seq;
-                                return self.request_quote(seq);
-                            }
+                            let seq = self.quote_seq.wrapping_add(1);
+                            self.quote_seq = seq;
+                            return self.request_quote(seq);
                         }
                     }
                 }
