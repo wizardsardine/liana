@@ -2049,13 +2049,13 @@ impl ConnectAccountPanel {
                 }
                 let mut channels = Vec::new();
                 if dc.form_ch_sms && !phone.is_empty() {
-                    channels.push("sms".to_string());
+                    channels.push(DURESS_CHANNEL_SMS.to_string());
                 }
                 if dc.form_ch_whatsapp && !phone.is_empty() {
-                    channels.push("whatsapp".to_string());
+                    channels.push(DURESS_CHANNEL_WHATSAPP.to_string());
                 }
                 if dc.form_ch_email && !email.is_empty() {
-                    channels.push("email".to_string());
+                    channels.push(DURESS_CHANNEL_EMAIL.to_string());
                 }
                 if channels.is_empty() {
                     dc.error = Some(
@@ -2088,13 +2088,6 @@ impl ConnectAccountPanel {
                             email: email_opt,
                             channels,
                         };
-
-                        println!("Submitting new duress contact: {:?}", req);
-                        println!(
-                            "JSON payload: {}",
-                            serde_json::to_string_pretty(&req).unwrap()
-                        );
-
                         iced::Task::perform(
                             async move { client.create_duress_alert_contact(req).await },
                             move |res| {
