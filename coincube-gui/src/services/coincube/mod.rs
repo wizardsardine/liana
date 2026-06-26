@@ -2299,7 +2299,8 @@ pub struct PutVaultEscrowRequest {
 
 /// Wire role string for an owner self-recovery recipient. Bound by the API plan;
 /// `coincube-api` validates that this row is **not** a Vault signer (invariant
-/// I2) — the desktop only ever registers this exact value.
+/// I2). Registration is phone-initiated (COIN-390) — the desktop only ever
+/// *matches* this value when detecting the recipient ([`RecoveryKitRecipient::is_owner_self`]).
 pub const RECOVERY_RECIPIENT_ROLE_OWNER_SELF: &str = "owner-self";
 
 /// Which artifacts the owner intends to seal to their `owner-self` key. Mirrors
@@ -2327,18 +2328,6 @@ impl OwnerRecoveryTier {
     pub fn includes_seed(self) -> bool {
         matches!(self, Self::FullCube)
     }
-}
-
-/// Body for `POST /connect/cubes/{cubeId}/recovery-kit/recipients` — registers
-/// the freshly-minted `owner-self` key as a recovery recipient (PR 1). `role` is
-/// always [`RECOVERY_RECIPIENT_ROLE_OWNER_SELF`]; the server rejects anything
-/// else and refuses to treat the key as a Vault signer (invariant I2).
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegisterRecoveryRecipientRequest {
-    pub key_id: u64,
-    pub role: String,
-    pub tier: OwnerRecoveryTier,
 }
 
 /// The registered key behind a recovery recipient — the xpub + derivation path

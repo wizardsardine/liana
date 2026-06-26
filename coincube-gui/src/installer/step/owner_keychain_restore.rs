@@ -41,7 +41,9 @@ use crate::{
             grpc::{create_channel, interceptor::AuthInterceptor, session::GrpcSessionClient},
         },
         inheritance::heir::decrypt_envelopes,
-        recovery::{fetch_owner_recovery_envelope, DescriptorBlob, OwnerKeychainRecoveryError, SeedBlob},
+        recovery::{
+            fetch_owner_recovery_envelope, DescriptorBlob, OwnerKeychainRecoveryError, SeedBlob,
+        },
     },
 };
 

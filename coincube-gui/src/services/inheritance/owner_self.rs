@@ -8,11 +8,13 @@
 //! crypto: the owner-self recipient is just a one-element keyholder set.
 //!
 //! Two phases:
-//!   * PR 1 — provision: mint + attach an `owner-self` key on the Keychain, then
-//!     register it as a recovery recipient. **The mint has no desktop rail yet**
-//!     (it lands in the keychain-app plan), so [`mint_owner_self_key`] is a stub
-//!     that fails closed; the registration ([`register_owner_self_recipient`])
-//!     is wired and tested.
+//!   * PR 1 — **detect** (provisioning is phone-initiated, COIN-390): the
+//!     Keychain app mints + attaches the `owner-self` key and registers the
+//!     recovery recipient itself (tier `full_cube`). The desktop **never mints
+//!     or registers** — it only *detects* the registered recipient via
+//!     [`find_owner_self_recipient`]; a `404`/absent row maps to
+//!     [`OwnerSelfError::NoRecipient`], the "set this up on your phone first"
+//!     affordance.
 //!   * PR 2 — seal: read the registered recipient's xpub, seal the seed /
 //!     descriptor to it, and upload the envelope set. Owner-side desktop crypto
 //!     only — the Keychain is **not** involved in sealing (public-key encryption
@@ -29,18 +31,15 @@ use zeroize::Zeroizing;
 
 use super::escrow::{build_escrow_set, EscrowError, KeyholderXpub};
 use crate::services::coincube::{
-    CoincubeClient, CoincubeError, InheritanceEnvelopeWire, OwnerRecoveryTier, RecoveryKitRecipient,
+    CoincubeClient, CoincubeError, InheritanceEnvelopeWire, RecoveryKitRecipient,
 };
 
-/// Errors from owner self-recovery provisioning + sealing.
+/// Errors from owner self-recovery detection + sealing.
 #[derive(Debug)]
 pub enum OwnerSelfError {
-    /// The Keychain couldn't mint/attach the `owner-self` recovery key. Fires on
-    /// every call today: the desktop has no rail to ask the Keychain to mint a
-    /// recovery key (it lands in the keychain-app plan). Display-safe.
-    KeychainMintUnavailable,
     /// No `owner-self` recovery recipient is registered for this Cube yet — the
-    /// owner must provision phone protection first.
+    /// owner must create the recovery key in their Keychain app first
+    /// (provisioning is phone-initiated; the desktop only detects it).
     NoRecipient,
     /// The registered recipient row carried no key (xpub) to seal to — a server
     /// that dropped the join. Fail closed rather than guess an xpub.
@@ -59,15 +58,10 @@ pub enum OwnerSelfError {
 impl std::fmt::Display for OwnerSelfError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::KeychainMintUnavailable => write!(
-                f,
-                "Setting up phone recovery isn't available in this build yet. Update your \
-                 Keychain app, then try again."
-            ),
             Self::NoRecipient => write!(
                 f,
-                "This Cube isn't set up for phone recovery yet. Choose “Protect with my phone” \
-                 first."
+                "This Cube isn't set up for phone recovery yet. Create a recovery key in your \
+                 Keychain app first, then check again."
             ),
             Self::RecipientMissingKey => write!(
                 f,
@@ -101,38 +95,11 @@ impl From<CoincubeError> for OwnerSelfError {
     }
 }
 
-/// **Stub.** Mint + attach an `owner-self` recovery key on the owner's Keychain
-/// and return its `models.Key` id (PR 1).
-///
-/// Always returns [`OwnerSelfError::KeychainMintUnavailable`] today: the desktop
-/// has no rail to ask the Keychain to mint a key (keychain-app plan PR 1). When
-/// that lands, this asks the existing Keychain key-management client to mint the
-/// key **as a recovery key, not a Vault signer** (invariant I2) and returns its
-/// id for [`register_owner_self_recipient`].
-pub async fn mint_owner_self_key(_cube_id: u64) -> Result<u64, OwnerSelfError> {
-    // TODO(keychain-app PR 1): once the desktop has a Keychain key-mint rail,
-    // call it here to mint + attach an `owner-self` key (role MUST be a recovery
-    // key, never a Vault signer — invariant I2) and return its `models.Key` id.
-    Err(OwnerSelfError::KeychainMintUnavailable)
-}
-
-/// Register a freshly-minted `owner-self` key as the cube's recovery recipient
-/// (PR 1). `coincube-api` validates the role and refuses to treat the key as a
-/// Vault signer.
-pub async fn register_owner_self_recipient(
-    client: &CoincubeClient,
-    cube_id: u64,
-    key_id: u64,
-    tier: OwnerRecoveryTier,
-) -> Result<RecoveryKitRecipient, OwnerSelfError> {
-    client
-        .register_recovery_kit_recipient(cube_id, key_id, tier)
-        .await
-        .map_err(OwnerSelfError::Connect)
-}
-
-/// Find the cube's registered `owner-self` recipient (the one we seal to). Maps
-/// a `404` (no recipients yet) to [`OwnerSelfError::NoRecipient`].
+/// Find the cube's registered `owner-self` recipient (the one we seal to) —
+/// the PR 1 "detect" step. Provisioning is phone-initiated: the Keychain app
+/// mints + registers the recipient, and the desktop only reads it back here.
+/// Maps a `404`/absent row (no recipient yet) to [`OwnerSelfError::NoRecipient`]
+/// — the "set this up on your phone first" affordance.
 pub async fn find_owner_self_recipient(
     client: &CoincubeClient,
     cube_id: u64,
@@ -157,6 +124,14 @@ pub fn build_owner_self_envelope_set(
     descriptor_json: &[u8],
     seed_json: Option<&[u8]>,
 ) -> Result<Vec<InheritanceEnvelopeWire>, OwnerSelfError> {
+    // Defense in depth: only ever seal the owner's recovery material — which
+    // includes the master seed — to the cube's own `owner-self` recovery key.
+    // The production path filters upstream (`find_owner_self_recipient`), but
+    // this is a `pub` helper; refuse a mis-roled recipient before touching its
+    // key so a wrong caller can't escrow the seed to a non-owner-self party.
+    if !recipient.is_owner_self() {
+        return Err(OwnerSelfError::NoRecipient);
+    }
     // The registered tier (when the server reports it) is the authority on
     // whether the seed is escrowed; refuse a mismatch so we never silently seal
     // a seed the owner didn't intend (or omit one they did).
@@ -181,8 +156,9 @@ pub fn build_owner_self_envelope_set(
 /// Seal the owner's recovery material to their `owner-self` key and upload it
 /// (PR 2). Owner-side desktop crypto only — the Keychain isn't involved in
 /// sealing (public-key encryption to the recipient's xpub). The `Zeroizing`
-/// seed buffer is owned here so it's wiped when this returns; only ciphertext
-/// crosses the wire.
+/// seed buffer is owned here and wiped the instant it's sealed — before the
+/// upload await — so the seed plaintext never lingers across the network
+/// round-trip; only ciphertext crosses the wire.
 pub async fn seal_and_upload_owner_self(
     client: &CoincubeClient,
     cube_id: u64,
@@ -196,6 +172,10 @@ pub async fn seal_and_upload_owner_self(
         descriptor_json,
         seed_json.as_ref().map(|s| s.as_slice()),
     )?;
+    // The seed plaintext is now sealed into ciphertext in `set`; wipe it
+    // (Zeroizing's Drop) immediately rather than holding it alive across the
+    // upload's network await.
+    drop(seed_json);
     client
         .put_recovery_kit_envelope(cube_id, set)
         .await
@@ -206,7 +186,7 @@ pub async fn seal_and_upload_owner_self(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::coincube::RecoveryRecipientKey;
+    use crate::services::coincube::{OwnerRecoveryTier, RecoveryRecipientKey};
     use crate::services::inheritance::ecies::{keychain_shared_key, ENCRYPTION_CHILD_INDEX};
     use crate::services::inheritance::{open_with_shared_key, wire_to_envelope};
     use coincube_core::miniscript::bitcoin::bip32::{ChildNumber, DerivationPath, Xpriv};
@@ -257,12 +237,71 @@ mod tests {
         open_with_shared_key(&k, &env, CUBE, 77).unwrap()
     }
 
+    /// Detect-then-seal (PR 1 "detect" + PR 2): the Keychain app has already
+    /// minted + registered the `owner-self` recipient (tier `full_cube`); the
+    /// desktop reads it back via `find_owner_self_recipient`, then seals the
+    /// seed + descriptor to it. No desktop mint/register anywhere in this path.
     #[tokio::test]
-    async fn mint_is_stubbed_unavailable() {
-        assert!(matches!(
-            mint_owner_self_key(CUBE).await,
-            Err(OwnerSelfError::KeychainMintUnavailable)
-        ));
+    async fn detect_then_seal_full_cube() {
+        use httpmock::{Method, MockServer};
+        use serde_json::json;
+
+        let key = owner_key(b"owner-self-detect-then-seal-vector-0000000000");
+        let server = MockServer::start();
+        // Detect: the phone-registered recipient row, full-cube, with its key.
+        let list = server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/api/v1/connect/cubes/7/recovery-kit/recipients");
+            then.status(200).json_body(json!({
+                "success": true,
+                "data": [{
+                    "id": 1,
+                    "keyId": 77,
+                    "role": "owner-self",
+                    "tier": "full_cube",
+                    "key": {
+                        "id": 77,
+                        "xpub": key.xpub.to_string(),
+                        "derivationPath": "m/48'/0'/0'/2'"
+                    }
+                }]
+            }));
+        });
+        // Seal: full-cube → seed + descriptor uploaded (the seed-half inclusion
+        // itself is covered by `full_cube_builds_descriptor_and_seed_that_round_trip`;
+        // here we just confirm the detected recipient drives a successful upload).
+        let put = server.mock(|when, then| {
+            when.method(Method::PUT)
+                .path("/api/v1/connect/cubes/7/recovery-kit/envelope");
+            then.status(200)
+                .json_body(json!({ "success": true, "data": {} }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let recipient = find_owner_self_recipient(&client, CUBE)
+            .await
+            .expect("the phone-registered recipient should be detected");
+        assert!(recipient.is_owner_self());
+        assert_eq!(recipient.tier, Some(OwnerRecoveryTier::FullCube));
+
+        // Full-cube seals both halves; build the set directly to assert the seed
+        // half is present, then upload it through the detected recipient.
+        let seed = Zeroizing::new(
+            br#"{"version":1,"cube":{},"mnemonic":{"phrase":"abandon about","language":"en"}}"#
+                .to_vec(),
+        );
+        let set =
+            build_owner_self_envelope_set(&recipient, CUBE, b"wsh(desc)#ck", Some(seed.as_slice()))
+                .unwrap();
+        assert!(
+            set.iter().any(|e| e.artifact_kind == "seed"),
+            "full-cube detect-then-seal must include the seed envelope"
+        );
+        seal_and_upload_owner_self(&client, CUBE, &recipient, b"wsh(desc)#ck", Some(seed))
+            .await
+            .expect("seal+upload should succeed");
+        list.assert();
+        put.assert();
     }
 
     #[test]
@@ -318,6 +357,21 @@ mod tests {
         assert!(matches!(
             build_owner_self_envelope_set(&r, CUBE, b"d", None),
             Err(OwnerSelfError::RecipientMissingKey)
+        ));
+    }
+
+    #[test]
+    fn non_owner_self_recipient_is_refused() {
+        // Defense in depth: never seal the owner's seed material to a recipient
+        // whose role isn't the cube's own `owner-self` recovery key. The role
+        // guard fires before the tier/key checks (here the row is otherwise
+        // well-formed) so a mis-roled recipient can't escrow the seed.
+        let key = owner_key(b"owner-self-wrong-role-seed-vector-000000000");
+        let mut r = recipient(&key, Some(OwnerRecoveryTier::VaultOnly));
+        r.role = "heir".to_string();
+        assert!(matches!(
+            build_owner_self_envelope_set(&r, CUBE, b"d", None),
+            Err(OwnerSelfError::NoRecipient)
         ));
     }
 

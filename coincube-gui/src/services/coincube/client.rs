@@ -1550,34 +1550,12 @@ impl CoincubeClient {
 // trust posture (owner-self recipient, server-blind envelope relay).
 
 impl CoincubeClient {
-    /// `POST /api/v1/connect/cubes/{cubeId}/recovery-kit/recipients`
-    /// (authenticated, owner-only). Registers the freshly-minted `owner-self`
-    /// key as a recovery recipient (PR 1). `coincube-api` validates the role and
-    /// refuses to treat the key as a Vault signer (invariant I2). Returns the
-    /// stored recipient row.
-    pub async fn register_recovery_kit_recipient(
-        &self,
-        cube_id: u64,
-        key_id: u64,
-        tier: super::OwnerRecoveryTier,
-    ) -> Result<super::RecoveryKitRecipient, CoincubeError> {
-        let url = format!(
-            "{}/api/v1/connect/cubes/{}/recovery-kit/recipients",
-            self.base_url, cube_id
-        );
-        let req = super::RegisterRecoveryRecipientRequest {
-            key_id,
-            role: super::RECOVERY_RECIPIENT_ROLE_OWNER_SELF.to_string(),
-            tier,
-        };
-        let res = self.client.post(&url).json(&req).send().await?;
-        Self::parse_recovery_response(res).await
-    }
-
     /// `GET /api/v1/connect/cubes/{cubeId}/recovery-kit/recipients`
-    /// (authenticated, owner-only). Lists the cube's recovery recipients (PR 2)
-    /// so the desktop can read the `owner-self` row's xpub + derivation path to
-    /// seal to. `404` → `NotFound` (no recipient registered yet).
+    /// (authenticated, owner-only). Lists the cube's recovery recipients so the
+    /// desktop can **detect** the phone-registered `owner-self` row and read its
+    /// xpub + derivation path to seal to (PR 1 detect + PR 2 seal). Registration
+    /// is phone-initiated (COIN-390) — the desktop never POSTs a recipient.
+    /// `404` → `NotFound` (no recipient registered yet).
     pub async fn list_recovery_kit_recipients(
         &self,
         cube_id: u64,
@@ -3444,43 +3422,6 @@ mod owner_keychain_recovery_tests {
     use crate::services::coincube::{CoincubeClient, CoincubeError, OwnerRecoveryTier};
     use httpmock::{Method as MockMethod, MockServer};
     use serde_json::json;
-
-    #[tokio::test]
-    async fn register_recipient_posts_owner_self_role_and_tier() {
-        let server = MockServer::start();
-        let mock = server.mock(|when, then| {
-            when.method(MockMethod::POST)
-                .path("/api/v1/connect/cubes/42/recovery-kit/recipients")
-                .json_body_partial(
-                    r#"{ "keyId": 77, "role": "owner-self", "tier": "full_cube" }"#,
-                );
-            then.status(200).json_body(json!({
-                "success": true,
-                "data": {
-                    "id": 1,
-                    "keyId": 77,
-                    "role": "owner-self",
-                    "tier": "full_cube",
-                    "key": {
-                        "id": 77,
-                        "xpub": "xpub6EuX7TBEwhFgifQY24vFeMRqeWHGyGCupztDxk7G2ECAqGQ22Fik8E811p8GrM2LfajQzLidXy4qECxhdcxChkjiKhnq2fiVMVjdfSoZQwg",
-                        "derivationPath": "m/48h/1h/0h/2h"
-                    }
-                }
-            }));
-        });
-
-        let client = CoincubeClient::for_test(server.base_url());
-        let row = client
-            .register_recovery_kit_recipient(42, 77, OwnerRecoveryTier::FullCube)
-            .await
-            .expect("register should succeed");
-        mock.assert();
-        assert!(row.is_owner_self());
-        assert_eq!(row.key_id, 77);
-        assert_eq!(row.tier, Some(OwnerRecoveryTier::FullCube));
-        assert_eq!(row.key.unwrap().derivation_path, "m/48h/1h/0h/2h");
-    }
 
     #[tokio::test]
     async fn list_recipients_returns_owner_self_row_with_key() {

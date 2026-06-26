@@ -1035,11 +1035,14 @@ pub enum RecoveryKitMessage {
     /// User picked a protection mode on the choice screen (PR 2). Routes to the
     /// password path (`Password`/`Both`) or runs the phone seal (`Phone`).
     SelectProtectionMode(RecoveryProtectionMode),
-    /// User clicked "Set up phone protection" on the choice screen (PR 1) —
-    /// mint + attach an `owner-self` Keychain key and register it as a recovery
-    /// recipient. (The Keychain mint is stubbed until keychain-app PR 1 lands.)
+    /// User clicked "Check for my phone key" on the choice screen (PR 1).
+    /// Provisioning is phone-initiated (COIN-390): the Keychain app mints +
+    /// registers the `owner-self` recovery recipient. This action only *detects*
+    /// it — polls the recipients list until the row appears.
     ProvisionPhone,
-    /// Async result of [`Self::ProvisionPhone`].
+    /// Async result of [`Self::ProvisionPhone`] (the detect): `Ok(())` once the
+    /// `owner-self` recipient exists; `Err` carries the "set this up on your
+    /// phone first" copy.
     ProvisionResult(Result<(), String>),
     /// Async result of the phone seal+upload (PR 2). `Ok(())` on success; the
     /// error string is display-safe.

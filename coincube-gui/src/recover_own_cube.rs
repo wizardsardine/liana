@@ -27,7 +27,8 @@ use coincube_ui::{
 
 use crate::services::coincube::{CoincubeClient, CoincubeError};
 
-const SIGNED_OUT_PROMPT: &str = "Sign in to your account to see Cubes you can recover with your phone.";
+const SIGNED_OUT_PROMPT: &str =
+    "Sign in to your account to see Cubes you can recover with your phone.";
 
 /// One row: a Cube the signed-in owner can recover with their phone.
 #[derive(Debug, Clone)]
@@ -219,10 +220,12 @@ pub fn view(panel: &RecoverOwnCubePanel) -> Element<'_, RecoverOwnCubeMessage> {
                 .center_x(Length::Fill)
                 .into()
         }
-        ListState::Error(msg) => Container::new(p1_regular(msg.clone()).style(theme::text::secondary))
-            .padding(20)
-            .center_x(Length::Fill)
-            .into(),
+        ListState::Error(msg) => {
+            Container::new(p1_regular(msg.clone()).style(theme::text::secondary))
+                .padding(20)
+                .center_x(Length::Fill)
+                .into()
+        }
         ListState::Loaded(rows) if rows.is_empty() => Container::new(
             p1_regular(
                 "No Cubes are set up for phone recovery on this account. Set one up from \

@@ -31,13 +31,10 @@ use crate::app::wallet::Wallet;
 use crate::feature_flags;
 use crate::pin_input::PinInput;
 use crate::services::coincube::{
-    CoincubeClient, CoincubeError, OwnerRecoveryTier, RecoveryKit as ApiRecoveryKit,
-    RecoveryKitStatus, RECOVERY_KIT_SCHEME_AES_256_GCM,
+    CoincubeClient, CoincubeError, RecoveryKit as ApiRecoveryKit, RecoveryKitStatus,
+    RECOVERY_KIT_SCHEME_AES_256_GCM,
 };
-use crate::services::inheritance::{
-    find_owner_self_recipient, mint_owner_self_key, register_owner_self_recipient,
-    seal_and_upload_owner_self,
-};
+use crate::services::inheritance::{find_owner_self_recipient, seal_and_upload_owner_self};
 use crate::services::recovery::{
     self, DescriptorBlob, DescriptorBlobCube, DescriptorBlobSigner, DescriptorBlobVault, KdfParams,
     SeedBlob, SeedBlobCube, SeedBlobMnemonic, BLOB_VERSION, MIN_PASSWORD_LEN,
@@ -514,21 +511,17 @@ pub fn update(
                 set_protection_error(rk, "This Cube isn't registered with Connect yet.");
                 return Task::none();
             };
-            // A mnemonic Cube can escrow its seed (Full-Cube); a passkey Cube
-            // can only escrow the descriptor (Vault-only).
-            let tier = match seed_source {
-                SeedSource::Mnemonic => OwnerRecoveryTier::FullCube,
-                SeedSource::Passkey => OwnerRecoveryTier::VaultOnly,
-            };
             if let RecoveryKitState::ProtectionChoice {
-                provisioning, error, ..
+                provisioning,
+                error,
+                ..
             } = &mut rk.flow
             {
                 *provisioning = true;
                 *error = None;
             }
             Task::perform(
-                async move { provision_phone(client, cube_id, tier).await },
+                async move { detect_owner_self_recipient(client, cube_id).await },
                 |res| {
                     Message::View(view::Message::Settings(view::SettingsMessage::RecoveryKit(
                         RecoveryKitMessage::ProvisionResult(res),
@@ -539,7 +532,9 @@ pub fn update(
 
         RecoveryKitMessage::ProvisionResult(res) => {
             if let RecoveryKitState::ProtectionChoice {
-                provisioning, error, ..
+                provisioning,
+                error,
+                ..
             } = &mut rk.flow
             {
                 *provisioning = false;
@@ -566,10 +561,18 @@ pub fn update(
                 Task::batch([toast, reload])
             }
             Err(e) => {
-                rk.flow = RecoveryKitState::Error {
-                    message: e.clone(),
-                };
-                Task::done(Message::View(view::Message::ShowError(e)))
+                rk.flow = RecoveryKitState::Error { message: e.clone() };
+                // "Both" mode chains this seal *after* a successful password
+                // upload, so the kit on Connect has already changed even though
+                // the phone half failed. Refresh status now (it only updates
+                // `rk.status`, not the `Error` flow) so the inline card reflects
+                // the real server state once the user dismisses the error —
+                // otherwise it keeps showing the pre-upload cache.
+                let reload = load_status(rk, client, server_cube_id);
+                Task::batch([
+                    Task::done(Message::View(view::Message::ShowError(e))),
+                    reload,
+                ])
             }
         },
 
@@ -971,8 +974,21 @@ fn password_entry(
 
 /// Set the inline error on the protection-choice screen (no-op off that screen).
 fn set_protection_error(rk: &mut RecoveryKit, msg: &str) {
-    if let RecoveryKitState::ProtectionChoice { error, .. } = &mut rk.flow {
-        *error = Some(msg.to_string());
+    match &mut rk.flow {
+        // On the protection-choice screen, surface the failure inline so the
+        // user stays put and can pick another mode or retry.
+        RecoveryKitState::ProtectionChoice { error, .. } => {
+            *error = Some(msg.to_string());
+        }
+        // Reached from the "Both" chain (the password kit already uploaded; the
+        // phone seal couldn't even start). The flow is `Uploading`, so an inline
+        // choice-screen error would be a silent no-op and leave the wizard stuck
+        // on the uploading screen forever. Fall back to the terminal error state.
+        _ => {
+            rk.flow = RecoveryKitState::Error {
+                message: msg.to_string(),
+            };
+        }
     }
 }
 
@@ -998,9 +1014,32 @@ fn gather_cube_meta(cache: &Cache, local_cube_id: &str) -> Option<(SeedBlobCube,
     Some((meta, cube_uuid, network))
 }
 
+/// Bail out of `start_phone_seal` after a synchronous preflight failure
+/// (missing client / cube / settings), branching by the caller's flow:
+///   * Direct Phone path — the flow is still `ProtectionChoice` and the unlocked
+///     `mnemonic` was lifted out for the seal. Put it back so a retry can still
+///     escrow the seed instead of silently downgrading to descriptor-only.
+///   * "Both" chain — the flow is `Uploading` (the password kit already
+///     uploaded); the lifted mnemonic is no longer needed and is dropped.
+/// `set_protection_error` then shows the message inline on the choice screen, or
+/// routes the `Uploading` flow to the terminal error state so the wizard isn't
+/// stranded mid-upload.
+fn fail_phone_preflight(
+    rk: &mut RecoveryKit,
+    mnemonic: Option<Zeroizing<Vec<String>>>,
+    msg: &str,
+) -> Task<Message> {
+    if let RecoveryKitState::ProtectionChoice { mnemonic: slot, .. } = &mut rk.flow {
+        *slot = mnemonic;
+    }
+    set_protection_error(rk, msg);
+    Task::none()
+}
+
 /// Transition into `PhoneSealing` and spawn the phone seal+upload task. Used by
 /// both the direct phone path and the "Both" chain. On a missing client / cube /
-/// settings, surfaces an inline error on the choice screen instead.
+/// settings, hands off to `fail_phone_preflight` (inline error + mnemonic
+/// restored on the choice screen, or terminal error for the "Both" chain).
 #[allow(clippy::too_many_arguments)]
 fn start_phone_seal(
     rk: &mut RecoveryKit,
@@ -1013,16 +1052,13 @@ fn start_phone_seal(
     mnemonic: Option<Zeroizing<Vec<String>>>,
 ) -> Task<Message> {
     let Some(client) = client else {
-        set_protection_error(rk, "Sign in to Connect to back up to your phone.");
-        return Task::none();
+        return fail_phone_preflight(rk, mnemonic, "Sign in to Connect to back up to your phone.");
     };
     let Some(cube_id) = server_cube_id else {
-        set_protection_error(rk, "This Cube isn't registered with Connect yet.");
-        return Task::none();
+        return fail_phone_preflight(rk, mnemonic, "This Cube isn't registered with Connect yet.");
     };
     let Some((cube_meta, cube_uuid, network)) = gather_cube_meta(cache, local_cube_id) else {
-        set_protection_error(rk, "Failed to read settings file.");
-        return Task::none();
+        return fail_phone_preflight(rk, mnemonic, "Failed to read settings file.");
     };
     let descriptor_blob = wallet
         .as_ref()
@@ -1081,19 +1117,18 @@ async fn seal_phone(
         .map_err(|e| e.to_string())
 }
 
-/// Provision the owner's `owner-self` recovery recipient (PR 1): mint + attach a
-/// Keychain key, then register it. The Keychain mint is stubbed until
-/// keychain-app PR 1 lands, so this currently fails closed with a clear message.
-async fn provision_phone(
-    client: CoincubeClient,
-    cube_id: u64,
-    tier: OwnerRecoveryTier,
-) -> Result<(), String> {
-    let key_id = mint_owner_self_key(cube_id).await.map_err(|e| e.to_string())?;
-    register_owner_self_recipient(&client, cube_id, key_id, tier)
+/// Detect the owner's phone-registered `owner-self` recovery recipient (PR 1).
+/// Provisioning is phone-initiated (COIN-390): the Keychain app mints + attaches
+/// the key and registers the recipient (tier `full_cube`). The desktop never
+/// mints or registers — it polls the recipients list and reports whether the
+/// `owner-self` row exists yet. `Ok(())` once it does (the user can then seal via
+/// "My phone" / "Both"); `Err(..)` with the [`OwnerSelfError::NoRecipient`]
+/// "set this up on your phone first" copy until they create it on their phone.
+async fn detect_owner_self_recipient(client: CoincubeClient, cube_id: u64) -> Result<(), String> {
+    find_owner_self_recipient(&client, cube_id)
         .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Network string used inside `SeedBlob`/`DescriptorBlob`. Routed
@@ -1635,6 +1670,99 @@ mod tests {
         assert!(matches!(
             flow,
             RecoveryKitState::Error { ref message } if message == "stale upload result"
+        ));
+    }
+
+    #[test]
+    fn set_protection_error_shows_inline_on_choice_screen() {
+        // On the protection-choice screen a synchronous phone-seal
+        // bail-out should surface inline so the user stays put.
+        let mut rk = RecoveryKit::new();
+        rk.flow = RecoveryKitState::ProtectionChoice {
+            mode: RecoveryKitMode::Create,
+            mnemonic: None,
+            provisioning: false,
+            error: None,
+        };
+        set_protection_error(&mut rk, "Sign in to Connect to back up to your phone.");
+        assert!(matches!(
+            rk.flow,
+            RecoveryKitState::ProtectionChoice { ref error, .. }
+                if error.as_deref() == Some("Sign in to Connect to back up to your phone.")
+        ));
+    }
+
+    #[test]
+    fn set_protection_error_from_uploading_falls_back_to_error() {
+        // The "Both" chain reaches `start_phone_seal` with the flow in
+        // `Uploading` (the password kit already uploaded). A synchronous
+        // bail-out there must NOT silently no-op — that left the wizard
+        // stuck on the uploading screen forever — but transition to the
+        // terminal error state so the failure is visible.
+        let mut rk = RecoveryKit::new();
+        rk.flow = RecoveryKitState::Uploading {
+            pending: sample_pending(),
+        };
+        set_protection_error(&mut rk, "Failed to read settings file.");
+        assert!(matches!(
+            rk.flow,
+            RecoveryKitState::Error { ref message } if message == "Failed to read settings file."
+        ));
+    }
+
+    #[test]
+    fn fail_phone_preflight_restores_mnemonic_on_choice_screen() {
+        // Direct Phone path: `SelectProtectionMode` lifts the mnemonic
+        // out of the choice screen for the seal, so the flow is
+        // `ProtectionChoice` with `mnemonic: None`. A preflight bail-out
+        // must put the mnemonic back (so a retry can still escrow the
+        // seed) AND surface the error inline.
+        let mut rk = RecoveryKit::new();
+        rk.flow = RecoveryKitState::ProtectionChoice {
+            mode: RecoveryKitMode::Create,
+            mnemonic: None,
+            provisioning: false,
+            error: None,
+        };
+        let mnemonic = Some(Zeroizing::new(vec!["word".to_string(); 12]));
+        let _ = fail_phone_preflight(
+            &mut rk,
+            mnemonic,
+            "Sign in to Connect to back up to your phone.",
+        );
+        match &rk.flow {
+            RecoveryKitState::ProtectionChoice {
+                mnemonic, error, ..
+            } => {
+                assert_eq!(
+                    mnemonic.as_ref().map(|m| m.len()),
+                    Some(12),
+                    "mnemonic must be restored so a retry can still escrow the seed"
+                );
+                assert_eq!(
+                    error.as_deref(),
+                    Some("Sign in to Connect to back up to your phone.")
+                );
+            }
+            other => panic!("expected ProtectionChoice, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn fail_phone_preflight_from_uploading_transitions_to_error() {
+        // "Both" chain: the password kit already uploaded and the flow is
+        // `Uploading`. A preflight bail-out must not strand the wizard
+        // there — it transitions to the terminal error state (the lifted
+        // mnemonic is no longer needed and is dropped).
+        let mut rk = RecoveryKit::new();
+        rk.flow = RecoveryKitState::Uploading {
+            pending: sample_pending(),
+        };
+        let mnemonic = Some(Zeroizing::new(vec!["word".to_string(); 12]));
+        let _ = fail_phone_preflight(&mut rk, mnemonic, "Failed to read settings file.");
+        assert!(matches!(
+            rk.flow,
+            RecoveryKitState::Error { ref message } if message == "Failed to read settings file."
         ));
     }
 

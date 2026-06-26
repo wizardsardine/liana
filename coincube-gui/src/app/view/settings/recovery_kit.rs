@@ -353,7 +353,11 @@ pub fn protection_choice_view<'a>(
             Row::new()
                 .width(Length::Fill)
                 .push(Space::new().width(Length::Fill))
-                .push(text("Choose how to protect your Recovery Kit").size(22).bold())
+                .push(
+                    text("Choose how to protect your Recovery Kit")
+                        .size(22)
+                        .bold(),
+                )
                 .push(Space::new().width(Length::Fill)),
         )
         .push(
@@ -374,14 +378,23 @@ pub fn protection_choice_view<'a>(
         ("Use my phone", RecoveryProtectionMode::Phone, false),
         ("Use both", RecoveryProtectionMode::Both, false),
     ] {
-        let btn = if primary {
+        let base = if primary {
             ui_button::primary(None, label)
         } else {
             ui_button::secondary(None, label)
         }
-        .on_press(wrap(RecoveryKitMessage::SelectProtectionMode(mode)))
         .padding([12, 16])
         .width(Length::Fixed(380.0));
+        // Gate the choice on provisioning being idle: dispatching
+        // `SelectProtectionMode` while the owner-self provisioning task is in
+        // flight would advance the flow out of `ProtectionChoice` — abandoning
+        // provisioning (its `ProvisionResult` then no-ops) and, for phone/both,
+        // racing the recipient registration. Mirrors the `provision_btn` gating.
+        let btn = if provisioning {
+            base
+        } else {
+            base.on_press(wrap(RecoveryKitMessage::SelectProtectionMode(mode)))
+        };
         col = col.push(
             Row::new()
                 .width(Length::Fill)
@@ -391,11 +404,12 @@ pub fn protection_choice_view<'a>(
         );
     }
 
-    // Provisioning action (PR 1) — mint + register the owner-self recovery key.
+    // Detect action (PR 1) — provisioning is phone-initiated (COIN-390); the
+    // desktop only checks whether the Keychain app has registered the key yet.
     let provision_label = if provisioning {
-        "Setting up phone protection…"
+        "Checking your phone…"
     } else {
-        "Set up phone protection"
+        "Check for my phone key"
     };
     let provision_btn = {
         let b = ui_button::secondary(None, provision_label)
@@ -423,9 +437,9 @@ pub fn protection_choice_view<'a>(
                 .push(
                     Container::new(
                         text(
-                            "First time? Set up phone protection once to register a recovery \
-                             key on your phone, then choose “Use my phone”. You'll need this \
-                             phone (or its recovery phrase) to restore.",
+                            "First time? Create a recovery key in your Keychain app, then \
+                             “Check for my phone key” and choose “Use my phone”. You'll need \
+                             this phone (or its recovery phrase) to restore.",
                         )
                         .size(12),
                     )
