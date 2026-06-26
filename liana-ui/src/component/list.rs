@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use bitcoin::bip32::Fingerprint;
 use iced::{
     alignment::Horizontal,
     widget::{column, row},
@@ -11,6 +12,7 @@ use crate::{
         badge::{self, Tile},
         button::{self, EntryWidth, ListEntryAccent},
         text::{self, new::caption},
+        tooltip,
     },
     icon, theme,
     widget::{Button, Container, Element, Row},
@@ -59,22 +61,83 @@ pub enum EntryRegisterStatus {
 }
 
 /// The trailing status shown on a hardware-device entry.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum DeviceStatus {
-    /// No status (no trailing).
     None,
-    /// The device's key is already assigned to another key in the wallet.
     AlreadyUsed,
+    Fingerprint(Fingerprint),
+    Selectable(Fingerprint),
+    Processing,
+    NotInPath,
+    Unrelated,
+    WrongNetwork,
+    ConnectionError,
+    Locked(Option<String>),
+    OutdatedFirmware(String),
+    Signed,
+    Registered,
+    Selected,
+    Warning(&'static str),
 }
 
-impl<'a, M: 'a> From<DeviceStatus> for Option<Element<'a, M>> {
+fn device_success_mark<'a, M: 'static>(label: Option<&'static str>) -> Element<'a, M> {
+    row![label.map(text::new::b5_medium), badge::success()]
+        .align_y(Alignment::Center)
+        .spacing(5)
+        .into()
+}
+
+impl<'a, M: 'static> From<DeviceStatus> for Option<Element<'a, M>> {
     fn from(status: DeviceStatus) -> Self {
+        let secondary = |label: String| -> Element<'a, M> {
+            text::new::small_caption(label)
+                .style(theme::text::secondary)
+                .into()
+        };
         match status {
             DeviceStatus::None => None,
-            DeviceStatus::AlreadyUsed => Some(
-                text::new::small_caption("Already used")
-                    .style(theme::text::secondary)
+            DeviceStatus::AlreadyUsed => Some(secondary("Already used".to_string())),
+            DeviceStatus::Fingerprint(fp) => Some(secondary(format!("#{fp}"))),
+            DeviceStatus::Selectable(fp) => Some(
+                row![
+                    text::new::small_caption(format!("#{fp}")).style(theme::text::secondary),
+                    icon::chevron_right().size(16).style(theme::text::secondary)
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .into(),
+            ),
+            DeviceStatus::Processing => {
+                Some(text::new::b5_medium("Processing, please check your device").into())
+            }
+            DeviceStatus::NotInPath => {
+                Some(text::new::b5_medium("This signer is not part of this spending path.").into())
+            }
+            DeviceStatus::Unrelated => Some(
+                text::new::b5_medium("This signing device is not related to this Liana wallet.")
                     .into(),
+            ),
+            DeviceStatus::WrongNetwork => {
+                Some(text::new::b5_medium("Wrong network in the device settings").into())
+            }
+            DeviceStatus::ConnectionError => Some(text::new::b5_medium("Connection error").into()),
+            DeviceStatus::Locked(Some(code)) => {
+                Some(text::new::b5_medium(format!("Locked, check code: {code}")).into())
+            }
+            DeviceStatus::Locked(None) => Some(text::new::b5_medium("Locked").into()),
+            DeviceStatus::OutdatedFirmware(version) => Some(
+                text::new::b5_medium(format!("Install firmware version {version} or later")).into(),
+            ),
+            DeviceStatus::Signed => Some(device_success_mark(Some("Signed"))),
+            DeviceStatus::Registered => Some(device_success_mark(Some("Registered"))),
+            DeviceStatus::Selected => Some(device_success_mark(None)),
+            DeviceStatus::Warning(w) => Some(
+                tooltip::tooltip_custom(
+                    w,
+                    icon::warning_icon(),
+                    iced::widget::tooltip::Position::Bottom,
+                )
+                .into(),
             ),
         }
     }
@@ -331,10 +394,10 @@ fn list_entry_row_with_enabled<'a, M: Clone + 'a>(
     button::list_entry_with_enabled(content, accent, width, enabled, msg)
 }
 
-pub fn entry_device_list<'a, M: Clone + 'a>(
+pub fn entry_device_list<'a, M: Clone + 'static>(
     title: impl Display,
     subtitle: Option<impl Display>,
-    trailing: impl Into<Option<Element<'a, M>>>,
+    trailing: DeviceStatus,
     width: EntryWidth,
     msg: Option<M>,
 ) -> Element<'a, M> {

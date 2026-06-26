@@ -1,11 +1,9 @@
 use std::fmt::Display;
 
 use async_hwi::{DeviceKind, Version};
-use iced::{widget::tooltip::Position, Alignment};
 use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::bip32::Fingerprint};
 use liana_ui::{
-    component::{list, modal::DeviceMark, tooltip_custom},
-    icon,
+    component::list::{self, DeviceStatus},
     widget::*,
 };
 
@@ -106,7 +104,7 @@ where
 /// Render an entry for a device that cannot be used as-is (unsupported, locked).
 /// Callers must have ruled out `Supported` already.
 pub fn unusable_device_entry<M: 'static + Clone>(hw: &HardwareWallet) -> Element<'static, M> {
-    let (fingerprint, kind, mark) = match hw {
+    let (fingerprint, kind, status) = match hw {
         HardwareWallet::Supported { .. } => {
             unreachable!("unusable_device_entry called with a Supported device")
         }
@@ -114,34 +112,27 @@ pub fn unusable_device_entry<M: 'static + Clone>(hw: &HardwareWallet) -> Element
             UnsupportedReason::NotPartOfWallet(fg) => (
                 Some(format!("#{fg}")),
                 kind.to_string(),
-                DeviceMark::Unrelated,
+                DeviceStatus::Unrelated,
             ),
-            UnsupportedReason::WrongNetwork => (None, kind.to_string(), DeviceMark::WrongNetwork),
+            UnsupportedReason::WrongNetwork => (None, kind.to_string(), DeviceStatus::WrongNetwork),
             UnsupportedReason::Version {
                 minimal_supported_version,
             } => (
                 None,
                 kind.to_string(),
-                DeviceMark::OutdatedFirmware(minimal_supported_version.to_string()),
+                DeviceStatus::OutdatedFirmware(minimal_supported_version.to_string()),
             ),
-            _ => (None, kind.to_string(), DeviceMark::ConnectionError),
+            _ => (None, kind.to_string(), DeviceStatus::ConnectionError),
         },
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => (
             None,
             kind.to_string(),
-            DeviceMark::Locked(pairing_code.clone()),
+            DeviceStatus::Locked(pairing_code.clone()),
         ),
     };
-    device_list_row(
-        fingerprint,
-        Some(kind),
-        None::<&str>,
-        Some(mark),
-        None,
-        None,
-    )
+    device_list_row(fingerprint, Some(kind), None::<&str>, status, None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -155,28 +146,26 @@ fn signing_entry<'a, M: Clone + 'static>(
     can_sign: bool,
     select_msg: Option<M>,
 ) -> Element<'a, M> {
-    let (alias, mark, warning, on_press) = if signing {
-        (alias, Some(DeviceMark::Processing), None, None)
+    let (alias, status, on_press) = if signing {
+        (alias, DeviceStatus::Processing, None)
     } else if signed {
-        (alias, Some(DeviceMark::Signed), None, None)
+        (alias, DeviceStatus::Signed, None)
     } else if registered == Some(false) {
         (
             alias,
-            None,
-            Some("The wallet descriptor is not registered on the device.\n You can register it in the settings."),
+            DeviceStatus::Warning("The wallet descriptor is not registered on the device.\n You can register it in the settings."),
             None,
         )
     } else if !can_sign {
-        (None, Some(DeviceMark::NotInPath), None, None)
+        (None, DeviceStatus::NotInPath, None)
     } else {
-        (alias, None, None, select_msg)
+        (alias, DeviceStatus::None, select_msg)
     };
     device_list_row(
         Some(format!("#{fingerprint}")),
         Some(kind),
         alias,
-        mark,
-        warning,
+        status,
         on_press,
     )
 }
@@ -197,32 +186,28 @@ fn registration_entry<'a, M: Clone + 'static>(
 ) -> Element<'a, M> {
     let not_tapminiscript =
         device_must_support_taproot && !is_compatible_with_tapminiscript(kind, version);
-    let taproot_warning =
-        not_tapminiscript.then_some("Device firmware version does not support taproot miniscript");
-    let (alias, mark, warning, on_press) = if unrelated {
-        (None, Some(DeviceMark::Unrelated), None, None)
+    let (alias, status, on_press) = if unrelated {
+        (None, DeviceStatus::Unrelated, None)
     } else if chosen && processing {
-        (alias, Some(DeviceMark::Processing), None, None)
+        (alias, DeviceStatus::Processing, None)
     } else if complete && has_descriptor {
+        (alias, DeviceStatus::Selected, select_msg)
+    } else if complete {
+        (alias, DeviceStatus::Registered, select_msg)
+    } else if not_tapminiscript {
         (
             alias,
-            Some(DeviceMark::Selected),
-            taproot_warning,
+            DeviceStatus::Warning("Device firmware version does not support taproot miniscript"),
             select_msg,
         )
-    } else if complete {
-        (alias, Some(DeviceMark::Registered), None, select_msg)
-    } else if not_tapminiscript {
-        (alias, None, taproot_warning, select_msg)
     } else {
-        (alias, None, None, select_msg)
+        (alias, DeviceStatus::None, select_msg)
     };
     device_list_row(
         Some(format!("#{fingerprint}")),
         Some(kind),
         alias,
-        mark,
-        warning,
+        status,
         on_press,
     )
 }
@@ -231,8 +216,7 @@ fn device_list_row<'a, M, F, K, A>(
     fingerprint: Option<F>,
     kind: Option<K>,
     alias: Option<A>,
-    mark: Option<DeviceMark>,
-    warning: Option<&'static str>,
+    status: DeviceStatus,
     on_press: Option<M>,
 ) -> Element<'a, M>
 where
@@ -244,7 +228,6 @@ where
     let fingerprint = fingerprint.map(|fingerprint| fingerprint.to_string());
     let kind = kind.map(|kind| kind.to_string());
     let alias = alias.map(|alias| alias.to_string());
-    let warning = warning.or_else(|| mark.as_ref().and_then(DeviceMark::warning));
 
     let title = alias
         .or_else(|| kind.clone())
@@ -255,26 +238,11 @@ where
         (None, Some(fingerprint)) => Some(fingerprint),
         (None, None) => None,
     };
-    let mark = mark.map(|mark| mark.element());
-    let warning =
-        warning.map(|warning| tooltip_custom(warning, icon::warning_icon(), Position::Bottom));
-    let trailing = if mark.is_some() || warning.is_some() {
-        Some(
-            Row::new()
-                .push_maybe(mark)
-                .push_maybe(warning)
-                .align_y(Alignment::Center)
-                .spacing(10)
-                .into(),
-        )
-    } else {
-        None
-    };
 
     list::entry_device_list(
         title,
         subtitle,
-        trailing,
+        status,
         liana_ui::component::button::EntryWidth::Fill,
         on_press,
     )

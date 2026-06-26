@@ -4,9 +4,7 @@ use iced::{
     alignment::{Horizontal, Vertical},
     widget::{
         button::{Status, Style},
-        column, row,
-        tooltip::Position,
-        Space,
+        column, row, Space,
     },
     Length, Padding,
 };
@@ -18,9 +16,10 @@ use bitcoin::bip32::{ChildNumber, Fingerprint};
 use crate::{
     color,
     component::{
-        badge, button,
+        button,
         form::{self, Value},
-        list, pick_list,
+        list::{self, DeviceStatus},
+        pick_list,
         text::new::{b1_bold, b4_medium, b5_bold, b5_medium, caption},
         tooltip,
     },
@@ -335,67 +334,6 @@ impl Display for Account {
     }
 }
 
-pub enum DeviceMark {
-    Processing,
-    NotInPath,
-    Unrelated,
-    WrongNetwork,
-    ConnectionError,
-    Locked(Option<String>),
-    OutdatedFirmware(String),
-    Signed,
-    Registered,
-    Selected,
-}
-
-impl Display for DeviceMark {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DeviceMark::Processing => write!(f, "Processing, please check your device"),
-            DeviceMark::NotInPath => write!(f, "This signer is not part of this spending path."),
-            DeviceMark::Unrelated => {
-                write!(
-                    f,
-                    "This signing device is not related to this Liana wallet."
-                )
-            }
-            DeviceMark::WrongNetwork => write!(f, "Wrong network in the device settings"),
-            DeviceMark::ConnectionError => write!(f, "Connection error"),
-            DeviceMark::Locked(Some(code)) => write!(f, "Locked, check code: {code}"),
-            DeviceMark::Locked(None) => write!(f, "Locked"),
-            DeviceMark::OutdatedFirmware(version) => {
-                write!(f, "Install firmware version {version} or later")
-            }
-            DeviceMark::Signed => write!(f, "Signed"),
-            DeviceMark::Registered => write!(f, "Registered"),
-            DeviceMark::Selected => Ok(()),
-        }
-    }
-}
-
-impl DeviceMark {
-    pub fn element<'a, M: 'static>(&self) -> Element<'a, M> {
-        match self {
-            DeviceMark::Signed | DeviceMark::Registered => success_mark(Some(self.to_string())),
-            DeviceMark::Selected => success_mark(None),
-            _ => b5_medium(self.to_string()).into(),
-        }
-    }
-
-    pub fn warning(&self) -> Option<&'static str> {
-        match self {
-            DeviceMark::WrongNetwork => Some(
-                "The wrong bitcoin application is open or the device was initialized with the wrong network",
-            ),
-            DeviceMark::OutdatedFirmware(_) => Some("Please upgrade firmware"),
-            DeviceMark::ConnectionError => {
-                Some("Make sure your device is unlocked and a supported Bitcoin application is opened.")
-            }
-            _ => None,
-        }
-    }
-}
-
 fn device_icon(is_device: bool) -> Text<'static> {
     if is_device {
         icon::usb_drive_icon()
@@ -427,19 +365,11 @@ fn device_designation<'a, M: 'a>(
     .align_x(Horizontal::Left)
 }
 
-fn success_mark<'a, M: 'static>(label: Option<String>) -> Element<'a, M> {
-    row![label.map(b5_medium), badge::success()]
-        .align_y(Vertical::Center)
-        .spacing(H_SPACING)
-        .into()
-}
-
 pub fn device_entry<'a, M, F, K, A>(
     fingerprint: Option<F>,
     kind: Option<K>,
     alias: Option<A>,
-    mark: Option<DeviceMark>,
-    warning: Option<&'static str>,
+    status: DeviceStatus,
     on_press: Option<M>,
 ) -> Element<'a, M>
 where
@@ -449,14 +379,15 @@ where
     A: Display + 'a,
 {
     let icon = device_icon(kind.is_some());
-    let warning = warning.or_else(|| mark.as_ref().and_then(DeviceMark::warning));
-    let mark: Option<Element<'a, M>> = mark.map(|m| m.element());
-    let warning =
-        warning.map(|w| tooltip::tooltip_custom(w, icon::warning_icon(), Position::Bottom));
     let designation = device_designation(kind, alias, fingerprint);
-    let row = row![icon, designation, Space::fill_width(), mark, warning]
-        .align_y(Vertical::Center)
-        .spacing(H_SPACING);
+    let row = row![
+        icon,
+        designation,
+        Space::fill_width(),
+        Option::<Element<'a, M>>::from(status)
+    ]
+    .align_y(Vertical::Center)
+    .spacing(H_SPACING);
     button::device(row, on_press)
 }
 
