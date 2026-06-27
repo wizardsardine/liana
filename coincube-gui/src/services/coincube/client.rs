@@ -1228,11 +1228,11 @@ impl CoincubeClient {
     }
 
     /// `POST /api/v1/connect/duress/clear` (authenticated). Submits the
-    /// all-clear passphrase hash after the lockout window expires.
-    pub async fn clear_duress(&self, all_clear_passphrase_hash: &str) -> Result<(), CoincubeError> {
+    /// all-clear passphrase after the lockout window expires.
+    pub async fn clear_duress(&self, all_clear_passphrase: &str) -> Result<(), CoincubeError> {
         let url = format!("{}/api/v1/connect/duress/clear", self.base_url);
         let req = super::ClearDuressRequest {
-            all_clear_passphrase_hash: all_clear_passphrase_hash.to_string(),
+            all_clear_passphrase_hash: all_clear_passphrase.to_string(),
         };
         let res = self.client.post(&url).json(&req).send().await?;
         res.check_success().await?;

@@ -2199,18 +2199,12 @@ impl ConnectAccountPanel {
                 else {
                     return iced::Task::none();
                 };
-                let hash = match enroll::hash_duress_secret(passphrase) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        self.error = Some(e);
-                        return iced::Task::none();
-                    }
-                };
+                let passphrase = passphrase.clone();
                 *submitting = true;
                 let client = self.client.clone();
                 let gen = self.session_generation;
                 return iced::Task::perform(
-                    async move { client.clear_duress(&hash).await },
+                    async move { client.clear_duress(&passphrase).await },
                     move |res| {
                         Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::Duress(DuressMessage::ClearResult(
