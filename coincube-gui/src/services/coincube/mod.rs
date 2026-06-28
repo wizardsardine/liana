@@ -1735,7 +1735,6 @@ impl DownloadError {
 /// coincube-api "channels mask" wire field. SMS/WhatsApp require a phone;
 /// Email requires an email — the UI enforces that pairing before letting a
 /// bit be set.
-
 pub const DURESS_CHANNEL_SMS: &str = "sms";
 pub const DURESS_CHANNEL_WHATSAPP: &str = "whatsapp";
 pub const DURESS_CHANNEL_EMAIL: &str = "email";
