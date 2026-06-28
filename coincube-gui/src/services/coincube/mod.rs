@@ -1874,7 +1874,10 @@ mod duress_alert_contact_tests {
             display_name: "Jane".into(),
             phone: Some("+15551234567".into()),
             email: None,
-            channels: vec![ DURESS_CHANNEL_SMS.to_string(), DURESS_CHANNEL_WHATSAPP.to_string()],
+            channels: vec![
+                DURESS_CHANNEL_SMS.to_string(),
+                DURESS_CHANNEL_WHATSAPP.to_string(),
+            ],
             intro_sent_at: None,
             opted_out_at: None,
             created_at: Some("2026-06-11T00:00:00Z".to_string()),

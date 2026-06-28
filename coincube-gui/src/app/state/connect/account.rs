@@ -5195,7 +5195,7 @@ mod duress_contacts_tests {
             channels: vec![DURESS_CHANNEL_SMS.to_string()],
             intro_sent_at: None,
             opted_out_at: None,
-             created_at: Some("2026-06-11T00:00:00Z".to_string()),
+            created_at: Some("2026-06-11T00:00:00Z".to_string()),
             updated_at: Some("2026-06-11T00:00:00Z".to_string()),
         }
     }
