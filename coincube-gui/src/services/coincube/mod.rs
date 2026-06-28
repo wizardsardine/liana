@@ -1735,9 +1735,9 @@ impl DownloadError {
 /// coincube-api "channels mask" wire field. SMS/WhatsApp require a phone;
 /// Email requires an email — the UI enforces that pairing before letting a
 /// bit be set.
-pub const DURESS_CHANNEL_SMS: u8 = 1 << 0;
-pub const DURESS_CHANNEL_WHATSAPP: u8 = 1 << 1;
-pub const DURESS_CHANNEL_EMAIL: u8 = 1 << 2;
+pub const DURESS_CHANNEL_SMS: &str = "sms";
+pub const DURESS_CHANNEL_WHATSAPP: &str = "whatsapp";
+pub const DURESS_CHANNEL_EMAIL: &str = "email";
 
 /// A duress alert contact as returned by
 /// `GET /api/v1/connect/duress/contacts`.
@@ -1755,7 +1755,7 @@ pub struct DuressAlertContact {
     pub email: Option<String>,
     /// Bitmask of [`DURESS_CHANNEL_SMS`] / `_WHATSAPP` / `_EMAIL`.
     #[serde(default)]
-    pub channels: u8,
+    pub channels: Vec<String>,
     /// RFC 3339 timestamp of when the one-time intro message was sent,
     /// or `None` if it hasn't gone out yet (just-created contact).
     #[serde(default)]
@@ -1764,8 +1764,10 @@ pub struct DuressAlertContact {
     /// contact is permanently opted out and never messaged again.
     #[serde(default)]
     pub opted_out_at: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 impl DuressAlertContact {
@@ -1773,9 +1775,8 @@ impl DuressAlertContact {
     pub fn is_opted_out(&self) -> bool {
         self.opted_out_at.is_some()
     }
-
-    pub fn has_channel(&self, bit: u8) -> bool {
-        self.channels & bit != 0
+    pub fn has_channel(&self, channel: &str) -> bool {
+        self.channels.iter().any(|c| c == channel)
     }
 }
 
@@ -1791,7 +1792,7 @@ pub struct CreateDuressAlertContactRequest {
     pub phone: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
-    pub channels: u8,
+    pub channels: Vec<String>,
 }
 
 /// Body for `PATCH /api/v1/connect/duress/contacts/{id}`. Every field is
@@ -1809,7 +1810,7 @@ pub struct UpdateDuressAlertContactRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub channels: Option<u8>,
+    pub channels: Option<Vec<String>>,
 }
 
 /// Maximum duress alert contacts per account. Cost + abuse bound, mirrored
@@ -1867,19 +1868,19 @@ mod duress_alert_contact_tests {
 
     #[test]
     fn channel_bits_are_distinct() {
-        assert_eq!(DURESS_CHANNEL_SMS, 1);
-        assert_eq!(DURESS_CHANNEL_WHATSAPP, 2);
-        assert_eq!(DURESS_CHANNEL_EMAIL, 4);
         let c = DuressAlertContact {
             id: 1,
             display_name: "Jane".into(),
             phone: Some("+15551234567".into()),
             email: None,
-            channels: DURESS_CHANNEL_SMS | DURESS_CHANNEL_WHATSAPP,
+            channels: vec![
+                DURESS_CHANNEL_SMS.to_string(),
+                DURESS_CHANNEL_WHATSAPP.to_string(),
+            ],
             intro_sent_at: None,
             opted_out_at: None,
-            created_at: "2026-06-11T00:00:00Z".into(),
-            updated_at: "2026-06-11T00:00:00Z".into(),
+            created_at: Some("2026-06-11T00:00:00Z".to_string()),
+            updated_at: Some("2026-06-11T00:00:00Z".to_string()),
         };
         assert!(c.has_channel(DURESS_CHANNEL_SMS));
         assert!(c.has_channel(DURESS_CHANNEL_WHATSAPP));
@@ -1894,9 +1895,7 @@ mod duress_alert_contact_tests {
             "id": 7,
             "displayName": "Sam",
             "email": "sam@example.com",
-            "channels": 4,
-            "createdAt": "2026-06-11T00:00:00Z",
-            "updatedAt": "2026-06-11T00:00:00Z"
+            "channels": [DURESS_CHANNEL_EMAIL],
         });
         let c: DuressAlertContact = serde_json::from_value(v).unwrap();
         assert_eq!(c.display_name, "Sam");
@@ -1904,6 +1903,8 @@ mod duress_alert_contact_tests {
         assert_eq!(c.email.as_deref(), Some("sam@example.com"));
         assert!(c.has_channel(DURESS_CHANNEL_EMAIL));
         assert!(c.intro_sent_at.is_none());
+        assert!(c.created_at.is_none());
+        assert!(c.updated_at.is_none());
     }
 }
 

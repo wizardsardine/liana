@@ -2047,17 +2047,17 @@ impl ConnectAccountPanel {
                     dc.error = Some("That email doesn't look right.".to_string());
                     return iced::Task::none();
                 }
-                let mut channels: u8 = 0;
+                let mut channels = Vec::new();
                 if dc.form_ch_sms && !phone.is_empty() {
-                    channels |= DURESS_CHANNEL_SMS;
+                    channels.push(DURESS_CHANNEL_SMS.to_string());
                 }
                 if dc.form_ch_whatsapp && !phone.is_empty() {
-                    channels |= DURESS_CHANNEL_WHATSAPP;
+                    channels.push(DURESS_CHANNEL_WHATSAPP.to_string());
                 }
                 if dc.form_ch_email && !email.is_empty() {
-                    channels |= DURESS_CHANNEL_EMAIL;
+                    channels.push(DURESS_CHANNEL_EMAIL.to_string());
                 }
-                if channels == 0 {
+                if channels.is_empty() {
                     dc.error = Some(
                         "Pick at least one way to reach them (SMS, WhatsApp, or email)."
                             .to_string(),
@@ -5192,11 +5192,11 @@ mod duress_contacts_tests {
             display_name: format!("Contact {id}"),
             phone: Some("+15551234567".into()),
             email: None,
-            channels: DURESS_CHANNEL_SMS,
+            channels: vec![DURESS_CHANNEL_SMS.to_string()],
             intro_sent_at: None,
             opted_out_at: None,
-            created_at: "2026-06-11T00:00:00Z".into(),
-            updated_at: "2026-06-11T00:00:00Z".into(),
+            created_at: Some("2026-06-11T00:00:00Z".to_string()),
+            updated_at: Some("2026-06-11T00:00:00Z".to_string()),
         }
     }
 
