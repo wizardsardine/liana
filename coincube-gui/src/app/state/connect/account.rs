@@ -2199,6 +2199,9 @@ impl ConnectAccountPanel {
                 else {
                     return iced::Task::none();
                 };
+                if *submitting {
+                    return iced::Task::none();
+                }
                 let passphrase = zeroize::Zeroizing::new(passphrase.clone());
                 *submitting = true;
                 let client = self.client.clone();
