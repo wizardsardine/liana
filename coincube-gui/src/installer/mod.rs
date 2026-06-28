@@ -107,9 +107,9 @@ pub use message::Message;
 use step::{
     BackupDescriptor, BackupMnemonic, ChooseBackend, ChooseDescriptorTemplate, CoincubeConnectStep,
     DefineDescriptor, DefineNode, DescriptorTemplateDescription, Final, ImportDescriptor,
-    ImportRemoteWallet, InheritanceRestoreStep, InternalBitcoindStep, RecoverMnemonic,
-    RecoveryKitRestoreStep, RegisterDescriptor, RemoteBackendLogin, RestorePinSetupStep,
-    RestoreScope, SelectBitcoindTypeStep, Step, WalletAlias,
+    ImportRemoteWallet, InheritanceRestoreStep, InternalBitcoindStep, OwnerKeychainRestoreStep,
+    RecoverMnemonic, RecoveryKitRestoreStep, RegisterDescriptor, RemoteBackendLogin,
+    RestorePinSetupStep, RestoreScope, SelectBitcoindTypeStep, Step, WalletAlias,
 };
 
 #[derive(Debug, Clone)]
@@ -135,6 +135,17 @@ pub enum UserFlow {
     /// `full_cube` picks the scope: Full (seed + descriptor → a real Cube, with
     /// a PIN-setup step) vs descriptor-only (watch-only Vault recovery).
     RecoverInheritedVault {
+        cube_id: u64,
+        full_cube: bool,
+    },
+    /// Owner self-recovery via Keychain (PLAN-owner-keychain-recovery PR 3).
+    /// Launched from the "Recover a Cube I own → with my phone" surface. Same
+    /// shape as `RecoverInheritedVault` but `OwnerKeychainRestoreStep` is the
+    /// decrypt source: it pulls the owner's *own* `recovery-kit/envelope` set and
+    /// relay-decrypts it via the owner's Keychain — no recovery password.
+    /// `full_cube` picks the scope: Full (seed + descriptor → a real Cube, with a
+    /// PIN-setup step) vs descriptor-only (watch-only Vault recovery).
+    RecoverOwnCubeWithPhone {
         cube_id: u64,
         full_cube: bool,
     },
@@ -256,7 +267,8 @@ impl Installer {
                         // with `unreachable!("Must be defined at this point")`.
                         (UserFlow::RestoreFromRecoveryKit, _)
                         | (UserFlow::RestoreVaultFromRecoveryKit, _)
-                        | (UserFlow::RecoverInheritedVault { .. }, _) => RemoteBackend::None,
+                        | (UserFlow::RecoverInheritedVault { .. }, _)
+                        | (UserFlow::RecoverOwnCubeWithPhone { .. }, _) => RemoteBackend::None,
                         // AddWallet still has ChooseBackend which transitions away from Undefined.
                         (_, Network::Bitcoin | Network::Signet) => RemoteBackend::Undefined,
                         // Non-mainnet/signet AddWallet skips backend choice.
@@ -394,6 +406,45 @@ impl Installer {
                             vec![
                                 InheritanceRestoreStep::new(RestoreScope::DescriptorOnly, cube_id)
                                     .into(),
+                                RegisterDescriptor::new_import_wallet().into(),
+                                SelectBitcoindTypeStep::new().into(),
+                                InternalBitcoindStep::new(&context.coincube_directory).into(),
+                                DefineNode::default().into(),
+                                WalletAlias::default().into(),
+                                Final::new().into(),
+                            ]
+                        }
+                    }
+                    // Owner self-recovery via Keychain (PLAN-owner-keychain-recovery
+                    // PR 3). Same shape as `RecoverInheritedVault`, but
+                    // `OwnerKeychainRestoreStep` (owner's own envelope set +
+                    // Keychain relay) is the decrypt source instead of the heir
+                    // release. No recovery password.
+                    UserFlow::RecoverOwnCubeWithPhone { cube_id, full_cube } => {
+                        if full_cube {
+                            // Full-Cube: seed + descriptor → a real Cube. Mirror
+                            // RestoreFromRecoveryKit (incl. PIN setup for the
+                            // restored seed).
+                            vec![
+                                OwnerKeychainRestoreStep::new(RestoreScope::Full, cube_id).into(),
+                                RestorePinSetupStep::new().into(),
+                                CoincubeConnectStep::new().into(),
+                                SelectBitcoindTypeStep::new().into(),
+                                InternalBitcoindStep::new(&context.coincube_directory).into(),
+                                DefineNode::new(crate::node::NodeType::Esplora).into(),
+                                WalletAlias::default().into(),
+                                Final::new().into(),
+                            ]
+                        } else {
+                            // Vault-only: descriptor → watch-only Vault. Mirror
+                            // RestoreVaultFromRecoveryKit (descriptor import, no
+                            // seed on disk).
+                            vec![
+                                OwnerKeychainRestoreStep::new(
+                                    RestoreScope::DescriptorOnly,
+                                    cube_id,
+                                )
+                                .into(),
                                 RegisterDescriptor::new_import_wallet().into(),
                                 SelectBitcoindTypeStep::new().into(),
                                 InternalBitcoindStep::new(&context.coincube_directory).into(),
