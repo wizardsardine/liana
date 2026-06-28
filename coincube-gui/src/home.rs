@@ -15,6 +15,7 @@ use tokio::runtime::Handle;
 
 use crate::feature_flags;
 use crate::pin_input;
+use crate::recover_own_cube::{self, RecoverOwnCubeMessage, RecoverOwnCubePanel};
 use crate::recover_vault::{self, RecoverVaultMessage, RecoverVaultPanel};
 use crate::services::coincube::{
     CoincubeClient, CubeLimitsResponse, CubeResponse, RegisterCubeRequest, UpdateCubeRequest,
@@ -93,6 +94,10 @@ pub enum HomeSection {
     /// Heir "Recover a Vault" discovery surface (COIN-377 / PR 1). Global —
     /// reachable even when the heir owns no Vault of their own.
     RecoverVault,
+    /// Owner "Recover a Cube I own" discovery surface
+    /// (PLAN-owner-keychain-recovery PR 3). Global; lists the owner's own Cubes
+    /// set up for phone recovery.
+    RecoverOwnCube,
 }
 
 /// Context stashed for firing a remote cube update after local rename succeeds.
@@ -125,6 +130,9 @@ pub struct Home {
     pub connect_account: ConnectAccountPanel,
     /// Heir "Recover a Vault" discovery surface state (COIN-377 / PR 1).
     pub recover_vault: RecoverVaultPanel,
+    /// Owner "Recover a Cube I own" discovery surface state
+    /// (PLAN-owner-keychain-recovery PR 3).
+    pub recover_own_cube: RecoverOwnCubePanel,
     /// Whether the Connect sidebar section is expanded
     pub connect_expanded: bool,
     /// Which section is currently displayed in the main content area
@@ -197,6 +205,7 @@ impl Home {
                 )),
                 connect_account: ConnectAccountPanel::new(),
                 recover_vault: RecoverVaultPanel::new(),
+                recover_own_cube: RecoverOwnCubePanel::new(),
                 connect_expanded: false,
                 active_section: HomeSection::Cubes,
                 theme_mode: GlobalSettings::load_theme_mode(&GlobalSettings::path(&datadir_path)),
@@ -1435,6 +1444,19 @@ impl Home {
                         .update(RecoverVaultMessage::Load, client, gen)
                         .map(|m| Message::View(ViewMessage::RecoverVault(m)));
                 }
+                // Load the owner's phone-recoverable Cubes when opening the
+                // owner discovery surface (once per session).
+                if matches!(self.active_section, HomeSection::RecoverOwnCube)
+                    && !self.recover_own_cube.is_loaded()
+                {
+                    let client = self.connect_account.authenticated_client();
+                    let gen = self.connect_account.session_generation();
+                    let network = crate::app::settings::network_to_api_string(self.network);
+                    return self
+                        .recover_own_cube
+                        .update(RecoverOwnCubeMessage::Load(network), client, gen)
+                        .map(|m| Message::View(ViewMessage::RecoverOwnCube(m)));
+                }
                 Task::none()
             }
 
@@ -1473,6 +1495,38 @@ impl Home {
                 self.recover_vault
                     .update(msg, client, gen)
                     .map(|m| Message::View(ViewMessage::RecoverVault(m)))
+            }
+
+            // Owner clicked "Recover" on a phone-recoverable Cube: launch the
+            // installer's owner-keychain flow (PLAN-owner-keychain-recovery PR 3).
+            // Intercepted here (not forwarded) because launching the installer is
+            // a home-level action — the owner's authenticated Connect client is
+            // threaded into the installer Context for the decrypt step.
+            Message::View(ViewMessage::RecoverOwnCube(RecoverOwnCubeMessage::Launch {
+                cube_id,
+                full_cube,
+            })) => {
+                let datadir_path = self.datadir_path.clone();
+                let network = self.network;
+                let client = self.connect_account.authenticated_client();
+                Task::perform(
+                    async move { (datadir_path, network, client) },
+                    move |(d, n, c)| {
+                        Message::Install(
+                            d,
+                            n,
+                            UserFlow::RecoverOwnCubeWithPhone { cube_id, full_cube },
+                            c,
+                        )
+                    },
+                )
+            }
+            Message::View(ViewMessage::RecoverOwnCube(msg)) => {
+                let client = self.connect_account.authenticated_client();
+                let gen = self.connect_account.session_generation();
+                self.recover_own_cube
+                    .update(msg, client, gen)
+                    .map(|m| Message::View(ViewMessage::RecoverOwnCube(m)))
             }
 
             Message::View(ViewMessage::RenameCube(index)) => {
@@ -1624,6 +1678,8 @@ impl Home {
                         // (and `is_loaded()` re-fetch guard) would persist and a
                         // later account would see the prior account's vault rows.
                         self.recover_vault = RecoverVaultPanel::new();
+                        // Same reset for the owner discovery surface.
+                        self.recover_own_cube = RecoverOwnCubePanel::new();
                     }
                 }
                 // Auto-expand Connect submenu and navigate to Cubes after login
@@ -2042,6 +2098,11 @@ impl Home {
             // Heir "Recover a Vault" discovery surface (COIN-377 / PR 1).
             recover_vault::view(&self.recover_vault)
                 .map(|msg| Message::View(ViewMessage::RecoverVault(msg)))
+        } else if matches!(self.active_section, HomeSection::RecoverOwnCube) {
+            // Owner "Recover a Cube I own" discovery surface
+            // (PLAN-owner-keychain-recovery PR 3).
+            recover_own_cube::view(&self.recover_own_cube)
+                .map(|msg| Message::View(ViewMessage::RecoverOwnCube(msg)))
         } else {
             content
         };
@@ -2323,6 +2384,31 @@ fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
                 .width(Length::Fill)
         };
         col = col.push(recover_button);
+    }
+
+    // Owner "Recover a Cube I own" — global phone-recovery surface
+    // (PLAN-owner-keychain-recovery PR 3). Gated behind the Beta flag (dark until
+    // the API `recovery-kit/*` endpoints + keychain-app mint ship) and only shown
+    // to a signed-in account.
+    if is_authenticated && feature_flags::OWNER_KEYCHAIN_RECOVERY_ENABLED {
+        let is_active = matches!(home.active_section, HomeSection::RecoverOwnCube);
+        let recover_own_button = if is_active {
+            Row::new()
+                .push(
+                    btn::menu_active(Some(ic::cube_icon()), "Recover a Cube I own")
+                        .width(Length::Fill),
+                )
+                .width(Length::Fill)
+        } else {
+            Row::new()
+                .push(
+                    btn::menu(Some(ic::cube_icon()), "Recover a Cube I own")
+                        .on_press(msg(ViewMessage::GoToSection(HomeSection::RecoverOwnCube)))
+                        .width(Length::Fill),
+                )
+                .width(Length::Fill)
+        };
+        col = col.push(recover_own_button);
     }
 
     // Bottom-pinned section: Sign In / email + theme toggle
@@ -3026,6 +3112,7 @@ pub enum ViewMessage {
     ConnectAccount(ConnectAccountMessage),
     /// Heir "Recover a Vault" discovery-surface messages (COIN-377 / PR 1).
     RecoverVault(RecoverVaultMessage),
+    RecoverOwnCube(RecoverOwnCubeMessage),
     /// Toggle light/dark theme
     ToggleTheme,
     /// Toggle passkey mode for Cube creation (no PIN when enabled).

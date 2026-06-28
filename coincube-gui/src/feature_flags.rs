@@ -41,6 +41,22 @@ pub const CUBE_MEMBERS_UI_ENABLED: bool = is_truthy(option_env!("COINCUBE_CUBE_M
 /// is hidden; the panel code still compiles but is unreachable via UI.
 pub const RECOVER_VAULT_ENABLED: bool = is_truthy(option_env!("COINCUBE_ENABLE_RECOVER_VAULT"));
 
+/// Whether the **owner keychain recovery** surfaces (PLAN-owner-keychain-recovery)
+/// are shown. This is the "protect with my phone" Recovery-Kit branch: the owner
+/// mints an `owner-self` recovery key on their Keychain, seals their own seed /
+/// descriptor to it (ECIES), and can later restore the Cube on a wiped install
+/// by approving a Keychain decrypt — no recovery password.
+///
+/// Controlled by the `COINCUBE_OWNER_KEYCHAIN_RECOVERY` env var at build time.
+/// Defaults to `false`: the feature depends on net-new `coincube-api`
+/// (`recovery-kit/recipients`, `recovery-kit/envelope`) and `keychain-app`
+/// (owner-self key mint) surfaces, so it stays **Beta**/dark until those ship.
+/// When `false`, the wizard's protection-mode picker hides the phone branches and
+/// the "Recover a Cube I own" entry is hidden; the code still compiles but is
+/// unreachable via UI.
+pub const OWNER_KEYCHAIN_RECOVERY_ENABLED: bool =
+    is_truthy(option_env!("COINCUBE_OWNER_KEYCHAIN_RECOVERY"));
+
 /// `const`-compatible truthy check: accepts `"1"`, `"true"`, `"yes"`
 /// (case-insensitive for the latter two). Anything else, including `None`,
 /// is `false`.

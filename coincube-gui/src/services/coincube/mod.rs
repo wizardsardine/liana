@@ -1735,9 +1735,9 @@ impl DownloadError {
 /// coincube-api "channels mask" wire field. SMS/WhatsApp require a phone;
 /// Email requires an email — the UI enforces that pairing before letting a
 /// bit be set.
-pub const DURESS_CHANNEL_SMS: u8 = 1 << 0;
-pub const DURESS_CHANNEL_WHATSAPP: u8 = 1 << 1;
-pub const DURESS_CHANNEL_EMAIL: u8 = 1 << 2;
+pub const DURESS_CHANNEL_SMS: &str = "sms";
+pub const DURESS_CHANNEL_WHATSAPP: &str = "whatsapp";
+pub const DURESS_CHANNEL_EMAIL: &str = "email";
 
 /// A duress alert contact as returned by
 /// `GET /api/v1/connect/duress/contacts`.
@@ -1755,7 +1755,7 @@ pub struct DuressAlertContact {
     pub email: Option<String>,
     /// Bitmask of [`DURESS_CHANNEL_SMS`] / `_WHATSAPP` / `_EMAIL`.
     #[serde(default)]
-    pub channels: u8,
+    pub channels: Vec<String>,
     /// RFC 3339 timestamp of when the one-time intro message was sent,
     /// or `None` if it hasn't gone out yet (just-created contact).
     #[serde(default)]
@@ -1764,8 +1764,10 @@ pub struct DuressAlertContact {
     /// contact is permanently opted out and never messaged again.
     #[serde(default)]
     pub opted_out_at: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 impl DuressAlertContact {
@@ -1773,9 +1775,8 @@ impl DuressAlertContact {
     pub fn is_opted_out(&self) -> bool {
         self.opted_out_at.is_some()
     }
-
-    pub fn has_channel(&self, bit: u8) -> bool {
-        self.channels & bit != 0
+    pub fn has_channel(&self, channel: &str) -> bool {
+        self.channels.iter().any(|c| c == channel)
     }
 }
 
@@ -1791,7 +1792,7 @@ pub struct CreateDuressAlertContactRequest {
     pub phone: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
-    pub channels: u8,
+    pub channels: Vec<String>,
 }
 
 /// Body for `PATCH /api/v1/connect/duress/contacts/{id}`. Every field is
@@ -1809,7 +1810,7 @@ pub struct UpdateDuressAlertContactRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub channels: Option<u8>,
+    pub channels: Option<Vec<String>>,
 }
 
 /// Maximum duress alert contacts per account. Cost + abuse bound, mirrored
@@ -1867,19 +1868,19 @@ mod duress_alert_contact_tests {
 
     #[test]
     fn channel_bits_are_distinct() {
-        assert_eq!(DURESS_CHANNEL_SMS, 1);
-        assert_eq!(DURESS_CHANNEL_WHATSAPP, 2);
-        assert_eq!(DURESS_CHANNEL_EMAIL, 4);
         let c = DuressAlertContact {
             id: 1,
             display_name: "Jane".into(),
             phone: Some("+15551234567".into()),
             email: None,
-            channels: DURESS_CHANNEL_SMS | DURESS_CHANNEL_WHATSAPP,
+            channels: vec![
+                DURESS_CHANNEL_SMS.to_string(),
+                DURESS_CHANNEL_WHATSAPP.to_string(),
+            ],
             intro_sent_at: None,
             opted_out_at: None,
-            created_at: "2026-06-11T00:00:00Z".into(),
-            updated_at: "2026-06-11T00:00:00Z".into(),
+            created_at: Some("2026-06-11T00:00:00Z".to_string()),
+            updated_at: Some("2026-06-11T00:00:00Z".to_string()),
         };
         assert!(c.has_channel(DURESS_CHANNEL_SMS));
         assert!(c.has_channel(DURESS_CHANNEL_WHATSAPP));
@@ -1894,9 +1895,7 @@ mod duress_alert_contact_tests {
             "id": 7,
             "displayName": "Sam",
             "email": "sam@example.com",
-            "channels": 4,
-            "createdAt": "2026-06-11T00:00:00Z",
-            "updatedAt": "2026-06-11T00:00:00Z"
+            "channels": [DURESS_CHANNEL_EMAIL],
         });
         let c: DuressAlertContact = serde_json::from_value(v).unwrap();
         assert_eq!(c.display_name, "Sam");
@@ -1904,6 +1903,8 @@ mod duress_alert_contact_tests {
         assert_eq!(c.email.as_deref(), Some("sam@example.com"));
         assert!(c.has_channel(DURESS_CHANNEL_EMAIL));
         assert!(c.intro_sent_at.is_none());
+        assert!(c.created_at.is_none());
+        assert!(c.updated_at.is_none());
     }
 }
 
@@ -2275,6 +2276,105 @@ impl std::fmt::Debug for InheritanceEnvelopeWire {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PutVaultEscrowRequest {
+    pub envelopes: Vec<InheritanceEnvelopeWire>,
+}
+
+// =============================================================================
+// Owner keychain recovery — "protect with my phone" (PLAN-owner-keychain-recovery)
+// =============================================================================
+//
+// Distinct from the inheritance heir-escrow above: here the recovery recipient
+// is the **owner's own** Keychain (role `owner-self`), not a designated heir.
+// The owner mints + attaches an `owner-self` key, registers it as a recovery
+// recipient, then seals their own seed/descriptor to it (ECIES, reusing
+// `services::inheritance`). On a wiped install the owner pulls their own
+// envelope set and decrypts it by approving on the Keychain — no password.
+//
+// Net-new endpoints (owned by the coincube-api counterpart plan), behind the
+// `OWNER_KEYCHAIN_RECOVERY_ENABLED` flag until they ship:
+//
+//   POST /api/v1/connect/cubes/{cubeId}/recovery-kit/recipients   (register key)
+//   GET  /api/v1/connect/cubes/{cubeId}/recovery-kit/recipients   (read xpub)
+//   PUT  /api/v1/connect/cubes/{cubeId}/recovery-kit/envelope      (owner uploads set)
+//   GET  /api/v1/connect/cubes/{cubeId}/recovery-kit/envelope      (owner downloads set)
+
+/// Wire role string for an owner self-recovery recipient. Bound by the API plan;
+/// `coincube-api` validates that this row is **not** a Vault signer (invariant
+/// I2). Registration is phone-initiated (COIN-390) — the desktop only ever
+/// *matches* this value when detecting the recipient ([`RecoveryKitRecipient::is_owner_self`]).
+pub const RECOVERY_RECIPIENT_ROLE_OWNER_SELF: &str = "owner-self";
+
+/// Which artifacts the owner intends to seal to their `owner-self` key. Mirrors
+/// the inheritance escrow tier but without an `Off` state (registering a
+/// recipient is always "on"). Wire values `vault_only` / `full_cube` match the
+/// coincube-api `recovery_recipient.tier` column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnerRecoveryTier {
+    /// Descriptor only — the owner can restore the watch-only Vault.
+    VaultOnly,
+    /// Seed + descriptor — the owner can restore the entire Cube.
+    FullCube,
+}
+
+impl OwnerRecoveryTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::VaultOnly => "vault_only",
+            Self::FullCube => "full_cube",
+        }
+    }
+
+    /// Whether this tier escrows the master seed (Full-Cube only).
+    pub fn includes_seed(self) -> bool {
+        matches!(self, Self::FullCube)
+    }
+}
+
+/// The registered key behind a recovery recipient — the xpub + derivation path
+/// the owner needs to seal envelopes (PR 2). The owner derives the dedicated
+/// encryption child **xpub-only** from this (SPEC §2, child 7000); no private
+/// material is ever on the owner side.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryRecipientKey {
+    pub id: u64,
+    pub xpub: String,
+    pub derivation_path: String,
+}
+
+/// One recovery recipient row returned by
+/// `GET /connect/cubes/{cubeId}/recovery-kit/recipients`. For owner self-recovery
+/// there is a single `owner-self` row; the desktop reads its `key` to seal to.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryKitRecipient {
+    pub id: u64,
+    pub key_id: u64,
+    pub role: String,
+    #[serde(default)]
+    pub tier: Option<OwnerRecoveryTier>,
+    /// The registered key (xpub + derivation). `Option` because an older server
+    /// could omit the join; the seal path then fails closed with a clear error
+    /// rather than guessing an xpub.
+    #[serde(default)]
+    pub key: Option<RecoveryRecipientKey>,
+}
+
+impl RecoveryKitRecipient {
+    /// True when this row is the owner's own self-recovery recipient.
+    pub fn is_owner_self(&self) -> bool {
+        self.role == RECOVERY_RECIPIENT_ROLE_OWNER_SELF
+    }
+}
+
+/// Body for `PUT /connect/cubes/{cubeId}/recovery-kit/envelope` — the owner
+/// uploads their own ECIES envelope set sealed to the `owner-self` key (PR 2).
+/// Shares the opaque [`InheritanceEnvelopeWire`] shape with the heir escrow; the
+/// server stores the bytes blind and never decrypts.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutRecoveryKitEnvelopeRequest {
     pub envelopes: Vec<InheritanceEnvelopeWire>,
 }
 

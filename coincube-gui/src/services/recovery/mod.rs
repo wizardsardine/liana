@@ -12,6 +12,7 @@
 pub mod envelope;
 pub mod error;
 pub mod keyholder;
+pub mod owner_keychain;
 pub mod password;
 pub mod plaintext;
 pub mod restore;
@@ -19,6 +20,7 @@ pub mod restore;
 pub use envelope::{decrypt, encrypt, KdfParams, ENVELOPE_VERSION, KDF_ID_ARGON2ID_V1};
 pub use error::RecoveryError;
 pub use keyholder::{fetch_recovery_descriptor, KeyholderRecoveryError};
+pub use owner_keychain::{fetch_owner_recovery_envelope, OwnerKeychainRecoveryError};
 pub use password::{score as score_password, PasswordStrength, MIN_PASSWORD_LEN};
 pub use plaintext::{
     DescriptorBlob, DescriptorBlobCube, DescriptorBlobSigner, DescriptorBlobVault, SeedBlob,
