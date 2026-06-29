@@ -137,7 +137,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     let mut external_keys = Vec::new();
     state
         .app
-        .keys
+        .keys()
         .iter()
         .for_each(|(id, key)| match key.key_type {
             KeyType::Internal => {

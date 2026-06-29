@@ -1,5 +1,4 @@
 use super::{
-    app::AppState,
     fetch_key_modal_signer_users,
     message::{HardwareWalletRequestId, Msg},
     refresh_key_modal_signers, signer_options_for_key_modal,
@@ -76,7 +75,7 @@ impl State {
             Msg::KeyUpdateDescr(value) => self.views.keys.on_key_update_descr(value),
             Msg::KeyUpdateEmail(value) => self.views.keys.on_key_update_email(value),
             Msg::KeySelectSigner(email) => self.on_key_select_signer(email),
-            Msg::KeyUpdateToken(value) => self.views.keys.on_key_update_token(value, &self.app.keys),
+            Msg::KeyUpdateToken(value) => self.views.keys.on_key_update_token(value, self.app.keys()),
             Msg::KeyUpdateType(key_type) => {
                 self.views.keys.on_key_update_type(key_type);
                 refresh_key_modal_signers(&self.app, &self.backend, &mut self.views.keys);
@@ -353,13 +352,7 @@ impl State {
         if let Some(wallet) = self.backend.get_wallet(wallet_id) {
             let wallet_template = wallet.template.clone().unwrap_or(PolicyTemplate::new());
             self.app.current_wallet_template = Some(wallet_template.clone());
-            // Convert template to AppState
-            let app_state: AppState = wallet_template.clone().into();
-            self.app.keys = app_state.keys;
-            self.app.primary_path = app_state.primary_path;
-            self.app.secondary_paths = app_state.secondary_paths;
-            self.app.keys_ready = app_state.keys_ready;
-            self.app.next_key_id = app_state.next_key_id;
+            self.app.apply_server_template(wallet_template);
         }
 
         // Check if wallet is in registration
@@ -415,7 +408,7 @@ impl State {
 impl State {
     fn on_key_add(&mut self) {
         // Open modal for creating a new key
-        let key_id = self.app.next_key_id;
+        let key_id = self.app.next_key_id();
         self.pending_user_fetches.clear();
         fetch_key_modal_signer_users(&self.app, &mut self.backend, &mut self.pending_user_fetches);
         let signer_options = signer_options_for_key_modal(
@@ -438,7 +431,7 @@ impl State {
     }
 
     fn on_key_edit(&mut self, key_id: u8) {
-        if let Some(key) = self.app.keys.get(&key_id).cloned() {
+        if let Some(key) = self.app.keys().get(&key_id).cloned() {
             let (email, token, provider) = match &key.identity {
                 KeyIdentity::Email(e) => (e.clone(), String::new(), None),
                 KeyIdentity::TokenWithProvider { token: t, provider } => {
@@ -501,26 +494,26 @@ impl State {
     }
 
     fn on_key_delete(&mut self, key_id: u8) {
-        // Remove key from all paths first
-        self.app.primary_path.key_ids.retain(|&id| id != key_id);
-        for secondary in &mut self.app.secondary_paths {
-            secondary.path.key_ids.retain(|&id| id != key_id);
-        }
-        // Then remove the key itself
-        self.app.keys.remove(&key_id);
-        // Close modal if it was open for this key
+        // Close modal if it was open for this key (UI state only).
         if let Some(modal_state) = &self.views.keys.edit_key_modal {
             if modal_state.key_id == key_id {
                 self.views.keys.edit_key_modal = None;
             }
         }
 
-        // Auto-save
+        // Build the deletion on a clone (server owns the template) and send it; the server's wallet
+        // update applies it back to AppState.
         if matches!(
             self.app.current_user_role,
             Some(UserRole::WizardSardineAdmin) | Some(UserRole::WalletManager)
         ) {
-            if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
+            let mut template = self.app.template();
+            template.keys.remove(&key_id);
+            template.primary_path.key_ids.retain(|&id| id != key_id);
+            for secondary in &mut template.secondary_paths {
+                secondary.path.key_ids.retain(|&id| id != key_id);
+            }
+            if let Some(wallet) = self.build_wallet(WalletStatus::Drafted, template) {
                 self.backend.edit_wallet(wallet);
             }
         }
@@ -541,7 +534,7 @@ impl State {
             };
 
             // Build key from modal without updating local state
-            let mut keys = self.app.keys.clone();
+            let mut keys = self.app.keys().clone();
             if modal_state.is_new {
                 let key = Key {
                     id: modal_state.key_id,
@@ -572,27 +565,12 @@ impl State {
                 self.app.current_user_role,
                 Some(UserRole::WizardSardineAdmin) | Some(UserRole::WalletManager)
             ) {
-                if let Some(wallet_id) = self.app.selected_wallet {
-                    if let Some(wallet) = self.backend.get_wallet(wallet_id) {
-                        let template = PolicyTemplate {
-                            keys,
-                            primary_path: self.app.primary_path.clone(),
-                            secondary_paths: self.app.secondary_paths.clone(),
-                            keys_ready: self.app.keys_ready,
-                        };
-                        self.backend.edit_wallet(Wallet {
-                            id: wallet.id,
-                            alias: wallet.alias.clone(),
-                            org: wallet.org,
-                            owner: wallet.owner,
-                            status: WalletStatus::Drafted,
-                            template: Some(template),
-                            last_edited: None,
-                            last_editor: None,
-                            descriptor: wallet.descriptor.clone(),
-                            devices: wallet.devices.clone(),
-                        });
-                    }
+                let template = PolicyTemplate {
+                    keys,
+                    ..self.app.template()
+                };
+                if let Some(wallet) = self.build_wallet(WalletStatus::Drafted, template) {
+                    self.backend.edit_wallet(wallet);
                 }
             }
         }
@@ -603,16 +581,19 @@ impl State {
             return;
         }
 
-        self.app.keys_ready = ready;
-
-        // Push the toggle through edit_wallet, preserving the current status.
+        // keys_ready is server-owned: never set it locally. Push the toggle through edit_wallet and
+        // let the server's wallet update apply the new value.
         let status = self
             .app
             .selected_wallet
             .and_then(|id| self.backend.get_wallet(id))
             .map(|w| w.status);
         if let Some(status) = status {
-            if let Some(wallet) = self.build_wallet_from_app_state(status) {
+            let template = PolicyTemplate {
+                keys_ready: ready,
+                ..self.app.template()
+            };
+            if let Some(wallet) = self.build_wallet(status, template) {
                 self.backend.edit_wallet(wallet);
             }
         }
@@ -621,20 +602,29 @@ impl State {
 
 // Template management
 impl State {
-    /// Build a Wallet from current AppState with the specified status.
-    /// Returns None if wallet cannot be found or built.
-    fn build_wallet_from_app_state(&self, status: WalletStatus) -> Option<Wallet> {
-        let wallet_id = self.app.selected_wallet?;
-        let wallet = self.backend.get_wallet(wallet_id)?;
+    /// Snapshot the current AppState template fields. Edits clone this and tweak the copy so
+    /// `self.app` is never mutated on a user action: the server owns those fields and applies them
+    /// back through `on_backend_wallet`.
+    /// Apply an edit to a clone of the current template and push it to the backend (WS Admin only).
+    /// Never mutates `self.app`: the server echo lands the change through `apply_server_template`.
+    fn edit_template(&mut self, edit: impl FnOnce(&mut PolicyTemplate)) {
+        if !matches!(
+            self.app.current_user_role,
+            Some(UserRole::WizardSardineAdmin)
+        ) {
+            return;
+        }
+        let mut template = self.app.template();
+        edit(&mut template);
+        if let Some(wallet) = self.build_wallet(WalletStatus::Drafted, template) {
+            self.backend.edit_wallet(wallet);
+        }
+    }
 
-        // Build template from AppState
-        let template = PolicyTemplate {
-            keys: self.app.keys.clone(),
-            primary_path: self.app.primary_path.clone(),
-            secondary_paths: self.app.secondary_paths.clone(),
-            keys_ready: self.app.keys_ready,
-        };
-
+    /// Build a Wallet for the selected wallet with the given status and template.
+    /// Returns None if the wallet cannot be found.
+    fn build_wallet(&self, status: WalletStatus, template: PolicyTemplate) -> Option<Wallet> {
+        let wallet = self.backend.get_wallet(self.app.selected_wallet?)?;
         Some(Wallet {
             id: wallet.id,
             alias: wallet.alias.clone(),
@@ -648,65 +638,69 @@ impl State {
             devices: wallet.devices.clone(),
         })
     }
+
+    /// Build a Wallet from the current AppState with the specified status.
+    fn build_wallet_from_app_state(&self, status: WalletStatus) -> Option<Wallet> {
+        self.build_wallet(status, self.app.template())
+    }
     fn on_template_add_key_to_primary(&mut self, key_id: u8) {
-        if !self.app.primary_path.contains_key(key_id) {
-            self.app.primary_path.key_ids.push(key_id);
-        }
+        self.edit_template(|t| {
+            if !t.primary_path.contains_key(key_id) {
+                t.primary_path.key_ids.push(key_id);
+            }
+        });
     }
 
     fn on_template_del_key_from_primary(&mut self, key_id: u8) {
-        self.app.primary_path.key_ids.retain(|&id| id != key_id);
-        // Adjust threshold_n if needed
-        let m = self.app.primary_path.key_ids.len();
-        if self.app.primary_path.threshold_n as usize > m && m > 0 {
-            self.app.primary_path.threshold_n = m as u8;
-        }
+        self.edit_template(|t| {
+            t.primary_path.key_ids.retain(|&id| id != key_id);
+            let m = t.primary_path.key_ids.len();
+            if t.primary_path.threshold_n as usize > m && m > 0 {
+                t.primary_path.threshold_n = m as u8;
+            }
+        });
     }
 
     fn on_template_add_key_to_secondary(&mut self, path_index: usize, key_id: u8) {
-        if let Some(secondary) = self.app.secondary_paths.get_mut(path_index) {
-            if !secondary.path.contains_key(key_id) {
-                secondary.path.key_ids.push(key_id);
+        self.edit_template(|t| {
+            if let Some(secondary) = t.secondary_paths.get_mut(path_index) {
+                if !secondary.path.contains_key(key_id) {
+                    secondary.path.key_ids.push(key_id);
+                }
             }
-        }
+        });
     }
 
     fn on_template_del_key_from_secondary(&mut self, path_index: usize, key_id: u8) {
-        if let Some(secondary) = self.app.secondary_paths.get_mut(path_index) {
-            secondary.path.key_ids.retain(|&id| id != key_id);
-            // Adjust threshold_n if needed
-            let m = secondary.path.key_ids.len();
-            if secondary.path.threshold_n as usize > m && m > 0 {
-                secondary.path.threshold_n = m as u8;
+        self.edit_template(|t| {
+            if let Some(secondary) = t.secondary_paths.get_mut(path_index) {
+                secondary.path.key_ids.retain(|&id| id != key_id);
+                let m = secondary.path.key_ids.len();
+                if secondary.path.threshold_n as usize > m && m > 0 {
+                    secondary.path.threshold_n = m as u8;
+                }
             }
-        }
+        });
     }
 
     fn on_template_add_secondary_path(&mut self) {
-        // Create a new secondary path with default values
-        // threshold_n defaults to 1, timelock defaults to 0 blocks (must be set later)
-        let path = SpendingPath::new(false, 1, Vec::new());
-        let timelock = Timelock::new(0);
-        self.app
-            .secondary_paths
-            .push(SecondaryPath { path, timelock });
-        self.app.sort_secondary_paths();
+        // threshold_n defaults to 1, timelock defaults to 0 blocks (set later via the edit modal).
+        self.edit_template(|t| {
+            t.secondary_paths.push(SecondaryPath {
+                path: SpendingPath::new(false, 1, Vec::new()),
+                timelock: Timelock::new(0),
+            });
+            t.secondary_paths
+                .sort_by(|a, b| a.timelock.blocks.cmp(&b.timelock.blocks));
+        });
     }
 
     fn on_template_delete_secondary_path(&mut self, path_index: usize) {
-        if path_index < self.app.secondary_paths.len() {
-            self.app.secondary_paths.remove(path_index);
-
-            // Auto-save for WS Admin only: push changes to server with status = Drafted
-            if matches!(
-                self.app.current_user_role,
-                Some(UserRole::WizardSardineAdmin)
-            ) {
-                if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
-                    self.backend.edit_wallet(wallet);
-                }
+        self.edit_template(|t| {
+            if path_index < t.secondary_paths.len() {
+                t.secondary_paths.remove(path_index);
             }
-        }
+        });
     }
 
     fn on_template_edit_path(&mut self, is_primary: bool, path_index: Option<usize>) {
@@ -714,13 +708,13 @@ impl State {
             self.views.paths.edit_path_modal = Some(views::EditPathModalState {
                 is_primary: true,
                 path_index: None,
-                selected_key_ids: self.app.primary_path.key_ids.clone(),
-                threshold: self.app.primary_path.threshold_n.to_string(),
+                selected_key_ids: self.app.primary_path().key_ids.clone(),
+                threshold: self.app.primary_path().threshold_n.to_string(),
                 timelock_value: None,
                 timelock_unit: TimelockUnit::default(),
             });
         } else if let Some(index) = path_index {
-            if let Some(secondary) = self.app.secondary_paths.get(index) {
+            if let Some(secondary) = self.app.secondary_paths().get(index) {
                 // Determine the best unit for display (largest unit that divides evenly)
                 let blocks = secondary.timelock.blocks;
                 let (unit, value) = if blocks >= TimelockUnit::Months.blocks_per_unit()
@@ -767,106 +761,76 @@ impl State {
     }
 
     fn on_template_save_path(&mut self) {
-        if let Some(modal_state) = &self.views.paths.edit_path_modal {
-            let selected_keys = modal_state.selected_key_ids.clone();
-            let selected_count = selected_keys.len();
+        // Snapshot the modal inputs so the rest can work off a template clone (no `self.app` writes).
+        let Some(modal_state) = &self.views.paths.edit_path_modal else {
+            return;
+        };
+        let is_primary = modal_state.is_primary;
+        let path_index = modal_state.path_index;
+        let selected_keys = modal_state.selected_key_ids.clone();
+        let threshold = modal_state.threshold.clone();
+        let timelock_value = modal_state.timelock_value.clone();
+        let timelock_unit = modal_state.timelock_unit;
 
-            if modal_state.is_primary {
-                // Apply key changes to primary path
-                self.app.primary_path.key_ids = selected_keys;
-
-                // Handle threshold - parse and validate
-                if let Ok(threshold_n) = modal_state.threshold.parse::<u8>() {
-                    if threshold_n > 0
-                        && (threshold_n as usize) <= selected_count
-                        && selected_count > 0
-                    {
-                        self.app.primary_path.threshold_n = threshold_n;
-                    } else if selected_count > 0 {
-                        // Default to all keys required if threshold invalid
-                        self.app.primary_path.threshold_n = selected_count as u8;
-                    }
-                } else if selected_count > 0 {
-                    // Default to all keys required if parse fails
-                    self.app.primary_path.threshold_n = selected_count as u8;
-                }
-            } else if let Some(path_index) = modal_state.path_index {
-                // Editing existing secondary path
-                if let Some(secondary) = self.app.secondary_paths.get_mut(path_index) {
-                    // Apply key changes to secondary path
-                    secondary.path.key_ids = selected_keys;
-
-                    // Handle threshold - parse and validate
-                    if let Ok(threshold_n) = modal_state.threshold.parse::<u8>() {
-                        if threshold_n > 0
-                            && (threshold_n as usize) <= selected_count
-                            && selected_count > 0
-                        {
-                            secondary.path.threshold_n = threshold_n;
-                        } else if selected_count > 0 {
-                            // Default to all keys required if threshold invalid
-                            secondary.path.threshold_n = selected_count as u8;
-                        }
-                    } else if selected_count > 0 {
-                        // Default to all keys required if parse fails
-                        secondary.path.threshold_n = selected_count as u8;
-                    }
-
-                    // Handle timelock (only for secondary paths)
-                    if let Some(value_str) = &modal_state.timelock_value {
-                        if let Ok(value) = value_str.parse::<u64>() {
-                            secondary.timelock.blocks =
-                                modal_state.timelock_unit.to_blocks_capped(value);
-                        }
-                    }
-                }
-                // Re-sort paths after timelock change
-                self.app.sort_secondary_paths();
-            } else {
-                // Creating new secondary path (path_index is None)
-                let threshold_n = if let Ok(n) = modal_state.threshold.parse::<u8>() {
-                    if n > 0 && (n as usize) <= selected_count && selected_count > 0 {
-                        n
-                    } else if selected_count > 0 {
-                        selected_count as u8
-                    } else {
-                        1
-                    }
-                } else if selected_count > 0 {
-                    selected_count as u8
-                } else {
-                    1
-                };
-
-                let blocks = if let Some(value_str) = &modal_state.timelock_value {
-                    if let Ok(value) = value_str.parse::<u64>() {
-                        modal_state.timelock_unit.to_blocks_capped(value)
-                    } else {
-                        BLOCKS_PER_DAY // Default 1 day
-                    }
-                } else {
-                    BLOCKS_PER_DAY // Default 1 day
-                };
-
-                let new_path = ws_business::SpendingPath::new(false, threshold_n, selected_keys);
-                let new_timelock = ws_business::Timelock::new(blocks);
-                self.app.secondary_paths.push(SecondaryPath {
-                    path: new_path,
-                    timelock: new_timelock,
-                });
-                self.app.sort_secondary_paths();
+        let selected_count = selected_keys.len();
+        // Resolve the threshold, defaulting to "all selected keys required" when blank/invalid.
+        let resolved_threshold = |parsed: Result<u8, _>| -> Option<u8> {
+            match parsed {
+                Ok(n) if n > 0 && (n as usize) <= selected_count && selected_count > 0 => Some(n),
+                _ if selected_count > 0 => Some(selected_count as u8),
+                _ => None,
             }
+        };
 
-            self.views.paths.edit_path_modal = None;
+        let mut template = self.app.template();
 
-            // Auto-save for WS Admin only: push changes to server with status = Drafted
-            if matches!(
-                self.app.current_user_role,
-                Some(UserRole::WizardSardineAdmin)
-            ) {
-                if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
-                    self.backend.edit_wallet(wallet);
+        if is_primary {
+            template.primary_path.key_ids = selected_keys;
+            if let Some(n) = resolved_threshold(threshold.parse::<u8>()) {
+                template.primary_path.threshold_n = n;
+            }
+        } else if let Some(path_index) = path_index {
+            // Editing an existing secondary path.
+            if let Some(secondary) = template.secondary_paths.get_mut(path_index) {
+                secondary.path.key_ids = selected_keys;
+                if let Some(n) = resolved_threshold(threshold.parse::<u8>()) {
+                    secondary.path.threshold_n = n;
                 }
+                if let Some(value_str) = &timelock_value {
+                    if let Ok(value) = value_str.parse::<u64>() {
+                        secondary.timelock.blocks = timelock_unit.to_blocks_capped(value);
+                    }
+                }
+            }
+            template
+                .secondary_paths
+                .sort_by(|a, b| a.timelock.blocks.cmp(&b.timelock.blocks));
+        } else {
+            // Creating a new secondary path.
+            let threshold_n = resolved_threshold(threshold.parse::<u8>()).unwrap_or(1);
+            let blocks = timelock_value
+                .as_deref()
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(|value| timelock_unit.to_blocks_capped(value))
+                .unwrap_or(BLOCKS_PER_DAY);
+            template.secondary_paths.push(SecondaryPath {
+                path: ws_business::SpendingPath::new(false, threshold_n, selected_keys),
+                timelock: ws_business::Timelock::new(blocks),
+            });
+            template
+                .secondary_paths
+                .sort_by(|a, b| a.timelock.blocks.cmp(&b.timelock.blocks));
+        }
+
+        self.views.paths.edit_path_modal = None;
+
+        // Auto-save for WS Admin only: push changes to server with status = Drafted.
+        if matches!(
+            self.app.current_user_role,
+            Some(UserRole::WizardSardineAdmin)
+        ) {
+            if let Some(wallet) = self.build_wallet(WalletStatus::Drafted, template) {
+                self.backend.edit_wallet(wallet);
             }
         }
     }
@@ -1499,7 +1463,7 @@ impl State {
                 // Check if the key was modified
                 if let Some(template) = new_template {
                     if let Some(server_key) = template.keys.get(&key_id) {
-                        if let Some(local_key) = self.app.keys.get(&key_id) {
+                        if let Some(local_key) = self.app.keys().get(&key_id) {
                             if server_key != local_key {
                                 // Key was modified
                                 self.views.modals.conflict = Some(ConflictModalState {
@@ -1524,7 +1488,7 @@ impl State {
                     if !template.keys.contains_key(&key_id) {
                         let key_alias = self
                             .app
-                            .keys
+                            .keys()
                             .get(&key_id)
                             .map(|k| k.alias.clone())
                             .unwrap_or_else(|| format!("Key {key_id}"));
@@ -1561,7 +1525,7 @@ impl State {
                 if modal.is_primary {
                     // Check if primary path was modified
                     if let Some(_local_primary) =
-                        self.app.keys.is_empty().then_some(()).or_else(|| {
+                        self.app.keys().is_empty().then_some(()).or_else(|| {
                             // Compare modal's selected keys with server's primary path
                             let modal_keys: std::collections::HashSet<u8> =
                                 modal.selected_key_ids.iter().copied().collect();
@@ -1636,25 +1600,8 @@ impl State {
 
     /// Load wallet data into AppState
     fn load_wallet_into_app_state(&mut self, wallet: &Wallet) {
-        if let Some(template) = &wallet.template {
-            self.app.keys = template.keys.clone();
-            self.app.primary_path = template.primary_path.clone();
-            self.app.secondary_paths = template.secondary_paths.clone();
-            self.app.keys_ready = template.keys_ready;
-            self.app.next_key_id = template.keys.keys().copied().max().unwrap_or(0) + 1;
-        } else {
-            self.app.keys.clear();
-            self.app.primary_path = SpendingPath {
-                is_primary: true,
-                threshold_n: 0,
-                key_ids: vec![],
-                last_edited: None,
-                last_editor: None,
-            };
-            self.app.secondary_paths.clear();
-            self.app.keys_ready = false;
-            self.app.next_key_id = 0;
-        }
+        self.app
+            .apply_server_template(wallet.template.clone().unwrap_or_default());
     }
 
     /// Handle conflict reload - user chose to reload from server
@@ -1684,8 +1631,8 @@ impl State {
                                     modal.key_type = key.key_type;
                                     modal.token_warning = None;
                                 }
-                                // Also update local AppState
-                                self.app.keys.insert(key_id, key.clone());
+                                // Re-apply the server template; the server owns AppState.
+                                self.app.apply_server_template(template.clone());
                             }
                         }
                     }
@@ -1704,7 +1651,7 @@ impl State {
                                     modal.selected_key_ids = template.primary_path.key_ids.clone();
                                     modal.threshold = template.primary_path.threshold_n.to_string();
                                 }
-                                self.app.primary_path = template.primary_path.clone();
+                                self.app.apply_server_template(template.clone());
                             } else if let Some(idx) = path_index {
                                 if let Some(secondary) = template.secondary_paths.get(idx) {
                                     if let Some(modal) = &mut self.views.paths.edit_path_modal {
@@ -1713,9 +1660,7 @@ impl State {
                                         modal.timelock_value =
                                             Some(secondary.timelock.blocks.to_string());
                                     }
-                                    if idx < self.app.secondary_paths.len() {
-                                        self.app.secondary_paths[idx] = secondary.clone();
-                                    }
+                                    self.app.apply_server_template(template.clone());
                                 }
                             }
                         }
@@ -1830,7 +1775,7 @@ impl State {
 impl State {
     /// Open xpub entry modal for a key
     fn on_xpub_select_key(&mut self, key_id: u8) {
-        if let Some(key) = self.app.keys.get(&key_id) {
+        if let Some(key) = self.app.keys().get(&key_id) {
             self.views
                 .xpub
                 .open_modal(key_id, key.alias.clone(), key.xpub.clone(), self.network);
@@ -2113,7 +2058,7 @@ impl State {
                     };
 
                     // Log key update with xpub source info
-                    if let Some(key) = self.app.keys.get(&key_id) {
+                    if let Some(key) = self.app.keys().get(&key_id) {
                         debug!(
                             key_id = key_id,
                             key_alias = %key.alias,
