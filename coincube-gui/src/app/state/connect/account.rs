@@ -2332,12 +2332,12 @@ impl ConnectAccountPanel {
             }
             DuressMessage::DuressPinChanged(v) => {
                 if let Some(e) = &mut self.duress_enroll {
-                    e.duress_pin = v;
+                    e.duress_pin = v.chars().filter(|c| c.is_ascii_digit()).take(4).collect();
                 }
             }
             DuressMessage::DuressPinConfirmChanged(v) => {
                 if let Some(e) = &mut self.duress_enroll {
-                    e.duress_pin_confirm = v;
+                   e.duress_pin_confirm = v.chars().filter(|c| c.is_ascii_digit()).take(4).collect();
                 }
             }
             DuressMessage::AllClearChanged(v) => {
