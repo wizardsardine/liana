@@ -437,23 +437,11 @@ fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         );
 
         let paste_block: Element<'_, Msg> = if modal_state.paste_expanded {
-            let form_xpub = form::Value {
-                value: modal_state.xpub_input.clone(),
-                warning: None,
-                valid: true,
-            };
-            let input_row = Container::new(
-                row![
-                    form::Form::new("xpub...", &form_xpub, Msg::XpubUpdateInput).padding(10),
-                    button::btn_paste_icon(Some(Msg::XpubPaste)),
-                ]
-                .spacing(modal::H_SPACING)
-                .align_y(Alignment::Center),
+            list::entry_paste_xpub(
+                &modal_state.xpub_input,
+                Msg::XpubUpdateInput,
+                Msg::XpubPaste,
             )
-            .width(button::STANDARD_ENTRY_WIDTH);
-            column![paste_entry, input_row]
-                .spacing(modal::V_SPACING)
-                .into()
         } else {
             paste_entry
         };
