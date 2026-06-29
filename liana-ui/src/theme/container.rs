@@ -1,4 +1,5 @@
 use super::{card::CARD_SHADOW, Theme};
+use crate::color;
 use iced::{
     border::Radius,
     widget::container::{transparent, Catalog, Style, StyleFn},
@@ -67,6 +68,28 @@ pub fn sidebar(theme: &Theme) -> Style {
 pub fn border(theme: &Theme) -> Style {
     Style {
         background: Some(Background::Color(theme.colors.general.background)),
+        ..Default::default()
+    }
+}
+
+pub fn step_dot_filled(_theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(color::BUSINESS_BLUE)),
+        border: Border {
+            radius: 4.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+pub fn step_dot_track(_theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(color::BUSINESS_STEP_TRACK)),
+        border: Border {
+            radius: 4.0.into(),
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
