@@ -100,7 +100,8 @@ pub fn pill_with_icon<'a, T: 'a, L: Display, TT: Display>(
             .style(style)
             .center_x(width)
     };
-    pill_with_tooltip(pill, Some(tooltip))
+    let tooltip = tooltip.to_string();
+    pill_with_tooltip(pill, (!tooltip.is_empty()).then_some(tooltip))
 }
 
 fn pill_with_tooltip<'a, T: 'a, P: Into<Container<'a, T>>, TT: Display>(
@@ -353,13 +354,27 @@ pub fn ws_admin<'a, T: 'a>() -> Container<'a, T> {
     compact_metric("WS Admin", theme::pill::simple)
 }
 
-pub fn signer_assigned<'a, T: 'a>() -> Container<'a, T> {
+/// Success pill shown for a key that is used in the template: a checkmark only, with a hover tooltip
+/// stating how many spending paths use the key.
+pub fn in_policy<'a, T: 'a>(usage_count: usize) -> Container<'a, T> {
+    let pill = Container::new(crate::icon::check_icon())
+        .padding(PILL_PADDING_COMPACT)
+        .style(theme::pill::success);
+    let tip = format!(
+        "Used in {usage_count} spending path{}",
+        if usage_count == 1 { "" } else { "s" }
+    );
+    pill_with_tooltip(pill, Some(tip))
+}
+
+/// Light-warning pill shown for a key that is not used in any spending path yet.
+pub fn not_in_policy<'a, T: 'a>() -> Container<'a, T> {
     pill_with_icon(
-        Some(crate::icon::check_icon()),
-        "Signer assigned",
+        Some(crate::icon::tooltip_icon()),
+        "Not in policy yet",
         "",
         PillWidth::Shrink,
-        theme::pill::fingerprint,
+        theme::pill::soft_warning,
         true,
     )
 }
