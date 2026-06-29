@@ -123,7 +123,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     let add_recovery_path = editable.then_some(
         column![
             btn_add_recovery_path(Some(Msg::TemplateNewPathModal)).width(
-                if state.app.secondary_paths.is_empty() {
+                if state.app.secondary_paths().is_empty() {
                     EntryWidth::Standard
                 } else {
                     EntryWidth::Deletable

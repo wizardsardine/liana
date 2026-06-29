@@ -55,8 +55,8 @@ pub fn edit_path_modal_view<'a>(
     let current_user_email_lower = state.views.login.email.form.value.to_lowercase();
     let last_edit_info: Option<Element<'_, Msg>> = if modal_state.is_primary {
         format_last_edit_info(
-            state.app.primary_path.last_edited,
-            state.app.primary_path.last_editor,
+            state.app.primary_path().last_edited,
+            state.app.primary_path().last_editor,
             state,
             &current_user_email_lower,
         )
@@ -68,7 +68,7 @@ pub fn edit_path_modal_view<'a>(
     } else if let Some(idx) = modal_state.path_index {
         state
             .app
-            .secondary_paths
+            .secondary_paths()
             .get(idx)
             .and_then(|secondary| {
                 format_last_edit_info(
@@ -90,14 +90,14 @@ pub fn edit_path_modal_view<'a>(
     // Key selection section
     let keys_label = compact_label("Keys in Path:");
 
-    let keys_column = if state.app.keys.is_empty() {
+    let keys_column = if state.app.keys().is_empty() {
         column![
             text::new::caption("No keys available. Add keys first.").style(theme::text::secondary)
         ]
         .spacing(8)
     } else {
         let mut col = column![].spacing(8);
-        for (key_id, key) in state.app.keys.iter() {
+        for (key_id, key) in state.app.keys().iter() {
             let is_selected = modal_state.selected_key_ids.contains(key_id);
             let mut name = if key.alias.is_empty() {
                 format!("Key {key_id}")
@@ -204,15 +204,16 @@ pub fn edit_path_modal_view<'a>(
             )
         } else {
             // Check for duplicate timelocks
-            let duplicate = state
-                .app
-                .secondary_paths
-                .iter()
-                .enumerate()
-                .any(|(idx, secondary)| {
-                    modal_state.path_index != Some(idx)
-                        && secondary.timelock.blocks == current_blocks
-                });
+            let duplicate =
+                state
+                    .app
+                    .secondary_paths()
+                    .iter()
+                    .enumerate()
+                    .any(|(idx, secondary)| {
+                        modal_state.path_index != Some(idx)
+                            && secondary.timelock.blocks == current_blocks
+                    });
             if duplicate {
                 (false, Some("Duplicate timelock".to_string()))
             } else {

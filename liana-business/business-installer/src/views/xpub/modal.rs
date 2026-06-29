@@ -235,7 +235,7 @@ fn hw_section(state: &State) -> Element<'_, Msg> {
         .values()
         .map(extract_device_data)
         .fold(column![].spacing(12), |column, data| {
-            let in_use = state.app.keys.iter().any(|(key_id, key)| {
+            let in_use = state.app.keys().iter().any(|(key_id, key)| {
                 *key_id != modal_state.key_id && key.fingerprint() == data.fingerprint
             });
             column.push(device_card(data, in_use))

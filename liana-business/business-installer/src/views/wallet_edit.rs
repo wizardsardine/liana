@@ -55,7 +55,7 @@ pub(crate) fn wallet_edit_route(state: &State) -> View {
         state.current_view,
         state.app.current_user_role,
         wallet_status,
-        state.app.keys_ready,
+        state.app.keys_ready(),
     )
 }
 
@@ -64,15 +64,15 @@ pub(crate) fn wallet_edit_tab_header(state: &State) -> Element<'_, Msg> {
     let gated = template_edit_disabled(
         state.app.current_user_role,
         wallet_status,
-        state.app.keys_ready,
+        state.app.keys_ready(),
     );
     let active = wallet_edit_view(
         state.current_view,
         state.app.current_user_role,
         wallet_status,
-        state.app.keys_ready,
+        state.app.keys_ready(),
     );
-    let items = wallet_edit_tab_items(state.app.keys_ready, gated);
+    let items = wallet_edit_tab_items(state.app.keys_ready(), gated);
 
     Container::new(tab::tab_header(&items, &active, |view| {
         if *view == View::TemplateEdit {
