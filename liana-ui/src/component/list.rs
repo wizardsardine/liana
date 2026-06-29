@@ -11,6 +11,7 @@ use crate::{
     component::{
         badge::{self, Tile},
         button::{self, EntryWidth, ListEntryAccent},
+        form,
         text::{self, new::caption},
         tooltip,
     },
@@ -174,6 +175,44 @@ pub fn breadcrumb_chevron<'a, M: 'a>() -> Element<'a, M> {
         .size(13)
         .style(theme::text::border)
         .into()
+}
+
+/// Like [`list_entry_row`] but non-clickable and always rendered active, for an entry whose body is
+/// interactive (e.g. a text input) rather than a button label.
+pub fn list_entry_row_static<'a, M: Clone + 'a>(
+    tile: Option<Element<'a, M>>,
+    body: impl Into<Element<'a, M>>,
+    trailing: Option<Element<'a, M>>,
+    width: EntryWidth,
+) -> Element<'a, M> {
+    let body = Container::new(body).width(Length::Fill);
+    let trailing = trailing.map(|trailing| Container::new(trailing).align_y(Alignment::Center));
+    let content = row![tile, body, trailing]
+        .spacing(16)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+
+    button::list_entry_with_enabled(content, None, width, true, None)
+}
+
+/// Expanded "paste an extended public key" entry: a paste tile, an xpub text input and a paste button,
+/// laid out as a static (non-clickable) entry row.
+pub fn entry_paste_xpub<'a, M: Clone + 'a>(
+    value: &str,
+    on_input: impl Fn(String) -> M + 'static,
+    on_paste: M,
+) -> Element<'a, M> {
+    let form_value = form::Value {
+        value: value.to_string(),
+        warning: None,
+        valid: true,
+    };
+    list_entry_row_static(
+        Some(badge::tile(Tile::Paste).into()),
+        form::Form::new("xpub...", &form_value, on_input).padding(10),
+        Some(Button::new(icon::paste_icon()).on_press(on_paste).into()),
+        EntryWidth::Standard,
+    )
 }
 
 pub fn entry_organization<'a, M: Clone + 'a>(
