@@ -99,6 +99,17 @@ fn notice_content(is_manager: bool, keys_ready: bool, locked: bool) -> Element<'
     cards.spacing(12).width(Length::Fill).into()
 }
 
+/// Number of spending paths (primary plus secondaries) that use the given key.
+fn key_usage_count(state: &State, key_id: u8) -> usize {
+    usize::from(state.app.primary_path().contains_key(key_id))
+        + state
+            .app
+            .secondary_paths()
+            .iter()
+            .filter(|s| s.path.contains_key(key_id))
+            .count()
+}
+
 fn keys_list(state: &State, editable: bool) -> Element<'static, Msg> {
     let keys_column = state
         .app
@@ -112,7 +123,12 @@ fn keys_list(state: &State, editable: bool) -> Element<'static, Msg> {
                     .style(theme::text::tertiary)
                     .into()
             } else {
-                pill::signer_assigned().into()
+                let count = key_usage_count(state, *key_id);
+                if count > 0 {
+                    pill::in_policy(count).into()
+                } else {
+                    pill::not_in_policy().into()
+                }
             };
 
             menu_key_entry(
