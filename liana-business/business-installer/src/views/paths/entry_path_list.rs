@@ -111,13 +111,13 @@ fn entry_path<'a>(
 }
 
 pub fn path_list<'a>(state: &'a State, editable: bool) -> Element<'a, Msg> {
-    let keys = &state.app.keys;
+    let keys = state.app.keys();
     // The deletable width is only reserved when at least one recovery path shows a delete button,
     // so a lone primary lines up at the standard width.
-    let has_delete = editable && !state.app.secondary_paths.is_empty();
+    let has_delete = editable && !state.app.secondary_paths().is_empty();
 
     let mut list = column![entry_path(
-        &state.app.primary_path,
+        state.app.primary_path(),
         keys,
         None,
         true,
@@ -128,7 +128,7 @@ pub fn path_list<'a>(state: &'a State, editable: bool) -> Element<'a, Msg> {
     .spacing(12)
     .width(Length::Fill);
 
-    for (index, secondary) in state.app.secondary_paths.iter().enumerate() {
+    for (index, secondary) in state.app.secondary_paths().iter().enumerate() {
         list = list.push(entry_path(
             &secondary.path,
             keys,

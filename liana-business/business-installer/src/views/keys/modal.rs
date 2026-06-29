@@ -38,7 +38,7 @@ pub fn edit_key_modal_view<'a>(
     let current_user_email_lower = state.views.login.email.form.value.to_lowercase();
     let last_edit_info: Option<Element<'_, Message>> = (!modal_state.is_new)
         .then_some({
-            state.app.keys.get(&modal_state.key_id).and_then(|key| {
+            state.app.keys().get(&modal_state.key_id).and_then(|key| {
                 format_last_edit_info(
                     key.last_edited,
                     key.last_editor,

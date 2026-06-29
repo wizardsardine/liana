@@ -102,7 +102,7 @@ fn notice_content(is_manager: bool, keys_ready: bool, locked: bool) -> Element<'
 fn keys_list(state: &State, editable: bool) -> Element<'static, Msg> {
     let keys_column = state
         .app
-        .keys
+        .keys()
         .iter()
         .map(|(key_id, key)| {
             let signer = key_signer(key);
@@ -189,11 +189,11 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
         .and_then(|wallet_id| state.backend.get_wallet(wallet_id))
         .map(|wallet| wallet.status);
     let locked = matches!(wallet_status, Some(WalletStatus::Locked));
-    let editable = !(locked || (is_manager && state.app.keys_ready));
+    let editable = !(locked || (is_manager && state.app.keys_ready()));
 
     let header_content = column![
         wallet_edit_tab_header(state),
-        notice_content(is_manager, state.app.keys_ready, locked),
+        notice_content(is_manager, state.app.keys_ready(), locked),
     ]
     .width(Length::Fill)
     .spacing(16)
@@ -201,7 +201,7 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
     let keys_list = keys_list(state, editable);
     let add_key = editable.then_some(
         column![
-            btn_add_key(Some(Msg::KeyAdd)).width(if state.app.keys.is_empty() {
+            btn_add_key(Some(Msg::KeyAdd)).width(if state.app.keys().is_empty() {
                 EntryWidth::Standard
             } else {
                 EntryWidth::Deletable
@@ -213,8 +213,8 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
     let footer_content = footer_content(
         is_manager,
         locked,
-        state.app.keys_ready,
-        state.app.keys.len(),
+        state.app.keys_ready(),
+        state.app.keys().len(),
     );
 
     let org_name = state
