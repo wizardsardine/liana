@@ -225,8 +225,8 @@ pub fn enroll_ux(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage
             // the phrase is an exact, case-sensitive match — no paraphrase, no
             // checkbox shortcut. Every other step advances freely (its own
             // validation runs on press).
-            let ready = !matches!(state.step, DuressEnrollStep::BackupAck)
-                || state.backup_ack_satisfied();
+            let ready =
+                !matches!(state.step, DuressEnrollStep::BackupAck) || state.backup_ack_satisfied();
             button::primary(None, "Next")
                 .width(Length::Fixed(120.0))
                 .on_press_maybe(ready.then(|| msg(DuressMessage::EnrollNext)))
@@ -331,8 +331,8 @@ fn backup_ack_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessa
 }
 
 fn duress_pin_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {
-    let pin_valid = state.duress_pin.len() == 4
-        && state.duress_pin.chars().all(|c| c.is_ascii_digit());
+    let pin_valid =
+        state.duress_pin.len() == 4 && state.duress_pin.chars().all(|c| c.is_ascii_digit());
     let confirm_valid = state.duress_pin == state.duress_pin_confirm;
 
     let hint_color = if state.duress_pin.is_empty() {

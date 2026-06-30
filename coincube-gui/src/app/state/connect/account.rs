@@ -1829,9 +1829,7 @@ impl ConnectAccountPanel {
                         // `clear_duress_enrollment` no-ops when nothing is armed,
                         // so this is cheap for the common never-enrolled account.
                         if !server_enrolled {
-                            if let Some(account_id) =
-                                self.user.as_ref().map(|u| u.id.to_string())
-                            {
+                            if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
                                 if let Ok(dir) = crate::dir::CoincubeDirectory::active() {
                                     let gen = self.session_generation;
                                     return iced::Task::perform(
@@ -2449,7 +2447,8 @@ impl ConnectAccountPanel {
             }
             DuressMessage::DuressPinConfirmChanged(v) => {
                 if let Some(e) = &mut self.duress_enroll {
-                   e.duress_pin_confirm = v.chars().filter(|c| c.is_ascii_digit()).take(4).collect();
+                    e.duress_pin_confirm =
+                        v.chars().filter(|c| c.is_ascii_digit()).take(4).collect();
                 }
             }
             DuressMessage::AllClearChanged(v) => {
@@ -2794,9 +2793,7 @@ impl ConnectAccountPanel {
                 // PIN makes no call at all.
                 match crate::dir::CoincubeDirectory::active() {
                     Ok(dir) => {
-                        if let Err(msg) =
-                            crate::app::verify_regular_cube_pin(dir.path(), &d.pin)
-                        {
+                        if let Err(msg) = crate::app::verify_regular_cube_pin(dir.path(), &d.pin) {
                             d.error = Some(msg);
                             return iced::Task::none();
                         }
@@ -2856,7 +2853,9 @@ impl ConnectAccountPanel {
                         };
                         return iced::Task::perform(
                             async move {
-                                crate::app::clear_duress_enrollment(dir).await.map(|()| true)
+                                crate::app::clear_duress_enrollment(dir)
+                                    .await
+                                    .map(|()| true)
                             },
                             move |res| {
                                 Message::View(view::Message::ConnectAccount(
@@ -2910,15 +2909,14 @@ impl ConnectAccountPanel {
                         // disable (a dialog was open). The cross-device event and
                         // launch reconcile disarm silently.
                         if changed && had_dialog {
-                            return iced::Task::done(Message::View(
-                                view::Message::ShowSuccess("Duress mode disabled.".to_string()),
-                            ));
+                            return iced::Task::done(Message::View(view::Message::ShowSuccess(
+                                "Duress mode disabled.".to_string(),
+                            )));
                         }
                     }
                     Err(e) => {
                         log::error!("[CONNECT] duress disarm failed: {e}");
-                        let msg =
-                            format!("Couldn't turn off duress mode: {e}. Please try again.");
+                        let msg = format!("Couldn't turn off duress mode: {e}. Please try again.");
                         if let Some(d) = &mut self.duress_disable {
                             d.submitting = false;
                             d.error = Some(msg);
@@ -4090,7 +4088,13 @@ fn device_fingerprint() -> Result<String, String> {
 fn enroll_steps(tier: EnrollTier, require_backup_ack: bool) -> Vec<DuressEnrollStep> {
     use DuressEnrollStep::*;
     let mut steps = match tier {
-        EnrollTier::Tier1 => vec![SetDuressPin, SetAllClear, SetCrkPassword, PickDelay, Confirm],
+        EnrollTier::Tier1 => vec![
+            SetDuressPin,
+            SetAllClear,
+            SetCrkPassword,
+            PickDelay,
+            Confirm,
+        ],
         EnrollTier::Tier2 => vec![SetDuressPin, SetAllClear, PickDelay, Confirm],
         EnrollTier::Sovereign => vec![Encourage, SetDuressPin, Confirm],
     };
@@ -4277,15 +4281,27 @@ mod duress_enroll_tests {
 
         // Tier 1 with every cube backed up → skip the gate.
         panel.duress_cubes = Some(vec![
-            DuressCube { name: "A".into(), has_recovery_kit: true },
-            DuressCube { name: "B".into(), has_recovery_kit: true },
+            DuressCube {
+                name: "A".into(),
+                has_recovery_kit: true,
+            },
+            DuressCube {
+                name: "B".into(),
+                has_recovery_kit: true,
+            },
         ]);
         assert!(!panel.compute_require_backup_ack(EnrollTier::Tier1));
 
         // Tier 1 with any cube lacking a recovery kit → gate.
         panel.duress_cubes = Some(vec![
-            DuressCube { name: "A".into(), has_recovery_kit: true },
-            DuressCube { name: "B".into(), has_recovery_kit: false },
+            DuressCube {
+                name: "A".into(),
+                has_recovery_kit: true,
+            },
+            DuressCube {
+                name: "B".into(),
+                has_recovery_kit: false,
+            },
         ]);
         assert!(panel.compute_require_backup_ack(EnrollTier::Tier1));
     }

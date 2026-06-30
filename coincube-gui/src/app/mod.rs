@@ -1058,10 +1058,7 @@ pub(crate) const DURESS_STEP_UP_BAD_PIN_MSG: &str =
 /// `Ok` when a Cube's regular PIN matches, or when no Cube has a regular PIN at
 /// all (no second factor to demand). `Err` on an empty PIN, a mismatch, no
 /// Cubes, or when settings can't be read.
-pub(crate) fn verify_regular_cube_pin(
-    root: &std::path::Path,
-    pin: &str,
-) -> Result<(), String> {
+pub(crate) fn verify_regular_cube_pin(root: &std::path::Path, pin: &str) -> Result<(), String> {
     if pin.is_empty() {
         return Err("Enter your Cube unlock PIN to continue.".to_string());
     }
