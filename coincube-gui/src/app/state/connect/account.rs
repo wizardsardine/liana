@@ -1820,19 +1820,35 @@ impl ConnectAccountPanel {
                                 );
                             }
                         }
-                        // Launch reconcile (Issue 2, PR 4): the account is no
-                        // longer enrolled server-side, but this device may still
-                        // hold a Connect duress enrollment from before a disable
-                        // it missed while offline. Disarm it locally so the duress
-                        // PIN can't still trip a wipe. `reconcile_duress_disarm`
-                        // no-ops for sovereign / non-matching local state, and
-                        // `clear_duress_enrollment` no-ops when nothing is armed,
-                        // so this is cheap for the common never-enrolled account.
-                        if !server_enrolled {
-                            if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
-                                if let Ok(dir) = crate::dir::CoincubeDirectory::active() {
-                                    let gen = self.session_generation;
-                                    return iced::Task::perform(
+                        // Launch reconcile (Issue 2, PR 4): bring this device's
+                        // local duress state in line with the server's, catching
+                        // a disable missed while offline AND an orphaned device
+                        // (Cubes armed while the local state never finished, e.g.
+                        // a crash mid-enroll) whose duress PIN would otherwise
+                        // still trip a wipe behind a UI that reports it inert.
+                        //
+                        // `reconcile_duress_disarm` (server says NOT enrolled)
+                        // disarms a matching local enrollment or any orphaned
+                        // armed Cubes; `reconcile_duress_orphan` (server says
+                        // STILL enrolled — reached only with this device already
+                        // registered) disarms ONLY an orphan, never a healthy
+                        // enrollment. Both no-op cheaply for a consistent device.
+                        if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
+                            if let Ok(dir) = crate::dir::CoincubeDirectory::active() {
+                                let gen = self.session_generation;
+                                let task = if server_enrolled {
+                                    iced::Task::perform(
+                                        async move { crate::app::reconcile_duress_orphan(dir).await },
+                                        move |res| {
+                                            Message::View(view::Message::ConnectAccount(
+                                                ConnectAccountMessage::Duress(
+                                                    DuressMessage::DisarmComplete(res, gen),
+                                                ),
+                                            ))
+                                        },
+                                    )
+                                } else {
+                                    iced::Task::perform(
                                         async move {
                                             crate::app::reconcile_duress_disarm(dir, account_id)
                                                 .await
@@ -1844,8 +1860,9 @@ impl ConnectAccountPanel {
                                                 ),
                                             ))
                                         },
-                                    );
-                                }
+                                    )
+                                };
+                                return task;
                             }
                         }
                     }
@@ -1973,7 +1990,7 @@ impl ConnectAccountPanel {
             EnrollTier::Tier1 => self
                 .duress_cubes
                 .as_ref()
-                .map_or(true, |cubes| cubes.iter().any(|c| !c.has_recovery_kit)),
+                .is_none_or(|cubes| cubes.iter().any(|c| !c.has_recovery_kit)),
         }
     }
 
@@ -4338,7 +4355,8 @@ mod duress_enroll_tests {
             s.backup_ack = near_miss.to_string();
             assert!(
                 validate_enroll_step(&s).is_err(),
-                "near-miss should keep the gate closed: {near_miss:?}"
+                "near-miss should keep the gate closed: {:?}",
+                near_miss
             );
             assert!(!s.backup_ack_satisfied());
         }
