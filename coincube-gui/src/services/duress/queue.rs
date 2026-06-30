@@ -76,6 +76,14 @@ impl DuressQueue {
         self.write_locked(items)
     }
 
+    /// Drops every queued activation. Used by the duress *disable* (disarm)
+    /// path — no pending activation should survive an un-enroll. Idempotent: an
+    /// already-empty (or absent) queue is left empty.
+    pub fn clear(&self) -> io::Result<()> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        self.write_locked(&[])
+    }
+
     fn read_locked(&self) -> io::Result<Vec<PendingActivation>> {
         match std::fs::read(self.path.as_path()) {
             Ok(bytes) => serde_json::from_slice(&bytes)
@@ -155,6 +163,21 @@ mod tests {
         let dir = temp_dir("noop");
         let q = DuressQueue::new(&dir);
         q.dequeue("nope").unwrap();
+        assert!(q.is_empty().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clear_empties_the_queue() {
+        let dir = temp_dir("clear");
+        let q = DuressQueue::new(&dir);
+        q.enqueue(item("acct_1")).unwrap();
+        q.enqueue(item("acct_2")).unwrap();
+        assert_eq!(q.entries().unwrap().len(), 2);
+        q.clear().unwrap();
+        assert!(q.is_empty().unwrap());
+        // Idempotent: clearing an already-empty queue is fine.
+        q.clear().unwrap();
         assert!(q.is_empty().unwrap());
         let _ = std::fs::remove_dir_all(&dir);
     }

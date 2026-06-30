@@ -1429,7 +1429,11 @@ pub enum DuressMessage {
     AllClearChanged(String),
     CrkPasswordChanged(String),
     DelaySelected(crate::services::duress::enroll::DuressDelay),
-    SovereignConfirmChanged(String),
+    /// The mandated backup-acknowledgement gate's typed-confirmation input
+    /// (formerly `SovereignConfirmChanged`). The gate now covers the Tier-2
+    /// (Connect, no CRK) and any-Cube-without-a-recovery-kit paths too, not
+    /// just sovereign — see [`crate::app::state::connect::DuressEnrollStep`].
+    BackupAckChanged(String),
     MemorizedToggled(bool),
     SubmitEnrollment,
     EnrollResult(Result<(), String>, u64),
@@ -1449,6 +1453,37 @@ pub enum DuressMessage {
     /// it's actually true — never on the optimistic pre-persist path, where a
     /// later collision / disk failure would leave a false "enabled" view.
     EnrollmentPersisted,
+
+    // ── Disable (Issue 2 — turn duress off) ──
+    /// User tapped "Disable Duress Mode" in Settings → opens the step-up
+    /// re-auth dialog (re-enter the regular Cube PIN).
+    DisableStart,
+    /// The step-up regular-PIN input changed.
+    DisablePinChanged(String),
+    /// Dismiss the step-up dialog without disabling.
+    DisableCancel,
+    /// Confirm the step-up: verify the regular Cube PIN locally, then call
+    /// `disable_duress()` on the server.
+    DisableSubmit,
+    /// Result of the server `disable_duress()` call. `Active` (423) means duress
+    /// is currently active and can't be disabled.
+    DisableResult(Result<(), DuressDisableError>, u64),
+    /// Result of the local disarm (`clear_duress_enrollment` /
+    /// `reconcile_duress_disarm`). `Ok(true)` = a disarm actually ran (drop the
+    /// armed state); `Ok(false)` = nothing to disarm (e.g. a sovereign-only
+    /// enrollment a server "not enrolled" must never touch). Shared by the
+    /// explicit-disable, cross-device event, and launch-reconcile paths.
+    DisarmComplete(Result<bool, String>, u64),
+}
+
+/// Outcome of a server `disable_duress()` call, classified so the panel can
+/// branch on the 423 "currently active" case without re-parsing the error body.
+#[derive(Debug, Clone)]
+pub enum DuressDisableError {
+    /// 423 — duress is currently active and can't be disabled.
+    Active,
+    /// Any other failure; carries a user-facing message.
+    Failed(String),
 }
 
 impl std::fmt::Debug for DuressMessage {
@@ -1461,7 +1496,8 @@ impl std::fmt::Debug for DuressMessage {
             DuressPinConfirmChanged(_) => write!(f, "DuressPinConfirmChanged(<redacted>)"),
             AllClearChanged(_) => write!(f, "AllClearChanged(<redacted>)"),
             CrkPasswordChanged(_) => write!(f, "CrkPasswordChanged(<redacted>)"),
-            SovereignConfirmChanged(_) => write!(f, "SovereignConfirmChanged(<redacted>)"),
+            BackupAckChanged(_) => write!(f, "BackupAckChanged(<redacted>)"),
+            DisablePinChanged(_) => write!(f, "DisablePinChanged(<redacted>)"),
             // Non-sensitive — `ClearResult`/`EnrollResult` carry only an error
             // string (no secret), so they format normally.
             SubmitClear => write!(f, "SubmitClear"),
@@ -1488,6 +1524,11 @@ impl std::fmt::Debug for DuressMessage {
             ),
             StateLoaded(s, gen) => write!(f, "StateLoaded({:?}, {})", s, gen),
             EnrollmentPersisted => write!(f, "EnrollmentPersisted"),
+            DisableStart => write!(f, "DisableStart"),
+            DisableCancel => write!(f, "DisableCancel"),
+            DisableSubmit => write!(f, "DisableSubmit"),
+            DisableResult(res, gen) => write!(f, "DisableResult({:?}, {})", res, gen),
+            DisarmComplete(res, gen) => write!(f, "DisarmComplete({:?}, {})", res, gen),
         }
     }
 }
@@ -2144,7 +2185,8 @@ mod duress_message_debug_tests {
             DuressMessage::DuressPinConfirmChanged(CANARY.to_string()),
             DuressMessage::AllClearChanged(CANARY.to_string()),
             DuressMessage::CrkPasswordChanged(CANARY.to_string()),
-            DuressMessage::SovereignConfirmChanged(CANARY.to_string()),
+            DuressMessage::BackupAckChanged(CANARY.to_string()),
+            DuressMessage::DisablePinChanged(CANARY.to_string()),
         ];
         for msg in &sensitive {
             let rendered = format!("{:?}", msg);

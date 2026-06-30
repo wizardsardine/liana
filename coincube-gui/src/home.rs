@@ -2996,6 +2996,12 @@ fn map_connect_task(task: Task<app::message::Message>) -> Task<Message> {
         app::message::Message::CompleteDuressEnrollment(payload) => {
             Message::PersistDuressEnrollment(payload)
         }
+        // The duress-disable confirmation toast (Issue 2). Home has no toast
+        // surface; the Duress panel already reflects the disabled state in its
+        // own fields, so swallow it quietly rather than warn.
+        app::message::Message::View(app::view::Message::ShowSuccess(_)) => {
+            Message::View(ViewMessage::Check)
+        }
         _ => {
             log::warn!("[LAUNCHER] Unexpected message from ConnectAccountPanel");
             Message::View(ViewMessage::Check)

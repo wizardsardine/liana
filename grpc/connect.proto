@@ -210,6 +210,9 @@ message StreamEnvelope {
     // ListPendingDecryptRequests / GetDecryptResult fetches for reliability).
     DecryptRequestedEvent decrypt_requested = 9; // → heir's Keychain
     DecryptResultEvent decrypt_result = 10;      // → heir's desktop
+    // Duress was disabled (turned off) account-wide; every connected device
+    // disarms locally. Offline clients reconcile via GET /connect/duress.
+    DuressDisabledEvent duress_disabled = 11;
   }
 }
 
@@ -227,6 +230,15 @@ message DuressActivatedEvent {
 message DuressClearedEvent {
   string account_id = 1;
   google.protobuf.Timestamp cleared_at = 2;
+}
+
+// DuressDisabledEvent is broadcast when duress is turned OFF for an account
+// (the inverse of enrollment — not the same as all-clear, which only ends an
+// active episode). Every connected device disarms locally; offline clients
+// reconcile via GET /connect/duress.
+message DuressDisabledEvent {
+  string account_id = 1;
+  google.protobuf.Timestamp disabled_at = 2;
 }
 
 message ClientHello {

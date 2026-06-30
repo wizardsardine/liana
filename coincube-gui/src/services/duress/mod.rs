@@ -171,6 +171,24 @@ impl DuressLocalState {
     pub fn save(&self, coincube_dir: &Path) -> io::Result<()> {
         write_json_atomic(&Self::path(coincube_dir), self)
     }
+
+    /// Resets this state to the un-enrolled baseline for a duress *disable*
+    /// (disarm, not wipe): zeroizes the encrypted device code (and any queued
+    /// copy of it) in place before dropping it, then clears every duress field —
+    /// `enrolled`/`active` flags, `unlock_at`, the Connect `account_id`, and any
+    /// mirrored pending activation. Cube funds and data are untouched (this
+    /// struct holds none); the caller separately clears the per-Cube duress PIN
+    /// hashes and the durable queue.
+    pub fn disarm(&mut self) {
+        use zeroize::Zeroize;
+        if let Some(code) = self.duress_code.as_mut() {
+            code.zeroize();
+        }
+        if let Some(pending) = self.pending_activation.as_mut() {
+            pending.duress_code.zeroize();
+        }
+        *self = DuressLocalState::default();
+    }
 }
 
 /// Reads and deserializes a JSON document, treating "file not found" as
@@ -287,6 +305,20 @@ mod tests {
         // The corrupt content is gone, and the value is now stable.
         assert_eq!(device_fingerprint(&dir).unwrap(), fp);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn disarm_resets_to_unenrolled_baseline() {
+        let mut st = sample_state();
+        st.active = true;
+        st.disarm();
+        assert_eq!(st, DuressLocalState::default());
+        assert!(!st.enrolled);
+        assert!(!st.active);
+        assert!(st.unlock_at.is_none());
+        assert!(st.duress_code.is_none());
+        assert!(st.account_id.is_none());
+        assert!(st.pending_activation.is_none());
     }
 
     #[test]

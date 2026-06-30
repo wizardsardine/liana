@@ -14,7 +14,9 @@ use coincube_ui::{
 };
 use iced::Length;
 
-use crate::app::state::connect::{DuressEnrollState, DuressEnrollStep, EnrollTier};
+use crate::app::state::connect::{
+    DuressDisableState, DuressEnrollState, DuressEnrollStep, EnrollTier, BACKUP_ACK_PHRASE,
+};
 use crate::app::view::{ConnectAccountMessage, DuressMessage};
 use crate::services::duress::enroll::{DuressDelay, MIN_ALL_CLEAR_LEN};
 
@@ -115,6 +117,71 @@ pub fn recovery_ux<'a>(
 }
 
 // =============================================================================
+// Issue 2 — disable (step-up re-auth)
+// =============================================================================
+
+/// The "Disable Duress Mode" step-up dialog. Takes over the duress panel (like
+/// the enrollment wizard) while `ConnectAccountPanel::duress_disable` is `Some`.
+/// The user re-enters their regular Cube unlock PIN — not the duress PIN — to
+/// authorize turning duress off on every device.
+pub fn disable_ux(state: &DuressDisableState) -> Element<'_, ConnectAccountMessage> {
+    let confirm: Element<ConnectAccountMessage> = if state.submitting {
+        button::primary(None, "Disabling…")
+            .width(Length::Fixed(220.0))
+            .into()
+    } else {
+        button::primary(None, "Disable Duress Mode")
+            .width(Length::Fixed(220.0))
+            .on_press_maybe((!state.pin.is_empty()).then(|| msg(DuressMessage::DisableSubmit)))
+            .into()
+    };
+
+    let mut col = Column::new()
+        .spacing(16)
+        .max_width(560)
+        .push(text::h4_bold("Disable Duress Mode").style(theme::text::primary))
+        .push(card(
+            Column::new()
+                .push(text::p1_bold("Confirm with your Cube PIN").style(theme::text::primary))
+                .push(
+                    text::p2_regular(
+                        "Turning off duress disarms it on all your devices. Re-enter your \
+                         regular Cube unlock PIN to confirm — not your duress PIN.",
+                    )
+                    .color(color::GREY_3),
+                )
+                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                .push(
+                    TextInput::new("Cube unlock PIN", &state.pin)
+                        .on_input(|v| msg(DuressMessage::DisablePinChanged(v)))
+                        .on_submit(msg(DuressMessage::DisableSubmit))
+                        .secure(true)
+                        .padding(15),
+                ),
+        ));
+
+    if let Some(err) = &state.error {
+        col = col.push(text::p2_regular(err.clone()).color(color::RED));
+    }
+
+    col = col.push(
+        Row::new()
+            .spacing(12)
+            .push(
+                // Disabled mid-flight: cancelling between the server disable and
+                // the local disarm would orphan the in-flight result.
+                button::secondary(None, "Cancel")
+                    .width(Length::Fixed(120.0))
+                    .on_press_maybe((!state.submitting).then(|| msg(DuressMessage::DisableCancel))),
+            )
+            .push(iced::widget::Space::new().width(Length::Fill))
+            .push(confirm),
+    );
+
+    col.width(Length::Fill).into()
+}
+
+// =============================================================================
 // Phases 2 & 8 — enrollment wizard
 // =============================================================================
 
@@ -123,7 +190,7 @@ pub fn recovery_ux<'a>(
 pub fn enroll_ux(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {
     let body = match state.step {
         DuressEnrollStep::Encourage => encourage_step(),
-        DuressEnrollStep::SovereignConfirm => sovereign_confirm_step(state),
+        DuressEnrollStep::BackupAck => backup_ack_step(state),
         DuressEnrollStep::SetDuressPin => duress_pin_step(state),
         DuressEnrollStep::SetAllClear => all_clear_step(state),
         DuressEnrollStep::SetCrkPassword => crk_password_step(state),
@@ -154,9 +221,15 @@ pub fn enroll_ux(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage
                     .on_press(msg(DuressMessage::SubmitEnrollment))
             }
         } else {
+            // On the backup-acknowledgement gate, "Next" stays disabled until
+            // the phrase is an exact, case-sensitive match — no paraphrase, no
+            // checkbox shortcut. Every other step advances freely (its own
+            // validation runs on press).
+            let ready = !matches!(state.step, DuressEnrollStep::BackupAck)
+                || state.backup_ack_satisfied();
             button::primary(None, "Next")
                 .width(Length::Fixed(120.0))
-                .on_press(msg(DuressMessage::EnrollNext))
+                .on_press_maybe(ready.then(|| msg(DuressMessage::EnrollNext)))
         };
         col = col.push(
             Row::new()
@@ -216,26 +289,45 @@ fn encourage_step<'a>() -> Element<'a, ConnectAccountMessage> {
     )
 }
 
-fn sovereign_confirm_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {
-    card(
-        Column::new()
-            .push(text::p1_bold("No server-side recovery").style(theme::text::warning))
-            .push(
-                text::p2_regular(
-                    "Without a Connect account, duress mode will erase your Cubes on this device \
-                 and there is NO server-side recovery path. You will need your seed-phrase \
-                 backup to restore. Continue only if you have a verified offline backup.",
-                )
-                .color(color::GREY_3),
+fn backup_ack_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {
+    // Name BOTH destroyed artifacts explicitly — the Master Seed Phrase(s) AND
+    // the Vault Wallet Descriptor(s) — and the funds consequence. A duress wipe
+    // without a Cube Recovery Kit is only reversible from the user's own
+    // external backup of both.
+    let mut col = Column::new()
+        .push(text::p1_bold("No recovery without your own backup").style(theme::text::warning))
+        .push(
+            text::p2_regular(
+                "Activating duress permanently destroys every Cube on this device. Without a \
+                 Cube Recovery Kit, the only way back is your OWN external backup of BOTH your \
+                 Master Seed Phrase(s) AND your Vault Wallet Descriptor(s). If you don't have \
+                 both, the wipe is irreversible and any funds held in those Cubes are gone — \
+                 there is no server-side recovery path.",
             )
+            .color(color::GREY_3),
+        )
+        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+        .push(text::p2_regular("Type the following exactly to continue:").color(color::GREY_3))
+        .push(text::p2_bold(BACKUP_ACK_PHRASE).style(theme::text::primary))
+        .push(
+            TextInput::new("Type the confirmation phrase exactly", &state.backup_ack)
+                .on_input(|v| msg(DuressMessage::BackupAckChanged(v)))
+                .padding(15),
+        );
+
+    // Connect tiers: keep the recommended path one tap away. Cancelling returns
+    // to the Duress panel, where the per-Cube recovery-kit checklist lives.
+    // Sovereign has no recovery kit, so there's no off-ramp to offer.
+    if state.tier != EnrollTier::Sovereign {
+        col = col
             .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-            .push(text::p2_regular("Type: I have my seed-phrase backup").color(color::GREY_3))
             .push(
-                TextInput::new("I have my seed-phrase backup", &state.sovereign_confirm)
-                    .on_input(|v| msg(DuressMessage::SovereignConfirmChanged(v)))
-                    .padding(15),
-            ),
-    )
+                button::secondary(None, "Set up a Recovery Kit first")
+                    .on_press(msg(DuressMessage::CancelEnrollment)),
+            );
+    }
+
+    card(col)
 }
 
 fn duress_pin_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {

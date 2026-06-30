@@ -30,6 +30,13 @@ pub enum ConnectStreamMessage {
     },
     /// Duress was cleared server-side — exit the cryptic screen.
     DuressCleared,
+    /// Duress was *disabled* (turned off) account-wide (Issue 2). Every device
+    /// disarms its local enrollment — no UI lock, no wipe. `account_id`
+    /// identifies the account so a device only disarms a matching local
+    /// (Connect) enrollment, never an unrelated sovereign one.
+    DuressDisabled {
+        account_id: String,
+    },
 }
 
 #[derive(Debug)]

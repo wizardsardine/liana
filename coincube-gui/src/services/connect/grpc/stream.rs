@@ -180,6 +180,22 @@ pub fn connect_stream(
                                                     );
                                                 }
                                             }
+                                            Some(Body::DuressDisabled(event)) => {
+                                                // Issue 2: duress turned off account-wide.
+                                                // Forward the account id so the app can
+                                                // disarm only a matching local enrollment.
+                                                if let Err(e) = channel
+                                                    .send(ConnectStreamMessage::DuressDisabled {
+                                                        account_id: event.account_id,
+                                                    })
+                                                    .await
+                                                {
+                                                    log::warn!(
+                                                        "[CONNECT GRPC] Failed to forward DuressDisabled: {}",
+                                                        e
+                                                    );
+                                                }
+                                            }
                                             _ => {}
                                         },
                                         Ok(None) => {
