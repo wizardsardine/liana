@@ -93,6 +93,12 @@ pub fn validate_duress_pin(duress_pin: &str, confirm: &str) -> Result<(), String
     if duress_pin.is_empty() {
         return Err("Enter a duress PIN.".to_string());
     }
+    if duress_pin.len() != 4 {
+        return Err("Duress PIN must be exactly 4 digits.".to_string());
+    }
+    if !duress_pin.chars().all(|c| c.is_ascii_digit()) {
+        return Err("Duress PIN must contain only digits.".to_string());
+    }
     if duress_pin != confirm {
         return Err("The duress PINs don't match.".to_string());
     }

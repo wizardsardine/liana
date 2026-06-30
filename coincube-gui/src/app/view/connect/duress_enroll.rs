@@ -239,32 +239,49 @@ fn sovereign_confirm_step(state: &DuressEnrollState) -> Element<'_, ConnectAccou
 }
 
 fn duress_pin_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {
-    card(
-        Column::new()
-            .push(text::p1_bold("Set your duress PIN").style(theme::text::primary))
-            .push(
-                text::p2_regular(
-                    "Choose a PIN you don't use to unlock any of your Cubes. Entering it at any \
+    let pin_valid = state.duress_pin.len() == 4
+        && state.duress_pin.chars().all(|c| c.is_ascii_digit());
+    let confirm_valid = state.duress_pin == state.duress_pin_confirm;
+
+    let hint_color = if state.duress_pin.is_empty() {
+        color::GREY_3
+    } else if pin_valid {
+        color::GREEN
+    } else {
+        color::RED
+    };
+
+    let mut col = Column::new()
+        .push(text::p1_bold("Set your duress PIN").style(theme::text::primary))
+        .push(
+            text::p2_regular(
+                "Choose a PIN you don't use to unlock any of your Cubes. Entering it at any \
                  Cube's unlock screen triggers a duress wipe, so it can't be one of your real \
                  unlock PINs.",
-                )
-                .color(color::GREY_3),
             )
-            .push(text::p2_regular("Duress PIN").color(color::GREY_3))
-            .push(
-                TextInput::new("Duress PIN", &state.duress_pin)
-                    .on_input(|v| msg(DuressMessage::DuressPinChanged(v)))
-                    .secure(true)
-                    .padding(15),
-            )
-            .push(text::p2_regular("Confirm duress PIN").color(color::GREY_3))
-            .push(
-                TextInput::new("Confirm duress PIN", &state.duress_pin_confirm)
-                    .on_input(|v| msg(DuressMessage::DuressPinConfirmChanged(v)))
-                    .secure(true)
-                    .padding(15),
-            ),
-    )
+            .color(color::GREY_3),
+        )
+        .push(text::p2_regular("Duress PIN (4 digits)").color(color::GREY_3))
+        .push(
+            TextInput::new("Duress PIN", &state.duress_pin)
+                .on_input(|v| msg(DuressMessage::DuressPinChanged(v)))
+                .secure(true)
+                .padding(15),
+        )
+        .push(text::caption("Must be exactly 4 digits.").color(hint_color))
+        .push(text::p2_regular("Confirm duress PIN").color(color::GREY_3))
+        .push(
+            TextInput::new("Confirm duress PIN", &state.duress_pin_confirm)
+                .on_input(|v| msg(DuressMessage::DuressPinConfirmChanged(v)))
+                .secure(true)
+                .padding(15),
+        );
+
+    if !state.duress_pin_confirm.is_empty() && !confirm_valid {
+        col = col.push(text::caption("PINs do not match.").color(color::RED));
+    }
+
+    card(col)
 }
 
 fn all_clear_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {
