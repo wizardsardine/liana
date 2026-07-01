@@ -1,6 +1,6 @@
 use crate::{
     state::{
-        views::path::{EditPathModalState, TimelockUnit},
+        views::paths::{EditPathModalState, TimelockUnit},
         Msg, State,
     },
     views::format_last_edit_info,
