@@ -16,8 +16,6 @@ use crate::{
     widget::{Button, Container, Element, Row},
 };
 
-const PATH_DELETE_SLOT: u32 = 24;
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum EntryStatus {
     Simple,
@@ -244,21 +242,37 @@ pub fn entry_key<'a, M: Clone + 'a>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn entry_path<'a, M: Clone + 'a>(
     role: EntryPathRole,
     title: impl Display,
     summary: impl Display,
     availability: Element<'a, M>,
     key_pills: Vec<Element<'a, M>>,
-    trailing: Option<Element<'a, M>>,
+    deletable: bool,
+    on_delete: Option<M>,
     msg: Option<M>,
 ) -> Element<'a, M> {
-    button::list_entry(
-        path_body(title, summary, availability, key_pills, trailing),
+    // When the list is deletable every card shares the deletable width (so the primary, which has
+    // no delete button, still lines up with the recovery cards); otherwise they fill the standard
+    // width.
+    let width = if deletable {
+        EntryWidth::Deletable
+    } else {
+        EntryWidth::Standard
+    };
+    let entry = button::list_entry(
+        path_body(title, summary, availability, key_pills),
         Some(path_accent(role)),
-        EntryWidth::Standard,
+        width,
         msg,
-    )
+    );
+
+    if on_delete.is_some() {
+        with_delete_button(entry, on_delete)
+    } else {
+        entry
+    }
 }
 
 pub fn entry_set_key<'a, M: Clone + 'a>(
@@ -454,7 +468,6 @@ fn path_body<'a, M: 'a>(
     summary: impl Display,
     availability: Element<'a, M>,
     key_pills: Vec<Element<'a, M>>,
-    trailing: Option<Element<'a, M>>,
 ) -> Element<'a, M> {
     let title_block = column![
         text::new::h3_semi(title),
@@ -463,14 +476,9 @@ fn path_body<'a, M: 'a>(
             ..iced::Padding::ZERO
         }),
     ];
-    let trailing = Container::new(trailing.unwrap_or_else(|| row![].into()))
-        .width(PATH_DELETE_SLOT)
-        .align_x(Horizontal::Center)
-        .align_y(Alignment::Center);
     let header = row![
         Container::new(title_block).width(Length::Fill),
-        availability,
-        trailing
+        availability
     ]
     .spacing(16)
     .align_y(Alignment::Start)

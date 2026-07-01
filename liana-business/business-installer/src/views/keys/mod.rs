@@ -96,7 +96,7 @@ fn notice_content(is_manager: bool, keys_ready: bool, locked: bool) -> Element<'
         )]
     };
 
-    cards.spacing(12).into()
+    cards.spacing(12).width(Length::Fill).into()
 }
 
 fn keys_list(state: &State, editable: bool) -> Element<'static, Msg> {
@@ -195,6 +195,8 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
         wallet_edit_tab_header(state),
         notice_content(is_manager, state.app.keys_ready, locked),
     ]
+    .width(Length::Fill)
+    .spacing(16)
     .into();
     let keys_list = keys_list(state, editable);
     let add_key = editable.then_some(

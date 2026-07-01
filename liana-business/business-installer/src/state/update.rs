@@ -2,7 +2,9 @@ use super::{
     app::AppState,
     fetch_key_modal_signer_users,
     message::{HardwareWalletRequestId, Msg},
-    refresh_key_modal_signers, signer_options_for_key_modal, views, State, View,
+    refresh_key_modal_signers, signer_options_for_key_modal,
+    views::{self, paths::TimelockUnit},
+    State, View,
 };
 use crate::{
     backend::{Backend, Error, Notification},
@@ -708,8 +710,6 @@ impl State {
     }
 
     fn on_template_edit_path(&mut self, is_primary: bool, path_index: Option<usize>) {
-        use views::path::TimelockUnit;
-
         if is_primary {
             self.views.paths.edit_path_modal = Some(views::EditPathModalState {
                 is_primary: true,
@@ -755,8 +755,6 @@ impl State {
     }
 
     fn on_template_new_path_modal(&mut self) {
-        use views::path::TimelockUnit;
-
         // Open modal for creating a new recovery path (all keys deselected)
         self.views.paths.edit_path_modal = Some(views::EditPathModalState {
             is_primary: false,
