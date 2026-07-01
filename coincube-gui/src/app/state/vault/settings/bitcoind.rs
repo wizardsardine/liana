@@ -150,37 +150,20 @@ impl BitcoindSettingsState {
             self.warning = Some(err);
             return Task::done(Message::View(view::Message::ShowError(err_msg)));
         };
-        // Reconstruct URLs from cache.network so a stale fallback_esplora.addr
-        // (e.g. written before Testnet4 was handled) is never used. Three-tier
-        // chain: mempool.space → blockstream.info (where available) → Connect
-        // (JWT). Two independent public providers in front means a 429 from
-        // one doesn't immediately push the user onto the metered Connect URL.
-        use coincubed::config::EsploraConfig;
-        let primary_url = crate::installer::public_esplora_url(cache.network);
-        let public_fallback = crate::installer::public_esplora_fallback_url(cache.network);
-        let connect_url = crate::installer::connect_url(cache.network);
+        // Reconstruct the provider chain from cache.network so a stale
+        // fallback_esplora.addr (e.g. written before Testnet4 was handled) is
+        // never used. Mainnet routes primary traffic through COINCUBE API
+        // (keeps addresses off public providers); every other network keeps a
+        // public-primary chain (mempool.space → blockstream.info → Connect).
+        // See `connect_esplora_config` for the assembled chain.
+        let esplora = crate::installer::connect_esplora_config(cache.network, &jwt);
         info!(
-            "Switching to Connect: primary={} public_fallback={:?} backstop={} token_len={}",
-            primary_url,
-            public_fallback,
-            connect_url,
+            "Switching to Connect: primary={} fallback={:?} secondary_fallback={:?} token_len={}",
+            esplora.addr,
+            esplora.fallback_addr,
+            esplora.secondary_fallback_addr,
             jwt.len()
         );
-        let (fallback_addr, fallback_token, secondary_fallback_addr, secondary_fallback_token) =
-            match public_fallback {
-                Some(public_fallback) => {
-                    (Some(public_fallback), None, Some(connect_url), Some(jwt))
-                }
-                None => (Some(connect_url), Some(jwt), None, None),
-            };
-        let esplora = EsploraConfig {
-            addr: primary_url,
-            token: None,
-            fallback_addr,
-            fallback_token,
-            secondary_fallback_addr,
-            secondary_fallback_token,
-        };
         let mut new_cfg = cfg.clone();
         if let Some(BitcoinBackend::Bitcoind(current)) = cfg.bitcoin_backend.clone() {
             new_cfg.pending_bitcoind = Some(current);

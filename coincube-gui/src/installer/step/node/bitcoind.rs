@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 use bitcoin_hashes::sha256;
 use coincube_core::miniscript::bitcoin::Network;
-use coincubed::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, EsploraConfig};
+use coincubed::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use flate2::read::GzDecoder;
 use iced::{Subscription, Task};
@@ -572,48 +572,21 @@ impl Step for SelectBitcoindTypeStep {
                     ctx.bitcoin_backend = None;
                 }
             } else {
-                // Connect-only: set Esplora backend now. Primary is a public
-                // Esplora so wallet sync traffic distributes across user IPs;
-                // Connect is the fallback so the safety net still exists when
-                // a public provider rate-limits an individual user.
+                // Connect-only: set Esplora backend now. Mainnet routes
+                // primary traffic through COINCUBE API (keeps addresses off
+                // public providers); every other network keeps a public
+                // Esplora primary so sync traffic distributes across user
+                // IPs, with Connect as the safety-net fallback. See
+                // `connect_esplora_config` for the assembled chain.
                 // `EsploraConfig.token` is a plain `String` (serialized
                 // to disk in `coincubed` config), so we copy the inner
                 // string out of the `Zeroizing<String>` wrapper here.
                 let Some(token) = &ctx.connect_jwt else {
                     return false;
                 };
-                // Three-tier chain: mempool.space → blockstream.info →
-                // Connect (JWT). Picking up `public_esplora_fallback_url`
-                // when it's available for this network distributes
-                // sync load across two independent public providers
-                // before falling back to the metered Connect URL.
-                let (
-                    fallback_addr,
-                    fallback_token,
-                    secondary_fallback_addr,
-                    secondary_fallback_token,
-                ) = match crate::installer::public_esplora_fallback_url(ctx.network) {
-                    Some(public_fallback) => (
-                        Some(public_fallback),
-                        None,
-                        Some(crate::installer::connect_url(ctx.network)),
-                        Some(token.as_str().to_owned()),
-                    ),
-                    None => (
-                        Some(crate::installer::connect_url(ctx.network)),
-                        Some(token.as_str().to_owned()),
-                        None,
-                        None,
-                    ),
-                };
-                ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
-                    addr: crate::installer::public_esplora_url(ctx.network),
-                    token: None,
-                    fallback_addr,
-                    fallback_token,
-                    secondary_fallback_addr,
-                    secondary_fallback_token,
-                }));
+                ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(
+                    crate::installer::connect_esplora_config(ctx.network, token.as_str()),
+                ));
                 ctx.internal_bitcoind_config = None;
                 ctx.pending_bitcoind_config = None;
                 ctx.internal_bitcoind = None;
@@ -1192,38 +1165,12 @@ impl Step for InternalBitcoindStep {
                 // Inner `String` copy: `EsploraConfig.token` is a plain
                 // `String` (persisted to disk), so extract it from the
                 // `Zeroizing<String>` wrapper rather than cloning the
-                // wrapper itself. Primary/fallback split: see the
-                // Connect-only branch above for the rationale.
-                // Same three-tier chain as the Connect-only branch above:
-                // mempool.space → blockstream.info (where available) →
-                // Connect (JWT).
-                let (
-                    fallback_addr,
-                    fallback_token,
-                    secondary_fallback_addr,
-                    secondary_fallback_token,
-                ) = match crate::installer::public_esplora_fallback_url(ctx.network) {
-                    Some(public_fallback) => (
-                        Some(public_fallback),
-                        None,
-                        Some(crate::installer::connect_url(ctx.network)),
-                        Some(token.as_str().to_owned()),
-                    ),
-                    None => (
-                        Some(crate::installer::connect_url(ctx.network)),
-                        Some(token.as_str().to_owned()),
-                        None,
-                        None,
-                    ),
-                };
-                ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
-                    addr: crate::installer::public_esplora_url(ctx.network),
-                    token: None,
-                    fallback_addr,
-                    fallback_token,
-                    secondary_fallback_addr,
-                    secondary_fallback_token,
-                }));
+                // wrapper itself. Primary/fallback split (mainnet →
+                // COINCUBE API primary, others → public primary): see
+                // `connect_esplora_config`.
+                ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(
+                    crate::installer::connect_esplora_config(ctx.network, token.as_str()),
+                ));
             } else {
                 ctx.bitcoin_backend = bitcoind_config.map(BitcoinBackend::Bitcoind);
             }

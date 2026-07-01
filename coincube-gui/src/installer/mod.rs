@@ -20,14 +20,19 @@ pub(crate) fn connect_url(network: bitcoin::Network) -> String {
     format!("{}/api/v1/esplora/{}", base, network_path)
 }
 
-/// Public-Esplora URL for the given network, used as the daemon's primary
-/// endpoint so wallet sync traffic distributes across users' IPs instead of
-/// consolidating onto coincube-api's IP (which is where the per-IP rate limits
-/// bite). The chain in the same flow goes
+/// Public-Esplora URL for the given network. On non-mainnet networks this is
+/// the daemon's primary endpoint so wallet sync traffic distributes across
+/// users' IPs instead of consolidating onto coincube-api's IP (which is where
+/// the per-IP rate limits bite). The chain in that flow goes
 /// `public_esplora_url` (mempool.space) → [`public_esplora_fallback_url`]
 /// (blockstream.info) → [`connect_url`] (authenticated backstop), so a
 /// throttled mempool doesn't immediately push the user to the metered
 /// Connect URL.
+///
+/// Mainnet inverts this: [`connect_esplora_config`] makes [`connect_url`]
+/// (COINCUBE API) the primary and demotes these public URLs to fallbacks, so
+/// mainnet address lookups stay on COINCUBE infrastructure. See
+/// [`connect_esplora_config`] for the assembled chain.
 ///
 /// Regtest has no public counterpart — callers in regtest builds should
 /// configure their own endpoint via the installer's manual-Esplora step.
@@ -62,7 +67,49 @@ pub(crate) fn public_esplora_fallback_url(network: bitcoin::Network) -> Option<S
     }
 }
 
+/// Build the Esplora provider chain for a Connect-backed install.
+///
+/// Mainnet routes primary traffic through COINCUBE API (self-hosted node —
+/// keeps mainnet addresses off public providers) with mempool.space and
+/// blockstream.info demoted to fallbacks. Every other network keeps the
+/// public-primary chain (mempool.space → blockstream.info → Connect) so sync
+/// load stays distributed across user IPs.
+pub(crate) fn connect_esplora_config(network: bitcoin::Network, jwt: &str) -> EsploraConfig {
+    if network == bitcoin::Network::Bitcoin {
+        EsploraConfig {
+            addr: connect_url(network),
+            token: Some(jwt.to_owned()),
+            fallback_addr: Some(public_esplora_url(network)),
+            fallback_token: None,
+            // Some(blockstream.info) for mainnet.
+            secondary_fallback_addr: public_esplora_fallback_url(network),
+            secondary_fallback_token: None,
+        }
+    } else {
+        // Unchanged public-primary chain for testnet/testnet4/signet/regtest.
+        let (fallback_addr, fallback_token, secondary_fallback_addr, secondary_fallback_token) =
+            match public_esplora_fallback_url(network) {
+                Some(public_fallback) => (
+                    Some(public_fallback),
+                    None,
+                    Some(connect_url(network)),
+                    Some(jwt.to_owned()),
+                ),
+                None => (Some(connect_url(network)), Some(jwt.to_owned()), None, None),
+            };
+        EsploraConfig {
+            addr: public_esplora_url(network),
+            token: None,
+            fallback_addr,
+            fallback_token,
+            secondary_fallback_addr,
+            secondary_fallback_token,
+        }
+    }
+}
+
 use coincube_core::miniscript::bitcoin::{self, Network};
+use coincubed::config::EsploraConfig;
 use coincube_ui::{
     component::network_banner,
     widget::{Column, Element},
