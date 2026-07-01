@@ -4784,6 +4784,21 @@ impl State for P2PPanel {
             Message::View(view::Message::P2P(msg)) => msg,
             _ => return Task::none(),
         };
+        // Fail-closed server gate (defense-in-depth, mirroring the
+        // `subscription()` gate and the `StartCheckout` chokepoint). When the
+        // server has P2P switched off the whole surface is hidden and every
+        // route unreachable, so no P2P message is legitimate — drop them all
+        // before any side-effecting work (order submit/take/cancel, trade
+        // actions, chat/dispute sends, attachment uploads, Spark hold-invoice
+        // payments) can run. A stale, deep-linked, or async-completion message
+        // must never drive externally visible Mostro work while P2P is
+        // disabled. Keyed on `p2p_on()` (the server switch) only — NOT the
+        // per-network gate — so P2P Settings stays usable on a server-enabled
+        // but network-gated cube, where the user configures a coordinator to
+        // lift that gate.
+        if !cache.marketplace_flags.p2p_on() {
+            return Task::none();
+        }
         if !self.lightning_address_user_edited && self.create_lightning_address.value.is_empty() {
             if let Some(addr) = cache.lightning_address.as_ref() {
                 self.create_lightning_address.value = addr.clone();
