@@ -243,7 +243,7 @@ fn connected_view<'a>(
 
     let btc_fiat_str = btc_row_fiat
         .as_ref()
-        .map(|f| format!("{} {}", f.to_rounded_string(), f.currency()))
+        .map(|f| format!("{} {}", f.to_formatted_string(), f.currency()))
         .unwrap_or_default();
     let btc_row = Row::new()
         .spacing(10)
@@ -334,7 +334,7 @@ fn connected_view<'a>(
             if let Some(fiat) = tx.fiat_amount.as_ref() {
                 item = item.with_fiat_amount(format!(
                     "{} {}",
-                    fiat.to_rounded_string(),
+                    fiat.to_formatted_string(),
                     fiat.currency()
                 ));
             }

@@ -475,7 +475,7 @@ pub fn liquid_send_view<'a>(
             } else {
                 tx.fiat_amount
                     .as_ref()
-                    .map(|fiat| format!("{} {}", fiat.to_rounded_string(), fiat.currency()))
+                    .map(|fiat| format!("{} {}", fiat.to_formatted_string(), fiat.currency()))
             };
 
             let display_amount = if tx.usdt_display.is_some() {

@@ -349,7 +349,7 @@ fn transaction_row<'a>(
 
     if let Some(fiat_amount) = fiat_converter.map(|converter| {
         let fiat = converter.convert(btc_amount);
-        format!("{} {}", fiat.to_rounded_string(), fiat.currency())
+        format!("{} {}", fiat.to_formatted_string(), fiat.currency())
     }) {
         item = item.with_fiat_amount(fiat_amount);
     }
@@ -429,7 +429,7 @@ fn refundable_row<'a>(
 
     if let Some(fiat_amount) = fiat_converter.map(|converter| {
         let fiat = converter.convert(btc_amount);
-        format!("{} {}", fiat.to_rounded_string(), fiat.currency())
+        format!("{} {}", fiat.to_formatted_string(), fiat.currency())
     }) {
         item = item.with_fiat_amount(fiat_amount);
     }

@@ -12,6 +12,8 @@
 //! backend state (it'll need to pull from the bridge once per-cube asset
 //! discovery is wired).
 
+use coincube_ui::component::amount::format_u64_as_string;
+
 /// A Spark-side asset that the UI can display in a picker / balance row.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum SparkAsset {
@@ -69,7 +71,7 @@ pub fn format_token_display(amount: u64, decimals: u32) -> String {
         let scale = 10_u64.pow(DISPLAY_DECIMALS - decimals);
         return format!(
             "{}.{:0>width$}",
-            whole,
+            format_u64_as_string(whole, ","),
             frac * scale,
             width = DISPLAY_DECIMALS as usize
         );
@@ -83,7 +85,7 @@ pub fn format_token_display(amount: u64, decimals: u32) -> String {
     }
     format!(
         "{}.{:0>width$}",
-        whole,
+        format_u64_as_string(whole, ","),
         frac_2dp,
         width = DISPLAY_DECIMALS as usize
     )

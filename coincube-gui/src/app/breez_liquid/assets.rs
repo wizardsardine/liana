@@ -1,4 +1,5 @@
 use breez_sdk_liquid::bitcoin::Network;
+use coincube_ui::component::amount::format_u64_as_string;
 
 // ---------------------------------------------------------------------------
 // Mainnet Liquid asset IDs
@@ -150,7 +151,7 @@ pub fn format_usdt_display(amount: u64) -> String {
     }
     format!(
         "{}.{:0>width$}",
-        whole,
+        format_u64_as_string(whole, ","),
         frac_2dp,
         width = USDT_DISPLAY_DECIMALS as usize
     )

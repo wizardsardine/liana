@@ -8,6 +8,7 @@ use crate::{
 
 use iced::{widget, Alignment, Length};
 
+use coincube_ui::component::amount::{format_f64_as_string, format_u64_as_string};
 use coincube_ui::component::{button, card, text};
 use coincube_ui::{color, icon::*, theme};
 
@@ -854,11 +855,15 @@ fn info_field<'a>(
 }
 
 fn format_currency_amount(amount: u64, currency: &MavapayUnitCurrency) -> String {
+    let fiat = |v: f64| format_f64_as_string(v, ",", 2, false);
     match currency {
-        MavapayUnitCurrency::KenyanShillingCent => format!("{:.2} KES", amount as f64 / 100.0),
-        MavapayUnitCurrency::SouthAfricanRandCent => format!("{:.2} ZAR", amount as f64 / 100.0),
-        MavapayUnitCurrency::NigerianNairaKobo => format!("{:.2} NGN", amount as f64 / 100.0),
-        MavapayUnitCurrency::BitcoinSatoshi => format!("{:.8} BTC", amount as f64 / 100_000_000.0),
+        MavapayUnitCurrency::KenyanShillingCent => format!("{} KES", fiat(amount as f64 / 100.0)),
+        MavapayUnitCurrency::SouthAfricanRandCent => format!("{} ZAR", fiat(amount as f64 / 100.0)),
+        MavapayUnitCurrency::NigerianNairaKobo => format!("{} NGN", fiat(amount as f64 / 100.0)),
+        MavapayUnitCurrency::BitcoinSatoshi => format!(
+            "{} BTC",
+            format_f64_as_string(amount as f64 / 100_000_000.0, ",", 8, false)
+        ),
     }
 }
 
@@ -1305,17 +1310,21 @@ fn transaction_status_info(transaction: &OrderTransaction) -> (&'static str, ice
 }
 
 fn format_amount(amount: u64, currency: &MavapayCurrency) -> String {
+    let fiat = |v: f64| format_f64_as_string(v, ",", 2, false);
     match currency {
-        MavapayCurrency::Bitcoin => format!("{:.8} BTC", amount as f64 / 100_000_000.0),
-        MavapayCurrency::KenyanShilling => format!("{:.2} KSh", amount as f64 / 100.0),
-        MavapayCurrency::SouthAfricanRand => format!("{:.2} ZAR", amount as f64 / 100.0),
-        MavapayCurrency::NigerianNaira => format!("{:.2} NGN", amount as f64 / 100.0),
+        MavapayCurrency::Bitcoin => format!(
+            "{} BTC",
+            format_f64_as_string(amount as f64 / 100_000_000.0, ",", 8, false)
+        ),
+        MavapayCurrency::KenyanShilling => format!("{} KSh", fiat(amount as f64 / 100.0)),
+        MavapayCurrency::SouthAfricanRand => format!("{} ZAR", fiat(amount as f64 / 100.0)),
+        MavapayCurrency::NigerianNaira => format!("{} NGN", fiat(amount as f64 / 100.0)),
     }
 }
 
 fn format_fees(fees: u64, currency: &MavapayCurrency) -> String {
     match currency {
-        MavapayCurrency::Bitcoin => format!("{} sats", fees),
+        MavapayCurrency::Bitcoin => format!("{} sats", format_u64_as_string(fees, ",")),
         _ => format_amount(fees, currency),
     }
 }

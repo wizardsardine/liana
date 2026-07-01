@@ -5,7 +5,7 @@
 use coincube_ui::{
     color,
     component::{
-        amount::BitcoinDisplayUnit,
+        amount::{BitcoinDisplayUnit, DisplayAmount},
         text::*,
         transaction::{TransactionDirection, TransactionListItem},
     },
@@ -73,7 +73,7 @@ pub fn last_transactions_section<'a, M: 'a + Clone + 'static>(
         }
         if let Some(fiat) = tx.fiat_amount.as_ref() {
             item =
-                item.with_fiat_amount(format!("{} {}", fiat.to_rounded_string(), fiat.currency()));
+                item.with_fiat_amount(format!("{} {}", fiat.to_formatted_string(), fiat.currency()));
         }
 
         if matches!(tx.status, DomainPaymentStatus::Pending) {

@@ -25,7 +25,7 @@ use crate::export::ImportExportMessage;
 use crate::utils::{format_timestamp, truncate_middle};
 use coincube_ui::{
     component::{
-        amount::{amount_with_size_and_unit, BitcoinDisplayUnit},
+        amount::{amount_with_size_and_unit, BitcoinDisplayUnit, DisplayAmount},
         button, card,
         pagination::pagination_controls,
         quote_display::{self, Quote, QuoteDisplayProps},
@@ -232,11 +232,11 @@ fn transaction_row<'a>(
     let fiat_label = if tx.token_display.is_some() {
         tx.fiat_amount
             .as_ref()
-            .map(|f| format!("{} {}", f.to_rounded_string(), f.currency()))
+            .map(|f| format!("{} {}", f.to_formatted_string(), f.currency()))
     } else {
         fiat_converter.map(|converter| {
             let fiat = converter.convert(display_amount);
-            format!("{} {}", fiat.to_rounded_string(), fiat.currency())
+            format!("{} {}", fiat.to_formatted_string(), fiat.currency())
         })
     };
     if let Some(fiat_amount) = fiat_label {
@@ -321,7 +321,7 @@ pub fn transaction_detail_view<'a>(
     let date_text = format_timestamp(tx.timestamp).unwrap_or_else(|| "Unknown".to_string());
     let fiat_str = total_fiat
         .as_ref()
-        .map(|f| format!("{} {}", f.to_rounded_string(), f.currency()));
+        .map(|f| format!("{} {}", f.to_formatted_string(), f.currency()));
 
     let amount_row = if let Some(token_str) = tx.token_display.as_ref() {
         Row::new()
