@@ -855,9 +855,14 @@ fn info_field<'a>(
 }
 
 /// Format a minor-unit (cents) fiat amount with two decimal places and comma
-/// grouping, e.g. `1234567` -> `12,345.67`.
+/// grouping, e.g. `1234567` -> `12,345.67`. Uses integer division so large
+/// amounts stay exact (an `f64` cast would lose precision above 2^53).
 fn format_fiat_cents(cents: u64) -> String {
-    format_f64_as_string(cents as f64 / 100.0, ",", 2, false)
+    format!(
+        "{}.{:02}",
+        format_u64_as_string(cents / 100, ","),
+        cents % 100
+    )
 }
 
 fn format_currency_amount(amount: u64, currency: &MavapayUnitCurrency) -> String {

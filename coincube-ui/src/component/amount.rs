@@ -42,11 +42,17 @@ impl DisplayAmount for Amount {
 /// Format a BTC amount (as f64) with commas grouping the whole-number part and
 /// spaces grouping the 8 fractional digits, e.g. `1,000.00 799 800`.
 pub fn format_btc_string(value: f64) -> String {
+    // Non-finite inputs (NaN, ±inf) format without a decimal point; return them
+    // as-is rather than panicking in the split below. `to_btc()` is always
+    // finite, so this only guards misuse of the public helper.
+    if !value.is_finite() {
+        return value.to_string();
+    }
     let amount = format!("{:.8}", value);
-    // `{:.8}` always emits a decimal point for the finite values `to_btc()` yields.
+    // `{:.8}` always emits a decimal point for finite values.
     let (integer, fraction) = amount
         .split_once('.')
-        .expect("formatted amount always contains a decimal point");
+        .expect("formatted finite amount always contains a decimal point");
     format!(
         "{}.{}",
         group_digits(integer, ","),
@@ -368,6 +374,14 @@ mod tests {
             format_u64_as_string(u64::MAX, ","),
             "18,446,744,073,709,551,615"
         );
+    }
+
+    #[test]
+    fn format_btc_string_handles_non_finite_without_panicking() {
+        assert_eq!(format_btc_string(f64::NAN), "NaN");
+        assert_eq!(format_btc_string(f64::INFINITY), "inf");
+        assert_eq!(format_btc_string(f64::NEG_INFINITY), "-inf");
+        assert_eq!(format_btc_string(1234.5), "1,234.50 000 000");
     }
 
     #[test]
