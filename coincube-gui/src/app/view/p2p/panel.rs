@@ -2061,11 +2061,13 @@ impl P2PPanel {
                             actions = actions.push(
                                 card::simple(
                                     column![
-                                        p1_bold("Waiting for seller payment"),
+                                        p1_bold("Waiting for seller to lock the Bitcoin"),
                                         p2_regular(
-                                            "A payment request has been sent to the seller. \
-                                            If the seller doesn't complete the payment in time, \
-                                            the trade will be canceled.",
+                                            "The seller has been asked to lock the Bitcoin in \
+                                            escrow. Once it's locked, you'll be prompted to send \
+                                            the fiat payment. If the seller doesn't lock it in \
+                                            time, the trade will be canceled — you won't have \
+                                            paid anything yet.",
                                         )
                                         .style(theme::text::secondary),
                                     ]

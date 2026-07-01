@@ -34,7 +34,7 @@ impl TradeStatus {
         match self {
             TradeStatus::Pending => "Pending",
             TradeStatus::Active => "Active",
-            TradeStatus::WaitingPayment => "Waiting Payment",
+            TradeStatus::WaitingPayment => "Locking Escrow",
             TradeStatus::WaitingBuyerInvoice => "Waiting Invoice",
             TradeStatus::FiatSent => "Fiat Sent",
             TradeStatus::SettledHoldInvoice => "Paying Sats",

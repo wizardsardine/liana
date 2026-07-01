@@ -34,7 +34,7 @@ impl std::fmt::Display for TradeFilter {
             TradeFilter::All => write!(f, "All"),
             TradeFilter::Pending => write!(f, "Pending"),
             TradeFilter::Active => write!(f, "Active"),
-            TradeFilter::WaitingPayment => write!(f, "Waiting Payment"),
+            TradeFilter::WaitingPayment => write!(f, "Locking Escrow"),
             TradeFilter::WaitingInvoice => write!(f, "Waiting Invoice"),
             TradeFilter::FiatSent => write!(f, "Fiat Sent"),
             TradeFilter::Success => write!(f, "Success"),
