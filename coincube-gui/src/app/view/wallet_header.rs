@@ -19,7 +19,7 @@ use coincube_ui::{
     component::{
         amount::{
             amount_with_size_and_unit, amount_with_size_colors_and_unit,
-            unconfirmed_amount_with_size_and_unit, BitcoinDisplayUnit,
+            unconfirmed_amount_with_size_and_unit, BitcoinDisplayUnit, DisplayAmount,
         },
         spinner,
         text::{text, Text as TextExt, H1_SIZE, H2_SIZE, H3_SIZE, H4_SIZE, P1_SIZE, P2_SIZE},
@@ -318,7 +318,7 @@ enum FiatStyle {
 ///   " NGN") renders at `value_size` in `color::GREY_3` — same look as
 ///   the SATS suffix that follows the satoshi balance.
 fn fiat_amount_row<'a, M: 'a>(fiat: &FiatAmount, value_size: u32, style: FiatStyle) -> Row<'a, M> {
-    let value_str = fiat.to_rounded_string();
+    let value_str = fiat.to_formatted_string();
     let value_text = match style {
         FiatStyle::Primary => text(value_str).size(value_size).bold(),
         FiatStyle::Secondary => text(value_str).size(value_size).color(color::GREY_3),

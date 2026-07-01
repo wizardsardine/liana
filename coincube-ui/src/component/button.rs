@@ -104,6 +104,23 @@ pub fn transparent_border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) ->
     .style(theme::button::container_border)
 }
 
+/// Transparent bordered button with centered content — for segmented toggles
+/// where the button has a fixed/fill width and the label should sit in the
+/// middle (e.g. the Spark Receive method picker). Same style as
+/// [`transparent_border`], but centered rather than left-aligned.
+pub fn transparent_border_centered<'a, T: 'a>(
+    icon: Option<Text<'a>>,
+    t: &'static str,
+) -> Button<'a, T> {
+    Button::new(content(
+        icon,
+        text(t)
+            .align_y(iced::Alignment::Center)
+            .align_x(iced::Alignment::Center),
+    ))
+    .style(theme::button::container_border)
+}
+
 /// Orange-on-transparent outline button with a solid `DARK_ORANGE`
 /// fill + black text on hover. Centered content — use this for
 /// "Receive" and similar secondary actions that should read as

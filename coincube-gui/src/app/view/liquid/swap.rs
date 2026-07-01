@@ -350,7 +350,11 @@ fn swap_leg_row<'a>(
     if is_usdt {
         item = item.with_amount_override(format!("{} USDt", format_usdt_display(amount.to_sat())));
     } else if let Some(fiat) = config.fiat_converter.as_ref().map(|c| c.convert(amount)) {
-        item = item.with_fiat_amount(format!("{} {}", fiat.to_rounded_string(), fiat.currency()));
+        item = item.with_fiat_amount(format!(
+            "{} {}",
+            fiat.to_formatted_string(),
+            fiat.currency()
+        ));
     }
 
     if matches!(payment.status, DomainPaymentStatus::Pending) {

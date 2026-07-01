@@ -28,6 +28,7 @@ use std::convert::TryInto;
 use std::sync::Arc;
 
 use coincube_spark_protocol::{ParseInputKind, PrepareSendOk, SendPaymentOk};
+use coincube_ui::component::amount::format_u64_as_string;
 use coincube_ui::widget::Element;
 use iced::Task;
 
@@ -241,7 +242,8 @@ impl State for SparkSend {
                 )
             }
             SparkSendMessage::SendSucceeded(ok) => {
-                self.sent_amount_display = format!("{} sats", ok.amount_sat);
+                self.sent_amount_display =
+                    format!("{} sats", format_u64_as_string(ok.amount_sat, ","));
                 self.phase = SparkSendPhase::Sent(ok);
                 // Clear the inputs so a follow-up send doesn't re-use them.
                 self.destination_input.clear();

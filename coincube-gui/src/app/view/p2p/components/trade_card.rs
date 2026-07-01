@@ -8,8 +8,10 @@ use iced::{
     Length,
 };
 
+use super::format_with_separators;
 use super::order_card::OrderType;
 use crate::app::view::{self, message::P2PMessage};
+use coincube_ui::component::amount::format_f64_as_string;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TradeStatus {
@@ -160,17 +162,19 @@ pub fn trade_card<'a>(trade: &'a P2PTrade) -> Button<'a, view::Message> {
             if trade.is_range_order() {
                 row!(
                     h2(format!(
-                        "{:.0} - {:.0}",
-                        trade.min_amount.unwrap_or(0.0),
-                        trade.max_amount.unwrap_or(0.0)
-                    )),
+                        "{} - {}",
+                        format_f64_as_string(trade.min_amount.unwrap_or(0.0), ",", 0, false),
+                        format_f64_as_string(trade.max_amount.unwrap_or(0.0), ",", 0, false)
+                    ))
+                    .style(theme::text::primary),
                     p1_bold(format!(" {}", trade.fiat_currency)).style(theme::text::secondary)
                 )
                 .spacing(8)
                 .align_y(iced::alignment::Vertical::Center)
             } else {
                 row!(
-                    h2(format!("{:.2}", trade.fiat_amount)),
+                    h2(format_f64_as_string(trade.fiat_amount, ",", 2, false))
+                        .style(theme::text::primary),
                     p1_bold(format!(" {}", trade.fiat_currency)).style(theme::text::secondary)
                 )
                 .spacing(8)
@@ -180,7 +184,10 @@ pub fn trade_card<'a>(trade: &'a P2PTrade) -> Button<'a, view::Message> {
             if trade.is_fixed_price() {
                 row![
                     p2_regular("for").style(theme::text::secondary),
-                    p2_bold(format!("{} sats", trade.sats_amount.unwrap_or(0)))
+                    p2_bold(format!(
+                        "{} sats",
+                        format_with_separators(trade.sats_amount.unwrap_or(0))
+                    ))
                 ]
                 .spacing(8)
             } else {

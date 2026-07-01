@@ -168,7 +168,7 @@ fn tx_list_view(
 
     if let Some(fiat_amount) = fiat_converter.map(|converter| {
         let fiat = converter.convert(*amount);
-        format!("{} {}", fiat.to_rounded_string(), fiat.currency())
+        format!("{} {}", fiat.to_formatted_string(), fiat.currency())
     }) {
         item = item.with_fiat_amount(fiat_amount);
     }

@@ -28,15 +28,36 @@ pub trait DisplayAmount {
 
 impl DisplayAmount for Amount {
     fn to_formatted_string(&self) -> String {
-        format_f64_as_string(self.to_btc(), " ", 8, true)
+        format_btc_string(self.to_btc())
     }
 
     fn to_formatted_string_with_unit(&self, unit: BitcoinDisplayUnit) -> String {
         match unit {
-            BitcoinDisplayUnit::BTC => format_f64_as_string(self.to_btc(), " ", 8, true),
-            BitcoinDisplayUnit::Sats => format_u64_as_string(self.to_sat(), " "),
+            BitcoinDisplayUnit::BTC => format_btc_string(self.to_btc()),
+            BitcoinDisplayUnit::Sats => format_u64_as_string(self.to_sat(), ","),
         }
     }
+}
+
+/// Format a BTC amount (as f64) with commas grouping the whole-number part and
+/// spaces grouping the 8 fractional digits, e.g. `1,000.00 799 800`.
+pub fn format_btc_string(value: f64) -> String {
+    // Non-finite inputs (NaN, ±inf) format without a decimal point; return them
+    // as-is rather than panicking in the split below. `to_btc()` is always
+    // finite, so this only guards misuse of the public helper.
+    if !value.is_finite() {
+        return value.to_string();
+    }
+    let amount = format!("{:.8}", value);
+    // `{:.8}` always emits a decimal point for finite values.
+    let (integer, fraction) = amount
+        .split_once('.')
+        .expect("formatted finite amount always contains a decimal point");
+    format!(
+        "{}.{}",
+        group_digits(integer, ","),
+        group_digits(fraction, " ")
+    )
 }
 
 /// Amount with default size and colors.
@@ -138,11 +159,11 @@ pub fn format_f64_as_string(
         None => (amount.as_str(), ""), // num_decimals must be 0
     };
 
-    let integer = format_amount_number_part(integer, sep);
+    let integer = group_digits(integer, sep);
 
     if num_decimals > 0 {
         let fraction = if sep_decimals {
-            format_amount_number_part(fraction, sep)
+            group_digits(fraction, sep)
         } else {
             fraction.to_string()
         };
@@ -152,20 +173,20 @@ pub fn format_f64_as_string(
     }
 }
 
-/// Format a u64 (sats) as a string with space separators
+/// Format a u64 (sats) as a string with the given separator
 pub fn format_u64_as_string(value: u64, sep: &str) -> String {
     let s = value.to_string();
-    format_amount_number_part(&s, sep)
+    group_digits(&s, sep)
 }
 
-// Format a "part" of a number string with spaces to fit display requirements.
-// Currently using French formatting rules so digits are space-separated in groups
-// of three, starting from the right side. Incidentally, this works for both the
-// integer portion of the number as well as the fraction part.
+// Group the digits of a number string with `sep` to fit display requirements.
+// Digits are separated in groups of three, starting from the right side.
+// Incidentally, this works for both the integer portion of the number as well
+// as the fraction part.
 // Ex:
-//   1000 => 1 000
-//   100000 => 100 000
-fn format_amount_number_part(s: &str, sep: &str) -> String {
+//   group_digits("1000", ",") => 1,000
+//   group_digits("100000", " ") => 100 000
+pub fn group_digits(s: &str, sep: &str) -> String {
     let (sign, digits) = s.strip_prefix('-').map_or(("", s), |digits| ("-", digits));
     let mut part = digits
         .chars()
@@ -259,13 +280,13 @@ mod tests {
                 .to_formatted_string()
         );
         assert_eq!(
-            "1 000.00 799 800",
+            "1,000.00 799 800",
             bitcoin::Amount::from_btc(1000.00799800)
                 .unwrap()
                 .to_formatted_string()
         );
         assert_eq!(
-            "1 000.00 000 000",
+            "1,000.00 000 000",
             bitcoin::Amount::from_btc(1000.0)
                 .unwrap()
                 .to_formatted_string()
@@ -356,6 +377,14 @@ mod tests {
     }
 
     #[test]
+    fn format_btc_string_handles_non_finite_without_panicking() {
+        assert_eq!(format_btc_string(f64::NAN), "NaN");
+        assert_eq!(format_btc_string(f64::INFINITY), "inf");
+        assert_eq!(format_btc_string(f64::NEG_INFINITY), "-inf");
+        assert_eq!(format_btc_string(1234.5), "1,234.50 000 000");
+    }
+
+    #[test]
     fn negative_values_keep_sign_attached_to_leading_digits() {
         assert_eq!(format_f64_as_string(-123.5, " ", 2, false), "-123.50");
         assert_eq!(
@@ -377,7 +406,7 @@ mod tests {
         );
         assert_eq!(
             amount.to_formatted_string_with_unit(BitcoinDisplayUnit::Sats),
-            "123 456 789"
+            "123,456,789"
         );
     }
 }
