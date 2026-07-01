@@ -1239,6 +1239,18 @@ impl CoincubeClient {
         Ok(())
     }
 
+    /// `POST /api/v1/connect/duress/disable` (authenticated). The inverse of
+    /// [`enroll_duress`](Self::enroll_duress): turns duress off for the whole
+    /// account (clears every device's enrollment server-side). A `423` means
+    /// duress is currently active and can't be disabled — the caller must clear
+    /// it from a trusted device first.
+    pub async fn disable_duress(&self) -> Result<(), CoincubeError> {
+        let url = format!("{}/api/v1/connect/duress/disable", self.base_url);
+        let res = self.client.post(&url).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
     /// `GET /api/v1/connect/duress` (authenticated). Returns the account's
     /// duress state plus whether THIS device is already registered.
     pub async fn get_duress_state(&self) -> Result<super::DuressState, CoincubeError> {
@@ -3213,6 +3225,57 @@ mod duress_tests {
             .await
             .expect("clear should succeed");
         mock.assert();
+    }
+
+    #[tokio::test]
+    async fn disable_duress_200_ok() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::POST)
+                .path("/api/v1/connect/duress/disable");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({ "success": true, "data": {} }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        client
+            .disable_duress()
+            .await
+            .expect("disable should succeed");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn disable_duress_423_surfaces_status() {
+        // Duress currently active → 423. The caller (settings panel) classifies
+        // this as `DuressDisableError::Active`; here we just prove the status
+        // survives as an `Unsuccessful` error.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::POST)
+                .path("/api/v1/connect/duress/disable");
+            then.status(423)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": { "code": "DURESS_LOCKED", "message": "duress is active" }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .disable_duress()
+            .await
+            .expect_err("active duress should fail disable");
+        mock.assert();
+        assert!(matches!(
+            err,
+            CoincubeError::Unsuccessful(crate::services::http::NotSuccessResponseInfo {
+                status_code: 423,
+                ..
+            })
+        ));
     }
 
     #[tokio::test]

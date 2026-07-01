@@ -1581,6 +1581,12 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
         return duress_enroll::enroll_ux(enroll);
     }
 
+    // The step-up re-auth dialog takes over the panel while a disable is in
+    // progress (Issue 2).
+    if let Some(disable) = &state.duress_disable {
+        return duress_enroll::disable_ux(disable);
+    }
+
     // The Emergency-contacts add/edit form takes over the panel too (only
     // reachable from the Estate-entitled list, so the guard is belt-and-
     // suspenders against a mid-session downgrade).
@@ -1657,6 +1663,13 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
         .as_ref()
         .map(|s| s.enrolled)
         .unwrap_or(false);
+    // Active duress hides the disable control (the app is on the cryptic /
+    // recovery screen then anyway, but guard defensively).
+    let duress_active = state
+        .duress_state
+        .as_ref()
+        .map(|s| s.active)
+        .unwrap_or(false);
     let locally_armed = state.duress_locally_armed;
 
     if locally_armed {
@@ -1680,19 +1693,25 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
             .width(Length::Fill),
         );
 
-        col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
-        // Reset is intentionally inert for now: there is no un-enroll path yet
-        // (the backend has no disable endpoint), so we surface the action as a
-        // disabled button with a note rather than hide it.
-        col = col.push(
-            button::secondary(None, "Reset Duress Mode")
-                .width(Length::Fixed(240.0))
-                .on_press_maybe(None),
-        );
-        col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
-        col = col.push(
-            text::p2_regular("Disabling duress mode isn't available yet.").color(color::GREY_3),
-        );
+        // Disable control — shown only when enrolled & inactive (this whole
+        // branch is unreachable during active duress, which routes to the
+        // recovery/cryptic screen, but guard anyway). Styled as a
+        // destructive-secondary action with a one-line explainer.
+        if !duress_active {
+            col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
+            col = col.push(
+                button::secondary(None, "Disable Duress Mode")
+                    .width(Length::Fixed(240.0))
+                    .on_press(ConnectAccountMessage::Duress(DuressMessage::DisableStart)),
+            );
+            col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+            col = col.push(
+                text::p2_regular(
+                    "Turns off duress on all your devices. You can re-enable it anytime.",
+                )
+                .color(color::GREY_3),
+            );
+        }
     } else if server_enrolled {
         // Enrolled on the account but not armed on THIS device (set up on
         // another device, or a local persist that didn't complete). Be honest:
@@ -1721,6 +1740,25 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
             .style(card_style)
             .width(Length::Fill),
         );
+
+        // Duress can still be turned off account-wide from here (the server
+        // disable propagates to every device); this one just has no local PIN
+        // hashes to clear. Shown only while inactive.
+        if !duress_active {
+            col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
+            col = col.push(
+                button::secondary(None, "Disable Duress Mode")
+                    .width(Length::Fixed(240.0))
+                    .on_press(ConnectAccountMessage::Duress(DuressMessage::DisableStart)),
+            );
+            col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+            col = col.push(
+                text::p2_regular(
+                    "Turns off duress on all your devices. You can re-enable it anytime.",
+                )
+                .color(color::GREY_3),
+            );
+        }
     } else {
         let delays: String = DuressDelay::ALL
             .iter()

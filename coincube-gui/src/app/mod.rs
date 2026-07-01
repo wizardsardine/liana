@@ -1043,6 +1043,191 @@ pub(crate) async fn persist_duress_enrollment(
     Ok(())
 }
 
+/// User-facing message when the step-up PIN doesn't match any Cube's real unlock
+/// PIN. The duress PIN never satisfies `verify_pin` (distinct hash, collision
+/// forbidden at enroll), so entering it lands here too — without revealing that
+/// it was the duress PIN.
+pub(crate) const DURESS_STEP_UP_BAD_PIN_MSG: &str =
+    "That PIN doesn't match any of your Cubes' unlock PINs.";
+
+/// Step-up re-auth for the duress *disable* flow: verify `pin` is the REAL
+/// unlock PIN of at least one Cube. Because `verify_pin` checks the regular-PIN
+/// hash (never the duress one), entering the duress PIN here is rejected —
+/// exactly the plan's "do not accept the duress PIN at step-up".
+///
+/// `Ok` when a Cube's regular PIN matches, or when no Cube has a regular PIN at
+/// all (no second factor to demand). `Err` on an empty PIN, a mismatch, no
+/// Cubes, or when settings can't be read.
+pub(crate) fn verify_regular_cube_pin(root: &std::path::Path, pin: &str) -> Result<(), String> {
+    if pin.is_empty() {
+        return Err("Enter your Cube unlock PIN to continue.".to_string());
+    }
+    let network_dirs = duress_enroll_network_dirs(root);
+    if network_dirs.is_empty() {
+        return Err(DURESS_NO_CUBES_MSG.to_string());
+    }
+    let mut any_pin = false;
+    for network_dir in &network_dirs {
+        let settings = crate::app::settings::Settings::from_file(network_dir)
+            .map_err(|e| format!("Couldn't read your Cube settings to verify your PIN: {e}"))?;
+        for cube in &settings.cubes {
+            // `verify_pin` returns true for a PIN-less Cube, so gate on
+            // `has_pin()` — a Cube with no PIN can't anchor the step-up.
+            if cube.has_pin() {
+                any_pin = true;
+                if cube.verify_pin(pin) {
+                    return Ok(());
+                }
+            }
+        }
+    }
+    if !any_pin {
+        // No regular PIN on any Cube — there's no second factor to demand, so
+        // let the disable proceed.
+        return Ok(());
+    }
+    Err(DURESS_STEP_UP_BAD_PIN_MSG.to_string())
+}
+
+/// Local disarm — the inverse of [`persist_duress_enrollment`]. Turns duress
+/// off ON THIS DEVICE without wiping anything: clears the per-Cube duress PIN
+/// hash on every Cube across every network, resets `DuressLocalState` to the
+/// un-enrolled baseline (zeroizing the encrypted device code), and empties the
+/// durable activation queue. Cube funds and data are left untouched.
+///
+/// The per-Cube hashes are cleared UNCONDITIONALLY — never gated on
+/// `DuressLocalState.enrolled`. A hard crash between persist's Cube-arming step
+/// and its state-write step can leave Cubes armed while the local state still
+/// reads "not enrolled"; trusting that flag here would let a disable report
+/// success while the duress PIN could still trip a wipe. Setting each hash to
+/// `None` is idempotent, so always clearing is cheap and safe.
+///
+/// Ordering mirrors persist in reverse: clear the Cube PIN hashes FIRST (so the
+/// duress PIN can no longer trip a wipe), THEN drop the local state. A failure
+/// midway leaves a consistent "still enrolled" view that a retry completes —
+/// every step is idempotent.
+pub(crate) async fn clear_duress_enrollment(datadir: CoincubeDirectory) -> Result<(), String> {
+    let root = datadir.path().to_path_buf();
+
+    // 1. Clear the duress PIN hash on every Cube on every network — ALWAYS,
+    //    whatever DuressLocalState records. Setting it to None is idempotent;
+    //    stop at the first failure so a retry re-clears the rest.
+    let network_dirs = duress_enroll_network_dirs(&root);
+    for network_dir in &network_dirs {
+        crate::app::settings::update_settings_file(network_dir, move |mut s| {
+            for cube in s.cubes.iter_mut() {
+                cube.duress_pin_hash = None;
+            }
+            Some(s)
+        })
+        .await
+        .map_err(|e| format!("Couldn't clear the duress PIN on all your Cubes ({e})."))?;
+    }
+
+    // 2. Reset DuressLocalState to the un-enrolled baseline (zeroizes the
+    //    encrypted device code). `load` maps a missing file to default, so a
+    //    never-enrolled device just rewrites a default; a real parse/IO error is
+    //    surfaced rather than papered over. Only now is the device truly disarmed.
+    let mut st = crate::services::duress::DuressLocalState::load(&root)
+        .map_err(|e| format!("Couldn't read existing duress state: {e}"))?;
+    st.disarm();
+    st.save(&root)
+        .map_err(|e| format!("Couldn't update local duress state: {e}"))?;
+
+    // 3. Empty the durable activation queue — no pending activation should
+    //    survive an un-enroll. Best-effort: a stale entry would only retry an
+    //    already-disabled activation, so log rather than fail the disarm.
+    if let Err(e) = crate::services::duress::queue::DuressQueue::new(&root).clear() {
+        log::warn!("duress: failed to clear activation queue on disarm: {e}");
+    }
+    Ok(())
+}
+
+/// Whether any Cube on any network still has a duress PIN hash armed. Read-only.
+/// Used to detect the *orphaned* state — Cubes armed while `DuressLocalState`
+/// reads "not enrolled" — so a reconcile doesn't skip a device that a crash left
+/// half-armed. A settings read error is surfaced rather than papered over (a
+/// false "nothing armed" could leave a live wipe trigger in place).
+fn any_cube_duress_armed(root: &std::path::Path) -> Result<bool, String> {
+    for network_dir in &duress_enroll_network_dirs(root) {
+        let settings = crate::app::settings::Settings::from_file(network_dir)
+            .map_err(|e| format!("Couldn't read your Cube settings: {e}"))?;
+        if settings.cubes.iter().any(|c| c.has_duress_pin()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Reconcile a possibly remote/offline duress *disable* against this device's
+/// local state, returning whether a disarm actually ran. Disarms when EITHER:
+///
+/// * this device holds a Connect enrollment (`account_id` set) for `account_id`
+///   — the account the server now reports as no longer enrolled; OR
+/// * the device is *orphaned* — Cubes are still armed while `DuressLocalState`
+///   reads "not enrolled". A hard crash between persist's Cube-arming step and
+///   its state-write step leaves exactly this state. A properly-armed enrollment
+///   (sovereign included) reads `enrolled == true`, so "armed while not enrolled"
+///   uniquely flags an unfinished enrollment whose wipe trigger is still live —
+///   we fail toward disarmed rather than leave it able to wipe after a disable.
+///
+/// A fully sovereign enrollment (`enrolled == true`, `account_id == None`) is
+/// matched by neither branch and is therefore never disarmed by a server "not
+/// enrolled" — sovereign duress is local-only and the server has no say over it.
+/// The only sovereign state this can touch is an *orphaned* (crashed, unfinished)
+/// one, which never reached the "enabled" confirmation; clearing its stale wipe
+/// trigger is the safe, recoverable (re-enrollable) outcome.
+pub(crate) async fn reconcile_duress_disarm(
+    datadir: CoincubeDirectory,
+    account_id: String,
+) -> Result<bool, String> {
+    let root = datadir.path().to_path_buf();
+    let st = crate::services::duress::DuressLocalState::load(&root)
+        .map_err(|e| format!("Couldn't read existing duress state: {e}"))?;
+
+    let connect_enrollment_matches =
+        st.enrolled && st.account_id.as_deref() == Some(account_id.as_str());
+    // Only pay for the settings scan when the cheap flag check didn't already
+    // decide it, and only when the local state claims "not enrolled" (a properly
+    // enrolled device is handled by the flag check above).
+    let orphaned_armed =
+        !connect_enrollment_matches && !st.enrolled && any_cube_duress_armed(&root)?;
+
+    if !(connect_enrollment_matches || orphaned_armed) {
+        return Ok(false);
+    }
+    clear_duress_enrollment(datadir).await?;
+    Ok(true)
+}
+
+/// Launch-time orphan check for an account the server still reports as ENROLLED.
+/// Disarms ONLY when this device is *orphaned* — Cubes armed while
+/// `DuressLocalState` never recorded the enrollment, the state a hard crash
+/// between persist's Cube-arming and state-write steps leaves behind. The lost
+/// device code can't be recovered, so the enrollment can't be completed; the
+/// armed Cubes would otherwise stay a live wipe trigger that the panel reports
+/// as inert ("not armed on this device"). Disarming makes the device honestly
+/// match that copy and re-enrollable.
+///
+/// A healthy device (local state present → `enrolled == true`) or one with no
+/// armed Cubes is a no-op, so a normally-enrolled device is NEVER disarmed here.
+/// Returns whether a disarm ran.
+pub(crate) async fn reconcile_duress_orphan(datadir: CoincubeDirectory) -> Result<bool, String> {
+    let root = datadir.path().to_path_buf();
+    let st = crate::services::duress::DuressLocalState::load(&root)
+        .map_err(|e| format!("Couldn't read existing duress state: {e}"))?;
+    // Local state present → a healthy, fully-recorded enrollment. Leave it.
+    if st.enrolled {
+        return Ok(false);
+    }
+    // Local state missing but Cubes armed → orphan. Disarm.
+    if !any_cube_duress_armed(&root)? {
+        return Ok(false);
+    }
+    clear_duress_enrollment(datadir).await?;
+    Ok(true)
+}
+
 /// Poll the local bitcoind's IBD progress via its JSON-RPC interface.
 /// Returns `(verificationprogress, initialblockdownload)` or an error string.
 async fn check_bitcoind_sync_progress(
@@ -2259,6 +2444,27 @@ impl App {
                         }
                     },
                     |_| Message::CacheUpdated,
+                )
+            }
+            M::DuressDisabled { account_id } => {
+                // Issue 2: duress disabled account-wide on another device. Disarm
+                // THIS device locally (clear Cube PIN hashes + local state +
+                // queue) — no UI lock, no wipe. `reconcile_duress_disarm` only
+                // touches a matching Connect enrollment, so a sovereign local
+                // enrollment (or an unrelated account) is left untouched. Refresh
+                // the Duress panel afterwards if the user is sitting in it.
+                log::info!("[CONNECT GRPC] Duress disabled remotely");
+                let datadir = self.datadir.clone();
+                let gen = self.panels.connect.account.session_generation();
+                Task::perform(
+                    async move { reconcile_duress_disarm(datadir, account_id).await },
+                    move |res| {
+                        Message::View(view::Message::ConnectAccount(
+                            view::ConnectAccountMessage::Duress(
+                                view::DuressMessage::DisarmComplete(res, gen),
+                            ),
+                        ))
+                    },
                 )
             }
         }
