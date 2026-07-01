@@ -72,8 +72,11 @@ pub fn last_transactions_section<'a, M: 'a + Clone + 'static>(
             item = item.with_amount_override(token_str.clone());
         }
         if let Some(fiat) = tx.fiat_amount.as_ref() {
-            item =
-                item.with_fiat_amount(format!("{} {}", fiat.to_formatted_string(), fiat.currency()));
+            item = item.with_fiat_amount(format!(
+                "{} {}",
+                fiat.to_formatted_string(),
+                fiat.currency()
+            ));
         }
 
         if matches!(tx.status, DomainPaymentStatus::Pending) {
