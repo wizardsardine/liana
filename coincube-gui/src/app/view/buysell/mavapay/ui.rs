@@ -854,12 +854,17 @@ fn info_field<'a>(
     .width(Length::Fill)
 }
 
+/// Format a minor-unit (cents) fiat amount with two decimal places and comma
+/// grouping, e.g. `1234567` -> `12,345.67`.
+fn format_fiat_cents(cents: u64) -> String {
+    format_f64_as_string(cents as f64 / 100.0, ",", 2, false)
+}
+
 fn format_currency_amount(amount: u64, currency: &MavapayUnitCurrency) -> String {
-    let fiat = |v: f64| format_f64_as_string(v, ",", 2, false);
     match currency {
-        MavapayUnitCurrency::KenyanShillingCent => format!("{} KES", fiat(amount as f64 / 100.0)),
-        MavapayUnitCurrency::SouthAfricanRandCent => format!("{} ZAR", fiat(amount as f64 / 100.0)),
-        MavapayUnitCurrency::NigerianNairaKobo => format!("{} NGN", fiat(amount as f64 / 100.0)),
+        MavapayUnitCurrency::KenyanShillingCent => format!("{} KES", format_fiat_cents(amount)),
+        MavapayUnitCurrency::SouthAfricanRandCent => format!("{} ZAR", format_fiat_cents(amount)),
+        MavapayUnitCurrency::NigerianNairaKobo => format!("{} NGN", format_fiat_cents(amount)),
         MavapayUnitCurrency::BitcoinSatoshi => format!(
             "{} BTC",
             format_f64_as_string(amount as f64 / 100_000_000.0, ",", 8, false)
@@ -1310,15 +1315,14 @@ fn transaction_status_info(transaction: &OrderTransaction) -> (&'static str, ice
 }
 
 fn format_amount(amount: u64, currency: &MavapayCurrency) -> String {
-    let fiat = |v: f64| format_f64_as_string(v, ",", 2, false);
     match currency {
         MavapayCurrency::Bitcoin => format!(
             "{} BTC",
             format_f64_as_string(amount as f64 / 100_000_000.0, ",", 8, false)
         ),
-        MavapayCurrency::KenyanShilling => format!("{} KSh", fiat(amount as f64 / 100.0)),
-        MavapayCurrency::SouthAfricanRand => format!("{} ZAR", fiat(amount as f64 / 100.0)),
-        MavapayCurrency::NigerianNaira => format!("{} NGN", fiat(amount as f64 / 100.0)),
+        MavapayCurrency::KenyanShilling => format!("{} KSh", format_fiat_cents(amount)),
+        MavapayCurrency::SouthAfricanRand => format!("{} ZAR", format_fiat_cents(amount)),
+        MavapayCurrency::NigerianNaira => format!("{} NGN", format_fiat_cents(amount)),
     }
 }
 

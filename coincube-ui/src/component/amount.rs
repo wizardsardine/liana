@@ -43,7 +43,10 @@ impl DisplayAmount for Amount {
 /// spaces grouping the 8 fractional digits, e.g. `1,000.00 799 800`.
 pub fn format_btc_string(value: f64) -> String {
     let amount = format!("{:.8}", value);
-    let (integer, fraction) = amount.split_once('.').unwrap_or((amount.as_str(), ""));
+    // `{:.8}` always emits a decimal point for the finite values `to_btc()` yields.
+    let (integer, fraction) = amount
+        .split_once('.')
+        .expect("formatted amount always contains a decimal point");
     format!(
         "{}.{}",
         group_digits(integer, ","),
