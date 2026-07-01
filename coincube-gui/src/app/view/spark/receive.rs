@@ -366,7 +366,7 @@ fn method_chip<'a>(
     let btn = if active {
         button::primary(None, label)
     } else {
-        button::transparent_border(None, label)
+        button::transparent_border_centered(None, label)
     };
     btn.on_press(Message::SparkReceive(
         crate::app::view::SparkReceiveMessage::MethodSelected(target),

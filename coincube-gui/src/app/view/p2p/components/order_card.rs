@@ -10,6 +10,8 @@ use iced::{
 
 use crate::app::view::{self, message::P2PMessage};
 
+use coincube_ui::component::amount::format_f64_as_string;
+
 use super::format_with_separators;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,17 +105,19 @@ pub fn order_card<'a>(order: &'a P2POrder) -> Button<'a, view::Message> {
             if order.is_range_order() {
                 row!(
                     h1(format!(
-                        "{:.0} - {:.0}",
-                        order.min_amount.unwrap_or(0.0),
-                        order.max_amount.unwrap_or(0.0)
-                    )),
+                        "{} - {}",
+                        format_f64_as_string(order.min_amount.unwrap_or(0.0), ",", 0, false),
+                        format_f64_as_string(order.max_amount.unwrap_or(0.0), ",", 0, false)
+                    ))
+                    .style(theme::text::primary),
                     h3(format!(" {}", order.fiat_currency)).style(theme::text::secondary)
                 )
                 .spacing(8)
                 .align_y(iced::alignment::Vertical::Center)
             } else {
                 row!(
-                    h1(format!("{:.2}", order.fiat_amount)),
+                    h1(format_f64_as_string(order.fiat_amount, ",", 2, false))
+                        .style(theme::text::primary),
                     h3(format!(" {}", order.fiat_currency)).style(theme::text::secondary)
                 )
                 .spacing(8)
@@ -237,17 +241,19 @@ pub fn order_detail<'a>(
             if order.is_range_order() {
                 row!(
                     h1(format!(
-                        "{:.0} - {:.0}",
-                        order.min_amount.unwrap_or(0.0),
-                        order.max_amount.unwrap_or(0.0)
-                    )),
+                        "{} - {}",
+                        format_f64_as_string(order.min_amount.unwrap_or(0.0), ",", 0, false),
+                        format_f64_as_string(order.max_amount.unwrap_or(0.0), ",", 0, false)
+                    ))
+                    .style(theme::text::primary),
                     h3(format!(" {}", order.fiat_currency)).style(theme::text::secondary)
                 )
                 .spacing(8)
                 .align_y(iced::alignment::Vertical::Center)
             } else {
                 row!(
-                    h1(format!("{:.2}", order.fiat_amount)),
+                    h1(format_f64_as_string(order.fiat_amount, ",", 2, false))
+                        .style(theme::text::primary),
                     h3(format!(" {}", order.fiat_currency)).style(theme::text::secondary)
                 )
                 .spacing(8)
@@ -459,9 +465,9 @@ pub fn order_detail<'a>(
                 detail_col = detail_col.push(
                     column![
                         p2_regular(format!(
-                            "Enter fiat amount ({:.0} - {:.0} {})",
-                            order.min_amount.unwrap_or(0.0),
-                            order.max_amount.unwrap_or(0.0),
+                            "Enter fiat amount ({} - {} {})",
+                            format_f64_as_string(order.min_amount.unwrap_or(0.0), ",", 0, false),
+                            format_f64_as_string(order.max_amount.unwrap_or(0.0), ",", 0, false),
                             order.fiat_currency
                         ))
                         .style(theme::text::secondary),
