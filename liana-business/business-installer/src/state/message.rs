@@ -1,6 +1,8 @@
 use liana_connect::ws_business;
 use uuid::Uuid;
 
+use crate::state::views::paths;
+
 pub type HardwareWalletRequestId = u64;
 
 /// All application messages
@@ -61,7 +63,7 @@ pub enum Msg {
     TemplateCancelPathModal,                                    // Close path modal
     TemplateUpdateThreshold(String),                            // Update threshold field
     TemplateUpdateTimelock(String),                             // Update timelock field
-    TemplateUpdateTimelockUnit(crate::state::views::path::TimelockUnit), // Update timelock unit
+    TemplateUpdateTimelockUnit(paths::TimelockUnit),            // Update timelock unit
     TemplateLock,                                               // Lock template (Draft → Locked)
     TemplateUnlock,                                             // Unlock template (Locked → Draft)
     TemplateValidate,                                           // Validate template

@@ -5,7 +5,6 @@ pub mod modals;
 pub mod org_select;
 pub mod paths;
 pub mod registration;
-pub mod template_builder;
 pub mod wallet_edit;
 pub mod wallet_select;
 pub mod xpub;
@@ -16,8 +15,8 @@ use liana_ui::component::{button::btn_breadcrumb_previous, pill, text::capitaliz
 pub use loading::loading_view;
 pub use login::login_view;
 pub use org_select::org_select_view;
+pub use paths::template_builder_view;
 pub use registration::registration_view;
-pub use template_builder::template_builder_view;
 pub use wallet_select::wallet_select_view;
 pub use xpub::xpub_view;
 
