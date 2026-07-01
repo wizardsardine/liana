@@ -670,7 +670,10 @@ fn order_success_view<'a>(
                         .width(Length::Fill),
                         widget::column![
                             text::p2_medium("Bitcoin Received").style(theme::text::secondary),
-                            text::p1_bold(format!("{:.8} BTC", sats as f64 / 100_000_000.0))
+                            text::p1_bold(format!(
+                                "{} BTC",
+                                format_f64_as_string(sats as f64 / 100_000_000.0, ",", 8, false)
+                            ))
                         ]
                         .width(Length::Fill)
                     ],
@@ -1060,8 +1063,8 @@ fn order_detail_view<'a>(
                             info_field(
                                 "Fee (USD)",
                                 format!(
-                                    "${:.2}",
-                                    quote.transaction_fees_in_usd_cent as f64 / 100.0
+                                    "${}",
+                                    format_fiat_cents(quote.transaction_fees_in_usd_cent)
                                 )
                             ),
                         ],
