@@ -414,6 +414,24 @@ pub struct FeaturesResponse {
     /// `ConnectAccountPanel::purchasing_enabled`.
     #[serde(default, alias = "purchasingEnabled", alias = "purchasing_enabled")]
     pub purchasing_enabled: Option<bool>,
+    /// Master server switch for the whole Marketplace section (Buy/Sell +
+    /// P2P). When `Some(false)` — or absent/unreachable — the desktop hides
+    /// the Marketplace nav entirely and makes every route under it
+    /// unreachable. Unlike `purchasing_enabled`, this fails **closed**: an
+    /// absent flag reads as *off*, so a launch build never surfaces the
+    /// untested money feature on a stale or missing API response. See
+    /// `ConnectAccountPanel::marketplace_server_flags` and
+    /// `crate::app::features::MarketplaceServerFlags`.
+    #[serde(default, alias = "marketplaceEnabled", alias = "marketplace_enabled")]
+    pub marketplace_enabled: Option<bool>,
+    /// Server switch for Buy/Sell (fiat on/off-ramp). Only consulted when
+    /// `marketplace_enabled` is on. Fails closed (absent → off).
+    #[serde(default, alias = "buySellEnabled", alias = "buy_sell_enabled")]
+    pub buy_sell_enabled: Option<bool>,
+    /// Server switch for P2P trading. Only consulted when
+    /// `marketplace_enabled` is on. Fails closed (absent → off).
+    #[serde(default, alias = "p2pEnabled", alias = "p2p_enabled")]
+    pub p2p_enabled: Option<bool>,
 }
 
 // ── Checkout / Billing ──────────────────────────────────────────────────────

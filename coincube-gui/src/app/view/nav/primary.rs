@@ -56,13 +56,17 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
         top = top.push(setup_vault_item());
     }
 
-    // Marketplace is hidden entirely when the cube has neither P2P nor a
-    // vault — those are the only two surfaces it can link into, and
-    // `TopLevel::Marketplace.default_menu()` would otherwise route the
-    // user to a P2P Overview panel that isn't mounted (blank content).
-    // Marketplace itself is never network-gated — its *children*
-    // (Buy/Sell, P2P) carry the per-feature gate in the secondary rail.
-    if ctx.has_p2p || ctx.has_vault {
+    // Marketplace is hidden entirely unless the cube has a structurally
+    // present child (P2P or a vault) that the *server* also permits. The two
+    // surfaces it links into are P2P and Buy/Sell; `p2p_on`/`buy_sell_on` fold
+    // in the Marketplace master switch, so when the server has Marketplace off
+    // (or fails closed before features load) neither branch holds and the whole
+    // top-level entry disappears — not greyed, since this is a feature-off state
+    // rather than a "coming soon on this network" one (per-network gating lives
+    // on the *children* in the secondary rail).
+    let show_marketplace = (ctx.has_p2p && ctx.marketplace_flags.p2p_on())
+        || (ctx.has_vault && ctx.marketplace_flags.buy_sell_on());
+    if show_marketplace {
         let landing = marketplace_landing_menu(ctx);
         top = top.push(item_with_route(
             TopLevel::Marketplace,
@@ -171,37 +175,37 @@ fn item_with_route<'a>(
 
 /// Landing route for a Marketplace rail click.
 ///
-/// The secondary rail only surfaces P2P when `has_p2p` is set and
-/// Buy/Sell when `has_vault` is set. We prefer landing on a child that
-/// is both structurally present *and* available on the current network,
-/// so the click never drops the user onto a network-disabled panel when
-/// an enabled sibling exists. If every available child is also
-/// network-disabled we still pick a structurally-present one (its panel
-/// shows the section, the rail item stays greyed) and finally fall back
-/// to P2P to match `TopLevel::default_menu`.
+/// Only reached when the rail item is shown, i.e. at least one child is
+/// structurally present *and* server-permitted. A child must clear the server
+/// gate (`p2p_on`/`buy_sell_on`) to be a candidate at all; among those we
+/// prefer one also available on the current network, so the click never drops
+/// the user onto a disabled panel when an enabled sibling exists. If every
+/// server-permitted child is network-disabled we still pick one — P2P routes
+/// to Settings (where the user adds a coordinator to lift the network gate;
+/// the greyed rail item is otherwise inert, so this avoids a configure
+/// catch-22), Buy/Sell to its own (greyed) panel.
 fn marketplace_landing_menu(ctx: &NavContext<'_>) -> Menu {
     let p2p = Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview));
-    // P2P Settings stays reachable even when trading is gated (see
-    // `features::route_availability`), so it's the landing for a gated-but-
-    // present P2P section — that's where the user adds a coordinator to lift
-    // the gate. The greyed secondary-rail P2P item is otherwise inert, so this
-    // is the path that avoids a configure catch-22.
     let p2p_settings = Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Settings));
     let buy_sell = Menu::Marketplace(MarketplaceSubMenu::BuySell);
 
-    let p2p_enabled =
-        ctx.has_p2p && features::p2p(ctx.network, ctx.p2p_test_coordinator).is_available();
-    let buy_sell_enabled = ctx.has_vault && features::buy_sell(ctx.network).is_available();
+    let p2p_server = ctx.has_p2p && ctx.marketplace_flags.p2p_on();
+    let buy_sell_server = ctx.has_vault && ctx.marketplace_flags.buy_sell_on();
+    let p2p_net_ok =
+        p2p_server && features::p2p(ctx.network, ctx.p2p_test_coordinator).is_available();
+    let buy_sell_net_ok = buy_sell_server && features::buy_sell(ctx.network).is_available();
 
-    if p2p_enabled {
+    if p2p_net_ok {
         p2p
-    } else if buy_sell_enabled {
+    } else if buy_sell_net_ok {
         buy_sell
-    } else if ctx.has_p2p {
+    } else if p2p_server {
         p2p_settings
-    } else if ctx.has_vault {
+    } else if buy_sell_server {
         buy_sell
     } else {
+        // Unreachable in practice — the rail item is hidden when no child is
+        // server-permitted — but keep a sane default matching `default_menu`.
         p2p_settings
     }
 }

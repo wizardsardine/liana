@@ -3580,6 +3580,27 @@ impl ConnectAccountPanel {
         }
     }
 
+    /// Server-controlled Marketplace availability, sourced from
+    /// `GET /connect/features` (`marketplaceEnabled` / `buySellEnabled` /
+    /// `p2pEnabled`). Mirrored into [`crate::app::cache::Cache`] so the nav
+    /// rails and route guard can hide the Marketplace surface.
+    ///
+    /// Fails **closed**, unlike [`Self::purchasing_enabled`]: while features
+    /// are unloaded (`None` — in flight after sign-in, or the fetch failed) or
+    /// a flag is absent, every flag reads `false`. A launch build must never
+    /// surface the untested money feature on a stale, silent, or unreachable
+    /// API. See [`crate::app::features::MarketplaceServerFlags`].
+    pub fn marketplace_server_flags(&self) -> crate::app::features::MarketplaceServerFlags {
+        match &self.features {
+            None => crate::app::features::MarketplaceServerFlags::OFF,
+            Some(f) => crate::app::features::MarketplaceServerFlags {
+                marketplace_enabled: f.marketplace_enabled.unwrap_or(false),
+                buy_sell_enabled: f.buy_sell_enabled.unwrap_or(false),
+                p2p_enabled: f.p2p_enabled.unwrap_or(false),
+            },
+        }
+    }
+
     /// Whether the pre-expiry renewal banner should render: the plan is
     /// within its renewal window AND the user hasn't dismissed it this
     /// session. The expired state has its own dedicated UX (D3), so the
@@ -5192,6 +5213,9 @@ mod plan_lifecycle_tests {
             }],
             pricing_schema_version: version,
             purchasing_enabled,
+            marketplace_enabled: None,
+            buy_sell_enabled: None,
+            p2p_enabled: None,
         }
     }
 
@@ -5492,6 +5516,55 @@ mod plan_lifecycle_tests {
         let mut panel = ConnectAccountPanel::new();
         panel.features = Some(features_with_purchasing(None, Some(false)));
         assert!(!panel.purchasing_enabled());
+    }
+
+    // ── Marketplace server flags (COIN-346) ───────────────────────────
+    fn features_with_marketplace(
+        marketplace: Option<bool>,
+        buy_sell: Option<bool>,
+        p2p: Option<bool>,
+    ) -> FeaturesResponse {
+        let mut f = features_with_purchasing(None, None);
+        f.marketplace_enabled = marketplace;
+        f.buy_sell_enabled = buy_sell;
+        f.p2p_enabled = p2p;
+        f
+    }
+
+    #[test]
+    fn marketplace_flags_fail_closed_until_features_load() {
+        let panel = ConnectAccountPanel::new();
+        // Unloaded (fetch in flight / failed / unreachable) → everything off.
+        assert_eq!(
+            panel.marketplace_server_flags(),
+            crate::app::features::MarketplaceServerFlags::OFF
+        );
+    }
+
+    #[test]
+    fn marketplace_flags_absent_read_as_off() {
+        let mut panel = ConnectAccountPanel::new();
+        // Loaded but the flags are absent (older backend) → still off, unlike
+        // the purchasing gate which treats absent as on.
+        panel.features = Some(features_with_marketplace(None, None, None));
+        assert_eq!(
+            panel.marketplace_server_flags(),
+            crate::app::features::MarketplaceServerFlags::OFF
+        );
+    }
+
+    #[test]
+    fn marketplace_flags_mirror_the_response() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.features = Some(features_with_marketplace(
+            Some(true),
+            Some(true),
+            Some(false),
+        ));
+        let flags = panel.marketplace_server_flags();
+        assert!(flags.marketplace_enabled);
+        assert!(flags.buy_sell_on());
+        assert!(!flags.p2p_on());
     }
 
     #[test]

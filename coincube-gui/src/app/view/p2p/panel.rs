@@ -395,6 +395,12 @@ pub struct P2PPanel {
     // selection (`MostroConfig::active_for`) — needed in `subscription`,
     // which has no `Cache` access.
     network: Network,
+    /// Server-controlled P2P availability (`MarketplaceServerFlags::p2p_on`),
+    /// mirrored from [`Cache`] via [`Self::sync_marketplace_flags_from_cache`].
+    /// Read by `subscription` (which has no `Cache` access) so no live Mostro
+    /// relay stream is held while the server has P2P switched off. Fail-closed:
+    /// starts `false` and stays off until `/connect/features` loads it on.
+    marketplace_p2p_enabled: bool,
     // Mostro settings
     mostro_config: MostroConfig,
     new_relay_input: form::Value<String>,
@@ -527,6 +533,9 @@ impl P2PPanel {
             dispute_chat_input: Default::default(),
             pending_dispute_chat_message: None,
             network,
+            // Fail-closed until the account panel mirrors `/connect/features`
+            // in (via `sync_marketplace_flags_from_cache`).
+            marketplace_p2p_enabled: false,
             mostro_config,
             new_relay_input: Default::default(),
             new_node_name_input: Default::default(),
@@ -775,6 +784,15 @@ impl P2PPanel {
         if let Some(addr) = cache.lightning_address.as_ref() {
             self.create_lightning_address.value = addr.clone();
         }
+    }
+
+    /// Mirror the server-controlled P2P availability from [`Cache`] (sourced
+    /// from `/connect/features`). Read by `subscription`, which has no `Cache`
+    /// access — so a Mostro relay stream is never held while the server has
+    /// P2P switched off. Called after each ConnectAccount/ConnectCube message,
+    /// which is when the cache flag can change (features load / logout).
+    pub fn sync_marketplace_flags_from_cache(&mut self, cache: &Cache) {
+        self.marketplace_p2p_enabled = cache.marketplace_flags.p2p_on();
     }
 
     fn clear_create_form(&mut self) {
@@ -4192,6 +4210,7 @@ impl State for P2PPanel {
                                         has_p2p: cache.has_p2p,
                                         network: cache.network,
                                         p2p_test_coordinator: cache.p2p_test_coordinator,
+                                        marketplace_flags: cache.marketplace_flags,
                                         cube_name: &cache.cube_name,
                                         lightning_address: None,
                                         avatar: None,
@@ -4355,6 +4374,7 @@ impl State for P2PPanel {
                                             has_p2p: cache.has_p2p,
                                             network: cache.network,
                                             p2p_test_coordinator: cache.p2p_test_coordinator,
+                                            marketplace_flags: cache.marketplace_flags,
                                             cube_name: &cache.cube_name,
                                             lightning_address: None,
                                             avatar: None,
@@ -4414,6 +4434,7 @@ impl State for P2PPanel {
                                             has_p2p: cache.has_p2p,
                                             network: cache.network,
                                             p2p_test_coordinator: cache.p2p_test_coordinator,
+                                            marketplace_flags: cache.marketplace_flags,
                                             cube_name: &cache.cube_name,
                                             lightning_address: None,
                                             avatar: None,
@@ -4545,6 +4566,7 @@ impl State for P2PPanel {
                                             has_p2p: cache.has_p2p,
                                             network: cache.network,
                                             p2p_test_coordinator: cache.p2p_test_coordinator,
+                                            marketplace_flags: cache.marketplace_flags,
                                             cube_name: &cache.cube_name,
                                             lightning_address: None,
                                             avatar: None,
@@ -4601,6 +4623,7 @@ impl State for P2PPanel {
                                             has_p2p: cache.has_p2p,
                                             network: cache.network,
                                             p2p_test_coordinator: cache.p2p_test_coordinator,
+                                            marketplace_flags: cache.marketplace_flags,
                                             cube_name: &cache.cube_name,
                                             lightning_address: None,
                                             avatar: None,
@@ -4711,14 +4734,17 @@ impl State for P2PPanel {
     fn subscription(&self) -> Subscription<Message> {
         // Only stream from Mostro when P2P is actually usable, so the panel
         // never holds a live relay subscription while the nav/content show P2P
-        // disabled. Two conditions, mirroring the rest of the gate:
+        // disabled. Three conditions, mirroring the rest of the gate:
+        //  - the server permits P2P at all (`/connect/features`, mirrored in
+        //    via `sync_marketplace_flags_from_cache`) — so a launch build with
+        //    Marketplace off never opens a Mostro relay stream, and
         //  - the feature is available on this network (test coordinator + a
         //    connected Spark escrow backend — same as the nav gate), and
         //  - the active coordinator matches the wallet's network (else
         //    `resolved_coordinator` could stream from a different coordinator
         //    than the one shown as active; COIN-371 Q4).
-        let p2p_available =
-            crate::app::features::p2p(self.network, self.has_test_coordinator()).is_available();
+        let p2p_available = self.marketplace_p2p_enabled
+            && crate::app::features::p2p(self.network, self.has_test_coordinator()).is_available();
         let mostro_sub = if p2p_available && self.coordinator_network_matches() {
             let cube_name = self.cube_name();
             let mnemonic = self.mnemonic.clone();
