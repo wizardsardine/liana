@@ -233,11 +233,7 @@ impl RecoveryKitRestoreStep {
                 let matches: Vec<CubeResponse> = all
                     .into_iter()
                     .filter(|c| c.network == network)
-                    .filter(|c| {
-                        preselect_uuid
-                            .as_ref()
-                            .is_none_or(|uuid| &c.uuid == uuid)
-                    })
+                    .filter(|c| preselect_uuid.as_ref().is_none_or(|uuid| &c.uuid == uuid))
                     .collect();
                 let mut out = Vec::with_capacity(matches.len());
                 for cube in matches {
