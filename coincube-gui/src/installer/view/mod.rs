@@ -1431,8 +1431,8 @@ pub fn select_bitcoind_type<'a>(
                 .max_width(620)
                 .push(text("Start with COINCUBE | Connect").bold())
                 .push(text(
-                    "Your Vault will use our hosted Esplora server immediately. \
-                    No setup required.",
+                    "Your Vault will use our hosted Esplora server immediately \
+                    (backed by Bitcoin Knots). No setup required.",
                 ))
                 .push(
                     checkbox(install_node)
@@ -2534,7 +2534,7 @@ pub fn recovery_kit_restore<'a>(
     use crate::installer::step::recovery_kit_restore::RestorePhase;
 
     let title = match scope {
-        crate::installer::step::RestoreScope::Full => "Restore from Connect Recovery Kit",
+        crate::installer::step::RestoreScope::Full => "Restore from Cube Recovery Kit",
         crate::installer::step::RestoreScope::DescriptorOnly => {
             "Restore Wallet Descriptor from Connect"
         }

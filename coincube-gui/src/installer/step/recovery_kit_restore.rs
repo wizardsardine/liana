@@ -120,6 +120,10 @@ pub struct RecoveryKitRestoreStep {
     /// Network filter applied to the cube picker. The user can only
     /// restore into the same network they're installing for.
     network_filter: String,
+    /// When set (W13 launched from a home "Your Cubes" row), the cube
+    /// list is filtered to just this uuid so `phase_after_cubes_loaded`
+    /// auto-selects it and the picker is skipped entirely.
+    preselect_uuid: Option<String>,
     client: CoincubeClient,
     phase: Phase,
     // Transient UI inputs held outside Phase so typing during an
@@ -140,10 +144,15 @@ pub struct RecoveryKitRestoreStep {
 }
 
 impl RecoveryKitRestoreStep {
-    pub fn new(scope: RestoreScope, network_filter: String) -> Self {
+    pub fn new(
+        scope: RestoreScope,
+        network_filter: String,
+        preselect_uuid: Option<String>,
+    ) -> Self {
         Self {
             scope,
             network_filter,
+            preselect_uuid,
             client: CoincubeClient::new(),
             phase: Phase::Email,
             email: form::Value {
@@ -208,6 +217,7 @@ impl RecoveryKitRestoreStep {
     fn list_cubes_task(&self) -> Task<Message> {
         let client = self.client.clone();
         let network = self.network_filter.clone();
+        let preselect_uuid = self.preselect_uuid.clone();
         Task::perform(
             async move {
                 let all = client.list_cubes().await.map_err(|e| e.to_string())?;
@@ -215,8 +225,20 @@ impl RecoveryKitRestoreStep {
                 // filter by `has_recovery_kit` at list time because the
                 // kit status lives on a separate endpoint — fetch
                 // status in parallel.
-                let matches: Vec<CubeResponse> =
-                    all.into_iter().filter(|c| c.network == network).collect();
+                //
+                // When a specific cube was preselected (home restore
+                // row), narrow to just that uuid so the loaded list has
+                // a single entry and `phase_after_cubes_loaded`
+                // auto-selects it, skipping the picker.
+                let matches: Vec<CubeResponse> = all
+                    .into_iter()
+                    .filter(|c| c.network == network)
+                    .filter(|c| {
+                        preselect_uuid
+                            .as_ref()
+                            .is_none_or(|uuid| &c.uuid == uuid)
+                    })
+                    .collect();
                 let mut out = Vec::with_capacity(matches.len());
                 for cube in matches {
                     // Only NotFound is a signal that this particular
