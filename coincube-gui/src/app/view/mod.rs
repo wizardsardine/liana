@@ -149,6 +149,7 @@ pub fn dashboard_with_info<'a, T: Into<Element<'a, Message>>>(
         has_p2p,
         network: cache.network,
         p2p_test_coordinator: cache.p2p_test_coordinator,
+        marketplace_flags: cache.marketplace_flags,
         cube_name,
         lightning_address,
         avatar: avatar_handle,

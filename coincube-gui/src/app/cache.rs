@@ -82,6 +82,14 @@ pub struct Cache {
     /// panel (`P2PPanel::has_test_coordinator`), since the stateless sidebar
     /// view can't reach the panel.
     pub p2p_test_coordinator: bool,
+    /// Server-controlled Marketplace availability, mirrored from the Connect
+    /// account panel's `/connect/features` response (see
+    /// `ConnectAccountPanel::marketplace_server_flags`). Drives whether the
+    /// Marketplace nav + its routes are shown at all, on top of the per-network
+    /// gate. Fail-closed: defaults to [`MarketplaceServerFlags::OFF`] until
+    /// features load, so a launch build hides the untested money feature while
+    /// the API stance is unknown.
+    pub marketplace_flags: crate::app::features::MarketplaceServerFlags,
     /// Current theme mode (dark/light) — used for theme-aware widget rendering
     pub theme_mode: coincube_ui::theme::palette::ThemeMode,
     /// BTC price in USD, always fetched regardless of the user's selected fiat
@@ -170,6 +178,7 @@ impl std::default::Default for Cache {
             current_cube_is_passkey: false,
             has_p2p: false,
             p2p_test_coordinator: false,
+            marketplace_flags: crate::app::features::MarketplaceServerFlags::OFF,
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
             btc_usd_price: None,
             show_direction_badges: true,

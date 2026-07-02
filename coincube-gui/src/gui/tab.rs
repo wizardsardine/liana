@@ -1945,6 +1945,9 @@ pub fn create_app_with_remote_backend(
             datadir_path: coincube_dir.clone(),
             // Recomputed from the P2P panel's Mostro config once panels are built.
             p2p_test_coordinator: false,
+            // Fail-closed until `/connect/features` loads and the account panel
+            // mirrors the real flags in (see `App::update`'s ConnectAccount arm).
+            marketplace_flags: crate::app::features::MarketplaceServerFlags::OFF,
             // We ignore last poll fields for remote backend.
             last_poll_at_startup: None,
             daemon_cache: DaemonCache {

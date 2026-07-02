@@ -3538,6 +3538,13 @@ impl App {
                     .connect
                     .update(self.daemon.clone(), &self.cache, msg);
                 self.cache.connect_authenticated = self.panels.connect.account.is_authenticated();
+                // Mirror the server-controlled Marketplace flags so the nav
+                // rails and route guard reflect the latest `/connect/features`
+                // stance. Recomputed after every ConnectAccount/ConnectCube
+                // message (FeaturesLoaded flows through here, and logout clears
+                // `features` back to fail-closed OFF via the accessor).
+                self.cache.marketplace_flags =
+                    self.panels.connect.account.marketplace_server_flags();
                 // Sync lightning address to cache for sidebar display
                 self.cache.lightning_address = self
                     .panels
@@ -3556,6 +3563,10 @@ impl App {
                     });
                 if let Some(p2p) = self.panels.p2p.as_mut() {
                     p2p.sync_lightning_address_from_cache(&self.cache);
+                    // Keep the panel's server-P2P mirror current so its Mostro
+                    // subscription gate drops the relay stream when the server
+                    // has P2P off (the cache flag was just refreshed above).
+                    p2p.sync_marketplace_flags_from_cache(&self.cache);
                 }
                 // Sync avatar handle to cache for sidebar display across all panels.
                 // Only update when Some to avoid blinking during in-flight image loads.
@@ -4380,6 +4391,7 @@ impl App {
             &self.panels.current,
             self.cache.network,
             self.cache.p2p_test_coordinator,
+            self.cache.marketplace_flags,
         )
         .reason()
         .map(str::to_string)

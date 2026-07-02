@@ -38,6 +38,64 @@ impl Availability {
     }
 }
 
+/// Server-controlled availability of the Marketplace, sourced from
+/// `GET /connect/features`. This is a second, independent dimension on top
+/// of the per-network gate above: the network gate greys features out with
+/// a "not on this network" reason, whereas these flags are a launch
+/// kill-switch — when off, the whole surface is *hidden*, not greyed.
+///
+/// Fails **closed**. Every flag defaults to `false`, and callers hand this
+/// its [`OFF`](Self::OFF) value before `/connect/features` has loaded (right
+/// after sign-in), when the response omits the flags, or when the API is
+/// unreachable. A launch build must never surface the untested money feature
+/// because of a stale or missing API response. (Contrast the network gate,
+/// which defaults to showing-but-disabled.)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct MarketplaceServerFlags {
+    /// Master switch. When `false` the entire Marketplace section is hidden
+    /// and every route under it — including the otherwise always-reachable
+    /// P2P `Settings` sub-route — is unreachable.
+    pub marketplace_enabled: bool,
+    /// Whether the server permits Buy/Sell. Only meaningful when
+    /// `marketplace_enabled` is also `true` (see [`Self::buy_sell_on`]).
+    pub buy_sell_enabled: bool,
+    /// Whether the server permits P2P trading. Only meaningful when
+    /// `marketplace_enabled` is also `true` (see [`Self::p2p_on`]).
+    pub p2p_enabled: bool,
+}
+
+impl MarketplaceServerFlags {
+    /// Fail-closed value: everything off. The default state before features
+    /// load, and the value used when the API is unreachable or silent.
+    pub const OFF: Self = Self {
+        marketplace_enabled: false,
+        buy_sell_enabled: false,
+        p2p_enabled: false,
+    };
+
+    /// Whether the server permits Buy/Sell at all: the master switch AND the
+    /// Buy/Sell flag. The single source of truth for "should Buy/Sell show".
+    pub fn buy_sell_on(&self) -> bool {
+        self.marketplace_enabled && self.buy_sell_enabled
+    }
+
+    /// Whether the server permits P2P at all: the master switch AND the P2P
+    /// flag. The single source of truth for "should P2P show".
+    pub fn p2p_on(&self) -> bool {
+        self.marketplace_enabled && self.p2p_enabled
+    }
+}
+
+/// Placeholder reason for a Marketplace route reached while the server has
+/// the feature switched off. These routes are hidden from the nav, so this
+/// only surfaces on a restored or deep-linked route (fail-closed backstop) —
+/// deliberately generic, since "off at the server" is not a per-network state.
+fn marketplace_off() -> Availability {
+    Availability::Unavailable {
+        reason: "The Marketplace isn't available right now.".to_string(),
+    }
+}
+
 /// Display name for a network, used in popover text.
 fn net_label(n: Network) -> &'static str {
     match n {
@@ -105,17 +163,44 @@ pub fn p2p(net: Network, has_test_coordinator: bool) -> Availability {
 /// feature renders the shared "unavailable" placeholder instead of a live
 /// panel (the rail items themselves are already greyed and inert). Routes
 /// not tied to a gated feature are always available.
-pub fn route_availability(menu: &Menu, net: Network, p2p_test_coordinator: bool) -> Availability {
+pub fn route_availability(
+    menu: &Menu,
+    net: Network,
+    p2p_test_coordinator: bool,
+    flags: MarketplaceServerFlags,
+) -> Availability {
     match menu {
         Menu::Spark(_) => spark(net),
         Menu::Liquid(_) => liquid(net),
-        Menu::Marketplace(MarketplaceSubMenu::BuySell) => buy_sell(net),
-        // P2P Settings stays reachable even when trading is gated, so users
-        // can configure a coordinator to lift the gate — otherwise it's a
-        // catch-22 (you'd need a working coordinator to reach the page that
-        // adds one, and removing the last test node would lock you out).
-        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Settings)) => Availability::Available,
-        Menu::Marketplace(MarketplaceSubMenu::P2P(_)) => p2p(net, p2p_test_coordinator),
+        // Buy/Sell: hidden entirely when the server switch is off, otherwise
+        // subject to the per-network gate.
+        Menu::Marketplace(MarketplaceSubMenu::BuySell) => {
+            if flags.buy_sell_on() {
+                buy_sell(net)
+            } else {
+                marketplace_off()
+            }
+        }
+        // P2P Settings stays reachable even when *network* trading is gated,
+        // so users can configure a coordinator to lift that gate — otherwise
+        // it's a catch-22 (you'd need a working coordinator to reach the page
+        // that adds one, and removing the last test node would lock you out).
+        // But when the *server* has P2P off, there's nothing to configure, so
+        // Settings is unreachable too — matching the hide-everything intent.
+        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Settings)) => {
+            if flags.p2p_on() {
+                Availability::Available
+            } else {
+                marketplace_off()
+            }
+        }
+        Menu::Marketplace(MarketplaceSubMenu::P2P(_)) => {
+            if flags.p2p_on() {
+                p2p(net, p2p_test_coordinator)
+            } else {
+                marketplace_off()
+            }
+        }
         _ => Availability::Available,
     }
 }
@@ -179,6 +264,116 @@ mod tests {
                 net
             );
         }
+    }
+
+    /// Every marketplace flag combination that gates a route. Kept as its
+    /// own table so the server dimension is legible next to the network one.
+    const ALL_ON: MarketplaceServerFlags = MarketplaceServerFlags {
+        marketplace_enabled: true,
+        buy_sell_enabled: true,
+        p2p_enabled: true,
+    };
+
+    fn buy_sell_route() -> Menu {
+        Menu::Marketplace(MarketplaceSubMenu::BuySell)
+    }
+    fn p2p_route() -> Menu {
+        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview))
+    }
+    fn p2p_settings_route() -> Menu {
+        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Settings))
+    }
+
+    fn avail(menu: &Menu, net: Network, flags: MarketplaceServerFlags) -> bool {
+        route_availability(menu, net, false, flags).is_available()
+    }
+
+    #[test]
+    fn server_flags_default_and_off_are_fail_closed() {
+        // Default derives to all-false, matching the explicit OFF constant.
+        assert_eq!(
+            MarketplaceServerFlags::default(),
+            MarketplaceServerFlags::OFF
+        );
+        assert!(!MarketplaceServerFlags::OFF.buy_sell_on());
+        assert!(!MarketplaceServerFlags::OFF.p2p_on());
+    }
+
+    #[test]
+    fn sub_flags_require_the_master_switch() {
+        // Sub-flags on but master off → still off (fail-closed).
+        let master_off = MarketplaceServerFlags {
+            marketplace_enabled: false,
+            buy_sell_enabled: true,
+            p2p_enabled: true,
+        };
+        assert!(!master_off.buy_sell_on());
+        assert!(!master_off.p2p_on());
+    }
+
+    #[test]
+    fn marketplace_off_hides_every_route_including_p2p_settings() {
+        // Fail-closed: with the server switch off, no Marketplace route is
+        // reachable on mainnet — not even P2P Settings, which is otherwise
+        // always available.
+        for flags in [
+            MarketplaceServerFlags::OFF,
+            MarketplaceServerFlags::default(),
+        ] {
+            assert!(!avail(&buy_sell_route(), Network::Bitcoin, flags));
+            assert!(!avail(&p2p_route(), Network::Bitcoin, flags));
+            assert!(!avail(&p2p_settings_route(), Network::Bitcoin, flags));
+        }
+    }
+
+    #[test]
+    fn buy_sell_on_p2p_off_leaves_only_buy_sell_reachable() {
+        let flags = MarketplaceServerFlags {
+            marketplace_enabled: true,
+            buy_sell_enabled: true,
+            p2p_enabled: false,
+        };
+        assert!(avail(&buy_sell_route(), Network::Bitcoin, flags));
+        assert!(!avail(&p2p_route(), Network::Bitcoin, flags));
+        assert!(!avail(&p2p_settings_route(), Network::Bitcoin, flags));
+    }
+
+    #[test]
+    fn p2p_on_buy_sell_off_leaves_only_p2p_reachable() {
+        let flags = MarketplaceServerFlags {
+            marketplace_enabled: true,
+            buy_sell_enabled: false,
+            p2p_enabled: true,
+        };
+        assert!(!avail(&buy_sell_route(), Network::Bitcoin, flags));
+        assert!(avail(&p2p_route(), Network::Bitcoin, flags));
+        // Settings reachable so a coordinator can be configured.
+        assert!(avail(&p2p_settings_route(), Network::Bitcoin, flags));
+    }
+
+    #[test]
+    fn network_gate_still_applies_once_server_flags_are_on() {
+        // Server says yes everywhere, but Buy/Sell + P2P have no backend on
+        // signet, so the per-network gate still blocks them — while P2P
+        // Settings stays reachable (configure a coordinator).
+        assert!(!avail(&buy_sell_route(), Network::Signet, ALL_ON));
+        assert!(!avail(&p2p_route(), Network::Signet, ALL_ON));
+        assert!(avail(&p2p_settings_route(), Network::Signet, ALL_ON));
+        // On mainnet everything is reachable once the flags are on.
+        assert!(avail(&buy_sell_route(), Network::Bitcoin, ALL_ON));
+        assert!(avail(&p2p_route(), Network::Bitcoin, ALL_ON));
+    }
+
+    #[test]
+    fn non_marketplace_routes_ignore_server_flags() {
+        // A Spark route is unaffected by marketplace flags (still network-gated).
+        let spark_route = Menu::Spark(crate::app::menu::SparkSubMenu::Overview);
+        assert!(avail(
+            &spark_route,
+            Network::Bitcoin,
+            MarketplaceServerFlags::OFF
+        ));
+        assert!(!avail(&spark_route, Network::Signet, ALL_ON));
     }
 
     #[test]

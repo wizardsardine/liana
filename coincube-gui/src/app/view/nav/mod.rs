@@ -252,6 +252,12 @@ pub struct NavContext<'a> {
     /// Whether a non-mainnet Mostro coordinator is configured. Only
     /// affects P2P on test networks (mainnet P2P is always available).
     pub p2p_test_coordinator: bool,
+    /// Server-controlled Marketplace availability (from `/connect/features`).
+    /// Gates whether the Marketplace top-level nav and its Buy/Sell + P2P
+    /// sub-items are shown at all — on top of the per-network gate. Fail-closed
+    /// [`MarketplaceServerFlags::OFF`](crate::app::features::MarketplaceServerFlags::OFF)
+    /// until features load, hiding the section while the API stance is unknown.
+    pub marketplace_flags: crate::app::features::MarketplaceServerFlags,
     pub cube_name: &'a str,
     pub lightning_address: Option<&'a str>,
     pub avatar: Option<&'a iced::widget::image::Handle>,
