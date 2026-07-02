@@ -21,7 +21,8 @@ use liana_ui::{
         button, card,
         collapse::Collapse,
         form,
-        modal::{self, modal_view, DeviceMark, ModalWidth},
+        list::DeviceStatus,
+        modal::{self, modal_view, ModalWidth},
         pill, scrollable,
         text::{self, *},
     },
@@ -964,25 +965,11 @@ pub fn sign_action<'a>(
         let fp = Some(format!("#{fingerprint}"));
         let alias = signer_alias;
         if signed.contains(&fingerprint) {
-            modal::device_entry(
-                fp,
-                None::<&str>,
-                alias,
-                Some(DeviceMark::Signed),
-                None,
-                None,
-            )
+            modal::device_entry(fp, None::<&str>, alias, DeviceStatus::Signed, None)
         } else if !can_sign {
-            modal::device_entry(
-                fp,
-                None::<&str>,
-                alias,
-                Some(DeviceMark::NotInPath),
-                None,
-                None,
-            )
+            modal::device_entry(fp, None::<&str>, alias, DeviceStatus::NotInPath, None)
         } else {
-            modal::device_entry(fp, None::<&str>, alias, None, None, select_msg)
+            modal::device_entry(fp, None::<&str>, alias, DeviceStatus::None, select_msg)
         }
     }) {
         signers.push(hot_signer);

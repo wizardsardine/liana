@@ -1,5 +1,5 @@
 use liana_ui::{
-    component::modal::{self, DeviceMark},
+    component::{list::DeviceStatus, modal},
     widget::*,
 };
 
@@ -20,23 +20,21 @@ pub fn hw_list_view_verify_address(
     else {
         return unusable_device_entry(hw);
     };
-    let (mark, warning, on_press) = if chosen {
-        (Some(DeviceMark::Processing), None, None)
+    let (status, on_press) = if chosen {
+        (DeviceStatus::Processing, None)
     } else if matches!(kind, DeviceKind::Specter | DeviceKind::SpecterSimulator) {
         (
-            None,
-            Some("Liana cannot request the device to display the address. \n Verify it with the QR code in the options below."),
+            DeviceStatus::Warning("Liana cannot request the device to display the address. \n Verify it with the QR code in the options below."),
             None,
         )
     } else {
-        (None, None, Some(Message::SelectHardwareWallet(i)))
+        (DeviceStatus::None, Some(Message::SelectHardwareWallet(i)))
     };
     modal::device_entry(
         Some(format!("#{fingerprint}")),
         Some(kind),
         alias.as_ref(),
-        mark,
-        warning,
+        status,
         on_press,
     )
 }

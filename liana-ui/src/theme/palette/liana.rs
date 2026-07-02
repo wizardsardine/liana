@@ -51,6 +51,8 @@ impl Palette {
             text: Text {
                 primary: color::WHITE,
                 secondary: color::GREY_2,
+                muted: color::GREY_3,
+                border: color::GREY_7,
                 warning: color::ORANGE,
                 success: color::GREEN,
                 error: color::RED,
@@ -107,6 +109,27 @@ impl Palette {
                     pressed: Some(ButtonPalette {
                         background: BTN_SECONDARY_PRESSED_BGD,
                         text: color::GREEN,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: btn_disabled(),
+                },
+                auxiliary: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_SECONDARY_TEXT,
+                        border: color::GREY_2.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_SECONDARY_HOVER_TEXT,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_SECONDARY_PRESSED_TEXT,
                         border: color::GREEN.into(),
                         shadow: Default::default(),
                     }),
@@ -189,6 +212,32 @@ impl Palette {
                         shadow: Default::default(),
                     }),
                 },
+                remove: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: None,
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: None,
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: None,
+                        shadow: Default::default(),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: None,
+                        shadow: Default::default(),
+                    }),
+                },
                 transparent_border: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
@@ -231,7 +280,7 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
-                clickable_card: Button {
+                list_entry: Button {
                     active: ButtonPalette {
                         background: color::GREY_6,
                         text: color::GREY_2,
@@ -252,6 +301,8 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                list_entry_radius: None,
+                list_entry_hover_border_width: None,
                 container: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
@@ -410,6 +461,27 @@ impl Palette {
                         shadow: Default::default(),
                     }),
                 },
+                link_subtle: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: None,
+                },
                 pick_list: Button {
                     active: ButtonPalette {
                         background: color::GREY_6,
@@ -499,6 +571,7 @@ impl Palette {
                     text: color::WHITE.into(),
                     border: color::GREY_7.into(),
                 },
+                success: None,
                 error: ContainerPalette {
                     background: color::LIGHT_BLACK,
                     text: color::RED.into(),
@@ -543,6 +616,31 @@ impl Palette {
                     text: color::BLACK.into(),
                     border: color::TRANSPARENT.into(),
                 },
+                avatar: ContainerPalette {
+                    background: color::FINGERPRINT_BACKGROUND,
+                    text: color::GREY_2.into(),
+                    border: color::TRANSPARENT.into(),
+                },
+                danger: None,
+            },
+            tile_tones: Tiles {
+                background: color::GREY_5,
+                accent: Tile {
+                    fg: color::GREEN,
+                    bg: None,
+                },
+                neutral: Tile {
+                    fg: SAFETY_NET,
+                    bg: None,
+                },
+                muted: Tile {
+                    fg: color::GREY_3,
+                    bg: None,
+                },
+                danger: Tile {
+                    fg: color::RED,
+                    bg: Some(color::LIGHT_BLACK),
+                },
             },
             pills: Pills {
                 simple: ContainerPalette {
@@ -564,6 +662,16 @@ impl Palette {
                     background: color::TRANSPARENT,
                     text: color::AMBER.into(),
                     border: color::AMBER.into(),
+                },
+                role_manager: ContainerPalette {
+                    background: color::GREY_5,
+                    text: color::GREY_2.into(),
+                    border: color::GREY_5.into(),
+                },
+                role_participant: ContainerPalette {
+                    background: color::GREY_5,
+                    text: color::GREY_2.into(),
+                    border: color::GREY_5.into(),
                 },
                 success: ContainerPalette {
                     background: color::SUCCESS_GREEN,
@@ -590,6 +698,13 @@ impl Palette {
                     text: color::FINGERPRINT_TEXT.into(),
                     border: color::FINGERPRINT_BORDER.into(),
                 },
+            },
+            tabs: Tabs {
+                active: color::GREEN,
+                inactive: color::GREY_2,
+                strip: color::GREY_7,
+                dot_ready: color::GREEN,
+                dot_pending: color::AMBER,
             },
             notifications: Notifications {
                 pending: ContainerPalette {
@@ -640,6 +755,10 @@ impl Palette {
                         border: Some(color::RED),
                     },
                 },
+            },
+            combobox: Combobox {
+                selected: color::FINGERPRINT_BACKGROUND,
+                header: color::GREY_7,
             },
             checkboxes: Checkboxes {
                 icon: color::GREEN,

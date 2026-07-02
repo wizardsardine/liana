@@ -20,6 +20,7 @@ text_roles! {
     h2,                     H2_SPEC,                    font::MANROPE_MEDIUM,   22;
     h2_semi,                H2_SEMI_SPEC,               font::MANROPE_SEMIBOLD, 22;
     h3,                     H3_SPEC,                    font::MANROPE_MEDIUM,   20;
+    h3_semi,                H3_SEMI_SPEC,               font::MANROPE_SEMIBOLD, 20;
     b1,                     B1_SPEC,                    font::REGULAR,          24;
     b1_bold,                B1_BOLD_SPEC,               font::BOLD,             24;
     b2,                     B2_SPEC,                    font::REGULAR,          22;
@@ -31,6 +32,7 @@ text_roles! {
     b5_medium,              B5_MEDIUM_SPEC,             font::MEDIUM,           16;
     b5_bold,                B5_BOLD_SPEC,               font::BOLD,             16;
     caption,                CAPTION_SPEC,               font::REGULAR,          16;
+    small_caption,          SMALL_CAPTION_SPEC,         font::REGULAR,          13;
     button_text,            BUTTON_TEXT_SPEC,           font::MEDIUM,           22;
     button_text_compact,    BUTTON_TEXT_COMPACT_SPEC,   font::MEDIUM,           16;
 }

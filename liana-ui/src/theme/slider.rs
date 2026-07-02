@@ -29,6 +29,7 @@ pub fn slider(theme: &Theme, _status: Status) -> Style {
                     color,
                     width: 1.0,
                     radius: 4.0.into(),
+                    ..Default::default()
                 }
             } else {
                 Border {

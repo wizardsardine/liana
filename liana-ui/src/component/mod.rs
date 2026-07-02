@@ -5,6 +5,7 @@ pub mod button;
 pub mod card;
 pub mod checkbox;
 pub mod collapse;
+pub mod combobox;
 pub mod form;
 pub mod label;
 pub mod list;
@@ -15,6 +16,7 @@ pub mod pick_list;
 pub mod pill;
 pub mod scrollable;
 pub mod spinner;
+pub mod tab;
 pub mod text;
 pub mod toast;
 pub mod tooltip;
@@ -59,15 +61,14 @@ pub fn network_banner<'a, T: 'a>(network: Network) -> Container<'a, T> {
 }
 
 pub fn section<'a, T: 'a>(title: impl std::fmt::Display) -> Row<'a, T> {
-    let title = Container::new(text::new::d4(title))
+    let title = card::section(text::new::d4(title))
         .padding(Padding {
             top: 10.0,
             right: 24.0,
             bottom: 10.0,
             left: 18.0,
         })
-        .align_y(Alignment::Center)
-        .style(theme::card::section);
+        .align_y(Alignment::Center);
     row![title, separator()]
         .align_y(Alignment::Center)
         .spacing(10)

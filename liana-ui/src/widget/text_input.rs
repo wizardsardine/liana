@@ -241,7 +241,7 @@ where
 
         state.placeholder.update(placeholder_text);
 
-        let secure_value = self.is_secure.then(|| value.secure());
+        let secure_value = self.is_secure.then_some(value.secure());
         let value = secure_value.as_ref().unwrap_or(value);
 
         state.value.update(Text {
@@ -314,7 +314,7 @@ where
         let value = value.unwrap_or(&self.value);
         let is_disabled = self.on_input.is_none();
 
-        let secure_value = self.is_secure.then(|| value.secure());
+        let secure_value = self.is_secure.then_some(value.secure());
         let value = secure_value.as_ref().unwrap_or(value);
 
         let bounds = layout.bounds();

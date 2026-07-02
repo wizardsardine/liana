@@ -66,12 +66,15 @@ impl Login {
     }
 
     pub fn on_update_email(&mut self, email: String) {
-        self.email.form.valid = email_address::EmailAddress::parse_with_options(
-            &email,
-            email_address::Options::default().with_required_tld(),
-        )
-        .is_ok();
-        self.email.form.warning = (!self.email.form.valid).then_some("Invalid email!");
+        // An empty field is neutral, not invalid.
+        let valid = email.is_empty()
+            || email_address::EmailAddress::parse_with_options(
+                &email,
+                email_address::Options::default().with_required_tld(),
+            )
+            .is_ok();
+        self.email.form.valid = valid;
+        self.email.form.warning = (!valid).then_some("Invalid email!");
         self.email.form.value = email;
     }
     pub fn on_update_code(&mut self, code: String) {

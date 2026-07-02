@@ -24,8 +24,8 @@ use liana::{
 use liana_ui::{
     component::{
         button, card, collapse, form,
-        modal::{self, DeviceMark},
-        scrollable, separation,
+        list::DeviceStatus,
+        modal, scrollable, separation,
         text::{h2, h3, h4_bold, p1_bold, p1_regular, text, Text},
     },
     icon, theme,
@@ -450,8 +450,7 @@ pub fn hardware_wallet_xpubs<'a>(
                     Some(format!("#{fingerprint}")),
                     Some(kind),
                     alias.as_ref(),
-                    Some(DeviceMark::Processing),
-                    None,
+                    DeviceStatus::Processing,
                     None,
                 )
             } else {

@@ -10,6 +10,7 @@ fn builder(palette: &ContainerPalette) -> Style {
             radius: 25.0.into(),
             width: 2.0,
             color: palette.border.unwrap_or_default(),
+            ..Default::default()
         },
         ..Default::default()
     }
@@ -25,6 +26,8 @@ styles!(
         success,
         warning,
         soft_warning,
+        role_manager,
+        role_participant,
         internal,
         external,
         safety_net,
@@ -40,6 +43,7 @@ pub fn fingerprint(theme: &crate::theme::Theme) -> ::iced::widget::container::St
             radius: 25.0.into(),
             width: 2.0,
             color: palette.border.unwrap_or_default(),
+            ..Default::default()
         },
         shadow: CARD_SHADOW,
         ..Default::default()

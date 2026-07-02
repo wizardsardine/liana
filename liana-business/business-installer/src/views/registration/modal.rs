@@ -3,14 +3,17 @@ use crate::state::{
     views::registration::{RegistrationModalState, RegistrationModalStep},
     State,
 };
-use iced::Alignment;
+use iced::{
+    widget::{column, row},
+    Alignment, Length,
+};
 use liana_ui::{
     component::{
         button::{btn_cancel, btn_no, btn_retry, btn_yes},
         modal::{modal_view, ModalWidth},
         text,
     },
-    theme,
+    icon, theme,
     widget::*,
 };
 
@@ -28,20 +31,16 @@ pub fn registration_modal_view(state: &State) -> Option<Element<'_, Msg>> {
 }
 
 fn registering_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
-    let body = Column::new()
-        .spacing(15)
-        .align_x(Alignment::Center)
-        .push(
-            text::p1_medium("Please confirm on your device...")
-                .style(theme::text::secondary)
-                .align_x(Alignment::Center),
-        )
-        .push(
-            Row::new()
-                .spacing(10)
-                .push(btn_cancel(Some(Msg::RegistrationCancelModal))),
-        )
-        .align_x(Alignment::Center);
+    let body = column![
+        icon::usb_icon().size(100),
+        text::new::caption("Please confirm on your device...")
+            .style(theme::text::secondary)
+            .align_x(Alignment::Center),
+        row![btn_cancel(Some(Msg::RegistrationCancelModal))].spacing(10),
+    ]
+    .spacing(15)
+    .width(Length::Fill)
+    .align_x(Alignment::Center);
 
     modal_view(
         Some("Registering Wallet".to_string()),
@@ -58,20 +57,19 @@ fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
         .as_deref()
         .unwrap_or("Unknown error occurred");
 
-    let body = Column::new()
-        .spacing(15)
-        .align_x(Alignment::Center)
-        .push(
-            text::p1_medium(error_msg)
-                .style(theme::text::warning)
-                .align_x(Alignment::Center),
-        )
-        .push(
-            Row::new()
-                .spacing(10)
-                .push(btn_cancel(Some(Msg::RegistrationCancelModal)))
-                .push(btn_retry(Some(Msg::RegistrationRetry))),
-        );
+    let body = column![
+        icon::warning_icon().size(80),
+        text::new::caption(error_msg)
+            .style(theme::text::warning)
+            .align_x(Alignment::Center),
+        row![
+            btn_cancel(Some(Msg::RegistrationCancelModal)),
+            btn_retry(Some(Msg::RegistrationRetry)),
+        ]
+        .spacing(10),
+    ]
+    .spacing(15)
+    .align_x(Alignment::Center);
 
     modal_view(
         Some("Registration Failed".to_string()),
@@ -83,26 +81,22 @@ fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
 }
 
 fn confirm_coldcard_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
-    let body = Column::new()
-        .spacing(15)
-        .align_x(Alignment::Center)
-        .push(
-            text::p1_medium(
-                "Please confirm on your Coldcard that the wallet registration completed successfully.",
-            )
-            .style(theme::text::secondary)
+    let body = column![
+        text::new::caption(
+            "Please confirm on your Coldcard that the wallet registration completed successfully.",
+        )
+        .style(theme::text::secondary)
+        .align_x(Alignment::Center),
+        text::new::b5_bold("Did the registration succeed on your Coldcard?")
             .align_x(Alignment::Center),
-        )
-        .push(
-            text::p1_bold("Did the registration succeed on your Coldcard?")
-                .align_x(Alignment::Center),
-        )
-        .push(
-            Row::new()
-                .spacing(10)
-                .push(btn_no(Some(Msg::RegistrationConfirmNo)))
-                .push(btn_yes(Some(Msg::RegistrationConfirmYes))),
-        );
+        row![
+            btn_no(Some(Msg::RegistrationConfirmNo)),
+            btn_yes(Some(Msg::RegistrationConfirmYes)),
+        ]
+        .spacing(10),
+    ]
+    .spacing(15)
+    .align_x(Alignment::Center);
 
     modal_view(
         Some("Confirm Registration".to_string()),

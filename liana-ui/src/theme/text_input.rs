@@ -51,6 +51,7 @@ fn text_input(c: &TextInput, status: Status) -> Style {
                 radius: INPUT_RADIUS.into(),
                 width: 1.0,
                 color,
+                ..Default::default()
             }
         } else {
             Border::default()
@@ -70,6 +71,7 @@ fn text_input(c: &TextInput, status: Status) -> Style {
                     radius: INPUT_RADIUS.into(),
                     width: 1.0,
                     color,
+                    ..Default::default()
                 }
             } else {
                 Border::default()

@@ -13,9 +13,12 @@ pub struct Palette {
     pub cards: Cards,
     pub banners: Banners,
     pub badges: Badges,
+    pub tile_tones: Tiles,
     pub pills: Pills,
+    pub tabs: Tabs,
     pub notifications: Notifications,
     pub text_inputs: TextInputs,
+    pub combobox: Combobox,
     pub checkboxes: Checkboxes,
     pub radio_buttons: RadioButtons,
     pub sliders: Sliders,
@@ -31,6 +34,8 @@ pub struct Palette {
 pub struct Text {
     pub primary: iced::Color,
     pub secondary: iced::Color,
+    pub muted: iced::Color,
+    pub border: iced::Color,
     pub warning: iced::Color,
     pub success: iced::Color,
     pub error: iced::Color,
@@ -66,12 +71,17 @@ pub struct General {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Buttons {
     pub transparent: Button,
+    /// Transparent icon button that keeps its active look while inert (e.g. the remove cross).
+    pub remove: Button,
     pub transparent_border: Button,
-    pub clickable_card: Button,
+    pub list_entry: Button,
+    pub list_entry_radius: Option<f32>,
+    pub list_entry_hover_border_width: Option<f32>,
     // previously theme::button::transparent_border wrapped into theme::card::simple
     pub clickable_section: Button,
     pub primary: Button,
     pub secondary: Button,
+    pub auxiliary: Button,
     pub feerate: Button,
     pub feerate_unselected: Button,
     pub tertiary: Button,
@@ -82,6 +92,7 @@ pub struct Buttons {
     pub tab_menu: Button,
     pub tab: Button,
     pub link: Button,
+    pub link_subtle: Button,
     pub pick_list: Button,
     pub signing_devices: Button,
     pub border_width: f32,
@@ -163,6 +174,7 @@ pub struct Cards {
     pub warning: ContainerPalette,
     pub soft_warning: ContainerPalette,
     pub info: ContainerPalette,
+    pub success: Option<ContainerPalette>,
     pub error: ContainerPalette,
     /// Section header card: no shadow, accent background.
     pub section: ContainerPalette,
@@ -181,6 +193,23 @@ pub struct Badges {
     pub simple: ContainerPalette,
     pub bitcoin: ContainerPalette,
     pub success: ContainerPalette,
+    pub avatar: ContainerPalette,
+    pub danger: Option<ContainerPalette>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Tiles {
+    pub background: iced::Color,
+    pub accent: Tile,
+    pub neutral: Tile,
+    pub muted: Tile,
+    pub danger: Tile,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Tile {
+    pub fg: iced::Color,
+    pub bg: Option<iced::Color>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -190,10 +219,21 @@ pub struct Pills {
     pub success: ContainerPalette,
     pub warning: ContainerPalette,
     pub soft_warning: ContainerPalette,
+    pub role_manager: ContainerPalette,
+    pub role_participant: ContainerPalette,
     pub internal: ContainerPalette,
     pub external: ContainerPalette,
     pub safety_net: ContainerPalette,
     pub fingerprint: ContainerPalette,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Tabs {
+    pub active: iced::Color,
+    pub inactive: iced::Color,
+    pub strip: iced::Color,
+    pub dot_ready: iced::Color,
+    pub dot_pending: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -222,6 +262,12 @@ pub struct TextInputPalette {
     pub value: iced::Color,
     pub selection: iced::Color,
     pub border: Option<iced::Color>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Combobox {
+    pub selected: iced::Color,
+    pub header: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

@@ -4,6 +4,7 @@ pub mod banner;
 pub mod button;
 pub mod card;
 pub mod checkbox;
+pub mod combobox;
 pub mod container;
 pub mod context_menu;
 pub mod notification;
@@ -84,9 +85,16 @@ macro_rules! styles {
 pub(crate) use styles;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
+pub enum ThemeVariant {
+    Wallet,
+    Business,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Theme {
     pub colors: palette::Palette,
     pub button_border_width: f32,
+    pub variant: ThemeVariant,
 }
 
 impl Default for Theme {
@@ -94,6 +102,7 @@ impl Default for Theme {
         Self {
             colors: palette::Palette::liana(),
             button_border_width: 1.0,
+            variant: ThemeVariant::Wallet,
         }
     }
 }
@@ -104,7 +113,12 @@ impl Theme {
         Self {
             colors: palette::Palette::business(),
             button_border_width: 3.0,
+            variant: ThemeVariant::Business,
         }
+    }
+
+    pub fn is_business(&self) -> bool {
+        self.variant == ThemeVariant::Business
     }
 }
 

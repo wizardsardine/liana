@@ -1,6 +1,6 @@
 //! Gallery of every pill constructor exposed by `liana-ui`.
 
-use liana_ui::component::pill;
+use liana_ui::{component::pill, theme};
 
 use crate::debug::Sample;
 
@@ -42,9 +42,14 @@ fn pill_components_b() -> Sample<14> {
 }
 
 #[rustfmt::skip]
-fn pill_components_c() -> Sample<9> {
+fn pill_components_c() -> Sample<14> {
     [
         (pill::ws_admin(),                                 "liana_ui::component::pill::ws_admin()"),
+        (pill::role_manager(),                             "liana_ui::component::pill::role_manager()"),
+        (pill::role_participant(),                         "liana_ui::component::pill::role_participant()"),
+        (pill::compact_metric("Draft", theme::pill::simple), "liana_ui::component::pill::compact_metric(\"Draft\", theme::pill::simple)"),
+        (pill::compact_metric("To Approve", theme::pill::warning), "liana_ui::component::pill::compact_metric(\"To Approve\", theme::pill::warning)"),
+        (pill::compact_metric("Active", theme::pill::success), "liana_ui::component::pill::compact_metric(\"Active\", theme::pill::success)"),
         (pill::key_internal(),                             "liana_ui::component::pill::key_internal()"),
         (pill::key_external(),                             "liana_ui::component::pill::key_external()"),
         (pill::key_safety_net(),                           "liana_ui::component::pill::key_safety_net()"),

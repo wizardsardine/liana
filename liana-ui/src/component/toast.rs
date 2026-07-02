@@ -185,7 +185,7 @@ where
             translation,
         );
 
-        let toasts = (!self.toasts.is_empty()).then(|| {
+        let toasts = (!self.toasts.is_empty()).then_some({
             overlay::Element::new(Box::new(Overlay {
                 position: layout.position() + translation,
                 toasts: &mut self.toasts,
@@ -196,7 +196,7 @@ where
         });
         let overlays = content.into_iter().chain(toasts).collect::<Vec<_>>();
 
-        (!overlays.is_empty()).then(|| overlay::Group::with_children(overlays).overlay())
+        (!overlays.is_empty()).then_some(overlay::Group::with_children(overlays).overlay())
     }
 }
 

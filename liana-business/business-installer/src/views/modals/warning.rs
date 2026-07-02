@@ -1,24 +1,26 @@
 use crate::state::{views::modals::WarningModalState, Msg};
-use iced::{widget::Space, Length};
+use iced::widget::{column, row, Space};
 use liana_ui::{
     component::{
         button::btn_ok,
         modal::{modal_view, ModalWidth},
-        text,
     },
-    theme,
     widget::*,
 };
 
+use super::installer_modal;
+
 pub fn warning_modal_view(modal_state: &WarningModalState) -> Element<'_, Msg> {
-    let message = text::p1_medium(&modal_state.message).style(theme::text::primary);
+    let message = installer_modal(&modal_state.message);
 
-    let footer = Row::new()
-        .spacing(10)
-        .push(Space::with_width(Length::Fill))
-        .push(btn_ok(Some(Msg::WarningCloseModal)));
+    let footer = row![
+        Space::fill_width(),
+        btn_ok(Some(Msg::WarningCloseModal)),
+        Space::fill_width()
+    ]
+    .spacing(10);
 
-    let body = Column::new().push(message).push(footer).spacing(15);
+    let body = column![message, footer].spacing(15);
 
     modal_view(
         Some(modal_state.title.clone()),

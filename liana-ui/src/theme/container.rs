@@ -1,4 +1,5 @@
 use super::{card::CARD_SHADOW, Theme};
+use crate::color;
 use iced::{
     border::Radius,
     widget::container::{transparent, Catalog, Style, StyleFn},
@@ -37,6 +38,7 @@ pub fn panel_background(theme: &Theme) -> Style {
                 bottom_right: 0.0,
                 bottom_left: 0.0,
             },
+            ..Default::default()
         },
         ..Default::default()
     }
@@ -45,6 +47,13 @@ pub fn panel_background(theme: &Theme) -> Style {
 pub fn foreground(theme: &Theme) -> Style {
     Style {
         background: Some(Background::Color(theme.colors.general.foreground)),
+        ..Default::default()
+    }
+}
+
+pub fn top_bar(theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(theme.colors.general.menu_background)),
         ..Default::default()
     }
 }
@@ -63,6 +72,28 @@ pub fn border(theme: &Theme) -> Style {
     }
 }
 
+pub fn step_dot_filled(_theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(color::BUSINESS_BLUE)),
+        border: Border {
+            radius: 4.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+pub fn step_dot_track(_theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(color::BUSINESS_STEP_TRACK)),
+        border: Border {
+            radius: 4.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
 pub fn tab_menu_panel(theme: &Theme) -> Style {
     let p = theme.colors.buttons.tab_menu.active;
     Style {
@@ -76,6 +107,7 @@ pub fn tab_menu_panel(theme: &Theme) -> Style {
                 bottom_right: 6.0,
                 bottom_left: 6.0,
             },
+            ..Default::default()
         },
         shadow: CARD_SHADOW,
         ..Default::default()

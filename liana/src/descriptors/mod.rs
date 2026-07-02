@@ -428,7 +428,7 @@ impl LianaDescriptor {
         let is_taproot = self.is_taproot();
         // Get the origin ECDSA or Schnorr signatures, depending on the descriptor type.
         let pubkeys_signed = (!is_taproot)
-            .then(|| {
+            .then_some({
                 // ECDSA sigs.
                 psbt_in
                     .partial_sigs
@@ -439,7 +439,7 @@ impl LianaDescriptor {
             .flatten()
             .chain(
                 is_taproot
-                    .then(|| {
+                    .then_some({
                         // Tapscript Schnorr sigs.
                         psbt_in
                             .tap_script_sigs

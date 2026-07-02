@@ -2,82 +2,130 @@ use crate::{
     backend::Backend,
     state::{message::Msg, State},
 };
-use iced::{Alignment, Length};
+use iced::{
+    alignment::Horizontal,
+    widget::{column, row},
+    Alignment, Length,
+};
 use liana_connect::ws_business::{UserRole, WalletStatus};
 use liana_ui::{
-    component::button::{btn_approve_template, btn_manage_keys, btn_send_for_approval, btn_unlock},
+    component::{
+        button::{self, btn_add_recovery_path, btn_approve, btn_send_for_approval, btn_unlock},
+        card, text, tooltip,
+    },
+    theme,
     widget::*,
 };
 
-use super::layout_with_scrollable_list;
+use super::{layout_with_scrollable_list, wallet_edit::wallet_edit_tab_header, INSTALLER_STEPS};
 
-pub mod template_visualization;
+pub mod entry_path_list;
 
-pub use template_visualization::template_visualization;
+pub use entry_path_list::entry_path_list;
+
+fn banner_card(
+    variant: fn(Element<'static, Msg>) -> Container<'static, Msg>,
+    icon_style: fn(&theme::Theme) -> iced::widget::text::Style,
+    body: &'static str,
+) -> Element<'static, Msg> {
+    let content = row![
+        tooltip::tooltip_with_style(body, icon_style),
+        text::new::caption(body).style(icon_style),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+
+    variant(content.into()).width(Length::Fill).into()
+}
+
+fn header_content(
+    is_ws_admin: bool,
+    is_manager: bool,
+    is_locked: bool,
+) -> Option<Element<'static, Msg>> {
+    if is_locked {
+        return Some(if is_manager {
+            banner_card(
+                card::soft_warning,
+                theme::text::warning,
+                "Template is locked and pending approval. You must approve it to continue.",
+            )
+        } else {
+            card::info("Template is locked and pending approval. Unlock to make further changes.")
+                .into()
+        });
+    }
+
+    if is_manager && !is_ws_admin {
+        return Some(card::info("Read-only. Only a WS Admin can edit this template.").into());
+    }
+
+    None
+}
+
+fn footer_content(
+    is_ws_admin: bool,
+    is_manager: bool,
+    is_locked: bool,
+    can_send_for_approval: bool,
+) -> Option<Element<'static, Msg>> {
+    let footer: Element<'static, Msg> = if is_ws_admin && !is_locked {
+        btn_send_for_approval(can_send_for_approval.then_some(Msg::TemplateLock)).into()
+    } else if is_ws_admin && is_locked {
+        btn_unlock(Some(Msg::TemplateUnlock)).into()
+    } else if is_manager && is_locked {
+        let help = button::btn_template_help(Some(Msg::TemplateHelpShowModal));
+        column![btn_approve(Some(Msg::TemplateValidate)), help]
+            .spacing(12)
+            .align_x(Horizontal::Center)
+            .into()
+    } else {
+        return None;
+    };
+
+    Some(
+        Container::new(footer)
+            .width(Length::Fill)
+            .center_x(Length::Fill)
+            .padding(20)
+            .into(),
+    )
+}
 
 pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     let current_user_email = &state.views.login.email.form.value;
 
-    // Determine user role from AppState
     let is_ws_admin = matches!(
         state.app.current_user_role,
         Some(UserRole::WizardSardineAdmin)
     );
-    let is_owner = matches!(state.app.current_user_role, Some(UserRole::WalletManager));
+    let is_manager = matches!(state.app.current_user_role, Some(UserRole::WalletManager));
 
-    // Get current wallet status
     let wallet_status = state
         .app
         .selected_wallet
         .and_then(|id| state.backend.get_wallet(id))
         .map(|w| w.status);
 
-    let is_draft = matches!(
-        wallet_status,
-        Some(WalletStatus::Created) | Some(WalletStatus::Drafted)
-    );
     let is_locked = matches!(wallet_status, Some(WalletStatus::Locked));
+    let editable = is_ws_admin && !is_locked;
 
-    // Template visualization as scrollable content
-    let visualization = template_visualization(state);
+    let list_content = entry_path_list(state, editable);
+    let header_content = column![
+        wallet_edit_tab_header(state),
+        header_content(is_ws_admin, is_manager, is_locked)
+    ]
+    .align_x(Alignment::Center)
+    .into();
+    let pinned_content =
+        editable.then_some(btn_add_recovery_path(Some(Msg::TemplateNewPathModal)).into());
+    let footer_content = footer_content(
+        is_ws_admin,
+        is_manager,
+        is_locked,
+        state.is_template_valid(),
+    );
 
-    // Action buttons row (fixed at bottom) - role-based and status-based
-    let mut buttons_row = Row::new().spacing(20).align_y(Alignment::Center);
-
-    // "Manage Keys" button: WS Admin or Wallet Manager, only on Draft status
-    // Once the wallet is Locked/Validated/Finalized, keys cannot be managed
-    if is_draft {
-        if is_ws_admin {
-            buttons_row = buttons_row.push(btn_manage_keys(Some(Msg::NavigateToKeys), false));
-        } else if is_owner {
-            buttons_row = buttons_row.push(btn_manage_keys(Some(Msg::NavigateToKeys), true));
-        }
-    }
-
-    // WS Admin on Draft: "Lock Template" (if valid)
-    if is_ws_admin && is_draft {
-        let is_valid = state.is_template_valid();
-        let lock_button = btn_send_for_approval(is_valid.then_some(Msg::TemplateLock));
-        buttons_row = buttons_row.push(lock_button);
-    }
-
-    // WS Admin on Locked: "Unlock" button
-    if is_ws_admin && is_locked {
-        buttons_row = buttons_row.push(btn_unlock(Some(Msg::TemplateUnlock)));
-    }
-
-    // Wallet Manager on Locked: "Approve Template" button
-    if is_owner && is_locked {
-        buttons_row = buttons_row.push(btn_approve_template(Some(Msg::TemplateValidate)));
-    }
-
-    let footer_content: Element<'_, Msg> = Container::new(buttons_row)
-        .width(Length::Fill)
-        .center_x(Length::Fill)
-        .padding(20)
-        .into();
-
-    // Build breadcrumb: org_name > wallet_name > Template
     let org_name = state
         .app
         .selected_org
@@ -90,20 +138,17 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
         .and_then(|wallet_id| state.backend.get_wallet(wallet_id))
         .map(|wallet| wallet.alias.clone())
         .unwrap_or_else(|| "Wallet".to_string());
-    let breadcrumb = vec![org_name, wallet_name, "Template".to_string()];
-
-    // Empty header content - the visualization goes directly in the scrollable area
-    let header_content: Element<'_, Msg> = Column::new().into();
+    let breadcrumb = vec![org_name, wallet_name];
 
     layout_with_scrollable_list(
-        (0, 0), // No progress indicator for template builder
+        (5, INSTALLER_STEPS),
         Some(current_user_email),
         is_ws_admin,
         &breadcrumb,
-        header_content,
-        visualization,
-        Some(footer_content),
-        true,
+        Some(header_content),
+        list_content,
+        pinned_content,
+        footer_content,
         Some(Msg::NavigateBack),
     )
 }

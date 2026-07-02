@@ -1,30 +1,28 @@
 use crate::state::{
-    views::{ModalStep, XpubEntryModalState},
+    message::HardwareWalletRequestId,
+    views::{ModalStep, XpubEntryModalState, XpubInputSource},
     Msg, State,
 };
 use async_hwi::service::SigningDevice;
 use iced::{
-    alignment::Vertical,
-    widget::{container, row, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
 use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, UnsupportedReason};
 use liana_ui::{
     component::{
-        button::{btn_cancel, btn_clear, btn_retry, btn_save},
-        form,
+        badge::Tile,
+        button::{self, btn_cancel, btn_clear, btn_retry, btn_save},
+        card, form, list,
         modal::{self, modal_view, ModalWidth},
-        pick_list, scrollable,
-        text::{self, capitalize_first, p1_bold, truncate},
+        scrollable,
+        text::{self, capitalize_first, truncate},
         tooltip,
     },
     icon, theme,
     widget::*,
 };
 
-use miniscript::bitcoin::bip32::ChildNumber;
-
-/// Render the xpub entry modal if it's open
 pub fn xpub_modal_view(state: &State) -> Option<Element<'_, Msg>> {
     let modal_state = state.views.xpub.modal.as_ref()?;
 
@@ -51,78 +49,46 @@ pub fn xpub_modal_view(state: &State) -> Option<Element<'_, Msg>> {
     })
 }
 
-/// Render the Select view - shows device list and other options
 fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> Element<'a, Msg> {
-    // Show current xpub status if one exists
-    let xpub_status = modal_state.current_xpub.is_some().then_some(
-        Container::new(
-            Row::new()
-                .spacing(10)
-                .push(icon::tooltip_icon().size(16))
-                .push(
-                text::p2_medium(
-                    "This key already has an xpub. You can replace it by fetching from a device, \
-                    importing from file, or pasting. Use the Clear button to remove it completely.",
-                )
-                .style(theme::text::primary),
-            ),
+    let xpub_status: Option<Element<'_, Msg>> = modal_state.current_xpub.is_some().then_some(
+        card::info(
+            "This key already has an xpub. You can replace it by fetching from a device, importing from file, or pasting."
         )
-        .padding(10)
-        .style(theme::card::simple)
-        .width(Length::Fill),
+        .width(Length::Fill)
+        .into(),
     );
 
-    // Validation error display - show validation result when input is present
-    let validation_error = if !modal_state.xpub_input.is_empty() {
-        modal_state.validate().err().map(|error| {
-            text::p2_medium(error)
-                .style(theme::text::warning)
-                .width(Length::Fill)
-        })
-    } else {
-        None
-    };
-
-    // Show input field if paste was used or file loaded
-    let input_display = (!modal_state.xpub_input.is_empty()).then(|| {
-        let input_header = Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(text::p2_medium("Current xpub:").style(theme::text::primary))
-            .push(Space::with_width(Length::Fill));
-
-        let input_value = Container::new(scrollable::horizontal_thin(
-            text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary),
-        ))
-        .padding(10)
-        .style(theme::card::simple)
-        .width(Length::Fill);
-
-        Column::new()
-            .push(Space::with_height(5))
-            .push(input_header)
-            .push(input_value)
+    let input_display: Option<Element<'_, Msg>> = (!modal_state.xpub_input.is_empty()).then_some({
+        column![
+            text::new::b5_bold("Current xpub").style(theme::text::primary),
+            xpub_box(&modal_state.xpub_input)
+        ]
+        .spacing(8)
+        .into()
     });
 
-    let body = Column::new()
-        .push_maybe(xpub_status)
-        .push(hw_section(state))
-        .push_maybe(input_display)
-        .push(other_options(
-            modal_state,
-            matches!(
-                state.app.current_user_role,
-                Some(liana_connect::ws_business::UserRole::WalletManager)
-            ),
-        ))
-        .push_maybe(validation_error)
-        .push(footer_buttons(modal_state))
-        .spacing(15)
-        .align_x(Alignment::Center);
+    let validation_error = validation_error(modal_state);
+
+    let detected_devices = row![
+        text::new::b5_bold("Detected devices").style(theme::text::primary),
+        Space::fill_width()
+    ];
+
+    let body = column![
+        xpub_status,
+        detected_devices,
+        hw_section(state),
+        input_display,
+        other_options(modal_state),
+        validation_error,
+        select_footer_buttons(modal_state),
+    ]
+    .spacing(15)
+    .align_x(Alignment::Center);
 
     let alias = truncate(&modal_state.key_alias, 25);
     modal_view(
-        Some(format!("Select key source - {alias}")),
+        Some(format!("Select key source · {alias}")),
         None,
         Some(Msg::XpubCancelModal),
         ModalWidth::L,
@@ -130,102 +96,37 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
     )
 }
 
-/// Render the Details view - shows account picker and fetch status
-fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
-    // Account selection picker
-    let accounts: Vec<_> = (0..10)
-        .map(|i| ChildNumber::from_hardened_idx(i).expect("hardcoded"))
-        .collect();
-
-    let pick_enabled = !modal_state.processing;
-
-    let info = "Switch account if you already uses the same hardware in other configurations";
-    let account_label = row![p1_bold("Key path account:"), tooltip(info)].align_y(Vertical::Center);
-
-    let account = if pick_enabled {
-        container(
-            pick_list::pick_list(
-                accounts,
-                Some(modal_state.selected_account),
-                Msg::XpubUpdateAccount,
-            )
-            .width(Length::Fill),
-        )
-    } else {
-        container(
-            text::p1_medium(format_account(modal_state.selected_account))
-                .style(theme::text::primary)
-                .width(Length::Fill),
-        )
-    }
-    .width(180);
-
-    let fetching_label = modal_state.processing.then_some(
-        Row::new()
-            .spacing(10)
-            .push(Space::with_width(Length::Fill))
-            .push(text::p1_medium("Fetching from device...").style(theme::text::primary))
-            .push(Space::with_width(Length::Fill)),
-    );
-
-    let error = modal_state.fetch_error.as_ref().map(|error| {
-        text::p2_medium(error)
+fn details_view<'a>(modal_state: &'a XpubEntryModalState) -> Element<'a, Msg> {
+    let source = modal_state.input_source.as_ref().and_then(source_line);
+    let fetching_label: Option<Element<'_, Msg>> = modal_state.processing.then_some({
+        text::new::caption("Fetching from device...")
+            .style(theme::text::secondary)
+            .width(Length::Fill)
+            .into()
+    });
+    let error: Option<Element<'_, Msg>> = modal_state.fetch_error.as_ref().map(|error| {
+        text::new::caption(error)
             .style(theme::text::warning)
             .width(Length::Fill)
+            .into()
     });
-
-    // Processing indicator or action buttons
-    let btn_row = {
-        let mut btn_row = Row::new().spacing(10);
-
-        // Retry button (only if there was an error)
-        if modal_state.fetch_error.is_some() {
-            btn_row = btn_row.push(btn_retry(Some(Msg::XpubRetry)));
-        }
-
-        btn_row = btn_row.push(Space::with_width(Length::Fill));
-
-        // Save button (enabled only if we have a valid xpub)
-        let can_save =
-            modal_state.validate().is_ok() && modal_state.has_changes() && !modal_state.processing;
-        btn_row = btn_row.push(btn_save(can_save.then_some(Msg::XpubSave)));
-        btn_row
-    };
-
-    // Validation error (e.g., wrong network)
-    let validation_error = if !modal_state.xpub_input.is_empty() && !modal_state.processing {
-        modal_state.validate().err().map(|error| {
-            text::p2_medium(error)
-                .style(theme::text::warning)
-                .width(Length::Fill)
-        })
-    } else {
-        None
-    };
-
-    // Show fetched xpub if available and not fetching
     let xpub = (!modal_state.xpub_input.is_empty()
         && modal_state.fetch_error.is_none()
-        && !modal_state.processing
-        && validation_error.is_none())
-    .then_some({
-        Container::new(scrollable::horizontal_thin(
-            text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary),
-        ))
-        .padding(10)
-        .style(theme::card::simple)
-        .width(Length::Fill)
-    });
+        && !modal_state.processing)
+        .then_some(xpub_box(&modal_state.xpub_input));
+    let validation_error = validation_error(modal_state);
+    let account_picker = account_picker(modal_state);
 
-    let body = Column::new()
-        .push_maybe(fetching_label)
-        .push_maybe(error)
-        .push_maybe(xpub)
-        .push_maybe(validation_error)
-        .push(account_label)
-        .push(account)
-        .push(btn_row)
-        .spacing(15);
+    let body = column![
+        source,
+        fetching_label,
+        error,
+        xpub,
+        validation_error,
+        account_picker,
+        details_footer_buttons(modal_state),
+    ]
+    .spacing(15);
 
     let alias = truncate(&modal_state.key_alias, 25);
     modal_view(
@@ -237,38 +138,111 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
     )
 }
 
-/// Format account for display (e.g., "Account #0")
-fn format_account(account: ChildNumber) -> String {
-    let index = account.to_string().replace("'", "");
-    format!("Account #{index}")
-}
+/// Account picker width, shared by the live combobox and the disabled input
+/// shown while fetching so the two states keep identical dimensions.
+const ACCOUNT_PICKER_WIDTH: f32 = 150.0;
 
-/// Render the Hardware Wallet section (Select step only)
-fn hw_section(state: &State) -> Element<'_, Msg> {
-    let devices = state.hw.list();
-
-    let device_list: Element<'_, Msg> = if devices.is_empty() {
-        modal::modal_no_devices_placeholder()
-    } else {
-        // Show device list - extract data to avoid lifetime issues with local BTreeMap
-        let device_data: Vec<_> = devices.values().map(extract_device_data).collect();
-        let mut list = Column::new()
-            .spacing(10)
-            .push(text::p1_bold("Detected Devices:"));
-        for data in device_data {
-            list = list.push(device_card(data));
+fn account_picker(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
+    let picker: Element<'_, Msg> = if let Some(fingerprint) = modal_state.selected_device {
+        if modal_state.processing {
+            // iced has no disabled pick_list, so mirror the combobox with a
+            // disabled input of the same width and height (its padding matches
+            // the pick_list's vertical DEFAULT_PADDING).
+            let value = form::Value {
+                value: modal::Account::new(modal_state.selected_account, fingerprint).to_string(),
+                warning: None,
+                valid: true,
+            };
+            Container::new(form::Form::new_disabled("Select account", &value).padding(5))
+                .width(ACCOUNT_PICKER_WIDTH)
+                .into()
+        } else {
+            modal::account_pick_list(
+                fingerprint,
+                Some(modal_state.selected_account),
+                |account: modal::Account| Msg::XpubUpdateAccount(account.index),
+            )
+            .width(ACCOUNT_PICKER_WIDTH)
+            .into()
         }
-        list.into()
+    } else {
+        Space::with_height(0).into()
     };
 
-    Column::new()
-        .push(device_list)
-        .spacing(10)
-        .padding(10)
+    let label = row![
+        text::new::b5_bold("Key path account").style(theme::text::primary),
+        tooltip::tooltip(
+            "The account number in this key's derivation path. Pick a different account to derive an independent key from the same device."
+        ),
+    ]
+    .align_y(Alignment::Center)
+    .spacing(5);
+
+    column![label, picker].spacing(8).into()
+}
+
+fn validation_error(modal_state: &XpubEntryModalState) -> Option<Element<'_, Msg>> {
+    if modal_state.xpub_input.is_empty() || modal_state.processing {
+        return None;
+    }
+
+    modal_state.validate().err().map(|error| {
+        text::new::caption(error)
+            .style(theme::text::warning)
+            .width(Length::Fill)
+            .into()
+    })
+}
+
+fn xpub_box<'a>(xpub: &'a str) -> Element<'a, Msg> {
+    card::flat(
+        scrollable::horizontal_thin(text::new::small_caption(xpub).style(theme::text::secondary)),
+        10,
+    )
+    .width(Length::Fill)
+    .into()
+}
+
+fn source_line(input_source: &XpubInputSource) -> Option<Element<'static, Msg>> {
+    match input_source {
+        XpubInputSource::Device {
+            kind, fingerprint, ..
+        } => Some(
+            row![
+                text::new::caption(format!("Fetched from {kind} #{fingerprint}"))
+                    .style(theme::text::secondary),
+                icon::check_icon().size(13).style(theme::text::success)
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into(),
+        ),
+        _ => None,
+    }
+}
+
+fn hw_section(state: &State) -> Element<'_, Msg> {
+    let devices = state.hw.list();
+    let Some(modal_state) = state.views.xpub.modal.as_ref() else {
+        return column![].into();
+    };
+
+    if devices.is_empty() {
+        return modal::modal_no_devices_placeholder();
+    }
+
+    devices
+        .values()
+        .map(extract_device_data)
+        .fold(column![].spacing(12), |column, data| {
+            let in_use = state.app.keys().iter().any(|(key_id, key)| {
+                *key_id != modal_state.key_id && key.fingerprint() == data.fingerprint
+            });
+            column.push(device_card(data, in_use))
+        })
         .into()
 }
 
-/// Extracted device data for rendering (avoids lifetime issues with local BTreeMap)
 struct DeviceRenderData {
     kind: async_hwi::DeviceKind,
     version: Option<async_hwi::Version>,
@@ -282,84 +256,91 @@ enum DeviceState {
     Unsupported { reason: UnsupportedReason },
 }
 
-/// Render a device card based on its state (Supported, Locked, or Unsupported)
-/// Clicking a supported device opens the Details step
-fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
-    let kind = data.kind;
-    let kind_name = capitalize_first(&data.kind.to_string());
-    let name = match &data.version {
-        Some(v) => format!("{kind_name} {v}"),
-        None => kind_name,
-    };
-    let fp_str = data.fingerprint.map(|fp| format!("#{fp}"));
+fn device_card(data: DeviceRenderData, in_use: bool) -> Element<'static, Msg> {
+    let title = device_title(data.kind, data.version.as_ref());
+
+    if in_use {
+        return list::entry_device_list(
+            title,
+            None::<String>,
+            list::DeviceStatus::AlreadyUsed,
+            button::EntryWidth::Standard,
+            None,
+        );
+    }
+
+    let fingerprint = data
+        .fingerprint
+        .map(list::DeviceStatus::Fingerprint)
+        .unwrap_or(list::DeviceStatus::None);
 
     match data.state {
         DeviceState::Supported => {
-            let fp = data.fingerprint.expect("supported device has fingerprint");
-            modal::key_entry(
-                Some(icon::usb_drive_icon()),
-                name,
-                Some(format!("#{fp}")),
-                None,
-                None,
-                None,
-                Some(Msg::XpubSelectDevice(fp)),
+            let fingerprint = data.fingerprint.expect("supported device has fingerprint");
+            list::entry_device_list(
+                title,
+                None::<String>,
+                list::DeviceStatus::Selectable(fingerprint),
+                button::EntryWidth::Standard,
+                Some(Msg::XpubSelectDevice(fingerprint)),
             )
         }
-        DeviceState::Locked { pairing_code } => {
-            let message = match kind {
-                async_hwi::DeviceKind::Jade => {
-                    "This device doesn't support taproot miniscript".to_string()
-                }
-                _ => match pairing_code {
-                    Some(code) => format!("Pairing code: {code}"),
-                    None => "Please unlock the device".to_string(),
-                },
-            };
-            modal::key_entry(
-                Some(icon::usb_drive_icon()),
-                name,
-                fp_str,
-                None,
-                None,
-                Some(message),
-                None,
-            )
-        }
-        DeviceState::Unsupported { reason } => {
-            let message = match &reason {
-                UnsupportedReason::NotPartOfWallet(fg) => {
-                    format!("Not part of this wallet (#{fg})")
-                }
-                UnsupportedReason::WrongNetwork => "Wrong network in device settings".to_string(),
-                UnsupportedReason::Version {
-                    minimal_supported_version,
-                } => match kind {
-                    async_hwi::DeviceKind::Jade => {
-                        "This device doesn't support taproot miniscript".to_string()
-                    }
-                    _ => format!(
-                        "Device version not supported, upgrade to version > {minimal_supported_version}"
-                    ),
-                },
-                UnsupportedReason::Method(m) => format!("Unsupported method: {m}"),
-                UnsupportedReason::AppIsNotOpen => "Please open the app on device".to_string(),
-            };
-            modal::key_entry(
-                Some(icon::usb_drive_icon()),
-                name,
-                fp_str,
-                None,
-                None,
-                Some(message),
-                None,
-            )
-        }
+        DeviceState::Locked { pairing_code } => list::entry_device_list(
+            title,
+            Some(locked_message(data.kind, pairing_code)),
+            fingerprint,
+            button::EntryWidth::Standard,
+            None,
+        ),
+        DeviceState::Unsupported { reason } => list::entry_device_list(
+            title,
+            Some(unsupported_message(data.kind, &reason)),
+            fingerprint,
+            button::EntryWidth::Standard,
+            None,
+        ),
     }
 }
 
-/// Extract render data from a SigningDevice (copies needed data to avoid lifetime issues)
-fn extract_device_data(device: &SigningDevice<Msg>) -> DeviceRenderData {
+fn device_title(kind: async_hwi::DeviceKind, version: Option<&async_hwi::Version>) -> String {
+    let kind_name = capitalize_first(&kind.to_string());
+    match version {
+        Some(version) => format!("{kind_name} {version}"),
+        None => kind_name,
+    }
+}
+
+fn locked_message(kind: async_hwi::DeviceKind, pairing_code: Option<String>) -> String {
+    match kind {
+        async_hwi::DeviceKind::Jade => "This device doesn't support taproot miniscript".to_string(),
+        _ => pairing_code
+            .map(|code| format!("Pairing code: {code}"))
+            .unwrap_or_else(|| "Please unlock the device".to_string()),
+    }
+}
+
+fn unsupported_message(kind: async_hwi::DeviceKind, reason: &UnsupportedReason) -> String {
+    match reason {
+        UnsupportedReason::NotPartOfWallet(fingerprint) => {
+            format!("Not part of this wallet (#{fingerprint})")
+        }
+        UnsupportedReason::WrongNetwork => "Wrong network in device settings".to_string(),
+        UnsupportedReason::Version {
+            minimal_supported_version,
+        } => match kind {
+            async_hwi::DeviceKind::Jade => {
+                "This device doesn't support taproot miniscript".to_string()
+            }
+            _ => format!(
+                "Device version not supported, upgrade to version > {minimal_supported_version}"
+            ),
+        },
+        UnsupportedReason::Method(method) => format!("Unsupported method: {method}"),
+        UnsupportedReason::AppIsNotOpen => "Please open the app on device".to_string(),
+    }
+}
+
+fn extract_device_data(device: &SigningDevice<Msg, HardwareWalletRequestId>) -> DeviceRenderData {
     let kind = device.kind();
     let fingerprint = device.fingerprint();
 
@@ -370,9 +351,11 @@ fn extract_device_data(device: &SigningDevice<Msg>) -> DeviceRenderData {
             } => UnsupportedReason::Version {
                 minimal_supported_version: (*minimal_supported_version).into(),
             },
-            async_hwi::service::UnsupportedReason::Method(m) => UnsupportedReason::Method(m),
-            async_hwi::service::UnsupportedReason::NotPartOfWallet(fg) => {
-                UnsupportedReason::NotPartOfWallet(*fg)
+            async_hwi::service::UnsupportedReason::Method(method) => {
+                UnsupportedReason::Method(method)
+            }
+            async_hwi::service::UnsupportedReason::NotPartOfWallet(fingerprint) => {
+                UnsupportedReason::NotPartOfWallet(*fingerprint)
             }
             async_hwi::service::UnsupportedReason::WrongNetwork => UnsupportedReason::WrongNetwork,
             async_hwi::service::UnsupportedReason::AppIsNotOpen => UnsupportedReason::AppIsNotOpen,
@@ -386,7 +369,7 @@ fn extract_device_data(device: &SigningDevice<Msg>) -> DeviceRenderData {
                 (version, DeviceState::Supported)
             } else {
                 let minimal_supported_version = min_taproot_version(hw.kind())
-                    .map(|v| v.to_string())
+                    .map(|version| version.to_string())
                     .unwrap_or_default();
                 (
                     version,
@@ -422,78 +405,88 @@ fn extract_device_data(device: &SigningDevice<Msg>) -> DeviceRenderData {
     }
 }
 
-/// Render the "Other options" collapsible section
-fn other_options(modal_state: &XpubEntryModalState, is_wallet_manager: bool) -> Element<'_, Msg> {
+fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
     let collapsed = modal_state.options_collapsed;
-
-    let section_header = modal::optional_section(
-        collapsed,
-        "Other options".to_string(),
-        || Msg::XpubToggleOptions,
-        || Msg::XpubToggleOptions,
-    );
-
-    let expanded_content = (!collapsed).then(|| {
-        let file_button: Element<'_, Msg> = modal::button_entry(
-            Some(icon::import_icon()),
+    let section_header = row![
+        modal::optional_section(
+            // optional_section's flag is "is open" (folded -> right chevron, open -> down).
+            !collapsed,
+            "Other options".to_string(),
+            || Msg::XpubToggleOptions,
+            || Msg::XpubToggleOptions,
+        ),
+        Space::fill_width()
+    ];
+    let expanded_content = (!collapsed).then_some({
+        let file_button = list::entry_action(
+            Tile::Import,
             "Import extended public key file",
-            None,
-            None,
-            Some(|| Msg::XpubLoadFromFile),
+            None::<String>,
+            Some(list::entry_chevron()),
+            button::EntryWidth::Standard,
+            Some(Msg::XpubLoadFromFile),
         );
 
-        let paste_input = is_wallet_manager.then(|| {
-            let form_xpub = form::Value {
-                value: modal_state.xpub_input.clone(),
-                warning: None,
-                valid: true,
-            };
-            let input: Element<'_, Msg> = modal::collapsible_input_button(
-                modal_state.paste_expanded,
-                Some(icon::paste_icon()),
-                "Paste an extended public key".to_string(),
-                "xpub...".to_string(),
-                &form_xpub,
-                Some(Msg::XpubUpdateInput),
-                Some(|| Msg::XpubPaste),
-                || Msg::XpubSelectPaste,
-            );
-            input
-        });
+        let paste_entry = list::entry_action(
+            Tile::Paste,
+            "Paste an extended public key",
+            None::<String>,
+            Some(list::entry_chevron()),
+            button::EntryWidth::Standard,
+            Some(Msg::XpubSelectPaste),
+        );
 
-        Column::new()
-            .spacing(modal::V_SPACING)
-            .push(file_button)
-            .push_maybe(paste_input)
+        let paste_block: Element<'_, Msg> = if modal_state.paste_expanded {
+            list::entry_paste_xpub(
+                &modal_state.xpub_input,
+                Msg::XpubUpdateInput,
+                Msg::XpubPaste,
+            )
+        } else {
+            paste_entry
+        };
+
+        column![file_button, paste_block].spacing(modal::V_SPACING)
     });
 
-    Column::new()
-        .spacing(modal::V_SPACING)
-        .push(section_header)
-        .push_maybe(expanded_content)
-        .into()
+    if let Some(expanded_content) = expanded_content {
+        column![section_header, expanded_content]
+    } else {
+        column![section_header]
+    }
+    .spacing(modal::V_SPACING)
+    .into()
 }
 
-/// Render the footer action buttons (Select step only)
-fn footer_buttons(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
-    // Cancel button (always enabled)
-    let cancel_button = btn_cancel(Some(Msg::XpubCancelModal));
-
-    // Clear button (enabled only if there's a current xpub)
+fn select_footer_buttons(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
     let clear_button = btn_clear(modal_state.current_xpub.is_some().then_some(Msg::XpubClear));
-
-    // Save button (enabled only if validation passes and there are changes)
     let can_save = modal_state.validate().is_ok() && modal_state.has_changes();
+    let buttons = row![
+        btn_cancel(Some(Msg::XpubCancelModal)),
+        clear_button,
+        btn_save(can_save.then_some(Msg::XpubSave))
+    ]
+    .spacing(10);
+
+    row![Space::fill_width(), buttons].into()
+}
+
+fn details_footer_buttons(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
+    let retry_button: Option<Element<'_, Msg>> = modal_state
+        .fetch_error
+        .is_some()
+        .then_some(btn_retry(Some(Msg::XpubRetry)).into());
+
+    let can_save =
+        modal_state.validate().is_ok() && modal_state.has_changes() && !modal_state.processing;
+    let clear_button = btn_clear(modal_state.current_xpub.is_some().then_some(Msg::XpubClear));
     let save_button = btn_save(can_save.then_some(Msg::XpubSave));
 
-    let buttons = Row::new()
-        .spacing(10)
-        .push(cancel_button)
-        .push(clear_button)
-        .push(save_button);
-
-    Row::new()
-        .push(Space::with_width(Length::Fill))
-        .push(buttons)
-        .into()
+    if let Some(retry_button) = retry_button {
+        row![retry_button, Space::fill_width(), clear_button, save_button]
+    } else {
+        row![Space::fill_width(), clear_button, save_button]
+    }
+    .spacing(10)
+    .into()
 }
