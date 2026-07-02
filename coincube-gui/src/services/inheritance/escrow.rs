@@ -9,7 +9,7 @@
 
 use std::str::FromStr;
 
-use coincube_core::miniscript::bitcoin::bip32::Xpub;
+use coincube_core::miniscript::bitcoin::bip32::{DerivationPath, Xpub};
 
 use super::ecies::{seal_to_xpub, ArtifactKind, ENCRYPTION_CHILD_INDEX};
 use super::error::EciesError;
@@ -66,6 +66,12 @@ pub enum EscrowError {
     /// No keyholder with a registered key was found — there is no one to
     /// escrow to, so escrow would be a no-op the owner should be told about.
     NoKeyholders,
+    /// A keyholder's registered account derivation path (from the Connect vault
+    /// response) does not parse as a BIP-32 derivation path. Building the enc
+    /// child path (`account_derivation + /7000`) from it would produce an
+    /// envelope the heir's phone can never derive `d` for, so it would silently
+    /// fail to open at recovery time (CC-DESK-002). Fail closed at seal instead.
+    BadKeyholderDerivation { key_id: u64, path: String },
     /// Sealing failed (e.g. a hardened derivation). Wraps the ECIES error.
     Ecies(EciesError),
 }
@@ -82,6 +88,11 @@ impl std::fmt::Display for EscrowError {
                 f,
                 "this Vault has no keyholders with a registered key to set up recovery for"
             ),
+            Self::BadKeyholderDerivation { key_id, path } => write!(
+                f,
+                "keyholder key #{} has an unreadable derivation path ({:?}); can't set up recovery for them",
+                key_id, path
+            ),
             Self::Ecies(e) => write!(f, "{}", e),
         }
     }
@@ -93,6 +104,24 @@ impl From<EciesError> for EscrowError {
     fn from(e: EciesError) -> Self {
         Self::Ecies(e)
     }
+}
+
+/// Validates that a keyholder's registered account derivation path parses as a
+/// BIP-32 [`DerivationPath`]. Accepts both the bare form (`84'/0'/0'`) and the
+/// `m/`-prefixed form (`m/84'/0'/0'`). The combined enc-child path used for
+/// sealing is `account_derivation + /7000`; if the account path itself parses,
+/// appending a valid non-hardened index keeps it valid. Returns `Ok(())` on
+/// success and `Err(())` on a malformed path.
+fn validate_account_derivation(path: &str) -> Result<(), ()> {
+    let trimmed = path.trim();
+    let normalized = trimmed
+        .strip_prefix("m/")
+        .or_else(|| trimmed.strip_prefix("M/"))
+        .unwrap_or(trimmed);
+    if normalized.is_empty() {
+        return Err(());
+    }
+    DerivationPath::from_str(normalized).map(|_| ()).map_err(|_| ())
 }
 
 /// Extracts the designated inheritance keyholders (role == Keyholder, with a
@@ -113,6 +142,16 @@ pub fn keyholders_from_vault(
         let xpub = Xpub::from_str(&key.xpub).map_err(|source| EscrowError::BadKeyholderXpub {
             key_id: key.id,
             source,
+        })?;
+        // CC-DESK-002: validate the account derivation path parses before we
+        // build the enc-child path from it and seal an envelope. A malformed
+        // path from the server would otherwise yield an envelope the heir can
+        // never open, discoverable only at recovery time. Fail closed here.
+        validate_account_derivation(&key.derivation_path).map_err(|_| {
+            EscrowError::BadKeyholderDerivation {
+                key_id: key.id,
+                path: key.derivation_path.clone(),
+            }
         })?;
         out.push(KeyholderXpub {
             key_id: key.id,

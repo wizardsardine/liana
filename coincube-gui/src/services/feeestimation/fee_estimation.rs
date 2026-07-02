@@ -8,6 +8,24 @@ use std::time::Duration;
 const MEMPOOL_FEES_API_URL: &str = "https://mempool.space/api/v1/fees/recommended";
 const ESPLORA_FEES_API_URL: &str = "https://blockstream.info/api/fee-estimates";
 
+/// Upper bound (sat/vB) we will accept from an external fee source. Anything
+/// above this is treated as bogus and clamped. This is deliberately generous
+/// (well above any realistic mempool spike) but bounded, so a poisoned or
+/// malicious upstream cannot inject an absurd rate. Defense-in-depth: the
+/// funds-critical `create_spend` path also enforces its own MAX_FEERATE, but the
+/// estimator must not emit garbage regardless of who consumes it (CC-DESK-001).
+const MAX_SANE_FEERATE: f64 = 5_000.0;
+
+/// Validate and clamp a fee rate ingested from an external source. Rejects
+/// non-finite (`NaN`/`inf`) and non-positive values, and clamps anything above
+/// `MAX_SANE_FEERATE`. Returns `None` for values that should be discarded.
+fn sanitize_feerate(fee: f64) -> Option<f64> {
+    if !fee.is_finite() || fee <= 0.0 {
+        return None;
+    }
+    Some(fee.min(MAX_SANE_FEERATE))
+}
+
 #[derive(Default, Clone)]
 pub struct FeeEstimator;
 
@@ -52,14 +70,21 @@ impl FeeEstimator {
         combined.insert(BlockTarget::Standard, vec![]);
         combined.insert(BlockTarget::Economy, vec![]);
 
+        // CC-DESK-001: sanitize each externally-supplied rate before it enters
+        // the average. Non-finite/non-positive values are dropped; excessive
+        // values are clamped to MAX_SANE_FEERATE.
         if let Ok(fees) = mempool_res {
             for (target, fee) in fees {
-                combined.get_mut(&target).unwrap().push(fee);
+                if let Some(v) = sanitize_feerate(fee) {
+                    combined.get_mut(&target).unwrap().push(v);
+                }
             }
         }
         if let Ok(fees) = esplora_res {
             for (target, fee) in fees {
-                combined.get_mut(&target).unwrap().push(fee);
+                if let Some(v) = sanitize_feerate(fee) {
+                    combined.get_mut(&target).unwrap().push(v);
+                }
             }
         }
 
@@ -72,7 +97,9 @@ impl FeeEstimator {
         for (target, list) in combined {
             if !list.is_empty() {
                 let avg = list.iter().sum::<f64>() / list.len() as f64;
-                final_fees.insert(target, avg);
+                // Belt-and-suspenders: the inputs are already sanitized, so the
+                // average is finite and in-range, but clamp again defensively.
+                final_fees.insert(target, avg.min(MAX_SANE_FEERATE).max(1.0));
             }
         }
 
@@ -183,4 +210,25 @@ pub enum BlockTarget {
     Fastest,
     Standard,
     Economy,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{sanitize_feerate, MAX_SANE_FEERATE};
+
+    #[test]
+    fn rejects_non_finite_and_non_positive() {
+        assert_eq!(sanitize_feerate(f64::NAN), None);
+        assert_eq!(sanitize_feerate(f64::INFINITY), None);
+        assert_eq!(sanitize_feerate(f64::NEG_INFINITY), None);
+        assert_eq!(sanitize_feerate(0.0), None);
+        assert_eq!(sanitize_feerate(-5.0), None);
+    }
+
+    #[test]
+    fn clamps_excessive_and_passes_normal() {
+        assert_eq!(sanitize_feerate(12.0), Some(12.0));
+        assert_eq!(sanitize_feerate(MAX_SANE_FEERATE + 1_000.0), Some(MAX_SANE_FEERATE));
+        assert_eq!(sanitize_feerate(MAX_SANE_FEERATE), Some(MAX_SANE_FEERATE));
+    }
 }
