@@ -163,13 +163,19 @@ use step::{
 pub enum UserFlow {
     CreateWallet,
     AddWallet,
-    /// W13 — full install restore from a Connect Recovery Kit.
+    /// W13 — full install restore from a Cube Recovery Kit.
     /// Skips the descriptor-editor, backup-mnemonic, and register-
     /// descriptor steps because the kit provides both the seed and
     /// the descriptor. The flow is: RecoveryKitRestore(Full) →
     /// CoincubeConnect (noop — already authed) → Node setup →
     /// WalletAlias → Final.
-    RestoreFromRecoveryKit,
+    ///
+    /// `cube_uuid` preselects a specific remote cube (set when launched
+    /// from a home "Your Cubes" row) so the step skips its picker; `None`
+    /// falls back to the picker.
+    RestoreFromRecoveryKit {
+        cube_uuid: Option<String>,
+    },
     /// W15 — restore the Wallet Descriptor only, from a running
     /// Cube. Assumes the Cube's seed is already on disk (the user
     /// just needs to rehydrate the vault). Launched from the
@@ -312,7 +318,7 @@ impl Installer {
                         // this match arm `ctx.remote_backend` stays at
                         // `Undefined` and the `Message::Install` match panics
                         // with `unreachable!("Must be defined at this point")`.
-                        (UserFlow::RestoreFromRecoveryKit, _)
+                        (UserFlow::RestoreFromRecoveryKit { .. }, _)
                         | (UserFlow::RestoreVaultFromRecoveryKit, _)
                         | (UserFlow::RecoverInheritedVault { .. }, _)
                         | (UserFlow::RecoverOwnCubeWithPhone { .. }, _) => RemoteBackend::None,
@@ -375,6 +381,7 @@ impl Installer {
                         RecoveryKitRestoreStep::new(
                             RestoreScope::DescriptorOnly,
                             network_str.clone(),
+                            None,
                         )
                         .into(),
                         RegisterDescriptor::new_import_wallet().into(),
@@ -389,8 +396,13 @@ impl Installer {
                     // and the descriptor, so the flow skips the editor +
                     // register-descriptor + backup-mnemonic steps that
                     // only make sense for a fresh install.
-                    UserFlow::RestoreFromRecoveryKit => vec![
-                        RecoveryKitRestoreStep::new(RestoreScope::Full, network_str.clone()).into(),
+                    UserFlow::RestoreFromRecoveryKit { cube_uuid } => vec![
+                        RecoveryKitRestoreStep::new(
+                            RestoreScope::Full,
+                            network_str.clone(),
+                            cube_uuid,
+                        )
+                        .into(),
                         // Collect a PIN *after* the kit is decrypted
                         // (so `ctx.recovered_signer` is populated and
                         // the step's `skip()` doesn't short-circuit)
@@ -418,6 +430,7 @@ impl Installer {
                         RecoveryKitRestoreStep::new(
                             RestoreScope::DescriptorOnly,
                             network_str.clone(),
+                            None,
                         )
                         .into(),
                         RegisterDescriptor::new_import_wallet().into(),

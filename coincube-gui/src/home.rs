@@ -18,7 +18,8 @@ use crate::pin_input;
 use crate::recover_own_cube::{self, RecoverOwnCubeMessage, RecoverOwnCubePanel};
 use crate::recover_vault::{self, RecoverVaultMessage, RecoverVaultPanel};
 use crate::services::coincube::{
-    CoincubeClient, CubeLimitsResponse, CubeResponse, RegisterCubeRequest, UpdateCubeRequest,
+    CoincubeClient, CoincubeError, CubeLimitsResponse, CubeResponse, RegisterCubeRequest,
+    UpdateCubeRequest,
 };
 #[cfg(not(target_os = "macos"))]
 use crate::services::passkey::CeremonyMode;
@@ -82,6 +83,12 @@ pub struct RemoteCube {
     pub uuid: String,
     pub name: String,
     pub network: String, // API string: "mainnet", "testnet", etc.
+    /// Whether the server holds a Cube Recovery Kit for this cube.
+    pub has_recovery_kit: bool,
+    /// Whether that kit carries the encrypted seed half — the piece a
+    /// full restore needs. Only `true` implies the row is restorable
+    /// from this screen (kit present *and* the seed inside it).
+    pub has_encrypted_seed: bool,
 }
 
 /// Which section is shown in the home's main content area.
@@ -318,10 +325,12 @@ impl Home {
                     Message::Install(d, n, UserFlow::CreateWallet, None)
                 })
             }
-            Message::View(ViewMessage::RestoreFromRecoveryKit) => {
+            Message::View(ViewMessage::RestoreFromRecoveryKit(cube_uuid)) => {
                 // W13 — same launch shape as CreateWallet; the
                 // installer picks the Recovery-Kit step sequence off
-                // the UserFlow.
+                // the UserFlow. The clicked cube's `uuid` is threaded
+                // through so the step preselects it and skips the cube
+                // picker.
                 //
                 // Forward the home's already-authenticated Connect
                 // client so `RecoveryKitRestoreStep` can skip its own
@@ -338,7 +347,16 @@ impl Home {
                 let client = self.connect_account.authenticated_client();
                 Task::perform(
                     async move { (datadir_path, network, client) },
-                    |(d, n, c)| Message::Install(d, n, UserFlow::RestoreFromRecoveryKit, c),
+                    move |(d, n, c)| {
+                        Message::Install(
+                            d,
+                            n,
+                            UserFlow::RestoreFromRecoveryKit {
+                                cube_uuid: Some(cube_uuid),
+                            },
+                            c,
+                        )
+                    },
                 )
             }
             Message::View(ViewMessage::ShowCreateCube(show)) => {
@@ -1833,15 +1851,50 @@ impl Home {
                                 }
 
                                 // Keep only server cubes with no local counterpart
-                                let remote_only: Vec<RemoteCube> = server_cubes
+                                let remote_source: Vec<CubeResponse> = server_cubes
                                     .into_iter()
                                     .filter(|sc| !local_uuids.contains(&sc.uuid))
-                                    .map(|sc| RemoteCube {
-                                        uuid: sc.uuid,
-                                        name: sc.name,
-                                        network: sc.network,
-                                    })
                                     .collect();
+
+                                // Determine restorability per cube. `has_recovery_kit`
+                                // comes free from `list_cubes()`; the seed half (what a
+                                // full restore needs) lives on a separate endpoint, so
+                                // probe it only when a kit actually exists. Probes run
+                                // concurrently (`join_all`) so latency is one round-trip,
+                                // not N. A flaky probe must not blank the whole list — on
+                                // a non-NotFound error we log and treat the seed half as
+                                // absent (the row still shows, just without the restore
+                                // icon). `join_all` preserves input order.
+                                let client_ref = &rc_client;
+                                let remote_only: Vec<RemoteCube> = iced::futures::future::join_all(
+                                    remote_source.into_iter().map(|sc| async move {
+                                        let has_encrypted_seed = if sc.has_recovery_kit {
+                                            match client_ref.get_recovery_kit_status(sc.id).await {
+                                                Ok(status) => status.has_encrypted_seed,
+                                                Err(CoincubeError::NotFound) => false,
+                                                Err(e) => {
+                                                    log::warn!(
+                                                        "[LAUNCHER] Recovery Kit status probe \
+                                                         failed for \"{}\": {}",
+                                                        sc.name,
+                                                        e
+                                                    );
+                                                    false
+                                                }
+                                            }
+                                        } else {
+                                            false
+                                        };
+                                        RemoteCube {
+                                            uuid: sc.uuid,
+                                            name: sc.name,
+                                            network: sc.network,
+                                            has_recovery_kit: sc.has_recovery_kit,
+                                            has_encrypted_seed,
+                                        }
+                                    }),
+                                )
+                                .await;
 
                                 Ok(remote_only)
                             },
@@ -2741,57 +2794,82 @@ fn cubes_list_item<'a>(
 }
 
 fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
+    // A remote cube is only restorable from this screen when the server
+    // holds a Recovery Kit *and* that kit carries the encrypted seed a
+    // full restore needs. Kit-less cubes (merely registered in Connect)
+    // and descriptor-only kits can't be rebuilt here, so they show no
+    // restore affordance — only the honest status and a delete button.
+    let restorable = cube.has_recovery_kit && cube.has_encrypted_seed;
+
     // Render the cube-name area as a plain card, NOT a Button. Using a
     // Button without `.on_press` makes Iced render it in
     // `Status::Disabled` (alpha 0.2 on the text), which made the whole
     // row read as "disabled" to users and obscured the fact that the
     // cloud-download icon on the right is an active restore trigger.
+    // Three distinct states, so the copy tells the user *why* a row is
+    // (not) restorable rather than lumping "descriptor-only kit" in with
+    // "nothing backed up":
+    //   * kit + seed  → restorable here
+    //   * kit, no seed → a descriptor-only kit exists, but a full
+    //     restore needs the seed half, which lives on the original device
+    //   * no kit       → merely registered in Connect, nothing to restore
+    let status_line = if restorable {
+        "Recovery Kit available — click the download icon to restore"
+    } else if cube.has_recovery_kit {
+        "Recovery Kit has no Master Seed — restore from the device where it was backed up"
+    } else {
+        "Registered in Connect (no Recovery Kit backed up)"
+    };
+    // Mute the whole remote row (title included) relative to local
+    // cubes: these cubes have no data on this machine, so rendering
+    // their name in the same bright white as a locally-available Cube
+    // over-states their presence. `theme::text::secondary` on the bold
+    // title greys it back a notch while keeping the weight contrast.
     let card = Container::new(
-        Column::new().spacing(4).push(p1_bold(&cube.name)).push(
-            p1_regular("On another device — click the download icon to restore")
-                .style(theme::text::secondary),
-        ),
+        Column::new()
+            .spacing(4)
+            .push(p1_bold(&cube.name).style(theme::text::secondary))
+            .push(p1_regular(status_line).style(theme::text::secondary)),
     )
     .padding(15)
     .width(Length::Fixed(500.0))
     .style(theme::card::simple);
 
     // W13 entry point on the home: clicking cloud-arrow-down on a
-    // remote-only cube kicks off the Connect-Recovery-Kit restore flow.
-    // The flow's cube picker (`RecoveryKitRestoreStep`) lets the user
-    // choose which cube on their Connect account to restore — clicking
-    // this specific row doesn't preselect `cube.uuid`, so the tooltip
-    // is deliberately generic to avoid implying otherwise. Threading
-    // the clicked uuid through `ViewMessage::RestoreFromRecoveryKit`
-    // → `UserFlow::RestoreFromRecoveryKit` → the step's cube picker
-    // is a future refinement.
-    let restore_button = iced_tooltip::Tooltip::new(
-        Button::new(icon::cloud_arrow_down_icon())
+    // restorable remote cube kicks off the Cube-Recovery-Kit restore
+    // flow, threading this row's `uuid` through
+    // `ViewMessage::RestoreFromRecoveryKit` →
+    // `UserFlow::RestoreFromRecoveryKit { cube_uuid }` → the step, which
+    // preselects it and skips the cube picker entirely. The icon is only
+    // shown when the cube is actually restorable, so the click always
+    // has a valid target.
+    let restore_button = restorable.then(|| {
+        iced_tooltip::Tooltip::new(
+            Button::new(icon::cloud_arrow_down_icon())
+                .style(theme::button::secondary)
+                .padding(10)
+                .on_press(ViewMessage::RestoreFromRecoveryKit(cube.uuid.clone())),
+            Container::new(p1_regular("Restore this Cube from its Recovery Kit"))
+                .padding(8)
+                .style(theme::card::simple),
+            iced_tooltip::Position::Bottom,
+        )
+    });
+
+    let mut row = Row::new().align_y(Alignment::Center).spacing(20).push(card);
+    if let Some(restore_button) = restore_button {
+        row = row.push(restore_button);
+    }
+    row = row.push(
+        Button::new(icon::trash_icon())
             .style(theme::button::secondary)
             .padding(10)
-            .on_press(ViewMessage::RestoreFromRecoveryKit),
-        Container::new(p1_regular("Choose a Recovery Kit to restore"))
-            .padding(8)
-            .style(theme::card::simple),
-        iced_tooltip::Position::Bottom,
+            .on_press(ViewMessage::DeleteCube(DeleteCubeMessage::ShowRemoteModal(
+                cube.uuid.clone(),
+            ))),
     );
 
-    Container::new(
-        Row::new()
-            .align_y(Alignment::Center)
-            .spacing(20)
-            .push(card)
-            .push(restore_button)
-            .push(
-                Button::new(icon::trash_icon())
-                    .style(theme::button::secondary)
-                    .padding(10)
-                    .on_press(ViewMessage::DeleteCube(DeleteCubeMessage::ShowRemoteModal(
-                        cube.uuid.clone(),
-                    ))),
-            ),
-    )
-    .into()
+    Container::new(row).into()
 }
 
 fn recovery_input_view(
@@ -3076,10 +3154,10 @@ pub enum Message {
 pub enum ViewMessage {
     ImportWallet,
     CreateWallet,
-    /// W13 — launch the installer in "restore from Connect Recovery
-    /// Kit" mode. Sibling to `CreateWallet` / `ImportWallet` in the
-    /// cube-setup menu.
-    RestoreFromRecoveryKit,
+    /// W13 — launch the installer in "restore from Cube Recovery Kit"
+    /// mode for a specific remote cube (payload is its `uuid`). The
+    /// installer preselects the cube and skips the picker.
+    RestoreFromRecoveryKit(String),
     ShowCreateCube(bool),
     CubeNameEdited(String),
     CreateCube,

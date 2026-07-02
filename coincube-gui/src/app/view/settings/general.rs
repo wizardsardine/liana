@@ -26,7 +26,6 @@ pub fn general_section<'a>(
     new_price_setting: &'a PriceSetting,
     new_unit_setting: &'a UnitSetting,
     currencies_list: &'a [Currency],
-    developer_mode: bool,
     show_direction_badges: bool,
     backup_state: &'a crate::app::state::settings::general::BackupSeedState,
     backup_pin: &'a crate::pin_input::PinInput,
@@ -92,10 +91,6 @@ pub fn general_section<'a>(
     // threading discipline as the Recovery Kit card above.
     if let Some(ra) = recovery_alerts {
         col = col.push(recovery_alerts_card(ra));
-    }
-
-    if developer_mode {
-        col = col.push(toast_testing());
     }
 
     dashboard(menu, cache, col)
@@ -609,32 +604,6 @@ fn direction_badges_toggle<'a>(show: bool) -> Element<'a, Message> {
                     .on_toggle(|new_val| SettingsMessage::ToggleDirectionBadges(new_val).into())
                     .width(50)
                     .style(theme::toggler::orange),
-            ),
-    )
-    .width(Length::Fill)
-    .into()
-}
-
-fn toast_testing<'a>() -> Element<'a, Message> {
-    let btn = |label: &'static str, level: log::Level| {
-        iced::widget::Button::new(text(label).bold())
-            .padding([8, 16])
-            .style(theme::button::secondary)
-            .on_press(SettingsMessage::TestToast(level).into())
-    };
-
-    card::simple(
-        Column::new()
-            .spacing(15)
-            .push(text("Toast Testing").bold())
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .push(btn("Error", log::Level::Error))
-                    .push(btn("Warn", log::Level::Warn))
-                    .push(btn("Info", log::Level::Info))
-                    .push(btn("Debug", log::Level::Debug))
-                    .push(btn("Trace", log::Level::Trace)),
             ),
     )
     .width(Length::Fill)

@@ -158,7 +158,6 @@ pub struct GeneralSettingsState {
     new_price_setting: PriceSetting,
     new_unit_setting: UnitSetting,
     currencies: Vec<Currency>,
-    developer_mode: bool,
     show_direction_badges: bool,
     error: Option<Error>,
     /// Master seed backup flow state.
@@ -189,14 +188,12 @@ impl GeneralSettingsState {
     ) -> Self {
         use crate::app::settings::global::GlobalSettings;
         let global_path = GlobalSettings::path(datadir_path);
-        let developer_mode = GlobalSettings::load_developer_mode(&global_path);
         let show_direction_badges = GlobalSettings::load_show_direction_badges(&global_path);
         Self {
             cube_id,
             new_price_setting: price_setting,
             new_unit_setting: unit_setting,
             currencies: Vec::new(),
-            developer_mode,
             show_direction_badges,
             error: None,
             backup_state: BackupSeedState::None,
@@ -546,7 +543,6 @@ impl GeneralSettingsState {
             &self.new_price_setting,
             &self.new_unit_setting,
             &self.currencies,
-            self.developer_mode,
             self.show_direction_badges,
             &self.backup_state,
             &self.backup_pin,
@@ -569,7 +565,6 @@ impl State for GeneralSettingsState {
             &self.new_price_setting,
             &self.new_unit_setting,
             &self.currencies,
-            self.developer_mode,
             self.show_direction_badges,
             &self.backup_state,
             &self.backup_pin,
@@ -809,19 +804,6 @@ impl State for GeneralSettingsState {
                         Err(e) => Message::SettingsSaveFailed(e.into()),
                     },
                 )
-            }
-            Message::View(view::Message::Settings(view::SettingsMessage::TestToast(level))) => {
-                let label = match level {
-                    log::Level::Error => "Error",
-                    log::Level::Warn => "Warn",
-                    log::Level::Info => "Info",
-                    log::Level::Debug => "Debug",
-                    log::Level::Trace => "Trace",
-                };
-                Task::done(Message::View(view::Message::ShowToast(
-                    level,
-                    format!("Test {} toast", label),
-                )))
             }
             // --- Master seed backup flow ---
             Message::View(view::Message::Settings(view::SettingsMessage::BackupMasterSeed(

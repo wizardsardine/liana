@@ -379,7 +379,6 @@ pub enum SettingsMessage {
     NodeSettings(NodeSettingsMessage),
     InstallStatsSection,
     InstallStats(InstallStatsViewMessage),
-    TestToast(log::Level),
     ToggleDirectionBadges(bool),
     /// Master seed backup flow (moved from Liquid Settings to Cube/General Settings).
     BackupMasterSeed(BackupWalletMessage),

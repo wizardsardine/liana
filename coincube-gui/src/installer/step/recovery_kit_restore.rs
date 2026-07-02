@@ -120,6 +120,10 @@ pub struct RecoveryKitRestoreStep {
     /// Network filter applied to the cube picker. The user can only
     /// restore into the same network they're installing for.
     network_filter: String,
+    /// When set (W13 launched from a home "Your Cubes" row), the cube
+    /// list is filtered to just this uuid so `phase_after_cubes_loaded`
+    /// auto-selects it and the picker is skipped entirely.
+    preselect_uuid: Option<String>,
     client: CoincubeClient,
     phase: Phase,
     // Transient UI inputs held outside Phase so typing during an
@@ -140,10 +144,15 @@ pub struct RecoveryKitRestoreStep {
 }
 
 impl RecoveryKitRestoreStep {
-    pub fn new(scope: RestoreScope, network_filter: String) -> Self {
+    pub fn new(
+        scope: RestoreScope,
+        network_filter: String,
+        preselect_uuid: Option<String>,
+    ) -> Self {
         Self {
             scope,
             network_filter,
+            preselect_uuid,
             client: CoincubeClient::new(),
             phase: Phase::Email,
             email: form::Value {
@@ -208,6 +217,7 @@ impl RecoveryKitRestoreStep {
     fn list_cubes_task(&self) -> Task<Message> {
         let client = self.client.clone();
         let network = self.network_filter.clone();
+        let preselect_uuid = self.preselect_uuid.clone();
         Task::perform(
             async move {
                 let all = client.list_cubes().await.map_err(|e| e.to_string())?;
@@ -215,8 +225,17 @@ impl RecoveryKitRestoreStep {
                 // filter by `has_recovery_kit` at list time because the
                 // kit status lives on a separate endpoint — fetch
                 // status in parallel.
-                let matches: Vec<CubeResponse> =
-                    all.into_iter().filter(|c| c.network == network).collect();
+                //
+                // When a specific cube was preselected (home restore
+                // row), narrow to just that uuid so the loaded list has
+                // a single entry and `phase_after_cubes_loaded`
+                // auto-selects it, skipping the picker.
+                let matches: Vec<CubeResponse> = all
+                    .into_iter()
+                    .filter(|c| {
+                        cube_passes_filter(&c.network, &c.uuid, &network, preselect_uuid.as_deref())
+                    })
+                    .collect();
                 let mut out = Vec::with_capacity(matches.len());
                 for cube in matches {
                     // Only NotFound is a signal that this particular
@@ -378,6 +397,23 @@ pub(crate) fn stage_restore(
     };
 
     Ok(StagedRestore { descriptor, signer })
+}
+
+/// Filter applied to the server cube list before status probing:
+/// keep cubes on the network we're installing for, and — when a
+/// specific cube was preselected from a home "Your Cubes" row — only
+/// the row with that uuid. Both conditions must hold; a preselected
+/// uuid that lives on a different network is still excluded, so the
+/// caller never probes (or auto-selects) a cross-network cube.
+/// Extracted as a pure fn so the network×preselect matrix is
+/// unit-testable without standing up the async task.
+fn cube_passes_filter(
+    cube_network: &str,
+    cube_uuid: &str,
+    network: &str,
+    preselect_uuid: Option<&str>,
+) -> bool {
+    cube_network == network && preselect_uuid.is_none_or(|uuid| cube_uuid == uuid)
 }
 
 /// Does `c` carry the specific encrypted half this restore flow
@@ -918,6 +954,77 @@ mod tests {
                 updated_at: None,
             },
         }
+    }
+
+    // --- `cube_passes_filter`: the network × preselect matrix that
+    // `list_cubes_task` uses to narrow the server cube list. ---
+
+    #[test]
+    fn filter_keeps_matching_cube_on_network_when_preselected() {
+        // Preselected uuid on the requested network → kept.
+        assert!(cube_passes_filter(
+            "mainnet",
+            "cube-a",
+            "mainnet",
+            Some("cube-a")
+        ));
+    }
+
+    #[test]
+    fn filter_drops_mismatched_uuid_when_preselected() {
+        // Right network, wrong uuid → excluded so only the clicked cube
+        // survives to auto-select.
+        assert!(!cube_passes_filter(
+            "mainnet",
+            "cube-b",
+            "mainnet",
+            Some("cube-a")
+        ));
+    }
+
+    #[test]
+    fn filter_drops_preselected_uuid_on_wrong_network() {
+        // Matching uuid but a different network → still excluded; we
+        // never restore into a network we're not installing for.
+        assert!(!cube_passes_filter(
+            "testnet",
+            "cube-a",
+            "mainnet",
+            Some("cube-a")
+        ));
+    }
+
+    #[test]
+    fn filter_without_preselect_keeps_all_on_network() {
+        // No preselection (W14/W15, or a home launch without a uuid):
+        // network is the only gate.
+        assert!(cube_passes_filter("mainnet", "cube-a", "mainnet", None));
+        assert!(cube_passes_filter("mainnet", "cube-b", "mainnet", None));
+    }
+
+    #[test]
+    fn filter_without_preselect_drops_off_network() {
+        assert!(!cube_passes_filter("testnet", "cube-a", "mainnet", None));
+    }
+
+    #[test]
+    fn preselect_then_auto_select_advances_to_password() {
+        // End-to-end of the home restore path: after the filter narrows
+        // to the single preselected cube, `phase_after_cubes_loaded`
+        // auto-selects it (no picker). Model the survivor as a
+        // restorable candidate and confirm the auto-select branch.
+        let survivors: Vec<RestoreCubeCandidate> =
+            vec![candidate("Preselected", true), candidate("Other", true)]
+                .into_iter()
+                .filter(|c| cube_passes_filter(&c.network, "uuid", "mainnet", Some("uuid")))
+                .collect();
+        // Both share the test uuid "uuid"; the point exercised here is
+        // the auto-select on a single-entry list.
+        let phase = phase_after_cubes_loaded(RestoreScope::Full, vec![survivors[0].clone()]);
+        assert!(
+            matches!(phase, Phase::PasswordEntry { .. }),
+            "single preselected restorable cube should auto-advance to PasswordEntry"
+        );
     }
 
     // Regression tests for the auto-select-skips-kit-check bug. Before
