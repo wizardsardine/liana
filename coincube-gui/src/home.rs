@@ -2802,8 +2802,17 @@ fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
     // `Status::Disabled` (alpha 0.2 on the text), which made the whole
     // row read as "disabled" to users and obscured the fact that the
     // cloud-download icon on the right is an active restore trigger.
+    // Three distinct states, so the copy tells the user *why* a row is
+    // (not) restorable rather than lumping "descriptor-only kit" in with
+    // "nothing backed up":
+    //   * kit + seed  → restorable here
+    //   * kit, no seed → a descriptor-only kit exists, but a full
+    //     restore needs the seed half, which lives on the original device
+    //   * no kit       → merely registered in Connect, nothing to restore
     let status_line = if restorable {
         "Recovery Kit available — click the download icon to restore"
+    } else if cube.has_recovery_kit {
+        "Recovery Kit has no Master Seed — restore from the device where it was backed up"
     } else {
         "Registered in Connect (no Recovery Kit backed up)"
     };
