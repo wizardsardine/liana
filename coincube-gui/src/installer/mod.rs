@@ -109,11 +109,11 @@ pub(crate) fn connect_esplora_config(network: bitcoin::Network, jwt: &str) -> Es
 }
 
 use coincube_core::miniscript::bitcoin::{self, Network};
-use coincubed::config::EsploraConfig;
 use coincube_ui::{
     component::network_banner,
     widget::{Column, Element},
 };
+use coincubed::config::EsploraConfig;
 use coincubed::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config};
 pub use context::{Context, RemoteBackend};
 use iced::{clipboard, Subscription, Task};
