@@ -1859,38 +1859,42 @@ impl Home {
                                 // Determine restorability per cube. `has_recovery_kit`
                                 // comes free from `list_cubes()`; the seed half (what a
                                 // full restore needs) lives on a separate endpoint, so
-                                // probe it only when a kit actually exists. A flaky probe
-                                // must not blank the whole list — on a non-NotFound error
-                                // we log and treat the seed half as absent (the row still
-                                // shows, just without the restore icon).
-                                let mut remote_only: Vec<RemoteCube> =
-                                    Vec::with_capacity(remote_source.len());
-                                for sc in remote_source {
-                                    let has_encrypted_seed = if sc.has_recovery_kit {
-                                        match rc_client.get_recovery_kit_status(sc.id).await {
-                                            Ok(status) => status.has_encrypted_seed,
-                                            Err(CoincubeError::NotFound) => false,
-                                            Err(e) => {
-                                                log::warn!(
-                                                    "[LAUNCHER] Recovery Kit status probe \
-                                                     failed for \"{}\": {}",
-                                                    sc.name,
-                                                    e
-                                                );
-                                                false
+                                // probe it only when a kit actually exists. Probes run
+                                // concurrently (`join_all`) so latency is one round-trip,
+                                // not N. A flaky probe must not blank the whole list — on
+                                // a non-NotFound error we log and treat the seed half as
+                                // absent (the row still shows, just without the restore
+                                // icon). `join_all` preserves input order.
+                                let client_ref = &rc_client;
+                                let remote_only: Vec<RemoteCube> = iced::futures::future::join_all(
+                                    remote_source.into_iter().map(|sc| async move {
+                                        let has_encrypted_seed = if sc.has_recovery_kit {
+                                            match client_ref.get_recovery_kit_status(sc.id).await {
+                                                Ok(status) => status.has_encrypted_seed,
+                                                Err(CoincubeError::NotFound) => false,
+                                                Err(e) => {
+                                                    log::warn!(
+                                                        "[LAUNCHER] Recovery Kit status probe \
+                                                         failed for \"{}\": {}",
+                                                        sc.name,
+                                                        e
+                                                    );
+                                                    false
+                                                }
                                             }
+                                        } else {
+                                            false
+                                        };
+                                        RemoteCube {
+                                            uuid: sc.uuid,
+                                            name: sc.name,
+                                            network: sc.network,
+                                            has_recovery_kit: sc.has_recovery_kit,
+                                            has_encrypted_seed,
                                         }
-                                    } else {
-                                        false
-                                    };
-                                    remote_only.push(RemoteCube {
-                                        uuid: sc.uuid,
-                                        name: sc.name,
-                                        network: sc.network,
-                                        has_recovery_kit: sc.has_recovery_kit,
-                                        has_encrypted_seed,
-                                    });
-                                }
+                                    }),
+                                )
+                                .await;
 
                                 Ok(remote_only)
                             },
