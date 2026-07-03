@@ -99,7 +99,7 @@ impl FeeEstimator {
                 let avg = list.iter().sum::<f64>() / list.len() as f64;
                 // Belt-and-suspenders: the inputs are already sanitized, so the
                 // average is finite and in-range, but clamp again defensively.
-                final_fees.insert(target, avg.min(MAX_SANE_FEERATE).max(1.0));
+                final_fees.insert(target, avg.clamp(1.0, MAX_SANE_FEERATE));
             }
         }
 
