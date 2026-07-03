@@ -1,4 +1,5 @@
 pub mod conflict;
+pub mod template_help;
 pub mod warning;
 
 use crate::state::{Msg, State};
@@ -11,7 +12,7 @@ pub fn modals_view(state: &State) -> Option<Element<'_, Msg>> {
         .or_else(|| crate::views::xpub::xpub_modal_view(state))
         .or_else(|| crate::views::registration::modal::registration_modal_view(state));
 
-    // Priority order: Warning modal > Conflict modal > Underlying modal
+    // Priority order: Warning modal > Template-help modal > Conflict modal > Underlying modal
 
     // If there's a warning modal, it should be on top
     if let Some(warning_modal_state) = &state.views.modals.warning {
@@ -50,6 +51,40 @@ pub fn modals_view(state: &State) -> Option<Element<'_, Msg>> {
         return Some(warning_modal);
     }
 
+    if let Some(template_help_modal_state) = &state.views.modals.template_help {
+        let template_help_modal =
+            template_help::template_help_modal_view(template_help_modal_state);
+
+        if let Some(conflict_modal_state) = &state.views.modals.conflict {
+            let conflict_modal = conflict::conflict_modal_view(conflict_modal_state);
+            if let Some(underlying) = underlying_modal {
+                let stacked: Element<'_, Msg> = Modal::new(underlying, conflict_modal)
+                    .on_blur(Some(Msg::ConflictDismiss))
+                    .into();
+                return Some(
+                    Modal::new(stacked, template_help_modal)
+                        .on_blur(Some(Msg::TemplateHelpCloseModal))
+                        .into(),
+                );
+            }
+            return Some(
+                Modal::new(conflict_modal, template_help_modal)
+                    .on_blur(Some(Msg::TemplateHelpCloseModal))
+                    .into(),
+            );
+        }
+
+        if let Some(underlying) = underlying_modal {
+            return Some(
+                Modal::new(underlying, template_help_modal)
+                    .on_blur(Some(Msg::TemplateHelpCloseModal))
+                    .into(),
+            );
+        }
+
+        return Some(template_help_modal);
+    }
+
     // If there's a conflict modal, it should be stacked on top of underlying
     if let Some(conflict_modal_state) = &state.views.modals.conflict {
         let conflict_modal = conflict::conflict_modal_view(conflict_modal_state);
@@ -65,6 +100,6 @@ pub fn modals_view(state: &State) -> Option<Element<'_, Msg>> {
         return Some(conflict_modal);
     }
 
-    // No warning or conflict modal, just return the underlying modal if it exists
+    // No warning, template-help, or conflict modal, just return the underlying modal if it exists
     underlying_modal
 }

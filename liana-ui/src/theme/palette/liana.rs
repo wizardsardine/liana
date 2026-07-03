@@ -461,6 +461,27 @@ impl Palette {
                         shadow: Default::default(),
                     }),
                 },
+                link_subtle: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: None,
+                },
                 pick_list: Button {
                     active: ButtonPalette {
                         background: color::GREY_6,

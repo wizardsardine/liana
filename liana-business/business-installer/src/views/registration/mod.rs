@@ -93,7 +93,7 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
         Some(current_user_email),
         false,
         &breadcrumb,
-        header_content,
+        Some(header_content.into()),
         list_content,
         pinned_content,
         None,
