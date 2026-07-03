@@ -3,7 +3,7 @@ use crate::{
     state::{Msg, State},
     views::{
         entry_key_kind, format_last_edit_info, layout_with_scrollable_list, screen_intro,
-        MENU_ENTRY_WIDTH,
+        INSTALLER_STEPS, MENU_ENTRY_WIDTH,
     },
 };
 use iced::{
@@ -202,11 +202,11 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     list_content = list_content.push(Space::with_height(50));
 
     layout_with_scrollable_list(
-        (0, 0), // No progress indicator
+        (6, INSTALLER_STEPS),
         Some(current_user_email),
         is_ws_admin,
         &breadcrumb,
-        header_content,
+        Some(header_content.into()),
         list_content,
         None,
         None,

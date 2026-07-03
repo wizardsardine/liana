@@ -198,6 +198,8 @@ impl State {
             // Warning modal has priority - if it's open, close it first
             let cancel_msg = if self.views.modals.warning.is_some() {
                 Message::WarningCloseModal
+            } else if self.views.modals.template_help.is_some() {
+                Message::TemplateHelpCloseModal
             } else if self.views.keys.edit_key_modal.is_some() {
                 Message::KeyCancelModal
             } else if self.views.paths.edit_path_modal.is_some() {
@@ -207,7 +209,7 @@ impl State {
             } else if self.views.registration.modal.is_some() {
                 Message::RegistrationCancelModal
             } else {
-                Message::WarningCloseModal
+                Message::TemplateHelpCloseModal
             };
             Modal::new(content, modal).on_blur(Some(cancel_msg)).into()
         } else {

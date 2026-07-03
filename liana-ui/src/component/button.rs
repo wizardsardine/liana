@@ -3,7 +3,7 @@ use std::fmt::Display;
 use super::{
     modal::BTN_W,
     text::{
-        new::{button_text, button_text_compact, BUTTON_TEXT_COMPACT_SPEC},
+        new::{button_text, button_text_compact, caption, BUTTON_TEXT_COMPACT_SPEC},
         p1_regular, panel_title, text,
     },
     tooltip,
@@ -306,9 +306,13 @@ impl From<BtnWidth> for Length {
     }
 }
 
+pub const STANDARD_ENTRY_WIDTH: f32 = 600.0;
+pub const ENTRY_DELETE_SLOT: f32 = 40.0;
+pub const ENTRY_DELETE_GAP: f32 = 10.0;
+
 pub enum EntryWidth {
     Standard,
-    Account,
+    Deletable,
     Fill,
     Shrink,
 }
@@ -316,8 +320,11 @@ pub enum EntryWidth {
 impl From<EntryWidth> for Length {
     fn from(value: EntryWidth) -> Self {
         match value {
-            EntryWidth::Standard => 600.into(),
-            EntryWidth::Account => 520.into(),
+            EntryWidth::Standard => Length::Fixed(STANDARD_ENTRY_WIDTH),
+            // A deletable row matches the standard width, reserving room for its delete button.
+            EntryWidth::Deletable => {
+                Length::Fixed(STANDARD_ENTRY_WIDTH - ENTRY_DELETE_SLOT - ENTRY_DELETE_GAP)
+            }
             EntryWidth::Fill => Length::Fill,
             EntryWidth::Shrink => Length::Shrink,
         }
@@ -475,6 +482,17 @@ pub fn btn_ok<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "OK", BtnWidth::M, msg)
 }
 
+pub fn btn_email_wizardsardine<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Email WS", BtnWidth::Auto, msg)
+}
+
+pub fn btn_modal_close<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    Button::new(icon::cross_icon().size(40))
+        .padding(0)
+        .style(theme::button::transparent)
+        .on_press_maybe(msg)
+}
+
 pub fn btn_generate<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "Generate", BtnWidth::M, msg)
 }
@@ -532,8 +550,8 @@ pub fn btn_reload<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "Reload", BtnWidth::M, msg)
 }
 
-pub fn btn_approve_template<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Approve template", BtnWidth::XL, msg)
+pub fn btn_approve<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Approve", BtnWidth::XL, msg)
 }
 
 pub fn btn_send_for_approval<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -546,6 +564,27 @@ pub fn btn_keep_changes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 
 pub fn btn_send_token<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "Send token", BtnWidth::L, msg)
+}
+
+pub fn subtle_link<'a, T: Clone + 'a>(label: impl Display, msg: Option<T>) -> Element<'a, T> {
+    let link = Button::new(caption(label).size(14))
+        .padding(0)
+        .style(theme::button::link_subtle)
+        .on_press_maybe(msg);
+    let underline =
+        Container::new(iced::widget::rule::horizontal(1).style(theme::rule::link_underline))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_y(Vertical::Bottom);
+    Stack::new()
+        .width(Length::Shrink)
+        .push(link)
+        .push(underline)
+        .into()
+}
+
+pub fn btn_template_help<'a, T: Clone + 'a>(msg: Option<T>) -> Element<'a, T> {
+    subtle_link("Something’s wrong with this template?", msg)
 }
 
 pub fn btn_breadcrumb_previous<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {

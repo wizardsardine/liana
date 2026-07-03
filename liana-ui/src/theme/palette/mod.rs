@@ -92,6 +92,7 @@ pub struct Buttons {
     pub tab_menu: Button,
     pub tab: Button,
     pub link: Button,
+    pub link_subtle: Button,
     pub pick_list: Button,
     pub signing_devices: Button,
     pub border_width: f32,
