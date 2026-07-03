@@ -55,7 +55,10 @@ jobs:
 
       - name: Setup Python dependencies
         run: |
-          pip install --break-system-packages -r tests/requirements.txt
+          rm -rf .venv
+          python3 -m venv .venv
+          .venv/bin/pip install -r tests/requirements.txt
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Add local bin to PATH
         run: echo "$HOME/.local/bin" >> $GITHUB_PATH
@@ -135,4 +138,4 @@ jobs:
           rm -rf ~/.cargo/registry/index
 
           # Run the functional tests
-          LIANAD_PATH=$PWD/target/release/lianad pytest tests/ -vvv -n 8
+          LIANAD_PATH=$PWD/target/release/lianad .venv/bin/pytest tests/ -vvv -n 8
