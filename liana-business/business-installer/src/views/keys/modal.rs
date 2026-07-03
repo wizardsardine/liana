@@ -5,7 +5,7 @@ use crate::{
 use iced::{
     alignment::Vertical,
     widget::{column, row, Space},
-    Alignment, Length,
+    Alignment,
 };
 use liana_connect::ws_business;
 use liana_ui::{
@@ -84,12 +84,11 @@ SafetyNet: Professional recovery service.";
         .spacing(5);
     let key_type_field = column![
         key_type_label,
-        pick_list::pick_list(
+        pick_list::field_pick_list(
             key_type_options,
             Some(modal_state.key_type),
             Message::KeyUpdateType,
-        )
-        .width(Length::Fill),
+        ),
     ]
     .spacing(5);
 
