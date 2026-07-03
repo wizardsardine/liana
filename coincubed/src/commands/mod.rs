@@ -959,6 +959,14 @@ impl DaemonControl {
         let mut spend_psbt = db_conn
             .spend_tx(txid)
             .ok_or(CommandError::UnknownSpend(*txid))?;
+
+        // CC-DESK-003: belt-and-suspenders re-verification of the spend's
+        // outputs, absolute fee and feerate immediately before broadcast. The
+        // same checks run at spend-creation time, but re-running them here — on
+        // the pre-finalization PSBT — means a PSBT mutated in-flight between
+        // creation and broadcast is rejected before it can hit the network.
+        spend::reverify_spend_before_broadcast(&self.config.main_descriptor, &spend_psbt)?;
+
         spend_psbt.finalize_mut(&self.secp).map_err(|e| {
             CommandError::SpendFinalization(
                 e.into_iter()

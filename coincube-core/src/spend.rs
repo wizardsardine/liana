@@ -167,6 +167,36 @@ fn sanity_check_psbt(
     Ok(())
 }
 
+/// Re-verify a spend PSBT's economic invariants immediately before broadcast as
+/// defense-in-depth (CC-DESK-003). The full [`sanity_check_psbt`] runs at spend
+/// creation; this repeats the output/fee/feerate checks so that if the PSBT's
+/// state were somehow mutated between creation and broadcast, the anomaly is
+/// caught before the transaction reaches the network.
+///
+/// A spend may use either the primary or the recovery spending path, which have
+/// different maximum witness sizes and therefore different feerates. The feerate
+/// bound is treated as satisfied if it holds for *either* path, so a legitimate
+/// recovery-path spend is never false-rejected while an absurd feerate or a
+/// mutated output set (empty, dust, negative/over-cap fee) is still rejected.
+///
+/// Must be called on the pre-finalization PSBT (finalizing strips the per-input
+/// bip32 derivations this check relies on).
+pub fn reverify_spend_before_broadcast(
+    main_descriptor: &descriptors::CoincubeDescriptor,
+    psbt: &Psbt,
+) -> Result<(), SpendCreationError> {
+    match sanity_check_psbt(main_descriptor, psbt, true) {
+        Ok(()) => Ok(()),
+        Err(primary_err) => {
+            if sanity_check_psbt(main_descriptor, psbt, false).is_ok() {
+                Ok(())
+            } else {
+                Err(primary_err)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AncestorInfo {
     pub vsize: u64,
