@@ -1784,7 +1784,7 @@ pub fn defined_threshold<'a>(
                 .spacing(10)
                 .push((0..threshold.1).fold(Row::new(), |row, i| {
                     if i < threshold.0 {
-                        row.push(icon::round_key_icon().color(color))
+                        row.push(icon::round_key_icon().style(theme::text::adaptive(color)))
                     } else {
                         row.push(icon::round_key_icon())
                     }
@@ -1807,7 +1807,7 @@ pub fn defined_threshold<'a>(
                 .spacing(10)
                 .push((0..threshold.1).fold(Row::new(), |row, i| {
                     if i < threshold.0 {
-                        row.push(icon::round_key_icon().color(color))
+                        row.push(icon::round_key_icon().style(theme::text::adaptive(color)))
                     } else {
                         row.push(icon::round_key_icon())
                     }
@@ -2469,7 +2469,7 @@ fn layout<'a>(
                         Container::new(p1_regular(e).style(theme::text::success)).padding(20)
                     })),
             )
-            .push(Space::new().height(Length::Fixed(100.0)))
+            .push(Space::new().height(Length::Fixed(50.0)))
             .push(
                 Row::new()
                     .align_y(Alignment::Center)
@@ -2490,7 +2490,7 @@ fn layout<'a>(
                     .push(
                         Container::new(
                             Column::new()
-                                .push(Space::new().height(Length::Fixed(100.0)))
+                                .push(Space::new().height(Length::Fixed(40.0)))
                                 .push(content),
                         )
                         .width(Length::FillPortion(if padding_left {

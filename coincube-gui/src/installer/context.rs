@@ -78,6 +78,15 @@ pub enum DescriptorTemplate {
     SimpleInheritance,
     Custom,
     MultisigSecurity,
+    /// 2-of-3 multisig primary spend + a simple timelocked inheritance key.
+    TwoOfThreeInheritance,
+    /// 2-of-3 multisig primary spend + an inheritance path + a second
+    /// (later-timelocked) recovery path.
+    MultisigInheritanceRecovery,
+    /// Like [`Self::MultisigInheritanceRecovery`], but the primary keys are
+    /// reused in the inheritance path (2-of-6 over primary + inheritance
+    /// keys), plus a second (later-timelocked) recovery path.
+    ExpandingMultisigInheritanceRecovery,
 }
 
 #[derive(Clone)]

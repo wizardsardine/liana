@@ -11,6 +11,12 @@ use crate::{
 /// Whether to enable cosigner keys on all paths (excluding safety net paths).
 const ENABLE_COSIGNER_KEYS: bool = false;
 
+/// Whether to enable Safety Net keys. The "Safety Net token" key source was
+/// backed by a Liana third-party service we don't operate, so it is disabled.
+/// Extra recovery paths are added via "Add recovery option" instead. Flip to
+/// `true` to restore the Safety Net path + token source if the service returns.
+pub(crate) const ENABLE_SAFETY_NET_KEYS: bool = false;
+
 /// Identifies the owner of a Keychain key — either the current user
 /// or one of their contacts.  Carries `primary_owner_id` on every
 /// variant so duplicate-owner checks are self-contained and don't
@@ -230,7 +236,7 @@ impl PathKind {
     pub fn can_choose_key_source_kind(&self, source_kind: &KeySourceKind) -> bool {
         match (self, source_kind) {
             // Safety net path allows safety net token keys and Border Wallet keys.
-            (Self::SafetyNet, KeySourceKind::Token(KeyKind::SafetyNet)) => true,
+            (Self::SafetyNet, KeySourceKind::Token(KeyKind::SafetyNet)) => ENABLE_SAFETY_NET_KEYS,
             (Self::SafetyNet, KeySourceKind::BorderWallet) => true,
             (Self::SafetyNet, _) => false,
             // Safety net token keys cannot be used in non-safety-net paths.

@@ -10,15 +10,19 @@ use coincube_ui::{
         button,
         text::{h3, p1_regular, text},
     },
-    icon, image, theme,
+    icon, theme,
     widget::*,
 };
 
 use crate::installer::{
-    descriptor::Path,
+    descriptor::{Path, ENABLE_SAFETY_NET_KEYS},
     message::{self, Message},
     view::{
-        editor::{defined_key, path, undefined_key},
+        editor::{
+            defined_key, path,
+            template::diagram::{policy_timeline, PolicyRow, Timelock},
+            undefined_key,
+        },
         layout,
     },
 };
@@ -44,7 +48,20 @@ pub fn custom_template_description(progress: (usize, usize)) -> Element<'static,
                 .style(theme::text::secondary)
                 .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
-            .push(image::custom_template_description().width(Length::Fill))
+            .push(policy_timeline(vec![
+                PolicyRow {
+                    label: "Primary spending policy:",
+                    keys: vec![(1, color::GREEN)],
+                    box_label: "Primary Keys",
+                    timelock: Timelock::None,
+                },
+                PolicyRow {
+                    label: "Recovery spending policy:",
+                    keys: vec![(2, color::ORANGE)],
+                    box_label: "Recovery Keys",
+                    timelock: Timelock::After(0.5),
+                },
+            ]))
             .push(Row::new().push(Space::new().width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
             .push(Space::new().height(50.0))
             .spacing(20),
@@ -72,7 +89,7 @@ pub fn custom_template<'a>(
             .max_width(1000.0)
             .push(
                 path(
-                    color::ORANGE,
+                    color::GREEN,
                     Some("Primary spending option:".to_string()),
                     primary_path.sequence,
                     primary_path.warning,
@@ -85,7 +102,7 @@ pub fn custom_template<'a>(
                             if let Some(key) = primary_key {
                                 defined_key(
                                     &key.name,
-                                    color::ORANGE,
+                                    color::GREEN,
                                     "Primary key".to_string(),
                                     if use_taproot && !key.source.is_compatible_taproot() {
                                         Some("This device does not support Taproot")
@@ -96,7 +113,7 @@ pub fn custom_template<'a>(
                                 )
                             } else {
                                 undefined_key(
-                                    color::ORANGE,
+                                    color::GREEN,
                                     "Primary key",
                                     !primary_path.keys[0..i].iter().any(|k| k.is_none()),
                                     prim_keys_fixed,
@@ -171,17 +188,19 @@ pub fn custom_template<'a>(
                             )),
                     )
                     .push(
-                        safety_net_path.is_none().then_some(tooltip::Tooltip::new(
-                            button::secondary(Some(icon::plus_icon()), "Add Safety Net")
-                                .width(Length::Fixed(210.0))
-                                .on_press(Message::DefineDescriptor(
-                                    message::DefineDescriptor::AddSafetyNetPath,
-                                )),
-                            Container::new(text(SAFETY_NET_DESCRIPTION))
-                                .style(theme::card::simple)
-                                .padding(10),
-                            tooltip::Position::Bottom,
-                        )),
+                        (ENABLE_SAFETY_NET_KEYS && safety_net_path.is_none()).then_some(
+                            tooltip::Tooltip::new(
+                                button::secondary(Some(icon::plus_icon()), "Add Safety Net")
+                                    .width(Length::Fixed(210.0))
+                                    .on_press(Message::DefineDescriptor(
+                                        message::DefineDescriptor::AddSafetyNetPath,
+                                    )),
+                                Container::new(text(SAFETY_NET_DESCRIPTION))
+                                    .style(theme::card::simple)
+                                    .padding(10),
+                                tooltip::Position::Bottom,
+                            ),
+                        ),
                     )
                     .spacing(10),
             )
