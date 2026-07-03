@@ -1,6 +1,6 @@
 # COINCUBE Desktop Wallet — Pre-Launch Security Audit (PASS 1)
 
-- **Repo:** `/Users/allen/git/coincubetech/coincube` (Liana-derived, self-custodial Bitcoin wallet)
+- **Repo:** `coincube` (Liana-derived, self-custodial Bitcoin wallet)
 - **Branch / commit:** `feature/code-security-audit` @ `0d8f9ae36e4ae5a01da6fbc87698651f6708d2ff`
 - **Date:** 2026-07-02
 - **Auditor:** senior security auditor (audit-only; no source modified)

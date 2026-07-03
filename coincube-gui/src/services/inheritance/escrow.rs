@@ -121,7 +121,9 @@ fn validate_account_derivation(path: &str) -> Result<(), ()> {
     if normalized.is_empty() {
         return Err(());
     }
-    DerivationPath::from_str(normalized).map(|_| ()).map_err(|_| ())
+    DerivationPath::from_str(normalized)
+        .map(|_| ())
+        .map_err(|_| ())
 }
 
 /// Extracts the designated inheritance keyholders (role == Keyholder, with a

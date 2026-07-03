@@ -228,7 +228,10 @@ mod tests {
     #[test]
     fn clamps_excessive_and_passes_normal() {
         assert_eq!(sanitize_feerate(12.0), Some(12.0));
-        assert_eq!(sanitize_feerate(MAX_SANE_FEERATE + 1_000.0), Some(MAX_SANE_FEERATE));
+        assert_eq!(
+            sanitize_feerate(MAX_SANE_FEERATE + 1_000.0),
+            Some(MAX_SANE_FEERATE)
+        );
         assert_eq!(sanitize_feerate(MAX_SANE_FEERATE), Some(MAX_SANE_FEERATE));
     }
 }
