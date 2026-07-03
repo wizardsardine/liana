@@ -78,28 +78,31 @@ fn box_bg(t: &Theme) -> Color {
 
 /// A small numbered circle in the key's colour.
 fn key_badge<'a>(n: u32, c: Color) -> Element<'a, Message> {
-    Container::new(p2_regular(n.to_string()).style(theme::text::adaptive(c)).bold())
-        .center_x(Length::Fixed(26.0))
-        .center_y(Length::Fixed(26.0))
-        .style(move |t| container::Style {
-            background: Some(Background::Color(box_bg(t))),
-            border: Border {
-                color: theme::text::adapt_color(c, t),
-                width: 1.5,
-                radius: 13.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
+    Container::new(
+        p2_regular(n.to_string())
+            .style(theme::text::adaptive(c))
+            .bold(),
+    )
+    .center_x(Length::Fixed(26.0))
+    .center_y(Length::Fixed(26.0))
+    .style(move |t| container::Style {
+        background: Some(Background::Color(box_bg(t))),
+        border: Border {
+            color: theme::text::adapt_color(c, t),
+            width: 1.5,
+            radius: 13.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 /// The rounded box on the left of a row: key badges + a label.
 fn policy_box<'a>(keys: &[(u32, Color)], label: &'a str) -> Element<'a, Message> {
-    let badges = keys
-        .iter()
-        .fold(Row::new().spacing(4).align_y(Alignment::Center), |row, (n, c)| {
-            row.push(key_badge(*n, *c))
-        });
+    let badges = keys.iter().fold(
+        Row::new().spacing(4).align_y(Alignment::Center),
+        |row, (n, c)| row.push(key_badge(*n, *c)),
+    );
     Container::new(
         Row::new()
             .align_y(Alignment::Center)
@@ -187,8 +190,7 @@ fn policy_row<'a>(r: PolicyRow<'a>, label_w: f32) -> Element<'a, Message> {
                 .align_y(Alignment::Center)
                 .spacing(16)
                 .push(
-                    Container::new(policy_box(&r.keys, r.box_label))
-                        .width(Length::Fixed(label_w)),
+                    Container::new(policy_box(&r.keys, r.box_label)).width(Length::Fixed(label_w)),
                 )
                 .push(Container::new(timeline).width(Length::Fill)),
         )
@@ -217,16 +219,16 @@ pub fn policy_timeline<'a>(rows: Vec<PolicyRow<'a>>) -> Element<'a, Message> {
                 .push(caption("Receipt of funds").style(theme::text::secondary))
                 .push(Space::new().width(Length::Fill))
                 .push(
-                    caption("After some time* of wallet inactivity")
-                        .style(theme::text::secondary),
+                    caption("After some time* of wallet inactivity").style(theme::text::secondary),
                 )
                 .push(Space::new().width(Length::Fill)),
         );
 
-    let body = rows.into_iter().fold(
-        Column::new().spacing(20).push(header),
-        |col, r| col.push(policy_row(r, label_w)),
-    );
+    let body = rows
+        .into_iter()
+        .fold(Column::new().spacing(20).push(header), |col, r| {
+            col.push(policy_row(r, label_w))
+        });
 
     let body = body.push(
         caption(

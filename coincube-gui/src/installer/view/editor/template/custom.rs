@@ -188,17 +188,19 @@ pub fn custom_template<'a>(
                             )),
                     )
                     .push(
-                        (ENABLE_SAFETY_NET_KEYS && safety_net_path.is_none()).then_some(tooltip::Tooltip::new(
-                            button::secondary(Some(icon::plus_icon()), "Add Safety Net")
-                                .width(Length::Fixed(210.0))
-                                .on_press(Message::DefineDescriptor(
-                                    message::DefineDescriptor::AddSafetyNetPath,
-                                )),
-                            Container::new(text(SAFETY_NET_DESCRIPTION))
-                                .style(theme::card::simple)
-                                .padding(10),
-                            tooltip::Position::Bottom,
-                        )),
+                        (ENABLE_SAFETY_NET_KEYS && safety_net_path.is_none()).then_some(
+                            tooltip::Tooltip::new(
+                                button::secondary(Some(icon::plus_icon()), "Add Safety Net")
+                                    .width(Length::Fixed(210.0))
+                                    .on_press(Message::DefineDescriptor(
+                                        message::DefineDescriptor::AddSafetyNetPath,
+                                    )),
+                                Container::new(text(SAFETY_NET_DESCRIPTION))
+                                    .style(theme::card::simple)
+                                    .padding(10),
+                                tooltip::Position::Bottom,
+                            ),
+                        ),
                     )
                     .spacing(10),
             )

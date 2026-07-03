@@ -72,6 +72,9 @@ pub fn adapt_color(base: iced::Color, theme: &Theme) -> iced::Color {
             color::DARK_ORANGE
         } else if base == color::RED {
             color::DARK_RED
+        } else if base == color::WHITE {
+            // WHITE keys are invisible on light surfaces; use a dark neutral.
+            color::GREY_7
         } else {
             base
         }

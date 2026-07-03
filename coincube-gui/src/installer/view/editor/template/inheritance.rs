@@ -16,9 +16,9 @@ use crate::installer::{
     message::{self, Message},
     view::{
         editor::{
-            defined_key,
+            defined_key, path,
             template::diagram::{policy_timeline, PolicyRow, Timelock},
-            path, undefined_key,
+            undefined_key,
         },
         layout,
     },
@@ -86,9 +86,7 @@ After a period of inactivity (but not before that) your Inheritance Key will bec
     )
 }
 
-pub fn two_of_three_inheritance_description(
-    progress: (usize, usize),
-) -> Element<'static, Message> {
+pub fn two_of_three_inheritance_description(progress: (usize, usize)) -> Element<'static, Message> {
     layout(
         progress,
         None,

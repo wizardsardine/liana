@@ -72,38 +72,10 @@ pub fn coincube_wordmark_gray<'a, M: 'a>(size: f32) -> Row<'a, M> {
     ]
 }
 
-const CREATE_NEW_WALLET_ICON: &[u8] = include_bytes!("../static/icons/blueprint.svg");
-
-pub fn create_new_wallet_icon<'a>() -> Svg<'a, Theme> {
-    let h = svg::Handle::from_memory(CREATE_NEW_WALLET_ICON);
-    Svg::new(h)
-}
-
-const PARTICIPATE_IN_NEW_WALLET_ICON: &[u8] = include_bytes!("../static/icons/discussion.svg");
-
-pub fn participate_in_new_wallet_icon<'a>() -> Svg<'a, Theme> {
-    let h = svg::Handle::from_memory(PARTICIPATE_IN_NEW_WALLET_ICON);
-    Svg::new(h)
-}
-
-const RESTORE_WALLET_ICON: &[u8] = include_bytes!("../static/icons/syncdata.svg");
-
-pub fn restore_wallet_icon<'a>() -> Svg<'a, Theme> {
-    let h = svg::Handle::from_memory(RESTORE_WALLET_ICON);
-    Svg::new(h)
-}
-
 const SUCCESS_MARK_ICON: &[u8] = include_bytes!("../static/icons/success-mark.svg");
 
 pub fn success_mark_icon<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(SUCCESS_MARK_ICON);
-    Svg::new(h)
-}
-
-const KEY_MARK_ICON: &[u8] = include_bytes!("../static/icons/key-mark.svg");
-
-pub fn key_mark_icon<'a>() -> Svg<'a, Theme> {
-    let h = svg::Handle::from_memory(KEY_MARK_ICON);
     Svg::new(h)
 }
 
