@@ -58,6 +58,36 @@ pub fn custom(color: iced::Color) -> Style {
     Style { color: Some(color) }
 }
 
+/// Map a brand accent colour to a light-mode-friendly shade when the theme is
+/// light, so installer diagrams/editors keep contrast in both modes. Unknown
+/// colours pass through unchanged.
+pub fn adapt_color(base: iced::Color, theme: &Theme) -> iced::Color {
+    use crate::color;
+    if matches!(theme.mode, super::palette::ThemeMode::Light) {
+        if base == color::GREEN {
+            color::DARK_GREEN
+        } else if base == color::BLUE {
+            color::DARK_BLUE
+        } else if base == color::ORANGE {
+            color::DARK_ORANGE
+        } else if base == color::RED {
+            color::DARK_RED
+        } else {
+            base
+        }
+    } else {
+        base
+    }
+}
+
+/// Text style that renders `base` (a brand accent) with a light-mode-friendly
+/// shade when the theme is light. Use for role-coloured key icons/labels.
+pub fn adaptive(base: iced::Color) -> impl Fn(&Theme) -> Style {
+    move |theme| Style {
+        color: Some(adapt_color(base, theme)),
+    }
+}
+
 /// Green for incoming amounts — darker on light backgrounds.
 pub fn incoming(theme: &Theme) -> Style {
     use crate::color;

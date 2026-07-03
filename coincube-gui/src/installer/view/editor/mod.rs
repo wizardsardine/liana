@@ -97,7 +97,7 @@ pub fn uneditable_defined_key<'a>(
             .spacing(10)
             .width(Length::Fill)
             .align_y(Alignment::Center)
-            .push(icon::round_key_icon().size(H3_SIZE).color(color))
+            .push(icon::round_key_icon().size(H3_SIZE).style(theme::text::adaptive(color)))
             .push(
                 Column::new()
                     .width(Length::Fill)
@@ -131,7 +131,7 @@ pub fn defined_key<'a>(
             .spacing(10)
             .width(Length::Fill)
             .align_y(Alignment::Center)
-            .push(icon::round_key_icon().size(H3_SIZE).color(color))
+            .push(icon::round_key_icon().size(H3_SIZE).style(theme::text::adaptive(color)))
             .push(
                 Column::new()
                     .width(Length::Fill)
@@ -178,7 +178,7 @@ pub fn undefined_key<'a>(
             .spacing(10)
             .width(Length::Fill)
             .align_y(Alignment::Center)
-            .push(icon::round_key_icon().size(H3_SIZE).color(color))
+            .push(icon::round_key_icon().size(H3_SIZE).style(theme::text::adaptive(color)))
             .push(
                 Column::new()
                     .width(Length::Fill)

@@ -130,30 +130,6 @@ pub fn wrench_outline_icon<'a>(size: f32) -> Svg<'a, Theme> {
         .style(crate::theme::svg::nav_icon)
 }
 
-const INHERITANCE_TEMPLATE_DESC: &[u8] =
-    include_bytes!("../static/images/inheritance_template_description.svg");
-
-pub fn inheritance_template_description<'a>() -> Svg<'a, Theme> {
-    let h = svg::Handle::from_memory(INHERITANCE_TEMPLATE_DESC);
-    Svg::new(h)
-}
-
-const CUSTOM_TEMPLATE_DESC: &[u8] =
-    include_bytes!("../static/images/custom_template_description.svg");
-
-pub fn custom_template_description<'a>() -> Svg<'a, Theme> {
-    let h = svg::Handle::from_memory(CUSTOM_TEMPLATE_DESC);
-    Svg::new(h)
-}
-
-const MULTISIG_SECURITY_TEMPLATE_DESC: &[u8] =
-    include_bytes!("../static/images/multisig_security_template.svg");
-
-pub fn multisig_security_template_description<'a>() -> Svg<'a, Theme> {
-    let h = svg::Handle::from_memory(MULTISIG_SECURITY_TEMPLATE_DESC);
-    Svg::new(h)
-}
-
 // ---------------------------------------------------------------------------
 // USDt + network logos
 // ---------------------------------------------------------------------------

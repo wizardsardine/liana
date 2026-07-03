@@ -79,6 +79,15 @@ impl Step for DescriptorTemplateDescription {
             DescriptorTemplate::Custom => {
                 view::editor::template::custom::custom_template_description(progress)
             }
+            DescriptorTemplate::TwoOfThreeInheritance => {
+                view::editor::template::inheritance::two_of_three_inheritance_description(progress)
+            }
+            DescriptorTemplate::MultisigInheritanceRecovery => {
+                view::editor::template::multisig_security_wallet::multisig_inheritance_recovery_description(progress)
+            }
+            DescriptorTemplate::ExpandingMultisigInheritanceRecovery => {
+                view::editor::template::multisig_security_wallet::expanding_multisig_inheritance_recovery_description(progress)
+            }
         }
     }
 }

@@ -27,7 +27,7 @@ use crate::{
     hw::HardwareWallets,
     installer::{
         context::DescriptorTemplate,
-        descriptor::{Key, Path, PathKind, PathSequence, PathWarning},
+        descriptor::{Key, Path, PathKind, PathSequence, PathWarning, ENABLE_SAFETY_NET_KEYS},
         message::{self, Message},
         step::{Context, Step},
         view,
@@ -156,6 +156,36 @@ impl DefineDescriptor {
                 DescriptorTemplate::Custom => {
                     self.paths = vec![Path::new_primary_path(), Path::new_recovery_path()];
                 }
+                DescriptorTemplate::TwoOfThreeInheritance => {
+                    self.paths = vec![
+                        Path::new_primary_path().with_n_keys(3).with_threshold(2),
+                        Path::new_recovery_path(), // inheritance: 1 key, seq 52_596 (~1y)
+                    ];
+                }
+                DescriptorTemplate::MultisigInheritanceRecovery => {
+                    // Second recovery must have a distinct sequence from the
+                    // inheritance path (apply() keys recovery paths by sequence).
+                    let mut second_recovery = Path::new_recovery_path();
+                    second_recovery.sequence = PathSequence::Recovery(65_000); // ~1.24y
+                    self.paths = vec![
+                        Path::new_primary_path().with_n_keys(3).with_threshold(2),
+                        // inheritance: 2-of-3 multisig, seq 52_596 (~1y)
+                        Path::new_recovery_path().with_n_keys(3).with_threshold(2),
+                        second_recovery,
+                    ];
+                }
+                DescriptorTemplate::ExpandingMultisigInheritanceRecovery => {
+                    let mut second_recovery = Path::new_recovery_path();
+                    second_recovery.sequence = PathSequence::Recovery(65_000); // ~1.24y
+                    self.paths = vec![
+                        Path::new_primary_path().with_n_keys(3).with_threshold(2),
+                        // inheritance: 2-of-6 multisig — the 3 primary keys are
+                        // reused (mirrored) alongside 3 inheritance keys, so any
+                        // two of the six can recover. seq 52_596 (~1y).
+                        Path::new_recovery_path().with_n_keys(6).with_threshold(2),
+                        second_recovery,
+                    ];
+                }
             }
         }
         self.descriptor_template = template;
@@ -203,7 +233,7 @@ impl DefineDescriptor {
         coordinates: Vec<(usize, usize)>,
     ) -> SelectKeySource {
         let mut token_kind = vec![];
-        if let PathKind::SafetyNet = path_kind {
+        if ENABLE_SAFETY_NET_KEYS && path_kind == PathKind::SafetyNet {
             token_kind.push(KeyKind::SafetyNet);
         }
         if path_kind.can_choose_key_source_kind(&KeySourceKind::Token(KeyKind::Cosigner))
@@ -724,21 +754,54 @@ impl Step for DefineDescriptor {
                     self.valid(),
                 )
             }
-            DescriptorTemplate::Custom => view::editor::template::custom::custom_template(
-                progress,
-                self.use_taproot,
-                &self.paths[0],
-                &mut self.paths[1..]
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, p)| p.kind() == PathKind::Recovery),
-                self.paths[1..]
-                    .iter()
-                    .enumerate()
-                    .find(|(_, p)| p.kind() == PathKind::SafetyNet),
-                self.paths[1..].len(),
-                self.valid(),
-            ),
+            // Bespoke mirroring editor: primary keys are reused in the 2-of-6
+            // inheritance path (paths[1]), plus a single backup (paths[2]).
+            DescriptorTemplate::ExpandingMultisigInheritanceRecovery => {
+                view::editor::template::multisig_security_wallet::expanding_multisig_inheritance_template(
+                    progress,
+                    self.use_taproot,
+                    &self.paths[0],
+                    &self.paths[1],
+                    &self.paths[2],
+                    self.valid(),
+                )
+            }
+            DescriptorTemplate::TwoOfThreeInheritance => {
+                view::editor::template::inheritance::two_of_three_inheritance_template(
+                    progress,
+                    self.use_taproot,
+                    &self.paths[0],
+                    &self.paths[1],
+                    self.valid(),
+                )
+            }
+            DescriptorTemplate::MultisigInheritanceRecovery => {
+                view::editor::template::multisig_security_wallet::multisig_inheritance_recovery_template(
+                    progress,
+                    self.use_taproot,
+                    &self.paths[0],
+                    &self.paths[1],
+                    &self.paths[2],
+                    self.valid(),
+                )
+            }
+            DescriptorTemplate::Custom => {
+                view::editor::template::custom::custom_template(
+                    progress,
+                    self.use_taproot,
+                    &self.paths[0],
+                    &mut self.paths[1..]
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, p)| p.kind() == PathKind::Recovery),
+                    self.paths[1..]
+                        .iter()
+                        .enumerate()
+                        .find(|(_, p)| p.kind() == PathKind::SafetyNet),
+                    self.paths[1..].len(),
+                    self.valid(),
+                )
+            }
         };
         if let Some(modal) = &self.modal {
             Modal::new(content, modal.view(hws))
