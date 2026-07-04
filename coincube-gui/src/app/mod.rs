@@ -2162,6 +2162,9 @@ impl App {
             if let Some(bitcoind) = self.internal_bitcoind.take() {
                 bitcoind.stop();
             }
+            // Stop the managed Tor daemon (if inbound-over-Tor was running)
+            // alongside the node it serves.
+            crate::node::tor::stop_managed_tor();
         }
     }
 

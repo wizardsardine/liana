@@ -3,6 +3,7 @@ use coincubed::config::BitcoinBackend;
 pub mod bitcoind;
 pub mod electrum;
 pub mod esplora;
+pub mod tor;
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum NodeType {

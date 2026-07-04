@@ -447,6 +447,8 @@ impl Loader {
         if let Some(bitcoind) = self.internal_bitcoind.take() {
             bitcoind.stop();
         }
+        // Stop the managed Tor daemon (if inbound-over-Tor was running).
+        crate::node::tor::stop_managed_tor();
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -896,14 +898,25 @@ pub async fn start_bitcoind_and_daemon(
     }
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
     let bitcoind = match (start_internal_bitcoind, &config.bitcoin_backend) {
-        (true, Some(BitcoinBackend::Bitcoind(bitcoind_config))) => Some(
-            Bitcoind::maybe_start(
-                config.bitcoin_config.network,
-                bitcoind_config.clone(),
+        (true, Some(BitcoinBackend::Bitcoind(bitcoind_config))) => {
+            // Bring up inbound-over-Tor (if the user enabled it) and reconcile
+            // bitcoin.conf *before* starting bitcoind, so bitcoind reads the
+            // fresh onion/proxy config. Fail-safe and infallible: any Tor issue
+            // leaves the conf outbound-only, so the node starts exactly as it
+            // does today.
+            crate::node::tor::prepare_inbound_tor(
                 &coincube_datadir_path,
+                config.bitcoin_config.network,
+            );
+            Some(
+                Bitcoind::maybe_start(
+                    config.bitcoin_config.network,
+                    bitcoind_config.clone(),
+                    &coincube_datadir_path,
+                )
+                .map_err(Error::Bitcoind)?,
             )
-            .map_err(Error::Bitcoind)?,
-        ),
+        }
         _ => None,
     };
 

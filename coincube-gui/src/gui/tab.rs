@@ -123,6 +123,13 @@ fn duress_wipe_targets(root: &std::path::Path) -> Vec<std::path::PathBuf> {
             }
         }
     }
+    // Identifying material from inbound-over-Tor: the managed Tor data directory
+    // and bitcoind's onion-service key(s). These live under `<root>/bitcoind`,
+    // which the loop above deliberately preserves (the blockchain is expensive
+    // to re-sync and not sensitive), so they must be added explicitly — the
+    // onion key would otherwise survive a wipe and remain a fingerprint of the
+    // device. See `PLAN-inbound-tor-connectivity.md` Decision 4.
+    targets.extend(crate::node::tor::duress_identifying_targets(root));
     targets
 }
 
@@ -2056,8 +2063,12 @@ mod duress_wipe_target_tests {
         touch(&net.join("connect.json"));
         // A second network is covered too.
         touch(&root.join("testnet").join("mnemonics").join("seed"));
-        // bitcoind (root-level, not a network dir) carries no cube material.
-        touch(&root.join("bitcoind").join("blocks").join("blk0.dat"));
+        // bitcoind (root-level, not a network dir): the blockchain is preserved,
+        // but inbound-over-Tor identifying material (Tor data + onion key) is
+        // obliterated — see Decision 4.
+        touch(&root.join("bitcoind").join("datadir").join("blocks").join("blk0.dat"));
+        touch(&root.join("bitcoind").join("tor-data").join("state"));
+        touch(&root.join("bitcoind").join("datadir").join("onion_v3_private_key"));
 
         let targets = duress_wipe_targets(&root);
 
@@ -2074,14 +2085,24 @@ mod duress_wipe_target_tests {
             targets.contains(&root.join("testnet").join("mnemonics")),
             "every network's seeds must be wiped"
         );
-        // Cached Connect auth and the bitcoind blockchain are preserved.
+        // Cached Connect auth is preserved.
         assert!(
             !targets.iter().any(|t| t.ends_with("connect.json")),
             "connect.json (cached auth) must survive"
         );
+        // The blockchain is preserved (expensive to re-sync, not sensitive)...
         assert!(
-            !targets.iter().any(|t| t.starts_with(root.join("bitcoind"))),
+            !targets.iter().any(|t| t.ends_with("blk0.dat")),
             "bitcoind blockchain must not be wiped"
+        );
+        // ...but the Tor state and onion-service key (identifying) are wiped.
+        assert!(
+            targets.contains(&root.join("bitcoind").join("tor-data")),
+            "managed Tor data dir must be wiped"
+        );
+        assert!(
+            targets.contains(&root.join("bitcoind").join("datadir").join("onion_v3_private_key")),
+            "onion-service key must be wiped"
         );
 
         let _ = std::fs::remove_dir_all(&root);
