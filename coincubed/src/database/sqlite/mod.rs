@@ -2286,6 +2286,115 @@ CREATE TABLE labels (
         fs::remove_dir_all(tmp_dir).unwrap();
     }
 
+    /// Seeds `conn` with the shared 7-transaction / 5-coin fixture used by the
+    /// txid-listing tests and returns the transactions (CQ-DESK-005). Previously
+    /// duplicated verbatim in sqlite_list_txids and sqlite_list_all_txids.
+    fn seed_txid_fixture(conn: &mut SqliteConn) -> Vec<bitcoin::Transaction> {
+        let txs: Vec<_> = (0..7)
+            .map(|i| bitcoin::Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
+                input: vec![bitcoin::TxIn::default()], // a single input
+                output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
+            })
+            .collect();
+        conn.new_txs(&txs);
+
+        let coins = [
+            Coin {
+                outpoint: bitcoin::OutPoint::new(txs.first().unwrap().compute_txid(), 1),
+                is_immature: false,
+                block_info: None,
+                amount: bitcoin::Amount::from_sat(98765),
+                derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
+                is_change: false,
+                spend_txid: None,
+                spend_block: None,
+                is_from_self: false,
+            },
+            Coin {
+                outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().compute_txid(), 2),
+                is_immature: false,
+                block_info: Some(BlockInfo {
+                    height: 101_095,
+                    time: 1_121_000,
+                }),
+                amount: bitcoin::Amount::from_sat(98765),
+                derivation_index: bip32::ChildNumber::from_normal_idx(100).unwrap(),
+                is_change: false,
+                spend_txid: None,
+                spend_block: None,
+                is_from_self: false,
+            },
+            Coin {
+                outpoint: bitcoin::OutPoint::new(txs.get(2).unwrap().compute_txid(), 3),
+                is_immature: false,
+                block_info: Some(BlockInfo {
+                    height: 101_099,
+                    time: 1_122_000,
+                }),
+                amount: bitcoin::Amount::from_sat(98765),
+                derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
+                is_change: false,
+                spend_txid: Some(txs.get(3).unwrap().compute_txid()),
+                spend_block: Some(BlockInfo {
+                    height: 101_199,
+                    time: 1_123_000,
+                }),
+                is_from_self: false,
+            },
+            Coin {
+                outpoint: bitcoin::OutPoint::new(txs.get(4).unwrap().compute_txid(), 4),
+                is_immature: true,
+                block_info: Some(BlockInfo {
+                    height: 101_100,
+                    time: 1_124_000,
+                }),
+                amount: bitcoin::Amount::from_sat(98765),
+                derivation_index: bip32::ChildNumber::from_normal_idx(10000).unwrap(),
+                is_change: false,
+                spend_txid: None,
+                spend_block: None,
+                is_from_self: false,
+            },
+            Coin {
+                outpoint: bitcoin::OutPoint::new(txs.get(5).unwrap().compute_txid(), 5),
+                is_immature: false,
+                block_info: Some(BlockInfo {
+                    height: 101_102,
+                    time: 1_125_000,
+                }),
+                amount: bitcoin::Amount::from_sat(98765),
+                derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
+                is_change: false,
+                spend_txid: Some(txs.get(6).unwrap().compute_txid()),
+                spend_block: Some(BlockInfo {
+                    height: 101_105,
+                    time: 1_126_000,
+                }),
+                is_from_self: false,
+            },
+        ];
+        conn.new_unspent_coins(&coins);
+        conn.confirm_coins(
+            &coins
+                .iter()
+                .filter_map(|c| c.block_info.map(|b| (c.outpoint, b.height, b.time)))
+                .collect::<Vec<_>>(),
+        );
+        conn.confirm_spend(
+            &coins
+                .iter()
+                .filter_map(|c| {
+                    c.spend_block
+                        .as_ref()
+                        .map(|b| (c.outpoint, c.spend_txid.unwrap(), b.height, b.time))
+                })
+                .collect::<Vec<_>>(),
+        );
+        txs
+    }
+
     #[test]
     fn sqlite_list_txids() {
         let (tmp_dir, _, _, db) = dummy_db();
@@ -2293,108 +2402,7 @@ CREATE TABLE labels (
         {
             let mut conn = db.connection().unwrap();
 
-            let txs: Vec<_> = (0..7)
-                .map(|i| bitcoin::Transaction {
-                    version: bitcoin::transaction::Version::TWO,
-                    lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: vec![bitcoin::TxIn::default()], // a single input
-                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
-                })
-                .collect();
-            conn.new_txs(&txs);
-
-            let coins = [
-                Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.first().unwrap().compute_txid(), 1),
-                    is_immature: false,
-                    block_info: None,
-                    amount: bitcoin::Amount::from_sat(98765),
-                    derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
-                    is_change: false,
-                    spend_txid: None,
-                    spend_block: None,
-                    is_from_self: false,
-                },
-                Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().compute_txid(), 2),
-                    is_immature: false,
-                    block_info: Some(BlockInfo {
-                        height: 101_095,
-                        time: 1_121_000,
-                    }),
-                    amount: bitcoin::Amount::from_sat(98765),
-                    derivation_index: bip32::ChildNumber::from_normal_idx(100).unwrap(),
-                    is_change: false,
-                    spend_txid: None,
-                    spend_block: None,
-                    is_from_self: false,
-                },
-                Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(2).unwrap().compute_txid(), 3),
-                    is_immature: false,
-                    block_info: Some(BlockInfo {
-                        height: 101_099,
-                        time: 1_122_000,
-                    }),
-                    amount: bitcoin::Amount::from_sat(98765),
-                    derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
-                    is_change: false,
-                    spend_txid: Some(txs.get(3).unwrap().compute_txid()),
-                    spend_block: Some(BlockInfo {
-                        height: 101_199,
-                        time: 1_123_000,
-                    }),
-                    is_from_self: false,
-                },
-                Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(4).unwrap().compute_txid(), 4),
-                    is_immature: true,
-                    block_info: Some(BlockInfo {
-                        height: 101_100,
-                        time: 1_124_000,
-                    }),
-                    amount: bitcoin::Amount::from_sat(98765),
-                    derivation_index: bip32::ChildNumber::from_normal_idx(10000).unwrap(),
-                    is_change: false,
-                    spend_txid: None,
-                    spend_block: None,
-                    is_from_self: false,
-                },
-                Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(5).unwrap().compute_txid(), 5),
-                    is_immature: false,
-                    block_info: Some(BlockInfo {
-                        height: 101_102,
-                        time: 1_125_000,
-                    }),
-                    amount: bitcoin::Amount::from_sat(98765),
-                    derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
-                    is_change: false,
-                    spend_txid: Some(txs.get(6).unwrap().compute_txid()),
-                    spend_block: Some(BlockInfo {
-                        height: 101_105,
-                        time: 1_126_000,
-                    }),
-                    is_from_self: false,
-                },
-            ];
-            conn.new_unspent_coins(&coins);
-            conn.confirm_coins(
-                &coins
-                    .iter()
-                    .filter_map(|c| c.block_info.map(|b| (c.outpoint, b.height, b.time)))
-                    .collect::<Vec<_>>(),
-            );
-            conn.confirm_spend(
-                &coins
-                    .iter()
-                    .filter_map(|c| {
-                        c.spend_block
-                            .as_ref()
-                            .map(|b| (c.outpoint, c.spend_txid.unwrap(), b.height, b.time))
-                    })
-                    .collect::<Vec<_>>(),
-            );
+            let txs = seed_txid_fixture(&mut conn);
 
             let db_txids = conn.db_list_txids(1_123_000, 1_127_000, 10);
             // Ordered by desc block time.
@@ -2417,108 +2425,7 @@ CREATE TABLE labels (
         {
             let mut conn = db.connection().unwrap();
 
-            let txs: Vec<_> = (0..7)
-                .map(|i| bitcoin::Transaction {
-                    version: bitcoin::transaction::Version::TWO,
-                    lock_time: bitcoin::absolute::LockTime::from_height(i).unwrap(),
-                    input: vec![bitcoin::TxIn::default()], // a single input
-                    output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
-                })
-                .collect();
-            conn.new_txs(&txs);
-
-            let coins = [
-                Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.first().unwrap().compute_txid(), 1),
-                    is_immature: false,
-                    block_info: None,
-                    amount: bitcoin::Amount::from_sat(98765),
-                    derivation_index: bip32::ChildNumber::from_normal_idx(10).unwrap(),
-                    is_change: false,
-                    spend_txid: None,
-                    spend_block: None,
-                    is_from_self: false,
-                },
-                Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(1).unwrap().compute_txid(), 2),
-                    is_immature: false,
-                    block_info: Some(BlockInfo {
-                        height: 101_095,
-                        time: 1_121_000,
-                    }),
-                    amount: bitcoin::Amount::from_sat(98765),
-                    derivation_index: bip32::ChildNumber::from_normal_idx(100).unwrap(),
-                    is_change: false,
-                    spend_txid: None,
-                    spend_block: None,
-                    is_from_self: false,
-                },
-                Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(2).unwrap().compute_txid(), 3),
-                    is_immature: false,
-                    block_info: Some(BlockInfo {
-                        height: 101_099,
-                        time: 1_122_000,
-                    }),
-                    amount: bitcoin::Amount::from_sat(98765),
-                    derivation_index: bip32::ChildNumber::from_normal_idx(1000).unwrap(),
-                    is_change: false,
-                    spend_txid: Some(txs.get(3).unwrap().compute_txid()),
-                    spend_block: Some(BlockInfo {
-                        height: 101_199,
-                        time: 1_123_000,
-                    }),
-                    is_from_self: false,
-                },
-                Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(4).unwrap().compute_txid(), 4),
-                    is_immature: true,
-                    block_info: Some(BlockInfo {
-                        height: 101_100,
-                        time: 1_124_000,
-                    }),
-                    amount: bitcoin::Amount::from_sat(98765),
-                    derivation_index: bip32::ChildNumber::from_normal_idx(10000).unwrap(),
-                    is_change: false,
-                    spend_txid: None,
-                    spend_block: None,
-                    is_from_self: false,
-                },
-                Coin {
-                    outpoint: bitcoin::OutPoint::new(txs.get(5).unwrap().compute_txid(), 5),
-                    is_immature: false,
-                    block_info: Some(BlockInfo {
-                        height: 101_102,
-                        time: 1_125_000,
-                    }),
-                    amount: bitcoin::Amount::from_sat(98765),
-                    derivation_index: bip32::ChildNumber::from_normal_idx(100000).unwrap(),
-                    is_change: false,
-                    spend_txid: Some(txs.get(6).unwrap().compute_txid()),
-                    spend_block: Some(BlockInfo {
-                        height: 101_105,
-                        time: 1_126_000,
-                    }),
-                    is_from_self: false,
-                },
-            ];
-            conn.new_unspent_coins(&coins);
-            conn.confirm_coins(
-                &coins
-                    .iter()
-                    .filter_map(|c| c.block_info.map(|b| (c.outpoint, b.height, b.time)))
-                    .collect::<Vec<_>>(),
-            );
-            conn.confirm_spend(
-                &coins
-                    .iter()
-                    .filter_map(|c| {
-                        c.spend_block
-                            .as_ref()
-                            .map(|b| (c.outpoint, c.spend_txid.unwrap(), b.height, b.time))
-                    })
-                    .collect::<Vec<_>>(),
-            );
+            let txs = seed_txid_fixture(&mut conn);
 
             let db_txids = conn.db_list_all_txids();
             assert_eq!(db_txids.len(), txs.len());

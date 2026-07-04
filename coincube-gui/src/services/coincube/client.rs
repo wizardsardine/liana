@@ -667,7 +667,7 @@ impl CoincubeClient {
             .map_err(|e| e.to_string())?
             .check_success()
             .await
-            .map_err(|e| format!("HTTP {}: {}", e.status_code, e.text))?;
+            .map_err(|e| format!("HTTP {}: {}", e.status_code, e.message()))?;
         let config: crate::services::sideshift::SideshiftConfig =
             res.json().await.map_err(|e| e.to_string())?;
         Ok(config.affiliate_id)

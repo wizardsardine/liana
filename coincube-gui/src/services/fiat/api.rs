@@ -27,7 +27,14 @@ impl std::fmt::Display for PriceApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::RequestFailed(e) => write!(f, "Request failed: {}", e),
-            Self::NotSuccessResponse(info) => write!(f, "Not success response: {:?}", info),
+            Self::NotSuccessResponse(info) => {
+                write!(
+                    f,
+                    "Not success response ({}): {}",
+                    info.status_code,
+                    info.message()
+                )
+            }
             Self::CannotParseResponse(e) => write!(f, "Cannot parse response: {}", e),
             Self::CannotParseData(e) => write!(f, "Cannot parse data: {}", e),
         }
