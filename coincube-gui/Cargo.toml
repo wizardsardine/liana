@@ -141,6 +141,13 @@ subtle = "2"
 dotenvy = "0.15.7"
 pgp = "0.16"
 
+# Used to unpack `.tar.gz` archives. The Bitcoin Core/Knots archives are tar.gz
+# on Unix (Windows is a zip, handled by `zip` below), and the Tor Expert Bundle
+# is a tar.gz on *every* platform — so these must be available everywhere, not
+# gated to Unix.
+tar = { version = "0.4", default-features = false }
+flate2 = { version = "1.0", default-features = false }
+
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features = false, features = [
 	"bzip2",
@@ -185,8 +192,6 @@ objc2-authentication-services = { version = "0.3", features = [
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-tar = { version = "0.4", default-features = false }
-flate2 = { version = "1.0", default-features = false }
 iced = { version = "0.14.0", features = ["x11", "wayland"] }
 
 [dev-dependencies]

@@ -96,6 +96,27 @@ pub const KNOTS_SIGNING_KEY_FINGERPRINT: &str = "1A3E761F19D2CC7785C5502EA291A2C
 /// silently change the trust anchor.
 pub const KNOTS_SIGNING_KEY_ASC: &str = include_str!("../../assets/knots_signing_key.asc");
 
+/// Current managed Tor version, sourced from the Tor Project's Tor Expert Bundle
+/// (the same `tor` daemon shipped inside Tor Browser). Pinned like
+/// [`KNOTS_VERSIONS`] — bumps are a deliberate follow-up, since the bundle is
+/// verified against its published `sha256sums-unsigned-build.txt` manifest and a
+/// bump is therefore not checksum-locked in code.
+pub const TOR_VERSION: &str = "15.0.17";
+
+/// PGP key fingerprint of the "Tor Browser Developers (signing key)"
+/// (`torbrowser@torproject.org`) that signs the Tor Expert Bundle's
+/// `sha256sums-unsigned-build.txt.asc`. Canonical, long-published fingerprint;
+/// pinning it lets us recognise the signing key. Full verification of the
+/// detached signature additionally uses the vendored public material below.
+pub const TOR_SIGNING_KEY_FINGERPRINT: &str = "EF6E286DDA85EA2A4BA7DE684E2C6E8793298290";
+
+/// Vendored armored OpenPGP public key for [`TOR_SIGNING_KEY_FINGERPRINT`] (the
+/// Tor Browser Developers signing key), used to verify the Tor Expert Bundle's
+/// `sha256sums-unsigned-build.txt.asc`. The fingerprint is re-derived from this
+/// key and checked against the pin at verification time, so a swapped-out file
+/// cannot silently change the trust anchor.
+pub const TOR_SIGNING_KEY_ASC: &str = include_str!("../../assets/tor_signing_key.asc");
+
 /// Operating system COINCUBE builds managed-node asset names for. Kept explicit
 /// (rather than only `cfg!`) so URL construction is unit-testable for every
 /// `(flavor, platform)` regardless of the host running the test.
@@ -242,8 +263,97 @@ impl NodeFlavor {
     }
 }
 
+/// Tor Expert Bundle archive filename for `version` on the given platform, e.g.
+/// `tor-expert-bundle-macos-aarch64-15.0.17.tar.gz`.
+///
+/// Returns `None` for platforms the Tor Project does not publish an Expert
+/// Bundle for — there is no Linux or Windows **aarch64** build. On those hosts
+/// inbound-over-Tor is simply unavailable and the managed node runs
+/// outbound-only (fail-safe); nothing else about the wallet changes. Kept
+/// explicit (not `cfg!`) so URL construction is unit-testable for every
+/// platform regardless of the host running the test.
+pub fn tor_asset_filename(version: &str, os: NodeOs, arch: NodeArch) -> Option<String> {
+    let platform = match (os, arch) {
+        (NodeOs::MacOs, NodeArch::X86_64) => "macos-x86_64",
+        (NodeOs::MacOs, NodeArch::Aarch64) => "macos-aarch64",
+        (NodeOs::Linux, NodeArch::X86_64) => "linux-x86_64",
+        (NodeOs::Windows, NodeArch::X86_64) => "windows-x86_64",
+        // No Tor Expert Bundle is published for these.
+        (NodeOs::Linux, NodeArch::Aarch64) | (NodeOs::Windows, NodeArch::Aarch64) => return None,
+    };
+    Some(format!("tor-expert-bundle-{platform}-{version}.tar.gz"))
+}
+
+/// Base URL of the Tor Project's package archive for `version`.
+fn tor_release_base_url(version: &str) -> String {
+    format!("https://archive.torproject.org/tor-package-archive/torbrowser/{version}")
+}
+
+/// Download URL for the Tor Expert Bundle for `version` on the given platform,
+/// or `None` where no Expert Bundle is published (see [`tor_asset_filename`]).
+pub fn tor_asset_url(version: &str, os: NodeOs, arch: NodeArch) -> Option<String> {
+    let filename = tor_asset_filename(version, os, arch)?;
+    Some(format!("{}/{filename}", tor_release_base_url(version)))
+}
+
+/// URLs of the Tor release `sha256sums-unsigned-build.txt` and its detached
+/// `.asc`, which the Expert Bundle archive is verified against (reusing the
+/// same signed-manifest path as Knots).
+pub fn tor_manifest_urls(version: &str) -> (String, String) {
+    let base = tor_release_base_url(version);
+    (
+        format!("{base}/sha256sums-unsigned-build.txt"),
+        format!("{base}/sha256sums-unsigned-build.txt.asc"),
+    )
+}
+
+/// Tor Expert Bundle download filename for the current pinned version on this
+/// host, or `None` if Tor is unavailable for the host platform.
+pub fn tor_download_filename() -> Option<String> {
+    tor_asset_filename(TOR_VERSION, HOST_OS, HOST_ARCH)
+}
+
+/// Tor Expert Bundle download URL for the current pinned version on this host,
+/// or `None` if Tor is unavailable for the host platform.
+pub fn tor_download_url() -> Option<String> {
+    tor_asset_url(TOR_VERSION, HOST_OS, HOST_ARCH)
+}
+
+/// Whether a managed Tor daemon can be installed on this host. `false` on
+/// Linux/Windows aarch64 (no published Expert Bundle) — the settings UI hides
+/// or disables inbound-over-Tor there.
+pub fn tor_supported_on_host() -> bool {
+    tor_download_filename().is_some()
+}
+
 pub fn internal_bitcoind_directory(coincube_datadir: &CoincubeDirectory) -> PathBuf {
     coincube_datadir.bitcoind_directory().path().to_path_buf()
+}
+
+/// Directory the managed Tor Expert Bundle for `version` is unpacked into. Sits
+/// alongside the managed `bitcoin-<version>` install so both share the managed
+/// bitcoind directory (and the duress wipe that covers it). Unpacking preserves
+/// the bundle's own layout, so the contents are `tor/tor[.exe]`,
+/// `tor/lib…`, `data/geoip…`, etc. underneath.
+pub fn internal_tor_directory(coincube_datadir: &CoincubeDirectory, version: &str) -> PathBuf {
+    internal_bitcoind_directory(coincube_datadir).join(format!("tor-{version}"))
+}
+
+/// Path of the managed `tor` executable for `version`.
+pub fn internal_tor_exe_path(coincube_datadir: &CoincubeDirectory, version: &str) -> PathBuf {
+    internal_tor_directory(coincube_datadir, version)
+        .join("tor")
+        .join(if cfg!(target_os = "windows") {
+            "tor.exe"
+        } else {
+            "tor"
+        })
+}
+
+/// Directory holding the bundle's geoip databases (`data/geoip`, `data/geoip6`)
+/// for `version`, passed to tor via `GeoIPFile`/`GeoIPv6File`.
+pub fn internal_tor_geoip_dir(coincube_datadir: &CoincubeDirectory, version: &str) -> PathBuf {
+    internal_tor_directory(coincube_datadir, version).join("data")
 }
 
 /// Data directory used by internal bitcoind.

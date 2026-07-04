@@ -98,3 +98,15 @@ pub async fn fetch_release_manifest(
     let asc = fetch_text(asc_url).await?;
     Ok(Some((sums, asc)))
 }
+
+/// Fetch the Tor release `sha256sums-unsigned-build.txt` and its detached
+/// `.asc`, which the managed Tor Expert Bundle download is verified against
+/// (the same signed-manifest path as Knots).
+pub async fn fetch_tor_release_manifest(
+    version: &str,
+) -> Result<(String, String), DownloadError> {
+    let (sums_url, asc_url) = crate::node::bitcoind::tor_manifest_urls(version);
+    let sums = fetch_text(sums_url).await?;
+    let asc = fetch_text(asc_url).await?;
+    Ok((sums, asc))
+}

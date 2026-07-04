@@ -1,18 +1,18 @@
 #[cfg(target_os = "windows")]
 use std::io::{self, Cursor};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use bitcoin_hashes::sha256;
 use coincube_core::miniscript::bitcoin::Network;
 use coincubed::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth};
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+// Not `cfg`-gated: the Bitcoin Core/Knots archives are tar.gz on Unix, and the
+// Tor Expert Bundle is tar.gz on *every* platform, so these are used everywhere.
 use flate2::read::GzDecoder;
 use iced::{Subscription, Task};
 use pgp::composed::{Deserializable, SignedPublicKey, StandaloneSignature};
 use pgp::types::KeyDetails;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 use tar::Archive;
 use tracing::info;
 
@@ -221,20 +221,27 @@ fn unpack_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBit
     Ok(())
 }
 
-/// What a freshly-downloaded managed-node archive is checked against before it
-/// is unpacked.
+/// What a freshly-downloaded managed-node/Tor archive is checked against before
+/// it is unpacked.
 #[derive(Debug, Clone)]
 pub enum DownloadVerification {
     /// Bitcoin Core: a single SHA-256 (hex) pinned in code for the current
     /// version's archive on this platform.
     PinnedSha256(String),
-    /// Bitcoin Knots: the release `SHA256SUMS` manifest plus its detached
-    /// `SHA256SUMS.asc`, both fetched from the release directory.
-    /// `archive_filename` is the name the archive is listed under.
+    /// A signed release-manifest verification (Bitcoin Knots and the Tor Expert
+    /// Bundle both use this shape): a `SHA256SUMS`-style manifest plus its
+    /// detached `.asc`, and the pinned signing key the `.asc` must validate
+    /// against. `archive_filename` is the name the archive is listed under.
     ReleaseManifest {
         archive_filename: String,
         sha256sums: String,
         sha256sums_asc: String,
+        /// Vendored armored public key the manifest signature must validate
+        /// against (Knots' or Tor's, depending on what is being installed).
+        signing_key_asc: &'static str,
+        /// Pinned fingerprint of `signing_key_asc`, re-derived and checked at
+        /// verification time so a swapped key file can't move the trust anchor.
+        signing_key_fingerprint: &'static str,
     },
 }
 
@@ -254,9 +261,30 @@ impl DownloadVerification {
                     archive_filename: flavor.download_filename(),
                     sha256sums,
                     sha256sums_asc,
+                    signing_key_asc: bitcoind::KNOTS_SIGNING_KEY_ASC,
+                    signing_key_fingerprint: bitcoind::KNOTS_SIGNING_KEY_FINGERPRINT,
                 })
             }
         }
+    }
+
+    /// Verification for the managed Tor Expert Bundle on this host: its release
+    /// `sha256sums-unsigned-build.txt` (+ `.asc`) signed by the Tor Browser
+    /// Developers key. `manifest` is the already-fetched `(sums, asc)`; returns
+    /// `None` if the manifest wasn't fetched, or if Tor isn't published for the
+    /// host platform (Linux/Windows aarch64).
+    // `allow(dead_code)`: consumed by the Tor lifecycle manager in T3.
+    #[allow(dead_code)]
+    pub fn for_tor(manifest: Option<(String, String)>) -> Option<Self> {
+        let archive_filename = bitcoind::tor_download_filename()?;
+        let (sha256sums, sha256sums_asc) = manifest?;
+        Some(Self::ReleaseManifest {
+            archive_filename,
+            sha256sums,
+            sha256sums_asc,
+            signing_key_asc: bitcoind::TOR_SIGNING_KEY_ASC,
+            signing_key_fingerprint: bitcoind::TOR_SIGNING_KEY_FINGERPRINT,
+        })
     }
 }
 
@@ -299,8 +327,15 @@ enum SignatureError {
 /// armored public key `pubkey_armored`, which must have fingerprint
 /// `expected_fingerprint`. The `.asc` may carry several signatures (the Knots
 /// manifest is multi-signed); verification succeeds iff **at least one** of them
-/// validates against the pinned key. Returns [`SignatureError::Missing`] when no
-/// signature block is present so callers can distinguish it from an invalid one.
+/// validates against the pinned key or one of its bound signing subkeys.
+/// Returns [`SignatureError::Missing`] when no signature block is present so
+/// callers can distinguish it from an invalid one.
+///
+/// Some issuers (e.g. Luke Dashjr's Knots key) sign the manifest with their
+/// primary key; others (e.g. the Tor Browser Developers key) sign with a
+/// dedicated signing *subkey*. We accept a subkey signature only when the
+/// subkey's binding signature itself validates against the pinned primary, so
+/// trust still flows from the single pinned fingerprint.
 fn verify_detached_signature(
     data: &[u8],
     asc: &str,
@@ -320,12 +355,23 @@ fn verify_detached_signature(
     if !hex::encode(pubkey.fingerprint().as_bytes()).eq_ignore_ascii_case(expected_fingerprint) {
         return Err(SignatureError::Invalid);
     }
-    let (signatures, _) =
+    // Subkeys cryptographically bound to the pinned primary — the only subkeys
+    // whose signatures we are willing to trust.
+    let bound_subkeys: Vec<_> = pubkey
+        .public_subkeys
+        .iter()
+        .filter(|sub| sub.verify(&pubkey.primary_key).is_ok())
+        .collect();
+    let (sig_iter, _) =
         StandaloneSignature::from_string_many(asc).map_err(|_| SignatureError::Invalid)?;
-    if signatures
-        .flatten()
-        .any(|sig| sig.verify(&pubkey, data).is_ok())
-    {
+    let signatures: Vec<StandaloneSignature> = sig_iter.flatten().collect();
+    let verifies = signatures.iter().any(|sig| {
+        sig.verify(&pubkey, data).is_ok()
+            || bound_subkeys
+                .iter()
+                .any(|sub| sig.verify(*sub, data).is_ok())
+    });
+    if verifies {
         Ok(())
     } else {
         Err(SignatureError::Invalid)
@@ -349,14 +395,17 @@ fn verify_download(
             archive_filename,
             sha256sums,
             sha256sums_asc,
+            signing_key_asc,
+            signing_key_fingerprint,
         } => {
             // The manifest's authenticity is anchored by its detached signature
-            // against the pinned Knots key; only then do we trust its checksums.
+            // against the pinned signing key (Knots' or Tor's); only then do we
+            // trust its checksums.
             match verify_detached_signature(
                 sha256sums.as_bytes(),
                 sha256sums_asc,
-                bitcoind::KNOTS_SIGNING_KEY_ASC,
-                bitcoind::KNOTS_SIGNING_KEY_FINGERPRINT,
+                signing_key_asc,
+                signing_key_fingerprint,
             ) {
                 Ok(()) => {}
                 Err(SignatureError::Missing) => return Err(InstallBitcoindError::MissingSignature),
@@ -378,6 +427,39 @@ pub fn install_bitcoind(
 ) -> Result<(), InstallBitcoindError> {
     verify_download(bytes, verification)?;
     unpack_bitcoind(install_dir, bytes)
+}
+
+/// Unpack the downloaded Tor Expert Bundle into `install_dir`, preserving the
+/// bundle's own layout (`tor/tor[.exe]`, its bundled shared libs, and
+/// `data/geoip…`). Unlike bitcoind — a single static binary we cherry-pick —
+/// `tor` needs its companion files, so the whole archive is extracted. The
+/// bundle is a tar.gz on every platform (Windows included).
+// `allow(dead_code)`: wired into the Tor lifecycle manager in T3; the `allow`
+// is removed then.
+#[allow(dead_code)]
+fn unpack_tor(install_dir: &Path, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
+    let decoder = GzDecoder::new(bytes);
+    let mut archive = Archive::new(decoder);
+    // `Archive::unpack` rejects entries whose paths would escape `install_dir`
+    // (path traversal), so even a malicious archive can't write outside it. It
+    // also restores the Unix mode bits, so `tor/tor` stays executable.
+    archive
+        .unpack(install_dir)
+        .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))
+}
+
+/// Install the managed Tor daemon: verify the download against `verification`
+/// (its signed release manifest), then unpack it into the versioned
+/// `tor-<version>` directory `install_dir`.
+// `allow(dead_code)`: wired into the Tor lifecycle manager in T3.
+#[allow(dead_code)]
+pub fn install_tor(
+    install_dir: &Path,
+    bytes: &[u8],
+    verification: &DownloadVerification,
+) -> Result<(), InstallBitcoindError> {
+    verify_download(bytes, verification)?;
+    unpack_tor(install_dir, bytes)
 }
 
 /// RPC address for internal bitcoind.
@@ -1230,6 +1312,25 @@ mod tests {
     const REAL_SUMS: &str = include_str!("test_fixtures/knots_sha256sums");
     const REAL_ASC: &str = include_str!("test_fixtures/knots_sha256sums.asc");
 
+    // Real Tor Expert Bundle manifest + detached signature (Tor Browser
+    // Developers signing key). Proves the vendored Tor key verifies the real
+    // release manifest — the crypto anchor for the Tor binary download.
+    const REAL_TOR_SUMS: &str = include_str!("test_fixtures/tor_sha256sums");
+    const REAL_TOR_ASC: &str = include_str!("test_fixtures/tor_sha256sums.asc");
+
+    #[test]
+    fn tor_detached_signature_verification() {
+        assert_eq!(
+            verify_detached_signature(
+                REAL_TOR_SUMS.as_bytes(),
+                REAL_TOR_ASC,
+                bitcoind::TOR_SIGNING_KEY_ASC,
+                bitcoind::TOR_SIGNING_KEY_FINGERPRINT,
+            ),
+            Ok(())
+        );
+    }
+
     // Core path: a single pinned hash. Wrong bytes fail, matching bytes pass.
     #[test]
     fn pinned_sha256_verification() {
@@ -1322,6 +1423,8 @@ mod tests {
             archive_filename: "bitcoin-29.3.knots20260508-x86_64-linux-gnu.tar.gz".to_string(),
             sha256sums: REAL_SUMS.to_string(),
             sha256sums_asc: REAL_ASC.to_string(),
+            signing_key_asc: bitcoind::KNOTS_SIGNING_KEY_ASC,
+            signing_key_fingerprint: bitcoind::KNOTS_SIGNING_KEY_FINGERPRINT,
         };
         assert_eq!(
             verify_download(b"not the real archive", &manifest),
@@ -1333,6 +1436,8 @@ mod tests {
             archive_filename: "x".to_string(),
             sha256sums: REAL_SUMS.to_string(),
             sha256sums_asc: String::new(),
+            signing_key_asc: bitcoind::KNOTS_SIGNING_KEY_ASC,
+            signing_key_fingerprint: bitcoind::KNOTS_SIGNING_KEY_FINGERPRINT,
         };
         assert_eq!(
             verify_download(b"x", &unsigned),
@@ -1346,11 +1451,96 @@ mod tests {
             archive_filename: "x".to_string(),
             sha256sums: tampered_sums,
             sha256sums_asc: REAL_ASC.to_string(),
+            signing_key_asc: bitcoind::KNOTS_SIGNING_KEY_ASC,
+            signing_key_fingerprint: bitcoind::KNOTS_SIGNING_KEY_FINGERPRINT,
         };
         assert_eq!(
             verify_download(b"x", &tampered),
             Err(InstallBitcoindError::InvalidSignature)
         );
+    }
+
+    // Exact Tor Expert Bundle URLs per platform, plus the unsupported-platform
+    // holes. Host-independent: `tor_asset_url` takes the platform explicitly.
+    #[test]
+    fn tor_asset_urls() {
+        use bitcoind::{tor_asset_url, NodeArch, NodeOs, TOR_VERSION};
+        assert_eq!(
+            tor_asset_url(TOR_VERSION, NodeOs::MacOs, NodeArch::Aarch64),
+            Some(format!(
+                "https://archive.torproject.org/tor-package-archive/torbrowser/\
+                 {TOR_VERSION}/tor-expert-bundle-macos-aarch64-{TOR_VERSION}.tar.gz"
+            ))
+        );
+        assert_eq!(
+            tor_asset_url(TOR_VERSION, NodeOs::Linux, NodeArch::X86_64),
+            Some(format!(
+                "https://archive.torproject.org/tor-package-archive/torbrowser/\
+                 {TOR_VERSION}/tor-expert-bundle-linux-x86_64-{TOR_VERSION}.tar.gz"
+            ))
+        );
+        assert_eq!(
+            tor_asset_url(TOR_VERSION, NodeOs::Windows, NodeArch::X86_64),
+            Some(format!(
+                "https://archive.torproject.org/tor-package-archive/torbrowser/\
+                 {TOR_VERSION}/tor-expert-bundle-windows-x86_64-{TOR_VERSION}.tar.gz"
+            ))
+        );
+        // No Expert Bundle is published for Linux/Windows aarch64.
+        assert_eq!(tor_asset_url(TOR_VERSION, NodeOs::Linux, NodeArch::Aarch64), None);
+        assert_eq!(
+            tor_asset_url(TOR_VERSION, NodeOs::Windows, NodeArch::Aarch64),
+            None
+        );
+    }
+
+    // `for_tor` needs the fetched manifest and pins the Tor signing key; end to
+    // end, the real Tor archive verifies against the real manifest.
+    #[test]
+    fn tor_verification() {
+        // Without a manifest, there is nothing to verify against.
+        assert!(DownloadVerification::for_tor(None).is_none());
+
+        // With the real manifest, `for_tor` pins the Tor key (only meaningful on
+        // hosts where a Tor bundle is published).
+        if bitcoind::tor_supported_on_host() {
+            let v = DownloadVerification::for_tor(Some((
+                REAL_TOR_SUMS.to_string(),
+                REAL_TOR_ASC.to_string(),
+            )))
+            .expect("tor verification on a supported host");
+            assert!(matches!(
+                v,
+                DownloadVerification::ReleaseManifest {
+                    signing_key_fingerprint,
+                    ..
+                } if signing_key_fingerprint == bitcoind::TOR_SIGNING_KEY_FINGERPRINT
+            ));
+
+            // The real bundle's checksum is listed in the real manifest under
+            // the host archive name — the full verify path succeeds for the
+            // real hash and fails for a tampered one.
+            let filename = bitcoind::tor_download_filename().unwrap();
+            let real_hash = REAL_TOR_SUMS
+                .lines()
+                .find(|l| l.trim_end().ends_with(&filename))
+                .and_then(|l| l.split_whitespace().next())
+                .expect("host archive listed in manifest");
+            assert!(hash_listed_in_manifest_hex(real_hash, &filename, REAL_TOR_SUMS));
+        }
+    }
+
+    // Helper mirroring `hash_listed_in_manifest` but taking a hex hash directly,
+    // so the Tor test needn't reconstruct the (large) archive bytes.
+    fn hash_listed_in_manifest_hex(hash_hex: &str, archive_filename: &str, sha256sums: &str) -> bool {
+        sha256sums.lines().any(|line| {
+            let mut fields = line.split_whitespace();
+            matches!(
+                (fields.next(), fields.next()),
+                (Some(hash), Some(name))
+                    if name == archive_filename && hash.eq_ignore_ascii_case(hash_hex)
+            )
+        })
     }
 
     #[test]
