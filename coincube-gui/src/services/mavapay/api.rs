@@ -17,12 +17,7 @@ pub enum MavapayApiResult<T> {
 impl<T> From<coincube::CoincubeError> for MavapayApiResult<T> {
     fn from(e: coincube::CoincubeError) -> Self {
         let message = match &e {
-            coincube::CoincubeError::Unsuccessful(info) => {
-                serde_json::from_str::<serde_json::Value>(&info.text)
-                    .ok()
-                    .and_then(|v| v.get("message")?.as_str().map(String::from))
-                    .unwrap_or_else(|| info.text.clone())
-            }
+            coincube::CoincubeError::Unsuccessful(info) => info.message(),
             coincube::CoincubeError::Network(e) => format!("Network error: {e}"),
             coincube::CoincubeError::Api(msg) => msg.clone(),
             coincube::CoincubeError::Parse(e) => format!("Parse error: {e:?}"),

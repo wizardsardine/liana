@@ -3,18 +3,6 @@ use serde::{Deserialize, Serialize};
 pub mod client;
 pub use client::CoincubeClient;
 
-/// Matches `{"success":false,"error":{"code":"...","message":"..."}}` error bodies
-/// returned by the coincube-api on non-2xx responses.
-#[derive(Debug, Deserialize)]
-struct ApiErrorBody {
-    message: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ApiErrorEnvelope {
-    error: ApiErrorBody,
-}
-
 #[derive(Debug)]
 pub enum CoincubeError {
     Network(reqwest::Error),
@@ -76,13 +64,7 @@ impl std::fmt::Display for CoincubeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CoincubeError::Network(msg) => write!(f, "Network error: {:?}", msg),
-            CoincubeError::Unsuccessful(e) => {
-                if let Ok(env) = serde_json::from_str::<ApiErrorEnvelope>(&e.text) {
-                    write!(f, "{}", env.error.message)
-                } else {
-                    write!(f, "{}", e.text)
-                }
-            }
+            CoincubeError::Unsuccessful(e) => write!(f, "{}", e.message()),
             CoincubeError::Api(msg) => write!(f, "API error: {}", msg),
             CoincubeError::Parse(msg) => write!(f, "Parse error: {}", msg),
             CoincubeError::SseError(e) => write!(f, "SSE Error: {}", e),
