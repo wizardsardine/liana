@@ -545,8 +545,13 @@ fn spent_coins_from(
             if w_c.spend_txid != Some(*spend_txid) {
                 expired_spending.push(*op);
             }
-            if let Some(block) = w_c.spend_block {
-                spent.push((*op, *spend_txid, block.height, block.time));
+            // Record the coin's *current* spend txid rather than the requested
+            // one: after an RBF replacement `w_c.spend_txid` differs from
+            // `spend_txid`, and persisting the stale requested txid would leave
+            // the DB pointing at a spend that no longer matches the confirmed
+            // transaction. (`spend_txid` is always set when `spend_block` is.)
+            if let (Some(current_txid), Some(block)) = (w_c.spend_txid, w_c.spend_block) {
+                spent.push((*op, current_txid, block.height, block.time));
             }
         }
     }
