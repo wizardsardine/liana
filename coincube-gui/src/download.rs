@@ -73,6 +73,18 @@ impl From<reqwest::Error> for DownloadError {
     }
 }
 
+/// Fetch a URL's full body as bytes in one shot, no progress reporting. Used
+/// for background installs (e.g. the managed Tor Expert Bundle) where there is
+/// no progress UI to drive, unlike the sipper-based [`download`].
+pub async fn fetch_bytes(url: impl AsRef<str>) -> Result<Vec<u8>, DownloadError> {
+    let body = reqwest::get(url.as_ref())
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
+    Ok(body.to_vec())
+}
+
 /// Fetch a small text file in one shot (e.g. a release `SHA256SUMS` manifest or
 /// its detached `.asc` signature). Unlike [`download`], it reports no progress.
 pub async fn fetch_text(url: impl AsRef<str>) -> Result<String, DownloadError> {

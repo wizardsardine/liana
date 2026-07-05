@@ -75,6 +75,9 @@ pub struct BitcoindSettingsState {
     bitcoind_settings: Option<BitcoindSettings>,
     electrum_settings: Option<ElectrumSettings>,
     rescan_settings: RescanSetting,
+    /// Cached inbound-over-Tor preference (from the sidecar), driving the "Help
+    /// defend the network" toggles. Persisted on every change.
+    inbound_tor_pref: crate::node::tor::InboundTorPreference,
 }
 
 impl BitcoindSettingsState {
@@ -127,6 +130,14 @@ impl BitcoindSettingsState {
             rescan_settings: RescanSetting::new(cache.rescan_progress()),
             pending_node_setup: None,
             cancel_node_setup_in_flight: false,
+            inbound_tor_pref: crate::node::tor::InboundTorPreference::load(&cache.datadir_path),
+        }
+    }
+
+    /// Persist the current inbound-over-Tor preference to its sidecar.
+    fn persist_inbound_tor_pref(&self, datadir: &CoincubeDirectory) {
+        if let Err(e) = self.inbound_tor_pref.save(datadir) {
+            warn!("could not save inbound-tor preference: {e}");
         }
     }
 
@@ -633,6 +644,26 @@ impl State for BitcoindSettingsState {
                             }
                         }
                     }
+                    // "Help defend the network": persist the preference sidecar.
+                    // The change takes effect the next time the managed node
+                    // starts (see `node::tor::prepare_inbound_tor`), so there's
+                    // nothing to restart here.
+                    NodeSettingsMessage::InboundTorToggled(on) => {
+                        self.inbound_tor_pref.enabled = on;
+                        self.persist_inbound_tor_pref(&cache.datadir_path);
+                    }
+                    NodeSettingsMessage::InboundTorOutboundToggled(on) => {
+                        self.inbound_tor_pref.outbound_via_tor = on;
+                        self.persist_inbound_tor_pref(&cache.datadir_path);
+                    }
+                    NodeSettingsMessage::InboundTorLimitUploadToggled(limit) => {
+                        self.inbound_tor_pref.max_upload_target_mb_day = if limit {
+                            Some(crate::node::bitcoind::MAX_UPLOAD_TARGET_MB_DAY_DEFAULT)
+                        } else {
+                            None
+                        };
+                        self.persist_inbound_tor_pref(&cache.datadir_path);
+                    }
                 }
             }
             _ => {}
@@ -774,6 +805,26 @@ impl State for BitcoindSettingsState {
                     )
                     .map(map_node_msg),
                 );
+
+                // "Help defend the network": inbound-over-Tor controls, shown
+                // only when the managed local node is the active backend.
+                if matches!(
+                    self.full_config
+                        .as_ref()
+                        .and_then(|c| c.bitcoin_backend.as_ref()),
+                    Some(BitcoinBackend::Bitcoind(_))
+                ) {
+                    setting_panels.push(
+                        view::vault::settings::inbound_tor_section(
+                            self.inbound_tor_pref.enabled,
+                            self.inbound_tor_pref.outbound_via_tor,
+                            self.inbound_tor_pref.max_upload_target_mb_day.is_some(),
+                            crate::node::tor::managed_tor_ports().is_some(),
+                            crate::node::bitcoind::tor_supported_on_host(),
+                        )
+                        .map(map_node_msg),
+                    );
+                }
             }
 
             if self.bitcoind_settings.is_some() || self.electrum_settings.is_some() {
@@ -866,6 +917,21 @@ fn configure_and_start_internal_bitcoind(
     });
     conf.networks.insert(network, network_conf);
     conf.to_file(&config_path).map_err(|e| e.to_string())?;
+
+    // Default-ON inbound-over-Tor for a freshly set-up enforcing (Knots) node —
+    // the point of the wedge is more reachable RDTS-enforcing nodes. Only write
+    // the sidecar when the user hasn't already made a choice, so an existing
+    // opt-out survives a reconfigure. The binary is provisioned lazily on the
+    // next node start (see `node::tor::ensure_tor_installed_if_wanted`).
+    if matches!(flavor, NodeFlavor::Knots)
+        && !crate::node::tor::InboundTorPreference::path(&coincube_datadir).exists()
+    {
+        if let Err(e) =
+            crate::node::tor::InboundTorPreference::default_enabled().save(&coincube_datadir)
+        {
+            warn!("could not write default inbound-tor preference: {e}");
+        }
+    }
 
     let cookie_path = internal_bitcoind_cookie_path(&bitcoind_datadir, &network);
     let bitcoind_config = BitcoindConfig {

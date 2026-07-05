@@ -273,8 +273,6 @@ impl DownloadVerification {
     /// Developers key. `manifest` is the already-fetched `(sums, asc)`; returns
     /// `None` if the manifest wasn't fetched, or if Tor isn't published for the
     /// host platform (Linux/Windows aarch64).
-    // `allow(dead_code)`: consumed by the Tor lifecycle manager in T3.
-    #[allow(dead_code)]
     pub fn for_tor(manifest: Option<(String, String)>) -> Option<Self> {
         let archive_filename = bitcoind::tor_download_filename()?;
         let (sha256sums, sha256sums_asc) = manifest?;
@@ -434,9 +432,6 @@ pub fn install_bitcoind(
 /// `data/geoip…`). Unlike bitcoind — a single static binary we cherry-pick —
 /// `tor` needs its companion files, so the whole archive is extracted. The
 /// bundle is a tar.gz on every platform (Windows included).
-// `allow(dead_code)`: wired into the Tor lifecycle manager in T3; the `allow`
-// is removed then.
-#[allow(dead_code)]
 fn unpack_tor(install_dir: &Path, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
     let decoder = GzDecoder::new(bytes);
     let mut archive = Archive::new(decoder);
@@ -451,8 +446,6 @@ fn unpack_tor(install_dir: &Path, bytes: &[u8]) -> Result<(), InstallBitcoindErr
 /// Install the managed Tor daemon: verify the download against `verification`
 /// (its signed release manifest), then unpack it into the versioned
 /// `tor-<version>` directory `install_dir`.
-// `allow(dead_code)`: wired into the Tor lifecycle manager in T3.
-#[allow(dead_code)]
 pub fn install_tor(
     install_dir: &Path,
     bytes: &[u8],
@@ -1057,6 +1050,20 @@ impl Step for InternalBitcoindStep {
                     )) {
                         self.error = Some(e.to_string());
                         return Task::none();
+                    }
+                    // Default-ON inbound-over-Tor for a freshly set-up enforcing
+                    // (Knots) node — see the settings path for rationale. Only
+                    // write the sidecar when the user hasn't already chosen, so
+                    // an existing opt-out survives.
+                    if matches!(self.flavor, NodeFlavor::Knots)
+                        && !crate::node::tor::InboundTorPreference::path(&self.coincube_datadir)
+                            .exists()
+                    {
+                        if let Err(e) = crate::node::tor::InboundTorPreference::default_enabled()
+                            .save(&self.coincube_datadir)
+                        {
+                            info!("could not write default inbound-tor preference: {e}");
+                        }
                     }
                     self.error = None;
                     self.internal_bitcoind_config = Some(conf);

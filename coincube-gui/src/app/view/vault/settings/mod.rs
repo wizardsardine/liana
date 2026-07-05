@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{container, rule, Column};
+use iced::widget::{container, rule, Column, Toggler};
 use iced::{
     alignment,
     widget::{radio, scrollable, tooltip as iced_tooltip, Space},
@@ -1737,6 +1737,99 @@ pub fn internal_node_setup_panel<'a>(
     }
 
     card::simple(Container::new(col).padding(15).width(Length::Fill)).into()
+}
+
+/// The "Help defend the network" panel: opt in/out of inbound-over-Tor and tune
+/// it. Each control persists the preference sidecar; the change takes effect the
+/// next time the managed node starts.
+pub fn inbound_tor_section<'a>(
+    enabled: bool,
+    outbound_via_tor: bool,
+    limit_upload: bool,
+    tor_running: bool,
+    supported: bool,
+) -> Element<'a, NodeSettingsMessage> {
+    let mut col = Column::new()
+        .spacing(15)
+        .push(text("Help defend the network").bold().size(18))
+        .push(
+            text(
+                "Make your enforcing node reachable over Tor — a private onion \
+                 service, no port-forwarding — so it can relay valid blocks and \
+                 transactions to more peers and defend the network.",
+            )
+            .size(13)
+            .style(theme::text::secondary),
+        );
+
+    if !supported {
+        col = col.push(
+            text("Not available on this platform.")
+                .size(13)
+                .style(theme::text::secondary),
+        );
+        return card::simple(col).width(Length::Fill).into();
+    }
+
+    col = col.push(
+        Row::new()
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .push(text("Share and defend over Tor").bold().width(Length::Fill))
+            .push(
+                Toggler::new(enabled)
+                    .on_toggle(NodeSettingsMessage::InboundTorToggled)
+                    .width(50)
+                    .style(theme::toggler::orange),
+            ),
+    );
+
+    if enabled {
+        col = col
+            .push(
+                text(
+                    "Sharing up to ~1 GB/day. Turn off the limit only if your \
+                     internet connection isn't metered.",
+                )
+                .size(12)
+                .style(theme::text::secondary),
+            )
+            .push(
+                Row::new()
+                    .spacing(20)
+                    .align_y(Alignment::Center)
+                    .push(text("Limit upload to ~1 GB/day").width(Length::Fill))
+                    .push(
+                        Toggler::new(limit_upload)
+                            .on_toggle(NodeSettingsMessage::InboundTorLimitUploadToggled)
+                            .width(50)
+                            .style(theme::toggler::orange),
+                    ),
+            )
+            .push(
+                Row::new()
+                    .spacing(20)
+                    .align_y(Alignment::Center)
+                    .push(text("Also route outbound connections through Tor").width(Length::Fill))
+                    .push(
+                        Toggler::new(outbound_via_tor)
+                            .on_toggle(NodeSettingsMessage::InboundTorOutboundToggled)
+                            .width(50)
+                            .style(theme::toggler::orange),
+                    ),
+            )
+            .push(
+                text(if tor_running {
+                    "Status: Tor is running — your node is reachable as an onion service."
+                } else {
+                    "Status: takes effect the next time your node starts."
+                })
+                .size(12)
+                .style(theme::text::secondary),
+            );
+    }
+
+    card::simple(col).width(Length::Fill).into()
 }
 
 pub fn register_wallet_modal<'a>(

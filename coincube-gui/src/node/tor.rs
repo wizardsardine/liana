@@ -39,8 +39,9 @@ use tracing::{info, warn};
 use crate::dir::CoincubeDirectory;
 use crate::node::bitcoind::{
     internal_bitcoind_config_path, internal_bitcoind_datadir, internal_bitcoind_directory,
-    internal_tor_exe_path, internal_tor_geoip_dir, tor_supported_on_host, InternalBitcoindConfig,
-    MAX_CONNECTIONS_DEFAULT, MAX_UPLOAD_TARGET_MB_DAY_DEFAULT, TOR_VERSION,
+    internal_tor_directory, internal_tor_exe_path, internal_tor_geoip_dir, tor_download_url,
+    tor_supported_on_host, InternalBitcoindConfig, MAX_CONNECTIONS_DEFAULT,
+    MAX_UPLOAD_TARGET_MB_DAY_DEFAULT, TOR_VERSION,
 };
 
 #[cfg(target_os = "windows")]
@@ -512,6 +513,63 @@ pub fn prepare_inbound_tor(coincube_datadir: &CoincubeDirectory, _network: Netwo
             write_outbound_only(conf);
             false
         }
+    }
+}
+
+// -------------------------------------------------------------------------
+// Binary install
+// -------------------------------------------------------------------------
+
+/// Whether the managed Tor binary for the pinned version is installed.
+pub fn tor_installed(coincube_datadir: &CoincubeDirectory) -> bool {
+    internal_tor_exe_path(coincube_datadir, TOR_VERSION).exists()
+}
+
+/// Download, signature-verify, and install the managed Tor Expert Bundle for
+/// the pinned version. No-op (Ok) if it's already installed. Reuses the same
+/// signed-manifest verification path as the managed bitcoind (see
+/// `installer::step::node::bitcoind`), so an unverifiable download is refused.
+pub async fn download_and_install_tor(coincube_datadir: CoincubeDirectory) -> Result<(), String> {
+    use crate::installer::step::node::bitcoind::{install_tor, DownloadVerification};
+
+    if tor_installed(&coincube_datadir) {
+        return Ok(());
+    }
+    if !tor_supported_on_host() {
+        return Err("Tor is not available for this platform".to_string());
+    }
+    let url = tor_download_url().ok_or_else(|| "no Tor download URL for this platform".to_string())?;
+
+    info!("downloading managed Tor {TOR_VERSION} from {url}");
+    let bytes = crate::download::fetch_bytes(&url)
+        .await
+        .map_err(|e| format!("Tor download failed: {e}"))?;
+    let manifest = crate::download::fetch_tor_release_manifest(TOR_VERSION)
+        .await
+        .map_err(|e| format!("Tor manifest fetch failed: {e}"))?;
+    let verification = DownloadVerification::for_tor(Some(manifest))
+        .ok_or_else(|| "could not build Tor download verification".to_string())?;
+
+    let install_dir = internal_tor_directory(&coincube_datadir, TOR_VERSION);
+    std::fs::create_dir_all(&install_dir)
+        .map_err(|e| format!("could not create Tor install dir: {e}"))?;
+    install_tor(&install_dir, &bytes, &verification).map_err(|e| format!("Tor install failed: {e}"))?;
+    info!("installed managed Tor {TOR_VERSION}");
+    Ok(())
+}
+
+/// If the user wants inbound-over-Tor and it's available for this platform but
+/// the binary isn't installed yet, install it now (best-effort). Called before
+/// the runtime [`prepare_inbound_tor`] so a default-ON node self-provisions Tor
+/// on first launch. Never errors — a failed install just means inbound is
+/// unavailable this run (fail-safe), retried next launch.
+pub async fn ensure_tor_installed_if_wanted(coincube_datadir: &CoincubeDirectory) {
+    let pref = InboundTorPreference::load(coincube_datadir);
+    if !pref.enabled || !tor_supported_on_host() || tor_installed(coincube_datadir) {
+        return;
+    }
+    if let Err(e) = download_and_install_tor(coincube_datadir.clone()).await {
+        warn!("could not auto-install managed Tor ({e}); inbound unavailable this run");
     }
 }
 

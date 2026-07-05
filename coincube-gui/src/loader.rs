@@ -899,6 +899,9 @@ pub async fn start_bitcoind_and_daemon(
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
     let bitcoind = match (start_internal_bitcoind, &config.bitcoin_backend) {
         (true, Some(BitcoinBackend::Bitcoind(bitcoind_config))) => {
+            // A default-ON node self-provisions the Tor binary on first launch
+            // (best-effort; failure just means inbound is unavailable this run).
+            crate::node::tor::ensure_tor_installed_if_wanted(&coincube_datadir_path).await;
             // Bring up inbound-over-Tor (if the user enabled it) and reconcile
             // bitcoin.conf *before* starting bitcoind, so bitcoind reads the
             // fresh onion/proxy config. Fail-safe and infallible: any Tor issue

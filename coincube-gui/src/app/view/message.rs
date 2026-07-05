@@ -527,6 +527,15 @@ pub enum NodeSettingsMessage {
     SetupLocalNodeDownloadProgress(f32),
     SetupLocalNodeDownloadComplete(Result<Vec<u8>, String>),
     SetupLocalNodeStartResult(Result<(BitcoindConfig, Bitcoind), String>),
+    // "Help defend the network" — inbound-over-Tor preferences. Each persists
+    // the preference sidecar; the change takes effect the next time the managed
+    // node starts.
+    /// Master toggle: make the node reachable over Tor (v3 onion service).
+    InboundTorToggled(bool),
+    /// Sub-toggle: also route outbound peer connections through Tor.
+    InboundTorOutboundToggled(bool),
+    /// Cap daily upload at ~1 GB/day (on) vs. unlimited (off).
+    InboundTorLimitUploadToggled(bool),
 }
 
 #[derive(Debug, Clone)]
