@@ -807,13 +807,17 @@ impl State for BitcoindSettingsState {
                 );
 
                 // "Help defend the network": inbound-over-Tor controls, shown
-                // only when the managed local node is the active backend.
-                if matches!(
-                    self.full_config
-                        .as_ref()
-                        .and_then(|c| c.bitcoin_backend.as_ref()),
-                    Some(BitcoinBackend::Bitcoind(_))
-                ) {
+                // only when the managed local node is the active backend and on
+                // mainnet (the feature is mainnet-only; hidden elsewhere as it's
+                // unneeded).
+                if cache.network == Network::Bitcoin
+                    && matches!(
+                        self.full_config
+                            .as_ref()
+                            .and_then(|c| c.bitcoin_backend.as_ref()),
+                        Some(BitcoinBackend::Bitcoind(_))
+                    )
+                {
                     setting_panels.push(
                         view::vault::settings::inbound_tor_section(
                             self.inbound_tor_pref.enabled,
@@ -918,12 +922,14 @@ fn configure_and_start_internal_bitcoind(
     conf.networks.insert(network, network_conf);
     conf.to_file(&config_path).map_err(|e| e.to_string())?;
 
-    // Default-ON inbound-over-Tor for a freshly set-up enforcing (Knots) node —
-    // the point of the wedge is more reachable RDTS-enforcing nodes. Only write
-    // the sidecar when the user hasn't already made a choice, so an existing
-    // opt-out survives a reconfigure. The binary is provisioned lazily on the
-    // next node start (see `node::tor::ensure_tor_installed_if_wanted`).
+    // Default-ON inbound-over-Tor for a freshly set-up enforcing (Knots) node on
+    // mainnet — the point of the wedge is more reachable RDTS-enforcing nodes,
+    // and it's mainnet-only. Only write the sidecar when the user hasn't already
+    // made a choice, so an existing opt-out survives a reconfigure. The binary is
+    // provisioned lazily on the next node start (see
+    // `node::tor::ensure_tor_installed_if_wanted`).
     if matches!(flavor, NodeFlavor::Knots)
+        && network == Network::Bitcoin
         && !crate::node::tor::InboundTorPreference::path(&coincube_datadir).exists()
     {
         if let Err(e) =

@@ -38,6 +38,11 @@ the wedge). Safeguards replace the opt-in:
 - On platforms with no Tor build (Linux/Windows **aarch64**), the feature is
   hidden and the node runs outbound-only.
 
+It is **mainnet-only**: the managed enforcing node exists to defend mainnet, and
+onion reachability has no value on test networks. On signet/testnet/regtest the
+Settings section is hidden, no default-ON preference is written, and the runtime
+never starts Tor (see `prepare_inbound_tor`).
+
 ## Architecture
 
 | Concern | Where |
@@ -111,7 +116,7 @@ means a separate machine/host running `tor` + a Bitcoin client, or
 | 7 | **Unsupported platform** | Linux/Windows aarch64 | Settings section shows "Not available on this platform"; node runs outbound-only; no download attempted |
 | 8 | **Duress wipe** | Enable, let the onion key + `tor-data` exist, trigger a duress wipe | `bitcoind/tor-data` and `bitcoind/datadir[/**]/onion_v3_private_key` are gone; the blockchain (`blocks`/`chainstate`) survives |
 | 9 | **Signature failure refused** | Point the Tor download at a tampered archive/manifest (or wrong key) | Install fails with a signature/checksum error; no `tor` binary is written; inbound stays unavailable (fail-safe) |
-| 10 | **Signet/regtest** | Set up on a non-mainnet network | **Decide with the team** — currently the same code path runs; confirm whether inbound-over-Tor should be hidden or no-op off-mainnet, and gate accordingly. (The managed node is mainnet-focused; onion reachability off-mainnet has little value.) |
+| 10 | **Signet/regtest (mainnet-only)** | Set up a managed node on a non-mainnet network | The "Help defend the network" section is **hidden**; no default-ON preference is written; `prepare_inbound_tor` no-ops to outbound-only regardless of the sidecar. Only `Network::Bitcoin` runs Tor inbound. |
 
 ### Automated coverage
 
@@ -122,7 +127,6 @@ means a separate machine/host running `tor` + a Bitcoin client, or
 
 ## Open items / follow-ups
 
-- **Off-mainnet policy** (QA #10): decide hide-vs-no-op with the team and gate.
 - **Status card polish**: the Settings section shows a running/not-running status
   line; richer live stats (onion address copy button, inbound peer count from
   `getpeerinfo`, upload-used-vs-target from `getnettotals`) are post-launch polish.

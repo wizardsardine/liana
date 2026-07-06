@@ -1052,10 +1052,12 @@ impl Step for InternalBitcoindStep {
                         return Task::none();
                     }
                     // Default-ON inbound-over-Tor for a freshly set-up enforcing
-                    // (Knots) node — see the settings path for rationale. Only
-                    // write the sidecar when the user hasn't already chosen, so
-                    // an existing opt-out survives.
+                    // (Knots) node on mainnet — see the settings path for
+                    // rationale; it's mainnet-only. Only write the sidecar when
+                    // the user hasn't already chosen, so an existing opt-out
+                    // survives.
                     if matches!(self.flavor, NodeFlavor::Knots)
+                        && self.network == Network::Bitcoin
                         && !crate::node::tor::InboundTorPreference::path(&self.coincube_datadir)
                             .exists()
                     {

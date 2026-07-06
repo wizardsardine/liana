@@ -444,13 +444,17 @@ pub fn managed_tor_ports() -> Option<TorPorts> {
 /// `bitcoin.conf` so bitcoind emits the right inbound knobs for **this** run.
 /// Call this immediately before starting the managed bitcoind.
 ///
-/// Fail-safe and infallible by design: any problem (preference off, platform
-/// unsupported, binary missing, bootstrap timeout, I/O error) leaves
-/// `bitcoin.conf` with **no** inbound knobs, so bitcoind runs outbound-only
-/// exactly as today. Returns `true` iff Tor is up and bitcoind will host an
-/// onion service. The user's preference sidecar is never modified here, so a
-/// transient failure is retried next launch.
-pub fn prepare_inbound_tor(coincube_datadir: &CoincubeDirectory, _network: Network) -> bool {
+/// Fail-safe and infallible by design: any problem (preference off, wrong
+/// network, platform unsupported, binary missing, bootstrap timeout, I/O error)
+/// leaves `bitcoin.conf` with **no** inbound knobs, so bitcoind runs
+/// outbound-only exactly as today. Returns `true` iff Tor is up and bitcoind
+/// will host an onion service. The user's preference sidecar is never modified
+/// here, so a transient failure is retried next launch.
+///
+/// Inbound-over-Tor is **mainnet-only**: the managed enforcing node exists to
+/// defend mainnet, and onion reachability has no value on test networks, so we
+/// run outbound-only on anything but [`Network::Bitcoin`].
+pub fn prepare_inbound_tor(coincube_datadir: &CoincubeDirectory, network: Network) -> bool {
     // Any prior managed tor from this process is replaced.
     stop_managed_tor();
 
@@ -475,6 +479,12 @@ pub fn prepare_inbound_tor(coincube_datadir: &CoincubeDirectory, _network: Netwo
             warn!("failed to write outbound-only bitcoin.conf: {e}");
         }
     };
+
+    // Mainnet-only (see the doc comment above).
+    if network != Network::Bitcoin {
+        write_outbound_only(conf);
+        return false;
+    }
 
     let pref = InboundTorPreference::load(coincube_datadir);
     if !pref.enabled {
@@ -723,6 +733,40 @@ mod tests {
         // The RDTS/base config is preserved.
         assert!(reloaded.enforce_rdts);
         // The user's preference is NOT clobbered by the failure — retried next launch.
+        assert!(InboundTorPreference::load(&datadir).enabled);
+
+        let _ = std::fs::remove_dir_all(datadir.path());
+    }
+
+    #[test]
+    fn prepare_is_mainnet_only() {
+        use crate::node::bitcoind::{InternalBitcoindConfig, InternalBitcoindNetworkConfig};
+
+        let datadir = temp_datadir("mainnet-only");
+        let config_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(&datadir));
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        let mut conf =
+            InternalBitcoindConfig::for_flavor(crate::node::bitcoind::NodeFlavor::Knots);
+        conf.networks.insert(
+            Network::Signet,
+            InternalBitcoindNetworkConfig {
+                rpc_port: 12345,
+                p2p_port: 12346,
+                prune: 15000,
+                rpc_auth: None,
+            },
+        );
+        conf.to_file(&config_path).unwrap();
+        // Preference enabled, but we're on a non-mainnet network.
+        InboundTorPreference::default_enabled().save(&datadir).unwrap();
+
+        let enabled = prepare_inbound_tor(&datadir, Network::Signet);
+        assert!(!enabled, "inbound-over-tor must be mainnet-only");
+        let reloaded = InternalBitcoindConfig::from_file(&config_path).unwrap();
+        assert!(!reloaded.inbound_tor, "no inbound knobs off-mainnet");
+        assert!(reloaded.tor_control_port.is_none());
+        // Base config preserved; preference untouched (still enabled for mainnet).
+        assert!(reloaded.enforce_rdts);
         assert!(InboundTorPreference::load(&datadir).enabled);
 
         let _ = std::fs::remove_dir_all(datadir.path());
