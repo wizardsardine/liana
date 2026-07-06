@@ -221,18 +221,7 @@ impl BitcoindSettingsState {
         if exe_exists {
             setup.internal_stage = InternalSetupStage::Installing;
             Task::perform(
-                async move {
-                    tokio::task::spawn_blocking(move || {
-                        configure_and_start_internal_bitcoind(
-                            coincube_datadir,
-                            network,
-                            flavor,
-                            None,
-                        )
-                    })
-                    .await
-                    .unwrap_or_else(|e| Err(e.to_string()))
-                },
+                ensure_tor_and_start_managed(coincube_datadir, network, flavor, None, false),
                 |r| {
                     Message::View(view::Message::Settings(
                         view::SettingsMessage::NodeSettings(
@@ -477,16 +466,14 @@ impl State for BitcoindSettingsState {
                                             let manifest = download::fetch_release_manifest(flavor)
                                                 .await
                                                 .map_err(|e| e.to_string())?;
-                                            tokio::task::spawn_blocking(move || {
-                                                configure_and_start_internal_bitcoind(
-                                                    coincube_datadir,
-                                                    network,
-                                                    flavor,
-                                                    Some((bytes, manifest)),
-                                                )
-                                            })
+                                            ensure_tor_and_start_managed(
+                                                coincube_datadir,
+                                                network,
+                                                flavor,
+                                                Some((bytes, manifest)),
+                                                false,
+                                            )
                                             .await
-                                            .unwrap_or_else(|e| Err(e.to_string()))
                                         },
                                         |r| {
                                             Message::View(view::Message::Settings(
@@ -708,6 +695,47 @@ impl State for BitcoindSettingsState {
                     }
                     NodeSettingsMessage::CancelFlavorSwitch => {
                         self.pending_flavor_switch = None;
+                    }
+                    NodeSettingsMessage::RestartNodeToApply => {
+                        // Restart the managed node now so freshly-toggled
+                        // inbound-over-Tor settings take effect, reusing the setup
+                        // progress panel + result handler. `force_restart` stops
+                        // the running node first (same flavour, so `maybe_start`
+                        // would otherwise reuse it).
+                        let Some(flavor) =
+                            self.bitcoind_settings.as_ref().and_then(|s| s.managed_flavor)
+                        else {
+                            return Task::none();
+                        };
+                        self.pending_node_setup = Some(PendingNodeSetup {
+                            mode: Some(true),
+                            addr: form::Value::default(),
+                            rpc_auth_vals: RpcAuthValues::default(),
+                            selected_auth_type: RpcAuthType::CookieFile,
+                            processing: true,
+                            flavor,
+                            internal_stage: InternalSetupStage::Installing,
+                            internal_error: None,
+                            download_progress: 100.0,
+                        });
+                        let coincube_datadir = cache.datadir_path.clone();
+                        let network = cache.network;
+                        return Task::perform(
+                            ensure_tor_and_start_managed(
+                                coincube_datadir,
+                                network,
+                                flavor,
+                                None,
+                                true,
+                            ),
+                            |r| {
+                                Message::View(view::Message::Settings(
+                                    view::SettingsMessage::NodeSettings(
+                                        view::NodeSettingsMessage::SetupLocalNodeStartResult(r),
+                                    ),
+                                ))
+                            },
+                        );
                     }
                 }
             }
@@ -946,6 +974,10 @@ fn configure_and_start_internal_bitcoind(
     network: Network,
     flavor: NodeFlavor,
     install: Option<ManagedNodeInstall>,
+    // When true, stop any running managed node first so the (re)start applies
+    // the fresh config even at the same flavour — used by the "restart to apply"
+    // action. `maybe_start` alone only restarts on a flavour change.
+    force_restart: bool,
 ) -> Result<(BitcoindConfig, Bitcoind), String> {
     if let Some((bytes, manifest)) = install {
         let verification = DownloadVerification::for_flavor(flavor, manifest)
@@ -1011,10 +1043,49 @@ fn configure_and_start_internal_bitcoind(
         addr: internal_bitcoind_address(rpc_port),
     };
 
+    // Force a clean restart when asked (same-flavour reconfigure), so the new
+    // config below is actually applied rather than a running node reused.
+    if force_restart {
+        crate::node::bitcoind::stop_and_wait_managed_bitcoind(&bitcoind_config);
+    }
+
+    // Apply inbound-over-Tor before starting bitcoind: this starts the managed
+    // Tor daemon and rewrites bitcoin.conf with the onion/proxy keys (mainnet
+    // only, gated on the user's preference; fail-safe to outbound-only). Doing
+    // it here means a flavour switch or a "restart to apply" picks the inbound
+    // config up, matching the app-launch path in `loader`.
+    crate::node::tor::prepare_inbound_tor(&coincube_datadir, network);
+
     let bitcoind = Bitcoind::maybe_start(network, bitcoind_config.clone(), &coincube_datadir)
         .map_err(|e| e.to_string())?;
 
     Ok((bitcoind_config, bitcoind))
+}
+
+/// Ensure the managed Tor binary is present (when inbound is wanted), then
+/// configure and start the managed node on a blocking thread. Centralises the
+/// tor-install + `spawn_blocking(configure_and_start_internal_bitcoind)` used by
+/// the setup, flavour-switch, and restart flows so the blocking step's
+/// `prepare_inbound_tor` can actually start Tor.
+async fn ensure_tor_and_start_managed(
+    coincube_datadir: CoincubeDirectory,
+    network: Network,
+    flavor: NodeFlavor,
+    install: Option<ManagedNodeInstall>,
+    force_restart: bool,
+) -> Result<(BitcoindConfig, Bitcoind), String> {
+    crate::node::tor::ensure_tor_installed_if_wanted(&coincube_datadir).await;
+    tokio::task::spawn_blocking(move || {
+        configure_and_start_internal_bitcoind(
+            coincube_datadir,
+            network,
+            flavor,
+            install,
+            force_restart,
+        )
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
 }
 
 #[derive(Debug)]

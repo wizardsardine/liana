@@ -542,6 +542,9 @@ pub enum NodeSettingsMessage {
     ConfirmFlavorSwitch,
     /// Dismiss the flavour-switch confirmation without switching.
     CancelFlavorSwitch,
+    /// Restart the managed node now so freshly-changed inbound-over-Tor settings
+    /// take effect (they otherwise apply only on the next node start).
+    RestartNodeToApply,
 }
 
 #[derive(Debug, Clone)]

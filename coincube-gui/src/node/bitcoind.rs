@@ -959,6 +959,20 @@ fn wait_for_internal_bitcoind_shutdown(config: &BitcoindConfig) {
     );
 }
 
+/// Stop the managed bitcoind reachable at `config` (if one is running) and block
+/// until it has released the datadir, so a replacement can start cleanly on the
+/// same port. Used to force a same-flavour restart that applies new config
+/// (e.g. inbound-over-Tor toggled in settings) — [`Bitcoind::maybe_start`] would
+/// otherwise reuse the running node and never pick the change up. No-op when no
+/// managed node is reachable.
+pub fn stop_and_wait_managed_bitcoind(config: &BitcoindConfig) {
+    if let Ok(running) = coincubed::BitcoinD::new(config, "managed_restart_stop".to_string()) {
+        info!("Stopping managed bitcoind to apply new config...");
+        running.stop();
+        wait_for_internal_bitcoind_shutdown(config);
+    }
+}
+
 impl Bitcoind {
     /// Start internal bitcoind for the given network.
     pub fn maybe_start(

@@ -1877,17 +1877,36 @@ pub fn inbound_tor_section<'a>(
                             .width(50)
                             .style(theme::toggler::orange),
                     ),
-            )
-            .push(
-                text(if tor_running {
-                    "Status: Tor is running — your node is reachable as an onion service."
-                } else {
-                    "Status: takes effect the next time your node starts."
-                })
-                .size(12)
-                .style(theme::text::secondary),
             );
     }
+
+    // Status + apply-now. Every change above (including turning the feature off)
+    // only reaches the running node when it restarts, so offer a one-click
+    // restart alongside the status.
+    col = col
+        .push(separation().width(Length::Fill))
+        .push(
+            Row::new()
+                .spacing(15)
+                .align_y(Alignment::Center)
+                .push(
+                    text(if tor_running {
+                        "Tor is running — your node is reachable as an onion service."
+                    } else if enabled {
+                        "Not reachable over Tor yet — restart the node to apply."
+                    } else {
+                        "Inbound over Tor is off."
+                    })
+                    .size(12)
+                    .style(theme::text::secondary)
+                    .width(Length::Fill),
+                )
+                .push(
+                    button::secondary(None, "Restart node to apply")
+                        .padding([8, 14])
+                        .on_press(NodeSettingsMessage::RestartNodeToApply),
+                ),
+        );
 
     card::simple(col).width(Length::Fill).into()
 }
