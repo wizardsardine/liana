@@ -536,6 +536,12 @@ pub enum NodeSettingsMessage {
     InboundTorOutboundToggled(bool),
     /// Cap daily upload at ~1 GB/day (on) vs. unlimited (off).
     InboundTorLimitUploadToggled(bool),
+    /// Confirm a pending managed-node flavour switch (download if needed +
+    /// restart on the new flavour). Paired with the dropdown's
+    /// `SettingsEditMessage::SwitchManagedFlavor`.
+    ConfirmFlavorSwitch,
+    /// Dismiss the flavour-switch confirmation without switching.
+    CancelFlavorSwitch,
 }
 
 #[derive(Debug, Clone)]
@@ -553,6 +559,9 @@ pub enum SettingsEditMessage {
     Cancel,
     Confirm,
     Clipboard(String),
+    /// Managed-node flavour picked from the node-card dropdown. Intercepted by
+    /// `BitcoindSettingsState` to raise a confirmation before switching.
+    SwitchManagedFlavor(crate::node::bitcoind::NodeFlavor),
 }
 
 #[derive(Debug, Clone)]

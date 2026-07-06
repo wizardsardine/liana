@@ -263,6 +263,13 @@ impl NodeFlavor {
     }
 }
 
+impl std::fmt::Display for NodeFlavor {
+    /// Human-readable name, so `NodeFlavor` can back a `pick_list`.
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.display_name())
+    }
+}
+
 /// Tor Expert Bundle archive filename for `version` on the given platform, e.g.
 /// `tor-expert-bundle-macos-aarch64-15.0.17.tar.gz`.
 ///

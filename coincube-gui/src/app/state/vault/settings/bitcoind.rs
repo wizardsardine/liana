@@ -78,6 +78,9 @@ pub struct BitcoindSettingsState {
     /// Cached inbound-over-Tor preference (from the sidecar), driving the "Help
     /// defend the network" toggles. Persisted on every change.
     inbound_tor_pref: crate::node::tor::InboundTorPreference,
+    /// A managed-node flavour the user picked from the node-card dropdown but
+    /// hasn't confirmed yet — while `Some`, a confirmation panel is shown.
+    pending_flavor_switch: Option<NodeFlavor>,
 }
 
 impl BitcoindSettingsState {
@@ -131,6 +134,7 @@ impl BitcoindSettingsState {
             pending_node_setup: None,
             cancel_node_setup_in_flight: false,
             inbound_tor_pref: crate::node::tor::InboundTorPreference::load(&cache.datadir_path),
+            pending_flavor_switch: None,
         }
     }
 
@@ -345,6 +349,21 @@ impl State for BitcoindSettingsState {
             Message::View(view::Message::Settings(view::SettingsMessage::BitcoindSettings(
                 msg,
             ))) => {
+                // Intercept the node-card flavour dropdown before delegating to
+                // the sub-state: raise a confirmation instead of switching
+                // immediately (a switch restarts the shared node). Match by
+                // reference so `msg` stays available for delegation.
+                if let view::SettingsEditMessage::SwitchManagedFlavor(flavor) = &msg {
+                    let flavor = *flavor;
+                    let current = self
+                        .bitcoind_settings
+                        .as_ref()
+                        .and_then(|s| s.managed_flavor);
+                    if current != Some(flavor) {
+                        self.pending_flavor_switch = Some(flavor);
+                    }
+                    return Task::none();
+                }
                 if let Some(settings) = &mut self.bitcoind_settings {
                     return settings.update(daemon, cache, msg);
                 }
@@ -664,6 +683,28 @@ impl State for BitcoindSettingsState {
                         };
                         self.persist_inbound_tor_pref(&cache.datadir_path);
                     }
+                    NodeSettingsMessage::ConfirmFlavorSwitch => {
+                        if let Some(flavor) = self.pending_flavor_switch.take() {
+                            // Reuse the managed-node setup flow: it downloads the
+                            // binary if needed, rewrites the conf, and restarts on
+                            // the new flavour (`maybe_start` stops the old one).
+                            self.pending_node_setup = Some(PendingNodeSetup {
+                                mode: Some(true),
+                                addr: form::Value::default(),
+                                rpc_auth_vals: RpcAuthValues::default(),
+                                selected_auth_type: RpcAuthType::CookieFile,
+                                processing: false,
+                                flavor,
+                                internal_stage: InternalSetupStage::Idle,
+                                internal_error: None,
+                                download_progress: 0.0,
+                            });
+                            return self.start_internal_node_setup(cache);
+                        }
+                    }
+                    NodeSettingsMessage::CancelFlavorSwitch => {
+                        self.pending_flavor_switch = None;
+                    }
                 }
             }
             _ => {}
@@ -805,12 +846,31 @@ impl State for BitcoindSettingsState {
                     )
                     .map(map_node_msg),
                 );
+            }
 
-                // "Help defend the network": inbound-over-Tor controls, shown
-                // only when the managed local node is the active backend and on
-                // mainnet (the feature is mainnet-only; hidden elsewhere as it's
-                // unneeded).
+            if self.bitcoind_settings.is_some() || self.electrum_settings.is_some() {
+                if let Some(settings) = self.bitcoind_settings.as_ref() {
+                    setting_panels.push(settings.view(cache, can_edit_bitcoind_settings).map(
+                        move |msg| {
+                            view::Message::Settings(view::SettingsMessage::BitcoindSettings(msg))
+                        },
+                    ));
+                }
+
+                // Confirmation for a pending Core↔Knots switch, right below the
+                // node card whose dropdown raised it.
+                if let Some(flavor) = self.pending_flavor_switch {
+                    setting_panels.push(
+                        view::vault::settings::flavor_switch_confirm(flavor).map(map_node_msg),
+                    );
+                }
+
+                // "Help defend the network": inbound-over-Tor controls, placed
+                // directly below the node card. Shown only for the managed local
+                // node on mainnet (the feature is mainnet-only), and hidden
+                // during a node setup/flavour switch.
                 if cache.network == Network::Bitcoin
+                    && self.pending_node_setup.is_none()
                     && matches!(
                         self.full_config
                             .as_ref()
@@ -829,16 +889,7 @@ impl State for BitcoindSettingsState {
                         .map(map_node_msg),
                     );
                 }
-            }
 
-            if self.bitcoind_settings.is_some() || self.electrum_settings.is_some() {
-                if let Some(settings) = self.bitcoind_settings.as_ref() {
-                    setting_panels.push(settings.view(cache, can_edit_bitcoind_settings).map(
-                        move |msg| {
-                            view::Message::Settings(view::SettingsMessage::BitcoindSettings(msg))
-                        },
-                    ));
-                }
                 if let Some(settings) = self.electrum_settings.as_ref() {
                     setting_panels.push(settings.view(cache, can_edit_electrum_settings).map(
                         move |msg| {
@@ -963,6 +1014,10 @@ pub struct BitcoindSettings {
     addr: form::Value<String>,
     daemon_is_external: bool,
     bitcoind_is_internal: bool,
+    /// Flavour of the internal managed node — `Some` only when the node is the
+    /// internal managed one — read from the on-disk `bitcoin.conf`. Drives the
+    /// Core/Knots dropdown on the node card.
+    managed_flavor: Option<NodeFlavor>,
 }
 
 impl BitcoindSettings {
@@ -1008,10 +1063,24 @@ impl BitcoindSettings {
         } else {
             String::default()
         };
+        // For the internal managed node, recover its flavour from the on-disk
+        // config so the node card can show a Core/Knots switcher.
+        let managed_flavor = if bitcoind_is_internal {
+            CoincubeDirectory::active().ok().and_then(|dir| {
+                let cfg_path =
+                    internal_bitcoind_config_path(&internal_bitcoind_datadir(&dir));
+                InternalBitcoindConfig::from_file(&cfg_path)
+                    .ok()
+                    .map(|c| c.flavor)
+            })
+        } else {
+            None
+        };
         BitcoindSettings {
             configured_node_type,
             daemon_is_external,
             bitcoind_is_internal,
+            managed_flavor,
             bitcoind_config,
             bitcoin_config,
             edit: false,
@@ -1104,6 +1173,9 @@ impl BitcoindSettings {
                 }
             }
             view::SettingsEditMessage::Clipboard(text) => return clipboard::write(text),
+            // Handled by the parent `BitcoindSettingsState` (raises a
+            // confirmation); never delegated here.
+            view::SettingsEditMessage::SwitchManagedFlavor(_) => {}
         }
         Task::none()
     }
@@ -1128,6 +1200,7 @@ impl BitcoindSettings {
                 cache.blockheight(),
                 Some(cache.blockheight() != 0),
                 can_edit && !self.daemon_is_external && !self.bitcoind_is_internal,
+                self.managed_flavor,
             )
         }
     }

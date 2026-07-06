@@ -1325,6 +1325,11 @@ pub fn select_bitcoind_type<'a>(
                 .spacing(10)
                 .push(header_row)
                 .push(description_row)
+                // Flavour choice for the "Install a local pruned node" option.
+                // Shown here (not only on the Connect path) so a user whose
+                // machine already has one flavour installed can still choose
+                // Core vs Knots instead of being silently locked into it.
+                .push(node_flavor_selector(node_flavor, existing_flavor))
                 .push(button_row)
         } else if !connect_authenticated {
             // User skipped Connect: show only node-based options.
@@ -1409,6 +1414,11 @@ pub fn select_bitcoind_type<'a>(
                 .spacing(10)
                 .push(header_row)
                 .push(description_row)
+                // Flavour choice for the "Install a local pruned node" option.
+                // Shown here (not only on the Connect path) so a user whose
+                // machine already has one flavour installed can still choose
+                // Core vs Knots instead of being silently locked into it.
+                .push(node_flavor_selector(node_flavor, existing_flavor))
                 .push(button_row)
         } else {
             // Connect authenticated: opinionated default card (Connect + optional node)

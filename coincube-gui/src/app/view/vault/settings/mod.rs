@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{container, rule, Column, Toggler};
+use iced::widget::{container, pick_list, rule, Column, Toggler};
 use iced::{
     alignment,
     widget::{radio, scrollable, tooltip as iced_tooltip, Space},
@@ -439,6 +439,9 @@ pub fn bitcoind<'a>(
     blockheight: i32,
     is_running: Option<bool>,
     can_edit: bool,
+    // `Some(flavour)` for the internal managed node (renders a Core/Knots
+    // switcher); `None` for an external node (flavour unknown/not switchable).
+    managed_flavor: Option<NodeFlavor>,
 ) -> Element<'a, SettingsEditMessage> {
     let mut col = Column::new().spacing(20);
     if is_configured_node_type && blockheight != 0 {
@@ -522,6 +525,22 @@ pub fn bitcoind<'a>(
         });
     }
 
+    // Managed node → a Core/Knots dropdown (independent of `can_edit`, which
+    // governs the external-node RPC form and is false for the managed node);
+    // external node → a static label (its flavour isn't known to us and can't be
+    // switched from here).
+    let flavor_header: Element<'a, SettingsEditMessage> = match managed_flavor {
+        Some(flavor) => pick_list(
+            vec![NodeFlavor::Knots, NodeFlavor::Core],
+            Some(flavor),
+            SettingsEditMessage::SwitchManagedFlavor,
+        )
+        .style(theme::pick_list::primary)
+        .padding(8)
+        .into(),
+        None => text("Bitcoin node").bold().into(),
+    };
+
     card::simple(Container::new(
         Column::new()
             .push(
@@ -529,7 +548,7 @@ pub fn bitcoind<'a>(
                     .push(
                         Row::new()
                             .push(badge::badge(icon::bitcoin_icon()))
-                            .push(text("Bitcoin Core").bold())
+                            .push(flavor_header)
                             .push(if is_configured_node_type {
                                 Some(is_running_label(is_running))
                             } else {
@@ -552,6 +571,44 @@ pub fn bitcoind<'a>(
             .push(col.push(col_fields))
             .spacing(20),
     ))
+    .width(Length::Fill)
+    .into()
+}
+
+/// Confirmation shown before a managed-node flavour switch (Core ↔ Knots).
+/// Switching restarts the shared node and may download the other client, so we
+/// gate it behind an explicit confirm.
+pub fn flavor_switch_confirm<'a>(target: NodeFlavor) -> Element<'a, NodeSettingsMessage> {
+    card::simple(
+        Column::new()
+            .spacing(15)
+            .push(
+                text(format!("Switch node software to {}?", target.display_name()))
+                    .bold()
+                    .size(18),
+            )
+            .push(
+                text(
+                    "This restarts your managed node for every Vault (and downloads the \
+                     client if it isn't already installed, ~50 MB). Your Vaults keep \
+                     working; the node reconnects on the same port once it's back.",
+                )
+                .size(13)
+                .style(theme::text::secondary),
+            )
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .push(
+                        button::secondary(None, "Cancel")
+                            .on_press(NodeSettingsMessage::CancelFlavorSwitch),
+                    )
+                    .push(
+                        button::primary(None, "Switch")
+                            .on_press(NodeSettingsMessage::ConfirmFlavorSwitch),
+                    ),
+            ),
+    )
     .width(Length::Fill)
     .into()
 }
