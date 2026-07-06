@@ -1192,8 +1192,8 @@ fn node_flavor_selector<'a>(
             button::secondary(None, label)
         };
         btn.width(Length::Fixed(260.0))
-            .on_press(Message::SelectBitcoindType(
-                message::SelectBitcoindTypeMsg::SelectNodeFlavor(flavor),
+            .on_press(Message::InternalBitcoind(
+                message::InternalBitcoindMsg::SelectFlavor(flavor),
             ))
     };
     let blurb = match selected {
@@ -1241,7 +1241,6 @@ pub fn select_bitcoind_type<'a>(
     prune_default_mb: u32,
     connect_authenticated: bool,
     node_flavor: crate::node::bitcoind::NodeFlavor,
-    existing_flavor: Option<crate::node::bitcoind::NodeFlavor>,
 ) -> Element<'a, Message> {
     let content: Column<'a, Message> =
         if network == bitcoin::Network::Regtest {
@@ -1325,11 +1324,6 @@ pub fn select_bitcoind_type<'a>(
                 .spacing(10)
                 .push(header_row)
                 .push(description_row)
-                // Flavour choice for the "Install a local pruned node" option.
-                // Shown here (not only on the Connect path) so a user whose
-                // machine already has one flavour installed can still choose
-                // Core vs Knots instead of being silently locked into it.
-                .push(node_flavor_selector(node_flavor, existing_flavor))
                 .push(button_row)
         } else if !connect_authenticated {
             // User skipped Connect: show only node-based options.
@@ -1414,11 +1408,6 @@ pub fn select_bitcoind_type<'a>(
                 .spacing(10)
                 .push(header_row)
                 .push(description_row)
-                // Flavour choice for the "Install a local pruned node" option.
-                // Shown here (not only on the Connect path) so a user whose
-                // machine already has one flavour installed can still choose
-                // Core vs Knots instead of being silently locked into it.
-                .push(node_flavor_selector(node_flavor, existing_flavor))
                 .push(button_row)
         } else {
             // Connect authenticated: opinionated default card (Connect + optional node)
@@ -1436,7 +1425,7 @@ pub fn select_bitcoind_type<'a>(
                 "Your Vault will use COINCUBE | Connect as its only Bitcoin backend.".to_string()
             };
 
-            let mut default_col = Column::new()
+            let default_col = Column::new()
                 .spacing(20)
                 .max_width(620)
                 .push(text("Start with COINCUBE | Connect").bold())
@@ -1454,11 +1443,9 @@ pub fn select_bitcoind_type<'a>(
                         }),
                 );
 
-            // When installing a managed node, let the user pick the flavour.
-            // Defaults to Knots (enforces BIP-110 / RDTS); Core is the opt-out.
-            if install_node {
-                default_col = default_col.push(node_flavor_selector(node_flavor, existing_flavor));
-            }
+            // The Core/Knots choice now lives on the dedicated "Start Bitcoin
+            // full node" screen (`start_internal_bitcoind`), so it's offered once
+            // for every install path rather than here.
 
             let default_card = Container::new(default_col.push(text(node_description)).push(
                 button::primary(None, "Continue").on_press(Message::SelectBitcoindType(
@@ -1612,9 +1599,12 @@ pub fn select_bitcoind_type<'a>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn start_internal_bitcoind<'a>(
     progress: (usize, usize),
     flavor: crate::node::bitcoind::NodeFlavor,
+    existing_flavor: Option<crate::node::bitcoind::NodeFlavor>,
+    flavor_confirmed: bool,
     exe_path: Option<&PathBuf>,
     started: Option<&Result<(), StartInternalBitcoindError>>,
     error: Option<&'a String>,
@@ -1623,6 +1613,33 @@ pub fn start_internal_bitcoind<'a>(
 ) -> Element<'a, Message> {
     let version = flavor.version();
     let flavor_name = flavor.display_name();
+
+    // Choose the node software first; nothing is downloaded or started until the
+    // user confirms here.
+    if !flavor_confirmed {
+        return layout(
+            progress,
+            None,
+            "Start Bitcoin full node",
+            Column::new()
+                .spacing(25)
+                .push(node_flavor_selector(flavor, existing_flavor))
+                .push(
+                    Row::new().push(
+                        button::secondary(None, "Download & start")
+                            .width(Length::Fixed(220.0))
+                            .on_press(Message::InternalBitcoind(
+                                message::InternalBitcoindMsg::ConfirmFlavor,
+                            )),
+                    ),
+                ),
+            true,
+            Some(message::Message::InternalBitcoind(
+                message::InternalBitcoindMsg::Previous,
+            )),
+        );
+    }
+
     layout(
         progress,
         None,

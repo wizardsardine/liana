@@ -613,9 +613,6 @@ impl Step for SelectBitcoindTypeStep {
                 message::SelectBitcoindTypeMsg::ToggleAdvanced => {
                     self.show_advanced = !self.show_advanced;
                 }
-                message::SelectBitcoindTypeMsg::SelectNodeFlavor(flavor) => {
-                    self.node_flavor = flavor;
-                }
                 message::SelectBitcoindTypeMsg::UseExternal(selected) => {
                     self.use_external = selected;
                     self.use_connect = false;
@@ -700,7 +697,6 @@ impl Step for SelectBitcoindTypeStep {
             PRUNE_DEFAULT,
             self.connect_authenticated,
             self.node_flavor,
-            self.existing_flavor,
         )
     }
 }
@@ -875,6 +871,12 @@ pub struct InternalBitcoindStep {
     exe_download: Option<Download>,
     install_state: Option<InstallState>,
     internal_bitcoind: Option<Bitcoind>,
+    /// The flavour already configured on disk, if any (for the "…switches every
+    /// Vault" warning on the picker). Read in `load_context`.
+    existing_flavor: Option<NodeFlavor>,
+    /// Gate: the download/install/start flow only runs once the user confirms
+    /// the flavour on this screen. Until then the flavour picker is shown.
+    flavor_confirmed: bool,
 }
 
 impl From<InternalBitcoindStep> for Box<dyn Step> {
@@ -899,6 +901,8 @@ impl InternalBitcoindStep {
             exe_download: None,
             install_state: None,
             internal_bitcoind: None,
+            existing_flavor: None,
+            flavor_confirmed: false,
         }
     }
 }
@@ -914,6 +918,13 @@ impl Step for InternalBitcoindStep {
         // for Knots. `DefineConfig` reuses a matching on-disk config (ports /
         // RDTS) and rebuilds it on a flavour change.
         self.flavor = ctx.node_flavor;
+        // Flavour already configured on disk (if any) — drives the picker's
+        // "…switches every Vault" warning when the user changes it.
+        self.existing_flavor = InternalBitcoindConfig::from_file(
+            &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
+        )
+        .ok()
+        .map(|c| c.flavor);
         if self.exe_path.is_none() {
             // Check if current managed bitcoind version is already installed.
             // For new installations, we ignore any previous managed bitcoind versions that might be installed.
@@ -953,16 +964,41 @@ impl Step for InternalBitcoindStep {
                         }
                     }
                     self.started = None; // clear both Ok and Err
+                    // Re-show the flavour picker when the user comes back.
+                    self.flavor_confirmed = false;
                     return Task::perform(async {}, |_| Message::Previous);
                 }
                 message::InternalBitcoindMsg::Reload => {
                     return self.load();
                 }
                 message::InternalBitcoindMsg::SelectFlavor(flavor) => {
-                    // Only meaningful before the binary is fetched.
-                    if self.exe_path.is_none() && self.install_state.is_none() {
+                    // Only before the user confirms and the flow kicks off.
+                    if !self.flavor_confirmed {
                         self.flavor = flavor;
+                        // The binary is (re)resolved for the chosen flavour on
+                        // confirm, so drop any eagerly-set path/download.
+                        self.exe_path = None;
+                        self.exe_download = None;
                     }
+                }
+                message::InternalBitcoindMsg::ConfirmFlavor => {
+                    if !self.flavor_confirmed {
+                        self.flavor_confirmed = true;
+                        // Resolve the binary for the chosen flavour: reuse it if
+                        // already installed, else queue a download.
+                        let exe_path = bitcoind::internal_bitcoind_exe_path(
+                            &self.coincube_datadir,
+                            self.flavor.version(),
+                        );
+                        if exe_path.exists() {
+                            self.exe_path = Some(exe_path);
+                            self.exe_download = None;
+                        } else {
+                            self.exe_path = None;
+                            self.exe_download = Some(Download::new());
+                        }
+                    }
+                    return self.load();
                 }
                 message::InternalBitcoindMsg::DefineConfig => {
                     let mut conf = match InternalBitcoindConfig::from_file(
@@ -1214,6 +1250,11 @@ impl Step for InternalBitcoindStep {
     }
 
     fn load(&self) -> Task<Message> {
+        // Wait for the user to choose Core/Knots and confirm on this screen
+        // before doing anything (download/install/start).
+        if !self.flavor_confirmed {
+            return Task::none();
+        }
         if self.internal_bitcoind_config.is_none() {
             return Task::perform(async {}, |_| {
                 Message::InternalBitcoind(message::InternalBitcoindMsg::DefineConfig)
@@ -1279,6 +1320,8 @@ impl Step for InternalBitcoindStep {
         view::start_internal_bitcoind(
             progress,
             self.flavor,
+            self.existing_flavor,
+            self.flavor_confirmed,
             self.exe_path.as_ref(),
             self.started.as_ref(),
             self.error.as_ref(),

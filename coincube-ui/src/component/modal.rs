@@ -216,7 +216,11 @@ where
         .push(tt)
         .align_y(Vertical::Center)
         .spacing(V_SPACING);
-    let mut btn = Button::new(row).style(widget_style).width(BTN_W);
+    // Fill the parent's width so the entry stretches to whatever column it's
+    // placed in. Existing callers put it in fixed `BTN_W` columns (no visual
+    // change); the "Already used sources" list uses a full-width column so its
+    // rows now match the card grid below it.
+    let mut btn = Button::new(row).style(widget_style).width(Length::Fill);
     if let Some(msg) = on_press {
         btn = btn.on_press(msg())
     }
