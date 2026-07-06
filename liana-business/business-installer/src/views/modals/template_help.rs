@@ -6,7 +6,9 @@ use iced::{
 };
 use liana_ui::{
     component::{button, modal::ModalWidth, text},
-    icon, theme,
+    icon,
+    spacing::VSpacing,
+    theme,
     widget::*,
 };
 
@@ -33,7 +35,7 @@ pub fn template_help_modal_view(_modal_state: &TemplateHelpModalState) -> Elemen
     let close = button::btn_modal_close(Some(Msg::TemplateHelpCloseModal));
     let header = row![title, Space::fill_width(), close].align_y(Vertical::Center);
     let body = column![header, message, footer]
-        .spacing(15)
+        .spacing(VSpacing::M)
         .padding(20)
         .width(ModalWidth::M as u32);
 

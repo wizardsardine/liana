@@ -5,6 +5,7 @@ use liana_ui::{
         button::btn_ok,
         modal::{modal_view, ModalWidth},
     },
+    spacing::VSpacing,
     widget::*,
 };
 
@@ -20,7 +21,7 @@ pub fn warning_modal_view(modal_state: &WarningModalState) -> Element<'_, Msg> {
     ]
     .spacing(10);
 
-    let body = column![message, footer].spacing(15);
+    let body = column![message, footer].spacing(VSpacing::M);
 
     modal_view(
         Some(modal_state.title.clone()),

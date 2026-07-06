@@ -5,6 +5,7 @@ use crate::{
 use iced::{widget::column, Length};
 use liana_ui::{
     component::{button::btn_send_token, form},
+    spacing::VSpacing,
     widget::*,
 };
 
@@ -42,7 +43,7 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
             form,
             btn,
         ]
-        .spacing(20)
+        .spacing(VSpacing::L)
         .width(LOGIN_WIDTH),
     )
     .padding(40)

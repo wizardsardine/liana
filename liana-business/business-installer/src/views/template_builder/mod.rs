@@ -13,7 +13,7 @@ use liana_ui::{
         button::{self, btn_add_recovery_path, btn_approve, btn_send_for_approval, btn_unlock},
         card, text, tooltip,
     },
-    theme,
+    spacing::VSpacing, theme,
     widget::*,
 };
 
@@ -76,7 +76,7 @@ fn footer_content(
     } else if is_manager && is_locked {
         let help = button::btn_template_help(Some(Msg::TemplateHelpShowModal));
         column![btn_approve(Some(Msg::TemplateValidate)), help]
-            .spacing(12)
+            .spacing(VSpacing::M)
             .align_x(Horizontal::Center)
             .into()
     } else {

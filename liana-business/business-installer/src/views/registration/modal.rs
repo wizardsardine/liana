@@ -13,7 +13,9 @@ use liana_ui::{
         modal::{modal_view, ModalWidth},
         text,
     },
-    icon, theme,
+    icon,
+    spacing::VSpacing,
+    theme,
     widget::*,
 };
 
@@ -38,7 +40,7 @@ fn registering_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
             .align_x(Alignment::Center),
         row![btn_cancel(Some(Msg::RegistrationCancelModal))].spacing(10),
     ]
-    .spacing(15)
+    .spacing(VSpacing::M)
     .width(Length::Fill)
     .align_x(Alignment::Center);
 
@@ -68,7 +70,7 @@ fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
         ]
         .spacing(10),
     ]
-    .spacing(15)
+    .spacing(VSpacing::M)
     .align_x(Alignment::Center);
 
     modal_view(
@@ -95,7 +97,7 @@ fn confirm_coldcard_view(_modal_state: &RegistrationModalState) -> Element<'_, M
         ]
         .spacing(10),
     ]
-    .spacing(15)
+    .spacing(VSpacing::M)
     .align_x(Alignment::Center);
 
     modal_view(

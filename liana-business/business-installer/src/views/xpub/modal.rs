@@ -19,7 +19,9 @@ use liana_ui::{
         text::{self, capitalize_first, truncate},
         tooltip,
     },
-    icon, theme,
+    icon,
+    spacing::VSpacing,
+    theme,
     widget::*,
 };
 
@@ -63,7 +65,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
             text::new::b5_bold("Current xpub").style(theme::text::primary),
             xpub_box(&modal_state.xpub_input)
         ]
-        .spacing(8)
+        .spacing(VSpacing::S)
         .into()
     });
 
@@ -83,7 +85,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
         validation_error,
         select_footer_buttons(modal_state),
     ]
-    .spacing(15)
+    .spacing(VSpacing::M)
     .align_x(Alignment::Center);
 
     let alias = truncate(&modal_state.key_alias, 25);
@@ -126,7 +128,7 @@ fn details_view<'a>(modal_state: &'a XpubEntryModalState) -> Element<'a, Msg> {
         account_picker,
         details_footer_buttons(modal_state),
     ]
-    .spacing(15);
+    .spacing(VSpacing::M);
 
     let alias = truncate(&modal_state.key_alias, 25);
     modal_view(
@@ -234,7 +236,7 @@ fn hw_section(state: &State) -> Element<'_, Msg> {
     devices
         .values()
         .map(extract_device_data)
-        .fold(column![].spacing(12), |column, data| {
+        .fold(column![].spacing(VSpacing::M), |column, data| {
             let in_use = state.app.keys().iter().any(|(key_id, key)| {
                 *key_id != modal_state.key_id && key.fingerprint() == data.fingerprint
             });

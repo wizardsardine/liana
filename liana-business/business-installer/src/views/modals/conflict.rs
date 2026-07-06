@@ -5,6 +5,7 @@ use liana_ui::{
         button::{btn_keep_changes, btn_ok, btn_reload},
         modal::{modal_view, ModalWidth},
     },
+    spacing::VSpacing,
     widget::*,
 };
 
@@ -31,7 +32,7 @@ pub fn conflict_modal_view(modal_state: &ConflictModalState) -> Element<'_, Msg>
         .spacing(10)
     };
 
-    let body = column![message, footer].spacing(15);
+    let body = column![message, footer].spacing(VSpacing::M);
 
     modal_view(
         Some(modal_state.title.clone()),

@@ -16,7 +16,9 @@ use liana_ui::{
         modal::{modal_view, ModalWidth},
         pick_list, text, tooltip,
     },
-    icon, theme,
+    icon,
+    spacing::VSpacing,
+    theme,
     widget::*,
 };
 use std::str::FromStr;
@@ -67,7 +69,7 @@ pub fn edit_key_modal_view<'a>(
             Message::KeyUpdateAlias,
         ),
     ]
-    .spacing(5);
+    .spacing(VSpacing::S);
 
     let key_type_options = [
         ws_business::KeyType::Internal,
@@ -90,7 +92,7 @@ SafetyNet: Professional recovery service.";
             Message::KeyUpdateType,
         ),
     ]
-    .spacing(5);
+    .spacing(VSpacing::S);
 
     let identity_field = if uses_token_identity(modal_state.key_type) {
         token_field(modal_state)
@@ -111,7 +113,7 @@ SafetyNet: Professional recovery service.";
     } else {
         column![intro, alias_field, key_type_field, identity_field, footer]
     }
-    .spacing(16);
+    .spacing(VSpacing::M);
 
     modal_view(
         Some(title.to_string()),
@@ -161,7 +163,7 @@ fn token_field(modal_state: &EditKeyModalState) -> Element<'_, Message> {
         ),
         provider_line,
     ]
-    .spacing(5)
+    .spacing(VSpacing::S)
     .into()
 }
 
@@ -200,7 +202,7 @@ fn signer_field<'a>(state: &'a State, modal_state: &'a EditKeyModalState) -> Ele
     } else {
         column![field_label("Signer"), signer_picker, hint_text]
     }
-    .spacing(5)
+    .spacing(VSpacing::S)
     .into()
 }
 
