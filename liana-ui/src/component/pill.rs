@@ -4,7 +4,7 @@ use iced::{
     widget::{container::Style, row, tooltip, Space},
     Alignment, Font, Length,
 };
-use iced_core::text::Shaping;
+use iced_core::text::{LineHeight, Shaping};
 
 use crate::{
     theme::{self, Theme},
@@ -19,6 +19,8 @@ const PILL_FONT_SIZE: u32 = new::B4_MEDIUM_SPEC.size.unwrap();
 const PILL_FONT_SIZE_COMPACT: u32 = new::CAPTION_SPEC.size.unwrap();
 const PILL_FONT: Font = new::B4_MEDIUM_SPEC.font;
 const PILL_FONT_COMPACT: Font = new::CAPTION_SPEC.font;
+// Tight line box so compact pills size to the glyph, not the default 1.3 leading.
+const COMPACT_LINE_HEIGHT: LineHeight = LineHeight::Relative(1.0);
 
 fn tooltip_text<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
     new::caption(content)
@@ -28,6 +30,7 @@ fn tooltip_text<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
 #[repr(u16)]
 pub enum PillWidth {
     S = 90,
+    SM = 120,
     M = 150,
     ML = 175,
     L = 200,
@@ -79,13 +82,20 @@ pub fn pill_with_icon<'a, T: 'a, L: Display, TT: Display>(
     } else {
         PILL_FONT
     };
-    let label = iced::widget::text!("{label}")
+    let mut label = iced::widget::text!("{label}")
         .shaping(Shaping::Advanced)
         .font(font)
         .center()
         .size(size);
+    if compact {
+        label = label.line_height(COMPACT_LINE_HEIGHT);
+    }
     let content = match (icon, compact) {
-        (Some(icon), true) => row![icon, Space::with_width(6), label],
+        (Some(icon), true) => row![
+            icon.line_height(COMPACT_LINE_HEIGHT),
+            Space::with_width(6),
+            label
+        ],
         (Some(icon), false) => row![icon, Space::with_width(15), label, Space::fill_width()],
         (None, _) => row![label],
     };
@@ -129,14 +139,7 @@ fn pill_body_with_font<'a, T: 'a, L: Display>(
     style: fn(&Theme) -> Style,
     font: Font,
 ) -> Container<'a, T> {
-    pill_body_with_text_size_and_font_and_padding(
-        label,
-        width,
-        style,
-        font,
-        PILL_FONT_SIZE,
-        PILL_PADDING,
-    )
+    pill_body_with_text_size_and_font_and_compact(label, width, style, font, PILL_FONT_SIZE, false)
 }
 
 fn compact_pill_body_with_font<'a, T: 'a, L: Display>(
@@ -145,13 +148,13 @@ fn compact_pill_body_with_font<'a, T: 'a, L: Display>(
     style: fn(&Theme) -> Style,
     font: Font,
 ) -> Container<'a, T> {
-    pill_body_with_text_size_and_font_and_padding(
+    pill_body_with_text_size_and_font_and_compact(
         label,
         width,
         style,
         font,
         PILL_FONT_SIZE_COMPACT,
-        PILL_PADDING_COMPACT,
+        true,
     )
 }
 
@@ -162,7 +165,7 @@ fn pill_body_with_text_size_and_font<'a, T: 'a, L: Display>(
     font: Font,
     size: u32,
 ) -> Container<'a, T> {
-    pill_body_with_text_size_and_font_and_padding(label, width, style, font, size, PILL_PADDING)
+    pill_body_with_text_size_and_font_and_compact(label, width, style, font, size, false)
 }
 
 fn compact_pill_body_with_text_size_and_font<'a, T: 'a, L: Display>(
@@ -172,29 +175,30 @@ fn compact_pill_body_with_text_size_and_font<'a, T: 'a, L: Display>(
     font: Font,
     size: u32,
 ) -> Container<'a, T> {
-    pill_body_with_text_size_and_font_and_padding(
-        label,
-        width,
-        style,
-        font,
-        size,
-        PILL_PADDING_COMPACT,
-    )
+    pill_body_with_text_size_and_font_and_compact(label, width, style, font, size, true)
 }
 
-fn pill_body_with_text_size_and_font_and_padding<'a, T: 'a, L: Display>(
+fn pill_body_with_text_size_and_font_and_compact<'a, T: 'a, L: Display>(
     label: L,
     width: PillWidth,
     style: fn(&Theme) -> Style,
     font: Font,
     size: u32,
-    padding: [u16; 2],
+    compact: bool,
 ) -> Container<'a, T> {
-    let item = iced::widget::text!("{label}")
+    let mut item = iced::widget::text!("{label}")
         .shaping(Shaping::Advanced)
         .font(font)
         .center()
         .size(size);
+    if compact {
+        item = item.line_height(COMPACT_LINE_HEIGHT);
+    }
+    let padding = if compact {
+        PILL_PADDING_COMPACT
+    } else {
+        PILL_PADDING
+    };
     pill_body_with_item_and_padding(item, width, style, padding)
 }
 
@@ -240,24 +244,26 @@ pills! {
 }
 
 /// Wallet lifecycle status pills, compact (the wallet list trailing).
+const WALLET_STATUS_WIDTH: PillWidth = PillWidth::SM;
+
 pub fn register<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill("Register", PillWidth::M, theme::pill::warning)
+    compact_pill("Register", WALLET_STATUS_WIDTH, theme::pill::warning)
 }
 
 pub fn draft<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill("Draft", PillWidth::M, theme::pill::simple)
+    compact_pill("Draft", WALLET_STATUS_WIDTH, theme::pill::simple)
 }
 
 pub fn to_approve<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill("To approve", PillWidth::M, theme::pill::warning)
+    compact_pill("To approve", WALLET_STATUS_WIDTH, theme::pill::warning)
 }
 
 pub fn set_keys<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill("Set keys", PillWidth::M, theme::pill::warning)
+    compact_pill("Set keys", WALLET_STATUS_WIDTH, theme::pill::warning)
 }
 
 pub fn active<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill("Active", PillWidth::M, theme::pill::success)
+    compact_pill("Active", WALLET_STATUS_WIDTH, theme::pill::success)
 }
 
 /// Compact key pill styled by key kind (the key-type and path key-alias pills).
@@ -357,7 +363,7 @@ pub fn ws_admin<'a, T: 'a>() -> Container<'a, T> {
 /// Success pill shown for a key that is used in the template: a checkmark only, with a hover tooltip
 /// stating how many spending paths use the key.
 pub fn in_policy<'a, T: 'a>(usage_count: usize) -> Container<'a, T> {
-    let pill = Container::new(crate::icon::check_icon())
+    let pill = Container::new(crate::icon::check_icon().line_height(COMPACT_LINE_HEIGHT))
         .padding(PILL_PADDING_COMPACT)
         .style(theme::pill::success);
     let tip = format!(
