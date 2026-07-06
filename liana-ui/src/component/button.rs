@@ -23,17 +23,20 @@ use iced::{
     Background, Border, Color, Length, Padding,
 };
 
-const MENU_BTN_PADDING: [u16; 2] = [4 /* Top/Bottom */, 12 /* Left/Right */];
+const MENU_BTN_PADDING: [u16; 2] = [9 /* Top/Bottom */, 22 /* Left/Right */];
 const MENU_TEXT_SIZE: u32 = 22;
 const MENU_TEXT_COMPACT_SIZE: u32 = 18;
 const MENU_ICON_SIZE: u32 = ICON_SIZE_L as u32;
-const AUXILIARY_PADDING: [u16; 2] = [14, 20];
+const AUXILIARY_PADDING: [u16; 2] = [14 /* Top/Bottom */, 20 /* Left/Right */];
 const LIST_ENTRY_ACCENT_WIDTH: f32 = 4.0;
-const LIST_ENTRY_PADDING: [u16; 2] = [14, 20];
+const LIST_ENTRY_PADDING: [u16; 2] = [14 /* Top/Bottom */, 20 /* Left/Right */];
 
 const ICON_BTN_SIZE: f32 = 40.0;
 const ICON_BTN_PADDING: f32 = 10.0;
 pub const DEVICE_BTN_H: u32 = 40;
+
+const BTN_PADDING: [u16; 2] = [9 /* Top/Bottom */, 14 /* Left/Right */];
+const BTN_PADDING_COMPACT: [u16; 2] = [7 /* Top/Bottom */, 12 /* Left/Right */];
 
 pub type ListEntryAccent = fn(&Theme) -> Color;
 
@@ -48,6 +51,7 @@ pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str, compact: bool) -
         .padding(MENU_BTN_PADDING),
     )
     .style(theme::button::menu)
+    .padding(0)
 }
 
 pub fn menu_active<'a, T: 'a>(
@@ -57,6 +61,7 @@ pub fn menu_active<'a, T: 'a>(
 ) -> Button<'a, T> {
     Button::new(content_menu(icon, t, true, compact).padding(MENU_BTN_PADDING))
         .style(theme::button::menu_pressed)
+        .padding(0)
 }
 
 pub fn menu_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
@@ -66,6 +71,7 @@ pub fn menu_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
             .align_x(Horizontal::Center),
     )
     .style(theme::button::menu)
+    .padding(0)
 }
 
 pub fn menu_active_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
@@ -75,6 +81,7 @@ pub fn menu_active_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
             .align_x(Horizontal::Center),
     )
     .style(theme::button::menu_pressed)
+    .padding(0)
 }
 
 fn content_menu<'a, T: 'a>(
@@ -117,7 +124,9 @@ pub fn button_with_theme<'a, T: 'a>(
             icon.map(|i| i.size(BUTTON_TEXT_COMPACT_SPEC.size.expect("size"))),
         )
     };
-    Button::new(content(icon, text, compact)).style(style)
+    Button::new(content(icon, text, compact))
+        .style(style)
+        .padding(0)
 }
 
 pub fn button_compact<'a, T: 'a>(
@@ -165,10 +174,13 @@ pub fn auxiliary<'a, T: 'a + Clone>(
         .style(theme::button::auxiliary)
         .on_press_maybe(msg)
         .width(STANDARD_ENTRY_WIDTH)
+        .padding(0)
 }
 
 pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, panel_title(t), false)).style(theme::button::breadcrumb)
+    Button::new(content(icon, panel_title(t), false))
+        .style(theme::button::breadcrumb)
+        .padding(0)
 }
 
 pub fn list_entry<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
@@ -200,27 +212,31 @@ pub fn list_entry_with_state<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
 ) -> Element<'a, M> {
     let clickable = enabled && clickable;
     let msg = clickable.then_some(msg).flatten();
-    let button = Button::new(content.into())
-        .style(move |theme, status| {
-            let status = if !clickable && status == Status::Disabled {
-                Status::Active
-            } else {
-                status
-            };
-            let mut style = theme::button::list_entry(theme, status);
-            if let Some(color) = accent {
-                // The accent card behind carries the shadow; keep the inner card flat.
-                style.shadow = Default::default();
-                if status == Status::Hovered {
-                    // Hover border matches the entry's accent stripe.
-                    style.border.color = color(theme);
-                }
+    let button = Button::new(
+        container(content.into())
+            .padding(LIST_ENTRY_PADDING)
+            .width(Length::Fill),
+    )
+    .style(move |theme, status| {
+        let status = if !clickable && status == Status::Disabled {
+            Status::Active
+        } else {
+            status
+        };
+        let mut style = theme::button::list_entry(theme, status);
+        if let Some(color) = accent {
+            // The accent card behind carries the shadow; keep the inner card flat.
+            style.shadow = Default::default();
+            if status == Status::Hovered {
+                // Hover border matches the entry's accent stripe.
+                style.border.color = color(theme);
             }
-            style
-        })
-        .on_press_maybe(msg)
-        .padding(LIST_ENTRY_PADDING)
-        .width(Length::Fill);
+        }
+        style
+    })
+    .on_press_maybe(msg)
+    .padding(0)
+    .width(Length::Fill);
 
     let entry: Element<'a, M> = if let Some(color) = accent {
         let accent_card = Container::new(Space::with_height(Length::Fill))
@@ -287,7 +303,11 @@ fn content_with_tooltip<'a, T: 'a>(
     let content = row![icon, text, tooltip.map(tooltip::tooltip)]
         .spacing(10)
         .align_y(Vertical::Center);
-    let padding = if compact { 2 } else { 4 };
+    let padding = if compact {
+        BTN_PADDING_COMPACT
+    } else {
+        BTN_PADDING
+    };
     container(content)
         .align_x(Horizontal::Center)
         .padding(padding)
@@ -470,6 +490,7 @@ pub fn btn_secondary_with_tooltip<'a, T: Clone + 'a>(
     .width(width)
     .style(theme::button::secondary)
     .on_press_maybe(msg)
+    .padding(0)
 }
 
 /// Tertiary button with preset width.
