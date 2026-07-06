@@ -440,7 +440,59 @@ fn unpack_tor(install_dir: &Path, bytes: &[u8]) -> Result<(), InstallBitcoindErr
     // also restores the Unix mode bits, so `tor/tor` stays executable.
     archive
         .unpack(install_dir)
-        .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))
+        .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?;
+
+    // The Tor Expert Bundle ships **unsigned**, and macOS (mandatory on Apple
+    // Silicon) SIGKILLs unsigned Mach-O binaries on exec. bitcoind runs because
+    // it's Developer-ID-signed by its release team; Tor is not, so we apply an
+    // ad-hoc signature to the extracted `tor` binary and its bundled dylibs so
+    // the managed daemon can actually launch. No-op on other platforms.
+    #[cfg(target_os = "macos")]
+    adhoc_codesign_tor(install_dir)?;
+
+    Ok(())
+}
+
+/// Ad-hoc code-sign (`codesign --sign -`) the extracted Tor binary and the
+/// shared libraries it links, so Gatekeeper allows the unsigned Expert Bundle to
+/// run. dylibs are signed before the executable that loads them. `codesign` is
+/// part of the base macOS install.
+#[cfg(target_os = "macos")]
+fn adhoc_codesign_tor(install_dir: &Path) -> Result<(), InstallBitcoindError> {
+    let tor_dir = install_dir.join("tor");
+
+    // Bundled dylibs first, then the executable.
+    let mut targets: Vec<PathBuf> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&tor_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "dylib") {
+                targets.push(path);
+            }
+        }
+    }
+    targets.push(tor_dir.join("tor"));
+
+    for path in targets {
+        if !path.exists() {
+            continue;
+        }
+        let ok = std::process::Command::new("/usr/bin/codesign")
+            .args(["--force", "--sign", "-"])
+            .arg(&path)
+            .status()
+            .map(|s| s.success())
+            .map_err(|e| {
+                InstallBitcoindError::UnpackingError(format!("failed to run codesign: {e}"))
+            })?;
+        if !ok {
+            return Err(InstallBitcoindError::UnpackingError(format!(
+                "ad-hoc codesign failed for {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Install the managed Tor daemon: verify the download against `verification`
