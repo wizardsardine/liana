@@ -419,7 +419,6 @@ pub fn rescan<'a, T: 'a>(progress: f64, compact: bool) -> Container<'a, T> {
 
 pub fn fingerprint<'a, T: 'a>(fg: impl Into<String>, alias: Option<&str>) -> Container<'a, T> {
     let fg = fg.into();
-    let height = 32;
     match alias {
         Some(alias) => {
             let body = compact_pill_body_with_font(
@@ -427,8 +426,7 @@ pub fn fingerprint<'a, T: 'a>(fg: impl Into<String>, alias: Option<&str>) -> Con
                 PillWidth::Shrink,
                 theme::pill::fingerprint,
                 PILL_FONT_COMPACT,
-            )
-            .center_y(height);
+            );
             Container::new(tooltip::Tooltip::new(
                 body,
                 Container::new(tooltip_text(fg))
@@ -436,17 +434,14 @@ pub fn fingerprint<'a, T: 'a>(fg: impl Into<String>, alias: Option<&str>) -> Con
                     .style(theme::card::simple),
                 tooltip::Position::Top,
             ))
-            .center_y(height)
         }
         None => compact_pill_body_with_font(
             fg,
             PillWidth::M,
             theme::pill::fingerprint,
             PILL_FONT_COMPACT,
-        )
-        .center_y(height),
+        ),
     }
-    .center_y(height)
 }
 
 const BLOCKS_PER_DAY: u32 = 144;
