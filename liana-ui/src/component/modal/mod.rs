@@ -27,13 +27,16 @@ use crate::{
     theme::{self, Theme},
 };
 
-use crate::widget::{Button, CheckBox, Column, Element, PickList, SpaceExt, Text};
+use crate::{
+    spacing::VSpacing,
+    widget::{Button, CheckBox, Column, Element, PickList, SpaceExt, Text},
+};
 
 pub const BTN_W: u32 = 500;
-pub const V_SPACING: u32 = 10;
+pub const V_SPACING: VSpacing = VSpacing::S;
 pub const H_SPACING: u32 = 5;
 const MODAL_PADDING: f32 = 20.0;
-const MODAL_SPACING: u32 = 15;
+const MODAL_SPACING: VSpacing = VSpacing::M;
 
 /// Modal width presets.
 #[derive(Debug, Clone, Copy)]

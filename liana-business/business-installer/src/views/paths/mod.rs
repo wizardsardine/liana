@@ -15,6 +15,7 @@ use liana_ui::{
         },
         card, text, tooltip,
     },
+    spacing::VSpacing,
     theme,
     widget::*,
 };
@@ -79,7 +80,7 @@ fn footer_content(
     } else if is_manager && is_locked {
         let help = button::btn_template_help(Some(Msg::TemplateHelpShowModal));
         column![btn_approve(Some(Msg::TemplateValidate)), help]
-            .spacing(12)
+            .spacing(VSpacing::M)
             .align_x(Horizontal::Center)
             .into()
     } else {
@@ -119,7 +120,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     ]
     .align_x(Alignment::Center)
     .width(Length::Fill)
-    .spacing(16)
+    .spacing(VSpacing::M)
     .into();
     let add_recovery_path = editable.then_some(
         column![
@@ -130,7 +131,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
                     EntryWidth::Deletable
                 }
             ),
-            Space::with_height(12)
+            Space::with_height(VSpacing::M)
         ]
         .into(),
     );

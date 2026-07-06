@@ -11,6 +11,7 @@ use liana_ui::{
         list::{self, EntryPathRole},
         pill,
     },
+    spacing::VSpacing,
     widget::*,
 };
 
@@ -125,7 +126,7 @@ pub fn path_list<'a>(state: &'a State, editable: bool) -> Element<'a, Msg> {
         editable,
         has_delete,
     )]
-    .spacing(12)
+    .spacing(VSpacing::M)
     .width(Length::Fill);
 
     for (index, secondary) in state.app.secondary_paths().iter().enumerate() {

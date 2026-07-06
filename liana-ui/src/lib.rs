@@ -3,6 +3,7 @@ pub mod component;
 pub mod font;
 pub mod icon;
 pub mod image;
+pub mod spacing;
 pub mod theme;
 pub mod widget;
 

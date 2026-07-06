@@ -17,6 +17,7 @@ use liana_ui::{
         pick_list,
         text::{self, short_email, truncate},
     },
+    spacing::VSpacing,
     theme,
     widget::*,
 };
@@ -94,9 +95,9 @@ pub fn edit_path_modal_view<'a>(
         column![
             text::new::caption("No keys available. Add keys first.").style(theme::text::secondary)
         ]
-        .spacing(8)
+        .spacing(VSpacing::S)
     } else {
-        let mut col = column![].spacing(8);
+        let mut col = column![].spacing(VSpacing::S);
         for (key_id, key) in state.app.keys().iter() {
             let is_selected = modal_state.selected_key_ids.contains(key_id);
             let mut name = if key.alias.is_empty() {
@@ -174,7 +175,7 @@ pub fn edit_path_modal_view<'a>(
             ]
         });
 
-        column![input, warning].spacing(4).into()
+        column![input, warning].spacing(VSpacing::XS).into()
     });
 
     // Timelock validation and row (only for non-primary paths)
@@ -256,7 +257,7 @@ pub fn edit_path_modal_view<'a>(
 
         let label = label.map(|l| row![Space::with_width(LABEL_WIDTH + 10.0), l]);
 
-        let section = column![input, label].spacing(4);
+        let section = column![input, label].spacing(VSpacing::XS);
 
         (valid, Some(section))
     } else {
@@ -284,7 +285,7 @@ pub fn edit_path_modal_view<'a>(
         timelock_section,
         footer
     ]
-    .spacing(15);
+    .spacing(VSpacing::M);
 
     modal_view(
         Some(title.to_string()),

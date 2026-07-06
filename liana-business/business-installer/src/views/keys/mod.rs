@@ -15,7 +15,9 @@ use liana_ui::{
         card, pill,
         text::{self},
     },
-    icon, theme,
+    icon,
+    spacing::VSpacing,
+    theme,
     widget::*,
 };
 
@@ -96,7 +98,7 @@ fn notice_content(is_manager: bool, keys_ready: bool, locked: bool) -> Element<'
         )]
     };
 
-    cards.spacing(12).width(Length::Fill).into()
+    cards.spacing(VSpacing::M).width(Length::Fill).into()
 }
 
 /// Number of spending paths (primary plus secondaries) that use the given key.
@@ -145,7 +147,7 @@ fn keys_list(state: &State, editable: bool) -> Element<'static, Msg> {
             )
         })
         .fold(column![], |col, entry| col.push(entry))
-        .spacing(12);
+        .spacing(VSpacing::M);
 
     Container::new(keys_column).width(Length::Fill).into()
 }
@@ -212,7 +214,7 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
         notice_content(is_manager, state.app.keys_ready(), locked),
     ]
     .width(Length::Fill)
-    .spacing(16)
+    .spacing(VSpacing::M)
     .into();
     let keys_list = keys_list(state, editable);
     let add_key = editable.then_some(
@@ -222,7 +224,7 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
             } else {
                 EntryWidth::Deletable
             }),
-            Space::with_height(12)
+            Space::with_height(VSpacing::M)
         ]
         .into(),
     );

@@ -35,7 +35,9 @@ use liana_ui::{
         form, list, scrollable,
         text::{self, short_email, truncate},
     },
-    icon, theme,
+    icon,
+    spacing::VSpacing,
+    theme,
     widget::*,
 };
 use std::fmt::Display;
@@ -242,14 +244,14 @@ fn layout_inner<'a>(
             let footer = footer.map(|f| {
                 column![
                     thin_separator(),
-                    Space::with_height(8),
+                    Space::with_height(VSpacing::S),
                     f,
-                    Space::with_height(8),
+                    Space::with_height(VSpacing::S),
                 ]
             });
 
             let body = column![header, list_body, pinned, Space::fill_height(), footer,]
-                .spacing(12)
+                .spacing(VSpacing::M)
                 .width(CONTENT_WIDTH);
 
             column![top, body].width(Length::Fill)
@@ -417,7 +419,7 @@ pub struct SelectListView<'a> {
 
 pub fn select_list_view(cfg: SelectListView<'_>) -> Element<'_, Msg> {
     let mut header = column![screen_intro(cfg.title, None, false)]
-        .spacing(10)
+        .spacing(VSpacing::M)
         .align_x(Alignment::Center)
         .padding([0, 20]);
 

@@ -13,6 +13,7 @@ use iced::{
 use liana_connect::ws_business::Wallet;
 use liana_ui::{
     component::{button::btn_skip_registration, list, pill, text},
+    spacing::VSpacing,
     theme,
     widget::*,
 };
@@ -105,7 +106,7 @@ fn device_list_view(state: &State) -> Element<'_, Msg> {
     let connected_devices = state.hw.list();
 
     let mut cards = column![]
-        .spacing(12)
+        .spacing(VSpacing::M)
         .padding([0, 20])
         .align_x(Alignment::Center)
         .width(Length::Fill);

@@ -12,6 +12,7 @@ use liana_ui::{
         list,
         text::{self, truncate},
     },
+    spacing::VSpacing,
     theme,
     widget::*,
 };
@@ -114,7 +115,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
 
     // Scrollable list content: organization cards
     let mut list_content = column![]
-        .spacing(12)
+        .spacing(VSpacing::M)
         .width(Length::Fill)
         .align_x(Alignment::Center);
 

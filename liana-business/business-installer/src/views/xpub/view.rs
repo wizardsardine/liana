@@ -18,6 +18,7 @@ use liana_ui::{
         pill,
         text::{self},
     },
+    spacing::VSpacing,
     theme,
     widget::*,
 };
@@ -176,12 +177,12 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
 
     let owned_entries = if owned_keys.is_empty() {
         column![text::new::caption("No keys assigned to you.").style(theme::text::secondary)]
-            .spacing(12)
+            .spacing(VSpacing::M)
             .width(button::STANDARD_ENTRY_WIDTH)
     } else {
         owned_keys
             .iter()
-            .fold(column![].spacing(12), |column, (key_id, key)| {
+            .fold(column![].spacing(VSpacing::M), |column, (key_id, key)| {
                 column.push(xpub_key_card(**key_id, key, EntrySetKeyOwner::Own))
             })
             .width(button::STANDARD_ENTRY_WIDTH)
@@ -190,7 +191,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     let mut list_content = column![
         section_heading("Your keys", 4.0),
         owned_entries,
-        Space::with_height(24)
+        Space::with_height(VSpacing::XL)
     ]
     .padding([0, 20])
     .align_x(Alignment::Center)
@@ -199,27 +200,27 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     if is_wallet_manager && !other_participant_keys.is_empty() {
         let entries = other_participant_keys
             .iter()
-            .fold(column![].spacing(12), |column, (key_id, key)| {
+            .fold(column![].spacing(VSpacing::M), |column, (key_id, key)| {
                 column.push(xpub_key_card(**key_id, key, EntrySetKeyOwner::Other))
             })
             .width(button::STANDARD_ENTRY_WIDTH);
         list_content = list_content
             .push(section_heading("Other participants' keys", 0.0))
             .push(entries)
-            .push(Space::with_height(24));
+            .push(Space::with_height(VSpacing::XL));
     }
 
     if is_wallet_manager && !external_keys.is_empty() {
         let entries = external_keys
             .iter()
-            .fold(column![].spacing(12), |column, (key_id, key)| {
+            .fold(column![].spacing(VSpacing::M), |column, (key_id, key)| {
                 column.push(xpub_key_card(**key_id, key, EntrySetKeyOwner::Other))
             })
             .width(button::STANDARD_ENTRY_WIDTH);
         list_content = list_content
             .push(section_heading("External keys", 0.0))
             .push(entries)
-            .push(Space::with_height(24));
+            .push(Space::with_height(VSpacing::XL));
     }
 
     layout_with_scrollable_list(

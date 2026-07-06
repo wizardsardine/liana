@@ -15,9 +15,13 @@ Paths are under `liana-ui/src/` unless noted.
   and never `Row::new()` / `Column::new()` for a fixed set. Only genuinely dynamic building uses `.push`: a
   loop reassigning `x = x.push(...)`, a `.fold(col, |c, x| c.push(x))`, or `Vec::push`. Flatten deep view
   bodies into named `let` bindings first.
-- **Spacing.** Use the `SpaceExt` helpers (`widget/mod.rs`): `Space::with_width(100)`,
+- **Spacing.** Use the shared vertical scale from `liana_ui::spacing::VSpacing`: `XS = 4`, `S = 8`,
+  `M = 16`, `L = 20`, `XL = 24`. `M` is the standard business-installer stack/list spacing. Use the
+  `SpaceExt` helpers (`widget/mod.rs`): `Space::with_width(100)`,
   `Space::with_height(50)`, `Space::fill_width()`, `Space::fill_height()`. Never
-  `Space::new().width(Length::Fixed(100.0))` or `.width(Length::Fill)`.
+  `Space::new().width(Length::Fixed(100.0))` or `.width(Length::Fill)`. Consumer view code should
+  not use raw numeric vertical stack spacing or vertical `Space::with_height(..)` values unless the
+  value is geometry-specific and named locally.
 - **Lengths.** Do not spell raw `Length::Fixed(..)` / `Length::Fill` in new view code unless the API
   requires a `Length` value and there is no existing helper or named constant. Prefer direct numeric
   arguments when the method accepts `impl Into<Length>` (`.width(LOGIN_WIDTH)`, not

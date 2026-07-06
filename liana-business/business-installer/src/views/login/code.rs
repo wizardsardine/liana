@@ -11,6 +11,7 @@ use liana_ui::{
         button::{btn_change_email, btn_resend_token},
         form,
     },
+    spacing::VSpacing,
     widget::*,
 };
 
@@ -53,7 +54,7 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
             form,
             btn_row,
         ]
-        .spacing(20)
+        .spacing(VSpacing::L)
         .width(LOGIN_WIDTH),
     )
     .padding(40)

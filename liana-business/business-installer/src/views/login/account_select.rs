@@ -8,6 +8,7 @@ use liana_ui::{
         button::{btn_connect_another_email, EntryWidth},
         list, text,
     },
+    spacing::VSpacing,
     widget::*,
 };
 
@@ -23,7 +24,9 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     );
 
     // Scrollable list of accounts
-    let mut list_content = column![].spacing(15).align_x(iced::Alignment::Center);
+    let mut list_content = column![]
+        .spacing(VSpacing::M)
+        .align_x(iced::Alignment::Center);
 
     // One row per cached account: the account entry plus a delete button after it.
     for account in accounts {
