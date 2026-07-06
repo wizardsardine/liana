@@ -575,17 +575,18 @@ pub fn bitcoind<'a>(
     .into()
 }
 
-/// Confirmation shown before a managed-node flavour switch (Core ↔ Knots).
+/// Confirmation modal shown before a managed-node flavour switch (Core ↔ Knots).
 /// Switching restarts the shared node and may download the other client, so we
-/// gate it behind an explicit confirm.
+/// gate it behind an explicit confirm. Rendered as a modal body by
+/// `BitcoindSettingsState::view`.
 pub fn flavor_switch_confirm<'a>(target: NodeFlavor) -> Element<'a, NodeSettingsMessage> {
-    card::simple(
+    card::modal(
         Column::new()
-            .spacing(15)
+            .spacing(20)
             .push(
                 text(format!("Switch node software to {}?", target.display_name()))
                     .bold()
-                    .size(18),
+                    .size(20),
             )
             .push(
                 text(
@@ -593,7 +594,7 @@ pub fn flavor_switch_confirm<'a>(target: NodeFlavor) -> Element<'a, NodeSettings
                      client if it isn't already installed, ~50 MB). Your Vaults keep \
                      working; the node reconnects on the same port once it's back.",
                 )
-                .size(13)
+                .size(14)
                 .style(theme::text::secondary),
             )
             .push(
@@ -601,15 +602,17 @@ pub fn flavor_switch_confirm<'a>(target: NodeFlavor) -> Element<'a, NodeSettings
                     .spacing(10)
                     .push(
                         button::secondary(None, "Cancel")
+                            .width(Length::FillPortion(1))
                             .on_press(NodeSettingsMessage::CancelFlavorSwitch),
                     )
                     .push(
                         button::primary(None, "Switch")
+                            .width(Length::FillPortion(1))
                             .on_press(NodeSettingsMessage::ConfirmFlavorSwitch),
                     ),
             ),
     )
-    .width(Length::Fill)
+    .width(Length::Fixed(500.0))
     .into()
 }
 

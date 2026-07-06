@@ -13,7 +13,11 @@ use coincubed::config::{
     BitcoinBackend, BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config, ElectrumConfig,
 };
 
-use coincube_ui::{component::form, icon, widget::Element};
+use coincube_ui::{
+    component::form,
+    icon,
+    widget::{modal, Element},
+};
 
 use crate::{
     app::{
@@ -728,7 +732,7 @@ impl State for BitcoindSettingsState {
                 .map(|settings| settings.edit)
                 == Some(true);
         let can_do_rescan = !self.rescan_settings.processing && !settings_edit;
-        view::vault::settings::bitcoind_settings(menu, cache, {
+        let content = view::vault::settings::bitcoind_settings(menu, cache, {
             let mut setting_panels = Vec::new();
 
             // Top panel: either Connect re-login flow or backend status + switch.
@@ -857,14 +861,6 @@ impl State for BitcoindSettingsState {
                     ));
                 }
 
-                // Confirmation for a pending Core↔Knots switch, right below the
-                // node card whose dropdown raised it.
-                if let Some(flavor) = self.pending_flavor_switch {
-                    setting_panels.push(
-                        view::vault::settings::flavor_switch_confirm(flavor).map(map_node_msg),
-                    );
-                }
-
                 // "Help defend the network": inbound-over-Tor controls, placed
                 // directly below the node card. Shown only for the managed local
                 // node on mainnet (the feature is mainnet-only), and hidden
@@ -906,7 +902,26 @@ impl State for BitcoindSettingsState {
                     }),
             );
             setting_panels
-        })
+        });
+
+        // A pending Core↔Knots switch pops a confirmation modal over the page;
+        // clicking the backdrop cancels it.
+        if let Some(flavor) = self.pending_flavor_switch {
+            modal::Modal::new(
+                content,
+                view::vault::settings::flavor_switch_confirm(flavor).map(|m| {
+                    view::Message::Settings(view::SettingsMessage::NodeSettings(m))
+                }),
+            )
+            .on_blur(Some(view::Message::Settings(
+                view::SettingsMessage::NodeSettings(
+                    view::NodeSettingsMessage::CancelFlavorSwitch,
+                ),
+            )))
+            .into()
+        } else {
+            content
+        }
     }
 }
 
