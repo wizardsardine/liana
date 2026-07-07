@@ -25,3 +25,31 @@ impl From<VSpacing> for iced::Length {
         iced::Length::Fixed(spacing.pixels() as f32)
     }
 }
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[repr(u16)]
+pub enum HSpacing {
+    XS = 4,
+    S = 5,
+    M = 10,
+    ML = 12,
+    L = 16,
+}
+
+impl HSpacing {
+    pub const fn pixels(self) -> u32 {
+        self as u32
+    }
+}
+
+impl From<HSpacing> for iced::Pixels {
+    fn from(spacing: HSpacing) -> Self {
+        spacing.pixels().into()
+    }
+}
+
+impl From<HSpacing> for iced::Length {
+    fn from(spacing: HSpacing) -> Self {
+        iced::Length::Fixed(spacing.pixels() as f32)
+    }
+}

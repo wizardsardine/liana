@@ -15,8 +15,9 @@ Paths are under `liana-ui/src/` unless noted.
   and never `Row::new()` / `Column::new()` for a fixed set. Only genuinely dynamic building uses `.push`: a
   loop reassigning `x = x.push(...)`, a `.fold(col, |c, x| c.push(x))`, or `Vec::push`. Flatten deep view
   bodies into named `let` bindings first.
-- **Spacing.** Use the shared vertical scale from `liana_ui::spacing::VSpacing`: `XS = 4`, `S = 8`,
-  `M = 16`, `L = 20`, `XL = 24`. `M` is the standard business-installer stack/list spacing. Use the
+- **Spacing.** Use the shared scales from `liana_ui::spacing`: `VSpacing` for vertical gaps and
+  `HSpacing` for horizontal gaps. `VSpacing::M` is the standard business-installer stack/list
+  spacing. Use the
   `SpaceExt` helpers (`widget/mod.rs`): `Space::with_width(100)`,
   `Space::with_height(50)`, `Space::fill_width()`, `Space::fill_height()`. Never
   `Space::new().width(Length::Fixed(100.0))` or `.width(Length::Fill)`. Consumer view code should

@@ -5,7 +5,7 @@ use liana_ui::{
         button::btn_ok,
         modal::{modal_view, ModalWidth},
     },
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     widget::*,
 };
 
@@ -19,7 +19,7 @@ pub fn warning_modal_view(modal_state: &WarningModalState) -> Element<'_, Msg> {
         btn_ok(Some(Msg::WarningCloseModal)),
         Space::fill_width()
     ]
-    .spacing(10);
+    .spacing(HSpacing::M);
 
     let body = column![message, footer].spacing(VSpacing::M);
 

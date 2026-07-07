@@ -13,7 +13,7 @@ use iced::{
 use liana_connect::ws_business::Wallet;
 use liana_ui::{
     component::{button::btn_skip_registration, list, pill, text},
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     theme,
     widget::*,
 };
@@ -191,7 +191,7 @@ pub fn registration_key_entry(
         text::new::b5_medium(text::truncate(&alias, 25)),
         pill::fingerprint(fingerprint_label, None::<&str>)
     ]
-    .spacing(10)
+    .spacing(HSpacing::M)
     .align_y(Alignment::Center)
     .wrap();
     let body = if let Some(status) = status {

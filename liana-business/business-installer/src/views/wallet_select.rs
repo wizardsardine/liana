@@ -13,7 +13,7 @@ use liana_ui::{
         pill,
         text::{self, truncate},
     },
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     theme,
     widget::*,
 };
@@ -98,7 +98,7 @@ pub fn wallet_card<'a>(
     let alias = truncate(&wallet.alias, 25);
     let role = role_badge(role);
     let trailing = row![status_badge(wallet, user_email), list::entry_chevron()]
-        .spacing(12)
+        .spacing(HSpacing::ML)
         .align_y(Alignment::Center);
 
     let message = Some(Msg::OrgWalletSelected(wallet.id));

@@ -5,7 +5,7 @@ use liana_ui::{
         button::{btn_keep_changes, btn_ok, btn_reload},
         modal::{modal_view, ModalWidth},
     },
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     widget::*,
 };
 
@@ -21,7 +21,7 @@ pub fn conflict_modal_view(modal_state: &ConflictModalState) -> Element<'_, Msg>
             btn_reload(Some(Msg::ConflictReload)),
             Space::fill_width()
         ]
-        .spacing(10)
+        .spacing(HSpacing::M)
     } else {
         // Single dismiss button for info-only conflicts
         row![
@@ -29,7 +29,7 @@ pub fn conflict_modal_view(modal_state: &ConflictModalState) -> Element<'_, Msg>
             btn_ok(Some(Msg::ConflictDismiss)),
             Space::fill_width()
         ]
-        .spacing(10)
+        .spacing(HSpacing::M)
     };
 
     let body = column![message, footer].spacing(VSpacing::M);

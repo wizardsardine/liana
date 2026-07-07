@@ -13,7 +13,7 @@ use liana_ui::{
         button::{self, btn_add_recovery_path, btn_approve, btn_send_for_approval, btn_unlock},
         card, text, tooltip,
     },
-    spacing::VSpacing, theme,
+    spacing::{HSpacing, VSpacing}, theme,
     widget::*,
 };
 
@@ -32,7 +32,7 @@ fn banner_card(
         tooltip::tooltip_with_style(body, icon_style),
         text::new::caption(body).style(icon_style),
     ]
-    .spacing(10)
+    .spacing(HSpacing::M)
     .align_y(Alignment::Center);
 
     variant(content.into()).width(Length::Fill).into()

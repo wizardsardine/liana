@@ -17,7 +17,7 @@ use liana_ui::{
         pick_list,
         text::{self, short_email, truncate},
     },
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     theme,
     widget::*,
 };
@@ -151,12 +151,12 @@ pub fn edit_path_modal_view<'a>(
             )
             .width(INPUT_WIDTH)
         ]
-        .spacing(10)
+        .spacing(HSpacing::M)
         .align_y(Alignment::Center);
 
         let warning = threshold_warning.map(|warning| {
             row![
-                Space::with_width(LABEL_WIDTH + 10.0),
+                Space::with_width(LABEL_WIDTH + HSpacing::M.pixels() as f32),
                 text::new::small_caption(warning).style(theme::text::warning)
             ]
         });
@@ -227,7 +227,7 @@ pub fn edit_path_modal_view<'a>(
             )
             .width(100.0)
         ]
-        .spacing(10)
+        .spacing(HSpacing::M)
         .align_y(Alignment::Center);
 
         let label = warning
@@ -261,7 +261,7 @@ pub fn edit_path_modal_view<'a>(
         btn_cancel(Some(Msg::TemplateCancelPathModal)),
         save_button
     ]
-    .spacing(10);
+    .spacing(HSpacing::M);
 
     let body = column![
         last_edit_info,
