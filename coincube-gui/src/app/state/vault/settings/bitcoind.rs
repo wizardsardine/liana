@@ -705,8 +705,10 @@ impl State for BitcoindSettingsState {
                         // progress panel + result handler. `force_restart` stops
                         // the running node first (same flavour, so `maybe_start`
                         // would otherwise reuse it).
-                        let Some(flavor) =
-                            self.bitcoind_settings.as_ref().and_then(|s| s.managed_flavor)
+                        let Some(flavor) = self
+                            .bitcoind_settings
+                            .as_ref()
+                            .and_then(|s| s.managed_flavor)
                         else {
                             return Task::none();
                         };
@@ -942,14 +944,11 @@ impl State for BitcoindSettingsState {
         if let Some(flavor) = self.pending_flavor_switch {
             modal::Modal::new(
                 content,
-                view::vault::settings::flavor_switch_confirm(flavor).map(|m| {
-                    view::Message::Settings(view::SettingsMessage::NodeSettings(m))
-                }),
+                view::vault::settings::flavor_switch_confirm(flavor)
+                    .map(|m| view::Message::Settings(view::SettingsMessage::NodeSettings(m))),
             )
             .on_blur(Some(view::Message::Settings(
-                view::SettingsMessage::NodeSettings(
-                    view::NodeSettingsMessage::CancelFlavorSwitch,
-                ),
+                view::SettingsMessage::NodeSettings(view::NodeSettingsMessage::CancelFlavorSwitch),
             )))
             .into()
         } else {
@@ -1158,8 +1157,7 @@ impl BitcoindSettings {
         // config so the node card can show a Core/Knots switcher.
         let managed_flavor = if bitcoind_is_internal {
             CoincubeDirectory::active().ok().and_then(|dir| {
-                let cfg_path =
-                    internal_bitcoind_config_path(&internal_bitcoind_datadir(&dir));
+                let cfg_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(&dir));
                 InternalBitcoindConfig::from_file(&cfg_path)
                     .ok()
                     .map(|c| c.flavor)

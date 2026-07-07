@@ -584,9 +584,12 @@ pub fn flavor_switch_confirm<'a>(target: NodeFlavor) -> Element<'a, NodeSettings
         Column::new()
             .spacing(20)
             .push(
-                text(format!("Switch node software to {}?", target.display_name()))
-                    .bold()
-                    .size(20),
+                text(format!(
+                    "Switch node software to {}?",
+                    target.display_name()
+                ))
+                .bold()
+                .size(20),
             )
             .push(
                 text(
@@ -1934,9 +1937,13 @@ pub fn inbound_tor_section<'a>(
                 "unlimited".to_string()
             };
             col = col.push(
-                text(format!("Shared today: {} of {}", human_bytes(s.upload_used), cap))
-                    .size(12)
-                    .style(theme::text::secondary),
+                text(format!(
+                    "Shared today: {} of {}",
+                    human_bytes(s.upload_used),
+                    cap
+                ))
+                .size(12)
+                .style(theme::text::secondary),
             );
         }
     }
@@ -1944,38 +1951,36 @@ pub fn inbound_tor_section<'a>(
     // Status + apply-now. Every change above (including turning the feature off)
     // only reaches the running node when it restarts, so offer a one-click
     // restart alongside the status.
-    col = col
-        .push(separation().width(Length::Fill))
-        .push(
-            Row::new()
-                .spacing(15)
-                .align_y(Alignment::Center)
-                .push(
-                    text(if tor_running && onion_active {
-                        // Tor is up AND bitcoind has an onion key it re-publishes
-                        // on start. (The key file persists when the feature is
-                        // off, so we require a running tor too — otherwise a
-                        // just-disabled node would still read as "reachable".)
-                        "Tor is running — your node is reachable as an onion service."
-                    } else if tor_running && enabled {
-                        // Tor is up but bitcoind hasn't published the onion yet
-                        // (it applies its listen/onion config only on start).
-                        "Tor is running — restart the node to publish your onion service."
-                    } else if enabled {
-                        "Not reachable over Tor yet — restart the node to apply."
-                    } else {
-                        "Inbound over Tor is off."
-                    })
-                    .size(12)
-                    .style(theme::text::secondary)
-                    .width(Length::Fill),
-                )
-                .push(
-                    button::secondary(None, "Restart node to apply")
-                        .padding([8, 14])
-                        .on_press(NodeSettingsMessage::RestartNodeToApply),
-                ),
-        );
+    col = col.push(separation().width(Length::Fill)).push(
+        Row::new()
+            .spacing(15)
+            .align_y(Alignment::Center)
+            .push(
+                text(if tor_running && onion_active {
+                    // Tor is up AND bitcoind has an onion key it re-publishes
+                    // on start. (The key file persists when the feature is
+                    // off, so we require a running tor too — otherwise a
+                    // just-disabled node would still read as "reachable".)
+                    "Tor is running — your node is reachable as an onion service."
+                } else if tor_running && enabled {
+                    // Tor is up but bitcoind hasn't published the onion yet
+                    // (it applies its listen/onion config only on start).
+                    "Tor is running — restart the node to publish your onion service."
+                } else if enabled {
+                    "Not reachable over Tor yet — restart the node to apply."
+                } else {
+                    "Inbound over Tor is off."
+                })
+                .size(12)
+                .style(theme::text::secondary)
+                .width(Length::Fill),
+            )
+            .push(
+                button::secondary(None, "Restart node to apply")
+                    .padding([8, 14])
+                    .on_press(NodeSettingsMessage::RestartNodeToApply),
+            ),
+    );
 
     // Set expectations: the node only serves while the app is open and the
     // machine is awake. Minimizing is fine (bitcoind/tor run independently);

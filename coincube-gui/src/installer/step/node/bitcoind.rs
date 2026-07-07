@@ -1016,7 +1016,7 @@ impl Step for InternalBitcoindStep {
                         }
                     }
                     self.started = None; // clear both Ok and Err
-                    // Re-show the flavour picker when the user comes back.
+                                         // Re-show the flavour picker when the user comes back.
                     self.flavor_confirmed = false;
                     return Task::perform(async {}, |_| Message::Previous);
                 }
@@ -1591,7 +1591,10 @@ mod tests {
             ))
         );
         // No Expert Bundle is published for Linux/Windows aarch64.
-        assert_eq!(tor_asset_url(TOR_VERSION, NodeOs::Linux, NodeArch::Aarch64), None);
+        assert_eq!(
+            tor_asset_url(TOR_VERSION, NodeOs::Linux, NodeArch::Aarch64),
+            None
+        );
         assert_eq!(
             tor_asset_url(TOR_VERSION, NodeOs::Windows, NodeArch::Aarch64),
             None
@@ -1630,13 +1633,21 @@ mod tests {
                 .find(|l| l.trim_end().ends_with(&filename))
                 .and_then(|l| l.split_whitespace().next())
                 .expect("host archive listed in manifest");
-            assert!(hash_listed_in_manifest_hex(real_hash, &filename, REAL_TOR_SUMS));
+            assert!(hash_listed_in_manifest_hex(
+                real_hash,
+                &filename,
+                REAL_TOR_SUMS
+            ));
         }
     }
 
     // Helper mirroring `hash_listed_in_manifest` but taking a hex hash directly,
     // so the Tor test needn't reconstruct the (large) archive bytes.
-    fn hash_listed_in_manifest_hex(hash_hex: &str, archive_filename: &str, sha256sums: &str) -> bool {
+    fn hash_listed_in_manifest_hex(
+        hash_hex: &str,
+        archive_filename: &str,
+        sha256sums: &str,
+    ) -> bool {
         sha256sums.lines().any(|line| {
             let mut fields = line.split_whitespace();
             matches!(

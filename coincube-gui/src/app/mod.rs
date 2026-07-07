@@ -1338,7 +1338,11 @@ async fn check_bitcoind_net_stats(
 
     let upload_target = nt["uploadtarget"]["target"].as_u64().unwrap_or(0);
     let upload_used = if upload_target > 0 {
-        upload_target.saturating_sub(nt["uploadtarget"]["bytes_left_in_cycle"].as_u64().unwrap_or(0))
+        upload_target.saturating_sub(
+            nt["uploadtarget"]["bytes_left_in_cycle"]
+                .as_u64()
+                .unwrap_or(0),
+        )
     } else {
         nt["totalbytessent"].as_u64().unwrap_or(0)
     };

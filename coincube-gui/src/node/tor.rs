@@ -194,7 +194,9 @@ impl Tor {
             }
         }
 
-        let child = command.spawn().map_err(|e| StartTorError::Io(e.to_string()))?;
+        let child = command
+            .spawn()
+            .map_err(|e| StartTorError::Io(e.to_string()))?;
         let tor = Tor {
             ports,
             process: Arc::new(Mutex::new(child)),
@@ -298,7 +300,10 @@ fn torrc_contents(datadir: &Path, geoip_dir: &Path, ports: TorPorts) -> String {
 
 /// Quote a path for a `torrc` value (double quotes; backslashes/quotes escaped).
 fn quote_path(path: &Path) -> String {
-    let s = path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
+    let s = path
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
     format!("\"{s}\"")
 }
 
@@ -482,8 +487,7 @@ pub fn prepare_inbound_tor(coincube_datadir: &CoincubeDirectory, network: Networ
     // Any prior managed tor from this process is replaced.
     stop_managed_tor();
 
-    let config_path =
-        internal_bitcoind_config_path(&internal_bitcoind_datadir(coincube_datadir));
+    let config_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(coincube_datadir));
     let Ok(base) = InternalBitcoindConfig::from_file(&config_path) else {
         // No managed-node config on disk → nothing to do (external backend).
         return false;
@@ -572,7 +576,8 @@ pub async fn download_and_install_tor(coincube_datadir: CoincubeDirectory) -> Re
     if !tor_supported_on_host() {
         return Err("Tor is not available for this platform".to_string());
     }
-    let url = tor_download_url().ok_or_else(|| "no Tor download URL for this platform".to_string())?;
+    let url =
+        tor_download_url().ok_or_else(|| "no Tor download URL for this platform".to_string())?;
 
     info!("downloading managed Tor {TOR_VERSION} from {url}");
     let bytes = crate::download::fetch_bytes(&url)
@@ -587,7 +592,8 @@ pub async fn download_and_install_tor(coincube_datadir: CoincubeDirectory) -> Re
     let install_dir = internal_tor_directory(&coincube_datadir, TOR_VERSION);
     std::fs::create_dir_all(&install_dir)
         .map_err(|e| format!("could not create Tor install dir: {e}"))?;
-    install_tor(&install_dir, &bytes, &verification).map_err(|e| format!("Tor install failed: {e}"))?;
+    install_tor(&install_dir, &bytes, &verification)
+        .map_err(|e| format!("Tor install failed: {e}"))?;
     info!("installed managed Tor {TOR_VERSION}");
     Ok(())
 }
@@ -679,14 +685,23 @@ mod tests {
         assert!(!line_reports_bootstrapped(
             "May 01 00:00:00.000 [notice] Bootstrapped 95% (circuit_create): Establishing"
         ));
-        assert!(!line_reports_bootstrapped("[notice] Opening Socks listener"));
+        assert!(!line_reports_bootstrapped(
+            "[notice] Opening Socks listener"
+        ));
     }
 
     #[test]
     fn torrc_has_required_directives() {
         let datadir = Path::new("/tmp/coincube/tor-data");
         let geoip = Path::new("/tmp/coincube/tor-15/data");
-        let torrc = torrc_contents(datadir, geoip, TorPorts { control: 9151, socks: 9150 });
+        let torrc = torrc_contents(
+            datadir,
+            geoip,
+            TorPorts {
+                control: 9151,
+                socks: 9150,
+            },
+        );
         assert!(torrc.contains("SocksPort 127.0.0.1:9150"));
         assert!(torrc.contains("ControlPort 127.0.0.1:9151"));
         assert!(torrc.contains("CookieAuthentication 1"));
@@ -731,11 +746,9 @@ mod tests {
         let datadir = temp_datadir("failsafe");
         // A managed-node config exists (Knots, RDTS) but no tor binary is
         // installed, and the preference asks for inbound.
-        let config_path =
-            internal_bitcoind_config_path(&internal_bitcoind_datadir(&datadir));
+        let config_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(&datadir));
         std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-        let mut conf =
-            InternalBitcoindConfig::for_flavor(crate::node::bitcoind::NodeFlavor::Knots);
+        let mut conf = InternalBitcoindConfig::for_flavor(crate::node::bitcoind::NodeFlavor::Knots);
         conf.networks.insert(
             Network::Bitcoin,
             InternalBitcoindNetworkConfig {
@@ -753,7 +766,10 @@ mod tests {
         // No tor binary on disk → prepare must fail-safe to outbound-only and
         // leave no inbound knobs in bitcoin.conf.
         let enabled = prepare_inbound_tor(&datadir, Network::Bitcoin);
-        assert!(!enabled, "must not report inbound enabled without a tor binary");
+        assert!(
+            !enabled,
+            "must not report inbound enabled without a tor binary"
+        );
         let reloaded = InternalBitcoindConfig::from_file(&config_path).unwrap();
         assert!(!reloaded.inbound_tor, "no listen/listenonion emitted");
         assert!(reloaded.tor_control_port.is_none());
@@ -772,8 +788,7 @@ mod tests {
         let datadir = temp_datadir("mainnet-only");
         let config_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(&datadir));
         std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-        let mut conf =
-            InternalBitcoindConfig::for_flavor(crate::node::bitcoind::NodeFlavor::Knots);
+        let mut conf = InternalBitcoindConfig::for_flavor(crate::node::bitcoind::NodeFlavor::Knots);
         conf.networks.insert(
             Network::Signet,
             InternalBitcoindNetworkConfig {
@@ -785,7 +800,9 @@ mod tests {
         );
         conf.to_file(&config_path).unwrap();
         // Preference enabled, but we're on a non-mainnet network.
-        InboundTorPreference::default_enabled().save(&datadir).unwrap();
+        InboundTorPreference::default_enabled()
+            .save(&datadir)
+            .unwrap();
 
         let enabled = prepare_inbound_tor(&datadir, Network::Signet);
         assert!(!enabled, "inbound-over-tor must be mainnet-only");
@@ -812,22 +829,37 @@ mod tests {
         std::fs::write(bitcoind.join("datadir").join("onion_v3_private_key"), b"k").unwrap();
         std::fs::create_dir_all(bitcoind.join("datadir").join("signet")).unwrap();
         std::fs::write(
-            bitcoind.join("datadir").join("signet").join("onion_v3_private_key"),
+            bitcoind
+                .join("datadir")
+                .join("signet")
+                .join("onion_v3_private_key"),
             b"k",
         )
         .unwrap();
         // Blockchain (expensive, non-sensitive) — must NOT be targeted.
         std::fs::create_dir_all(bitcoind.join("datadir").join("blocks")).unwrap();
-        std::fs::write(bitcoind.join("datadir").join("blocks").join("blk0.dat"), b"b").unwrap();
+        std::fs::write(
+            bitcoind.join("datadir").join("blocks").join("blk0.dat"),
+            b"b",
+        )
+        .unwrap();
 
         let targets = duress_identifying_targets(root);
-        assert!(targets.contains(&bitcoind.join("tor-data")), "tor data wiped");
+        assert!(
+            targets.contains(&bitcoind.join("tor-data")),
+            "tor data wiped"
+        );
         assert!(
             targets.contains(&bitcoind.join("datadir").join("onion_v3_private_key")),
             "mainnet onion key wiped"
         );
         assert!(
-            targets.contains(&bitcoind.join("datadir").join("signet").join("onion_v3_private_key")),
+            targets.contains(
+                &bitcoind
+                    .join("datadir")
+                    .join("signet")
+                    .join("onion_v3_private_key")
+            ),
             "per-network onion key wiped"
         );
         assert!(

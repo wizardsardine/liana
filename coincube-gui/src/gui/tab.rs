@@ -2067,9 +2067,20 @@ mod duress_wipe_target_tests {
         // bitcoind (root-level, not a network dir): the blockchain is preserved,
         // but inbound-over-Tor identifying material (Tor data + onion key) is
         // obliterated — see Decision 4.
-        touch(&root.join("bitcoind").join("datadir").join("blocks").join("blk0.dat"));
+        touch(
+            &root
+                .join("bitcoind")
+                .join("datadir")
+                .join("blocks")
+                .join("blk0.dat"),
+        );
         touch(&root.join("bitcoind").join("tor-data").join("state"));
-        touch(&root.join("bitcoind").join("datadir").join("onion_v3_private_key"));
+        touch(
+            &root
+                .join("bitcoind")
+                .join("datadir")
+                .join("onion_v3_private_key"),
+        );
 
         let targets = duress_wipe_targets(&root);
 
@@ -2102,7 +2113,12 @@ mod duress_wipe_target_tests {
             "managed Tor data dir must be wiped"
         );
         assert!(
-            targets.contains(&root.join("bitcoind").join("datadir").join("onion_v3_private_key")),
+            targets.contains(
+                &root
+                    .join("bitcoind")
+                    .join("datadir")
+                    .join("onion_v3_private_key")
+            ),
             "onion-service key must be wiped"
         );
 

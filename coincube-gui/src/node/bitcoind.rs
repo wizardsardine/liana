@@ -835,10 +835,7 @@ impl InternalBitcoindConfig {
             // injected once Tor is up; absent it (e.g. a config loaded before
             // Tor starts), bitcoind falls back to no onion service — fail-safe.
             if let Some(control_port) = self.tor_control_port {
-                general.set(
-                    "torcontrol",
-                    format!("{TOR_LOOPBACK_HOST}:{control_port}"),
-                );
+                general.set("torcontrol", format!("{TOR_LOOPBACK_HOST}:{control_port}"));
             }
             // Route outbound peer connections through Tor too, when requested and
             // the SOCKS port is known.
@@ -1518,7 +1515,8 @@ mod tests {
 
         // On with the product defaults + injected runtime ports: every key is
         // present with the expected value.
-        let mut on = InternalBitcoindConfig::for_flavor(NodeFlavor::Knots).with_inbound_tor_defaults();
+        let mut on =
+            InternalBitcoindConfig::for_flavor(NodeFlavor::Knots).with_inbound_tor_defaults();
         on.tor_control_port = Some(9151);
         on.tor_socks_port = Some(9150);
         on.networks.insert(Network::Bitcoin, net.clone());
