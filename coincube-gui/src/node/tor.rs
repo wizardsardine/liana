@@ -161,17 +161,21 @@ impl Tor {
         // Start each run from a clean log so we only ever match *this* run's
         // "Bootstrapped 100%".
         let _ = std::fs::remove_file(&log_path);
-        std::fs::write(
-            &torrc_path,
-            torrc_contents(&datadir, &geoip_dir, &log_path, ports),
-        )
-        .map_err(|e| StartTorError::Io(e.to_string()))?;
+        std::fs::write(&torrc_path, torrc_contents(&datadir, &geoip_dir, ports))
+            .map_err(|e| StartTorError::Io(e.to_string()))?;
 
+        // We capture tor's log by pointing its `Log notice stdout` at a file we
+        // open here, rather than tor's `Log ... file <path>` directive: tor's
+        // Log-file parser mishandles a path containing spaces (e.g. the macOS
+        // `Application Support` datadir), failing with ENOENT and refusing to
+        // start. Opening the file ourselves sidesteps that entirely.
+        let log_file =
+            std::fs::File::create(&log_path).map_err(|e| StartTorError::Io(e.to_string()))?;
         let mut command = std::process::Command::new(&exe);
         command
             .arg("-f")
             .arg(&torrc_path)
-            .stdout(std::process::Stdio::null())
+            .stdout(std::process::Stdio::from(log_file))
             .stderr(std::process::Stdio::null());
 
         #[cfg(target_os = "windows")]
@@ -266,7 +270,11 @@ fn allocate_ports() -> Result<TorPorts, StartTorError> {
 /// are quoted so spaces (common on Windows/macOS) are handled on every
 /// platform. GeoIP lines are emitted only when the bundle's databases are
 /// present (their absence is a warning in tor, not an error).
-fn torrc_contents(datadir: &Path, geoip_dir: &Path, log_path: &Path, ports: TorPorts) -> String {
+///
+/// Logging uses `Log notice stdout` (not `Log ... file`): tor's Log-file parser
+/// mishandles a path containing spaces (the macOS `Application Support` datadir),
+/// so [`Tor::start`] captures stdout into the log file itself instead.
+fn torrc_contents(datadir: &Path, geoip_dir: &Path, ports: TorPorts) -> String {
     let mut torrc = String::new();
     torrc.push_str(&format!("DataDirectory {}\n", quote_path(datadir)));
     torrc.push_str(&format!("SocksPort {TOR_HOST}:{}\n", ports.socks));
@@ -284,7 +292,7 @@ fn torrc_contents(datadir: &Path, geoip_dir: &Path, log_path: &Path, ports: TorP
     if geoip6.exists() {
         torrc.push_str(&format!("GeoIPv6File {}\n", quote_path(&geoip6)));
     }
-    torrc.push_str(&format!("Log notice file {}\n", quote_path(log_path)));
+    torrc.push_str("Log notice stdout\n");
     torrc
 }
 
@@ -662,8 +670,7 @@ mod tests {
     fn torrc_has_required_directives() {
         let datadir = Path::new("/tmp/coincube/tor-data");
         let geoip = Path::new("/tmp/coincube/tor-15/data");
-        let log = Path::new("/tmp/coincube/tor-data/tor.log");
-        let torrc = torrc_contents(datadir, geoip, log, TorPorts { control: 9151, socks: 9150 });
+        let torrc = torrc_contents(datadir, geoip, TorPorts { control: 9151, socks: 9150 });
         assert!(torrc.contains("SocksPort 127.0.0.1:9150"));
         assert!(torrc.contains("ControlPort 127.0.0.1:9151"));
         assert!(torrc.contains("CookieAuthentication 1"));
@@ -671,6 +678,10 @@ mod tests {
         assert!(torrc.contains("DataDirectory \"/tmp/coincube/tor-data\""));
         // GeoIP lines are omitted when the databases don't exist on disk.
         assert!(!torrc.contains("GeoIPFile"));
+        // Logging goes to stdout (captured by us) — never `Log ... file`, which
+        // tor's parser mishandles for paths containing spaces.
+        assert!(torrc.contains("Log notice stdout"));
+        assert!(!torrc.contains("Log notice file"));
     }
 
     #[test]
