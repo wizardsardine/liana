@@ -1046,29 +1046,44 @@ impl Bitcoind {
             format!("-chain={}", network.to_core_arg()),
             format!("-datadir={}", datadir_path_str),
         ];
-        let mut command = std::process::Command::new(bitcoind_exe_path);
+        // Build a fresh bitcoind command each spawn attempt (we may respawn if
+        // the datadir lock isn't free yet — see the retry below).
+        let spawn_bitcoind = || -> Result<std::process::Child, StartInternalBitcoindError> {
+            let mut command = std::process::Command::new(&bitcoind_exe_path);
+            command
+                .args(&args)
+                // FIXME: can we pipe stderr to our logging system somehow?
+                .stdout(std::process::Stdio::null());
 
-        #[cfg(target_os = "windows")]
-        let command = command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+            #[cfg(target_os = "windows")]
+            command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            // Create a new session to detach the child from the main process.
-            unsafe {
-                command.pre_exec(|| {
-                    libc::setsid();
-                    Ok(())
-                });
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                // Create a new session to detach the child from the main process.
+                unsafe {
+                    command.pre_exec(|| {
+                        libc::setsid();
+                        Ok(())
+                    });
+                }
             }
-        }
+            command
+                .spawn()
+                .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))
+        };
 
-        let mut process = command
-            .args(&args)
-            // FIXME: can we pipe stderr to our logging system somehow?
-            .stdout(std::process::Stdio::null())
-            .spawn()
-            .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))?;
+        // When we've just asked a previous managed node to stop, it keeps the
+        // datadir lock until it finishes flushing on shutdown; a fresh bitcoind
+        // then exits immediately with "Cannot obtain a lock on directory". Retry
+        // the spawn a bounded number of times (~15s) to ride out that window.
+        // A genuine start failure just exhausts the retries and surfaces the
+        // error, a few seconds later than before.
+        const MAX_LOCK_RETRIES: u32 = 30;
+        let mut lock_retries = 0;
+
+        let mut process = spawn_bitcoind()?;
 
         // We've started bitcoind in the background, however it may fail to start for whatever
         // reason. And we need its JSONRPC interface to be available to continue. Thus wait for
@@ -1079,6 +1094,17 @@ impl Bitcoind {
                 Ok(None) => {}
                 Err(e) => log::error!("Error while trying to wait for bitcoind: {}", e),
                 Ok(Some(status)) => {
+                    if lock_retries < MAX_LOCK_RETRIES {
+                        lock_retries += 1;
+                        log::warn!(
+                            "bitcoind exited early ({status}); a stopping node likely still \
+                             holds the datadir lock — retrying ({lock_retries}/{MAX_LOCK_RETRIES})"
+                        );
+                        thread::sleep(time::Duration::from_millis(500));
+                        process = spawn_bitcoind()?;
+                        try_count = 0;
+                        continue;
+                    }
                     log::error!("Bitcoind exited with status '{}'", status);
                     return Err(StartInternalBitcoindError::ProcessExited(status));
                 }
