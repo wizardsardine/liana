@@ -908,6 +908,10 @@ impl State for BitcoindSettingsState {
                             self.inbound_tor_pref.outbound_via_tor,
                             self.inbound_tor_pref.max_upload_target_mb_day.is_some(),
                             crate::node::tor::managed_tor_ports().is_some(),
+                            crate::node::tor::onion_service_active(
+                                &cache.datadir_path,
+                                cache.network,
+                            ),
                             crate::node::bitcoind::tor_supported_on_host(),
                         )
                         .map(map_node_msg),

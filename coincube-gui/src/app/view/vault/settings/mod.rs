@@ -1807,6 +1807,7 @@ pub fn inbound_tor_section<'a>(
     outbound_via_tor: bool,
     limit_upload: bool,
     tor_running: bool,
+    onion_active: bool,
     supported: bool,
 ) -> Element<'a, NodeSettingsMessage> {
     let mut col = Column::new()
@@ -1890,8 +1891,12 @@ pub fn inbound_tor_section<'a>(
                 .spacing(15)
                 .align_y(Alignment::Center)
                 .push(
-                    text(if tor_running {
+                    text(if onion_active {
                         "Tor is running — your node is reachable as an onion service."
+                    } else if tor_running && enabled {
+                        // Tor is up but bitcoind hasn't published the onion yet
+                        // (it applies its listen/onion config only on start).
+                        "Tor is running — restart the node to publish your onion service."
                     } else if enabled {
                         "Not reachable over Tor yet — restart the node to apply."
                     } else {

@@ -907,10 +907,21 @@ pub async fn start_bitcoind_and_daemon(
             // fresh onion/proxy config. Fail-safe and infallible: any Tor issue
             // leaves the conf outbound-only, so the node starts exactly as it
             // does today.
-            crate::node::tor::prepare_inbound_tor(
+            let inbound_up = crate::node::tor::prepare_inbound_tor(
                 &coincube_datadir_path,
                 config.bitcoin_config.network,
             );
+            // A fresh tor gets fresh control/SOCKS ports each run, which a
+            // *reused* bitcoind (one that survived a previous session) wouldn't
+            // pick up — `maybe_start` would just reattach to it. When inbound is
+            // being applied, stop any running node first so `maybe_start` starts
+            // it clean against the new onion/proxy config. No-op (and no restart)
+            // when nothing is running, i.e. the normal clean-quit case. Safe
+            // here: the embedded daemon isn't up yet, so there's no live poller
+            // to disturb.
+            if inbound_up {
+                crate::node::bitcoind::stop_and_wait_managed_bitcoind(bitcoind_config);
+            }
             Some(
                 Bitcoind::maybe_start(
                     config.bitcoin_config.network,
