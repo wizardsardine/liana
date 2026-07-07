@@ -1316,7 +1316,7 @@ async fn check_bitcoind_net_stats(
     let call = |method: &'static str| {
         let (client, url, user, pass) = (client.clone(), url.clone(), user.clone(), pass.clone());
         async move {
-            client
+            let resp: serde_json::Value = client
                 .post(&url)
                 .basic_auth(&user, Some(&pass))
                 .json(&serde_json::json!({
@@ -1325,16 +1325,21 @@ async fn check_bitcoind_net_stats(
                 .send()
                 .await
                 .map_err(|e| format!("{method} request failed: {e}"))?
-                .json::<serde_json::Value>()
+                .json()
                 .await
-                .map_err(|e| format!("{method} parse failed: {e}"))
+                .map_err(|e| format!("{method} parse failed: {e}"))?;
+            // A JSON-RPC error comes back as HTTP 200 with a non-null `error`;
+            // surface it instead of indexing a null `result` into all-zeros
+            // stats (which the caller would then cache as if it were real).
+            if !resp["error"].is_null() {
+                return Err(format!("{method} error: {}", resp["error"]));
+            }
+            Ok(resp["result"].clone())
         }
     };
 
     let ni = call("getnetworkinfo").await?;
     let nt = call("getnettotals").await?;
-    let ni = &ni["result"];
-    let nt = &nt["result"];
 
     let upload_target = nt["uploadtarget"]["target"].as_u64().unwrap_or(0);
     let upload_used = if upload_target > 0 {
