@@ -1100,8 +1100,17 @@ impl SelectKeySource {
                 Some("This owner already has a Keychain key placed in this Vault.".to_string());
             return Task::none();
         }
+        
+        // Fingerprint alone doesn't uniquely identify a Keychain key —
+        // two distinct keys can share a master fingerprint if they come
+        // from the same seed. Compare `key_id` to tell whether
+        // this is genuinely the same key already placed,
+        // vs. a different key that happens to collide on fingerprint.
+        let existing_same_key = self.keys.get(&fingerprint).is_some_and(|(_, k)| {
+            matches!(&k.source, KeySource::KeychainKey { key_id, .. } if *key_id == resolved.raw.id)
+        });
 
-        if self.keys.contains_key(&fingerprint) {
+        if existing_same_key {
             self.selected_key = SelectedKey::Existing(fingerprint);
         } else {
             let key = Key {
