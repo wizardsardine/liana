@@ -963,6 +963,12 @@ fn wait_for_internal_bitcoind_shutdown(config: &BitcoindConfig) {
 /// otherwise reuse the running node and never pick the change up. No-op when no
 /// managed node is reachable.
 pub fn stop_and_wait_managed_bitcoind(config: &BitcoindConfig) {
+    // The second arg is only a label for the watchonly-client URL; it need not
+    // name a loaded wallet. `BitcoinD::new`'s connection check issues a
+    // non-wallet `echo` RPC, which bitcoind serves regardless of the
+    // `/wallet/<name>` in the URL (only real wallet RPCs require the wallet to
+    // exist). So `Ok` here means "the node is reachable", matching the same
+    // dummy-path pattern used by `maybe_start` and `wait_for_internal_bitcoind_shutdown`.
     if let Ok(running) = coincubed::BitcoinD::new(config, "managed_restart_stop".to_string()) {
         info!("Stopping managed bitcoind to apply new config...");
         running.stop();
