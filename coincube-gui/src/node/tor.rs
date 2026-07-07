@@ -29,9 +29,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
 use coincube_core::miniscript::bitcoin::Network;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -43,11 +40,6 @@ use crate::node::bitcoind::{
     tor_supported_on_host, InternalBitcoindConfig, MAX_CONNECTIONS_DEFAULT,
     MAX_UPLOAD_TARGET_MB_DAY_DEFAULT, TOR_VERSION,
 };
-
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
-#[cfg(target_os = "windows")]
-const DETACHED_PROCESS: u32 = 0x00000008;
 
 /// How long to wait for Tor to reach "Bootstrapped 100%" before giving up and
 /// falling back to outbound-only. Generous — a cold Tor bootstrap on a slow link
@@ -178,21 +170,8 @@ impl Tor {
             .stdout(std::process::Stdio::from(log_file))
             .stderr(std::process::Stdio::null());
 
-        #[cfg(target_os = "windows")]
-        command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            // Detach into a new session so closing the app doesn't SIGHUP tor;
-            // we stop it explicitly via `stop`.
-            unsafe {
-                command.pre_exec(|| {
-                    libc::setsid();
-                    Ok(())
-                });
-            }
-        }
+        // Detach so closing the app doesn't SIGHUP tor; we stop it via `stop`.
+        crate::node::detach_spawned_process(&mut command);
 
         let child = command
             .spawn()
@@ -627,18 +606,22 @@ pub async fn ensure_tor_installed_if_wanted(coincube_datadir: &CoincubeDirectory
 /// legacy `onion_private_key`) in its network data dir, so we look in the
 /// managed datadir root and one level of network subdirectories.
 pub fn duress_identifying_targets(coincube_datadir_root: &Path) -> Vec<PathBuf> {
-    let bitcoind_dir = coincube_datadir_root.join("bitcoind");
+    // Derive paths through the same helpers the rest of the module uses, so the
+    // wipe stays in lock-step with where Tor state and the onion keys actually
+    // live — hardcoding the layout here would silently miss the fingerprint if
+    // the directory scheme ever changed.
+    let coincube_datadir = CoincubeDirectory::new(coincube_datadir_root.to_path_buf());
     let mut targets = Vec::new();
 
     // The whole managed Tor data directory (state + control cookie).
-    let tor_data = bitcoind_dir.join("tor-data");
+    let tor_data = internal_tor_datadir(&coincube_datadir);
     if tor_data.exists() {
         targets.push(tor_data);
     }
 
     // bitcoind's onion-service key(s), in the datadir root and per-network dirs.
     const ONION_KEY_FILES: &[&str] = &["onion_v3_private_key", "onion_private_key"];
-    let datadir = bitcoind_dir.join("datadir");
+    let datadir = internal_bitcoind_datadir(&coincube_datadir);
     let mut search_dirs = vec![datadir.clone()];
     if let Ok(entries) = std::fs::read_dir(&datadir) {
         for entry in entries.flatten() {

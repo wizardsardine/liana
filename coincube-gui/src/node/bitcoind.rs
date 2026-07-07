@@ -15,17 +15,8 @@ use std::time;
 
 use tracing::{info, warn};
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
 use crate::dir::{BitcoindDirectory, CoincubeDirectory};
 use crate::utils::now_fallible;
-
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-#[cfg(target_os = "windows")]
-const DETACHED_PROCESS: u32 = 0x00000008;
 
 /// The flavour of managed Bitcoin node COINCUBE downloads, configures, and runs.
 ///
@@ -1058,20 +1049,9 @@ impl Bitcoind {
                 // FIXME: can we pipe stderr to our logging system somehow?
                 .stdout(std::process::Stdio::null());
 
-            #[cfg(target_os = "windows")]
-            command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+            // Detach the child so closing the app doesn't take the node down.
+            crate::node::detach_spawned_process(&mut command);
 
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::CommandExt;
-                // Create a new session to detach the child from the main process.
-                unsafe {
-                    command.pre_exec(|| {
-                        libc::setsid();
-                        Ok(())
-                    });
-                }
-            }
             command
                 .spawn()
                 .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))

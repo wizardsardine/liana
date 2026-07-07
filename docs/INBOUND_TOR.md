@@ -90,11 +90,18 @@ The **user preference** lives in a sidecar, `bitcoind/inbound_tor.json`
 `bitcoin.conf`, which `bitcoind` would reject unknown keys in and which is
 rewritten each run to reflect the *actual* runtime state.
 
-On every managed-node start, [`prepare_inbound_tor`](../coincube-gui/src/node/tor.rs):
+On every managed-node start, the loader
+([`start_bitcoind_and_daemon`](../coincube-gui/src/loader.rs)) first `await`s
+[`ensure_tor_installed_if_wanted`](../coincube-gui/src/node/tor.rs) — the only
+async, network-touching step, which downloads and verifies the Tor binary if the
+preference is on and it's missing — then calls the synchronous
+[`prepare_inbound_tor`](../coincube-gui/src/node/tor.rs), which:
 
 1. Loads the preference.
-2. If enabled + supported, self-installs the Tor binary if missing
-   (`ensure_tor_installed_if_wanted`), starts Tor, waits for bootstrap.
+2. If enabled + supported, starts Tor using the already-installed binary and
+   waits for bootstrap. (The binary is not fetched here; that's the loader's
+   awaited `ensure_tor_installed_if_wanted` step above. A still-missing binary
+   just fails this start and falls through to the outbound-only path below.)
 3. On success: injects the fresh control/SOCKS ports into `bitcoin.conf` and
    starts `bitcoind` → onion service.
 4. On **any** failure (binary missing, bootstrap timeout, crash, I/O): strips
