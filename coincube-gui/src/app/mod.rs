@@ -712,6 +712,9 @@ pub struct App {
     /// True while a check_bitcoind_sync_progress probe is in flight; prevents
     /// multiple concurrent RPC calls from piling up across subscription ticks.
     bitcoind_sync_probe_in_progress: bool,
+    /// Guards the active-node net-stats poll (connections/upload/onion) so ticks
+    /// don't stack concurrent RPCs.
+    node_net_stats_probe_in_progress: bool,
     /// True while an off-thread daemon backend switch ([`Self::spawn_daemon_switch`])
     /// is in flight. The config isn't updated until the switch completes, so
     /// without this guard the next sync probe would keep re-firing the switch
@@ -1281,6 +1284,82 @@ async fn check_bitcoind_sync_progress(
     Ok((progress, ibd))
 }
 
+/// Poll the active managed node's network participation stats — connection
+/// counts, upload used vs. its daily cap, and the advertised onion address —
+/// with two cheap RPCs (`getnetworkinfo` + `getnettotals`). Surfaced in the
+/// Node settings so users can see their node is connected and (over Tor)
+/// sharing.
+async fn check_bitcoind_net_stats(
+    cfg: coincubed::config::BitcoindConfig,
+) -> Result<cache::NodeNetStats, String> {
+    use coincubed::config::BitcoindRpcAuth;
+
+    let (user, pass) = match &cfg.rpc_auth {
+        BitcoindRpcAuth::CookieFile(path) => {
+            let cookie = tokio::fs::read_to_string(path)
+                .await
+                .map_err(|e| format!("Cannot read bitcoind cookie: {}", e))?;
+            let trimmed = cookie.trim();
+            let sep = trimmed
+                .find(':')
+                .ok_or_else(|| "Invalid cookie file format".to_string())?;
+            (trimmed[..sep].to_string(), trimmed[sep + 1..].to_string())
+        }
+        BitcoindRpcAuth::UserPass(u, p) => (u.clone(), p.clone()),
+    };
+
+    let url = format!("http://{}/", cfg.addr);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("bitcoind RPC client build failed: {}", e))?;
+    let call = |method: &'static str| {
+        let (client, url, user, pass) = (client.clone(), url.clone(), user.clone(), pass.clone());
+        async move {
+            client
+                .post(&url)
+                .basic_auth(&user, Some(&pass))
+                .json(&serde_json::json!({
+                    "jsonrpc": "2.0", "method": method, "params": [], "id": 1
+                }))
+                .send()
+                .await
+                .map_err(|e| format!("{method} request failed: {e}"))?
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|e| format!("{method} parse failed: {e}"))
+        }
+    };
+
+    let ni = call("getnetworkinfo").await?;
+    let nt = call("getnettotals").await?;
+    let ni = &ni["result"];
+    let nt = &nt["result"];
+
+    let upload_target = nt["uploadtarget"]["target"].as_u64().unwrap_or(0);
+    let upload_used = if upload_target > 0 {
+        upload_target.saturating_sub(nt["uploadtarget"]["bytes_left_in_cycle"].as_u64().unwrap_or(0))
+    } else {
+        nt["totalbytessent"].as_u64().unwrap_or(0)
+    };
+    let onion_address = ni["localaddresses"].as_array().and_then(|addrs| {
+        addrs.iter().find_map(|a| {
+            a["address"]
+                .as_str()
+                .filter(|s| s.ends_with(".onion"))
+                .map(|s| format!("{s}:{}", a["port"].as_u64().unwrap_or(8333)))
+        })
+    });
+
+    Ok(cache::NodeNetStats {
+        connections_in: ni["connections_in"].as_u64().unwrap_or(0),
+        connections_out: ni["connections_out"].as_u64().unwrap_or(0),
+        upload_used,
+        upload_target,
+        onion_address,
+    })
+}
+
 /// Hashable wrapper around `ConnectStreamConfig` so it can be used as
 /// the identity key for `iced::Subscription::run_with`. We hash only the
 /// fields that should force a fresh subscription: `device_id` and
@@ -1502,6 +1581,7 @@ impl App {
                 errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
+                node_net_stats_probe_in_progress: false,
                 daemon_switch_in_progress: false,
                 auto_switch_suppressed: false,
                 show_received_celebration: false,
@@ -1609,6 +1689,7 @@ impl App {
                 errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
+                node_net_stats_probe_in_progress: false,
                 daemon_switch_in_progress: false,
                 auto_switch_suppressed: false,
                 show_received_celebration: false,
@@ -2250,6 +2331,24 @@ impl App {
                     },
                     Message::UpdateDaemonCache,
                 ));
+            }
+
+            // Poll the active managed node's network participation stats
+            // (connections / upload / onion) for the Node settings, on the same
+            // cadence. Only when the backend is a local Bitcoind node.
+            if !self.node_net_stats_probe_in_progress {
+                if let Some(coincubed::config::BitcoinBackend::Bitcoind(cfg)) = self
+                    .daemon
+                    .as_ref()
+                    .and_then(|d| d.config())
+                    .and_then(|c| c.bitcoin_backend.clone())
+                {
+                    self.node_net_stats_probe_in_progress = true;
+                    tasks.push(Task::perform(
+                        check_bitcoind_net_stats(cfg),
+                        Message::BitcoindNetStats,
+                    ));
+                }
             }
         }
 
@@ -2979,6 +3078,14 @@ impl App {
                             Message::BitcoindSyncProgress,
                         );
                     }
+                }
+            }
+            Message::BitcoindNetStats(res) => {
+                self.node_net_stats_probe_in_progress = false;
+                match res {
+                    Ok(stats) => self.cache.node_net_stats = Some(stats),
+                    // Transient (e.g. mid-restart) — keep the last good stats.
+                    Err(e) => tracing::debug!("node net-stats poll failed: {e}"),
                 }
             }
             Message::BitcoindSyncProgress(res) => {

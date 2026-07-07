@@ -545,6 +545,8 @@ pub enum NodeSettingsMessage {
     /// Restart the managed node now so freshly-changed inbound-over-Tor settings
     /// take effect (they otherwise apply only on the next node start).
     RestartNodeToApply,
+    /// Copy a value (e.g. the onion address) to the clipboard.
+    CopyToClipboard(String),
 }
 
 #[derive(Debug, Clone)]

@@ -696,6 +696,9 @@ impl State for BitcoindSettingsState {
                     NodeSettingsMessage::CancelFlavorSwitch => {
                         self.pending_flavor_switch = None;
                     }
+                    NodeSettingsMessage::CopyToClipboard(value) => {
+                        return clipboard::write(value);
+                    }
                     NodeSettingsMessage::RestartNodeToApply => {
                         // Restart the managed node now so freshly-toggled
                         // inbound-over-Tor settings take effect, reusing the setup
@@ -910,6 +913,7 @@ impl State for BitcoindSettingsState {
                             crate::node::tor::managed_tor_ports().is_some(),
                             crate::node::tor::onion_key_exists(&cache.datadir_path, cache.network),
                             crate::node::bitcoind::tor_supported_on_host(),
+                            cache.node_net_stats.as_ref(),
                         )
                         .map(map_node_msg),
                     );

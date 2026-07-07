@@ -1802,6 +1802,22 @@ pub fn internal_node_setup_panel<'a>(
 /// The "Help defend the network" panel: opt in/out of inbound-over-Tor and tune
 /// it. Each control persists the preference sidecar; the change takes effect the
 /// next time the managed node starts.
+/// Format a byte count for display (`45 MB`, `1.0 GB`).
+fn human_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.0} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.0} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 pub fn inbound_tor_section<'a>(
     enabled: bool,
     outbound_via_tor: bool,
@@ -1809,6 +1825,7 @@ pub fn inbound_tor_section<'a>(
     tor_running: bool,
     onion_active: bool,
     supported: bool,
+    stats: Option<&crate::app::cache::NodeNetStats>,
 ) -> Element<'a, NodeSettingsMessage> {
     let mut col = Column::new()
         .spacing(15)
@@ -1879,6 +1896,49 @@ pub fn inbound_tor_section<'a>(
                             .style(theme::toggler::orange),
                     ),
             );
+    }
+
+    // Live participation stats (connections / onion / shared) — visible whether
+    // or not inbound is on, so the user can see their node is actually taking
+    // part in the network.
+    if let Some(s) = stats {
+        col = col.push(separation().width(Length::Fill)).push(
+            text(format!(
+                "Connections: {} inbound · {} outbound",
+                s.connections_in, s.connections_out
+            ))
+            .size(12)
+            .style(theme::text::secondary),
+        );
+        if let Some(onion) = &s.onion_address {
+            col = col.push(
+                Row::new()
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .push(
+                        text(format!("Onion address: {onion}"))
+                            .size(12)
+                            .style(theme::text::secondary),
+                    )
+                    .push(
+                        Button::new(icon::clipboard_icon())
+                            .style(theme::button::transparent_border)
+                            .on_press(NodeSettingsMessage::CopyToClipboard(onion.clone())),
+                    ),
+            );
+        }
+        if enabled {
+            let cap = if s.upload_target > 0 {
+                human_bytes(s.upload_target)
+            } else {
+                "unlimited".to_string()
+            };
+            col = col.push(
+                text(format!("Shared today: {} of {}", human_bytes(s.upload_used), cap))
+                    .size(12)
+                    .style(theme::text::secondary),
+            );
+        }
     }
 
     // Status + apply-now. Every change above (including turning the feature off)

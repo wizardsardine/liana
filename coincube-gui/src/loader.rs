@@ -648,6 +648,7 @@ pub async fn load_application(
         node_bitcoind_sync_progress: None,
         node_bitcoind_ibd: None,
         node_bitcoind_last_log: None,
+        node_net_stats: None,
         connect_authenticated: false,
         // Local-daemon launch has no Connect session until the user signs in
         // via the Connect tab; `App::new` flips this on if it restores one.

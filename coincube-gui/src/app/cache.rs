@@ -16,6 +16,24 @@ use coincubed::commands::CoinStatus;
 use std::sync::Arc;
 use std::time::Instant;
 
+/// Live network participation stats of the active managed Bitcoin node, polled
+/// from `getnetworkinfo` + `getnettotals`. Surfaced in Settings → Node so users
+/// can see their node is actually connected and (for inbound-over-Tor) sharing.
+#[derive(Debug, Clone, Default)]
+pub struct NodeNetStats {
+    /// Peers connected to us (inbound).
+    pub connections_in: u64,
+    /// Peers we connected to (outbound).
+    pub connections_out: u64,
+    /// Bytes uploaded so far — within the current 24h cap cycle when a cap is
+    /// set, else total bytes sent this session.
+    pub upload_used: u64,
+    /// Daily upload cap in bytes (`maxuploadtarget`); `0` means unlimited.
+    pub upload_target: u64,
+    /// The v3 onion address bitcoind advertises, if reachable over Tor.
+    pub onion_address: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Cache {
     pub datadir_path: CoincubeDirectory,
@@ -28,6 +46,10 @@ pub struct Cache {
     /// Latest UpdateTip/blockheaders line from the pending internal bitcoind's
     /// debug.log.  `None` until the first line is received.
     pub node_bitcoind_last_log: Option<String>,
+    /// Live network stats of the *active* managed node (connection counts,
+    /// upload used vs. target, onion address), polled from its RPC on tick.
+    /// `None` until the first poll, or when the backend isn't a local node.
+    pub node_net_stats: Option<NodeNetStats>,
     pub network: Network,
     /// The `last_poll_timestamp` when starting the application.
     pub last_poll_at_startup: Option<u32>,
@@ -163,6 +185,7 @@ impl std::default::Default for Cache {
             node_bitcoind_sync_progress: None,
             node_bitcoind_ibd: None,
             node_bitcoind_last_log: None,
+            node_net_stats: None,
             network: Network::Bitcoin,
             last_poll_at_startup: None,
             daemon_cache: DaemonCache::default(),
