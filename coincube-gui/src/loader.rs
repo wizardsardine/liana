@@ -447,6 +447,8 @@ impl Loader {
         if let Some(bitcoind) = self.internal_bitcoind.take() {
             bitcoind.stop();
         }
+        // Stop the managed Tor daemon (if inbound-over-Tor was running).
+        crate::node::tor::stop_managed_tor();
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -646,6 +648,7 @@ pub async fn load_application(
         node_bitcoind_sync_progress: None,
         node_bitcoind_ibd: None,
         node_bitcoind_last_log: None,
+        node_net_stats: None,
         connect_authenticated: false,
         // Local-daemon launch has no Connect session until the user signs in
         // via the Connect tab; `App::new` flips this on if it restores one.
@@ -896,14 +899,39 @@ pub async fn start_bitcoind_and_daemon(
     }
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
     let bitcoind = match (start_internal_bitcoind, &config.bitcoin_backend) {
-        (true, Some(BitcoinBackend::Bitcoind(bitcoind_config))) => Some(
-            Bitcoind::maybe_start(
-                config.bitcoin_config.network,
-                bitcoind_config.clone(),
+        (true, Some(BitcoinBackend::Bitcoind(bitcoind_config))) => {
+            // A default-ON node self-provisions the Tor binary on first launch
+            // (best-effort; failure just means inbound is unavailable this run).
+            crate::node::tor::ensure_tor_installed_if_wanted(&coincube_datadir_path).await;
+            // Bring up inbound-over-Tor (if the user enabled it) and reconcile
+            // bitcoin.conf *before* starting bitcoind, so bitcoind reads the
+            // fresh onion/proxy config. Fail-safe and infallible: any Tor issue
+            // leaves the conf outbound-only, so the node starts exactly as it
+            // does today.
+            let inbound_up = crate::node::tor::prepare_inbound_tor(
                 &coincube_datadir_path,
+                config.bitcoin_config.network,
+            );
+            // A fresh tor gets fresh control/SOCKS ports each run, which a
+            // *reused* bitcoind (one that survived a previous session) wouldn't
+            // pick up — `maybe_start` would just reattach to it. When inbound is
+            // being applied, stop any running node first so `maybe_start` starts
+            // it clean against the new onion/proxy config. No-op (and no restart)
+            // when nothing is running, i.e. the normal clean-quit case. Safe
+            // here: the embedded daemon isn't up yet, so there's no live poller
+            // to disturb.
+            if inbound_up {
+                crate::node::bitcoind::stop_and_wait_managed_bitcoind(bitcoind_config);
+            }
+            Some(
+                Bitcoind::maybe_start(
+                    config.bitcoin_config.network,
+                    bitcoind_config.clone(),
+                    &coincube_datadir_path,
+                )
+                .map_err(Error::Bitcoind)?,
             )
-            .map_err(Error::Bitcoind)?,
-        ),
+        }
         _ => None,
     };
 

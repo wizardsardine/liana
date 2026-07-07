@@ -1799,7 +1799,12 @@ impl SelectKeySource {
     }
     fn view_keys(&self) -> Element<Message> {
         let keys = self.already_used_keys();
-        let mut col = column![p1_bold("Already used sources")].spacing(5);
+        // Full width so the section sits flush-left with the card grid below,
+        // rather than shrinking to the button width and being centred by the
+        // parent modal column's `align_x(Center)`.
+        let mut col = column![p1_bold("Already used sources")]
+            .spacing(5)
+            .width(Length::Fill);
         for key in keys {
             col = col.push(self.widget_key(key));
         }

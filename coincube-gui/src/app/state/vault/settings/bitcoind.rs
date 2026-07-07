@@ -13,7 +13,11 @@ use coincubed::config::{
     BitcoinBackend, BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config, ElectrumConfig,
 };
 
-use coincube_ui::{component::form, icon, widget::Element};
+use coincube_ui::{
+    component::form,
+    icon,
+    widget::{modal, Element},
+};
 
 use crate::{
     app::{
@@ -75,6 +79,12 @@ pub struct BitcoindSettingsState {
     bitcoind_settings: Option<BitcoindSettings>,
     electrum_settings: Option<ElectrumSettings>,
     rescan_settings: RescanSetting,
+    /// Cached inbound-over-Tor preference (from the sidecar), driving the "Help
+    /// defend the network" toggles. Persisted on every change.
+    inbound_tor_pref: crate::node::tor::InboundTorPreference,
+    /// A managed-node flavour the user picked from the node-card dropdown but
+    /// hasn't confirmed yet — while `Some`, a confirmation panel is shown.
+    pending_flavor_switch: Option<NodeFlavor>,
 }
 
 impl BitcoindSettingsState {
@@ -127,6 +137,15 @@ impl BitcoindSettingsState {
             rescan_settings: RescanSetting::new(cache.rescan_progress()),
             pending_node_setup: None,
             cancel_node_setup_in_flight: false,
+            inbound_tor_pref: crate::node::tor::InboundTorPreference::load(&cache.datadir_path),
+            pending_flavor_switch: None,
+        }
+    }
+
+    /// Persist the current inbound-over-Tor preference to its sidecar.
+    fn persist_inbound_tor_pref(&self, datadir: &CoincubeDirectory) {
+        if let Err(e) = self.inbound_tor_pref.save(datadir) {
+            warn!("could not save inbound-tor preference: {e}");
         }
     }
 
@@ -202,18 +221,7 @@ impl BitcoindSettingsState {
         if exe_exists {
             setup.internal_stage = InternalSetupStage::Installing;
             Task::perform(
-                async move {
-                    tokio::task::spawn_blocking(move || {
-                        configure_and_start_internal_bitcoind(
-                            coincube_datadir,
-                            network,
-                            flavor,
-                            None,
-                        )
-                    })
-                    .await
-                    .unwrap_or_else(|e| Err(e.to_string()))
-                },
+                ensure_tor_and_start_managed(coincube_datadir, network, flavor, None, false),
                 |r| {
                     Message::View(view::Message::Settings(
                         view::SettingsMessage::NodeSettings(
@@ -334,6 +342,21 @@ impl State for BitcoindSettingsState {
             Message::View(view::Message::Settings(view::SettingsMessage::BitcoindSettings(
                 msg,
             ))) => {
+                // Intercept the node-card flavour dropdown before delegating to
+                // the sub-state: raise a confirmation instead of switching
+                // immediately (a switch restarts the shared node). Match by
+                // reference so `msg` stays available for delegation.
+                if let view::SettingsEditMessage::SwitchManagedFlavor(flavor) = &msg {
+                    let flavor = *flavor;
+                    let current = self
+                        .bitcoind_settings
+                        .as_ref()
+                        .and_then(|s| s.managed_flavor);
+                    if current != Some(flavor) {
+                        self.pending_flavor_switch = Some(flavor);
+                    }
+                    return Task::none();
+                }
                 if let Some(settings) = &mut self.bitcoind_settings {
                     return settings.update(daemon, cache, msg);
                 }
@@ -443,16 +466,14 @@ impl State for BitcoindSettingsState {
                                             let manifest = download::fetch_release_manifest(flavor)
                                                 .await
                                                 .map_err(|e| e.to_string())?;
-                                            tokio::task::spawn_blocking(move || {
-                                                configure_and_start_internal_bitcoind(
-                                                    coincube_datadir,
-                                                    network,
-                                                    flavor,
-                                                    Some((bytes, manifest)),
-                                                )
-                                            })
+                                            ensure_tor_and_start_managed(
+                                                coincube_datadir,
+                                                network,
+                                                flavor,
+                                                Some((bytes, manifest)),
+                                                false,
+                                            )
                                             .await
-                                            .unwrap_or_else(|e| Err(e.to_string()))
                                         },
                                         |r| {
                                             Message::View(view::Message::Settings(
@@ -633,6 +654,94 @@ impl State for BitcoindSettingsState {
                             }
                         }
                     }
+                    // "Help defend the network": persist the preference sidecar.
+                    // The change takes effect the next time the managed node
+                    // starts (see `node::tor::prepare_inbound_tor`), so there's
+                    // nothing to restart here.
+                    NodeSettingsMessage::InboundTorToggled(on) => {
+                        self.inbound_tor_pref.enabled = on;
+                        self.persist_inbound_tor_pref(&cache.datadir_path);
+                    }
+                    NodeSettingsMessage::InboundTorOutboundToggled(on) => {
+                        self.inbound_tor_pref.outbound_via_tor = on;
+                        self.persist_inbound_tor_pref(&cache.datadir_path);
+                    }
+                    NodeSettingsMessage::InboundTorLimitUploadToggled(limit) => {
+                        self.inbound_tor_pref.max_upload_target_mb_day = if limit {
+                            Some(crate::node::bitcoind::MAX_UPLOAD_TARGET_MB_DAY_DEFAULT)
+                        } else {
+                            None
+                        };
+                        self.persist_inbound_tor_pref(&cache.datadir_path);
+                    }
+                    NodeSettingsMessage::ConfirmFlavorSwitch => {
+                        if let Some(flavor) = self.pending_flavor_switch.take() {
+                            // Reuse the managed-node setup flow: it downloads the
+                            // binary if needed, rewrites the conf, and restarts on
+                            // the new flavour (`maybe_start` stops the old one).
+                            self.pending_node_setup = Some(PendingNodeSetup {
+                                mode: Some(true),
+                                addr: form::Value::default(),
+                                rpc_auth_vals: RpcAuthValues::default(),
+                                selected_auth_type: RpcAuthType::CookieFile,
+                                processing: false,
+                                flavor,
+                                internal_stage: InternalSetupStage::Idle,
+                                internal_error: None,
+                                download_progress: 0.0,
+                            });
+                            return self.start_internal_node_setup(cache);
+                        }
+                    }
+                    NodeSettingsMessage::CancelFlavorSwitch => {
+                        self.pending_flavor_switch = None;
+                    }
+                    NodeSettingsMessage::CopyToClipboard(value) => {
+                        return clipboard::write(value);
+                    }
+                    NodeSettingsMessage::RestartNodeToApply => {
+                        // Restart the managed node now so freshly-toggled
+                        // inbound-over-Tor settings take effect, reusing the setup
+                        // progress panel + result handler. `force_restart` stops
+                        // the running node first (same flavour, so `maybe_start`
+                        // would otherwise reuse it).
+                        let Some(flavor) = self
+                            .bitcoind_settings
+                            .as_ref()
+                            .and_then(|s| s.managed_flavor)
+                        else {
+                            return Task::none();
+                        };
+                        self.pending_node_setup = Some(PendingNodeSetup {
+                            mode: Some(true),
+                            addr: form::Value::default(),
+                            rpc_auth_vals: RpcAuthValues::default(),
+                            selected_auth_type: RpcAuthType::CookieFile,
+                            processing: true,
+                            flavor,
+                            internal_stage: InternalSetupStage::Installing,
+                            internal_error: None,
+                            download_progress: 100.0,
+                        });
+                        let coincube_datadir = cache.datadir_path.clone();
+                        let network = cache.network;
+                        return Task::perform(
+                            ensure_tor_and_start_managed(
+                                coincube_datadir,
+                                network,
+                                flavor,
+                                None,
+                                true,
+                            ),
+                            |r| {
+                                Message::View(view::Message::Settings(
+                                    view::SettingsMessage::NodeSettings(
+                                        view::NodeSettingsMessage::SetupLocalNodeStartResult(r),
+                                    ),
+                                ))
+                            },
+                        );
+                    }
                 }
             }
             _ => {}
@@ -656,7 +765,7 @@ impl State for BitcoindSettingsState {
                 .map(|settings| settings.edit)
                 == Some(true);
         let can_do_rescan = !self.rescan_settings.processing && !settings_edit;
-        view::vault::settings::bitcoind_settings(menu, cache, {
+        let content = view::vault::settings::bitcoind_settings(menu, cache, {
             let mut setting_panels = Vec::new();
 
             // Top panel: either Connect re-login flow or backend status + switch.
@@ -784,6 +893,34 @@ impl State for BitcoindSettingsState {
                         },
                     ));
                 }
+
+                // "Help defend the network": inbound-over-Tor controls, placed
+                // directly below the node card. Shown only for the managed local
+                // node on mainnet (the feature is mainnet-only), and hidden
+                // during a node setup/flavour switch.
+                if cache.network == Network::Bitcoin
+                    && self.pending_node_setup.is_none()
+                    && matches!(
+                        self.full_config
+                            .as_ref()
+                            .and_then(|c| c.bitcoin_backend.as_ref()),
+                        Some(BitcoinBackend::Bitcoind(_))
+                    )
+                {
+                    setting_panels.push(
+                        view::vault::settings::inbound_tor_section(
+                            self.inbound_tor_pref.enabled,
+                            self.inbound_tor_pref.outbound_via_tor,
+                            self.inbound_tor_pref.max_upload_target_mb_day.is_some(),
+                            crate::node::tor::managed_tor_ports().is_some(),
+                            crate::node::tor::onion_key_exists(&cache.datadir_path, cache.network),
+                            crate::node::bitcoind::tor_supported_on_host(),
+                            cache.node_net_stats.as_ref(),
+                        )
+                        .map(map_node_msg),
+                    );
+                }
+
                 if let Some(settings) = self.electrum_settings.as_ref() {
                     setting_panels.push(settings.view(cache, can_edit_electrum_settings).map(
                         move |msg| {
@@ -800,7 +937,23 @@ impl State for BitcoindSettingsState {
                     }),
             );
             setting_panels
-        })
+        });
+
+        // A pending Core↔Knots switch pops a confirmation modal over the page;
+        // clicking the backdrop cancels it.
+        if let Some(flavor) = self.pending_flavor_switch {
+            modal::Modal::new(
+                content,
+                view::vault::settings::flavor_switch_confirm(flavor)
+                    .map(|m| view::Message::Settings(view::SettingsMessage::NodeSettings(m))),
+            )
+            .on_blur(Some(view::Message::Settings(
+                view::SettingsMessage::NodeSettings(view::NodeSettingsMessage::CancelFlavorSwitch),
+            )))
+            .into()
+        } else {
+            content
+        }
     }
 }
 
@@ -825,6 +978,10 @@ fn configure_and_start_internal_bitcoind(
     network: Network,
     flavor: NodeFlavor,
     install: Option<ManagedNodeInstall>,
+    // When true, stop any running managed node first so the (re)start applies
+    // the fresh config even at the same flavour — used by the "restart to apply"
+    // action. `maybe_start` alone only restarts on a flavour change.
+    force_restart: bool,
 ) -> Result<(BitcoindConfig, Bitcoind), String> {
     if let Some((bytes, manifest)) = install {
         let verification = DownloadVerification::for_flavor(flavor, manifest)
@@ -867,16 +1024,72 @@ fn configure_and_start_internal_bitcoind(
     conf.networks.insert(network, network_conf);
     conf.to_file(&config_path).map_err(|e| e.to_string())?;
 
+    // Default-ON inbound-over-Tor for a freshly set-up enforcing (Knots) node on
+    // mainnet — the point of the wedge is more reachable RDTS-enforcing nodes,
+    // and it's mainnet-only. Only write the sidecar when the user hasn't already
+    // made a choice, so an existing opt-out survives a reconfigure. The binary is
+    // provisioned lazily on the next node start (see
+    // `node::tor::ensure_tor_installed_if_wanted`).
+    if matches!(flavor, NodeFlavor::Knots)
+        && network == Network::Bitcoin
+        && !crate::node::tor::InboundTorPreference::path(&coincube_datadir).exists()
+    {
+        if let Err(e) =
+            crate::node::tor::InboundTorPreference::default_enabled().save(&coincube_datadir)
+        {
+            warn!("could not write default inbound-tor preference: {e}");
+        }
+    }
+
     let cookie_path = internal_bitcoind_cookie_path(&bitcoind_datadir, &network);
     let bitcoind_config = BitcoindConfig {
         rpc_auth: BitcoindRpcAuth::CookieFile(cookie_path),
         addr: internal_bitcoind_address(rpc_port),
     };
 
+    // Force a clean restart when asked (same-flavour reconfigure), so the new
+    // config below is actually applied rather than a running node reused.
+    if force_restart {
+        crate::node::bitcoind::stop_and_wait_managed_bitcoind(&bitcoind_config);
+    }
+
+    // Apply inbound-over-Tor before starting bitcoind: this starts the managed
+    // Tor daemon and rewrites bitcoin.conf with the onion/proxy keys (mainnet
+    // only, gated on the user's preference; fail-safe to outbound-only). Doing
+    // it here means a flavour switch or a "restart to apply" picks the inbound
+    // config up, matching the app-launch path in `loader`.
+    crate::node::tor::prepare_inbound_tor(&coincube_datadir, network);
+
     let bitcoind = Bitcoind::maybe_start(network, bitcoind_config.clone(), &coincube_datadir)
         .map_err(|e| e.to_string())?;
 
     Ok((bitcoind_config, bitcoind))
+}
+
+/// Ensure the managed Tor binary is present (when inbound is wanted), then
+/// configure and start the managed node on a blocking thread. Centralises the
+/// tor-install + `spawn_blocking(configure_and_start_internal_bitcoind)` used by
+/// the setup, flavour-switch, and restart flows so the blocking step's
+/// `prepare_inbound_tor` can actually start Tor.
+async fn ensure_tor_and_start_managed(
+    coincube_datadir: CoincubeDirectory,
+    network: Network,
+    flavor: NodeFlavor,
+    install: Option<ManagedNodeInstall>,
+    force_restart: bool,
+) -> Result<(BitcoindConfig, Bitcoind), String> {
+    crate::node::tor::ensure_tor_installed_if_wanted(&coincube_datadir).await;
+    tokio::task::spawn_blocking(move || {
+        configure_and_start_internal_bitcoind(
+            coincube_datadir,
+            network,
+            flavor,
+            install,
+            force_restart,
+        )
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
 }
 
 #[derive(Debug)]
@@ -891,6 +1104,10 @@ pub struct BitcoindSettings {
     addr: form::Value<String>,
     daemon_is_external: bool,
     bitcoind_is_internal: bool,
+    /// Flavour of the internal managed node — `Some` only when the node is the
+    /// internal managed one — read from the on-disk `bitcoin.conf`. Drives the
+    /// Core/Knots dropdown on the node card.
+    managed_flavor: Option<NodeFlavor>,
 }
 
 impl BitcoindSettings {
@@ -936,10 +1153,23 @@ impl BitcoindSettings {
         } else {
             String::default()
         };
+        // For the internal managed node, recover its flavour from the on-disk
+        // config so the node card can show a Core/Knots switcher.
+        let managed_flavor = if bitcoind_is_internal {
+            CoincubeDirectory::active().ok().and_then(|dir| {
+                let cfg_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(&dir));
+                InternalBitcoindConfig::from_file(&cfg_path)
+                    .ok()
+                    .map(|c| c.flavor)
+            })
+        } else {
+            None
+        };
         BitcoindSettings {
             configured_node_type,
             daemon_is_external,
             bitcoind_is_internal,
+            managed_flavor,
             bitcoind_config,
             bitcoin_config,
             edit: false,
@@ -1032,6 +1262,9 @@ impl BitcoindSettings {
                 }
             }
             view::SettingsEditMessage::Clipboard(text) => return clipboard::write(text),
+            // Handled by the parent `BitcoindSettingsState` (raises a
+            // confirmation); never delegated here.
+            view::SettingsEditMessage::SwitchManagedFlavor(_) => {}
         }
         Task::none()
     }
@@ -1056,6 +1289,7 @@ impl BitcoindSettings {
                 cache.blockheight(),
                 Some(cache.blockheight() != 0),
                 can_edit && !self.daemon_is_external && !self.bitcoind_is_internal,
+                self.managed_flavor,
             )
         }
     }

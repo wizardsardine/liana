@@ -73,10 +73,39 @@ impl From<reqwest::Error> for DownloadError {
     }
 }
 
+/// A one-shot HTTP client with bounded connect + total timeouts, so a dead or
+/// stalled host can't hang a background install indefinitely (these fetches run
+/// on the startup path, before the managed node comes up). The total is generous
+/// enough for the ~18 MB Tor Expert Bundle on a slow link; the short connect
+/// timeout fails fast when the host is simply unreachable.
+fn timed_client() -> Result<reqwest::Client, DownloadError> {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(DownloadError::from)
+}
+
+/// Fetch a URL's full body as bytes in one shot, no progress reporting. Used
+/// for background installs (e.g. the managed Tor Expert Bundle) where there is
+/// no progress UI to drive, unlike the sipper-based [`download`].
+pub async fn fetch_bytes(url: impl AsRef<str>) -> Result<Vec<u8>, DownloadError> {
+    let body = timed_client()?
+        .get(url.as_ref())
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
+    Ok(body.to_vec())
+}
+
 /// Fetch a small text file in one shot (e.g. a release `SHA256SUMS` manifest or
 /// its detached `.asc` signature). Unlike [`download`], it reports no progress.
 pub async fn fetch_text(url: impl AsRef<str>) -> Result<String, DownloadError> {
-    let body = reqwest::get(url.as_ref())
+    let body = timed_client()?
+        .get(url.as_ref())
+        .send()
         .await?
         .error_for_status()?
         .text()
@@ -97,4 +126,14 @@ pub async fn fetch_release_manifest(
     let sums = fetch_text(sums_url).await?;
     let asc = fetch_text(asc_url).await?;
     Ok(Some((sums, asc)))
+}
+
+/// Fetch the Tor release `sha256sums-unsigned-build.txt` and its detached
+/// `.asc`, which the managed Tor Expert Bundle download is verified against
+/// (the same signed-manifest path as Knots).
+pub async fn fetch_tor_release_manifest(version: &str) -> Result<(String, String), DownloadError> {
+    let (sums_url, asc_url) = crate::node::bitcoind::tor_manifest_urls(version);
+    let sums = fetch_text(sums_url).await?;
+    let asc = fetch_text(asc_url).await?;
+    Ok((sums, asc))
 }

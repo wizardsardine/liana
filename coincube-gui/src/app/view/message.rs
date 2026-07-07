@@ -527,6 +527,26 @@ pub enum NodeSettingsMessage {
     SetupLocalNodeDownloadProgress(f32),
     SetupLocalNodeDownloadComplete(Result<Vec<u8>, String>),
     SetupLocalNodeStartResult(Result<(BitcoindConfig, Bitcoind), String>),
+    // "Help defend the network" — inbound-over-Tor preferences. Each persists
+    // the preference sidecar; the change takes effect the next time the managed
+    // node starts.
+    /// Master toggle: make the node reachable over Tor (v3 onion service).
+    InboundTorToggled(bool),
+    /// Sub-toggle: also route outbound peer connections through Tor.
+    InboundTorOutboundToggled(bool),
+    /// Cap daily upload at ~1 GB/day (on) vs. unlimited (off).
+    InboundTorLimitUploadToggled(bool),
+    /// Confirm a pending managed-node flavour switch (download if needed +
+    /// restart on the new flavour). Paired with the dropdown's
+    /// `SettingsEditMessage::SwitchManagedFlavor`.
+    ConfirmFlavorSwitch,
+    /// Dismiss the flavour-switch confirmation without switching.
+    CancelFlavorSwitch,
+    /// Restart the managed node now so freshly-changed inbound-over-Tor settings
+    /// take effect (they otherwise apply only on the next node start).
+    RestartNodeToApply,
+    /// Copy a value (e.g. the onion address) to the clipboard.
+    CopyToClipboard(String),
 }
 
 #[derive(Debug, Clone)]
@@ -544,6 +564,9 @@ pub enum SettingsEditMessage {
     Cancel,
     Confirm,
     Clipboard(String),
+    /// Managed-node flavour picked from the node-card dropdown. Intercepted by
+    /// `BitcoindSettingsState` to raise a confirmation before switching.
+    SwitchManagedFlavor(crate::node::bitcoind::NodeFlavor),
 }
 
 #[derive(Debug, Clone)]
