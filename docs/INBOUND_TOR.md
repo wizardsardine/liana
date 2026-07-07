@@ -43,6 +43,23 @@ onion reachability has no value on test networks. On signet/testnet/regtest the
 Settings section is hidden, no default-ON preference is written, and the runtime
 never starts Tor (see `prepare_inbound_tor`).
 
+## Availability (app running, awake)
+
+The managed `bitcoind`/`tor` are detached processes, but COINCUBE stops them on a
+clean quit, so the node serves **only while the app is running**:
+
+- **Minimized** — no effect. The processes and the stats poll keep running; the
+  onion stays up.
+- **Quit** — `bitcoind` + `tor` are stopped, so the node goes offline.
+- **Computer sleep** — everything is suspended and the network drops, so the node
+  is unreachable while asleep. On wake, `bitcoind` resumes (same cookie/ports),
+  tor rebuilds circuits, and the onion is re-advertised from its persistent key —
+  so it self-heals with no user action. The settings section states this.
+
+Serving continuously through sleep would require an OS-specific sleep inhibitor
+(macOS `IOPMAssertion`, Windows `SetThreadExecutionState`, Linux
+`systemd-inhibit`); that's an opt-in follow-up, not a default (battery/wear cost).
+
 ## Architecture
 
 | Concern | Where |

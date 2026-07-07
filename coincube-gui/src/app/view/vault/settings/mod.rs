@@ -1977,6 +1977,21 @@ pub fn inbound_tor_section<'a>(
                 ),
         );
 
+    // Set expectations: the node only serves while the app is open and the
+    // machine is awake. Minimizing is fine (bitcoind/tor run independently);
+    // sleeping drops connections but they reconnect automatically on wake.
+    if enabled {
+        col = col.push(
+            text(
+                "Your node is reachable while COINCUBE is open and your computer is awake. \
+                 Minimizing is fine; if the computer sleeps, connections reconnect \
+                 automatically on wake.",
+            )
+            .size(11)
+            .style(theme::text::secondary),
+        );
+    }
+
     card::simple(col).width(Length::Fill).into()
 }
 
