@@ -17,7 +17,7 @@ use liana_ui::{
         pick_list, text, tooltip,
     },
     icon,
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     theme,
     widget::*,
 };
@@ -88,7 +88,7 @@ Cosigner: Professional co-signing service.\n\
 SafetyNet: Professional recovery service.";
     let key_type_label = row![field_label("Key Type"), tooltip::tooltip(key_type_hint),]
         .align_y(Alignment::Center)
-        .spacing(5);
+        .spacing(HSpacing::S);
     let key_type_field = column![
         key_type_label,
         pick_list::field_pick_list(
@@ -148,7 +148,7 @@ fn token_field(modal_state: &EditKeyModalState) -> Element<'_, Message> {
             text::new::caption(format!("Provider · {}", provider.name)).style(theme::text::success),
             icon::check_icon().size(13).style(theme::text::success),
         ]
-        .spacing(6)
+        .spacing(HSpacing::S)
         .align_y(Alignment::Center)
         .into()
     } else {
@@ -305,7 +305,7 @@ fn footer<'a>(can_save: bool) -> Element<'a, Message> {
         btn_cancel(Some(Message::KeyCancelModal)),
         btn_save(can_save.then_some(Message::KeySave)),
     ]
-    .spacing(12)
+    .spacing(HSpacing::ML)
     .align_y(Vertical::Center)
     .into()
 }

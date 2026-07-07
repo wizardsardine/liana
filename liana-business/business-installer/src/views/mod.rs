@@ -36,7 +36,7 @@ use liana_ui::{
         text::{self, short_email, truncate},
     },
     icon,
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     theme,
     widget::*,
 };
@@ -89,7 +89,7 @@ const CONTENT_TOP_SPACING: u32 = 72;
 const SCREEN_INTRO_SUB_WIDTH: u32 = 620;
 
 fn breadcrumb_header<'a>(segments: &[String]) -> Element<'a, Msg> {
-    let mut row = row![].spacing(10).align_y(Alignment::Center);
+    let mut row = row![].spacing(HSpacing::M).align_y(Alignment::Center);
 
     for (i, segment) in segments.iter().enumerate() {
         if i > 0 {
@@ -126,10 +126,10 @@ fn user_bar<'a>(is_ws_admin: bool, email: Option<&'a str>) -> Element<'a, Msg> {
             icon::person_icon().size(16).style(theme::text::tertiary),
             text::new::caption(e).style(theme::text::accent)
         ]
-        .spacing(12)
+        .spacing(HSpacing::ML)
     });
     let user_bar = row![Space::fill_width(), ws_admin_pill, user]
-        .spacing(12)
+        .spacing(HSpacing::ML)
         .align_y(Alignment::Center);
 
     Container::new(user_bar)
@@ -141,7 +141,7 @@ fn user_bar<'a>(is_ws_admin: bool, email: Option<&'a str>) -> Element<'a, Msg> {
 }
 
 fn step_dots<'a>((step, total): (usize, usize)) -> Element<'a, Msg> {
-    let mut dots = row![].spacing(4).align_y(Alignment::Center);
+    let mut dots = row![].spacing(HSpacing::XS).align_y(Alignment::Center);
     for i in 0..total {
         let filled = i < step;
         let width = if i + 1 == step { 20.0 } else { 8.0 };
@@ -156,7 +156,7 @@ fn step_dots<'a>((step, total): (usize, usize)) -> Element<'a, Msg> {
                 }),
         );
     }
-    dots.push(Space::with_width(4))
+    dots.push(Space::with_width(HSpacing::XS))
         .push(
             text::new::small_caption(format!("{step}/{total}"))
                 .style(move |_: &theme::Theme| theme::text::custom(color::BUSINESS_STEP_LABEL)),

@@ -18,7 +18,7 @@ use liana_ui::{
         pill,
         text::{self},
     },
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     theme,
     widget::*,
 };
@@ -44,7 +44,7 @@ fn xpub_key_card(
         text::new::b5_medium(text::truncate(&key.alias, 25)),
         pill::key_kind(entry_key_kind(&key.key_type), key_kind_label(&key.key_type))
     ]
-    .spacing(10)
+    .spacing(HSpacing::M)
     .align_y(Alignment::Center);
     let body = column![
         title,

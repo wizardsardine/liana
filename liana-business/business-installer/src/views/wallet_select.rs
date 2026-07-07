@@ -13,7 +13,7 @@ use liana_ui::{
         pill,
         text::{self, truncate},
     },
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     theme,
     widget::*,
 };
@@ -100,12 +100,12 @@ pub fn wallet_card<'a>(
     let role = role_badge(role);
     let title_extras = (key_count.is_some() || role.is_some()).then_some({
         row![key_count, role]
-            .spacing(10)
+            .spacing(HSpacing::M)
             .align_y(Alignment::Center)
             .into()
     });
     let trailing = row![status_badge(wallet, user_email), list::entry_chevron()]
-        .spacing(12)
+        .spacing(HSpacing::ML)
         .align_y(Alignment::Center);
 
     let message = Some(Msg::OrgWalletSelected(wallet.id));

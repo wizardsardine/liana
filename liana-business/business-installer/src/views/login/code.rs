@@ -11,7 +11,7 @@ use liana_ui::{
         button::{btn_change_email, btn_resend_token},
         form,
     },
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     widget::*,
 };
 
@@ -39,7 +39,7 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
         .then_some(Msg::LoginResendToken);
     let btn_resend_token = btn_resend_token(resend_msg);
 
-    let btn_row = row![btn_previous, btn_resend_token].spacing(10);
+    let btn_row = row![btn_previous, btn_resend_token].spacing(HSpacing::M);
 
     let content = Container::new(
         column![

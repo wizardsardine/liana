@@ -28,13 +28,13 @@ use crate::{
 };
 
 use crate::{
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     widget::{Button, CheckBox, Column, Element, PickList, SpaceExt, Text},
 };
 
 pub const BTN_W: u32 = 500;
 pub const V_SPACING: VSpacing = VSpacing::S;
-pub const H_SPACING: u32 = 5;
+pub const H_SPACING: HSpacing = HSpacing::S;
 const MODAL_PADDING: f32 = 20.0;
 const MODAL_SPACING: VSpacing = VSpacing::M;
 

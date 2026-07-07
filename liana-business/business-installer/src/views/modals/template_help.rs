@@ -7,7 +7,7 @@ use iced::{
 use liana_ui::{
     component::{button, modal::ModalWidth, text},
     icon,
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     theme,
     widget::*,
 };
@@ -17,7 +17,7 @@ pub fn template_help_modal_view(_modal_state: &TemplateHelpModalState) -> Elemen
         icon::tooltip_icon().size(20).style(theme::text::warning),
         text::new::b1_bold("Can't approve this template?")
     ]
-    .spacing(10)
+    .spacing(HSpacing::M)
     .align_y(Vertical::Center);
 
     let message = text::new::caption(
@@ -30,7 +30,7 @@ pub fn template_help_modal_view(_modal_state: &TemplateHelpModalState) -> Elemen
         button::btn_email_wizardsardine(Some(Msg::TemplateHelpEmailWs)),
         Space::fill_width()
     ]
-    .spacing(10);
+    .spacing(HSpacing::M);
 
     let close = button::btn_modal_close(Some(Msg::TemplateHelpCloseModal));
     let header = row![title, Space::fill_width(), close].align_y(Vertical::Center);

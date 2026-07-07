@@ -16,7 +16,7 @@ use liana_ui::{
         text::{self},
     },
     icon,
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     theme,
     widget::*,
 };
@@ -56,7 +56,7 @@ fn notice_card(
         icon.size(NOTICE_ICON_SIZE),
         text::new::caption(body).style(theme::text::primary),
     ]
-    .spacing(11)
+    .spacing(HSpacing::M)
     .align_y(Alignment::Center);
 
     variant(content.into()).width(Length::Fill).into()
@@ -177,7 +177,7 @@ fn footer_content(
         } else {
             row![mark_ready]
         }
-        .spacing(16)
+        .spacing(HSpacing::L)
         .align_y(Alignment::Center);
         footer
     } else if is_manager && keys_ready {

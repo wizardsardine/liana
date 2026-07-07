@@ -14,7 +14,7 @@ use liana_ui::{
         text,
     },
     icon,
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     theme,
     widget::*,
 };
@@ -38,7 +38,7 @@ fn registering_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
         text::new::caption("Please confirm on your device...")
             .style(theme::text::secondary)
             .align_x(Alignment::Center),
-        row![btn_cancel(Some(Msg::RegistrationCancelModal))].spacing(10),
+        row![btn_cancel(Some(Msg::RegistrationCancelModal))].spacing(HSpacing::M),
     ]
     .spacing(VSpacing::M)
     .width(Length::Fill)
@@ -68,7 +68,7 @@ fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
             btn_cancel(Some(Msg::RegistrationCancelModal)),
             btn_retry(Some(Msg::RegistrationRetry)),
         ]
-        .spacing(10),
+        .spacing(HSpacing::M),
     ]
     .spacing(VSpacing::M)
     .align_x(Alignment::Center);
@@ -95,7 +95,7 @@ fn confirm_coldcard_view(_modal_state: &RegistrationModalState) -> Element<'_, M
             btn_no(Some(Msg::RegistrationConfirmNo)),
             btn_yes(Some(Msg::RegistrationConfirmYes)),
         ]
-        .spacing(10),
+        .spacing(HSpacing::M),
     ]
     .spacing(VSpacing::M)
     .align_x(Alignment::Center);

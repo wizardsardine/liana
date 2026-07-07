@@ -20,7 +20,7 @@ use liana_ui::{
         tooltip,
     },
     icon,
-    spacing::VSpacing,
+    spacing::{HSpacing, VSpacing},
     theme,
     widget::*,
 };
@@ -178,7 +178,7 @@ fn account_picker(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         ),
     ]
     .align_y(Alignment::Center)
-    .spacing(5);
+    .spacing(HSpacing::S);
 
     column![label, picker].spacing(8).into()
 }
@@ -215,7 +215,7 @@ fn source_line(input_source: &XpubInputSource) -> Option<Element<'static, Msg>> 
                     .style(theme::text::secondary),
                 icon::check_icon().size(13).style(theme::text::success)
             ]
-            .spacing(6)
+            .spacing(HSpacing::S)
             .align_y(Alignment::Center)
             .into(),
         ),
@@ -468,7 +468,7 @@ fn select_footer_buttons(modal_state: &XpubEntryModalState) -> Element<'_, Msg> 
         clear_button,
         btn_save(can_save.then_some(Msg::XpubSave))
     ]
-    .spacing(10);
+    .spacing(HSpacing::M);
 
     row![Space::fill_width(), buttons].into()
 }
@@ -489,6 +489,6 @@ fn details_footer_buttons(modal_state: &XpubEntryModalState) -> Element<'_, Msg>
     } else {
         row![Space::fill_width(), clear_button, save_button]
     }
-    .spacing(10)
+    .spacing(HSpacing::M)
     .into()
 }
