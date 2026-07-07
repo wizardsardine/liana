@@ -1891,7 +1891,11 @@ pub fn inbound_tor_section<'a>(
                 .spacing(15)
                 .align_y(Alignment::Center)
                 .push(
-                    text(if onion_active {
+                    text(if tor_running && onion_active {
+                        // Tor is up AND bitcoind has an onion key it re-publishes
+                        // on start. (The key file persists when the feature is
+                        // off, so we require a running tor too — otherwise a
+                        // just-disabled node would still read as "reachable".)
                         "Tor is running — your node is reachable as an onion service."
                     } else if tor_running && enabled {
                         // Tor is up but bitcoind hasn't published the onion yet

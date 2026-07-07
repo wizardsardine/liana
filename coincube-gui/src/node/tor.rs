@@ -430,12 +430,13 @@ pub fn stop_managed_tor() {
     }
 }
 
-/// Whether bitcoind has actually established its v3 onion service — i.e. it
-/// connected to tor's control port and persisted the onion key. This is the
-/// real "reachable over Tor" signal (a running tor is necessary but not
-/// sufficient; bitcoind must also be started against it). bitcoind stores the
-/// key in its network data dir.
-pub fn onion_service_active(coincube_datadir: &CoincubeDirectory, network: Network) -> bool {
+/// Whether bitcoind has an onion-service key on disk — i.e. it has, at some
+/// point, connected to tor's control port and created a v3 onion service, and
+/// will re-publish that same onion on the next start with `listenonion`. Note
+/// the key file **persists** even after inbound-over-Tor is turned off, so
+/// callers must AND this with a running tor (see the settings status) to mean
+/// "currently reachable". bitcoind stores the key in its network data dir.
+pub fn onion_key_exists(coincube_datadir: &CoincubeDirectory, network: Network) -> bool {
     let mut path = internal_bitcoind_datadir(coincube_datadir);
     if let Some(netdir) = crate::node::bitcoind::bitcoind_network_dir(&network) {
         path.push(netdir);
