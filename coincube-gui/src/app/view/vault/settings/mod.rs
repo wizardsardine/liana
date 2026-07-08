@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{container, rule, Column};
+use iced::widget::{container, pick_list, rule, Column, Toggler};
 use iced::{
     alignment,
     widget::{radio, scrollable, tooltip as iced_tooltip, Space},
@@ -439,6 +439,9 @@ pub fn bitcoind<'a>(
     blockheight: i32,
     is_running: Option<bool>,
     can_edit: bool,
+    // `Some(flavour)` for the internal managed node (renders a Core/Knots
+    // switcher); `None` for an external node (flavour unknown/not switchable).
+    managed_flavor: Option<NodeFlavor>,
 ) -> Element<'a, SettingsEditMessage> {
     let mut col = Column::new().spacing(20);
     if is_configured_node_type && blockheight != 0 {
@@ -522,6 +525,22 @@ pub fn bitcoind<'a>(
         });
     }
 
+    // Managed node → a Core/Knots dropdown (independent of `can_edit`, which
+    // governs the external-node RPC form and is false for the managed node);
+    // external node → a static label (its flavour isn't known to us and can't be
+    // switched from here).
+    let flavor_header: Element<'a, SettingsEditMessage> = match managed_flavor {
+        Some(flavor) => pick_list(
+            vec![NodeFlavor::Knots, NodeFlavor::Core],
+            Some(flavor),
+            SettingsEditMessage::SwitchManagedFlavor,
+        )
+        .style(theme::pick_list::primary)
+        .padding(8)
+        .into(),
+        None => text("Bitcoin node").bold().into(),
+    };
+
     card::simple(Container::new(
         Column::new()
             .push(
@@ -529,7 +548,7 @@ pub fn bitcoind<'a>(
                     .push(
                         Row::new()
                             .push(badge::badge(icon::bitcoin_icon()))
-                            .push(text("Bitcoin Core").bold())
+                            .push(flavor_header)
                             .push(if is_configured_node_type {
                                 Some(is_running_label(is_running))
                             } else {
@@ -553,6 +572,50 @@ pub fn bitcoind<'a>(
             .spacing(20),
     ))
     .width(Length::Fill)
+    .into()
+}
+
+/// Confirmation modal shown before a managed-node flavour switch (Core ↔ Knots).
+/// Switching restarts the shared node and may download the other client, so we
+/// gate it behind an explicit confirm. Rendered as a modal body by
+/// `BitcoindSettingsState::view`.
+pub fn flavor_switch_confirm<'a>(target: NodeFlavor) -> Element<'a, NodeSettingsMessage> {
+    card::modal(
+        Column::new()
+            .spacing(20)
+            .push(
+                text(format!(
+                    "Switch node software to {}?",
+                    target.display_name()
+                ))
+                .bold()
+                .size(20),
+            )
+            .push(
+                text(
+                    "This restarts your managed node for every Vault (and downloads the \
+                     client if it isn't already installed, ~50 MB). Your Vaults keep \
+                     working; the node reconnects on the same port once it's back.",
+                )
+                .size(14)
+                .style(theme::text::secondary),
+            )
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .push(
+                        button::secondary(None, "Cancel")
+                            .width(Length::FillPortion(1))
+                            .on_press(NodeSettingsMessage::CancelFlavorSwitch),
+                    )
+                    .push(
+                        button::primary(None, "Switch")
+                            .width(Length::FillPortion(1))
+                            .on_press(NodeSettingsMessage::ConfirmFlavorSwitch),
+                    ),
+            ),
+    )
+    .width(Length::Fixed(500.0))
     .into()
 }
 
@@ -1737,6 +1800,204 @@ pub fn internal_node_setup_panel<'a>(
     }
 
     card::simple(Container::new(col).padding(15).width(Length::Fill)).into()
+}
+
+/// The "Help defend the network" panel: opt in/out of inbound-over-Tor and tune
+/// it. Each control persists the preference sidecar; the change takes effect the
+/// next time the managed node starts.
+/// Format a byte count for display (`45 MB`, `1.0 GB`).
+fn human_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.0} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.0} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+pub fn inbound_tor_section<'a>(
+    enabled: bool,
+    outbound_via_tor: bool,
+    limit_upload: bool,
+    tor_running: bool,
+    onion_active: bool,
+    supported: bool,
+    stats: Option<&crate::app::cache::NodeNetStats>,
+) -> Element<'a, NodeSettingsMessage> {
+    let mut col = Column::new()
+        .spacing(15)
+        .push(text("Help defend the network").bold().size(18))
+        .push(
+            text(
+                "Make your enforcing node reachable over Tor — a private onion \
+                 service, no port-forwarding — so it can relay valid blocks and \
+                 transactions to more peers and defend the network.",
+            )
+            .size(13)
+            .style(theme::text::secondary),
+        );
+
+    if !supported {
+        col = col.push(
+            text("Not available on this platform.")
+                .size(13)
+                .style(theme::text::secondary),
+        );
+        return card::simple(col).width(Length::Fill).into();
+    }
+
+    col = col.push(
+        Row::new()
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .push(text("Share and defend over Tor").bold().width(Length::Fill))
+            .push(
+                Toggler::new(enabled)
+                    .on_toggle(NodeSettingsMessage::InboundTorToggled)
+                    .width(50)
+                    .style(theme::toggler::orange),
+            ),
+    );
+
+    if enabled {
+        col = col
+            .push(
+                text(
+                    "Sharing up to ~1 GB/day. Turn off the limit only if your \
+                     internet connection isn't metered.",
+                )
+                .size(12)
+                .style(theme::text::secondary),
+            )
+            .push(
+                Row::new()
+                    .spacing(20)
+                    .align_y(Alignment::Center)
+                    .push(text("Limit upload to ~1 GB/day").width(Length::Fill))
+                    .push(
+                        Toggler::new(limit_upload)
+                            .on_toggle(NodeSettingsMessage::InboundTorLimitUploadToggled)
+                            .width(50)
+                            .style(theme::toggler::orange),
+                    ),
+            )
+            .push(
+                Row::new()
+                    .spacing(20)
+                    .align_y(Alignment::Center)
+                    .push(text("Also route outbound connections through Tor").width(Length::Fill))
+                    .push(
+                        Toggler::new(outbound_via_tor)
+                            .on_toggle(NodeSettingsMessage::InboundTorOutboundToggled)
+                            .width(50)
+                            .style(theme::toggler::orange),
+                    ),
+            );
+    }
+
+    // Live participation stats (connections / onion / shared) — visible whether
+    // or not inbound is on, so the user can see their node is actually taking
+    // part in the network.
+    if let Some(s) = stats {
+        col = col.push(separation().width(Length::Fill)).push(
+            text(format!(
+                "Connections: {} inbound · {} outbound",
+                s.connections_in, s.connections_out
+            ))
+            .size(12)
+            .style(theme::text::secondary),
+        );
+        if let Some(onion) = &s.onion_address {
+            col = col.push(
+                Row::new()
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .push(
+                        text(format!("Onion address: {onion}"))
+                            .size(12)
+                            .style(theme::text::secondary),
+                    )
+                    .push(
+                        Button::new(icon::clipboard_icon())
+                            .style(theme::button::transparent_border)
+                            .on_press(NodeSettingsMessage::CopyToClipboard(onion.clone())),
+                    ),
+            );
+        }
+        if enabled {
+            let cap = if s.upload_target > 0 {
+                human_bytes(s.upload_target)
+            } else {
+                "unlimited".to_string()
+            };
+            col = col.push(
+                text(format!(
+                    "Shared today: {} of {}",
+                    human_bytes(s.upload_used),
+                    cap
+                ))
+                .size(12)
+                .style(theme::text::secondary),
+            );
+        }
+    }
+
+    // Status + apply-now. Every change above (including turning the feature off)
+    // only reaches the running node when it restarts, so offer a one-click
+    // restart alongside the status.
+    col = col.push(separation().width(Length::Fill)).push(
+        Row::new()
+            .spacing(15)
+            .align_y(Alignment::Center)
+            .push(
+                text(if tor_running && onion_active {
+                    // Tor is up AND bitcoind has an onion key it re-publishes
+                    // on start. (The key file persists when the feature is
+                    // off, so we require a running tor too — otherwise a
+                    // just-disabled node would still read as "reachable".)
+                    "Tor is running — your node is reachable as an onion service."
+                } else if tor_running && enabled {
+                    // Tor is up but bitcoind hasn't published the onion yet
+                    // (it applies its listen/onion config only on start).
+                    "Tor is running — restart the node to publish your onion service."
+                } else if enabled {
+                    "Not reachable over Tor yet — restart the node to apply."
+                } else {
+                    "Inbound over Tor is off."
+                })
+                .size(12)
+                .style(theme::text::secondary)
+                .width(Length::Fill),
+            )
+            .push(
+                button::secondary(None, "Restart node to apply")
+                    .padding([8, 14])
+                    .on_press(NodeSettingsMessage::RestartNodeToApply),
+            ),
+    );
+
+    // Set expectations: the node only serves while the app is open and the
+    // machine is awake. Minimizing is fine (bitcoind/tor run independently);
+    // sleeping drops connections but they reconnect automatically on wake.
+    if enabled {
+        col = col.push(
+            text(
+                "Your node is reachable while COINCUBE is open and your computer is awake. \
+                 Minimizing is fine; if the computer sleeps, connections reconnect \
+                 automatically on wake.",
+            )
+            .size(11)
+            .style(theme::text::secondary),
+        );
+    }
+
+    card::simple(col).width(Length::Fill).into()
 }
 
 pub fn register_wallet_modal<'a>(

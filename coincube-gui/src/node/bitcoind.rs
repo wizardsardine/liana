@@ -15,17 +15,8 @@ use std::time;
 
 use tracing::{info, warn};
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
 use crate::dir::{BitcoindDirectory, CoincubeDirectory};
 use crate::utils::now_fallible;
-
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-#[cfg(target_os = "windows")]
-const DETACHED_PROCESS: u32 = 0x00000008;
 
 /// The flavour of managed Bitcoin node COINCUBE downloads, configures, and runs.
 ///
@@ -95,6 +86,27 @@ pub const KNOTS_SIGNING_KEY_FINGERPRINT: &str = "1A3E761F19D2CC7785C5502EA291A2C
 /// checked against the pin at verification time, so a swapped-out file cannot
 /// silently change the trust anchor.
 pub const KNOTS_SIGNING_KEY_ASC: &str = include_str!("../../assets/knots_signing_key.asc");
+
+/// Current managed Tor version, sourced from the Tor Project's Tor Expert Bundle
+/// (the same `tor` daemon shipped inside Tor Browser). Pinned like
+/// [`KNOTS_VERSIONS`] — bumps are a deliberate follow-up, since the bundle is
+/// verified against its published `sha256sums-unsigned-build.txt` manifest and a
+/// bump is therefore not checksum-locked in code.
+pub const TOR_VERSION: &str = "15.0.17";
+
+/// PGP key fingerprint of the "Tor Browser Developers (signing key)"
+/// (`torbrowser@torproject.org`) that signs the Tor Expert Bundle's
+/// `sha256sums-unsigned-build.txt.asc`. Canonical, long-published fingerprint;
+/// pinning it lets us recognise the signing key. Full verification of the
+/// detached signature additionally uses the vendored public material below.
+pub const TOR_SIGNING_KEY_FINGERPRINT: &str = "EF6E286DDA85EA2A4BA7DE684E2C6E8793298290";
+
+/// Vendored armored OpenPGP public key for [`TOR_SIGNING_KEY_FINGERPRINT`] (the
+/// Tor Browser Developers signing key), used to verify the Tor Expert Bundle's
+/// `sha256sums-unsigned-build.txt.asc`. The fingerprint is re-derived from this
+/// key and checked against the pin at verification time, so a swapped-out file
+/// cannot silently change the trust anchor.
+pub const TOR_SIGNING_KEY_ASC: &str = include_str!("../../assets/tor_signing_key.asc");
 
 /// Operating system COINCUBE builds managed-node asset names for. Kept explicit
 /// (rather than only `cfg!`) so URL construction is unit-testable for every
@@ -242,8 +254,104 @@ impl NodeFlavor {
     }
 }
 
+impl std::fmt::Display for NodeFlavor {
+    /// Human-readable name, so `NodeFlavor` can back a `pick_list`.
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.display_name())
+    }
+}
+
+/// Tor Expert Bundle archive filename for `version` on the given platform, e.g.
+/// `tor-expert-bundle-macos-aarch64-15.0.17.tar.gz`.
+///
+/// Returns `None` for platforms the Tor Project does not publish an Expert
+/// Bundle for — there is no Linux or Windows **aarch64** build. On those hosts
+/// inbound-over-Tor is simply unavailable and the managed node runs
+/// outbound-only (fail-safe); nothing else about the wallet changes. Kept
+/// explicit (not `cfg!`) so URL construction is unit-testable for every
+/// platform regardless of the host running the test.
+pub fn tor_asset_filename(version: &str, os: NodeOs, arch: NodeArch) -> Option<String> {
+    let platform = match (os, arch) {
+        (NodeOs::MacOs, NodeArch::X86_64) => "macos-x86_64",
+        (NodeOs::MacOs, NodeArch::Aarch64) => "macos-aarch64",
+        (NodeOs::Linux, NodeArch::X86_64) => "linux-x86_64",
+        (NodeOs::Windows, NodeArch::X86_64) => "windows-x86_64",
+        // No Tor Expert Bundle is published for these.
+        (NodeOs::Linux, NodeArch::Aarch64) | (NodeOs::Windows, NodeArch::Aarch64) => return None,
+    };
+    Some(format!("tor-expert-bundle-{platform}-{version}.tar.gz"))
+}
+
+/// Base URL of the Tor Project's package archive for `version`.
+fn tor_release_base_url(version: &str) -> String {
+    format!("https://archive.torproject.org/tor-package-archive/torbrowser/{version}")
+}
+
+/// Download URL for the Tor Expert Bundle for `version` on the given platform,
+/// or `None` where no Expert Bundle is published (see [`tor_asset_filename`]).
+pub fn tor_asset_url(version: &str, os: NodeOs, arch: NodeArch) -> Option<String> {
+    let filename = tor_asset_filename(version, os, arch)?;
+    Some(format!("{}/{filename}", tor_release_base_url(version)))
+}
+
+/// URLs of the Tor release `sha256sums-unsigned-build.txt` and its detached
+/// `.asc`, which the Expert Bundle archive is verified against (reusing the
+/// same signed-manifest path as Knots).
+pub fn tor_manifest_urls(version: &str) -> (String, String) {
+    let base = tor_release_base_url(version);
+    (
+        format!("{base}/sha256sums-unsigned-build.txt"),
+        format!("{base}/sha256sums-unsigned-build.txt.asc"),
+    )
+}
+
+/// Tor Expert Bundle download filename for the current pinned version on this
+/// host, or `None` if Tor is unavailable for the host platform.
+pub fn tor_download_filename() -> Option<String> {
+    tor_asset_filename(TOR_VERSION, HOST_OS, HOST_ARCH)
+}
+
+/// Tor Expert Bundle download URL for the current pinned version on this host,
+/// or `None` if Tor is unavailable for the host platform.
+pub fn tor_download_url() -> Option<String> {
+    tor_asset_url(TOR_VERSION, HOST_OS, HOST_ARCH)
+}
+
+/// Whether a managed Tor daemon can be installed on this host. `false` on
+/// Linux/Windows aarch64 (no published Expert Bundle) — the settings UI hides
+/// or disables inbound-over-Tor there.
+pub fn tor_supported_on_host() -> bool {
+    tor_download_filename().is_some()
+}
+
 pub fn internal_bitcoind_directory(coincube_datadir: &CoincubeDirectory) -> PathBuf {
     coincube_datadir.bitcoind_directory().path().to_path_buf()
+}
+
+/// Directory the managed Tor Expert Bundle for `version` is unpacked into. Sits
+/// alongside the managed `bitcoin-<version>` install so both share the managed
+/// bitcoind directory (and the duress wipe that covers it). Unpacking preserves
+/// the bundle's own layout, so the contents are `tor/tor[.exe]`,
+/// `tor/lib…`, `data/geoip…`, etc. underneath.
+pub fn internal_tor_directory(coincube_datadir: &CoincubeDirectory, version: &str) -> PathBuf {
+    internal_bitcoind_directory(coincube_datadir).join(format!("tor-{version}"))
+}
+
+/// Path of the managed `tor` executable for `version`.
+pub fn internal_tor_exe_path(coincube_datadir: &CoincubeDirectory, version: &str) -> PathBuf {
+    internal_tor_directory(coincube_datadir, version)
+        .join("tor")
+        .join(if cfg!(target_os = "windows") {
+            "tor.exe"
+        } else {
+            "tor"
+        })
+}
+
+/// Directory holding the bundle's geoip databases (`data/geoip`, `data/geoip6`)
+/// for `version`, passed to tor via `GeoIPFile`/`GeoIPv6File`.
+pub fn internal_tor_geoip_dir(coincube_datadir: &CoincubeDirectory, version: &str) -> PathBuf {
+    internal_tor_directory(coincube_datadir, version).join("data")
 }
 
 /// Data directory used by internal bitcoind.
@@ -397,6 +505,20 @@ pub struct InternalBitcoindNetworkConfig {
     pub rpc_auth: Option<RpcAuth>,
 }
 
+/// Default daily upload cap (`maxuploadtarget`) when inbound-over-Tor is on,
+/// in MiB — ~1 GB/day. Always set by default so a metered connection is never
+/// surprised by unbounded upload (see `PLAN-inbound-tor-connectivity.md`).
+pub const MAX_UPLOAD_TARGET_MB_DAY_DEFAULT: u32 = 1000;
+
+/// Default total connection cap (`maxconnections`) when inbound-over-Tor is on.
+/// bitcoind reserves 10 outbound (8 full + 2 block-only); the remainder are
+/// inbound slots.
+pub const MAX_CONNECTIONS_DEFAULT: u16 = 20;
+
+/// Loopback host bitcoind uses to reach the co-located managed `tor` daemon's
+/// control and SOCKS ports (`torcontrol`/`proxy`).
+const TOR_LOOPBACK_HOST: &str = "127.0.0.1";
+
 /// Represents the `bitcoin.conf` file to be used by internal bitcoind.
 #[derive(Debug, Clone)]
 pub struct InternalBitcoindConfig {
@@ -410,6 +532,32 @@ pub struct InternalBitcoindConfig {
     /// RDTS enforcement. Never emitted for Core, which rejects the key and
     /// refuses to start.
     pub enforce_rdts: bool,
+    /// Opt-in inbound connectivity over Tor. When true, [`Self::to_ini`] emits
+    /// `listen=1`, `listenonion=1`, `discover=0` (and `torcontrol` once
+    /// [`Self::tor_control_port`] is known), so bitcoind advertises itself as a
+    /// v3 onion service and accepts inbound peers. The persisted marker is
+    /// `listenonion=1`. Off by default — absent keys parse back to all-off, so
+    /// existing datadirs are unchanged.
+    pub inbound_tor: bool,
+    /// Route *outbound* peer connections through Tor too, via `proxy=<socks>`.
+    /// Only meaningful alongside `inbound_tor`. The persisted marker is the
+    /// presence of a `proxy=` line.
+    pub outbound_via_tor: bool,
+    /// Daily upload cap emitted as `maxuploadtarget` (MiB). `None` = unlimited
+    /// (key omitted; bitcoind then defaults to no cap). Only emitted when
+    /// `inbound_tor` is set.
+    pub max_upload_target_mb_day: Option<u32>,
+    /// Total connection cap emitted as `maxconnections`. `None` = bitcoind's
+    /// own default (key omitted). Only emitted when `inbound_tor` is set.
+    pub max_connections: Option<u16>,
+    /// Local control port of the managed `tor` daemon. Injected by the Tor
+    /// lifecycle manager once Tor is up (see `node/tor.rs`); needed to emit
+    /// `torcontrol=127.0.0.1:<port>`. Runtime-only — re-derived each start.
+    pub tor_control_port: Option<u16>,
+    /// Local SOCKS port of the managed `tor` daemon. Injected by the Tor
+    /// lifecycle manager once Tor is up; needed to emit `proxy=127.0.0.1:<port>`
+    /// when `outbound_via_tor` is set. Runtime-only — re-derived each start.
+    pub tor_socks_port: Option<u16>,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -441,6 +589,17 @@ impl std::fmt::Display for InternalBitcoindConfigError {
     }
 }
 
+/// Parse the port out of a `torcontrol`/`proxy` value such as
+/// `127.0.0.1:9151`. bitcoind always writes these as `host:port`; we split on
+/// the last colon so an IPv6 host (unused here, but harmless) still parses.
+fn parse_loopback_port(value: &str) -> Result<u16, InternalBitcoindConfigError> {
+    let port_str = value.rsplit_once(':').map(|(_, p)| p).unwrap_or(value);
+    port_str
+        .trim()
+        .parse::<u16>()
+        .map_err(|e| InternalBitcoindConfigError::CouldNotParseValue(e.to_string()))
+}
+
 impl Default for InternalBitcoindConfig {
     fn default() -> Self {
         Self::new()
@@ -453,6 +612,12 @@ impl InternalBitcoindConfig {
             networks: BTreeMap::new(),
             flavor: NodeFlavor::Core,
             enforce_rdts: false,
+            inbound_tor: false,
+            outbound_via_tor: false,
+            max_upload_target_mb_day: None,
+            max_connections: None,
+            tor_control_port: None,
+            tor_socks_port: None,
         }
     }
 
@@ -460,17 +625,47 @@ impl InternalBitcoindConfig {
     /// enforcement defaults on — that is the reason a user opts into Knots —
     /// while staying a distinct field so "Knots without RDTS" remains
     /// expressible. For Core, RDTS is never enforced.
+    ///
+    /// Inbound-over-Tor stays off here: the config-layer default is all-off for
+    /// backward compatibility. The product default (ON for new installs) is
+    /// applied at node setup, where the user is shown the disclosure and a
+    /// one-click opt-out (see [`Self::with_inbound_tor_defaults`]).
     pub fn for_flavor(flavor: NodeFlavor) -> Self {
         Self {
             networks: BTreeMap::new(),
             flavor,
             enforce_rdts: matches!(flavor, NodeFlavor::Knots),
+            inbound_tor: false,
+            outbound_via_tor: false,
+            max_upload_target_mb_day: None,
+            max_connections: None,
+            tor_control_port: None,
+            tor_socks_port: None,
         }
+    }
+
+    /// Turn inbound-over-Tor on with the product defaults: outbound-via-Tor
+    /// enabled (Decision 2 — nearly free once Tor runs), the always-on ~1 GB/day
+    /// upload cap, and the default connection cap. Ports are left `None`; the
+    /// Tor lifecycle manager injects them once the managed `tor` is up. Does not
+    /// touch the ports or per-network sections.
+    pub fn with_inbound_tor_defaults(mut self) -> Self {
+        self.inbound_tor = true;
+        self.outbound_via_tor = true;
+        self.max_upload_target_mb_day = Some(MAX_UPLOAD_TARGET_MB_DAY_DEFAULT);
+        self.max_connections = Some(MAX_CONNECTIONS_DEFAULT);
+        self
     }
 
     pub fn from_ini(ini: &ini::Ini) -> Result<Self, InternalBitcoindConfigError> {
         let mut networks = BTreeMap::new();
         let mut enforce_rdts = false;
+        let mut inbound_tor = false;
+        let mut outbound_via_tor = false;
+        let mut max_upload_target_mb_day = None;
+        let mut max_connections = None;
+        let mut tor_control_port = None;
+        let mut tor_socks_port = None;
         for (maybe_sec, prop) in ini {
             if let Some(sec) = maybe_sec {
                 let network = Network::from_core_arg(sec)
@@ -514,16 +709,45 @@ impl InternalBitcoindConfig {
                     },
                 );
             } else {
-                // The general (section-less) part of the file. We only ever
-                // write `consensusrules=rdts` here (Knots RDTS enforcement);
+                // The general (section-less) part of the file. We write
+                // `consensusrules=rdts` (Knots RDTS enforcement) and, when
+                // inbound-over-Tor is on, the global listen/proxy/bandwidth
+                // options. Recover each preference from its persisted marker;
                 // anything else is unexpected.
                 for (key, value) in prop.iter() {
-                    if key == "consensusrules" {
-                        enforce_rdts = value.split(',').any(|rule| rule.trim() == "rdts");
-                    } else {
-                        return Err(InternalBitcoindConfigError::UnexpectedSection(format!(
-                            "Unexpected key in general section: {key}"
-                        )));
+                    match key {
+                        "consensusrules" => {
+                            enforce_rdts = value.split(',').any(|rule| rule.trim() == "rdts");
+                        }
+                        // `listenonion=1` is the marker that inbound-over-Tor is
+                        // enabled; `listen`/`discover` are implied companions.
+                        "listenonion" => inbound_tor = value.trim() == "1",
+                        "listen" | "discover" => {}
+                        // A `proxy=` line means outbound is routed through Tor;
+                        // recover the SOCKS port (runtime value, re-derived on
+                        // the next start but round-tripped for losslessness).
+                        "proxy" => {
+                            outbound_via_tor = true;
+                            tor_socks_port = Some(parse_loopback_port(value)?);
+                        }
+                        "torcontrol" => {
+                            tor_control_port = Some(parse_loopback_port(value)?);
+                        }
+                        "maxuploadtarget" => {
+                            max_upload_target_mb_day = Some(value.parse::<u32>().map_err(|e| {
+                                InternalBitcoindConfigError::CouldNotParseValue(e.to_string())
+                            })?);
+                        }
+                        "maxconnections" => {
+                            max_connections = Some(value.parse::<u16>().map_err(|e| {
+                                InternalBitcoindConfigError::CouldNotParseValue(e.to_string())
+                            })?);
+                        }
+                        _ => {
+                            return Err(InternalBitcoindConfigError::UnexpectedSection(format!(
+                                "Unexpected key in general section: {key}"
+                            )));
+                        }
                     }
                 }
             }
@@ -540,6 +764,12 @@ impl InternalBitcoindConfig {
             networks,
             flavor,
             enforce_rdts,
+            inbound_tor,
+            outbound_via_tor,
+            max_upload_target_mb_day,
+            max_connections,
+            tor_control_port,
+            tor_socks_port,
         })
     }
 
@@ -567,6 +797,44 @@ impl InternalBitcoindConfig {
             conf_ini
                 .with_general_section()
                 .set("consensusrules", "rdts");
+        }
+
+        // Inbound-over-Tor. All of these are global (non-network-scoped)
+        // bitcoind options, so they belong in the section-less general part of
+        // the file, like `consensusrules`. Emitted only when the feature is on;
+        // when off, the general section is untouched (so existing datadirs, and
+        // the default no-op state, produce a byte-identical file).
+        if self.inbound_tor {
+            let mut general = conf_ini.with_general_section();
+            // Advertise + accept inbound peers as a v3 onion service. `discover=0`
+            // keeps bitcoind from leaking a clearnet address; the onion address
+            // is the only one published.
+            general.set("listen", "1");
+            general.set("listenonion", "1");
+            general.set("discover", "0");
+            // Bandwidth guards — always set when inbound is on (the metered-data
+            // protection). `None` upload target means the user chose "unlimited",
+            // so the key is omitted and bitcoind applies no cap.
+            if let Some(mb) = self.max_upload_target_mb_day {
+                general.set("maxuploadtarget", mb.to_string());
+            }
+            if let Some(n) = self.max_connections {
+                general.set("maxconnections", n.to_string());
+            }
+            // `torcontrol` lets bitcoind own the ephemeral onion service via the
+            // managed `tor` daemon's control port. The port is a runtime value
+            // injected once Tor is up; absent it (e.g. a config loaded before
+            // Tor starts), bitcoind falls back to no onion service — fail-safe.
+            if let Some(control_port) = self.tor_control_port {
+                general.set("torcontrol", format!("{TOR_LOOPBACK_HOST}:{control_port}"));
+            }
+            // Route outbound peer connections through Tor too, when requested and
+            // the SOCKS port is known.
+            if self.outbound_via_tor {
+                if let Some(socks_port) = self.tor_socks_port {
+                    general.set("proxy", format!("{TOR_LOOPBACK_HOST}:{socks_port}"));
+                }
+            }
         }
 
         for (network, network_conf) in &self.networks {
@@ -679,6 +947,26 @@ fn wait_for_internal_bitcoind_shutdown(config: &BitcoindConfig) {
     );
 }
 
+/// Stop the managed bitcoind reachable at `config` (if one is running) and block
+/// until it has released the datadir, so a replacement can start cleanly on the
+/// same port. Used to force a same-flavour restart that applies new config
+/// (e.g. inbound-over-Tor toggled in settings) — [`Bitcoind::maybe_start`] would
+/// otherwise reuse the running node and never pick the change up. No-op when no
+/// managed node is reachable.
+pub fn stop_and_wait_managed_bitcoind(config: &BitcoindConfig) {
+    // The second arg is only a label for the watchonly-client URL; it need not
+    // name a loaded wallet. `BitcoinD::new`'s connection check issues a
+    // non-wallet `echo` RPC, which bitcoind serves regardless of the
+    // `/wallet/<name>` in the URL (only real wallet RPCs require the wallet to
+    // exist). So `Ok` here means "the node is reachable", matching the same
+    // dummy-path pattern used by `maybe_start` and `wait_for_internal_bitcoind_shutdown`.
+    if let Ok(running) = coincubed::BitcoinD::new(config, "managed_restart_stop".to_string()) {
+        info!("Stopping managed bitcoind to apply new config...");
+        running.stop();
+        wait_for_internal_bitcoind_shutdown(config);
+    }
+}
+
 impl Bitcoind {
     /// Start internal bitcoind for the given network.
     pub fn maybe_start(
@@ -752,29 +1040,33 @@ impl Bitcoind {
             format!("-chain={}", network.to_core_arg()),
             format!("-datadir={}", datadir_path_str),
         ];
-        let mut command = std::process::Command::new(bitcoind_exe_path);
+        // Build a fresh bitcoind command each spawn attempt (we may respawn if
+        // the datadir lock isn't free yet — see the retry below).
+        let spawn_bitcoind = || -> Result<std::process::Child, StartInternalBitcoindError> {
+            let mut command = std::process::Command::new(&bitcoind_exe_path);
+            command
+                .args(&args)
+                // FIXME: can we pipe stderr to our logging system somehow?
+                .stdout(std::process::Stdio::null());
 
-        #[cfg(target_os = "windows")]
-        let command = command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+            // Detach the child so closing the app doesn't take the node down.
+            crate::node::detach_spawned_process(&mut command);
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            // Create a new session to detach the child from the main process.
-            unsafe {
-                command.pre_exec(|| {
-                    libc::setsid();
-                    Ok(())
-                });
-            }
-        }
+            command
+                .spawn()
+                .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))
+        };
 
-        let mut process = command
-            .args(&args)
-            // FIXME: can we pipe stderr to our logging system somehow?
-            .stdout(std::process::Stdio::null())
-            .spawn()
-            .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))?;
+        // When we've just asked a previous managed node to stop, it keeps the
+        // datadir lock until it finishes flushing on shutdown; a fresh bitcoind
+        // then exits immediately with "Cannot obtain a lock on directory". Retry
+        // the spawn a bounded number of times (~15s) to ride out that window.
+        // A genuine start failure just exhausts the retries and surfaces the
+        // error, a few seconds later than before.
+        const MAX_LOCK_RETRIES: u32 = 30;
+        let mut lock_retries = 0;
+
+        let mut process = spawn_bitcoind()?;
 
         // We've started bitcoind in the background, however it may fail to start for whatever
         // reason. And we need its JSONRPC interface to be available to continue. Thus wait for
@@ -785,6 +1077,17 @@ impl Bitcoind {
                 Ok(None) => {}
                 Err(e) => log::error!("Error while trying to wait for bitcoind: {}", e),
                 Ok(Some(status)) => {
+                    if lock_retries < MAX_LOCK_RETRIES {
+                        lock_retries += 1;
+                        log::warn!(
+                            "bitcoind exited early ({status}); a stopping node likely still \
+                             holds the datadir lock — retrying ({lock_retries}/{MAX_LOCK_RETRIES})"
+                        );
+                        thread::sleep(time::Duration::from_millis(500));
+                        process = spawn_bitcoind()?;
+                        try_count = 0;
+                        continue;
+                    }
                     log::error!("Bitcoind exited with status '{}'", status);
                     return Err(StartInternalBitcoindError::ProcessExited(status));
                 }
@@ -1160,6 +1463,109 @@ mod tests {
                 .expect("parse non-rdts conf")
                 .enforce_rdts
         );
+    }
+
+    // Inbound-over-Tor global options are emitted only when enabled, and every
+    // preference round-trips through `to_ini`/`from_ini`. Mirrors
+    // `rdts_consensusrules_emission`.
+    #[test]
+    fn tor_inbound_emission() {
+        let net = InternalBitcoindNetworkConfig {
+            rpc_port: 12345,
+            p2p_port: 12346,
+            prune: 15000,
+            rpc_auth: None,
+        };
+
+        // Off by default: a Knots config emits none of the Tor keys, and the
+        // general section holds only `consensusrules`.
+        let mut off = InternalBitcoindConfig::for_flavor(NodeFlavor::Knots);
+        off.networks.insert(Network::Bitcoin, net.clone());
+        assert!(!off.inbound_tor);
+        let off_ini = off.to_ini();
+        for key in [
+            "listen",
+            "listenonion",
+            "discover",
+            "torcontrol",
+            "proxy",
+            "maxuploadtarget",
+            "maxconnections",
+        ] {
+            assert!(
+                off_ini.general_section().get(key).is_none(),
+                "{} should not be emitted when inbound is off",
+                key
+            );
+        }
+
+        // On with the product defaults + injected runtime ports: every key is
+        // present with the expected value.
+        let mut on =
+            InternalBitcoindConfig::for_flavor(NodeFlavor::Knots).with_inbound_tor_defaults();
+        on.tor_control_port = Some(9151);
+        on.tor_socks_port = Some(9150);
+        on.networks.insert(Network::Bitcoin, net.clone());
+        let on_ini = on.to_ini();
+        let general = on_ini.general_section();
+        assert_eq!(general.get("listen"), Some("1"));
+        assert_eq!(general.get("listenonion"), Some("1"));
+        assert_eq!(general.get("discover"), Some("0"));
+        assert_eq!(general.get("maxuploadtarget"), Some("1000"));
+        assert_eq!(general.get("maxconnections"), Some("20"));
+        assert_eq!(general.get("torcontrol"), Some("127.0.0.1:9151"));
+        assert_eq!(general.get("proxy"), Some("127.0.0.1:9150"));
+
+        // Round-trip recovers every preference (and the runtime ports).
+        let parsed = InternalBitcoindConfig::from_ini(&on_ini).expect("parse inbound conf");
+        assert!(parsed.inbound_tor);
+        assert!(parsed.outbound_via_tor);
+        assert_eq!(parsed.max_upload_target_mb_day, Some(1000));
+        assert_eq!(parsed.max_connections, Some(20));
+        assert_eq!(parsed.tor_control_port, Some(9151));
+        assert_eq!(parsed.tor_socks_port, Some(9150));
+        // RDTS still round-trips alongside the new keys.
+        assert!(parsed.enforce_rdts);
+        assert_eq!(parsed.flavor, NodeFlavor::Knots);
+
+        // "Unlimited" upload omits the cap key and parses back to `None`.
+        let mut unlimited =
+            InternalBitcoindConfig::for_flavor(NodeFlavor::Knots).with_inbound_tor_defaults();
+        unlimited.max_upload_target_mb_day = None;
+        unlimited.tor_control_port = Some(9151);
+        unlimited.networks.insert(Network::Bitcoin, net.clone());
+        let unlimited_ini = unlimited.to_ini();
+        assert!(unlimited_ini
+            .general_section()
+            .get("maxuploadtarget")
+            .is_none());
+        assert_eq!(
+            InternalBitcoindConfig::from_ini(&unlimited_ini)
+                .expect("parse unlimited conf")
+                .max_upload_target_mb_day,
+            None
+        );
+
+        // Inbound on but outbound off: no `proxy` line even with a SOCKS port.
+        let mut no_outbound =
+            InternalBitcoindConfig::for_flavor(NodeFlavor::Knots).with_inbound_tor_defaults();
+        no_outbound.outbound_via_tor = false;
+        no_outbound.tor_control_port = Some(9151);
+        no_outbound.tor_socks_port = Some(9150);
+        no_outbound.networks.insert(Network::Bitcoin, net);
+        let no_outbound_ini = no_outbound.to_ini();
+        assert!(no_outbound_ini.general_section().get("proxy").is_none());
+        assert!(general_marker_inbound(&no_outbound_ini));
+        assert!(
+            !InternalBitcoindConfig::from_ini(&no_outbound_ini)
+                .expect("parse no-outbound conf")
+                .outbound_via_tor
+        );
+    }
+
+    // Helper: does an emitted config carry the inbound marker?
+    fn general_marker_inbound(ini: &ini::Ini) -> bool {
+        ini.general_section().get("listenonion") == Some("1")
     }
 
     // When both flavours are installed, the launched binary must match the

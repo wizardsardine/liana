@@ -16,6 +16,7 @@ use std::{
     convert::TryInto,
     fs, io,
     str::FromStr,
+    sync::RwLock,
     thread,
     time::Duration,
 };
@@ -224,14 +225,36 @@ impl std::fmt::Display for WalletError {
     }
 }
 
+/// Which of [`BitcoinD`]'s clients a request uses. Carried (instead of a bare
+/// `&Client`) so a client can be rebuilt from a fresh cookie when bitcoind
+/// rotates it on restart.
+#[derive(Clone, Copy)]
+enum ClientKind {
+    /// Generalistic node calls ([`BitcoinD::node_client`]).
+    Node,
+    /// Wallet calls ([`BitcoinD::watchonly_client`]).
+    Watchonly,
+    /// Fire-and-forget calls with a low timeout ([`BitcoinD::sendonly_client`]).
+    Sendonly,
+}
+
 pub struct BitcoinD {
     /// Client for generalistic calls.
-    node_client: Client,
+    ///
+    /// Behind an `RwLock` so a cookie-refreshed client (after bitcoind rotates
+    /// its cookie on restart) can be swapped in and reused by later requests —
+    /// see [`BitcoinD::make_request_inner`]. Access is otherwise serialized by
+    /// the outer `Mutex<dyn BitcoinInterface>`, so the lock is uncontended.
+    node_client: RwLock<Client>,
     /// A client that will disregard responses to the queries it makes.
-    sendonly_client: Client,
+    sendonly_client: RwLock<Client>,
     /// A client for calls related to the wallet.
-    watchonly_client: Client,
+    watchonly_client: RwLock<Client>,
     watchonly_wallet_path: String,
+    /// The config the clients were built from. Kept so we can rebuild a client
+    /// from a freshly-read cookie when bitcoind rotates it on restart (see
+    /// [`BitcoinD::make_request_inner`]).
+    config: config::BitcoindConfig,
     /// How many times we'll retry upon failure to send a request.
     retries: usize,
 }
@@ -294,10 +317,11 @@ impl BitcoinD {
                 .build(),
         );
         let dummy_bitcoind = BitcoinD {
-            node_client: dummy_node_client,
-            sendonly_client,
-            watchonly_client: dummy_wo_client,
+            node_client: RwLock::new(dummy_node_client),
+            sendonly_client: RwLock::new(sendonly_client),
+            watchonly_client: RwLock::new(dummy_wo_client),
             watchonly_wallet_path: watchonly_wallet_path.clone(),
+            config: config.clone(),
             retries: 0,
         };
         log::info!("Checking the connection to bitcoind.");
@@ -305,44 +329,87 @@ impl BitcoinD {
         log::info!("Connection to bitcoind checked.");
 
         // Now the connection is checked, create the clients with an appropriate timeout.
-        let node_client = Client::with_transport(
-            builder
-                .clone()
-                .url(&node_url)
-                .map_err(BitcoindError::from)?
-                .timeout(Duration::from_secs(RPC_SOCKET_TIMEOUT))
-                .build(),
-        );
-        let sendonly_client = Client::with_transport(
-            builder
-                .clone()
-                .url(&watchonly_url)
-                .map_err(BitcoindError::from)?
-                .timeout(Duration::from_secs(1))
-                .build(),
-        );
-        let watchonly_client = Client::with_transport(
-            builder
-                .url(&watchonly_url)
-                .map_err(BitcoindError::from)?
-                .timeout(Duration::from_secs(RPC_SOCKET_TIMEOUT))
-                .build(),
-        );
         Ok(BitcoinD {
-            node_client,
-            sendonly_client,
-            watchonly_client,
+            node_client: RwLock::new(Self::build_client(
+                config,
+                &watchonly_wallet_path,
+                ClientKind::Node,
+            )?),
+            sendonly_client: RwLock::new(Self::build_client(
+                config,
+                &watchonly_wallet_path,
+                ClientKind::Sendonly,
+            )?),
+            watchonly_client: RwLock::new(Self::build_client(
+                config,
+                &watchonly_wallet_path,
+                ClientKind::Watchonly,
+            )?),
             watchonly_wallet_path,
+            config: config.clone(),
             retries: BITCOIND_RETRY_LIMIT,
         })
     }
 
-    fn check_client(&self, client: &Client) -> Result<(), BitcoindError> {
-        if let Err(e) = self.make_request(client, "echo", None) {
+    /// Build an RPC [`Client`] for `kind` from `config`, re-reading the cookie
+    /// file when cookie-auth is configured. Shared by [`Self::new`] (the
+    /// post-check clients) and the cookie-refresh path so the auth/URL/timeout
+    /// wiring lives in one place.
+    fn build_client(
+        config: &config::BitcoindConfig,
+        watchonly_wallet_path: &str,
+        kind: ClientKind,
+    ) -> Result<Client, BitcoindError> {
+        let builder = match &config.rpc_auth {
+            config::BitcoindRpcAuth::CookieFile(cookie_path) => {
+                let cookie_string =
+                    fs::read_to_string(cookie_path).map_err(BitcoindError::CookieFile)?;
+                MinreqHttpTransport::builder().cookie_auth(cookie_string)
+            }
+            config::BitcoindRpcAuth::UserPass(user, pass) => {
+                MinreqHttpTransport::builder().basic_auth(user.clone(), Some(pass.clone()))
+            }
+        };
+        let node_url = format!("http://{}", config.addr);
+        let watchonly_url = format!("http://{}/wallet/{}", config.addr, watchonly_wallet_path);
+        let (url, timeout) = match kind {
+            ClientKind::Node => (node_url, RPC_SOCKET_TIMEOUT),
+            ClientKind::Watchonly => (watchonly_url, RPC_SOCKET_TIMEOUT),
+            // Fire-and-forget: a very low timeout so we ignore the response.
+            ClientKind::Sendonly => (watchonly_url, 1),
+        };
+        Ok(Client::with_transport(
+            builder
+                .url(&url)
+                .map_err(BitcoindError::from)?
+                .timeout(Duration::from_secs(timeout))
+                .build(),
+        ))
+    }
+
+    /// The pre-built client slot for `kind`.
+    fn client(&self, kind: ClientKind) -> &RwLock<Client> {
+        match kind {
+            ClientKind::Node => &self.node_client,
+            ClientKind::Watchonly => &self.watchonly_client,
+            ClientKind::Sendonly => &self.sendonly_client,
+        }
+    }
+
+    /// Rebuild a fresh client for `kind` from [`Self::config`], re-reading the
+    /// cookie file. Used to recover after bitcoind rotates its cookie on a
+    /// restart, which invalidates the credentials baked into the existing
+    /// clients.
+    fn rebuild_client(&self, kind: ClientKind) -> Result<Client, BitcoindError> {
+        Self::build_client(&self.config, &self.watchonly_wallet_path, kind)
+    }
+
+    fn check_client(&self, kind: ClientKind) -> Result<(), BitcoindError> {
+        if let Err(e) = self.make_request(kind, "echo", None) {
             if e.is_warming_up() {
                 log::info!("bitcoind is warming up. Retrying connection sanity check in 1 second.");
                 thread::sleep(Duration::from_secs(1));
-                return self.check_client(client);
+                return self.check_client(kind);
             } else {
                 return Err(e);
             }
@@ -353,8 +420,8 @@ impl BitcoinD {
     // Make sure bitcoind is reachable through all clients. Note we don't check the sendonly client
     // since it has precisely a very low timeout for the purpose of ignoring responses.
     fn check_connection(&self) -> Result<(), BitcoindError> {
-        self.check_client(&self.node_client)?;
-        self.check_client(&self.watchonly_client)?;
+        self.check_client(ClientKind::Node)?;
+        self.check_client(ClientKind::Watchonly)?;
         Ok(())
     }
 
@@ -412,26 +479,67 @@ impl BitcoinD {
 
     fn make_request_inner(
         &self,
-        client: &Client,
+        kind: ClientKind,
         method: &str,
         params: Option<&serde_json::value::RawValue>,
         retry: bool,
     ) -> Result<Json, BitcoindError> {
-        let req = client.build_request(method, params);
-        if retry {
-            self.retry(|| self.try_request(client, req.clone()))
-        } else {
-            self.try_request(client, req)
+        let attempt = |client: &Client| {
+            let req = client.build_request(method, params);
+            if retry {
+                self.retry(|| self.try_request(client, req.clone()))
+            } else {
+                self.try_request(client, req)
+            }
+        };
+        let slot = self.client(kind);
+        // Read-lock for the normal path; the guard is dropped before we ever
+        // take the write lock below, so there's no self-deadlock.
+        let first = {
+            let client = slot.read().expect("client lock poisoned");
+            attempt(&client)
+        };
+        match first {
+            // bitcoind rotates its cookie every time it restarts, which
+            // invalidates the credentials baked into our clients (`401`).
+            // Rather than propagate it — which panics the poller — rebuild the
+            // client from the freshly-written cookie and retry once, so a node
+            // restart (e.g. applying inbound-over-Tor) doesn't take us down.
+            //
+            // Only cookie-auth rotates; a static user/pass can't be refreshed,
+            // so rebuilding would just reproduce the same rejected credentials.
+            Err(e)
+                if e.is_unauthorized()
+                    && matches!(self.config.rpc_auth, config::BitcoindRpcAuth::CookieFile(_)) =>
+            {
+                log::warn!(
+                    "bitcoind credentials rejected (cookie likely rotated by a restart); \
+                     refreshing from the cookie file and retrying."
+                );
+                match self.rebuild_client(kind) {
+                    Ok(fresh) => {
+                        let result = attempt(&fresh);
+                        // Persist the refreshed client so later requests use the
+                        // new cookie directly, instead of each paying a failed
+                        // round-trip + cookie re-read until the process restarts.
+                        *slot.write().expect("client lock poisoned") = fresh;
+                        result
+                    }
+                    // Couldn't re-read the cookie — surface the original error.
+                    Err(_) => Err(e),
+                }
+            }
+            other => other,
         }
     }
 
     fn make_request(
         &self,
-        client: &Client,
+        kind: ClientKind,
         method: &str,
         params: Option<&serde_json::value::RawValue>,
     ) -> Result<Json, BitcoindError> {
-        self.make_request_inner(client, method, params, true)
+        self.make_request_inner(kind, method, params, true)
     }
 
     // Make a request for which you don't expect a response. This is achieved by setting a very low
@@ -441,7 +549,7 @@ impl BitcoinD {
         method: &str,
         params: Option<&serde_json::value::RawValue>,
     ) -> Result<(), BitcoindError> {
-        match self.make_request_inner(&self.sendonly_client, method, params, false) {
+        match self.make_request_inner(ClientKind::Sendonly, method, params, false) {
             Ok(_) => Ok(()),
             Err(e) => {
                 // A timeout error is expected, as that's our workaround to avoid blocking
@@ -459,7 +567,7 @@ impl BitcoinD {
         method: &str,
         params: Option<&serde_json::value::RawValue>,
     ) -> Result<Json, BitcoindError> {
-        self.make_request(&self.node_client, method, params)
+        self.make_request(ClientKind::Node, method, params)
     }
 
     fn make_node_request(
@@ -467,7 +575,7 @@ impl BitcoinD {
         method: &str,
         params: Option<&serde_json::value::RawValue>,
     ) -> Json {
-        self.make_request(&self.node_client, method, params)
+        self.make_request(ClientKind::Node, method, params)
             .expect("We must not fail to make a request for more than a minute")
     }
 
@@ -476,7 +584,7 @@ impl BitcoinD {
         method: &str,
         params: Option<&serde_json::value::RawValue>,
     ) -> Json {
-        self.make_request(&self.watchonly_client, method, params)
+        self.make_request(ClientKind::Watchonly, method, params)
             .expect("We must not fail to make a request for more than a minute")
     }
 
@@ -485,7 +593,7 @@ impl BitcoinD {
         method: &str,
         params: Option<&serde_json::value::RawValue>,
     ) -> Result<Json, BitcoindError> {
-        self.make_request(&self.watchonly_client, method, params)
+        self.make_request(ClientKind::Watchonly, method, params)
     }
 
     fn get_bitcoind_version(&self) -> u64 {
@@ -1280,7 +1388,7 @@ impl BitcoinD {
     /// rather than block the caller for up to `BITCOIND_RETRY_LIMIT` seconds in
     /// the retry loop.
     pub fn subversion(&self) -> Option<String> {
-        self.make_request_inner(&self.node_client, "getnetworkinfo", None, false)
+        self.make_request_inner(ClientKind::Node, "getnetworkinfo", None, false)
             .ok()
             .and_then(|info| {
                 info.get("subversion")

@@ -211,9 +211,6 @@ pub enum SelectBitcoindTypeMsg {
     ContinueWithConnect,
     ToggleInstallNode,
     ToggleAdvanced,
-    /// Pick which managed-node flavour to install (Bitcoin Knots / Core) when
-    /// installing a node alongside Connect. Defaults to Knots.
-    SelectNodeFlavor(crate::node::bitcoind::NodeFlavor),
     // Advanced options
     UseExternal(bool),
     UseConnect,
@@ -425,6 +422,10 @@ pub enum InternalBitcoindMsg {
     /// Pick the managed node flavour (Bitcoin Core or Bitcoin Knots + RDTS)
     /// before the download starts.
     SelectFlavor(crate::node::bitcoind::NodeFlavor),
+    /// Confirm the chosen flavour on the "Start Bitcoin full node" screen and
+    /// begin the download/install/start flow (gated behind this so the user
+    /// picks Core vs Knots first).
+    ConfirmFlavor,
     DefineConfig,
     Download,
     DownloadProgressed(super::step::DownloadUpdate),

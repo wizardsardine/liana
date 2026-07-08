@@ -169,6 +169,9 @@ pub enum Message {
     /// Result of polling the pending local bitcoind's IBD sync progress.
     /// Carries `(verificationprogress, initialblockdownload)`.
     BitcoindSyncProgress(Result<(f64, bool), String>),
+    /// Result of polling the *active* managed node's network stats (connection
+    /// counts, upload used vs. cap, onion address) for the Node settings.
+    BitcoindNetStats(Result<crate::app::cache::NodeNetStats, String>),
     /// Latest UpdateTip/blockheaders line streamed from the pending internal
     /// bitcoind's debug.log.  `None` means no matching line found yet.
     PendingBitcoindLog(Option<String>),
