@@ -14,7 +14,7 @@ use coincube_core::{
         psbt::Psbt,
         secp256k1, Address, Amount, Denomination, Network, OutPoint,
     },
-    spend::{SpendCreationError, MAX_FEERATE},
+    spend::{SpendCreationError, DUST_OUTPUT_SATS, MAX_FEERATE},
 };
 use coincubed::commands::ListCoinsEntry;
 use iced::{Subscription, Task};
@@ -40,8 +40,6 @@ use crate::{
     },
     services::feeestimation::fee_estimation::FeeEstimator,
 };
-
-const DUST_OUTPUT_SATS: u64 = 5_000;
 
 /// How long to wait after the last form edit before running a redraft
 /// (coin selection / `create_spend_tx`). Coalesces a burst of keystrokes
@@ -271,6 +269,7 @@ impl DefineSpend {
 
     pub fn self_send(mut self) -> Self {
         self.recipients = Vec::new();
+        self.is_user_coin_selection = true;
         self
     }
 
@@ -514,9 +513,16 @@ impl DefineSpend {
         &mut self,
         max_address: Address<address::NetworkUnchecked>,
         recipient_with_max: Option<usize>,
-        destinations_is_empty: bool,
+        // No longer consulted: under-dust handling now derives everything from
+        // the recipient count and coin-selection result, matching upstream #1928.
+        _destinations_is_empty: bool,
         result: Result<CreateSpendResult, Error>,
     ) {
+        // Drop any stale under-dust state before processing the fresh result.
+        for recipient in &mut self.recipients {
+            recipient.dust_warning = None;
+            recipient.estimated_max = None;
+        }
         match result {
             Ok(CreateSpendResult::Success { psbt, .. }) => {
                 self.warning = None;
@@ -565,7 +571,7 @@ impl DefineSpend {
             }
             Ok(CreateSpendResult::InsufficientFunds { missing }) => {
                 self.fee_amount = None;
-                self.amount_left_to_select = Some(Amount::from_sat(missing));
+                let mut selected_coins = 0;
                 // To be sure, we exclude recovery transactions here, although they
                 // can't currently reach this part of code.
                 if !self.is_user_coin_selection && self.recovery_timelock.is_none() {
@@ -573,31 +579,42 @@ impl DefineSpend {
                     // being used, which are all owned coins.
                     for (coin, selected) in &mut self.coins {
                         *selected = coin_is_owned(coin);
+                        if *selected {
+                            selected_coins += 1;
+                        }
                     }
                 }
+                let all_selected = selected_coins == self.coins.len();
                 if let Some(i) = recipient_with_max {
-                    let base_sats = if destinations_is_empty {
-                        // If there are no other recipients, then the missing value will
-                        // be the amount left to select in order to create an output at the dust
-                        // threshold. Therefore, set this recipient's amount to this value so
-                        // that the information shown is consistent.
-                        // Otherwise, there are already insufficient funds for the other
-                        // recipients and so the max available for this recipient is 0.
-                        DUST_OUTPUT_SATS
-                    } else {
-                        0
-                    };
-                    let amount = match self.bitcoin_unit {
-                        BitcoinDisplayUnit::BTC => Amount::from_sat(base_sats).to_btc().to_string(),
-                        BitcoinDisplayUnit::Sats => base_sats.to_string(),
-                    };
+                    // An output has MAX selected, but the available amount is lower than
+                    // the dust limit. Rather than showing a confusing near-zero amount,
+                    // surface an explicit under-dust message and clear the amount field.
+                    self.amount_left_to_select = None;
+                    let total_recipients = self.recipients.len();
                     if let Some(recipient) = self.recipients.get_mut(i) {
+                        recipient.dust_warning = Some(if all_selected {
+                            "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s).".to_string()
+                        } else {
+                            "Minimum amount is 0.00 000 500 BTC. Select more coins to continue."
+                                .to_string()
+                        });
                         recipient.update(
                             self.network,
                             self.bitcoin_unit,
-                            view::CreateSpendMessage::RecipientEdited(i, "amount", amount),
+                            view::CreateSpendMessage::RecipientEdited(i, "amount", String::new()),
                         );
+                        if total_recipients > 1 {
+                            recipient.estimated_max = None;
+                        } else if missing > DUST_OUTPUT_SATS {
+                            // NOTE: Not reachable in theory.
+                        } else {
+                            recipient.estimated_max =
+                                Some(Amount::from_sat(DUST_OUTPUT_SATS - missing));
+                        }
                     }
+                } else {
+                    self.warning = None;
+                    self.amount_left_to_select = Some(Amount::from_sat(missing));
                 }
             }
             Err(e) => {
@@ -876,10 +893,12 @@ impl Step for DefineSpend {
                         }
                     }
                     view::CreateSpendMessage::SendMaxToRecipient(i) => {
-                        if self.recipients.get(i).is_some() {
+                        if let Some(recipient) = self.recipients.get_mut(i) {
                             if self.send_max_to_recipient == Some(i) {
                                 // If already set to this recipient, then unset it.
                                 self.send_max_to_recipient = None;
+                                recipient.dust_warning = None;
+                                recipient.estimated_max = None;
                             } else {
                                 // Either it's set to some other recipient or not at all.
                                 self.send_max_to_recipient = Some(i);
@@ -1038,6 +1057,10 @@ impl Step for DefineSpend {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let converter: Option<view::FiatAmountConverter> =
             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+        let max_under_dust = self
+            .recipients
+            .iter()
+            .any(|r| r.estimated_max.is_some() || r.dust_warning.is_some());
         view::vault::spend::create_spend_tx(
             &self.balance,
             &self.unconfirmed_balance,
@@ -1074,6 +1097,7 @@ impl Step for DefineSpend {
             self.loading_fee_estimate,
             self.generating,
             self.bitcoin_unit,
+            max_under_dust,
         )
     }
 
@@ -1082,16 +1106,21 @@ impl Step for DefineSpend {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 struct Recipient {
     label: form::Value<String>,
     address: form::Value<String>,
     amount: form::Value<String>,
     bitcoin_unit: BitcoinDisplayUnit,
+    // Estimated max spendable for this recipient when a send-max lands under the
+    // dust limit; used to show a fiat estimate alongside the under-dust message.
+    estimated_max: Option<Amount>,
     // This is only `Some` if the user has entered a fiat amount directly.
     fiat_amount: Option<form::Value<String>>,
     fiat_converter: Option<view::FiatAmountConverter>, // the converter at the time of entering the fiat amount
     is_recovery: bool,
+    // Set when a send-max output would be below the dust limit.
+    dust_warning: Option<String>,
 }
 
 impl Recipient {
@@ -1175,6 +1204,8 @@ impl Recipient {
                 }
             }
             view::CreateSpendMessage::RecipientFiatAmountEdited(_, fiat_amt_str, converter) => {
+                // Clear any warning on the BTC amount as it is no longer the last edited field.
+                self.amount.warning = None;
                 self.fiat_converter = Some(converter);
                 if fiat_amt_str.is_empty() {
                     self.fiat_amount = Some(form::Value::default());
@@ -1224,7 +1255,29 @@ impl Recipient {
                 self.bitcoin_unit = bitcoin_unit;
                 self.fiat_amount = None; // Clear any fiat amount to indicate BTC amount is now primary.
                 self.fiat_converter = None;
-                self.amount.value = amount;
+                self.amount.warning = None;
+
+                // If a float has been pasted with more than 8 decimal places, and truncating
+                // it to 8 places yields a valid BTC amount, truncate it and show a warning.
+                // This can only happen on paste, as the input otherwise allows up to 8 decimal
+                // places. Sats entry has no fractional part, so it is kept as-is.
+                self.amount.value = match bitcoin_unit {
+                    BitcoinDisplayUnit::BTC => f64::from_str(&amount)
+                        .ok()
+                        .and_then(|_| amount.split_once('.'))
+                        .filter(|(_, fraction)| fraction.len() > 8)
+                        .map(|(integer, fraction)| format!("{}.{}", integer, &fraction[..8]))
+                        .filter(|truncated| {
+                            Amount::from_str_in(truncated, Denomination::Bitcoin).is_ok()
+                        })
+                        .inspect(|_| {
+                            self.amount.warning =
+                                Some("Amount has been truncated to 8 decimal places");
+                        })
+                        .unwrap_or(amount),
+                    BitcoinDisplayUnit::Sats => amount,
+                };
+
                 if !self.amount.value.is_empty() {
                     self.amount.valid = self.amount().is_ok();
                 } else {
@@ -1274,6 +1327,8 @@ impl Recipient {
             &self.label,
             is_max_selected,
             self.is_recovery,
+            &self.dust_warning,
+            self.estimated_max,
             bitcoin_unit,
         )
     }

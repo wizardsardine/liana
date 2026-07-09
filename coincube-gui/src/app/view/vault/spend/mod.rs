@@ -166,6 +166,7 @@ pub fn create_spend_tx<'a>(
     loading_fee_estimate: Option<usize>,
     generating: bool,
     bitcoin_unit: BitcoinDisplayUnit,
+    max_under_dust: bool,
 ) -> Element<'a, Message> {
     let is_self_send = recipients.is_empty();
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
@@ -460,8 +461,10 @@ pub fn create_spend_tx<'a>(
                                     Row::new().push(
                                         text(if feerate.value.is_empty() || !feerate.valid {
                                             "Feerate needs to be set."
-                                        } else {
+                                        } else if !max_under_dust {
                                             "Add recipient details."
+                                        } else {
+                                            "Select or add more funds."
                                         })
                                         .style(theme::text::secondary),
                                     )
@@ -544,17 +547,37 @@ pub fn recipient_view<'a>(
     label: &'a form::Value<String>,
     is_max_selected: bool,
     is_recovery: bool,
+    dust_warning: &'a Option<String>,
+    max_estimated_amount: Option<Amount>,
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, CreateSpendMessage> {
-    let btc_amt = match bitcoin_unit {
-        BitcoinDisplayUnit::BTC => Amount::from_str_in(&amount.value, Denomination::Bitcoin).ok(),
-        BitcoinDisplayUnit::Sats => amount
-            .value
-            .replace(' ', "")
-            .parse::<u64>()
-            .ok()
-            .map(Amount::from_sat),
+    // When a send-max output is under the dust limit the amount field is cleared
+    // and an estimate is shown instead, so use that for any fiat conversion.
+    let btc_amt = if dust_warning.is_some() {
+        max_estimated_amount
+    } else {
+        match bitcoin_unit {
+            BitcoinDisplayUnit::BTC => {
+                Amount::from_str_in(&amount.value, Denomination::Bitcoin).ok()
+            }
+            BitcoinDisplayUnit::Sats => amount
+                .value
+                .replace(' ', "")
+                .parse::<u64>()
+                .ok()
+                .map(Amount::from_sat),
+        }
     };
+
+    // Show the dust warning (red) if any, otherwise any amount warning (orange).
+    let amount_warning_row = Row::new()
+        .push(Space::new().width(Length::Fixed(20.0)))
+        .push(
+            dust_warning
+                .as_ref()
+                .map(|w| caption(w).color(color::RED))
+                .or_else(|| amount.warning.map(|w| caption(w).color(color::ORANGE))),
+        );
 
     Container::new(
         Column::new()
@@ -609,6 +632,7 @@ pub fn recipient_view<'a>(
                     ),
             )
             .push(
+                Column::new().push(
                 Row::new()
                     .align_y(Alignment::Center)
                     .spacing(10)
@@ -640,13 +664,13 @@ pub fn recipient_view<'a>(
                                         form::Form::new_amount_btc("0.001 (in BTC)", amount, move |msg| {
                                             CreateSpendMessage::RecipientEdited(index, "amount", msg)
                                         })
-                                        .warning("Invalid amount. (Note amounts lower than 0.00005 BTC are invalid.)")
+                                        .warning("Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)")
                                     }
                                     BitcoinDisplayUnit::Sats => {
                                         form::Form::new_amount_sats("100 000 (in sats)", amount, move |msg| {
                                             CreateSpendMessage::RecipientEdited(index, "amount", msg)
                                         })
-                                        .warning("Invalid amount. (Note amounts lower than 5000 sats are invalid.)")
+                                        .warning("Invalid amount. (Note amounts lower than 500 sats are invalid.)")
                                     }
                                 };
 
@@ -660,19 +684,21 @@ pub fn recipient_view<'a>(
                                     .align_y(Alignment::Center)
                                     .spacing(5)
                                     .push(Space::new().width(Length::Fixed(20.0))) // add some space between BTC and fiat amounts
-                                    .push(p1_bold(format!("{}", conv.currency())))
+                                    // Don't show an empty fiat label when max is selected but no amount is known yet.
+                                    .push((!is_max_selected || btc_amt.is_some())
+                                        .then_some(p1_bold(format!("{}", conv.currency()))))
                                     .push(Space::new().width(Length::Fixed(5.0)))
                                     .push(if is_max_selected {
-                                        let fiat_from_btc = btc_amt
-                                            .map(|a| conv.convert(a))
-                                            .map(|fa| fa.to_formatted_string())
-                                            .unwrap_or_default();
-                                        Container::new(
-                                            text(fiat_from_btc)
-                                                .size(P1_SIZE)
-                                                .style(theme::text::secondary),
-                                        )
-                                        .width(Length::Fill)
+                                        // fiat is derived from the btc amount; hide it entirely when unknown.
+                                        btc_amt.map(|a| {
+                                            let fiat_from_btc = conv.convert(a).to_formatted_string();
+                                            Container::new(
+                                                text(fiat_from_btc)
+                                                    .size(P1_SIZE)
+                                                    .style(theme::text::secondary),
+                                            )
+                                            .width(Length::Fill)
+                                        })
                                     } else {
                                         let conv = *conv;
                                         // The particular form shown depends on whether the user has entered a fiat amount or
@@ -689,23 +715,27 @@ pub fn recipient_view<'a>(
                                         } else {
                                             &form::Value::default()
                                         };
-                                        form::Form::new_trimmed(
-                                            &format!("Enter amount in {}", conv.currency()),
-                                            fiat_form,
-                                            move |msg| {
-                                                CreateSpendMessage::RecipientFiatAmountEdited(
-                                                    index, msg, conv,
-                                                )
-                                            },
+                                        Some(
+                                            form::Form::new_trimmed(
+                                                &format!("Enter amount in {}", conv.currency()),
+                                                fiat_form,
+                                                move |msg| {
+                                                    CreateSpendMessage::RecipientFiatAmountEdited(
+                                                        index, msg, conv,
+                                                    )
+                                                },
+                                            )
+                                            .size(P1_SIZE)
+                                            .padding(10)
+                                            .into_container(),
                                         )
-                                        .size(P1_SIZE)
-                                        .padding(10)
-                                        .into_container()
                                     })
-                                    .push(tooltip::Tooltip::new(
-                                        icon::tooltip_icon(),
-                                        conv.to_container_summary(),
-                                        tooltip::Position::Bottom,
+                                    .push((!is_max_selected || btc_amt.is_some()).then_some(
+                                        tooltip::Tooltip::new(
+                                            icon::tooltip_icon(),
+                                            conv.to_container_summary(),
+                                            tooltip::Position::Bottom,
+                                        ),
                                     ))
                                     .push(Space::new().width(Length::Fixed(10.0)))
                             })),
@@ -721,6 +751,8 @@ pub fn recipient_view<'a>(
                         )),
                     )
                     .width(Length::Fill),
+                )
+                .push(amount_warning_row),
             ),
     )
     .padding(20)
