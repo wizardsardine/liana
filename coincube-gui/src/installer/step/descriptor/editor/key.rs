@@ -1883,9 +1883,17 @@ impl SelectKeySource {
                 match ur {
                     UnsupportedReason::Version {
                         minimal_supported_version,
+                        note,
                     } => {
                         enabled = true;
-                        Some(format!("Device version not supported, upgrade to version > {minimal_supported_version}"))
+                        let mut msg = format!(
+                            "Device version not supported, upgrade to version > {minimal_supported_version}"
+                        );
+                        if let Some(note) = note {
+                            msg.push_str(". ");
+                            msg.push_str(note);
+                        }
+                        Some(msg)
                     }
                     UnsupportedReason::Method(m) => {
                         Some(format!("Device not supported, method: {m}"))

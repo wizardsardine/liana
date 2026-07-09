@@ -476,12 +476,15 @@ pub fn unsupported_version_hardware_wallet<'a, T: 'static, K: Display, V: Displa
     kind: K,
     version: Option<V>,
     requested_version: S,
+    note: Option<&'static str>,
 ) -> Container<'a, T> {
     container(
         row(vec![
             column(vec![
                 text::p1_bold("Unsupported firmware version").into(),
                 text::p1_regular(format!("Install version {} or later", requested_version)).into(),
+                note.map(|n| text::p2_regular(n).style(theme::text::secondary).into())
+                    .unwrap_or_else(|| Row::new().into()),
                 Row::new()
                     .spacing(5)
                     .push(text::caption(kind.to_string()))

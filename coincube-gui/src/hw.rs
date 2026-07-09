@@ -23,6 +23,11 @@ use tracing::{debug, warn};
 pub enum UnsupportedReason {
     Version {
         minimal_supported_version: &'static str,
+        /// Optional extra guidance shown on its own line, for cases where the
+        /// bare version isn't self-explanatory (e.g. Coldcard's Edge branch).
+        /// Kept separate from `minimal_supported_version` so the latter stays
+        /// version-like for the "Install version {v} or later" templates.
+        note: Option<&'static str>,
     },
     Method(&'static str),
     NotPartOfWallet(Fingerprint),
@@ -666,7 +671,11 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                                         kind: device.device_kind(),
                                         version: Some(version),
                                         reason: UnsupportedReason::Version {
-                                            minimal_supported_version: "Edge firmware v6.2.1 — this is the experimental Edge branch, Mk4/Q only, not available on the Mk3",
+                                            minimal_supported_version: "Edge firmware v6.2.1",
+                                            note: Some(
+                                                "This is the experimental Edge branch, Mk4/Q \
+                                                 only — not available on the Mk3.",
+                                            ),
                                         },
                                     });
                                 }
@@ -981,6 +990,7 @@ async fn handle_ledger_device<'a, T: async_hwi::ledger::Transport + Sync + Send 
                     version: Some(version),
                     reason: UnsupportedReason::Version {
                         minimal_supported_version: "2.1.0",
+                        note: None,
                     },
                 })
             }

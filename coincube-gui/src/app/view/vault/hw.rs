@@ -65,10 +65,12 @@ pub fn hw_list_view(
             }
             UnsupportedReason::Version {
                 minimal_supported_version,
+                note,
             } => hw::unsupported_version_hardware_wallet(
                 kind.to_string(),
                 version.as_ref(),
                 minimal_supported_version,
+                *note,
             ),
             _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
         },
@@ -130,10 +132,12 @@ pub fn hw_list_view_for_registration(
             }
             UnsupportedReason::Version {
                 minimal_supported_version,
+                note,
             } => hw::unsupported_version_hardware_wallet(
                 kind.to_string(),
                 version.as_ref(),
                 minimal_supported_version,
+                *note,
             ),
             _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
         },
@@ -206,10 +210,12 @@ pub fn hw_list_view_verify_address(
                 }
                 UnsupportedReason::Version {
                     minimal_supported_version,
+                    note,
                 } => hw::unsupported_version_hardware_wallet(
                     kind.to_string(),
                     version.as_ref(),
                     minimal_supported_version,
+                    *note,
                 ),
                 _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
             },
