@@ -277,6 +277,15 @@ fn select_coins_for_spend(
     max_sat_weight: u64,
     must_have_change: bool,
 ) -> Result<CoinSelectionRes, InsufficientFunds> {
+    // Callers pass `candidate_coins` from a HashMap, so sort by outpoint to keep
+    // selection deterministic.
+    let sorted_candidates = {
+        let mut v = candidate_coins.to_vec();
+        v.sort_unstable_by_key(|c| c.outpoint);
+        v
+    };
+    let candidate_coins: &[CandidateCoin] = &sorted_candidates;
+
     let out_value_nochange = base_tx.output.iter().map(|o| o.value.to_sat()).sum();
     let out_weight_nochange = {
         let mut total: u64 = 0;
@@ -926,5 +935,62 @@ mod tests {
             ),
             LockTime::from_height(1).unwrap() // subtract 90
         );
+    }
+
+    #[test]
+    fn test_coin_selection_is_deterministic() {
+        use bitcoin::hashes::Hash;
+        use bitcoin::{
+            absolute::LockTime, transaction::Version, Amount, OutPoint, ScriptBuf, Transaction,
+            TxOut, Txid,
+        };
+
+        // Equal-value coins, so selection has ties, with distinct outpoints.
+        let candidates: Vec<CandidateCoin> = (0..6u32)
+            .map(|vout| CandidateCoin {
+                outpoint: OutPoint {
+                    txid: Txid::from_byte_array([0u8; 32]),
+                    vout,
+                },
+                amount: Amount::from_sat(100_000),
+                deriv_index: bip32::ChildNumber::from_normal_idx(0).unwrap(),
+                is_change: false,
+                must_select: false,
+                sequence: None,
+                ancestor_info: None,
+            })
+            .collect();
+
+        let base_tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![TxOut {
+                value: Amount::from_sat(250_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+        let change_txo = TxOut {
+            value: Amount::MAX,
+            script_pubkey: ScriptBuf::new(),
+        };
+        let select = |cands: &[CandidateCoin]| {
+            select_coins_for_spend(
+                cands,
+                base_tx.clone(),
+                change_txo.clone(),
+                2.0,
+                None,
+                100,
+                false,
+            )
+            .expect("enough funds")
+            .selected
+        };
+
+        // The same coins in a different input order must yield the same selection.
+        let mut reversed = candidates.clone();
+        reversed.reverse();
+        assert_eq!(select(&candidates), select(&reversed));
     }
 }
