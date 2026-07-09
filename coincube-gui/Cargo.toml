@@ -110,8 +110,9 @@ keyring = { version = "3.2.0", features = [
 	"sync-secret-service",
 ] }
 
-encrypted_backup = { version = "0.0.1", default-features = false, features = [
+encrypted_backup = { version = "=0.0.2", default-features = false, features = [
 	"miniscript_12_0",
+	"rand",
 ], package = "bitcoin-encrypted-backup" }
 
 zeroize = { version = "1", features = ["derive"] }

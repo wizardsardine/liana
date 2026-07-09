@@ -1119,9 +1119,9 @@ dependencies = [
 
 [[package]]
 name = "bitcoin-encrypted-backup"
-version = "0.0.1"
+version = "0.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b89ad3b53c1425530260f9080fe1a968816d762f9467c82d8e57a5d638b90aa"
+checksum = "f4e7cfd72b4e1eac651e2908660e90e65b729052bfd5d4004395a402c3e655cc"
 dependencies = [
  "aes-gcm",
  "miniscript",

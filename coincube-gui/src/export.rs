@@ -1775,4 +1775,59 @@ mod tests {
             }
         }
     }
+
+    // The BIP-341 NUMS point is public knowledge. If the encryption crate ever
+    // accepted it (or the descriptor's unspendable internal key) as a valid
+    // decryption recipient, the encrypted backup would be worthless. This mirrors
+    // the negative half of the export_encrypted_descriptor verification round-trip.
+    #[test]
+    fn test_nums_cannot_decrypt_encrypted_backup() {
+        let descr_str = "tr(tpubD6NzVbkrYhZ4XYBa9huubPUVRzmGGJoEjFF4i93okdJUBSiDenCbHMAZkjWYWiWoruNEgXouXEdKBL9gDWuxem4gwJMBEs3TVhhNw7AybcA/<0;1>/*,{and_v(v:multi_a(1,[bf3891f9/48'/1'/0'/2']tpubDF8FX2wbUi7rFS4xC8BfYDu6AScYFvRQBwouJeu2DzE55gJgQk2mSa56D9VbyU9YVdWNqWdFBqhWtV9ixZGbd83SRhr7EZUvGJ8QfYazwks/<2;3>/*,[08d94091/48'/1'/0'/2']tpubDEPcGiMo7Z9bwxKvqGU6Zwis2xoESJGKmbcX9Eu6puUgriny9UDCHCF1CpZyGT8s1Kj5diyT2kbe7tj1caWwVb2UYNF129rwNobcq4KTQbs/<2;3>/*),older(52596)),and_v(v:pk([bf3891f9/48'/1'/0'/2']tpubDF8FX2wbUi7rFS4xC8BfYDu6AScYFvRQBwouJeu2DzE55gJgQk2mSa56D9VbyU9YVdWNqWdFBqhWtV9ixZGbd83SRhr7EZUvGJ8QfYazwks/<0;1>/*),pk([08d94091/48'/1'/0'/2']tpubDEPcGiMo7Z9bwxKvqGU6Zwis2xoESJGKmbcX9Eu6puUgriny9UDCHCF1CpZyGT8s1Kj5diyT2kbe7tj1caWwVb2UYNF129rwNobcq4KTQbs/<0;1>/*))})#dn0kkwfc";
+        let descriptor = CoincubeDescriptor::from_str(descr_str).unwrap();
+
+        // Encrypt in-memory (requires the "rand" feature enabled on the crate).
+        let bytes = EncryptedBackup::new()
+            .set_payload(descriptor.descriptor())
+            .unwrap()
+            .encrypt()
+            .unwrap();
+
+        // Positive control: every spendable key must decrypt back to the descriptor.
+        for key in descriptor.spendable_keys() {
+            let decrypted = EncryptedBackup::new()
+                .set_encrypted_payload(&bytes)
+                .unwrap()
+                .set_keys(vec![dpk_to_pk(&key)])
+                .decrypt()
+                .unwrap();
+            match decrypted {
+                Decrypted::Descriptor(d) => assert_eq!(d.to_string(), descriptor.to_string()),
+                _ => panic!("not a descriptor"),
+            }
+        }
+
+        // Negative: the descriptor's unspendable internal key must NOT decrypt.
+        if let Some(unspendable) = descriptor.process_unspendable_key() {
+            let attempt = EncryptedBackup::new()
+                .set_encrypted_payload(&bytes)
+                .unwrap()
+                .set_keys(vec![dpk_to_pk(&unspendable)])
+                .decrypt();
+            assert!(
+                attempt.is_err(),
+                "the descriptor's unspendable internal key must not decrypt an encrypted backup"
+            );
+        }
+
+        // Negative: the public BIP-341 NUMS point must NOT decrypt.
+        let attempt = EncryptedBackup::new()
+            .set_encrypted_payload(&bytes)
+            .unwrap()
+            .set_keys(vec![bip341_nums()])
+            .decrypt();
+        assert!(
+            attempt.is_err(),
+            "the BIP-341 NUMS point must not decrypt an encrypted backup"
+        );
+    }
 }
