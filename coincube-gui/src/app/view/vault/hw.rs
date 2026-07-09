@@ -78,8 +78,18 @@ pub fn hw_list_view(
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
     })
-    .style(theme::button::secondary)
     .width(Length::Fill);
+    // While signing, the row is intentionally not clickable (no `on_press`),
+    // but it shouldn't read as disabled/greyed — the user is actively being
+    // asked to confirm on the device. Force the active style so the
+    // "Processing… / Please check your device" prompt stays legible.
+    bttn = if signing {
+        bttn.style(|theme, _status| {
+            theme::button::secondary(theme, iced::widget::button::Status::Active)
+        })
+    } else {
+        bttn.style(theme::button::secondary)
+    };
     if can_sign && !signing {
         if let HardwareWallet::Supported { registered, .. } = hw {
             if *registered != Some(false) {

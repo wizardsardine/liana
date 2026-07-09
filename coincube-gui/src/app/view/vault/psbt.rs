@@ -1233,7 +1233,10 @@ pub fn sign_action<'a>(
             .width(Length::Fill)
             .align_x(Alignment::Center),
     )
-    .width(Length::Fixed(500.0))
+    // Wider than the other action cards so long device names (e.g. "Ledger
+    // Nano S Plus #…") and the "Processing… / Please check your device"
+    // prompt don't crowd each other while signing.
+    .width(Length::Fixed(620.0))
     .into()
 }
 

@@ -277,13 +277,19 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
                     .push(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
-            .into(), // No width - let column size naturally
+            // Fill so the "Processing…" prompt is pushed to the right edge
+            // rather than crowding the device name/fingerprint (matches the
+            // signed/selected rows).
+            .width(Length::Fill)
+            .into(),
             column(vec![
                 text::p1_regular("Processing...").into(),
                 text::p1_regular("Please check your device").into(),
             ])
+            .align_x(Alignment::End)
             .into(),
         ])
+        .spacing(10)
         .align_y(Alignment::Center),
     )
     .padding(10)
