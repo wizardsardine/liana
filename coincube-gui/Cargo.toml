@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 async-trait = "0.1"
-async-hwi = "0.0.29"
+async-hwi = "0.0.32"
 breez-sdk-liquid = { git = "https://github.com/breez/breez-sdk-liquid", tag = "0.12.2" }
 coincube-core = { path = "../coincube-core" }
 coincube-spark-protocol = { path = "../coincube-spark-protocol" }

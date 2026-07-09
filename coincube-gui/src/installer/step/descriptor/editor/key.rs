@@ -184,7 +184,7 @@ pub struct PathData {
 
 pub enum HwState {
     Supported,
-    Locked,
+    Locked { pairing_code: Option<String> },
     Unsupported(UnsupportedReason),
 }
 
@@ -358,10 +358,14 @@ impl SelectKeySource {
                                 is_compatible_with_tapminiscript(kind, None),
                             ),
                         },
-                        HardwareWallet::Locked { kind, .. } => (
+                        HardwareWallet::Locked {
+                            kind, pairing_code, ..
+                        } => (
                             kind.to_string(),
                             None,
-                            HwState::Locked,
+                            HwState::Locked {
+                                pairing_code: pairing_code.clone(),
+                            },
                             is_compatible_with_tapminiscript(kind, None),
                         ),
                         HardwareWallet::Supported {
@@ -1831,8 +1835,11 @@ impl SelectKeySource {
         let support_taproot = device.3;
         let mut enabled = true;
         let message = match (state, support_taproot, self.taproot) {
-            (_, false, true) => Some("This device do not support taproot".to_string()),
-            (HwState::Locked, _, _) => Some("Please unlock the device".to_string()),
+            (HwState::Locked { pairing_code }, _, _) => Some(match pairing_code {
+                Some(code) => format!("Pairing code: {code}"),
+                None => "Please unlock the device".to_string(),
+            }),
+            (_, false, true) => Some("This device does not support taproot".to_string()),
             (HwState::Unsupported(ur), _, _) => {
                 enabled = false;
                 match ur {
