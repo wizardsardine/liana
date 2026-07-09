@@ -4,6 +4,7 @@ use std::{
 };
 
 use iced::{Subscription, Task};
+use liana_ui::component::form;
 use liana_ui::{widget::modal::Modal, widget::Element};
 use tokio::task::JoinHandle;
 
@@ -19,6 +20,7 @@ use crate::{
 #[derive(Debug)]
 pub struct ExportModal {
     path: Option<PathBuf>,
+    manual_path: form::Value<String>,
     handle: Option<Arc<Mutex<JoinHandle<()>>>>,
     state: ImportExportState,
     error: Option<export::Error>,
@@ -62,6 +64,7 @@ impl ExportModal {
     ) -> Self {
         Self {
             path: None,
+            manual_path: form::Value::default(),
             handle: None,
             state: ImportExportState::Init,
             error: None,
@@ -204,7 +207,30 @@ impl ExportModal {
                     self.path = Some(path);
                     self.start();
                 } else {
-                    return Task::perform(async {}, |_| ImportExportMessage::Close.into());
+                    self.manual_path.value = match self.import_export_type {
+                        ImportExportType::Transactions
+                        | ImportExportType::ExportPsbt(_)
+                        | ImportExportType::ExportEncryptedDescriptor(_)
+                        | ImportExportType::ExportProcessBackup(..)
+                        | ImportExportType::ExportXpub(_)
+                        | ImportExportType::Descriptor(_)
+                        | ImportExportType::ExportLabels => self.default_filename(),
+                        _ => String::new(),
+                    };
+                    self.manual_path.valid = true;
+                    self.state = ImportExportState::ManualPath;
+                }
+            }
+            ImportExportMessage::PathEdited(path) => {
+                self.manual_path.value = path;
+                self.manual_path.valid = true;
+            }
+            ImportExportMessage::ConfirmPath => {
+                if !self.manual_path.value.trim().is_empty() {
+                    self.path = Some(self.manual_path.value.trim().into());
+                    self.start();
+                } else {
+                    self.manual_path.valid = false;
                 }
             }
             ImportExportMessage::Close | ImportExportMessage::Open => { /* unreachable */ }
@@ -289,6 +315,7 @@ impl ExportModal {
                 self.error.as_ref(),
                 self.modal_title(),
                 &self.import_export_type,
+                &self.manual_path,
             ),
         );
         match self.state {

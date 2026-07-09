@@ -418,6 +418,14 @@ pub fn signer_xpubs<'a>(
                                         .width(Length::Shrink),
                                 )
                                 .padding(10),
+                            )
+                            .push(
+                                Container::new(
+                                    button::secondary(Some(icon::clipboard_icon()), "Copy")
+                                        .on_press(Message::Clipboard(xpub.clone()))
+                                        .width(Length::Shrink),
+                                )
+                                .padding(10),
                             ),
                     )
                 }))
@@ -491,6 +499,14 @@ pub fn hardware_wallet_xpubs<'a>(
                                 Container::new(
                                     button::primary(Some(icon::backup_icon()), "Export")
                                         .on_press(Message::ExportXpub(xpub.clone()))
+                                        .width(Length::Shrink),
+                                )
+                                .padding(10),
+                            )
+                            .push(
+                                Container::new(
+                                    button::secondary(Some(icon::clipboard_icon()), "Copy")
+                                        .on_press(Message::Clipboard(xpub.clone()))
                                         .width(Length::Shrink),
                                 )
                                 .padding(10),

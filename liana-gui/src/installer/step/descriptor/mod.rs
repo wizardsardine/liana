@@ -37,6 +37,7 @@ pub struct ImportDescriptor {
     imported_descriptor: form::Value<String>,
     imported_backup: Option<Backup>,
     imported_aliases: Option<HashMap<Fingerprint, KeySetting>>,
+    descriptor_from_backup: bool,
 }
 
 impl ImportDescriptor {
@@ -49,6 +50,7 @@ impl ImportDescriptor {
             modal: ImportDescriptorModal::None,
             imported_backup: None,
             imported_aliases: None,
+            descriptor_from_backup: false,
         }
     }
 
@@ -78,6 +80,30 @@ impl ImportDescriptor {
             None
         }
     }
+
+    fn clear_imported_backup(&mut self) {
+        self.imported_backup = None;
+        self.imported_aliases = None;
+        if self.descriptor_from_backup {
+            self.imported_descriptor.value.clear();
+            self.check_descriptor(self.network);
+            self.descriptor_from_backup = false;
+        }
+    }
+
+    fn set_imported_backup(
+        &mut self,
+        descriptor: LianaDescriptor,
+        aliases: Option<HashMap<Fingerprint, KeySetting>>,
+        backup: Backup,
+    ) {
+        self.imported_descriptor.value = descriptor.to_string();
+        self.check_descriptor(self.network);
+        self.imported_backup = Some(backup);
+        self.imported_aliases = aliases;
+        self.descriptor_from_backup = true;
+        self.error = None;
+    }
 }
 
 impl Step for ImportDescriptor {
@@ -98,13 +124,15 @@ impl Step for ImportDescriptor {
                 if desc != self.imported_descriptor.value {
                     self.imported_backup = None;
                     self.imported_aliases = None;
+                    self.descriptor_from_backup = false;
                 }
                 self.imported_descriptor.value = desc;
                 self.check_descriptor(self.network);
                 None
             }
             Message::ImportBackup => {
-                self.imported_backup = None;
+                self.clear_imported_backup();
+                self.error = None;
                 let modal = ExportModal::new(None, ImportExportType::FromBackup);
                 let launch = modal.launch(false);
                 self.modal = ImportDescriptorModal::Export(modal);
@@ -118,9 +146,7 @@ impl Step for ImportDescriptor {
                 let (descriptor, network, aliases, backup) = r;
                 if let Some(n) = network {
                     if self.network == n {
-                        self.imported_backup = Some(backup);
-                        self.imported_descriptor.value = descriptor.to_string();
-                        self.imported_aliases = Some(aliases);
+                        self.set_imported_backup(descriptor, Some(aliases), backup);
                     } else {
                         self.error = Some(BACKUP_NETWORK_NOT_MATCH.into());
                     }
@@ -128,9 +154,7 @@ impl Step for ImportDescriptor {
                     // The backup have been inferred from a bare descriptor, we check whether
                     // the descriptor match any test network
                     if self.network != Network::Bitcoin {
-                        self.imported_backup = Some(backup);
-                        self.imported_descriptor.value = descriptor.to_string();
-                        self.imported_aliases = Some(aliases);
+                        self.set_imported_backup(descriptor, Some(aliases), backup);
                     } else {
                         self.error = Some(BACKUP_NETWORK_NOT_MATCH.into());
                     }
@@ -170,9 +194,9 @@ impl Step for ImportDescriptor {
                         // as non Mainnet keys / descriptor are parsed as Signet
                         backup.network = self.network;
 
-                        self.imported_descriptor.value = desc;
-                        self.imported_backup = Some(backup);
-                        self.imported_aliases = None;
+                        let descriptor = LianaDescriptor::from_str(&desc)
+                            .expect("backup descriptor must stay valid");
+                        self.set_imported_backup(descriptor, None, backup);
                         self.modal = ImportDescriptorModal::None;
                     } else {
                         self.modal = ImportDescriptorModal::None;
