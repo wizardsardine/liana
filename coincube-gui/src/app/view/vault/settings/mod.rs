@@ -1362,12 +1362,12 @@ pub fn node_backend_status<'a>(
                 Column::new()
                     .spacing(8)
                     .push(caption("Switching backend"))
-                    .push(text("Switching to your local node…"))
+                    .push(text("Applying your node change…"))
                     .push(
                         p2_regular(
-                            "If the node is still scanning the blockchain this can take a \
-                             while. COINCUBE will finish the switch automatically — no need \
-                             to do anything.",
+                            "This may take a moment. If a local node is still scanning the \
+                             blockchain it can take a while. COINCUBE will finish the switch \
+                             automatically — no need to do anything.",
                         )
                         .style(theme::text::secondary),
                     ),

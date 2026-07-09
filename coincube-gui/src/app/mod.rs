@@ -3473,9 +3473,9 @@ impl App {
                     // the panel resets and the user can retry once the in-flight
                     // switch finishes.
                     return self.update_dispatch(Message::DaemonConfigLoaded(Err(Error::Config(
-                        "A switch to your local node is already in progress. If the node is \
-                         still scanning the blockchain this can take a while — please wait for \
-                         it to finish, then try again."
+                        "A backend switch is already in progress. If a local node is still \
+                         scanning the blockchain this can take a while — please wait for it \
+                         to finish, then try again."
                             .to_string(),
                     ))));
                 } else {
