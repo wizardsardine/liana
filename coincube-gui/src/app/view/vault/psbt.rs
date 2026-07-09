@@ -555,24 +555,13 @@ pub fn signatures<'a>(
                         .push(icon::square_check_icon().style(theme::text::success))
                         .push(text("Ready").bold().style(theme::text::success))
                         .push(text("  signed by"))
-                        .push(sigs.signed_pubkeys.keys().fold(
-                            Row::new().spacing(5),
-                            |row, value| {
-                                row.push(if let Some(alias) = keys_aliases.get(value) {
-                                    Container::new(tooltip::Tooltip::new(
-                                        Container::new(text(alias))
-                                            .padding(10)
-                                            .style(theme::pill::simple),
-                                        text(value.to_string()),
-                                        tooltip::Position::Bottom,
-                                    ))
-                                } else {
-                                    Container::new(text(value.to_string()))
-                                        .padding(10)
-                                        .style(theme::pill::simple)
-                                })
-                            },
-                        )),
+                        .push(
+                            sigs.signed_pubkeys
+                                .keys()
+                                .fold(Row::new().spacing(5), |row, value| {
+                                    row.push(container_from_fg(*value, keys_aliases))
+                                }),
+                        ),
                 )
                 .direction(scrollable::Direction::Horizontal(
                     scrollable::Scrollbar::new().width(2).scroller_width(2),
