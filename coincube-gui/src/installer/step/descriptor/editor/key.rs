@@ -1095,15 +1095,19 @@ impl SelectKeySource {
             return Task::none();
         }
 
-        if self.owner_placed_elsewhere(resolved.owner.primary_owner_id(), fingerprint) {
-            self.error =
-                Some("This owner already has a Keychain key placed in this Vault.".to_string());
-            return Task::none();
-        }
-
+        // Check exact-key reuse before owner reuse so this backstop's error
+        // matches the row-warning priority in the views (which surface
+        // "already used in this Vault" ahead of "already selected" when both
+        // an identical key and another key from the same owner are placed).
         if self.key_placed_elsewhere(fingerprint) {
             self.error =
                 Some("This Keychain key is already used elsewhere in this Vault.".to_string());
+            return Task::none();
+        }
+
+        if self.owner_placed_elsewhere(resolved.owner.primary_owner_id(), fingerprint) {
+            self.error =
+                Some("This owner already has a Keychain key placed in this Vault.".to_string());
             return Task::none();
         }
 
