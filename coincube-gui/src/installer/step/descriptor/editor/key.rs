@@ -1322,8 +1322,7 @@ impl SelectKeySource {
                         Some(fp) => self.owner_placed_elsewhere(owner_id, fp),
                         None => true,
                     };
-                    let key_reused =
-                        candidate_fp.is_some_and(|fp| self.key_placed_elsewhere(fp));
+                    let key_reused = candidate_fp.is_some_and(|fp| self.key_placed_elsewhere(fp));
                     let used_elsewhere = rk.raw.used_by_vault;
                     let disabled = owner_blocked || key_reused || used_elsewhere;
                     let fp = &rk.raw.fingerprint;
@@ -1596,12 +1595,21 @@ impl SelectKeySource {
     ) -> Element<Message> {
         let header = modal::header(Some("Hardware Device".to_string()), Some(|| Message::Close));
 
-        let listening = column![
-            icon::usb_icon().size(100),
-            p1_regular("Plug in a hardware device ..."),
-        ]
-        .align_x(Horizontal::Center)
-        .spacing(20);
+        // Present the "waiting for a device" prompt as its own full-width
+        // card so it reads as a peer of the device rows below rather than a
+        // loose icon floating above them.
+        let listening = Container::new(
+            column![
+                icon::usb_icon().size(60),
+                p1_regular("Plug in a hardware device ..."),
+            ]
+            .align_x(Horizontal::Center)
+            .width(Length::Fill)
+            .spacing(15),
+        )
+        .width(Length::Fill)
+        .padding(25)
+        .style(theme::card::border);
 
         // Reuse the existing detected-devices rendering.
         let devices =
@@ -1816,9 +1824,12 @@ impl SelectKeySource {
             bool, /* support taproot */
         )>,
     ) -> Element<Message> {
+        // Full width so the heading and device rows sit flush-left,
+        // lining up with the "Already used sources" section below
+        // (which also uses a full-width column).
         let mut col = column![p1_bold("Detected hardware")]
             .spacing(5)
-            .width(modal::BTN_W);
+            .width(Length::Fill);
         for hw in hws {
             col = col.push(self.widget_signing_device(hw));
         }
