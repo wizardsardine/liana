@@ -247,7 +247,10 @@ pub fn receive<'a>(
                                 .align_y(Alignment::Center),
                         )
                         .on_press(Message::SelectAddress(address.clone()))
-                        .style(theme::button::secondary)
+                        // Unify both previous-address cards to the same card-like style so the
+                        // list reads consistently (upstream 1514c9f3 used clickable_card, which
+                        // lives in its out-of-scope theme refactor; transparent_border is ours).
+                        .style(theme::button::transparent_border)
                     } else {
                         // Continue the row index from those of generated addresses above.
                         Button::new(address_card(

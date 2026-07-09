@@ -1,6 +1,7 @@
 use iced::{advanced::text::Shaping, widget::row, Alignment};
 
 use coincube_ui::{
+    color,
     component::{button, form},
     icon,
     widget::{Container, Element},
@@ -66,5 +67,29 @@ pub fn label_editing(
         .align_y(Alignment::Center),
     )
     .into();
+    e.map(move |msg| view::Message::Label(labelled.clone(), msg))
+}
+
+/// A read-only label for outputs the wallet does not own (external recipients),
+/// which the user should not be able to label.
+pub fn label_non_editable(
+    labelled: Vec<String>,
+    label: Option<&String>,
+    size: u32,
+) -> Element<'_, view::Message> {
+    let label_text = label.map(|s| s.as_str()).unwrap_or("(External Output)");
+
+    let e: Element<view::LabelMessage> = Container::new(
+        row![Container::new(
+            iced::widget::Text::new(label_text)
+                .size(size)
+                .width(iced::Length::Fill)
+                .color(color::GREY_1)
+        )]
+        .spacing(5)
+        .align_y(Alignment::Center),
+    )
+    .into();
+
     e.map(move |msg| view::Message::Label(labelled.clone(), msg))
 }
