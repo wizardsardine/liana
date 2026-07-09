@@ -1038,6 +1038,14 @@ impl Step for DefineSpend {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let converter: Option<view::FiatAmountConverter> =
             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+        // Mirror the view's "Insufficient funds." disabled-action hint: a
+        // non-recovery draft with ≥1 coin selected that still has a non-zero
+        // amount left to select can't be funded. (An unset/invalid feerate or
+        // duplicate recipient forces `amount_left_to_select` to `None`, so
+        // those states don't trip this.)
+        let insufficient = self.recovery_timelock.is_none()
+            && self.coins.iter().any(|(_, selected)| *selected)
+            && self.amount_left_to_select.is_some_and(|a| a.to_sat() != 0);
         view::vault::spend::create_spend_tx(
             &self.balance,
             &self.unconfirmed_balance,
@@ -1054,6 +1062,7 @@ impl Step for DefineSpend {
                             self.send_max_to_recipient == Some(i),
                             converter.as_ref(),
                             self.bitcoin_unit,
+                            insufficient,
                         )
                         .map(view::Message::CreateSpend)
                 })
@@ -1246,6 +1255,7 @@ impl Recipient {
         is_max_selected: bool,
         fiat_converter: Option<&view::FiatAmountConverter>,
         bitcoin_unit: BitcoinDisplayUnit,
+        insufficient: bool,
     ) -> Element<view::CreateSpendMessage> {
         let mut fiat_form_value = self.fiat_amount.as_ref();
 
@@ -1275,6 +1285,7 @@ impl Recipient {
             is_max_selected,
             self.is_recovery,
             bitcoin_unit,
+            insufficient,
         )
     }
 }

@@ -545,6 +545,9 @@ pub fn recipient_view<'a>(
     is_max_selected: bool,
     is_recovery: bool,
     bitcoin_unit: BitcoinDisplayUnit,
+    // Flag the amount input red when the draft can't be funded, mirroring the
+    // "Insufficient funds." disabled-action hint.
+    insufficient: bool,
 ) -> Element<'a, CreateSpendMessage> {
     let btc_amt = match bitcoin_unit {
         BitcoinDisplayUnit::BTC => Amount::from_str_in(&amount.value, Denomination::Bitcoin).ok(),
@@ -651,6 +654,7 @@ pub fn recipient_view<'a>(
                                 };
 
                                 form
+                                .invalid(insufficient)
                                 .size(P1_SIZE)
                                 .padding(10)
                                 .into_container()
