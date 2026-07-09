@@ -980,7 +980,9 @@ pub async fn import_xpub(
     let (descriptor_pubkey, key) =
         if let Some(DescriptorPublicKey::XPub(key)) = parse_raw_xpub(&xpub_str) {
             (DescriptorPublicKey::XPub(key.clone()), key)
-        } else if let Some(DescriptorPublicKey::XPub(key)) = parse_coldcard_xpub(&xpub_str) {
+        } else if let Some(DescriptorPublicKey::XPub(key)) = parse_coldcard_xpub_json(&xpub_str) {
+            (DescriptorPublicKey::XPub(key.clone()), key)
+        } else if let Some(DescriptorPublicKey::XPub(key)) = parse_coldcard_xpub_ccxp(&xpub_str) {
             (DescriptorPublicKey::XPub(key.clone()), key)
         } else {
             return Err(Error::ParseXpub);
@@ -1006,7 +1008,9 @@ pub fn parse_raw_xpub(raw_xpub: &str) -> Option<DescriptorPublicKey> {
     DescriptorPublicKey::from_str(raw_xpub).ok()
 }
 
-pub fn parse_coldcard_xpub(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
+// NOTE: this function is intended to import xpub that have been exported from a coldcard device
+// via this menu: Advanced/Tools => Export Wallet => Generic JSON (Any Edge firmware)
+pub fn parse_coldcard_xpub_json(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
     if let serde_json::Value::Object(map) = serde_json::from_str(coldcard_xpub).ok()? {
         let fg = map.get("xfp")?.to_string().to_lowercase();
         let fg = fg.replace("\"", "");
@@ -1019,6 +1023,20 @@ pub fn parse_coldcard_xpub(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
             let raw_xpub = format!("[{fg}{deriv}]{xpub}");
             return parse_raw_xpub(&raw_xpub);
         }
+    }
+    None
+}
+
+// NOTE: this function is intended to import xpub that have been exported from a coldcard device
+// via this menu: Settings => Miniscript => Export XPUB (Edge firmware >= 6.4.0)
+pub fn parse_coldcard_xpub_ccxp(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
+    if let serde_json::Value::Object(map) = serde_json::from_str(coldcard_xpub).ok()? {
+        let fg_upper = map.get("xfp")?.to_string().to_uppercase().replace("\"", "");
+        let fg_lower = fg_upper.clone().to_lowercase();
+        let xpub = map.get("p2wsh_key_exp")?.to_string();
+        let xpub = xpub.replace("\"", "");
+        let xpub = xpub.replace(&fg_upper, &fg_lower);
+        return parse_raw_xpub(&xpub);
     }
     None
 }
@@ -1670,7 +1688,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_coldcard_xpub() {
+    fn test_parse_coldcard_xpub_json() {
         let raw = r#"
             {
               "chain": "XTN",
@@ -1737,7 +1755,23 @@ mod tests {
             }
         "#;
         let expected = "[c658b283/48'/1'/3'/2']tpubDFmeRMxr4X7dxNKxxBKWXu1rskHEQYB8vY5PYPmiB74EjyrE814HHpQzh2XEFpm3z5uJpk7Cjt2hmhcMYmBbot6CmRHn3CKK2K6vzLPBMbH".to_string();
-        assert_eq!(expected, parse_coldcard_xpub(raw).unwrap().to_string());
+        assert_eq!(expected, parse_coldcard_xpub_json(raw).unwrap().to_string());
+    }
+
+    #[test]
+    fn test_parse_coldcard_xpub_ccxp() {
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join("ccxp-C658B283.json");
+        let mut file = File::open(path).unwrap();
+        let mut raw = String::new();
+        let _ = file.read_to_string(&mut raw).unwrap();
+        let expected = "[c658b283/48'/1'/0'/2']tpubDFL5wzgPBYK5pZ2Kh1T8qrxnp43kjE5CXfguZHHBrZSWpkfASy5rVfj7prh11XdqkC1P3kRwUPBeX7AHN8XBNx8UwiprnFnEm5jyswiRD4p".to_string();
+        assert_eq!(
+            expected,
+            parse_coldcard_xpub_ccxp(&raw).unwrap().to_string()
+        );
     }
 
     #[test]

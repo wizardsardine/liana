@@ -83,6 +83,7 @@ pub fn spend_view<'a>(
                 desc_info,
                 key_aliases,
                 currently_signing,
+                saved,
             ))
             .push(
                 Column::new()

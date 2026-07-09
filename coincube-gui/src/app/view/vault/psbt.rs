@@ -82,6 +82,7 @@ pub fn psbt_view<'a>(
                 desc_info,
                 key_aliases,
                 currently_signing,
+                saved,
             ))
             .push(
                 Column::new()
@@ -429,7 +430,18 @@ pub fn spend_overview_view<'a>(
     desc_info: &'a CoincubePolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
     currently_signing: bool,
+    saved: bool,
 ) -> Element<'a, Message> {
+    // Force the user to save (which commits the derivation-index increment to the
+    // database) before exporting, otherwise the exported PSBT can lead to change
+    // address reuse.
+    let export_button = button::secondary(Some(icon::backup_icon()), "Export").on_press_maybe(
+        if currently_signing || !saved {
+            None
+        } else {
+            Some(Message::ExportPsbt)
+        },
+    );
     Column::new()
         .spacing(20)
         .push(
@@ -446,23 +458,25 @@ pub fn spend_overview_view<'a>(
                                     .push(
                                         Row::new()
                                             .spacing(5)
-                                            .push(
-                                                button::secondary(
-                                                    Some(icon::backup_icon()),
-                                                    "Export",
-                                                )
-                                                .on_press_maybe(if currently_signing {
-                                                    None
-                                                } else {
-                                                    Some(Message::ExportPsbt)
-                                                }),
-                                            )
+                                            .push(if saved {
+                                                Container::new(export_button)
+                                            } else {
+                                                Container::new(tooltip::Tooltip::new(
+                                                    export_button,
+                                                    Container::new(p1_regular(
+                                                        "Sign or save the transaction first to enable export",
+                                                    ))
+                                                    .style(theme::card::simple)
+                                                    .padding(10),
+                                                    tooltip::Position::Top,
+                                                ))
+                                            })
                                             .push(
                                                 button::secondary(
                                                     Some(icon::restore_icon()),
                                                     "Import",
                                                 )
-                                                .on_press_maybe(if currently_signing {
+                                                .on_press_maybe(if currently_signing || !saved {
                                                     None
                                                 } else {
                                                     Some(Message::ImportPsbt)
