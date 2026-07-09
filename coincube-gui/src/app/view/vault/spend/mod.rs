@@ -142,6 +142,28 @@ pub fn spend_view<'a>(
     )
 }
 
+/// A Fast/Normal/Slow feerate preset button. Renders with an orange outline
+/// when its estimate currently fills the feerate field, and is disabled while
+/// its own estimate is being fetched.
+fn feerate_preset_button<'a>(
+    label: &'static str,
+    block_target: usize,
+    loading_fee_estimate: Option<usize>,
+    selected_feerate_target: Option<usize>,
+) -> Element<'a, Message> {
+    let btn = button::secondary(None, label)
+        .width(Length::Fixed(130.0))
+        .on_press_maybe(
+            (loading_fee_estimate != Some(block_target))
+                .then(|| Message::CreateSpend(CreateSpendMessage::FetchFeeEstimate(block_target))),
+        );
+    if selected_feerate_target == Some(block_target) {
+        btn.style(theme::button::orange_outline).into()
+    } else {
+        btn.into()
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn create_spend_tx<'a>(
     balance: &'a Amount,
@@ -164,6 +186,7 @@ pub fn create_spend_tx<'a>(
     sync_status: &SyncStatus,
     is_first_step: bool,
     loading_fee_estimate: Option<usize>,
+    selected_feerate_target: Option<usize>,
     generating: bool,
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
@@ -350,27 +373,24 @@ pub fn create_spend_tx<'a>(
                     .spacing(10)
                     .align_y(Alignment::Center)
                     .push(Container::new(p1_bold("Feerate:")).padding(10))
-                    .push(
-                        button::secondary(None, "Fast (~10m)")
-                            .width(Length::Fixed(130.0))
-                            .on_press_maybe((!matches!(loading_fee_estimate, Some(1))).then(
-                                || Message::CreateSpend(CreateSpendMessage::FetchFeeEstimate(1)),
-                            )),
-                    )
-                    .push(
-                        button::secondary(None, "Normal (~1h)")
-                            .width(Length::Fixed(130.0))
-                            .on_press_maybe((!matches!(loading_fee_estimate, Some(6))).then(
-                                || Message::CreateSpend(CreateSpendMessage::FetchFeeEstimate(6)),
-                            )),
-                    )
-                    .push(
-                        button::secondary(None, "Slow (~4h)")
-                            .width(Length::Fixed(130.0))
-                            .on_press_maybe((!matches!(loading_fee_estimate, Some(24))).then(
-                                || Message::CreateSpend(CreateSpendMessage::FetchFeeEstimate(24)),
-                            )),
-                    )
+                    .push(feerate_preset_button(
+                        "Fast (~10m)",
+                        1,
+                        loading_fee_estimate,
+                        selected_feerate_target,
+                    ))
+                    .push(feerate_preset_button(
+                        "Normal (~1h)",
+                        6,
+                        loading_fee_estimate,
+                        selected_feerate_target,
+                    ))
+                    .push(feerate_preset_button(
+                        "Slow (~4h)",
+                        24,
+                        loading_fee_estimate,
+                        selected_feerate_target,
+                    ))
                     .push(
                         Container::new(
                             form::Form::new_trimmed("42 (in sats/vbyte)", feerate, move |msg| {
