@@ -1101,6 +1101,12 @@ impl SelectKeySource {
             return Task::none();
         }
 
+        if self.key_placed_elsewhere(fingerprint) {
+            self.error =
+                Some("This Keychain key is already used elsewhere in this Vault.".to_string());
+            return Task::none();
+        }
+
         if self.keys.contains_key(&fingerprint) {
             self.selected_key = SelectedKey::Existing(fingerprint);
         } else {
@@ -1158,6 +1164,25 @@ impl SelectKeySource {
         })
     }
 
+    /// Companion to `owner_placed_elsewhere`: returns true when *this
+    /// exact* key is already placed at coordinates outside the
+    /// currently-edited slot, i.e. it's already used elsewhere in this
+    /// Vault's quorum. Selecting it again would put one key at two
+    /// positions, so we disable the row. Re-selecting the key at the
+    /// active slot stays allowed — its coordinates are the current slot,
+    /// so this returns false.
+    fn key_placed_elsewhere(&self, candidate_fingerprint: Fingerprint) -> bool {
+        self.keys.values().any(|(coords, k)| {
+            if k.fingerprint != candidate_fingerprint {
+                return false;
+            }
+            coords.is_empty()
+                || coords
+                    .iter()
+                    .any(|c| !self.actual_path.coordinates.contains(c))
+        })
+    }
+
     // ── Keychain key views ──────────────────────────────────────────
 
     fn view_my_keychain_keys(&self) -> Element<Message> {
@@ -1202,9 +1227,12 @@ impl SelectKeySource {
                 Some(fp) => self.owner_placed_elsewhere(owner_id, fp),
                 None => true,
             };
+            // Disable a key that's already placed in this quorum so it
+            // can't be selected into a second slot.
+            let key_reused = candidate_fp.is_some_and(|fp| self.key_placed_elsewhere(fp));
             // W9 pre-check: reject keys that another Vault already claims.
             let used_elsewhere = rk.raw.used_by_vault;
-            let disabled = owner_blocked || used_elsewhere;
+            let disabled = owner_blocked || key_reused || used_elsewhere;
             let fp_short: String = rk.raw.fingerprint.chars().take(8).collect();
             let fingerprint = Some(format!("#{}", fp_short));
             let msg = if disabled {
@@ -1215,11 +1243,13 @@ impl SelectKeySource {
                     Self::route(SelectKeySourceMessage::SelectKeychainKey(rk_clone.clone()))
                 })
             };
-            // Surface the more specific reason when both apply: once a key
-            // is in another Vault, that's the blocking constraint even if
-            // the owner is also placed elsewhere in this build.
+            // Surface the most specific reason when several apply: a key
+            // claimed by another Vault reports that first, then an exact
+            // reuse in this quorum, then the owner being placed elsewhere.
             let warning = if used_elsewhere {
                 Some("Used by another Vault".to_string())
+            } else if key_reused {
+                Some("Already used in this Vault".to_string())
             } else if owner_blocked {
                 Some("Already selected".to_string())
             } else {
@@ -1292,8 +1322,10 @@ impl SelectKeySource {
                         Some(fp) => self.owner_placed_elsewhere(owner_id, fp),
                         None => true,
                     };
+                    let key_reused =
+                        candidate_fp.is_some_and(|fp| self.key_placed_elsewhere(fp));
                     let used_elsewhere = rk.raw.used_by_vault;
-                    let disabled = owner_blocked || used_elsewhere;
+                    let disabled = owner_blocked || key_reused || used_elsewhere;
                     let fp = &rk.raw.fingerprint;
                     let fingerprint = Some(format!("#{}", &fp[..fp.len().min(8)]));
                     let msg = if disabled {
@@ -1306,6 +1338,8 @@ impl SelectKeySource {
                     };
                     let warning = if used_elsewhere {
                         Some("Used by another Vault".to_string())
+                    } else if key_reused {
+                        Some("Already used in this Vault".to_string())
                     } else if owner_blocked {
                         Some("Already selected".to_string())
                     } else {

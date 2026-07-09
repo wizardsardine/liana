@@ -666,7 +666,7 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                                         kind: device.device_kind(),
                                         version: Some(version),
                                         reason: UnsupportedReason::Version {
-                                            minimal_supported_version: "Edge firmware v6.2.1",
+                                            minimal_supported_version: "Edge firmware v6.2.1 — this is the experimental Edge branch, Mk4/Q only, not available on the Mk3",
                                         },
                                     });
                                 }

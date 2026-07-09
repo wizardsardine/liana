@@ -450,6 +450,7 @@ pub fn unsupported_hardware_wallet<'a, T: 'static, K: Display, V: Display>(
                     .spacing(5)
                     .push(text::p1_bold("Connection error"))
                     .into(),
+                text::p1_regular("Please unlock your device and open the Bitcoin app.").into(),
                 Row::new()
                     .spacing(5)
                     .push(text::caption(kind.to_string()))
