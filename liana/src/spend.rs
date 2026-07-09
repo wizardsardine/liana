@@ -491,6 +491,33 @@ fn derived_desc(
     desc.derive(coin.deriv_index, secp)
 }
 
+/// Build the canonical `(TxIn, PsbtIn)` for spending a coin, so every caller
+/// constructs inputs the same way.
+pub fn coin_to_psbt_input(
+    outpoint: bitcoin::OutPoint,
+    amount: bitcoin::Amount,
+    sequence: bitcoin::Sequence,
+    coin_desc: &descriptors::DerivedSinglePathLianaDesc,
+    is_taproot: bool,
+    prev_tx: impl FnOnce() -> Option<bitcoin::Transaction>,
+) -> (bitcoin::TxIn, PsbtIn) {
+    let txin = bitcoin::TxIn {
+        previous_output: outpoint,
+        sequence,
+        ..Default::default()
+    };
+    let mut psbt_in = PsbtIn::default();
+    coin_desc.update_psbt_in(&mut psbt_in);
+    psbt_in.witness_utxo = Some(bitcoin::TxOut {
+        value: amount,
+        script_pubkey: coin_desc.script_pubkey(),
+    });
+    if !is_taproot {
+        psbt_in.non_witness_utxo = prev_tx();
+    }
+    (txin, psbt_in)
+}
+
 /// Get value to use for transaction nLockTime in order to
 /// discourage fee sniping.
 ///
@@ -775,27 +802,20 @@ pub fn create_spend(
     // Iterate through selected coins and add necessary information to the PSBT inputs.
     let mut psbt_ins = Vec::with_capacity(selected.len());
     for cand in &selected {
+        // TODO: once we move to Taproot, anti-fee-sniping using nSequence
         let sequence = cand
             .sequence
             .unwrap_or(bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME);
-        tx.input.push(bitcoin::TxIn {
-            previous_output: cand.outpoint,
-            sequence,
-            // TODO: once we move to Taproot, anti-fee-sniping using nSequence
-            ..bitcoin::TxIn::default()
-        });
-
-        // Populate the PSBT input with the information needed by signers.
-        let mut psbt_in = PsbtIn::default();
         let coin_desc = derived_desc(secp, main_descriptor, cand);
-        coin_desc.update_psbt_in(&mut psbt_in);
-        psbt_in.witness_utxo = Some(bitcoin::TxOut {
-            value: cand.amount,
-            script_pubkey: coin_desc.script_pubkey(),
-        });
-        if !main_descriptor.is_taproot() {
-            psbt_in.non_witness_utxo = tx_getter.get_tx(&cand.outpoint.txid);
-        }
+        let (txin, psbt_in) = coin_to_psbt_input(
+            cand.outpoint,
+            cand.amount,
+            sequence,
+            &coin_desc,
+            main_descriptor.is_taproot(),
+            || tx_getter.get_tx(&cand.outpoint.txid),
+        );
+        tx.input.push(txin);
         psbt_ins.push(psbt_in);
     }
 
