@@ -2565,4 +2565,82 @@ mod tests {
         assert_eq!(picker.step, Step::KeychainKeys);
         assert!(!picker.keychain_keys_fetched);
     }
+
+    // ── key_placed_elsewhere: exact-key reuse across quorum slots ─────
+    //
+    // `key_placed_elsewhere` disables selecting a key already placed at
+    // coordinates outside the currently-edited slot, so the same key
+    // can't be used twice in a quorum — while still allowing re-selecting
+    // the key at the active slot. `keys` is `Fingerprint -> (coords, Key)`
+    // and `actual_path.coordinates` is the slot being edited.
+
+    // Any parseable descriptor key works — `key_placed_elsewhere` only
+    // reads `Key::fingerprint`, never the descriptor key itself.
+    fn manual_key(fingerprint: Fingerprint) -> Key {
+        let key = DescriptorPublicKey::from_str(
+            "tpubD6NzVbkrYhZ4XHQ1pLJ7pdpEGWCVbSUEaUakxnrtENzaZaDp4vL6gBgGH7n983ZPgsVe5G2JEAM2oYZkEPCNrfo9XLq8nHFhp9GzFjGc1uQ",
+        )
+        .unwrap();
+        Key {
+            source: KeySource::Manual,
+            name: "test".to_string(),
+            fingerprint,
+            key,
+            account: None,
+        }
+    }
+
+    fn picker_with_placed_key(
+        active: Vec<(usize, usize)>,
+        placed_at: Vec<(usize, usize)>,
+        placed_fg: Fingerprint,
+    ) -> SelectKeySource {
+        let mut picker = empty_picker();
+        picker.actual_path.coordinates = active;
+        picker
+            .keys
+            .insert(placed_fg, (placed_at, manual_key(placed_fg)));
+        picker
+    }
+
+    #[test]
+    fn key_placed_elsewhere_blocks_reuse_at_other_slot() {
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        // Editing slot (0,0); the same key is already placed at (1,0).
+        let picker = picker_with_placed_key(vec![(0, 0)], vec![(1, 0)], fg);
+        assert!(picker.key_placed_elsewhere(fg));
+    }
+
+    #[test]
+    fn key_placed_elsewhere_allows_reselect_at_active_slot() {
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        // The key is placed only at the slot currently being edited.
+        let picker = picker_with_placed_key(vec![(0, 0)], vec![(0, 0)], fg);
+        assert!(!picker.key_placed_elsewhere(fg));
+    }
+
+    #[test]
+    fn key_placed_elsewhere_false_for_unplaced_key() {
+        let placed = Fingerprint::from_str("8a550171").unwrap();
+        let other = Fingerprint::from_str("c658b283").unwrap();
+        let picker = picker_with_placed_key(vec![(0, 0)], vec![(1, 0)], placed);
+        // A different, not-yet-placed key is free to select.
+        assert!(!picker.key_placed_elsewhere(other));
+    }
+
+    #[test]
+    fn key_placed_elsewhere_blocks_when_spanning_active_and_other_slot() {
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        // Placed at the active slot AND another — the other placement blocks.
+        let picker = picker_with_placed_key(vec![(0, 0)], vec![(0, 0), (1, 0)], fg);
+        assert!(picker.key_placed_elsewhere(fg));
+    }
+
+    #[test]
+    fn key_placed_elsewhere_blocks_when_placed_without_coordinates() {
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        // A placement carrying no coordinates is treated as used elsewhere.
+        let picker = picker_with_placed_key(vec![(0, 0)], vec![], fg);
+        assert!(picker.key_placed_elsewhere(fg));
+    }
 }
