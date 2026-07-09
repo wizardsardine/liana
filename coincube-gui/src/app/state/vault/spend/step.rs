@@ -20,7 +20,10 @@ use coincubed::commands::ListCoinsEntry;
 use iced::{Subscription, Task};
 
 use coincube_ui::{
-    component::{amount::BitcoinDisplayUnit, form},
+    component::{
+        amount::{format_btc_string, BitcoinDisplayUnit},
+        form,
+    },
     widget::Element,
 };
 
@@ -591,12 +594,15 @@ impl DefineSpend {
                     // surface an explicit under-dust message and clear the amount field.
                     self.amount_left_to_select = None;
                     let total_recipients = self.recipients.len();
+                    // Derive the threshold string from DUST_OUTPUT_SATS so the message
+                    // can never drift out of sync with the constant.
+                    let min_amount =
+                        format_btc_string(Amount::from_sat(DUST_OUTPUT_SATS).to_btc());
                     if let Some(recipient) = self.recipients.get_mut(i) {
                         recipient.dust_warning = Some(if all_selected {
-                            "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s).".to_string()
+                            format!("Minimum amount is {min_amount} BTC. Add funds to your wallet to spend the coin(s).")
                         } else {
-                            "Minimum amount is 0.00 000 500 BTC. Select more coins to continue."
-                                .to_string()
+                            format!("Minimum amount is {min_amount} BTC. Select more coins to continue.")
                         });
                         recipient.update(
                             self.network,
