@@ -1,8 +1,10 @@
-use iced::widget::{pick_list, Column, Row, Space, Toggler};
+use iced::widget::{pick_list, tooltip, Column, Row, Space, Toggler};
 use iced::{Alignment, Length};
 
+use coincube_ui::color;
 use coincube_ui::component::text::*;
-use coincube_ui::component::{button, card};
+use coincube_ui::component::{button, card, tooltip_custom};
+use coincube_ui::icon;
 use coincube_ui::theme;
 use coincube_ui::widget::{ColumnExt, Element};
 
@@ -672,6 +674,11 @@ pub fn fiat_price<'a>(
                     .spacing(10)
                     .align_y(Alignment::Center)
                     .push(text("Fiat price:").bold())
+                    .push(tooltip_custom(
+                        "Fiat price data is provided by third-party services. Availability and accuracy are not guaranteed.",
+                        icon::warning_icon().color(color::ORANGE),
+                        tooltip::Position::Bottom,
+                    ))
                     .push(Space::new().width(Length::Fill))
                     .push(
                         Toggler::new(new_price_setting.is_enabled)

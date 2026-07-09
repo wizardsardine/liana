@@ -17,7 +17,7 @@ pub mod tooltip;
 pub mod transaction;
 
 use bitcoin::Network;
-pub use tooltip::tooltip;
+pub use tooltip::{tooltip, tooltip_custom};
 
 use iced::Length;
 
