@@ -595,8 +595,7 @@ impl DefineSpend {
                     let total_recipients = self.recipients.len();
                     // Derive the threshold string from DUST_OUTPUT_SATS so the message
                     // can never drift out of sync with the constant.
-                    let min_amount =
-                        format_btc_string(Amount::from_sat(DUST_OUTPUT_SATS).to_btc());
+                    let min_amount = format_btc_string(Amount::from_sat(DUST_OUTPUT_SATS).to_btc());
                     if let Some(recipient) = self.recipients.get_mut(i) {
                         recipient.dust_warning = Some(if all_selected {
                             format!("Minimum amount is {min_amount} BTC. Add funds to your wallet to spend the coin(s).")
