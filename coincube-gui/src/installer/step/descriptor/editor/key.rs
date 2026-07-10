@@ -1099,14 +1099,42 @@ impl SelectKeySource {
             return Task::none();
         }
 
+        // Check exact-key reuse before owner reuse so this backstop's error
+        // matches the row-warning priority in the views (which surface
+        // "already used in this Vault" ahead of "already selected" when both
+        // an identical key and another key from the same owner are placed).
+        if self.key_placed_elsewhere(fingerprint) {
+            self.error =
+                Some("This Keychain key is already used elsewhere in this Vault.".to_string());
+            return Task::none();
+        }
+
         if self.owner_placed_elsewhere(resolved.owner.primary_owner_id(), fingerprint) {
             self.error =
                 Some("This owner already has a Keychain key placed in this Vault.".to_string());
             return Task::none();
         }
 
-        if self.keys.contains_key(&fingerprint) {
+        // Fingerprint alone doesn't uniquely identify a Keychain key —
+        // two distinct keys can share a master fingerprint if they come
+        // from the same seed. Compare `key_id` to tell whether
+        // this is genuinely the same key already placed,
+        // vs. a different key that happens to collide on fingerprint.
+        let existing_same_key = self.keys.get(&fingerprint).is_some_and(|(_, k)| {
+            matches!(&k.source, KeySource::KeychainKey { key_id, .. } if *key_id == resolved.raw.id)
+        });
+
+        if existing_same_key {
             self.selected_key = SelectedKey::Existing(fingerprint);
+        } else if self.keys.contains_key(&fingerprint) {
+            // A different key (Keychain or otherwise) already occupies this
+            // fingerprint slot. Reject instead of letting a `SelectedKey::New`
+            // reach the KeysEdited handler and silently overwrite it.
+            self.error = Some(
+                "A different key with the same master fingerprint is already in this Vault."
+                    .to_string(),
+            );
+            return Task::none();
         } else {
             let key = Key {
                 source: KeySource::KeychainKey {
@@ -1162,6 +1190,25 @@ impl SelectKeySource {
         })
     }
 
+    /// Companion to `owner_placed_elsewhere`: returns true when *this
+    /// exact* key is already placed at coordinates outside the
+    /// currently-edited slot, i.e. it's already used elsewhere in this
+    /// Vault's quorum. Selecting it again would put one key at two
+    /// positions, so we disable the row. Re-selecting the key at the
+    /// active slot stays allowed — its coordinates are the current slot,
+    /// so this returns false.
+    fn key_placed_elsewhere(&self, candidate_fingerprint: Fingerprint) -> bool {
+        self.keys.values().any(|(coords, k)| {
+            if k.fingerprint != candidate_fingerprint {
+                return false;
+            }
+            coords.is_empty()
+                || coords
+                    .iter()
+                    .any(|c| !self.actual_path.coordinates.contains(c))
+        })
+    }
+
     // ── Keychain key views ──────────────────────────────────────────
 
     fn view_my_keychain_keys(&self) -> Element<Message> {
@@ -1206,9 +1253,12 @@ impl SelectKeySource {
                 Some(fp) => self.owner_placed_elsewhere(owner_id, fp),
                 None => true,
             };
+            // Disable a key that's already placed in this quorum so it
+            // can't be selected into a second slot.
+            let key_reused = candidate_fp.is_some_and(|fp| self.key_placed_elsewhere(fp));
             // W9 pre-check: reject keys that another Vault already claims.
             let used_elsewhere = rk.raw.used_by_vault;
-            let disabled = owner_blocked || used_elsewhere;
+            let disabled = owner_blocked || key_reused || used_elsewhere;
             let fp_short: String = rk.raw.fingerprint.chars().take(8).collect();
             let fingerprint = Some(format!("#{}", fp_short));
             let msg = if disabled {
@@ -1219,11 +1269,13 @@ impl SelectKeySource {
                     Self::route(SelectKeySourceMessage::SelectKeychainKey(rk_clone.clone()))
                 })
             };
-            // Surface the more specific reason when both apply: once a key
-            // is in another Vault, that's the blocking constraint even if
-            // the owner is also placed elsewhere in this build.
+            // Surface the most specific reason when several apply: a key
+            // claimed by another Vault reports that first, then an exact
+            // reuse in this quorum, then the owner being placed elsewhere.
             let warning = if used_elsewhere {
                 Some("Used by another Vault".to_string())
+            } else if key_reused {
+                Some("Already used in this Vault".to_string())
             } else if owner_blocked {
                 Some("Already selected".to_string())
             } else {
@@ -1296,8 +1348,9 @@ impl SelectKeySource {
                         Some(fp) => self.owner_placed_elsewhere(owner_id, fp),
                         None => true,
                     };
+                    let key_reused = candidate_fp.is_some_and(|fp| self.key_placed_elsewhere(fp));
                     let used_elsewhere = rk.raw.used_by_vault;
-                    let disabled = owner_blocked || used_elsewhere;
+                    let disabled = owner_blocked || key_reused || used_elsewhere;
                     let fp = &rk.raw.fingerprint;
                     let fingerprint = Some(format!("#{}", &fp[..fp.len().min(8)]));
                     let msg = if disabled {
@@ -1310,6 +1363,8 @@ impl SelectKeySource {
                     };
                     let warning = if used_elsewhere {
                         Some("Used by another Vault".to_string())
+                    } else if key_reused {
+                        Some("Already used in this Vault".to_string())
                     } else if owner_blocked {
                         Some("Already selected".to_string())
                     } else {
@@ -1566,12 +1621,21 @@ impl SelectKeySource {
     ) -> Element<Message> {
         let header = modal::header(Some("Hardware Device".to_string()), Some(|| Message::Close));
 
-        let listening = column![
-            icon::usb_icon().size(100),
-            p1_regular("Plug in a hardware device ..."),
-        ]
-        .align_x(Horizontal::Center)
-        .spacing(20);
+        // Present the "waiting for a device" prompt as its own full-width
+        // card so it reads as a peer of the device rows below rather than a
+        // loose icon floating above them.
+        let listening = Container::new(
+            column![
+                icon::usb_icon().size(60),
+                p1_regular("Plug in a hardware device ..."),
+            ]
+            .align_x(Horizontal::Center)
+            .width(Length::Fill)
+            .spacing(15),
+        )
+        .width(Length::Fill)
+        .padding(25)
+        .style(theme::card::border);
 
         // Reuse the existing detected-devices rendering.
         let devices =
@@ -1786,9 +1850,12 @@ impl SelectKeySource {
             bool, /* support taproot */
         )>,
     ) -> Element<Message> {
+        // Full width so the heading and device rows sit flush-left,
+        // lining up with the "Already used sources" section below
+        // (which also uses a full-width column).
         let mut col = column![p1_bold("Detected hardware")]
             .spacing(5)
-            .width(modal::BTN_W);
+            .width(Length::Fill);
         for hw in hws {
             col = col.push(self.widget_signing_device(hw));
         }
@@ -1845,9 +1912,17 @@ impl SelectKeySource {
                 match ur {
                     UnsupportedReason::Version {
                         minimal_supported_version,
+                        note,
                     } => {
                         enabled = true;
-                        Some(format!("Device version not supported, upgrade to version > {minimal_supported_version}"))
+                        let mut msg = format!(
+                            "Device version not supported, upgrade to version > {minimal_supported_version}"
+                        );
+                        if let Some(note) = note {
+                            msg.push_str(". ");
+                            msg.push_str(note);
+                        }
+                        Some(msg)
                     }
                     UnsupportedReason::Method(m) => {
                         Some(format!("Device not supported, method: {m}"))
@@ -2514,5 +2589,83 @@ mod tests {
         );
         assert_eq!(picker.step, Step::KeychainKeys);
         assert!(!picker.keychain_keys_fetched);
+    }
+
+    // ── key_placed_elsewhere: exact-key reuse across quorum slots ─────
+    //
+    // `key_placed_elsewhere` disables selecting a key already placed at
+    // coordinates outside the currently-edited slot, so the same key
+    // can't be used twice in a quorum — while still allowing re-selecting
+    // the key at the active slot. `keys` is `Fingerprint -> (coords, Key)`
+    // and `actual_path.coordinates` is the slot being edited.
+
+    // Any parseable descriptor key works — `key_placed_elsewhere` only
+    // reads `Key::fingerprint`, never the descriptor key itself.
+    fn manual_key(fingerprint: Fingerprint) -> Key {
+        let key = DescriptorPublicKey::from_str(
+            "tpubD6NzVbkrYhZ4XHQ1pLJ7pdpEGWCVbSUEaUakxnrtENzaZaDp4vL6gBgGH7n983ZPgsVe5G2JEAM2oYZkEPCNrfo9XLq8nHFhp9GzFjGc1uQ",
+        )
+        .unwrap();
+        Key {
+            source: KeySource::Manual,
+            name: "test".to_string(),
+            fingerprint,
+            key,
+            account: None,
+        }
+    }
+
+    fn picker_with_placed_key(
+        active: Vec<(usize, usize)>,
+        placed_at: Vec<(usize, usize)>,
+        placed_fg: Fingerprint,
+    ) -> SelectKeySource {
+        let mut picker = empty_picker();
+        picker.actual_path.coordinates = active;
+        picker
+            .keys
+            .insert(placed_fg, (placed_at, manual_key(placed_fg)));
+        picker
+    }
+
+    #[test]
+    fn key_placed_elsewhere_blocks_reuse_at_other_slot() {
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        // Editing slot (0,0); the same key is already placed at (1,0).
+        let picker = picker_with_placed_key(vec![(0, 0)], vec![(1, 0)], fg);
+        assert!(picker.key_placed_elsewhere(fg));
+    }
+
+    #[test]
+    fn key_placed_elsewhere_allows_reselect_at_active_slot() {
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        // The key is placed only at the slot currently being edited.
+        let picker = picker_with_placed_key(vec![(0, 0)], vec![(0, 0)], fg);
+        assert!(!picker.key_placed_elsewhere(fg));
+    }
+
+    #[test]
+    fn key_placed_elsewhere_false_for_unplaced_key() {
+        let placed = Fingerprint::from_str("8a550171").unwrap();
+        let other = Fingerprint::from_str("c658b283").unwrap();
+        let picker = picker_with_placed_key(vec![(0, 0)], vec![(1, 0)], placed);
+        // A different, not-yet-placed key is free to select.
+        assert!(!picker.key_placed_elsewhere(other));
+    }
+
+    #[test]
+    fn key_placed_elsewhere_blocks_when_spanning_active_and_other_slot() {
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        // Placed at the active slot AND another — the other placement blocks.
+        let picker = picker_with_placed_key(vec![(0, 0)], vec![(0, 0), (1, 0)], fg);
+        assert!(picker.key_placed_elsewhere(fg));
+    }
+
+    #[test]
+    fn key_placed_elsewhere_blocks_when_placed_without_coordinates() {
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        // A placement carrying no coordinates is treated as used elsewhere.
+        let picker = picker_with_placed_key(vec![(0, 0)], vec![], fg);
+        assert!(picker.key_placed_elsewhere(fg));
     }
 }

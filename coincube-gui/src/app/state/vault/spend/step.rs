@@ -172,6 +172,10 @@ pub struct DefineSpend {
     amount_left_to_select: Option<Amount>,
     feerate: form::Value<String>,
     loading_fee_estimate: Option<usize>,
+    /// Block target (1/6/24) of the preset whose estimate currently fills the
+    /// feerate field, so the matching Fast/Normal/Slow button can render as
+    /// selected. Cleared when the user types a feerate manually.
+    selected_feerate_target: Option<usize>,
     fee_amount: Option<Amount>,
     generated: Option<(Psbt, Vec<String>)>,
     generating: bool,
@@ -229,6 +233,7 @@ impl DefineSpend {
             is_duplicate: false,
             feerate: form::Value::default(),
             fee_amount: None,
+            selected_feerate_target: None,
             amount_left_to_select: None,
             warning: None,
             is_first_step,
@@ -769,6 +774,11 @@ impl Step for DefineSpend {
                             self.feerate.valid = false;
                         }
                         self.warning = None;
+                        // A FeerateEdited arriving while a preset fetch is in
+                        // flight is that fetch's result — keep the preset
+                        // highlighted. A manual edit (no fetch pending) has
+                        // `loading_fee_estimate == None`, clearing the selection.
+                        self.selected_feerate_target = self.loading_fee_estimate;
                         self.loading_fee_estimate = None;
                         // A feerate change must re-run coin selection: it
                         // changes the fee and therefore `amount_left_to_select`
@@ -1065,6 +1075,14 @@ impl Step for DefineSpend {
             .recipients
             .iter()
             .any(|r| r.estimated_max.is_some() || r.dust_warning.is_some());
+        // Mirror the view's "Insufficient funds." disabled-action hint: a
+        // non-recovery draft with ≥1 coin selected that still has a non-zero
+        // amount left to select can't be funded. (An unset/invalid feerate or
+        // duplicate recipient forces `amount_left_to_select` to `None`, so
+        // those states don't trip this.)
+        let insufficient = self.recovery_timelock.is_none()
+            && self.coins.iter().any(|(_, selected)| *selected)
+            && self.amount_left_to_select.is_some_and(|a| a.to_sat() != 0);
         view::vault::spend::create_spend_tx(
             &self.balance,
             &self.unconfirmed_balance,
@@ -1081,6 +1099,7 @@ impl Step for DefineSpend {
                             self.send_max_to_recipient == Some(i),
                             converter.as_ref(),
                             self.bitcoin_unit,
+                            insufficient,
                         )
                         .map(view::Message::CreateSpend)
                 })
@@ -1099,6 +1118,7 @@ impl Step for DefineSpend {
             &self.sync_status,
             self.is_first_step,
             self.loading_fee_estimate,
+            self.selected_feerate_target,
             self.generating,
             self.bitcoin_unit,
             max_under_dust,
@@ -1303,6 +1323,7 @@ impl Recipient {
         is_max_selected: bool,
         fiat_converter: Option<&view::FiatAmountConverter>,
         bitcoin_unit: BitcoinDisplayUnit,
+        insufficient: bool,
     ) -> Element<view::CreateSpendMessage> {
         let mut fiat_form_value = self.fiat_amount.as_ref();
 
@@ -1334,6 +1355,7 @@ impl Recipient {
             &self.dust_warning,
             self.estimated_max,
             bitcoin_unit,
+            insufficient,
         )
     }
 }

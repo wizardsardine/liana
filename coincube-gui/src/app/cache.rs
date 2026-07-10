@@ -43,6 +43,11 @@ pub struct Cache {
     /// Whether the pending local Bitcoind is currently in initial block download.
     /// `None` when no local node is pending.
     pub node_bitcoind_ibd: Option<bool>,
+    /// Mirror of `App::daemon_switch_in_progress` so the stateless Node
+    /// settings view can reflect an in-flight backend switch (disable the
+    /// switch buttons and show a "switching…" status) instead of offering a
+    /// button that just errors with "a switch is already in progress".
+    pub daemon_switch_in_progress: bool,
     /// Latest UpdateTip/blockheaders line from the pending internal bitcoind's
     /// debug.log.  `None` until the first line is received.
     pub node_bitcoind_last_log: Option<String>,
@@ -184,6 +189,7 @@ impl std::default::Default for Cache {
             datadir_path: CoincubeDirectory::new(std::path::PathBuf::new()),
             node_bitcoind_sync_progress: None,
             node_bitcoind_ibd: None,
+            daemon_switch_in_progress: false,
             node_bitcoind_last_log: None,
             node_net_stats: None,
             network: Network::Bitcoin,

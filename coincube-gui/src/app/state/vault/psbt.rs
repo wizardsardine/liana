@@ -1030,7 +1030,11 @@ impl Modal for SignModal {
                     ..
                 }) = self.hws.list.get(i)
                 {
-                    self.display_modal = false;
+                    // Keep the modal open (as the master-signer path below
+                    // does) so the selected device shows its "Processing… /
+                    // Please check your device" state while we wait for the
+                    // signature, rather than the modal vanishing with no
+                    // indication that the device is awaiting confirmation.
                     self.signing.insert(*fingerprint);
                     let psbt = tx.psbt.clone();
                     let fingerprint = *fingerprint;
