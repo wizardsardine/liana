@@ -574,7 +574,6 @@ impl DefineSpend {
             }
             Ok(CreateSpendResult::InsufficientFunds { missing }) => {
                 self.fee_amount = None;
-                let mut selected_coins = 0;
                 // To be sure, we exclude recovery transactions here, although they
                 // can't currently reach this part of code.
                 if !self.is_user_coin_selection && self.recovery_timelock.is_none() {
@@ -582,12 +581,12 @@ impl DefineSpend {
                     // being used, which are all owned coins.
                     for (coin, selected) in &mut self.coins {
                         *selected = coin_is_owned(coin);
-                        if *selected {
-                            selected_coins += 1;
-                        }
                     }
                 }
-                let all_selected = selected_coins == self.coins.len();
+                // Whether every available coin is already selected. Read the actual
+                // selection state so this is correct for manual and recovery spends,
+                // where the auto-selection branch above is skipped.
+                let all_selected = self.coins.iter().all(|(_, selected)| *selected);
                 if let Some(i) = recipient_with_max {
                     // An output has MAX selected, but the available amount is lower than
                     // the dust limit. Rather than showing a confusing near-zero amount,
