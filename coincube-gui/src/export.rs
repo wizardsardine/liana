@@ -1028,7 +1028,9 @@ pub fn parse_coldcard_xpub_json(coldcard_xpub: &str) -> Option<DescriptorPublicK
 }
 
 // NOTE: this function is intended to import xpub that have been exported from a coldcard device
-// via this menu: Settings => Miniscript => Export XPUB (Edge firmware >= 6.4.0)
+// via this menu: Settings => Miniscript => Export XPUB (Edge firmware >= 6.4.0).
+// Only the P2WSH key expression (`p2wsh_key_exp`) is read, since Vault is P2WSH-only;
+// files without that field (e.g. other script types) intentionally return `None`.
 pub fn parse_coldcard_xpub_ccxp(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
     if let serde_json::Value::Object(map) = serde_json::from_str(coldcard_xpub).ok()? {
         let fg_upper = map.get("xfp")?.to_string().to_uppercase().replace("\"", "");
@@ -1841,17 +1843,20 @@ mod tests {
         }
 
         // Negative: the descriptor's unspendable internal key must NOT decrypt.
-        if let Some(unspendable) = descriptor.process_unspendable_key() {
-            let attempt = EncryptedBackup::new()
-                .set_encrypted_payload(&bytes)
-                .unwrap()
-                .set_keys(vec![dpk_to_pk(&unspendable)])
-                .decrypt();
-            assert!(
-                attempt.is_err(),
-                "the descriptor's unspendable internal key must not decrypt an encrypted backup"
-            );
-        }
+        // A taproot descriptor always has one, so require it here — otherwise this
+        // assertion could be silently skipped if the descriptor or helper changed.
+        let unspendable = descriptor
+            .process_unspendable_key()
+            .expect("taproot descriptor always has an unspendable internal key");
+        let attempt = EncryptedBackup::new()
+            .set_encrypted_payload(&bytes)
+            .unwrap()
+            .set_keys(vec![dpk_to_pk(&unspendable)])
+            .decrypt();
+        assert!(
+            attempt.is_err(),
+            "the descriptor's unspendable internal key must not decrypt an encrypted backup"
+        );
 
         // Negative: the public BIP-341 NUMS point must NOT decrypt.
         let attempt = EncryptedBackup::new()
