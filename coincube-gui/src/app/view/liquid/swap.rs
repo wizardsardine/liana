@@ -269,7 +269,7 @@ fn amount_input_field<'a>(
     value: &'a form::Value<String>,
     asset: SendAsset,
     unit: BitcoinDisplayUnit,
-    on_edit: impl Fn(String) -> LiquidSwapMessage + 'static,
+    on_edit: impl Fn(String) -> LiquidSwapMessage + 'static + Clone,
 ) -> Element<'a, LiquidSwapMessage> {
     let form = match (asset, unit) {
         (SendAsset::Lbtc, BitcoinDisplayUnit::Sats) => {

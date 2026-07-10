@@ -82,6 +82,7 @@ pub fn psbt_view<'a>(
                 desc_info,
                 key_aliases,
                 currently_signing,
+                saved,
             ))
             .push(
                 Column::new()
@@ -96,11 +97,12 @@ pub fn psbt_view<'a>(
                     .push(outputs_view(
                         &tx.psbt.unsigned_tx,
                         network,
-                        Some(tx.change_indexes.clone()),
+                        &tx.change_indexes,
                         &tx.labels,
                         labels_editing,
                         bitcoin_unit,
                         tx.is_single_payment().is_some(),
+                        false,
                     )),
             )
             .push(if saved {
@@ -428,7 +430,18 @@ pub fn spend_overview_view<'a>(
     desc_info: &'a CoincubePolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
     currently_signing: bool,
+    saved: bool,
 ) -> Element<'a, Message> {
+    // Force the user to save (which commits the derivation-index increment to the
+    // database) before exporting, otherwise the exported PSBT can lead to change
+    // address reuse.
+    let export_button = button::secondary(Some(icon::backup_icon()), "Export").on_press_maybe(
+        if currently_signing || !saved {
+            None
+        } else {
+            Some(Message::ExportPsbt)
+        },
+    );
     Column::new()
         .spacing(20)
         .push(
@@ -445,23 +458,25 @@ pub fn spend_overview_view<'a>(
                                     .push(
                                         Row::new()
                                             .spacing(5)
-                                            .push(
-                                                button::secondary(
-                                                    Some(icon::backup_icon()),
-                                                    "Export",
-                                                )
-                                                .on_press_maybe(if currently_signing {
-                                                    None
-                                                } else {
-                                                    Some(Message::ExportPsbt)
-                                                }),
-                                            )
+                                            .push(if saved {
+                                                Container::new(export_button)
+                                            } else {
+                                                Container::new(tooltip::Tooltip::new(
+                                                    export_button,
+                                                    Container::new(p1_regular(
+                                                        "Sign or save the transaction first to enable export",
+                                                    ))
+                                                    .style(theme::card::simple)
+                                                    .padding(10),
+                                                    tooltip::Position::Top,
+                                                ))
+                                            })
                                             .push(
                                                 button::secondary(
                                                     Some(icon::restore_icon()),
                                                     "Import",
                                                 )
-                                                .on_press_maybe(if currently_signing {
+                                                .on_press_maybe(if currently_signing || !saved {
                                                     None
                                                 } else {
                                                     Some(Message::ImportPsbt)
@@ -800,16 +815,17 @@ pub fn inputs_view<'a>(
     .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn outputs_view<'a>(
     tx: &'a Transaction,
     network: Network,
-    change_indexes: Option<Vec<usize>>,
+    change_indexes: &'a [usize],
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
     bitcoin_unit: BitcoinDisplayUnit,
     is_single_payment: bool,
+    is_external: bool,
 ) -> Element<'a, Message> {
-    let change_indexes_copy = change_indexes.clone();
     Column::new()
         .spacing(20)
         .push({
@@ -818,11 +834,10 @@ pub fn outputs_view<'a>(
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| {
-                    if let Some(indexes) = change_indexes_copy.as_ref() {
-                        !indexes.contains(i)
-                    } else {
-                        true
+                    if is_external {
+                        return true;
                     }
+                    !change_indexes.contains(i)
                 })
                 .count();
             if count > 0 {
@@ -842,15 +857,20 @@ pub fn outputs_view<'a>(
                                 .iter()
                                 .enumerate()
                                 .filter(|(i, _)| {
-                                    if let Some(indexes) = change_indexes_copy.as_ref() {
-                                        !indexes.contains(i)
-                                    } else {
-                                        true
+                                    if is_external {
+                                        return true;
                                     }
+                                    !change_indexes.contains(i)
                                 })
                                 .fold(
                                     Column::new().padding(20),
                                     |col: Column<'a, Message>, (i, output)| {
+                                        // External outputs that are not our change are
+                                        // not owned by us, so their label is read-only.
+                                        let mut is_editable = true;
+                                        if is_external && !change_indexes.contains(&i) {
+                                            is_editable = false;
+                                        }
                                         col.spacing(10).push(payment_view(
                                             i,
                                             tx.compute_txid(),
@@ -860,6 +880,7 @@ pub fn outputs_view<'a>(
                                             labels_editing,
                                             bitcoin_unit,
                                             is_single_payment,
+                                            is_editable,
                                         ))
                                     },
                                 ),
@@ -887,60 +908,51 @@ pub fn outputs_view<'a>(
                 .style(theme::card::simple)
             }
         })
-        .push(
-            if change_indexes
-                .as_ref()
-                .map(|indexes| !indexes.is_empty())
-                .unwrap_or(false)
-            {
-                Some(
-                    Container::new(Collapse::new(
-                        move || {
-                            Button::new(
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .push(h4_bold("Change").width(Length::Fill))
-                                    .push(icon::collapse_icon()),
+        .push(if !is_external && !change_indexes.is_empty() {
+            Some(
+                Container::new(Collapse::new(
+                    move || {
+                        Button::new(
+                            Row::new()
+                                .align_y(Alignment::Center)
+                                .push(h4_bold("Change").width(Length::Fill))
+                                .push(icon::collapse_icon()),
+                        )
+                        .padding(20)
+                        .width(Length::Fill)
+                        .style(theme::button::transparent_border)
+                    },
+                    move || {
+                        Button::new(
+                            Row::new()
+                                .align_y(Alignment::Center)
+                                .push(h4_bold("Change").width(Length::Fill))
+                                .push(icon::collapsed_icon()),
+                        )
+                        .padding(20)
+                        .width(Length::Fill)
+                        .style(theme::button::transparent_border)
+                    },
+                    move || {
+                        tx.output
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| change_indexes.contains(i))
+                            .fold(
+                                Column::new().padding(20),
+                                |col: Column<'a, Message>, (_, output)| {
+                                    col.spacing(10)
+                                        .push(change_view(output, network, bitcoin_unit))
+                                },
                             )
-                            .padding(20)
-                            .width(Length::Fill)
-                            .style(theme::button::transparent_border)
-                        },
-                        move || {
-                            Button::new(
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .push(h4_bold("Change").width(Length::Fill))
-                                    .push(icon::collapsed_icon()),
-                            )
-                            .padding(20)
-                            .width(Length::Fill)
-                            .style(theme::button::transparent_border)
-                        },
-                        move || {
-                            tx.output
-                                .iter()
-                                .enumerate()
-                                .filter(|(i, _)| change_indexes.as_ref().unwrap().contains(i))
-                                .fold(
-                                    Column::new().padding(20),
-                                    |col: Column<'a, Message>, (_, output)| {
-                                        col.spacing(10).push(change_view(
-                                            output,
-                                            network,
-                                            bitcoin_unit,
-                                        ))
-                                    },
-                                )
-                                .into()
-                        },
-                    ))
-                    .style(theme::card::simple),
-                )
-            } else {
-                None
-            },
-        )
+                            .into()
+                    },
+                ))
+                .style(theme::card::simple),
+            )
+        } else {
+            None
+        })
         .into()
 }
 
@@ -1037,6 +1049,7 @@ fn payment_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
     bitcoin_unit: BitcoinDisplayUnit,
     is_single_payment: bool,
+    is_editable: bool,
 ) -> Element<'a, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .ok()
@@ -1053,6 +1066,19 @@ fn payment_view<'a>(
     } else {
         vec![outpoint.clone()]
     };
+    let label_widget = if is_editable {
+        if let Some(label) = labels_editing.get(&outpoint).or_else(|| {
+            is_single_payment
+                .then(|| labels_editing.get(&txid))
+                .flatten()
+        }) {
+            label::label_editing(labelled, label, text::P1_SIZE)
+        } else {
+            label::label_editable(labelled, labels.get(&outpoint), text::P1_SIZE)
+        }
+    } else {
+        label::label_non_editable(labelled, labels.get(&outpoint), text::P1_SIZE)
+    };
     Column::new()
         .width(Length::Fill)
         .spacing(5)
@@ -1060,20 +1086,7 @@ fn payment_view<'a>(
             Row::new()
                 .spacing(5)
                 .align_y(Alignment::Center)
-                .push(
-                    Container::new(
-                        if let Some(label) = labels_editing.get(&outpoint).or_else(|| {
-                            is_single_payment
-                                .then(|| labels_editing.get(&txid))
-                                .flatten()
-                        }) {
-                            label::label_editing(labelled, label, text::P1_SIZE)
-                        } else {
-                            label::label_editable(labelled, labels.get(&outpoint), text::P1_SIZE)
-                        },
-                    )
-                    .width(Length::Fill),
-                )
+                .push(Container::new(label_widget).width(Length::Fill))
                 .push(amount_with_unit(&output.value, bitcoin_unit)),
         )
         .push(addr.map(|addr| {

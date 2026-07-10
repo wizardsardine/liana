@@ -980,7 +980,9 @@ pub async fn import_xpub(
     let (descriptor_pubkey, key) =
         if let Some(DescriptorPublicKey::XPub(key)) = parse_raw_xpub(&xpub_str) {
             (DescriptorPublicKey::XPub(key.clone()), key)
-        } else if let Some(DescriptorPublicKey::XPub(key)) = parse_coldcard_xpub(&xpub_str) {
+        } else if let Some(DescriptorPublicKey::XPub(key)) = parse_coldcard_xpub_json(&xpub_str) {
+            (DescriptorPublicKey::XPub(key.clone()), key)
+        } else if let Some(DescriptorPublicKey::XPub(key)) = parse_coldcard_xpub_ccxp(&xpub_str) {
             (DescriptorPublicKey::XPub(key.clone()), key)
         } else {
             return Err(Error::ParseXpub);
@@ -1006,7 +1008,9 @@ pub fn parse_raw_xpub(raw_xpub: &str) -> Option<DescriptorPublicKey> {
     DescriptorPublicKey::from_str(raw_xpub).ok()
 }
 
-pub fn parse_coldcard_xpub(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
+// NOTE: this function is intended to import xpub that have been exported from a coldcard device
+// via this menu: Advanced/Tools => Export Wallet => Generic JSON (Any Edge firmware)
+pub fn parse_coldcard_xpub_json(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
     if let serde_json::Value::Object(map) = serde_json::from_str(coldcard_xpub).ok()? {
         let fg = map.get("xfp")?.to_string().to_lowercase();
         let fg = fg.replace("\"", "");
@@ -1019,6 +1023,22 @@ pub fn parse_coldcard_xpub(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
             let raw_xpub = format!("[{fg}{deriv}]{xpub}");
             return parse_raw_xpub(&raw_xpub);
         }
+    }
+    None
+}
+
+// NOTE: this function is intended to import xpub that have been exported from a coldcard device
+// via this menu: Settings => Miniscript => Export XPUB (Edge firmware >= 6.4.0).
+// Only the P2WSH key expression (`p2wsh_key_exp`) is read, since Vault is P2WSH-only;
+// files without that field (e.g. other script types) intentionally return `None`.
+pub fn parse_coldcard_xpub_ccxp(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
+    if let serde_json::Value::Object(map) = serde_json::from_str(coldcard_xpub).ok()? {
+        let fg_upper = map.get("xfp")?.to_string().to_uppercase().replace("\"", "");
+        let fg_lower = fg_upper.clone().to_lowercase();
+        let xpub = map.get("p2wsh_key_exp")?.to_string();
+        let xpub = xpub.replace("\"", "");
+        let xpub = xpub.replace(&fg_upper, &fg_lower);
+        return parse_raw_xpub(&xpub);
     }
     None
 }
@@ -1670,7 +1690,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_coldcard_xpub() {
+    fn test_parse_coldcard_xpub_json() {
         let raw = r#"
             {
               "chain": "XTN",
@@ -1737,7 +1757,23 @@ mod tests {
             }
         "#;
         let expected = "[c658b283/48'/1'/3'/2']tpubDFmeRMxr4X7dxNKxxBKWXu1rskHEQYB8vY5PYPmiB74EjyrE814HHpQzh2XEFpm3z5uJpk7Cjt2hmhcMYmBbot6CmRHn3CKK2K6vzLPBMbH".to_string();
-        assert_eq!(expected, parse_coldcard_xpub(raw).unwrap().to_string());
+        assert_eq!(expected, parse_coldcard_xpub_json(raw).unwrap().to_string());
+    }
+
+    #[test]
+    fn test_parse_coldcard_xpub_ccxp() {
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join("ccxp-C658B283.json");
+        let mut file = File::open(path).unwrap();
+        let mut raw = String::new();
+        let _ = file.read_to_string(&mut raw).unwrap();
+        let expected = "[c658b283/48'/1'/0'/2']tpubDFL5wzgPBYK5pZ2Kh1T8qrxnp43kjE5CXfguZHHBrZSWpkfASy5rVfj7prh11XdqkC1P3kRwUPBeX7AHN8XBNx8UwiprnFnEm5jyswiRD4p".to_string();
+        assert_eq!(
+            expected,
+            parse_coldcard_xpub_ccxp(&raw).unwrap().to_string()
+        );
     }
 
     #[test]
@@ -1774,5 +1810,63 @@ mod tests {
                 panic!("not a descriptor")
             }
         }
+    }
+
+    // The BIP-341 NUMS point is public knowledge. If the encryption crate ever
+    // accepted it (or the descriptor's unspendable internal key) as a valid
+    // decryption recipient, the encrypted backup would be worthless. This mirrors
+    // the negative half of the export_encrypted_descriptor verification round-trip.
+    #[test]
+    fn test_nums_cannot_decrypt_encrypted_backup() {
+        let descr_str = "tr(tpubD6NzVbkrYhZ4XYBa9huubPUVRzmGGJoEjFF4i93okdJUBSiDenCbHMAZkjWYWiWoruNEgXouXEdKBL9gDWuxem4gwJMBEs3TVhhNw7AybcA/<0;1>/*,{and_v(v:multi_a(1,[bf3891f9/48'/1'/0'/2']tpubDF8FX2wbUi7rFS4xC8BfYDu6AScYFvRQBwouJeu2DzE55gJgQk2mSa56D9VbyU9YVdWNqWdFBqhWtV9ixZGbd83SRhr7EZUvGJ8QfYazwks/<2;3>/*,[08d94091/48'/1'/0'/2']tpubDEPcGiMo7Z9bwxKvqGU6Zwis2xoESJGKmbcX9Eu6puUgriny9UDCHCF1CpZyGT8s1Kj5diyT2kbe7tj1caWwVb2UYNF129rwNobcq4KTQbs/<2;3>/*),older(52596)),and_v(v:pk([bf3891f9/48'/1'/0'/2']tpubDF8FX2wbUi7rFS4xC8BfYDu6AScYFvRQBwouJeu2DzE55gJgQk2mSa56D9VbyU9YVdWNqWdFBqhWtV9ixZGbd83SRhr7EZUvGJ8QfYazwks/<0;1>/*),pk([08d94091/48'/1'/0'/2']tpubDEPcGiMo7Z9bwxKvqGU6Zwis2xoESJGKmbcX9Eu6puUgriny9UDCHCF1CpZyGT8s1Kj5diyT2kbe7tj1caWwVb2UYNF129rwNobcq4KTQbs/<0;1>/*))})#dn0kkwfc";
+        let descriptor = CoincubeDescriptor::from_str(descr_str).unwrap();
+
+        // Encrypt in-memory (requires the "rand" feature enabled on the crate).
+        let bytes = EncryptedBackup::new()
+            .set_payload(descriptor.descriptor())
+            .unwrap()
+            .encrypt()
+            .unwrap();
+
+        // Positive control: every spendable key must decrypt back to the descriptor.
+        for key in descriptor.spendable_keys() {
+            let decrypted = EncryptedBackup::new()
+                .set_encrypted_payload(&bytes)
+                .unwrap()
+                .set_keys(vec![dpk_to_pk(&key)])
+                .decrypt()
+                .unwrap();
+            match decrypted {
+                Decrypted::Descriptor(d) => assert_eq!(d.to_string(), descriptor.to_string()),
+                _ => panic!("not a descriptor"),
+            }
+        }
+
+        // Negative: the descriptor's unspendable internal key must NOT decrypt.
+        // A taproot descriptor always has one, so require it here — otherwise this
+        // assertion could be silently skipped if the descriptor or helper changed.
+        let unspendable = descriptor
+            .process_unspendable_key()
+            .expect("taproot descriptor always has an unspendable internal key");
+        let attempt = EncryptedBackup::new()
+            .set_encrypted_payload(&bytes)
+            .unwrap()
+            .set_keys(vec![dpk_to_pk(&unspendable)])
+            .decrypt();
+        assert!(
+            attempt.is_err(),
+            "the descriptor's unspendable internal key must not decrypt an encrypted backup"
+        );
+
+        // Negative: the public BIP-341 NUMS point must NOT decrypt.
+        let attempt = EncryptedBackup::new()
+            .set_encrypted_payload(&bytes)
+            .unwrap()
+            .set_keys(vec![bip341_nums()])
+            .decrypt();
+        assert!(
+            attempt.is_err(),
+            "the BIP-341 NUMS point must not decrypt an encrypted backup"
+        );
     }
 }
