@@ -283,9 +283,9 @@ fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>, compact: bool) -> 
 }
 
 fn auxiliary_content<'a, T: 'a>(icon: Option<Text<'a>>, t: impl Display) -> Container<'a, T> {
-    let text = Text::new(t.to_string()).size(16).font(MANROPE_SEMIBOLD);
+    let text = Text::new(t.to_string()).size(13).font(MANROPE_SEMIBOLD);
     container(
-        row![icon.map(|icon| icon.size(16)), text]
+        row![icon.map(|icon| icon.size(13)), text]
             .spacing(10)
             .align_y(Vertical::Center),
     )
@@ -355,11 +355,11 @@ pub fn device_with_height_clickable<'a, T: 'a + std::clone::Clone, C: Into<Eleme
 /// Button width presets.
 #[derive(Debug, Clone, Copy)]
 pub enum BtnWidth {
-    S = 100,
-    M = 140,
-    L = 180,
-    XL = 230,
-    XXL = 330,
+    S = 80,
+    M = 112,
+    L = 145,
+    XL = 185,
+    XXL = 260,
     /// Default to Length::Shrink
     Auto,
 }
