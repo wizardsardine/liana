@@ -35,8 +35,8 @@ const ICON_BTN_SIZE: f32 = 40.0;
 const ICON_BTN_PADDING: f32 = 10.0;
 pub const DEVICE_BTN_H: u32 = 40;
 
-const BTN_PADDING: [u16; 2] = [9 /* Top/Bottom */, 14 /* Left/Right */];
-const BTN_PADDING_COMPACT: [u16; 2] = [7 /* Top/Bottom */, 12 /* Left/Right */];
+const BTN_PADDING: [u16; 2] = [8 /* Top/Bottom */, 13 /* Left/Right */];
+const BTN_PADDING_COMPACT: [u16; 2] = [6 /* Top/Bottom */, 11 /* Left/Right */];
 
 pub type ListEntryAccent = fn(&Theme) -> Color;
 
@@ -355,11 +355,11 @@ pub fn device_with_height_clickable<'a, T: 'a + std::clone::Clone, C: Into<Eleme
 /// Button width presets.
 #[derive(Debug, Clone, Copy)]
 pub enum BtnWidth {
-    S = 100,
-    M = 140,
-    L = 180,
-    XL = 230,
-    XXL = 330,
+    S = 90,
+    M = 126,
+    L = 162,
+    XL = 207,
+    XXL = 297,
     /// Default to Length::Shrink
     Auto,
 }
