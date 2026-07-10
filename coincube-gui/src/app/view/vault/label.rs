@@ -70,12 +70,19 @@ pub fn label_editing(
     e.map(move |msg| view::Message::Label(labelled.clone(), msg))
 }
 
-/// A read-only "(External Output)" marker for outputs the wallet does not own
-/// (external recipients), which the user should not be able to label.
-pub fn label_non_editable<'a>(labelled: Vec<String>, size: u32) -> Element<'a, view::Message> {
-    let e: Element<'a, view::LabelMessage> = Container::new(
+/// A read-only label for outputs the wallet does not own (external recipients),
+/// which the user should not be able to edit. Shows the stored label when one
+/// exists, otherwise falls back to a generic "(External Output)" marker.
+pub fn label_non_editable(
+    labelled: Vec<String>,
+    label: Option<&String>,
+    size: u32,
+) -> Element<'_, view::Message> {
+    let label_text = label.map(|s| s.as_str()).unwrap_or("(External Output)");
+
+    let e: Element<view::LabelMessage> = Container::new(
         row![Container::new(
-            iced::widget::Text::new("(External Output)")
+            iced::widget::Text::new(label_text)
                 .size(size)
                 .width(iced::Length::Fill)
                 .color(color::GREY_1)

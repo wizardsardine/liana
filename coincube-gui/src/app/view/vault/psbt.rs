@@ -1049,7 +1049,7 @@ fn payment_view<'a>(
             label::label_editable(labelled, labels.get(&outpoint), text::P1_SIZE)
         }
     } else {
-        label::label_non_editable(labelled, text::P1_SIZE)
+        label::label_non_editable(labelled, labels.get(&outpoint), text::P1_SIZE)
     };
     Column::new()
         .width(Length::Fill)
