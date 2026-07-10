@@ -277,13 +277,19 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
                     .push(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
-            .into(), // No width - let column size naturally
+            // Fill so the "Processing…" prompt is pushed to the right edge
+            // rather than crowding the device name/fingerprint (matches the
+            // signed/selected rows).
+            .width(Length::Fill)
+            .into(),
             column(vec![
                 text::p1_regular("Processing...").into(),
                 text::p1_regular("Please check your device").into(),
             ])
+            .align_x(Alignment::End)
             .into(),
         ])
+        .spacing(10)
         .align_y(Alignment::Center),
     )
     .padding(10)
@@ -450,6 +456,7 @@ pub fn unsupported_hardware_wallet<'a, T: 'static, K: Display, V: Display>(
                     .spacing(5)
                     .push(text::p1_bold("Connection error"))
                     .into(),
+                text::p1_regular("Please unlock your device and open the Bitcoin app.").into(),
                 Row::new()
                     .spacing(5)
                     .push(text::caption(kind.to_string()))
@@ -475,12 +482,15 @@ pub fn unsupported_version_hardware_wallet<'a, T: 'static, K: Display, V: Displa
     kind: K,
     version: Option<V>,
     requested_version: S,
+    note: Option<&'static str>,
 ) -> Container<'a, T> {
     container(
         row(vec![
             column(vec![
                 text::p1_bold("Unsupported firmware version").into(),
                 text::p1_regular(format!("Install version {} or later", requested_version)).into(),
+                note.map(|n| text::p2_regular(n).style(theme::text::secondary).into())
+                    .unwrap_or_else(|| Row::new().into()),
                 Row::new()
                     .spacing(5)
                     .push(text::caption(kind.to_string()))

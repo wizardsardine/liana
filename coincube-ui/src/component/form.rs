@@ -177,6 +177,18 @@ where
         self
     }
 
+    /// Forces the input into its invalid (red) style regardless of the value's
+    /// own format validity — e.g. to flag insufficient funds on an otherwise
+    /// well-formed amount. Suppresses the format warning text, since the reason
+    /// is surfaced elsewhere (e.g. the disabled-action hint).
+    pub fn invalid(mut self, is_invalid: bool) -> Self {
+        if is_invalid {
+            self.valid = false;
+            self.warning = None;
+        }
+        self
+    }
+
     /// Sets the padding of the [`Form`].
     pub fn padding(mut self, units: u16) -> Self {
         self.input = self.input.padding(units);

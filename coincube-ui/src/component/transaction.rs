@@ -138,6 +138,11 @@ impl<'a, T> TransactionListItem<'a, T> {
             info_column = info_column.push(text::p1_regular(label));
         }
 
+        // An unconfirmed payment has no timestamp, so surface its badge here —
+        // left-justified in the slot where the date normally sits — rather than
+        // over on the right next to the amount, which reads as more intuitive.
+        let has_unconfirmed = self.badges.contains(&TransactionBadge::Unconfirmed);
+
         if let Some(timestamp) = self.timestamp {
             info_column = info_column.push(
                 text::p2_regular(
@@ -155,6 +160,8 @@ impl<'a, T> TransactionListItem<'a, T> {
                 time_row = time_row.push(status);
             }
             info_column = info_column.push(time_row);
+        } else if has_unconfirmed {
+            info_column = info_column.push(badge::unconfirmed());
         }
 
         let mut left_side = Row::new().spacing(10).align_y(Alignment::Center);
@@ -180,7 +187,9 @@ impl<'a, T> TransactionListItem<'a, T> {
 
         for badge_type in self.badges {
             let badge_elem = match badge_type {
-                TransactionBadge::Unconfirmed => badge::unconfirmed(),
+                // Rendered left-justified in the info column above (where the
+                // date would be), not on the right by the amount.
+                TransactionBadge::Unconfirmed => continue,
                 TransactionBadge::Batch => badge::batch(),
                 TransactionBadge::Recovery => badge::recovery(),
             };

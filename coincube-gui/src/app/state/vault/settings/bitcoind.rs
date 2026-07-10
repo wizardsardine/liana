@@ -879,6 +879,7 @@ impl State for BitcoindSettingsState {
                         can_switch_to_bitcoind,
                         can_setup_local_node,
                         self.node_switch_processing,
+                        cache.daemon_switch_in_progress,
                         warning_str,
                     )
                     .map(map_node_msg),

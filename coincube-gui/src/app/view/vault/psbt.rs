@@ -555,24 +555,13 @@ pub fn signatures<'a>(
                         .push(icon::square_check_icon().style(theme::text::success))
                         .push(text("Ready").bold().style(theme::text::success))
                         .push(text("  signed by"))
-                        .push(sigs.signed_pubkeys.keys().fold(
-                            Row::new().spacing(5),
-                            |row, value| {
-                                row.push(if let Some(alias) = keys_aliases.get(value) {
-                                    Container::new(tooltip::Tooltip::new(
-                                        Container::new(text(alias))
-                                            .padding(10)
-                                            .style(theme::pill::simple),
-                                        text(value.to_string()),
-                                        tooltip::Position::Bottom,
-                                    ))
-                                } else {
-                                    Container::new(text(value.to_string()))
-                                        .padding(10)
-                                        .style(theme::pill::simple)
-                                })
-                            },
-                        )),
+                        .push(
+                            sigs.signed_pubkeys
+                                .keys()
+                                .fold(Row::new().spacing(5), |row, value| {
+                                    row.push(container_from_fg(*value, keys_aliases))
+                                }),
+                        ),
                 )
                 .direction(scrollable::Direction::Horizontal(
                     scrollable::Scrollbar::new().width(2).scroller_width(2),
@@ -580,47 +569,19 @@ pub fn signatures<'a>(
             )
             .padding(15)
         } else {
-            Container::new(Collapse::new(
-                move || {
-                    Button::new(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(20)
-                            .push(p1_bold("Status"))
-                            .push(
-                                Row::new()
-                                    .spacing(5)
-                                    .align_y(Alignment::Center)
-                                    .push(icon::square_cross_icon().style(theme::text::error))
-                                    .push(text("Not ready").style(theme::text::error))
-                                    .width(Length::Fill),
-                            )
-                            .push(icon::collapse_icon()),
-                    )
-                    .padding(15)
-                    .width(Length::Fill)
-                    .style(theme::button::transparent_border)
-                },
-                move || {
-                    Button::new(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(20)
-                            .push(p1_bold("Status"))
-                            .push(
-                                Row::new()
-                                    .spacing(5)
-                                    .align_y(Alignment::Center)
-                                    .push(icon::square_cross_icon().style(theme::text::error))
-                                    .push(text("Not ready").style(theme::text::error))
-                                    .width(Length::Fill),
-                            )
-                            .push(icon::collapsed_icon()),
-                    )
-                    .padding(15)
-                    .width(Length::Fill)
-                    .style(theme::button::transparent_border)
-                },
+            // Not broadcastable yet. If some (but not enough) signatures are
+            // present, surface a "Partially signed" banner with the signers so
+            // the user sees progress instead of a bare "Not ready".
+            let signed: Vec<Fingerprint> = {
+                let mut v: Vec<_> = tx.signers().into_iter().collect();
+                v.sort_by_key(|fg| fg.to_string());
+                v
+            };
+            let is_partial = !signed.is_empty();
+
+            let collapse = Collapse::new(
+                move || requirements_header(is_partial, icon::collapse_icon()),
+                move || requirements_header(is_partial, icon::collapsed_icon()),
                 move || {
                     Into::<Element<'a, Message>>::into(
                         Column::new()
@@ -641,9 +602,76 @@ pub fn signatures<'a>(
                             }),
                     )
                 },
-            ))
+            );
+
+            let mut col = Column::new();
+            if is_partial {
+                col = col.push(
+                    Container::new(
+                        scrollable(
+                            Row::new()
+                                .spacing(10)
+                                .align_y(Alignment::Center)
+                                .push(p1_bold("Status"))
+                                .push(icon::clock_icon().style(theme::text::warning))
+                                .push(text("Partially signed").bold().style(theme::text::warning))
+                                .push(text("  signed by"))
+                                .push(signed.iter().fold(Row::new().spacing(5), |row, fg| {
+                                    row.push(container_from_fg(*fg, keys_aliases))
+                                })),
+                        )
+                        .direction(scrollable::Direction::Horizontal(
+                            scrollable::Scrollbar::new().width(2).scroller_width(2),
+                        )),
+                    )
+                    .padding(15),
+                );
+            }
+            Container::new(col.push(collapse))
         })
         .into()
+}
+
+/// Header for the collapsible "what's still required" section of a PSBT that
+/// can't be broadcast yet. With nothing signed it shows the red "Not ready";
+/// once there are signatures the "Partially signed" banner above carries the
+/// status, so this becomes a neutral "Remaining requirements" toggle.
+fn requirements_header<'a, T: 'a>(
+    is_partial: bool,
+    collapse_icon: coincube_ui::widget::Text<'a>,
+) -> Button<'a, T> {
+    // When partial, the "Partially signed" banner above is the status line, so
+    // this header is just a neutral "Remaining requirements" toggle (no second
+    // "Status" label). With nothing signed it is the primary "Not ready" line.
+    let content = if is_partial {
+        Row::new()
+            .align_y(Alignment::Center)
+            .spacing(20)
+            .push(
+                text("Remaining requirements")
+                    .style(theme::text::secondary)
+                    .width(Length::Fill),
+            )
+            .push(collapse_icon)
+    } else {
+        Row::new()
+            .align_y(Alignment::Center)
+            .spacing(20)
+            .push(p1_bold("Status"))
+            .push(
+                Row::new()
+                    .spacing(5)
+                    .align_y(Alignment::Center)
+                    .push(icon::square_cross_icon().style(theme::text::error))
+                    .push(text("Not ready").style(theme::text::error))
+                    .width(Length::Fill),
+            )
+            .push(collapse_icon)
+    };
+    Button::new(content)
+        .padding(15)
+        .width(Length::Fill)
+        .style(theme::button::transparent_border)
 }
 
 // Display a fingerprint first by its alias if there is any, or in hex otherwise.
@@ -1205,7 +1233,10 @@ pub fn sign_action<'a>(
             .width(Length::Fill)
             .align_x(Alignment::Center),
     )
-    .width(Length::Fixed(500.0))
+    // Wider than the other action cards so long device names (e.g. "Ledger
+    // Nano S Plus #…") and the "Processing… / Please check your device"
+    // prompt don't crowd each other while signing.
+    .width(Length::Fixed(620.0))
     .into()
 }
 
