@@ -128,6 +128,12 @@ pub struct PendingSession {
 /// and the create-session RPC completing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingSessionStatus {
+    /// Resolved as a keychain signer but no session requested yet. The
+    /// unified picker renders `Idle` rows as clickable "request signature"
+    /// entries; a session is only created once the user clicks the row (or
+    /// "Request from everyone"). Distinct from `Creating`, which means a
+    /// `CreateSigningSession` RPC is already in flight.
+    Idle,
     /// Waiting on `CreateSigningSession` to return.
     Creating,
     Pending,
@@ -173,10 +179,17 @@ impl PendingSessionStatus {
         }
     }
 
+    /// True for a signer that has been resolved but not yet requested. The
+    /// unified picker renders these as clickable rows rather than status text.
+    pub fn is_idle(&self) -> bool {
+        matches!(self, Self::Idle)
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Creating => "Creating…",
-            Self::Pending => "Waiting for signer…",
+            Self::Idle => "",
+            Self::Creating => "Requesting…",
+            Self::Pending => "Requested…",
             Self::Delivered => "Delivered",
             Self::Viewed => "Viewed",
             Self::Approved => "Approved",
@@ -412,8 +425,40 @@ impl KeychainSignModal {
         matches!(self.phase, Phase::Loading | Phase::Resolving)
     }
 
+    /// True once `ResolveSigners` has returned (or the flow finished): the
+    /// `pending` list is now the authoritative set of keychain rows. Before
+    /// this, the unified picker falls back to descriptor-derived placeholder
+    /// rows so keychain signers are still visible while resolving.
+    pub fn is_resolved(&self) -> bool {
+        matches!(self.phase, Phase::Sessions | Phase::AllDone)
+    }
+
     pub fn is_done(&self) -> bool {
         matches!(self.phase, Phase::AllDone)
+    }
+
+    /// Banner text describing a degraded realtime stream while keychain
+    /// sessions are still in flight. `None` when the stream is healthy or no
+    /// session is pending. Surfaced by the unified picker (the standalone
+    /// keychain modal used to render this itself).
+    pub fn stream_health_banner(&self) -> Option<String> {
+        let has_pending_nonterminal = self.pending.iter().any(|p| !p.status.is_terminal());
+        if !has_pending_nonterminal {
+            return None;
+        }
+        match &self.stream_health {
+            crate::app::ConnectionStatus::Connecting => Some(
+                "Connection lost — reconnecting. Your signing requests are still active \
+                 server-side; updates will catch up once the connection comes back."
+                    .to_string(),
+            ),
+            crate::app::ConnectionStatus::Error(e) => Some(format!(
+                "Connection error ({}). Your signing requests are still active server-side; \
+                 reconnect to see updates.",
+                e,
+            )),
+            _ => None,
+        }
     }
 
     /// True when every pending session has both reached a
@@ -439,7 +484,12 @@ impl KeychainSignModal {
     /// `Cancelled` once their `SessionCancelled` reply lands. Dropping
     /// the modal before they drain orphans the sessions server-side.
     pub fn has_undrained_sessions(&self) -> bool {
-        self.pending.iter().any(|p| !p.status.is_terminal())
+        // Idle rows never started a session, so there is nothing to drain for
+        // them — only rows with an actual in-flight/awaiting-cancel session
+        // keep the dismissed modal mounted.
+        self.pending
+            .iter()
+            .any(|p| !p.status.is_terminal() && !p.status.is_idle())
     }
 
     /// Mark the modal dismissed-but-mounted. The view hides immediately
@@ -456,7 +506,10 @@ impl KeychainSignModal {
     fn close_if_dismissed_and_drained(&mut self) -> Task<Message> {
         if self.dismissed
             && !self.pending.is_empty()
-            && self.pending.iter().all(|p| p.status.is_terminal())
+            && self
+                .pending
+                .iter()
+                .all(|p| p.status.is_terminal() || p.status.is_idle())
         {
             self.phase = Phase::AllDone;
             return Task::done(Message::Updated(Ok(())));
@@ -602,12 +655,11 @@ impl KeychainSignModal {
                 required = %required_summary,
                 "No Keychain signers required for this transaction"
             );
+            // No keychain rows to show. In the unified picker this isn't an
+            // error — the user simply signs with the local signers listed
+            // alongside — so we leave `error` unset (the standalone modal used
+            // to surface a "use the Sign button" message here).
             self.phase = Phase::AllDone;
-            self.error = Some(
-                "No Keychain signers are required for this transaction. \
-                 Use the Sign button to sign locally."
-                    .to_string(),
-            );
             return Task::none();
         }
         tracing::info!(
@@ -682,18 +734,12 @@ impl KeychainSignModal {
         // classified signer so we can populate the label / fingerprint
         // on the pending row. Targets carry `key_fingerprint` so the
         // join is straightforward.
-        let mut tasks = Vec::new();
-        let psbt_bytes = self.psbt.serialize();
-        let vault_id = resp
-            .targets
-            .first()
-            .map(|_| self.vault_id.unwrap_or(0).to_string())
-            .unwrap_or_default();
-        let descriptor_id = self.descriptor_id.clone();
-        let tokens = self.tokens.clone();
-        let grpc_url = self.grpc_url.clone();
-        let desktop_device_id = self.desktop_device_id.clone();
-
+        //
+        // The rows start `Idle`: unlike the original fan-out flow we do NOT
+        // create a `SigningSession` here. Sessions are created on demand when
+        // the user clicks a row in the unified picker (`request_signer`) or
+        // presses "Request from everyone" (`request_from_everyone`).
+        //
         // Owned clone of the classification rows so the per-target
         // dispatch below can borrow without lifetime gymnastics.
         let by_fp: HashMap<String, RequiredSigner> = classified
@@ -735,50 +781,113 @@ impl KeychainSignModal {
                 fingerprint,
                 device_id: target.device_id.clone(),
                 label,
-                status: PendingSessionStatus::Creating,
+                status: PendingSessionStatus::Idle,
                 error: None,
                 cancel_requested: false,
                 signed_psbt_persisted: false,
                 signed_psbt_fetching: false,
             });
-
-            let req = CreateSigningSessionRequest {
-                request_id: uuid_v4(),
-                vault_id: vault_id.clone(),
-                descriptor_id: descriptor_id.clone(),
-                psbt: psbt_bytes.clone(),
-                targets: vec![target.clone()],
-                note: String::new(),
-                ttl: Some(prost_types::Duration {
-                    seconds: 24 * 60 * 60,
-                    nanos: 0,
-                }),
-                require_user_presence: false,
-                // Owner-branch signing; the heir recovery sweep sets this true.
-                is_recovery_spend: false,
-            };
-            let tokens = tokens.clone();
-            let grpc_url = grpc_url.clone();
-            let desktop_device_id = desktop_device_id.clone();
-            tasks.push(Task::perform(
-                async move {
-                    let channel = crate::services::connect::grpc::create_channel(&grpc_url)
-                        .await
-                        .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
-                    let access_token = tokens.read().await.access_token.clone();
-                    let mut client = GrpcSessionClient::new(
-                        channel,
-                        AuthInterceptor::with_device_id(&access_token, desktop_device_id),
-                    );
-                    client
-                        .create_signing_session(req)
-                        .await
-                        .map_err(OpError::from_status)
-                },
-                move |r| Message::KeychainSign(KeychainSignMessage::SessionCreated(fingerprint, r)),
-            ));
         }
 
+        Task::none()
+    }
+
+    /// Build the `CreateSigningSession` task for one already-populated pending
+    /// row, resetting its state to `Creating`. Shared by the on-demand request
+    /// paths (`request_signer`, `request_from_everyone`) and the failed-session
+    /// `retry_signer`. The caller is responsible for having gated on the row's
+    /// current status; this unconditionally (re)starts a session for it.
+    fn create_session_for(&mut self, index: usize) -> Task<Message> {
+        let Some(entry) = self.pending.get_mut(index) else {
+            return Task::none();
+        };
+        let fingerprint = entry.fingerprint;
+        let device_id = entry.device_id.clone();
+        let key_id = entry.key_id;
+        // Reset state to creating; clear any previous error and stale
+        // cancel intent (an explicit request overrides a prior cancel-all
+        // so the new session isn't auto-cancelled). A retried/re-requested
+        // session produces a fresh signature that must be fetched + persisted
+        // again before this row counts as done.
+        entry.status = PendingSessionStatus::Creating;
+        entry.session_id.clear();
+        entry.error = None;
+        entry.cancel_requested = false;
+        entry.signed_psbt_persisted = false;
+        entry.signed_psbt_fetching = false;
+
+        let psbt_bytes = self.psbt.serialize();
+        let vault_id = self.vault_id.unwrap_or(0).to_string();
+        let descriptor_id = self.descriptor_id.clone();
+        let tokens = self.tokens.clone();
+        let grpc_url = self.grpc_url.clone();
+        let desktop_device_id = self.desktop_device_id.clone();
+        Task::perform(
+            async move {
+                let channel = crate::services::connect::grpc::create_channel(&grpc_url)
+                    .await
+                    .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
+                let access_token = tokens.read().await.access_token.clone();
+                let mut client = GrpcSessionClient::new(
+                    channel,
+                    AuthInterceptor::with_device_id(&access_token, desktop_device_id),
+                );
+                let req = CreateSigningSessionRequest {
+                    request_id: uuid_v4(),
+                    vault_id,
+                    descriptor_id,
+                    psbt: psbt_bytes,
+                    targets: vec![crate::services::connect::grpc::connect_v1::SignerTarget {
+                        device_id,
+                        key_fingerprint: fingerprint_as_str(&fingerprint),
+                        key_id: key_id.to_string(),
+                    }],
+                    note: String::new(),
+                    ttl: Some(prost_types::Duration {
+                        seconds: 24 * 60 * 60,
+                        nanos: 0,
+                    }),
+                    require_user_presence: false,
+                    // Owner-branch signing; the heir recovery sweep sets this true.
+                    is_recovery_spend: false,
+                };
+                client
+                    .create_signing_session(req)
+                    .await
+                    .map_err(OpError::from_status)
+            },
+            move |r| Message::KeychainSign(KeychainSignMessage::SessionCreated(fingerprint, r)),
+        )
+    }
+
+    /// Request a signature from one specific idle keychain signer (the user
+    /// clicked its row in the unified picker). No-op unless the row is `Idle`.
+    pub fn request_signer(&mut self, fingerprint: Fingerprint) -> Task<Message> {
+        let Some(index) = self
+            .pending
+            .iter()
+            .position(|p| p.fingerprint == fingerprint && p.status.is_idle())
+        else {
+            return Task::none();
+        };
+        self.create_session_for(index)
+    }
+
+    /// Request a signature from every idle keychain signer at once — the
+    /// explicit "Request from everyone" affordance. Preserves the original
+    /// fan-out behaviour but triggered by the user rather than on launch.
+    pub fn request_from_everyone(&mut self) -> Task<Message> {
+        let idle: Vec<usize> = self
+            .pending
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.status.is_idle())
+            .map(|(i, _)| i)
+            .collect();
+        let tasks: Vec<Task<Message>> = idle
+            .into_iter()
+            .map(|i| self.create_session_for(i))
+            .collect();
         Task::batch(tasks)
     }
 
@@ -1270,7 +1379,7 @@ impl KeychainSignModal {
     /// `target_key_id`. The user must have manually addressed the
     /// underlying problem on the signer's device.
     pub fn retry_signer(&mut self, index: usize) -> Task<Message> {
-        let Some(entry) = self.pending.get_mut(index) else {
+        let Some(entry) = self.pending.get(index) else {
             return Task::none();
         };
         // Only the recoverable failure states are retryable. Anything
@@ -1285,63 +1394,7 @@ impl KeychainSignModal {
         ) {
             return Task::none();
         }
-        let fingerprint = entry.fingerprint;
-        let device_id = entry.device_id.clone();
-        let key_id = entry.key_id;
-        // Reset state to creating; clear any previous error and stale
-        // cancel intent (an explicit retry overrides a prior
-        // cancel-all so the new session isn't auto-cancelled).
-        entry.status = PendingSessionStatus::Creating;
-        entry.session_id.clear();
-        entry.error = None;
-        entry.cancel_requested = false;
-        // The retried session produces a fresh signature that must be
-        // fetched + persisted again before this row counts as done.
-        entry.signed_psbt_persisted = false;
-        entry.signed_psbt_fetching = false;
-
-        let psbt_bytes = self.psbt.serialize();
-        let vault_id = self.vault_id.unwrap_or(0).to_string();
-        let descriptor_id = self.descriptor_id.clone();
-        let tokens = self.tokens.clone();
-        let grpc_url = self.grpc_url.clone();
-        let desktop_device_id = self.desktop_device_id.clone();
-        Task::perform(
-            async move {
-                let channel = crate::services::connect::grpc::create_channel(&grpc_url)
-                    .await
-                    .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
-                let access_token = tokens.read().await.access_token.clone();
-                let mut client = GrpcSessionClient::new(
-                    channel,
-                    AuthInterceptor::with_device_id(&access_token, desktop_device_id),
-                );
-                let req = CreateSigningSessionRequest {
-                    request_id: uuid_v4(),
-                    vault_id,
-                    descriptor_id,
-                    psbt: psbt_bytes,
-                    targets: vec![crate::services::connect::grpc::connect_v1::SignerTarget {
-                        device_id,
-                        key_fingerprint: fingerprint_as_str(&fingerprint),
-                        key_id: key_id.to_string(),
-                    }],
-                    note: String::new(),
-                    ttl: Some(prost_types::Duration {
-                        seconds: 24 * 60 * 60,
-                        nanos: 0,
-                    }),
-                    require_user_presence: false,
-                    // Owner-branch signing; the heir recovery sweep sets this true.
-                    is_recovery_spend: false,
-                };
-                client
-                    .create_signing_session(req)
-                    .await
-                    .map_err(OpError::from_status)
-            },
-            move |r| Message::KeychainSign(KeychainSignMessage::SessionCreated(fingerprint, r)),
-        )
+        self.create_session_for(index)
     }
 }
 
@@ -1433,6 +1486,12 @@ impl KeychainSignModal {
             }
             Message::View(view::Message::Spend(SpendTxMessage::RetryKeychainSigner(idx))) => {
                 return self.retry_signer(idx);
+            }
+            Message::View(view::Message::Spend(SpendTxMessage::SelectKeychainSigner(fp))) => {
+                return self.request_signer(fp);
+            }
+            Message::View(view::Message::Spend(SpendTxMessage::RequestFromEveryone)) => {
+                return self.request_from_everyone();
             }
             _ => {}
         }

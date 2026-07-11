@@ -7,7 +7,6 @@ use iced::{
 };
 
 use coincube_core::border_wallet::{CellRef, WordGrid, PATTERN_LENGTH};
-use coincube_core::descriptors::CoincubeDescriptor;
 use coincube_core::{
     descriptors::{CoincubePolicy, PathInfo, PathSpendInfo},
     miniscript::bitcoin::{
@@ -24,7 +23,7 @@ use coincube_ui::{
         amount::*,
         badge, button, card,
         collapse::Collapse,
-        form, hw, separation,
+        form, separation,
         text::{self, *},
     },
     icon, theme,
@@ -36,7 +35,7 @@ use crate::{
         cache::Cache,
         menu::{Menu, VaultSubMenu},
         state::vault::psbt::{BorderWalletReconstructionState, ReconStep},
-        view::{dashboard, message::*, vault::hw::hw_list_view, vault::label},
+        view::{dashboard, message::*, vault::label},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
@@ -513,27 +512,16 @@ pub fn spend_overview_view<'a>(
                 Row::new()
                     .push(Space::new().width(Length::Fill))
                     .push(if tx.path_ready().is_none() {
-                        // While the path threshold isn't met, expose
-                        // both Sign (local signers: HW, master, border)
-                        // and Sign via Keychain (Connect-registered
-                        // signers on contacts' phones). The Keychain
-                        // button stays enabled even when Connect isn't
-                        // ready — the modal shows a clean error in
-                        // that case, which is better than a confusing
-                        // disabled state with no hint about why.
+                        // A single "Sign" entry point opens the unified
+                        // picker, which lists every signer — local (HW,
+                        // master, border) and Keychain (contacts' phones) —
+                        // as its own row.
                         Some(
-                            Row::new()
-                                .spacing(10)
-                                .push(
-                                    button::secondary(None, "Sign via Keychain")
-                                        .on_press(Message::Spend(SpendTxMessage::SignKeychain))
-                                        .width(Length::Fixed(200.0)),
-                                )
-                                .push(
-                                    button::primary(None, "Sign")
-                                        .on_press(Message::Spend(SpendTxMessage::Sign))
-                                        .width(Length::Fixed(150.0)),
-                                ),
+                            Row::new().push(
+                                button::primary(None, "Sign")
+                                    .on_press(Message::Spend(SpendTxMessage::Sign))
+                                    .width(Length::Fixed(150.0)),
+                            ),
                         )
                     } else {
                         Some(
@@ -1165,92 +1153,340 @@ fn change_view(
         .into()
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn sign_action<'a>(
-    hws: &'a [HardwareWallet],
-    descriptor: &CoincubeDescriptor,
-    signer: Option<Fingerprint>,
-    signer_alias: Option<&'a String>,
-    signed: &HashSet<Fingerprint>,
-    signing: &HashSet<Fingerprint>,
-    recovery_timelock: Option<u16>,
-    border_wallet_fingerprints: &'a HashSet<Fingerprint>,
-    keys_aliases: &'a HashMap<Fingerprint, String>,
-) -> Element<'a, Message> {
-    let mut signers_col = Column::new()
-        .push(
-            text("Select signing device to sign with:")
-                .bold()
-                .width(Length::Fill),
-        )
-        .spacing(10)
-        .push(
-            hws.iter()
-                .enumerate()
-                .fold(Column::new().spacing(10), |col, (i, hw)| {
-                    let (signed, signing, can_sign) =
-                        hw.fingerprint().map_or((false, false, false), |f| {
-                            (
-                                signed.contains(&f),
-                                signing.contains(&f),
-                                descriptor.contains_fingerprint_in_path(f, recovery_timelock),
-                            )
-                        });
-                    col.push(hw_list_view(i, hw, signed, signing, can_sign))
-                }),
-        )
-        .push({
-            signer.map(|fingerprint| {
-                let can_sign =
-                    descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);
-                let btn = Button::new(if signed.contains(&fingerprint) {
-                    hw::sign_success_master_signer(fingerprint, signer_alias)
-                } else {
-                    hw::master_signer(fingerprint, signer_alias, can_sign)
-                })
-                .padding(10)
-                .style(theme::button::secondary)
-                .width(Length::Fill);
-                if can_sign {
-                    btn.on_press(Message::Spend(SpendTxMessage::SelectMasterSigner))
-                } else {
-                    btn
-                }
-            })
-        })
-        .width(Length::Fill);
+/// A Keychain signer row for the unified signing picker. Built by
+/// `SignModal` from the nested Keychain flow once resolved, or derived from
+/// the descriptor before/without Connect. `status_label == None` means the
+/// signer is idle (clickable to request a signature); `Some` shows live
+/// session state.
+pub enum SigningKeyKind {
+    Master,
+    Hardware,
+    BorderWallet,
+    Keychain,
+    /// Not identifiable from local data — an external key whose device isn't
+    /// connected and which Connect hasn't resolved. Shown disabled rather than
+    /// guessed as hardware or keychain.
+    Unknown,
+}
 
-    // Add border wallet keys
-    for fg in border_wallet_fingerprints {
-        let can_sign = descriptor.contains_fingerprint_in_path(*fg, recovery_timelock);
-        let alias = keys_aliases.get(fg);
-        let btn = Button::new(if signed.contains(fg) {
-            hw::sign_success_border_wallet(*fg, alias)
-        } else {
-            hw::border_wallet_signer(*fg, alias, can_sign)
-        })
-        .padding(10)
-        .style(theme::button::secondary)
-        .width(Length::Fill);
-        signers_col = signers_col.push(if can_sign && !signed.contains(fg) {
-            btn.on_press(Message::Spend(SpendTxMessage::SelectBorderWallet(*fg)))
-        } else {
-            btn
-        });
+/// What clicking an available key row does.
+pub enum SigningKeyAction {
+    Master,
+    Hardware(usize),
+    BorderWallet,
+    Keychain,
+}
+
+pub enum SigningKeyState {
+    /// Signature already collected for this key.
+    Signed,
+    /// A signing operation is under way; carries status text.
+    InProgress(String),
+    /// Ready to sign — carries the action to fire.
+    Available(SigningKeyAction),
+    /// Failed keychain session; carries the `pending` index for retry.
+    Retry(usize),
+    /// Can't sign right now; carries the reason shown on the row.
+    Disabled(String),
+    /// Unidentified key while Connect is signed out: carries a reason and a
+    /// clickable "Sign in to Connect" affordance so the user can authenticate
+    /// (which then resolves any Keychain signers among these rows).
+    NeedsSignIn(String),
+}
+
+pub struct SigningKeyRow {
+    pub fingerprint: Fingerprint,
+    pub label: String,
+    pub kind: SigningKeyKind,
+    pub state: SigningKeyState,
+}
+
+/// One spending-path card in the signing picker, mirroring the vault-creation
+/// "Set keys" layout: a titled, colored card with a subtitle, per-key rows and
+/// a "k out of n" threshold badge.
+pub struct SigningPath {
+    pub title: String,
+    pub is_primary: bool,
+    /// Recovery timelock (in blocks) for the subtitle; `None` for the primary.
+    pub sequence: Option<u16>,
+    /// Whether this is the path the transaction actually spends through. Keys
+    /// in inactive paths render disabled.
+    pub active: bool,
+    pub threshold: usize,
+    pub total: usize,
+    pub collected: usize,
+    pub keys: Vec<SigningKeyRow>,
+    /// True when the active path has ≥1 idle keychain signer, enabling the
+    /// "Request from everyone" batch affordance.
+    pub can_request_all: bool,
+    /// Whether the card is expanded (keys shown). Active paths are always
+    /// expanded; inactive paths default to collapsed and toggle via
+    /// `ToggleSpendPath`.
+    pub expanded: bool,
+}
+
+/// Short human duration for a recovery timelock, e.g. "1y 2m". Mirrors the
+/// creation flow's `format_sequence_duration` without the cross-module dep.
+fn humanize_timelock(sequence: u16) -> String {
+    let mut n_minutes = sequence as u32 * 10;
+    let n_years = n_minutes / 525_960;
+    n_minutes -= n_years * 525_960;
+    let n_months = n_minutes / 43_830;
+    n_minutes -= n_months * 43_830;
+    let n_days = n_minutes / 1_440;
+    n_minutes -= n_days * 1_440;
+    let n_hours = n_minutes / 60;
+    n_minutes -= n_hours * 60;
+    [
+        (n_years, "y"),
+        (n_months, "m"),
+        (n_days, "d"),
+        (n_hours, "h"),
+        (n_minutes, "mn"),
+    ]
+    .iter()
+    .filter(|(n, _)| *n > 0)
+    .map(|(n, unit)| format!("{}{}", n, unit))
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+fn signing_key_kind_caption(kind: &SigningKeyKind) -> Option<&'static str> {
+    match kind {
+        SigningKeyKind::Master => Some("This computer"),
+        SigningKeyKind::Hardware => Some("Hardware wallet"),
+        SigningKeyKind::BorderWallet => Some("Border Wallet"),
+        SigningKeyKind::Keychain => Some("Keychain"),
+        SigningKeyKind::Unknown => None,
+    }
+}
+
+/// Render one signer row inside a spending-path card. The key icon is colored
+/// with the path color, matching the creation "Set keys" look.
+fn signing_key_row(row: &SigningKeyRow, color: iced::Color) -> Element<'static, Message> {
+    let key_icon = match row.kind {
+        SigningKeyKind::Hardware => icon::usb_drive_icon(),
+        _ => icon::round_key_icon(),
+    }
+    .size(text::H3_SIZE)
+    .style(theme::text::adaptive(color));
+
+    let mut info = Column::new()
+        .spacing(2)
+        .width(Length::Fill)
+        .push(p1_bold(row.label.clone()));
+    if let Some(caption) = signing_key_kind_caption(&row.kind) {
+        info = info.push(text::caption(caption));
     }
 
+    let right: Element<Message> = match &row.state {
+        SigningKeyState::Signed => Row::new()
+            .spacing(5)
+            .align_y(Alignment::Center)
+            .push(p1_regular("Signed").color(color::GREEN))
+            .push(icon::check_icon().style(theme::text::success))
+            .into(),
+        SigningKeyState::InProgress(status) => {
+            p1_regular(status.clone()).style(theme::text::secondary).into()
+        }
+        SigningKeyState::Disabled(reason) => {
+            p1_regular(reason.clone()).style(theme::text::secondary).into()
+        }
+        SigningKeyState::NeedsSignIn(reason) => Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(p1_regular(reason.clone()).style(theme::text::secondary))
+            .push(
+                // Bubbles straight to the tab (which opens/focuses the Home
+                // tab for sign-in) without routing through the PSBT panel, so
+                // the picker stays open behind the new tab.
+                button::secondary(None, "Sign in to Connect")
+                    .on_press(Message::OpenConnectSignIn),
+            )
+            .into(),
+        SigningKeyState::Retry(idx) => button::secondary(Some(icon::reload_icon()), "Retry")
+            .on_press(Message::Spend(SpendTxMessage::RetryKeychainSigner(*idx)))
+            .into(),
+        SigningKeyState::Available(action) => {
+            let (msg, label) = match action {
+                SigningKeyAction::Master => {
+                    (Message::Spend(SpendTxMessage::SelectMasterSigner), "Sign")
+                }
+                SigningKeyAction::Hardware(i) => (Message::SelectHardwareWallet(*i), "Sign"),
+                SigningKeyAction::BorderWallet => (
+                    Message::Spend(SpendTxMessage::SelectBorderWallet(row.fingerprint)),
+                    "Sign",
+                ),
+                SigningKeyAction::Keychain => (
+                    Message::Spend(SpendTxMessage::SelectKeychainSigner(row.fingerprint)),
+                    "Request",
+                ),
+            };
+            button::primary(None, label).on_press(msg).into()
+        }
+    };
+
     card::simple(
-        Column::new()
-            .push(signers_col)
-            .spacing(20)
+        Row::new()
+            .spacing(10)
             .width(Length::Fill)
-            .align_x(Alignment::Center),
+            .align_y(Alignment::Center)
+            .push(key_icon)
+            .push(info)
+            .push(right),
     )
-    // Wider than the other action cards so long device names (e.g. "Ledger
-    // Nano S Plus #…") and the "Processing… / Please check your device"
-    // prompt don't crowd each other while signing.
-    .width(Length::Fixed(620.0))
     .into()
+}
+
+/// The "k out of n" badge with mini key icons, adapted to show collected
+/// signatures. Colored icons = signatures collected; text = collected / threshold.
+fn signing_threshold_badge<'a>(
+    color: iced::Color,
+    collected: usize,
+    threshold: usize,
+    total: usize,
+) -> Element<'a, Message> {
+    card::simple(
+        Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push((0..total).fold(Row::new(), |row, i| {
+                if i < collected {
+                    row.push(icon::round_key_icon().style(theme::text::adaptive(color)))
+                } else {
+                    row.push(icon::round_key_icon())
+                }
+            }))
+            .push(text(format!(
+                "{} of {} signature{} collected",
+                collected,
+                threshold,
+                if threshold == 1 { "" } else { "s" }
+            ))),
+    )
+    .padding(10)
+    .into()
+}
+
+/// Render one spending-path card, mirroring the creation "Set keys" page. The
+/// active path is fully expanded; inactive paths default to a collapsed header
+/// (title + subtitle + note) with a caret, toggled via `ToggleSpendPath`.
+fn signing_path_card(path: SigningPath) -> Element<'static, Message> {
+    let SigningPath {
+        title,
+        is_primary,
+        sequence,
+        active,
+        threshold,
+        total,
+        collected,
+        keys,
+        can_request_all,
+        expanded,
+    } = path;
+    let color = if is_primary { color::GREEN } else { color::BLUE };
+    let subtitle_text = if is_primary {
+        "Able to move the funds at any time.".to_string()
+    } else {
+        format!(
+            "Available after inactivity of ~{}",
+            sequence.map(humanize_timelock).unwrap_or_default()
+        )
+    };
+
+    // Header. For an inactive path it's a toggle button (with a caret and the
+    // "not available" note); for the active path it's a plain title + subtitle.
+    let header: Element<Message> = if active {
+        Column::new()
+            .spacing(6)
+            .push(Row::new().push(Space::new().width(10)).push(p1_bold(title)))
+            .push(
+                Row::new()
+                    .padding(5)
+                    .push(p1_regular(subtitle_text).style(theme::text::secondary)),
+            )
+            .into()
+    } else {
+        let caret = if expanded {
+            icon::collapsed_icon()
+        } else {
+            icon::collapse_icon()
+        };
+        Button::new(
+            Column::new()
+                .spacing(6)
+                .push(
+                    Row::new()
+                        .align_y(Alignment::Center)
+                        .spacing(20)
+                        .push(
+                            Column::new()
+                                .spacing(2)
+                                .width(Length::Fill)
+                                .push(p1_bold(title))
+                                .push(p1_regular(subtitle_text).style(theme::text::secondary)),
+                        )
+                        .push(caret),
+                )
+                .push(
+                    p2_regular("This spending path isn't available for this transaction.")
+                        .style(theme::text::secondary),
+                ),
+        )
+        .padding(10)
+        .width(Length::Fill)
+        .style(theme::button::transparent_border)
+        .on_press(Message::Spend(SpendTxMessage::ToggleSpendPath(
+            sequence.unwrap_or(0),
+        )))
+        .into()
+    };
+
+    let mut col = Column::new().spacing(10).push(header);
+
+    if expanded {
+        let mut keys_col = Column::new().spacing(5);
+        for key in &keys {
+            keys_col = keys_col.push(signing_key_row(key, color));
+        }
+        col = col
+            .push(keys_col)
+            .push(signing_threshold_badge(color, collected, threshold, total));
+        if can_request_all {
+            col = col.push(
+                button::secondary(None, "Request from everyone")
+                    .on_press(Message::Spend(SpendTxMessage::RequestFromEveryone))
+                    .width(Length::Fill),
+            );
+        }
+    }
+
+    Container::new(col)
+        .padding(10)
+        .style(theme::card::border)
+        .into()
+}
+
+/// The unified signing picker: spending-path cards (primary + recovery), each
+/// listing its keys with per-key signability, mirroring the vault-creation
+/// "Set keys" layout.
+pub fn sign_action<'a>(
+    paths: Vec<SigningPath>,
+    keychain_notices: Vec<String>,
+) -> Element<'a, Message> {
+    let mut col = Column::new().spacing(15).width(Length::Fill);
+    for notice in &keychain_notices {
+        col = col.push(p1_regular(notice.clone()).style(theme::text::secondary));
+    }
+    for path in paths {
+        col = col.push(signing_path_card(path));
+    }
+    card::simple(scrollable(col.padding(5)))
+        // Wide enough that long device names, the per-path key rows and their
+        // "Sign in to Connect" affordances don't crowd each other.
+        .width(Length::Fixed(780.0))
+        .max_height(760.0)
+        .into()
 }
 
 /// Render the Border Wallet reconstruction wizard within the signing modal.

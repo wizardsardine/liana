@@ -2180,7 +2180,9 @@ impl State for GlobalHome {
 
                                     self.transfer_spend_tx = Some(spend_tx);
 
-                                    // Create the SignModal
+                                    // Create the SignModal. This send-to-self
+                                    // transfer signs locally only — no nested
+                                    // Keychain flow.
                                     let sign_modal = SignModal::new(
                                         std::collections::HashSet::new(),
                                         wallet,
@@ -2188,6 +2190,8 @@ impl State for GlobalHome {
                                         network,
                                         true,
                                         None,
+                                        None,
+                                        false,
                                     );
 
                                     self.modal = Modal::Sign(Box::new(sign_modal));
