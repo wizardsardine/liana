@@ -307,7 +307,25 @@ impl PsbtState {
                     }));
                     return Task::none();
                 }
-                // Ready: forward to the picker's nested Keychain flow.
+                // Connect is ready. If the picker was opened before Connect
+                // came up, its nested Keychain flow is still `None` — build and
+                // launch it now (checked without holding a mutable borrow so
+                // `build_keychain_if_ready` can read `self.wallet`/`self.tx`).
+                // This click just kicks off the resolve; the keychain rows
+                // become actionable once it returns.
+                let needs_init = matches!(
+                    &self.modal,
+                    Some(PsbtModal::Sign(sign)) if sign.keychain_needs_init()
+                );
+                if needs_init {
+                    let (keychain, launch) =
+                        build_keychain_if_ready(cache, &self.wallet, &self.tx.psbt);
+                    if let Some(PsbtModal::Sign(sign)) = self.modal.as_mut() {
+                        sign.set_keychain(keychain);
+                    }
+                    return launch;
+                }
+                // Ready and initialized: forward to the picker's nested flow.
                 if let Some(modal) = self.modal.as_mut() {
                     return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
                 }
@@ -703,7 +721,10 @@ fn build_keychain_if_ready(
     cache: &Cache,
     wallet: &Arc<Wallet>,
     psbt: &Psbt,
-) -> (Option<super::keychain_sign::KeychainSignModal>, Task<Message>) {
+) -> (
+    Option<super::keychain_sign::KeychainSignModal>,
+    Task<Message>,
+) {
     if !keychain_connect_missing(cache).is_empty() {
         return (None, Task::none());
     }
@@ -993,9 +1014,10 @@ pub struct SignModal {
     /// Home send-to-self transfer), which suppresses keychain rows entirely
     /// regardless of Connect state.
     keychain_enabled: bool,
-    /// Recovery-path timelocks (sequences) the user has expanded. Inactive
-    /// spending-path cards default to collapsed; toggled via `ToggleSpendPath`.
-    expanded_paths: HashSet<u16>,
+    /// Spending-path identities the user has expanded, keyed the same way as
+    /// `ToggleSpendPath`: `None` = primary, `Some(seq)` = a recovery path.
+    /// Inactive cards default to collapsed.
+    expanded_paths: HashSet<Option<u16>>,
 }
 
 impl SignModal {
@@ -1059,6 +1081,19 @@ impl SignModal {
                 .is_none_or(|k| !k.has_undrained_sessions())
     }
 
+    /// True when this picker offers Keychain signing but the nested flow
+    /// hasn't been built yet — the picker was opened before Connect was ready.
+    /// Once Connect comes up, the panel builds + launches it on demand.
+    pub fn keychain_needs_init(&self) -> bool {
+        self.keychain_enabled && self.keychain.is_none()
+    }
+
+    /// Attach a freshly-built (and launched) nested Keychain flow. Called once
+    /// Connect becomes ready for a picker that opened without it.
+    pub fn set_keychain(&mut self, keychain: Option<super::keychain_sign::KeychainSignModal>) {
+        self.keychain = keychain;
+    }
+
     /// Best-effort cancel of any keychain sessions still in flight, used when
     /// the picker is about to close because the threshold was met so those
     /// sessions don't outlive it server-side.
@@ -1120,7 +1155,10 @@ impl SignModal {
             if matches!(state, SigningKeyState::Signed) {
                 collected += 1;
             }
-            if matches!(state, SigningKeyState::Available(SigningKeyAction::Keychain)) {
+            if matches!(
+                state,
+                SigningKeyState::Available(SigningKeyAction::Keychain)
+            ) {
                 idle_keychain += 1;
             }
             keys.push(SigningKeyRow {
@@ -1143,8 +1181,9 @@ impl SignModal {
             // i.e. more than one idle Keychain signer to request at once.
             can_request_all: active && self.keychain.is_some() && idle_keychain > 1,
             // Active path is always expanded; inactive paths start collapsed
-            // and expand only when the user toggles them.
-            expanded: active || sequence.is_some_and(|s| self.expanded_paths.contains(&s)),
+            // and expand only when the user toggles them (keyed by `sequence`:
+            // None = primary, Some(seq) = recovery).
+            expanded: active || self.expanded_paths.contains(&sequence),
         }
     }
 
@@ -1157,25 +1196,34 @@ impl SignModal {
         &self,
         fp: Fingerprint,
         active: bool,
-    ) -> (view::vault::psbt::SigningKeyKind, view::vault::psbt::SigningKeyState) {
+    ) -> (
+        view::vault::psbt::SigningKeyKind,
+        view::vault::psbt::SigningKeyState,
+    ) {
         use super::keychain_sign::PendingSessionStatus;
-        use view::vault::psbt::{SigningKeyAction as Act, SigningKeyKind as Kind, SigningKeyState as St};
+        use view::vault::psbt::{
+            SigningKeyAction as Act, SigningKeyKind as Kind, SigningKeyState as St,
+        };
 
         let master_fp = self.wallet.signer.as_ref().map(|s| s.fingerprint());
         // Keychain session for this key, only once the flow has resolved.
-        let kc = self.keychain.as_ref().filter(|k| k.is_resolved()).and_then(|k| {
-            k.pending()
-                .iter()
-                .enumerate()
-                .find(|(_, p)| p.fingerprint == fp)
-                .map(|(i, p)| {
-                    (
-                        i,
-                        p.status,
-                        p.status.is_terminal_success() && p.signed_psbt_persisted,
-                    )
-                })
-        });
+        let kc = self
+            .keychain
+            .as_ref()
+            .filter(|k| k.is_resolved())
+            .and_then(|k| {
+                k.pending()
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.fingerprint == fp)
+                    .map(|(i, p)| {
+                        (
+                            i,
+                            p.status,
+                            p.status.is_terminal_success() && p.signed_psbt_persisted,
+                        )
+                    })
+            });
         let kind = self.signing_key_kind(fp, master_fp, kc.is_some());
 
         // Signature already collected (local or keychain).
@@ -1186,7 +1234,9 @@ impl SignModal {
         if !active {
             return (
                 kind,
-                St::Disabled("This spending path isn't available for this transaction.".to_string()),
+                St::Disabled(
+                    "This spending path isn't available for this transaction.".to_string(),
+                ),
             );
         }
         // Local device operation in flight.
@@ -1202,7 +1252,12 @@ impl SignModal {
             return (kind, St::Available(Act::BorderWallet));
         }
         // A currently-connected hardware wallet matching this key.
-        if let Some(i) = self.hws.list.iter().position(|hw| hw.fingerprint() == Some(fp)) {
+        if let Some(i) = self
+            .hws
+            .list
+            .iter()
+            .position(|hw| hw.fingerprint() == Some(fp))
+        {
             match &self.hws.list[i] {
                 HardwareWallet::Supported {
                     registered: Some(false),
@@ -1235,6 +1290,15 @@ impl SignModal {
                 other => (Kind::Keychain, St::InProgress(other.label().to_string())),
             };
         }
+        // Keychain flow launched but still resolving — we don't yet know which
+        // unidentified keys are Keychain signers, so show a neutral hint rather
+        // than a misleading "connect a device" message.
+        if self.keychain.as_ref().is_some_and(|k| k.is_loading()) {
+            return (
+                Kind::Unknown,
+                St::Disabled("Looking up Keychain signers…".to_string()),
+            );
+        }
         // Unidentified: an external key whose device isn't connected and which
         // Connect hasn't resolved. Shown disabled — never guessed as Keychain.
         // When Keychain is possible here but Connect is signed out, offer a
@@ -1243,7 +1307,7 @@ impl SignModal {
         if self.keychain_enabled && self.keychain.is_none() {
             return (
                 Kind::Unknown,
-                St::NeedsSignIn("Connect a device, or".to_string()),
+                St::NeedsSignIn("Connect a device to sign with this key.".to_string()),
             );
         }
         (
@@ -1311,7 +1375,6 @@ impl SignModal {
         notices
     }
 }
-
 
 /// Ensure any in-progress Border Wallet reconstruction state is dropped
 /// (triggering its own `Drop` zeroization) when the sign modal goes away.
@@ -1493,10 +1556,11 @@ impl Modal for SignModal {
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
-            // Expand/collapse an inactive spending-path card.
-            Message::View(view::Message::Spend(view::SpendTxMessage::ToggleSpendPath(seq))) => {
-                if !self.expanded_paths.remove(&seq) {
-                    self.expanded_paths.insert(seq);
+            // Expand/collapse an inactive spending-path card (keyed by path:
+            // None = primary, Some(seq) = recovery).
+            Message::View(view::Message::Spend(view::SpendTxMessage::ToggleSpendPath(path))) => {
+                if !self.expanded_paths.remove(&path) {
+                    self.expanded_paths.insert(path);
                 }
             }
             // Forward all Keychain traffic to the nested modal: its own

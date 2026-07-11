@@ -280,10 +280,11 @@ pub enum SpendTxMessage {
     /// the explicit "fan out to everyone" affordance. Flips all idle
     /// keychain rows into the requested/waiting state.
     RequestFromEveryone,
-    /// Expand/collapse an unavailable spending-path card in the signing picker,
-    /// keyed by its recovery timelock (sequence). Inactive paths default to
-    /// collapsed (header only).
-    ToggleSpendPath(u16),
+    /// Expand/collapse an unavailable spending-path card in the signing picker.
+    /// Keyed by the path's recovery timelock: `None` is the primary path (which
+    /// is inactive during a recovery spend), `Some(seq)` a recovery path.
+    /// Inactive paths default to collapsed (header only).
+    ToggleSpendPath(Option<u16>),
     /// Cancel all non-terminal `SigningSession`s tracked by the open
     /// signing picker's nested `KeychainSignModal`. Discards any partial
     /// signatures already returned — those are not merged into the PSBT

@@ -1286,12 +1286,12 @@ fn signing_key_row(row: &SigningKeyRow, color: iced::Color) -> Element<'static, 
             .push(p1_regular("Signed").color(color::GREEN))
             .push(icon::check_icon().style(theme::text::success))
             .into(),
-        SigningKeyState::InProgress(status) => {
-            p1_regular(status.clone()).style(theme::text::secondary).into()
-        }
-        SigningKeyState::Disabled(reason) => {
-            p1_regular(reason.clone()).style(theme::text::secondary).into()
-        }
+        SigningKeyState::InProgress(status) => p1_regular(status.clone())
+            .style(theme::text::secondary)
+            .into(),
+        SigningKeyState::Disabled(reason) => p1_regular(reason.clone())
+            .style(theme::text::secondary)
+            .into(),
         SigningKeyState::NeedsSignIn(reason) => Row::new()
             .spacing(10)
             .align_y(Alignment::Center)
@@ -1300,8 +1300,7 @@ fn signing_key_row(row: &SigningKeyRow, color: iced::Color) -> Element<'static, 
                 // Bubbles straight to the tab (which opens/focuses the Home
                 // tab for sign-in) without routing through the PSBT panel, so
                 // the picker stays open behind the new tab.
-                button::secondary(None, "Sign in to Connect")
-                    .on_press(Message::OpenConnectSignIn),
+                button::secondary(None, "Sign in to Connect").on_press(Message::OpenConnectSignIn),
             )
             .into(),
         SigningKeyState::Retry(idx) => button::secondary(Some(icon::reload_icon()), "Retry")
@@ -1384,7 +1383,11 @@ fn signing_path_card(path: SigningPath) -> Element<'static, Message> {
         can_request_all,
         expanded,
     } = path;
-    let color = if is_primary { color::GREEN } else { color::BLUE };
+    let color = if is_primary {
+        color::GREEN
+    } else {
+        color::BLUE
+    };
     let subtitle_text = if is_primary {
         "Able to move the funds at any time.".to_string()
     } else {
@@ -1436,9 +1439,7 @@ fn signing_path_card(path: SigningPath) -> Element<'static, Message> {
         .padding(10)
         .width(Length::Fill)
         .style(theme::button::transparent_border)
-        .on_press(Message::Spend(SpendTxMessage::ToggleSpendPath(
-            sequence.unwrap_or(0),
-        )))
+        .on_press(Message::Spend(SpendTxMessage::ToggleSpendPath(sequence)))
         .into()
     };
 
