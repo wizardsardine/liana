@@ -25,7 +25,8 @@ use crate::app::message::Message;
 use crate::app::settings::{self, update_settings_file};
 use crate::app::view;
 use crate::app::view::{
-    RecoveryKitMessage, RecoveryKitMode, RecoveryKitUploadOutcome, RecoveryProtectionMode,
+    PhoneKeyOutcome, RecoveryKitMessage, RecoveryKitMode, RecoveryKitUploadOutcome,
+    RecoveryProtectionMode,
 };
 use crate::app::wallet::Wallet;
 use crate::feature_flags;
@@ -34,7 +35,9 @@ use crate::services::coincube::{
     CoincubeClient, CoincubeError, RecoveryKit as ApiRecoveryKit, RecoveryKitStatus,
     RECOVERY_KIT_SCHEME_AES_256_GCM,
 };
-use crate::services::inheritance::{find_owner_self_recipient, seal_and_upload_owner_self};
+use crate::services::inheritance::{
+    find_owner_self_recipient, seal_and_upload_owner_self, OwnerSelfError,
+};
 use crate::services::recovery::{
     self, DescriptorBlob, DescriptorBlobCube, DescriptorBlobSigner, DescriptorBlobVault, KdfParams,
     SeedBlob, SeedBlobCube, SeedBlobMnemonic, BLOB_VERSION, MIN_PASSWORD_LEN,
@@ -81,6 +84,26 @@ impl std::fmt::Debug for PasswordEntryPending {
     }
 }
 
+/// Auto-detection status of the owner's `owner-self` Keychain recovery key,
+/// shown on the protection-choice screen. The check runs automatically on
+/// entry (and via the "Check again" link); its result gates the phone options —
+/// "Use my phone" / "Use both" are only selectable while `Present`. Registration
+/// is phone-initiated (COIN-390): the desktop only *detects* whether the
+/// Keychain app has minted + registered the key yet.
+#[derive(Debug, Clone)]
+pub enum PhoneKey {
+    /// Detection request in flight.
+    Checking,
+    /// A registered `owner-self` key exists — phone options are enabled.
+    Present,
+    /// No key registered yet — phone options disabled, with guidance to create
+    /// one in the Keychain app under the same Connect account.
+    Absent,
+    /// Detection failed (network / auth / not signed in). Shown inline; the
+    /// "Check again" link lets the user retry.
+    Error(String),
+}
+
 /// The actual UI state of the wizard. `None` = card view; any other
 /// variant = wizard is taking over the settings page.
 ///
@@ -104,8 +127,12 @@ pub enum RecoveryKitState {
     ProtectionChoice {
         mode: RecoveryKitMode,
         mnemonic: Option<Zeroizing<Vec<String>>>,
-        /// Set while the mint+register provisioning task is in flight.
-        provisioning: bool,
+        /// Auto-detection status of the owner's phone (`owner-self`) key. Gates
+        /// whether the phone/both options are selectable.
+        phone: PhoneKey,
+        /// Seal-preflight error (e.g. a settings read failing after the user
+        /// picks Phone/Both). Distinct from a `PhoneKey::Error` detection
+        /// failure — this is a later-stage error surfaced inline.
         error: Option<String>,
     },
     /// In-flight phone seal+upload (PR 2). Reached from `ProtectionChoice` (phone
@@ -154,13 +181,13 @@ impl std::fmt::Debug for RecoveryKitState {
             Self::ProtectionChoice {
                 mode,
                 mnemonic,
-                provisioning,
+                phone,
                 error,
             } => f
                 .debug_struct("ProtectionChoice")
                 .field("mode", mode)
                 .field("mnemonic", &mnemonic.as_ref().map(|_| "<redacted>"))
-                .field("provisioning", provisioning)
+                .field("phone", phone)
                 .field("error", error)
                 .finish(),
             Self::PhoneSealing { mode } => {
@@ -302,6 +329,7 @@ pub fn update(
                         encryption_scheme: String::new(),
                         created_at: None,
                         updated_at: None,
+                        owner_self: None,
                     });
                 }
                 Err(e) => {
@@ -349,7 +377,7 @@ pub fn update(
                 StartGuard::NotSignedIn => {
                     rk.flow = RecoveryKitState::Error {
                         message: "Sign in to Connect to back up your Recovery Kit. \
-                                  You can sign in from Settings → Connect."
+                                  You can sign in from Home → Sign In."
                             .to_string(),
                     };
                     return Task::none();
@@ -380,9 +408,10 @@ pub fn update(
                         return Task::none();
                     }
                     // Passkey cubes have no on-device seed, so there's no PIN
-                    // gate; offer the protection-mode choice (flag on) or jump
-                    // straight to the password entry (flag off).
-                    rk.flow = next_after_seed_unlock(mode, None);
+                    // gate; offer the protection-mode choice (flag on, with the
+                    // phone key auto-detected on entry) or jump straight to the
+                    // password entry (flag off).
+                    return enter_after_seed_unlock(rk, mode, None, client, server_cube_id);
                 }
             }
             Task::none()
@@ -418,18 +447,19 @@ pub fn update(
                     // already happened at the async boundary in
                     // `verify_pin`'s task. Just move it into state. When the
                     // owner-keychain flag is on, the seed is now unlocked so we
-                    // offer the protection-mode choice (PR 2); otherwise go
-                    // straight to the password entry as before.
-                    rk.flow = next_after_seed_unlock(mode, Some(words));
+                    // offer the protection-mode choice (PR 2), auto-detecting the
+                    // phone key on entry; otherwise go straight to the password
+                    // entry as before.
+                    enter_after_seed_unlock(rk, mode, Some(words), client, server_cube_id)
                 }
                 Err(e) => {
                     rk.flow = RecoveryKitState::PinEntry {
                         mode,
                         error: Some(e),
                     };
+                    Task::none()
                 }
             }
-            Task::none()
         }
 
         RecoveryKitMessage::PasswordChanged(value) => {
@@ -500,51 +530,24 @@ pub fn update(
         }
 
         RecoveryKitMessage::ProvisionPhone => {
+            // Re-run detection (the "Check again" link). No-op off the choice
+            // screen. `begin_phone_detection` sets `PhoneKey::Checking` and
+            // handles the not-signed-in / unregistered cases inline.
             if !matches!(rk.flow, RecoveryKitState::ProtectionChoice { .. }) {
                 return Task::none();
             }
-            let Some(client) = client else {
-                set_protection_error(rk, "Sign in to Connect to set up phone recovery.");
-                return Task::none();
-            };
-            let Some(cube_id) = server_cube_id else {
-                set_protection_error(rk, "This Cube isn't registered with Connect yet.");
-                return Task::none();
-            };
-            if let RecoveryKitState::ProtectionChoice {
-                provisioning,
-                error,
-                ..
-            } = &mut rk.flow
-            {
-                *provisioning = true;
-                *error = None;
-            }
-            Task::perform(
-                async move { detect_owner_self_recipient(client, cube_id).await },
-                |res| {
-                    Message::View(view::Message::Settings(view::SettingsMessage::RecoveryKit(
-                        RecoveryKitMessage::ProvisionResult(res),
-                    )))
-                },
-            )
+            begin_phone_detection(rk, client, server_cube_id)
         }
 
-        RecoveryKitMessage::ProvisionResult(res) => {
-            if let RecoveryKitState::ProtectionChoice {
-                provisioning,
-                error,
-                ..
-            } = &mut rk.flow
-            {
-                *provisioning = false;
-                match res {
-                    // The `owner-self` recipient now exists; the user can pick a
-                    // phone protection mode, which will seal to it.
-                    Ok(()) => *error = None,
-                    Err(e) => *error = Some(e),
-                }
-            }
+        RecoveryKitMessage::ProvisionResult(outcome) => {
+            let status = match outcome {
+                // The `owner-self` recipient exists; the phone/both options unlock.
+                PhoneKeyOutcome::Present => PhoneKey::Present,
+                // No key yet — show guidance rather than an error.
+                PhoneKeyOutcome::Absent => PhoneKey::Absent,
+                PhoneKeyOutcome::Failed(e) => PhoneKey::Error(e),
+            };
+            set_phone_detection(rk, status);
             Task::none()
         }
 
@@ -960,11 +963,74 @@ fn next_after_seed_unlock(
         RecoveryKitState::ProtectionChoice {
             mode,
             mnemonic,
-            provisioning: false,
+            // Detection is kicked off immediately on entry (see
+            // `enter_after_seed_unlock`), so start in `Checking` rather than
+            // showing the phone options in an indeterminate state.
+            phone: PhoneKey::Checking,
             error: None,
         }
     } else {
         password_entry(mode, mnemonic)
+    }
+}
+
+/// Move into the post-seed-unlock state and, when that's the protection-choice
+/// screen, immediately kick off the owner-self phone-key detection so the phone
+/// options reflect reality without the user having to click anything. With the
+/// flag off (`password_entry`) there's nothing to detect.
+fn enter_after_seed_unlock(
+    rk: &mut RecoveryKit,
+    mode: RecoveryKitMode,
+    mnemonic: Option<Zeroizing<Vec<String>>>,
+    client: Option<CoincubeClient>,
+    server_cube_id: Option<u64>,
+) -> Task<Message> {
+    rk.flow = next_after_seed_unlock(mode, mnemonic);
+    if matches!(rk.flow, RecoveryKitState::ProtectionChoice { .. }) {
+        begin_phone_detection(rk, client, server_cube_id)
+    } else {
+        Task::none()
+    }
+}
+
+/// Set `PhoneKey::Checking` and spawn the detection task. Shared by the auto-run
+/// on entry and the "Check again" link. On a missing client / cube id, records
+/// the reason as a `PhoneKey::Error` inline (retryable) rather than spawning.
+fn begin_phone_detection(
+    rk: &mut RecoveryKit,
+    client: Option<CoincubeClient>,
+    server_cube_id: Option<u64>,
+) -> Task<Message> {
+    let Some(client) = client else {
+        set_phone_detection(
+            rk,
+            PhoneKey::Error("Sign in to Connect to check for your phone key.".to_string()),
+        );
+        return Task::none();
+    };
+    let Some(cube_id) = server_cube_id else {
+        set_phone_detection(
+            rk,
+            PhoneKey::Error("This Cube isn't registered with Connect yet.".to_string()),
+        );
+        return Task::none();
+    };
+    set_phone_detection(rk, PhoneKey::Checking);
+    Task::perform(
+        async move { detect_owner_self_recipient(client, cube_id).await },
+        |res| {
+            Message::View(view::Message::Settings(view::SettingsMessage::RecoveryKit(
+                RecoveryKitMessage::ProvisionResult(res),
+            )))
+        },
+    )
+}
+
+/// Update the phone-key detection status on the choice screen. No-op off it
+/// (e.g. a stale detection result arriving after the user navigated away).
+fn set_phone_detection(rk: &mut RecoveryKit, status: PhoneKey) {
+    if let RecoveryKitState::ProtectionChoice { phone, .. } = &mut rk.flow {
+        *phone = status;
     }
 }
 
@@ -1133,14 +1199,16 @@ async fn seal_phone(
 /// Provisioning is phone-initiated (COIN-390): the Keychain app mints + attaches
 /// the key and registers the recipient (tier `full_cube`). The desktop never
 /// mints or registers — it polls the recipients list and reports whether the
-/// `owner-self` row exists yet. `Ok(())` once it does (the user can then seal via
-/// "My phone" / "Both"); `Err(..)` with the [`OwnerSelfError::NoRecipient`]
-/// "set this up on your phone first" copy until they create it on their phone.
-async fn detect_owner_self_recipient(client: CoincubeClient, cube_id: u64) -> Result<(), String> {
-    find_owner_self_recipient(&client, cube_id)
-        .await
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+/// `owner-self` row exists yet. Maps the absent case
+/// ([`OwnerSelfError::NoRecipient`]) to [`PhoneKeyOutcome::Absent`] — a normal
+/// "not set up yet" state that drives guidance copy, *not* an error — and any
+/// other failure to [`PhoneKeyOutcome::Failed`].
+async fn detect_owner_self_recipient(client: CoincubeClient, cube_id: u64) -> PhoneKeyOutcome {
+    match find_owner_self_recipient(&client, cube_id).await {
+        Ok(_) => PhoneKeyOutcome::Present,
+        Err(OwnerSelfError::NoRecipient) => PhoneKeyOutcome::Absent,
+        Err(e) => PhoneKeyOutcome::Failed(e.to_string()),
+    }
 }
 
 /// Network string used inside `SeedBlob`/`DescriptorBlob`. Routed
@@ -1484,6 +1552,7 @@ mod tests {
             encryption_scheme: "aes-256-gcm".into(),
             created_at: Some("2026-04-23T00:00:00Z".into()),
             updated_at: Some("2026-04-23T00:00:00Z".into()),
+            owner_self: None,
         }
     }
 
@@ -1495,6 +1564,7 @@ mod tests {
             encryption_scheme: "aes-256-gcm".into(),
             created_at: Some("2026-04-23T00:00:00Z".into()),
             updated_at: Some("2026-04-23T00:00:00Z".into()),
+            owner_self: None,
         }
     }
 
@@ -1506,6 +1576,7 @@ mod tests {
             encryption_scheme: String::new(),
             created_at: None,
             updated_at: None,
+            owner_self: None,
         }
     }
 
@@ -1693,7 +1764,7 @@ mod tests {
         rk.flow = RecoveryKitState::ProtectionChoice {
             mode: RecoveryKitMode::Create,
             mnemonic: None,
-            provisioning: false,
+            phone: PhoneKey::Absent,
             error: None,
         };
         set_protection_error(&mut rk, "Sign in to Connect to back up to your phone.");
@@ -1733,7 +1804,7 @@ mod tests {
         rk.flow = RecoveryKitState::ProtectionChoice {
             mode: RecoveryKitMode::Create,
             mnemonic: None,
-            provisioning: false,
+            phone: PhoneKey::Absent,
             error: None,
         };
         let mnemonic = Some(Zeroizing::new(vec!["word".to_string(); 12]));
