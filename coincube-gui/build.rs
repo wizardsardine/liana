@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Windows resource configuration from master
         winresource::WindowsResource::new()
-            .set_icon("../coincube-ui/static/logos/coincube-cc.ico")
+            .set_icon("../coincube-ui/static/logos/coincube-tenshu.ico")
             .compile()
             .unwrap();
     }

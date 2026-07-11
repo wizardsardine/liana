@@ -35,11 +35,15 @@ pub fn about_section<'a>(
             .push(
                 Row::new().push(Space::new().width(Length::Fill)).push(
                     Column::new()
-                        .push(text(format!("coincube-gui v{}", crate::VERSION)))
-                        .push_maybe(
-                            coincubed_version
-                                .map(|version| text(format!("coincubed v{}", version))),
-                        ),
+                        .push(text(format!("COINCUBE | Tenshu v{}", crate::VERSION)).bold())
+                        .push(
+                            text(format!("coincube-gui v{}", crate::VERSION))
+                                .style(coincube_ui::theme::text::secondary),
+                        )
+                        .push_maybe(coincubed_version.map(|version| {
+                            text(format!("coincubed v{}", version))
+                                .style(coincube_ui::theme::text::secondary)
+                        })),
                 ),
             ),
     );
