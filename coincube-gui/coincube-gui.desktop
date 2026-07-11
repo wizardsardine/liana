@@ -2,4 +2,5 @@
 Name=COINCUBE
 Exec=coincube
 Type=Application
+Icon=coincube-tenshu
 StartupWMClass=Coincube

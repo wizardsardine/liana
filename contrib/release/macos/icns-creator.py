@@ -3,8 +3,11 @@
 from PIL import Image
 from icnsutil import IcnsFile
 
-# Input PNG (should be at least 1024x1024)
-input_file = "coincube-ui/static/logos/coincube-vault-icon.png"
+# Input PNGs (should be at least 1024x1024)
+# macOS: Big-Sur-style tile (white squircle + margin + shadow) — Tenshu artwork
+input_file = "coincube-ui/static/logos/tenshu-macos-1024.png"
+# Windows: full-bleed white square — same Tenshu artwork
+ico_input_file = "coincube-ui/static/logos/tenshu-square-1024.png"
 output_file = "contrib/release/macos/Coincube.icns"
 output_ico = "contrib/release/wix/Coincube.ico"
 
@@ -39,6 +42,7 @@ icns.write(output_file)
 
 print(f"Created {output_file}")
 
-# Prepare Windows ICO
-img.save(output_ico, format="ICO", sizes=[(16,16), (32,32), (48,48), (64,64)])
+# Prepare Windows ICO (full-bleed square source)
+ico_img = Image.open(ico_input_file).convert("RGBA")
+ico_img.save(output_ico, format="ICO", sizes=[(16,16), (32,32), (48,48), (64,64)])
 print(f"Created {output_ico}")
