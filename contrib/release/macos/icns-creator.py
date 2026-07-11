@@ -44,5 +44,5 @@ print(f"Created {output_file}")
 
 # Prepare Windows ICO (full-bleed square source)
 ico_img = Image.open(ico_input_file).convert("RGBA")
-ico_img.save(output_ico, format="ICO", sizes=[(16,16), (32,32), (48,48), (64,64)])
+ico_img.save(output_ico, format="ICO", sizes=[(16,16), (32,32), (48,48), (64,64), (256,256)])
 print(f"Created {output_ico}")
