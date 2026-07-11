@@ -18,12 +18,15 @@ use coincube_ui::{
 use iced::widget::{progress_bar, Column, Row, Space};
 use iced::{Alignment, Length};
 
-use crate::app::state::settings::recovery_kit::RecoveryKitState;
+use crate::app::state::settings::recovery_kit::{PhoneKey, RecoveryKitState};
 use crate::app::view::message::{
     Message, RecoveryKitMessage, RecoveryProtectionMode, SettingsMessage,
 };
 use crate::pin_input::PinInput;
+use crate::services::coincube::RecoveryKitStatus;
 use crate::services::recovery::{score_password, MIN_PASSWORD_LEN};
+
+use super::general::{backup_methods_present, backup_pill};
 use zeroize::Zeroizing;
 
 fn wrap(msg: RecoveryKitMessage) -> Message {
@@ -322,8 +325,10 @@ pub fn password_entry_view<'a>(
 /// password / phone / both — plus a one-time "set up phone protection"
 /// provisioning action (PR 1). Only reached when `OWNER_KEYCHAIN_RECOVERY_ENABLED`.
 pub fn protection_choice_view<'a>(
-    provisioning: bool,
+    phone: &'a PhoneKey,
     error: Option<&'a str>,
+    password_backed: bool,
+    keychain_backed: bool,
 ) -> Element<'a, Message> {
     let intro = Container::new(
         text(
@@ -369,14 +374,43 @@ pub fn protection_choice_view<'a>(
         )
         .push(Space::new().height(Length::Fixed(8.0)));
 
-    for (label, mode, primary) in [
+    // Show what's already backed up (Update mode). Nothing in Create mode, so
+    // the row is omitted entirely.
+    if password_backed || keychain_backed {
+        let mut pills = Row::new()
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .push(text("Already backed up:").size(13));
+        if password_backed {
+            pills = pills.push(backup_pill("Password"));
+        }
+        if keychain_backed {
+            pills = pills.push(backup_pill("Keychain"));
+        }
+        col = col
+            .push(
+                Row::new()
+                    .width(Length::Fill)
+                    .push(Space::new().width(Length::Fill))
+                    .push(pills)
+                    .push(Space::new().width(Length::Fill)),
+            )
+            .push(Space::new().height(Length::Fixed(8.0)));
+    }
+
+    // The phone options are only selectable once a registered `owner-self` key
+    // has been detected. Registration is phone-initiated (COIN-390); the desktop
+    // auto-detects on entry (see `enter_after_seed_unlock`).
+    let phone_ready = matches!(phone, PhoneKey::Present);
+    for (label, mode, primary, needs_phone) in [
         (
             "Use a recovery password",
             RecoveryProtectionMode::Password,
             true,
+            false,
         ),
-        ("Use my phone", RecoveryProtectionMode::Phone, false),
-        ("Use both", RecoveryProtectionMode::Both, false),
+        ("Use my phone", RecoveryProtectionMode::Phone, false, true),
+        ("Use both", RecoveryProtectionMode::Both, false, true),
     ] {
         let base = if primary {
             ui_button::primary(None, label)
@@ -385,15 +419,12 @@ pub fn protection_choice_view<'a>(
         }
         .padding([12, 16])
         .width(Length::Fixed(380.0));
-        // Gate the choice on provisioning being idle: dispatching
-        // `SelectProtectionMode` while the owner-self provisioning task is in
-        // flight would advance the flow out of `ProtectionChoice` — abandoning
-        // provisioning (its `ProvisionResult` then no-ops) and, for phone/both,
-        // racing the recipient registration. Mirrors the `provision_btn` gating.
-        let btn = if provisioning {
-            base
-        } else {
+        // Password never needs the phone key; phone/both stay disabled (no
+        // `on_press` → greyed out) until detection reports `Present`.
+        let btn = if !needs_phone || phone_ready {
             base.on_press(wrap(RecoveryKitMessage::SelectProtectionMode(mode)))
+        } else {
+            base
         };
         col = col.push(
             Row::new()
@@ -404,49 +435,48 @@ pub fn protection_choice_view<'a>(
         );
     }
 
-    // Detect action (PR 1) — provisioning is phone-initiated (COIN-390); the
-    // desktop only checks whether the Keychain app has registered the key yet.
-    let provision_label = if provisioning {
-        "Checking your phone…"
-    } else {
-        "Check for my phone key"
-    };
-    let provision_btn = {
-        let b = ui_button::secondary(None, provision_label)
-            .padding([8, 16])
-            .width(Length::Fixed(380.0));
-        if provisioning {
-            b
-        } else {
-            b.on_press(wrap(RecoveryKitMessage::ProvisionPhone))
-        }
-    };
-    col = col
-        .push(Space::new().height(Length::Fixed(8.0)))
-        .push(
-            Row::new()
-                .width(Length::Fill)
-                .push(Space::new().width(Length::Fill))
-                .push(provision_btn)
-                .push(Space::new().width(Length::Fill)),
+    // Detection status for the phone options, plus a "Check again" link so a
+    // user who just registered the key in their Keychain can re-detect without
+    // leaving the screen. `Checking` shows a spinner-ish line and no link.
+    let status_line: Element<'a, Message> = match phone {
+        PhoneKey::Checking => text("Checking for your phone key…").size(14).into(),
+        PhoneKey::Present => text(
+            "Phone key found. Choose “Use my phone” or “Use both” — you'll restore \
+             by approving on your Keychain.",
         )
-        .push(
+        .size(13)
+        .into(),
+        PhoneKey::Absent => text(
+            "No phone key yet. Create a recovery key in your Keychain app — signed in to \
+             this same Connect account — to enable phone recovery. You'll need this phone \
+             (or its recovery phrase) to restore.",
+        )
+        .size(13)
+        .into(),
+        PhoneKey::Error(e) => text(e).size(14).color(color::RED).into(),
+    };
+    col = col.push(Space::new().height(Length::Fixed(8.0))).push(
+        Row::new()
+            .width(Length::Fill)
+            .push(Space::new().width(Length::Fill))
+            .push(Container::new(status_line).width(Length::Fixed(600.0)))
+            .push(Space::new().width(Length::Fill)),
+    );
+
+    // Only offer a retry when there's a reason to — no key yet (`Absent`) or a
+    // failed check (`Error`). Once a key is `Present` (or while `Checking`)
+    // there's nothing to re-check.
+    if matches!(phone, PhoneKey::Absent | PhoneKey::Error(_)) {
+        let recheck =
+            ui_button::link(None, "Check again").on_press(wrap(RecoveryKitMessage::ProvisionPhone));
+        col = col.push(
             Row::new()
                 .width(Length::Fill)
                 .push(Space::new().width(Length::Fill))
-                .push(
-                    Container::new(
-                        text(
-                            "First time? Create a recovery key in your Keychain app, then \
-                             “Check for my phone key” and choose “Use my phone”. You'll need \
-                             this phone (or its recovery phrase) to restore.",
-                        )
-                        .size(12),
-                    )
-                    .width(Length::Fixed(600.0)),
-                )
+                .push(recheck)
                 .push(Space::new().width(Length::Fill)),
         );
+    }
 
     if let Some(err) = error {
         col = col.push(
@@ -585,15 +615,22 @@ pub fn error_view(message: &str) -> Element<'static, Message> {
 pub fn dispatch<'a>(
     state: &'a RecoveryKitState,
     pin: &'a PinInput,
+    status: Option<&'a RecoveryKitStatus>,
 ) -> Option<Element<'a, Message>> {
     match state {
         RecoveryKitState::None => None,
         RecoveryKitState::PinEntry { error, .. } => Some(pin_entry_view(pin, error.as_deref())),
-        RecoveryKitState::ProtectionChoice {
-            provisioning,
-            error,
-            ..
-        } => Some(protection_choice_view(*provisioning, error.as_deref())),
+        RecoveryKitState::ProtectionChoice { phone, error, .. } => {
+            // Surface what's already backed up so the user knows what an Update
+            // will re-encrypt / add to (empty in Create mode → no pills).
+            let (password_backed, keychain_backed) = backup_methods_present(status);
+            Some(protection_choice_view(
+                phone,
+                error.as_deref(),
+                password_backed,
+                keychain_backed,
+            ))
+        }
         RecoveryKitState::PhoneSealing { .. } => Some(phone_sealing_view()),
         RecoveryKitState::PasswordEntry {
             password,

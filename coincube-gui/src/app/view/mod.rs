@@ -83,7 +83,7 @@ pub fn backup_warning_banner<'a>() -> Element<'a, Message> {
                 .width(Length::Fixed(140.0))
                 .on_press(Message::Menu(Menu::Cube(
                     crate::app::menu::CubeSubMenu::Settings(
-                        crate::app::menu::CubeSettingsOption::General,
+                        crate::app::menu::CubeSettingsOption::Recovery,
                     ),
                 ))),
             iced::widget::Button::new(

@@ -1904,6 +1904,9 @@ impl App {
                     menu::CubeSettingsOption::General => {
                         Some(view::SettingsMessage::GeneralSection)
                     }
+                    menu::CubeSettingsOption::Recovery => {
+                        Some(view::SettingsMessage::RecoverySection)
+                    }
                     menu::CubeSettingsOption::About => Some(view::SettingsMessage::AboutSection),
                     menu::CubeSettingsOption::Stats => {
                         Some(view::SettingsMessage::InstallStatsSection)
