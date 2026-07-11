@@ -481,18 +481,6 @@ fn backup_master_seed_card<'a>(backed_up: bool) -> Element<'a, Message> {
     .into()
 }
 
-/// Cube Recovery Kit card — rendered below the local paper-phrase
-/// backup card. Shows copy + a primary action that drives the
-/// `RecoveryKitMessage` flow. States mirror the plan §6.3 matrix.
-///
-/// - `is_passkey`: when true, the seed is unextractable on-device and
-///   only the descriptor can be backed up; the card has a reduced
-///   two-state variant and is suppressed entirely on passkey cubes
-///   without a Vault (nothing to back up).
-/// - `has_vault`: gates the "complete" copy on mnemonic cubes — a
-///   seed-only kit on a vaultless cube is already "complete" from the
-///   user's perspective, so the CTA becomes "Update" rather than
-///   "Add Wallet Descriptor".
 /// Small rounded "pill" badge naming a Recovery-Kit backup method in use
 /// (e.g. "Password", "Keychain"). Subtle translucent-orange fill + orange
 /// border, but the label uses the **theme's primary text colour** (not orange)
@@ -543,6 +531,18 @@ fn format_backup_time(raw: &str) -> String {
         .unwrap_or_else(|_| raw.to_string())
 }
 
+/// Cube Recovery Kit card — rendered below the local paper-phrase
+/// backup card. Shows copy + a primary action that drives the
+/// `RecoveryKitMessage` flow. States mirror the plan §6.3 matrix.
+///
+/// - `is_passkey`: when true, the seed is unextractable on-device and
+///   only the descriptor can be backed up; the card has a reduced
+///   two-state variant and is suppressed entirely on passkey cubes
+///   without a Vault (nothing to back up).
+/// - `has_vault`: gates the "complete" copy on mnemonic cubes — a
+///   seed-only kit on a vaultless cube is already "complete" from the
+///   user's perspective, so the CTA becomes "Update" rather than
+///   "Add Wallet Descriptor".
 fn recovery_kit_card<'a>(
     is_passkey: bool,
     has_vault: bool,

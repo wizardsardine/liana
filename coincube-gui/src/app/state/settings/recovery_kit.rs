@@ -530,13 +530,26 @@ pub fn update(
         }
 
         RecoveryKitMessage::ProvisionPhone => {
-            // Re-run detection (the "Check again" link). No-op off the choice
-            // screen. `begin_phone_detection` sets `PhoneKey::Checking` and
-            // handles the not-signed-in / unregistered cases inline.
-            if !matches!(rk.flow, RecoveryKitState::ProtectionChoice { .. }) {
-                return Task::none();
+            // Re-run detection (the "Check again" link). Two guards:
+            //   * Off the choice screen → no-op.
+            //   * Already `Checking` → no-op. Dropping a duplicate request
+            //     (e.g. a double-click) keeps a single detection outstanding,
+            //     so a late `ProvisionResult` can't be a stale duplicate that
+            //     clobbers a newer one. Results that arrive after the user has
+            //     left the choice screen are already discarded by
+            //     `set_phone_detection` (the same flow guard `PhoneSealResult`
+            //     uses). `begin_phone_detection` sets `PhoneKey::Checking` and
+            //     handles the not-signed-in / unregistered cases inline.
+            match &rk.flow {
+                RecoveryKitState::ProtectionChoice {
+                    phone: PhoneKey::Checking,
+                    ..
+                } => Task::none(),
+                RecoveryKitState::ProtectionChoice { .. } => {
+                    begin_phone_detection(rk, client, server_cube_id)
+                }
+                _ => Task::none(),
             }
-            begin_phone_detection(rk, client, server_cube_id)
         }
 
         RecoveryKitMessage::ProvisionResult(outcome) => {
