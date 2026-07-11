@@ -114,30 +114,40 @@ fn recovery_section<'a>(
     // wrapper invoked `view_with_recovery_kit`. Falling back to no-card when
     // `None` keeps the trait-based `view` callers harmless.
     if let Some(rk) = recovery_kit {
-        // W12 drift: compute on the fly by comparing the cached live
-        // fingerprint (refreshed every App tick) with the last-backed-up
-        // fingerprint (persisted on `CubeSettings`). Only meaningful when a
-        // descriptor has actually been backed up — otherwise the card's
-        // "incomplete" copy already prompts the user.
-        let server_has_descriptor = rk
-            .status
-            .as_ref()
-            .map(|s| s.has_encrypted_wallet_descriptor)
-            .unwrap_or(false);
-        let drift = descriptor_drift(
-            server_has_descriptor,
-            cache.current_descriptor_fingerprint.as_deref(),
-            cache
-                .recovery_kit_last_backed_up_descriptor_fingerprint
-                .as_deref(),
-        );
-        col = col.push(recovery_kit_card(
-            cache.current_cube_is_passkey,
-            cache.has_vault,
-            rk.status.as_ref(),
-            rk.status_loading,
-            drift,
-        ));
+        if !cache.connect_authenticated {
+            // The Recovery Kit lives in the Connect account, so it needs sign-in
+            // first. Reuse the shared Connect sign-in prompt (same card + "Sign
+            // In" → `OpenConnectSignIn` button used by Avatar / Members) rather
+            // than a "Create Recovery Kit" CTA that would only dead-end.
+            col = col.push(crate::app::view::connect::sign_in_prompt::sign_in_prompt(
+                "back up your Cube Recovery Kit",
+            ));
+        } else {
+            // W12 drift: compute on the fly by comparing the cached live
+            // fingerprint (refreshed every App tick) with the last-backed-up
+            // fingerprint (persisted on `CubeSettings`). Only meaningful when a
+            // descriptor has actually been backed up — otherwise the card's
+            // "incomplete" copy already prompts the user.
+            let server_has_descriptor = rk
+                .status
+                .as_ref()
+                .map(|s| s.has_encrypted_wallet_descriptor)
+                .unwrap_or(false);
+            let drift = descriptor_drift(
+                server_has_descriptor,
+                cache.current_descriptor_fingerprint.as_deref(),
+                cache
+                    .recovery_kit_last_backed_up_descriptor_fingerprint
+                    .as_deref(),
+            );
+            col = col.push(recovery_kit_card(
+                cache.current_cube_is_passkey,
+                cache.has_vault,
+                rk.status.as_ref(),
+                rk.status_loading,
+                drift,
+            ));
+        }
     }
 
     // Vault Recovery Alerts card (Estate Notifications — PR 2). Same threading
