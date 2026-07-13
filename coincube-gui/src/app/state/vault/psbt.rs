@@ -64,15 +64,14 @@ pub trait Modal {
 
 pub enum PsbtModal {
     Save(SaveModal),
+    /// Unified signing picker. Owns local signers (HW, master, border) and
+    /// — nested inside `SignModal` — the multi-signer Keychain flow. Keychain
+    /// sessions run per-signer on demand; signatures returned by Keychain
+    /// signers are merged into the same SpendTx via the daemon's
+    /// `update_spend_tx`, so the picker can broadcast once every path
+    /// threshold is met regardless of which signer types contributed.
     Sign(SignModal),
-    /// Multi-signer Keychain signing flow. Coexists with `Sign` (local
-    /// signers) — the user picks which to open. Keychain sessions run
-    /// independently; signatures returned by Keychain signers are
-    /// merged into the same SpendTx via the daemon's `update_spend_tx`,
-    /// so the local-only "Sign" path can broadcast as today once every
-    /// path threshold is met.
-    KeychainSign(super::keychain_sign::KeychainSignModal),
-    /// Shown when "Sign via Keychain" is pressed but Connect isn't ready.
+    /// Shown when a Keychain signer is selected but Connect isn't ready.
     /// Offers Connect sign-in or local Wi-Fi pairing as ways forward,
     /// instead of dead-ending on a technical "missing field" toast.
     KeychainUnavailable(KeychainUnavailableModal),
@@ -86,7 +85,6 @@ impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
         match &self {
             Self::Save(a) => a,
             Self::Sign(a) => a,
-            Self::KeychainSign(a) => a,
             Self::KeychainUnavailable(a) => a,
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
@@ -100,7 +98,6 @@ impl<'a> AsMut<dyn Modal + 'a> for PsbtModal {
         match self {
             Self::Save(a) => a,
             Self::Sign(a) => a,
-            Self::KeychainSign(a) => a,
             Self::KeychainUnavailable(a) => a,
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
@@ -190,44 +187,37 @@ impl PsbtState {
                 }
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Cancel)) => {
-                if let Some(PsbtModal::Sign(SignModal {
-                    display_modal,
-                    signing,
-                    ..
-                })) = &mut self.modal
-                {
-                    if !signing.is_empty() {
-                        *display_modal = false;
+                // Dismissing the unified signing picker. A local
+                // hardware/master/border op in flight just hides the picker
+                // (keeping the device-confirmation state). Otherwise cancel
+                // any in-flight Keychain sessions server-side — otherwise
+                // signers keep seeing the request until its 24h TTL elapses.
+                // `cancel_all()` cancels sessions that already have an id;
+                // entries whose `CreateSigningSession` RPC is still in flight
+                // are cancelled later once their `SessionCreated` lands, which
+                // needs the picker to stay mounted. So when sessions are still
+                // undrained we keep the picker mounted-but-hidden — it
+                // self-closes via `Message::Updated(Ok)` once they all reach a
+                // terminal state (see `should_close_after_dismiss`).
+                if let Some(PsbtModal::Sign(sign)) = &mut self.modal {
+                    if sign.is_signing() {
+                        // A local device op is awaiting confirmation — just
+                        // hide the picker, keeping it mounted so the op's
+                        // result still lands. Any keychain sessions keep
+                        // running and are drained on the next close.
+                        sign.display_modal = false;
                         return Task::none();
                     }
+                    let (cancel, keep) = sign.begin_dismiss();
+                    if !keep {
+                        self.modal = None;
+                    }
+                    return cancel;
                 }
 
-                // Dismissing a Keychain-sign modal (blur or otherwise)
-                // must also terminate any in-flight signing sessions
-                // server-side, not just hide the UI — otherwise signers
-                // keep seeing the request until its 24h TTL elapses.
-                // `cancel_all()` cancels sessions that already have an
-                // id; entries whose `CreateSigningSession` RPC is still
-                // in flight are cancelled later by `on_session_created`,
-                // which only runs while the modal is still mounted to
-                // receive `SessionCreated`. So when sessions are still
-                // undrained, keep the modal mounted but hidden — it
-                // self-closes via `Message::Updated(Ok)` once they all
-                // reach a terminal state.
-                let (cancel, keep_modal) =
-                    if let Some(PsbtModal::KeychainSign(km)) = self.modal.as_mut() {
-                        let cancel = km.cancel_all();
-                        let keep = km.has_undrained_sessions();
-                        if keep {
-                            km.mark_dismissed();
-                        }
-                        (cancel, keep)
-                    } else {
-                        (Task::none(), false)
-                    };
-                if !keep_modal {
-                    self.modal = None;
-                }
+                // Any other modal (save / broadcast / export / keychain
+                // unavailable): dismissing just closes it.
+                self.modal = None;
                 // After a successful broadcast we keep the user on the
                 // PSBT detail page rather than reloading back to the
                 // list: the daemon derives `SpendStatus::Broadcast` from
@@ -240,7 +230,7 @@ impl PsbtState {
                 // runs `Wallet::apply_spend_tx_overrides` on every
                 // refresh to promote matching Pending entries to
                 // Broadcast.
-                return cancel;
+                return Task::none();
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::KeychainConnectSignIn)) => {
                 // From the "Keychain needs Connect" modal: close it and
@@ -276,6 +266,13 @@ impl PsbtState {
                     return Task::none();
                 }
 
+                // Build (and launch) the nested Keychain flow up front when
+                // Connect is ready, so keychain rows populate with friendly
+                // labels by the time the user reads the picker. When Connect
+                // isn't ready this is `None` and the picker shows keychain
+                // rows derived from the descriptor, disabled with a hint.
+                let (keychain, kc_launch) =
+                    build_keychain_if_ready(cache, &self.wallet, &self.tx.psbt);
                 let modal = SignModal::new(
                     self.tx.signers(),
                     self.wallet.clone(),
@@ -283,86 +280,55 @@ impl PsbtState {
                     cache.network,
                     self.saved,
                     self.tx.recovery_timelock(),
+                    keychain,
+                    true,
                 );
                 let cmd = modal.load(daemon);
                 self.modal = Some(PsbtModal::Sign(modal));
-                return cmd;
+                return Task::batch([cmd, kc_launch]);
             }
-            Message::View(view::Message::Spend(view::SpendTxMessage::SignKeychain)) => {
-                // Idempotent: re-opening the modal while one is already
-                // attached just brings it back to the foreground.
-                if matches!(self.modal, Some(PsbtModal::KeychainSign(_))) {
-                    return Task::none();
-                }
-                // Don't clobber another in-progress modal — most
-                // importantly an in-flight local `SignModal`, whose
-                // hardware-signing state would be silently discarded.
-                // Require the user to finish/close it first.
-                if self.modal.is_some() {
-                    let msg = "Close the current signing dialog before \
-                               signing via Keychain."
-                        .to_string();
-                    return Task::done(Message::View(view::Message::ShowError(msg)));
-                }
-                let missing: Vec<&'static str> = [
-                    ("connect_grpc_url", cache.connect_grpc_url.is_none()),
-                    ("connect_tokens", cache.connect_tokens.is_none()),
-                    ("connect_device_id", cache.connect_device_id.is_none()),
-                    (
-                        "current_cube_server_id",
-                        cache.current_cube_server_id.is_none(),
-                    ),
-                ]
-                .iter()
-                .filter_map(|(name, is_missing)| is_missing.then_some(*name))
-                .collect();
+            Message::View(view::Message::Spend(
+                view::SpendTxMessage::SelectKeychainSigner(_)
+                | view::SpendTxMessage::RequestFromEveryone,
+            )) => {
+                // Connect-readiness check, moved here from the old
+                // button-press: only when the user actually selects a
+                // Keychain signer do we require Connect. If it isn't ready,
+                // surface the sign-in / pair-a-phone modal (replacing the
+                // picker) instead of dead-ending on a technical error.
+                let missing = keychain_connect_missing(cache);
                 if !missing.is_empty() {
-                    // Connect isn't ready. Rather than dead-end on a
-                    // technical "missing field" toast, open a modal that
-                    // explains the requirement and offers both ways
-                    // forward: sign in to Connect (relay signing) or pair
-                    // a phone over Wi-Fi (local signing, no Connect). The
-                    // technical detail still goes to the log for support.
                     tracing::info!(
-                        "Sign via Keychain unavailable: Connect not ready (missing {})",
+                        "Keychain signer selected but Connect not ready (missing {})",
                         missing.join(", ")
                     );
                     self.modal = Some(PsbtModal::KeychainUnavailable(KeychainUnavailableModal {
-                        // Reflect the real Connect account session, not the
-                        // stream-bootstrap fields (which stay unset until a
-                        // device is registered). When signed in, the modal
-                        // offers "Sign with Connect" (on-demand bootstrap)
-                        // rather than a sign-in that would no-op.
                         signed_in: connect_session_available(cache),
                     }));
                     return Task::none();
                 }
-                let grpc_url = cache.connect_grpc_url.clone().expect("checked above");
-                let tokens = cache.connect_tokens.clone().expect("checked above");
-                let device_id = cache.connect_device_id.clone().expect("checked above");
-                let cube_server_id = cache.current_cube_server_id.expect("checked above");
-                // The REST client's bearer is set asynchronously inside
-                // `KeychainSignModal::launch()`, which reads the shared
-                // `Arc<RwLock>` in an async context. Reading it here on
-                // the synchronous `update` path would require
-                // `blocking_read`, which panics inside a tokio runtime.
-                let coincube_client = crate::services::coincube::CoincubeClient::new();
-
-                let descriptor_id = self.wallet.main_descriptor.to_string();
-                let modal = super::keychain_sign::KeychainSignModal::new(
-                    self.wallet.clone(),
-                    coincube_client,
-                    tokens,
-                    grpc_url,
-                    device_id,
-                    cube_server_id,
-                    cache.cube_id.clone(),
-                    descriptor_id,
-                    self.tx.psbt.clone(),
+                // Connect is ready. If the picker was opened before Connect
+                // came up, its nested Keychain flow is still `None` — build and
+                // launch it now (checked without holding a mutable borrow so
+                // `build_keychain_if_ready` can read `self.wallet`/`self.tx`).
+                // This click just kicks off the resolve; the keychain rows
+                // become actionable once it returns.
+                let needs_init = matches!(
+                    &self.modal,
+                    Some(PsbtModal::Sign(sign)) if sign.keychain_needs_init()
                 );
-                let launch = modal.launch();
-                self.modal = Some(PsbtModal::KeychainSign(modal));
-                return launch;
+                if needs_init {
+                    let (keychain, launch) =
+                        build_keychain_if_ready(cache, &self.wallet, &self.tx.psbt);
+                    if let Some(PsbtModal::Sign(sign)) = self.modal.as_mut() {
+                        sign.set_keychain(keychain);
+                    }
+                    return launch;
+                }
+                // Ready and initialized: forward to the picker's nested flow.
+                if let Some(modal) = self.modal.as_mut() {
+                    return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
+                }
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Broadcast)) => {
                 let outpoints: Vec<_> = self.tx.coins.keys().cloned().collect();
@@ -405,33 +371,42 @@ impl PsbtState {
                 self.saved = true;
                 if let Some(modal) = self.modal.as_mut() {
                     let cmd = modal.as_mut().update(daemon.clone(), message, &mut self.tx);
-                    // Decide modal-close intent before mutating
-                    // `self.modal` so the borrow checker stays happy.
-                    let close_sign = matches!(
-                        modal,
-                        PsbtModal::Sign(SignModal {
-                            display_modal: false,
-                            ..
-                        }),
-                    );
-                    let close_keychain = matches!(
-                        modal,
-                        PsbtModal::KeychainSign(km) if km.is_done(),
-                    );
-                    if close_sign || close_keychain {
-                        self.modal = None;
+                    // Recompute path_ready / sigs against the newly merged
+                    // PSBT so the close decision below — and the outer view's
+                    // Sign→Broadcast swap — reflect the just-added signature.
+                    // The signature may have come from a local device
+                    // (`SignModal`'s own Updated arm) or a Keychain session
+                    // (which re-emits `Updated(Ok)` through here after its
+                    // merge+persist), so recompute unconditionally.
+                    if let Ok(sigs) = self
+                        .wallet
+                        .main_descriptor
+                        .partial_spend_info(&self.tx.psbt)
+                    {
+                        self.tx.sigs = sigs;
                     }
-                    if close_keychain {
-                        // Recompute path_ready / sigs against the
-                        // newly merged PSBT so the outer view knows
-                        // to swap the Sign buttons for Broadcast.
-                        if let Ok(sigs) = self
-                            .wallet
-                            .main_descriptor
-                            .partial_spend_info(&self.tx.psbt)
-                        {
-                            self.tx.sigs = sigs;
+                    // Close the unified picker only when the spending path
+                    // threshold is met, or when it was dismissed mid-flight
+                    // and its Keychain sessions have finished draining. A
+                    // single local/keychain signature that doesn't meet the
+                    // threshold keeps the picker open so more signers can be
+                    // added.
+                    let close = match modal {
+                        PsbtModal::Sign(sign) => {
+                            self.tx.path_ready().is_some() || sign.should_close_after_dismiss()
                         }
+                        _ => false,
+                    };
+                    if close {
+                        // Best-effort: cancel any Keychain sessions still in
+                        // flight so they don't outlive the closed picker.
+                        let extra = if let PsbtModal::Sign(sign) = modal {
+                            sign.cancel_keychain_if_active()
+                        } else {
+                            Task::none()
+                        };
+                        self.modal = None;
+                        return Task::batch([cmd, extra]);
                     }
                     return cmd;
                 }
@@ -721,6 +696,62 @@ fn connect_session_available(cache: &Cache) -> bool {
         || (cache.connect_tokens.is_some() && cache.connect_email.is_some())
 }
 
+/// Connect-readiness fields required to open a Keychain signing session.
+/// Returns the names of any that are missing — empty means ready.
+fn keychain_connect_missing(cache: &Cache) -> Vec<&'static str> {
+    [
+        ("connect_grpc_url", cache.connect_grpc_url.is_none()),
+        ("connect_tokens", cache.connect_tokens.is_none()),
+        ("connect_device_id", cache.connect_device_id.is_none()),
+        (
+            "current_cube_server_id",
+            cache.current_cube_server_id.is_none(),
+        ),
+    ]
+    .iter()
+    .filter_map(|(name, is_missing)| is_missing.then_some(*name))
+    .collect()
+}
+
+/// Build and launch a nested `KeychainSignModal` when Connect is ready.
+/// Returns `(None, Task::none())` when Connect isn't ready — the unified
+/// picker still shows keychain rows (disabled, derived from the descriptor)
+/// so the user can be prompted to sign in when they click one.
+fn build_keychain_if_ready(
+    cache: &Cache,
+    wallet: &Arc<Wallet>,
+    psbt: &Psbt,
+) -> (
+    Option<super::keychain_sign::KeychainSignModal>,
+    Task<Message>,
+) {
+    if !keychain_connect_missing(cache).is_empty() {
+        return (None, Task::none());
+    }
+    let grpc_url = cache.connect_grpc_url.clone().expect("checked above");
+    let tokens = cache.connect_tokens.clone().expect("checked above");
+    let device_id = cache.connect_device_id.clone().expect("checked above");
+    let cube_server_id = cache.current_cube_server_id.expect("checked above");
+    // The REST client's bearer is set asynchronously inside
+    // `KeychainSignModal::launch()` (an async context) rather than here on
+    // the synchronous `update` path, which can't `blocking_read` the token.
+    let coincube_client = crate::services::coincube::CoincubeClient::new();
+    let descriptor_id = wallet.main_descriptor.to_string();
+    let modal = super::keychain_sign::KeychainSignModal::new(
+        wallet.clone(),
+        coincube_client,
+        tokens,
+        grpc_url,
+        device_id,
+        cube_server_id,
+        cache.cube_id.clone(),
+        descriptor_id,
+        psbt.clone(),
+    );
+    let launch = modal.launch();
+    (Some(modal), launch)
+}
+
 impl Modal for KeychainUnavailableModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
@@ -973,9 +1004,24 @@ pub struct SignModal {
     display_modal: bool,
     recovery_timelock: Option<u16>,
     border_wallet_recon: Option<BorderWalletReconstructionState>,
+    /// Nested multi-signer Keychain flow. `Some` when Connect was ready at
+    /// picker-open time (built + launched then). `None` when Connect isn't
+    /// ready — keychain rows still render (disabled, derived from the
+    /// descriptor) so the user can be prompted to sign in on click.
+    keychain: Option<super::keychain_sign::KeychainSignModal>,
+    /// Whether this picker offers Keychain signing at all. `true` for the
+    /// vault PSBT flow; `false` for contexts that sign locally only (e.g. the
+    /// Home send-to-self transfer), which suppresses keychain rows entirely
+    /// regardless of Connect state.
+    keychain_enabled: bool,
+    /// Spending-path identities the user has expanded, keyed the same way as
+    /// `ToggleSpendPath`: `None` = primary, `Some(seq)` = a recovery path.
+    /// Inactive cards default to collapsed.
+    expanded_paths: HashSet<Option<u16>>,
 }
 
 impl SignModal {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         signed: HashSet<Fingerprint>,
         wallet: Arc<Wallet>,
@@ -983,6 +1029,8 @@ impl SignModal {
         network: Network,
         is_saved: bool,
         recovery_timelock: Option<u16>,
+        keychain: Option<super::keychain_sign::KeychainSignModal>,
+        keychain_enabled: bool,
     ) -> Self {
         Self {
             signing: HashSet::new(),
@@ -995,11 +1043,336 @@ impl SignModal {
             display_modal: true,
             recovery_timelock,
             border_wallet_recon: None,
+            keychain,
+            keychain_enabled,
+            expanded_paths: HashSet::new(),
         }
     }
 
     pub fn is_signing(&self) -> bool {
         !self.signing.is_empty()
+    }
+
+    /// Begin dismissing the picker. Cancels any in-flight keychain sessions
+    /// server-side and reports whether the modal must stay mounted (hidden)
+    /// to drain deferred cancels — mirroring the old standalone keychain
+    /// modal's dismissal contract. When kept, the picker self-closes via
+    /// `Message::Updated(Ok)` once every session reaches a terminal state.
+    pub fn begin_dismiss(&mut self) -> (Task<Message>, bool) {
+        let Some(k) = self.keychain.as_mut() else {
+            return (Task::none(), false);
+        };
+        let cancel = k.cancel_all();
+        let keep = k.has_undrained_sessions();
+        if keep {
+            k.mark_dismissed();
+            self.display_modal = false;
+        }
+        (cancel, keep)
+    }
+
+    /// True once the picker was dismissed (hidden) and its keychain sessions
+    /// have all drained — the signal the panel uses to finally drop it.
+    pub fn should_close_after_dismiss(&self) -> bool {
+        !self.display_modal
+            && self
+                .keychain
+                .as_ref()
+                .is_none_or(|k| !k.has_undrained_sessions())
+    }
+
+    /// True when this picker offers Keychain signing but the nested flow
+    /// hasn't been built yet — the picker was opened before Connect was ready.
+    /// Once Connect comes up, the panel builds + launches it on demand.
+    pub fn keychain_needs_init(&self) -> bool {
+        self.keychain_enabled && self.keychain.is_none()
+    }
+
+    /// Attach a freshly-built (and launched) nested Keychain flow. Called once
+    /// Connect becomes ready for a picker that opened without it.
+    pub fn set_keychain(&mut self, keychain: Option<super::keychain_sign::KeychainSignModal>) {
+        self.keychain = keychain;
+    }
+
+    /// Best-effort cancel of any keychain sessions still in flight, used when
+    /// the picker is about to close because the threshold was met so those
+    /// sessions don't outlive it server-side.
+    pub fn cancel_keychain_if_active(&mut self) -> Task<Message> {
+        match self.keychain.as_mut() {
+            Some(k) if k.has_undrained_sessions() => k.cancel_all(),
+            _ => Task::none(),
+        }
+    }
+
+    /// Build the spending-path cards for the unified picker, mirroring the
+    /// vault-creation "Set keys" layout: one card per descriptor path (primary
+    /// + each recovery), each listing its keys with per-key signability.
+    fn signing_paths(&self) -> Vec<view::vault::psbt::SigningPath> {
+        let policy = self.wallet.main_descriptor.policy();
+        let mut paths = Vec::new();
+        // The transaction spends through exactly one path: the primary when it
+        // has no recovery timelock, else the recovery path matching that
+        // timelock. Keys in the other paths render disabled.
+        let primary_active = self.recovery_timelock.is_none();
+        paths.push(self.build_signing_path(
+            "Primary spending option:".to_string(),
+            true,
+            None,
+            primary_active,
+            policy.primary_path(),
+        ));
+        for (seq, info) in policy.recovery_paths() {
+            let active = self.recovery_timelock == Some(*seq);
+            paths.push(self.build_signing_path(
+                "Recovery spending option:".to_string(),
+                false,
+                Some(*seq),
+                active,
+                info,
+            ));
+        }
+        paths
+    }
+
+    fn build_signing_path(
+        &self,
+        title: String,
+        is_primary: bool,
+        sequence: Option<u16>,
+        active: bool,
+        path_info: &coincube_core::descriptors::PathInfo,
+    ) -> view::vault::psbt::SigningPath {
+        use view::vault::psbt::{SigningKeyAction, SigningKeyRow, SigningKeyState, SigningPath};
+        let (threshold, origins) = path_info.thresh_origins();
+        let mut fps: Vec<Fingerprint> = origins.into_keys().collect();
+        fps.sort();
+        let total = fps.len();
+        let mut collected = 0;
+        let mut idle_keychain = 0;
+        let mut keys = Vec::new();
+        for fp in fps {
+            let (kind, state) = self.classify_signing_key(fp, active);
+            if matches!(state, SigningKeyState::Signed) {
+                collected += 1;
+            }
+            if matches!(
+                state,
+                SigningKeyState::Available(SigningKeyAction::Keychain)
+            ) {
+                idle_keychain += 1;
+            }
+            keys.push(SigningKeyRow {
+                fingerprint: fp,
+                label: self.signing_key_label(fp),
+                kind,
+                state,
+            });
+        }
+        SigningPath {
+            title,
+            is_primary,
+            sequence,
+            active,
+            threshold,
+            total,
+            collected,
+            keys,
+            // Only worth offering the batch affordance when it saves clicks —
+            // i.e. more than one idle Keychain signer to request at once.
+            can_request_all: active && self.keychain.is_some() && idle_keychain > 1,
+            // Active path is always expanded; inactive paths start collapsed
+            // and expand only when the user toggles them (keyed by `sequence`:
+            // None = primary, Some(seq) = recovery).
+            expanded: active || self.expanded_paths.contains(&sequence),
+        }
+    }
+
+    /// Determine a descriptor key's display kind (for its icon) and signing
+    /// state (signed / in-progress / available / retry / disabled). Signability
+    /// is derived dynamically — a connected hardware wallet, the master signer,
+    /// a border wallet, or a Connect-resolved Keychain signer — so an
+    /// unidentified key is shown disabled rather than guessed as Keychain.
+    fn classify_signing_key(
+        &self,
+        fp: Fingerprint,
+        active: bool,
+    ) -> (
+        view::vault::psbt::SigningKeyKind,
+        view::vault::psbt::SigningKeyState,
+    ) {
+        use super::keychain_sign::PendingSessionStatus;
+        use view::vault::psbt::{
+            SigningKeyAction as Act, SigningKeyKind as Kind, SigningKeyState as St,
+        };
+
+        let master_fp = self.wallet.signer.as_ref().map(|s| s.fingerprint());
+        // Keychain session for this key, only once the flow has resolved.
+        let kc = self
+            .keychain
+            .as_ref()
+            .filter(|k| k.is_resolved())
+            .and_then(|k| {
+                k.pending()
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.fingerprint == fp)
+                    .map(|(i, p)| {
+                        (
+                            i,
+                            p.status,
+                            p.status.is_terminal_success() && p.signed_psbt_persisted,
+                        )
+                    })
+            });
+        let kind = self.signing_key_kind(fp, master_fp, kc.is_some());
+
+        // Signature already collected (local or keychain).
+        if self.signed.contains(&fp) || kc.map(|(_, _, s)| s).unwrap_or(false) {
+            return (kind, St::Signed);
+        }
+        // Inactive spending path — nothing here can sign this transaction.
+        if !active {
+            return (
+                kind,
+                St::Disabled(
+                    "This spending path isn't available for this transaction.".to_string(),
+                ),
+            );
+        }
+        // Local device operation in flight.
+        if self.signing.contains(&fp) {
+            return (kind, St::InProgress("Signing…".to_string()));
+        }
+        // Master signer on this computer.
+        if master_fp == Some(fp) {
+            return (kind, St::Available(Act::Master));
+        }
+        // Border wallet key.
+        if self.wallet.border_wallet_fingerprints.contains(&fp) {
+            return (kind, St::Available(Act::BorderWallet));
+        }
+        // A currently-connected hardware wallet matching this key.
+        if let Some(i) = self
+            .hws
+            .list
+            .iter()
+            .position(|hw| hw.fingerprint() == Some(fp))
+        {
+            match &self.hws.list[i] {
+                HardwareWallet::Supported {
+                    registered: Some(false),
+                    ..
+                } => {
+                    return (
+                        Kind::Hardware,
+                        St::Disabled("Register the wallet on this device to sign.".to_string()),
+                    );
+                }
+                HardwareWallet::Supported { .. } => {
+                    return (Kind::Hardware, St::Available(Act::Hardware(i)));
+                }
+                HardwareWallet::Locked { .. } => {
+                    return (
+                        Kind::Hardware,
+                        St::Disabled("Unlock this device to sign.".to_string()),
+                    );
+                }
+                _ => {}
+            }
+        }
+        // A Connect-resolved Keychain signer.
+        if let Some((idx, status, _)) = kc {
+            return match status {
+                PendingSessionStatus::Idle => (Kind::Keychain, St::Available(Act::Keychain)),
+                PendingSessionStatus::Rejected
+                | PendingSessionStatus::Expired
+                | PendingSessionStatus::Failed => (Kind::Keychain, St::Retry(idx)),
+                other => (Kind::Keychain, St::InProgress(other.label().to_string())),
+            };
+        }
+        // Keychain flow launched but still resolving — we don't yet know which
+        // unidentified keys are Keychain signers, so show a neutral hint rather
+        // than a misleading "connect a device" message.
+        if self.keychain.as_ref().is_some_and(|k| k.is_loading()) {
+            return (
+                Kind::Unknown,
+                St::Disabled("Looking up Keychain signers…".to_string()),
+            );
+        }
+        // Unidentified: an external key whose device isn't connected and which
+        // Connect hasn't resolved. Shown disabled — never guessed as Keychain.
+        // When Keychain is possible here but Connect is signed out, offer a
+        // clickable "Sign in to Connect" so any Keychain signer among these
+        // rows can be resolved.
+        if self.keychain_enabled && self.keychain.is_none() {
+            return (
+                Kind::Unknown,
+                St::NeedsSignIn("Connect a device to sign with this key.".to_string()),
+            );
+        }
+        (
+            Kind::Unknown,
+            St::Disabled("Connect this signing device to sign.".to_string()),
+        )
+    }
+
+    /// Icon kind for a descriptor key: master / border / connected-hardware /
+    /// resolved-keychain, else unknown.
+    fn signing_key_kind(
+        &self,
+        fp: Fingerprint,
+        master_fp: Option<Fingerprint>,
+        is_keychain: bool,
+    ) -> view::vault::psbt::SigningKeyKind {
+        use view::vault::psbt::SigningKeyKind as Kind;
+        if master_fp == Some(fp) {
+            Kind::Master
+        } else if self.wallet.border_wallet_fingerprints.contains(&fp) {
+            Kind::BorderWallet
+        } else if self.hws.list.iter().any(|hw| hw.fingerprint() == Some(fp)) {
+            Kind::Hardware
+        } else if is_keychain {
+            Kind::Keychain
+        } else {
+            Kind::Unknown
+        }
+    }
+
+    /// Display label for a descriptor key: user alias, else the resolved
+    /// Keychain signer's name, else the short fingerprint.
+    fn signing_key_label(&self, fp: Fingerprint) -> String {
+        if let Some(alias) = self.wallet.keys_aliases.get(&fp) {
+            return alias.clone();
+        }
+        if let Some(k) = self.keychain.as_ref().filter(|k| k.is_resolved()) {
+            if let Some(p) = k.pending().iter().find(|p| p.fingerprint == fp) {
+                return p.label.clone();
+            }
+        }
+        format!("#{}", fp)
+    }
+
+    /// Keychain-flow banners for the unified picker (errors, degraded stream,
+    /// unaddressable signers) — surfaced above the signer list. Empty when no
+    /// keychain flow is active or everything is healthy.
+    fn keychain_notices(&self) -> Vec<String> {
+        let Some(k) = self.keychain.as_ref() else {
+            return Vec::new();
+        };
+        let mut notices = Vec::new();
+        if let Some(err) = k.error() {
+            notices.push(format!("Couldn't start Keychain signing: {}", err));
+        }
+        if let Some(banner) = k.stream_health_banner() {
+            notices.push(banner);
+        }
+        for u in k.unresolved() {
+            notices.push(format!(
+                "Can't sign with {} — this signer has no registered device.",
+                u
+            ));
+        }
+        notices
     }
 }
 
@@ -1013,7 +1386,14 @@ impl Drop for SignModal {
 
 impl Modal for SignModal {
     fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        // Local device refresh plus, when a Keychain flow is active, its
+        // poll-fallback subscription so missed realtime `SessionEvent`s still
+        // get picked up while the user can also sign locally.
+        let hws = self.hws.refresh().map(Message::HardwareWallets);
+        match self.keychain.as_ref() {
+            Some(k) => Subscription::batch([hws, k.subscription()]),
+            None => hws,
+        }
     }
 
     fn update(
@@ -1115,6 +1495,13 @@ impl Modal for SignModal {
                     }
                     Ok(psbt) => {
                         self.error = None;
+                        // Bring the picker back into view after a local sign
+                        // (the border-wallet path hides it during the async
+                        // reconstruction). The picker now closes only when the
+                        // threshold is met — decided by the panel's
+                        // `Message::Updated(Ok)` handler — so a sub-threshold
+                        // signature should leave it visible to add more.
+                        self.display_modal = true;
                         self.signed.insert(fingerprint);
                         let daemon = daemon.clone();
                         merge_signatures(&mut tx.psbt, &psbt);
@@ -1169,6 +1556,28 @@ impl Modal for SignModal {
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
+            // Expand/collapse an inactive spending-path card (keyed by path:
+            // None = primary, Some(seq) = recovery).
+            Message::View(view::Message::Spend(view::SpendTxMessage::ToggleSpendPath(path))) => {
+                if !self.expanded_paths.remove(&path) {
+                    self.expanded_paths.insert(path);
+                }
+            }
+            // Forward all Keychain traffic to the nested modal: its own
+            // async results (`KeychainSign(_)`) plus the per-row user actions
+            // routed through the unified picker. `KeychainSignModal::update`
+            // runs the merge+persist and the dismissed-drain choke point.
+            Message::KeychainSign(_)
+            | Message::View(view::Message::Spend(
+                view::SpendTxMessage::SelectKeychainSigner(_)
+                | view::SpendTxMessage::RequestFromEveryone
+                | view::SpendTxMessage::RetryKeychainSigner(_)
+                | view::SpendTxMessage::CancelKeychainSign,
+            )) => {
+                if let Some(k) = self.keychain.as_mut() {
+                    return k.update(daemon, message, tx);
+                }
+            }
             _ => {}
         }
 
@@ -1186,22 +1595,11 @@ impl Modal for SignModal {
                     )))
                     .into()
             } else {
+                let paths = self.signing_paths();
+                let keychain_notices = self.keychain_notices();
                 modal::Modal::new(
                     content,
-                    view::vault::psbt::sign_action(
-                        &self.hws.list,
-                        &self.wallet.main_descriptor,
-                        self.wallet.signer.as_ref().map(|s| s.fingerprint()),
-                        self.wallet
-                            .signer
-                            .as_ref()
-                            .and_then(|signer| self.wallet.keys_aliases.get(&signer.fingerprint)),
-                        &self.signed,
-                        &self.signing,
-                        self.recovery_timelock,
-                        &self.wallet.border_wallet_fingerprints,
-                        &self.wallet.keys_aliases,
-                    ),
+                    view::vault::psbt::sign_action(paths, keychain_notices),
                 )
                 .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
                 .into()

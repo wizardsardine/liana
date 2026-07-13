@@ -270,16 +270,25 @@ pub enum ImportSpendMessage {
 pub enum SpendTxMessage {
     Delete,
     Sign,
-    /// Open the Keychain signing flow: contact-signers and self-signers
-    /// whose private keys live on a Connect-registered phone. Routed to
-    /// `KeychainSignModal` which fetches vault members, classifies the
-    /// required signers, and orchestrates `SigningSession` lifecycles
-    /// via gRPC.
-    SignKeychain,
+    /// Request a Keychain signature from one specific signer, chosen from
+    /// the unified signing picker. Carries the descriptor fingerprint of
+    /// the keychain signer to address. Creates just that signer's
+    /// `SigningSession` (see `KeychainSignModal::request_signer`) rather
+    /// than fanning out to everyone at once.
+    SelectKeychainSigner(Fingerprint),
+    /// Request a Keychain signature from every eligible signer at once —
+    /// the explicit "fan out to everyone" affordance. Flips all idle
+    /// keychain rows into the requested/waiting state.
+    RequestFromEveryone,
+    /// Expand/collapse an unavailable spending-path card in the signing picker.
+    /// Keyed by the path's recovery timelock: `None` is the primary path (which
+    /// is inactive during a recovery spend), `Some(seq)` a recovery path.
+    /// Inactive paths default to collapsed (header only).
+    ToggleSpendPath(Option<u16>),
     /// Cancel all non-terminal `SigningSession`s tracked by the open
-    /// `KeychainSignModal`. Discards any partial signatures already
-    /// returned — those are not merged into the PSBT until all signers
-    /// have responded.
+    /// signing picker's nested `KeychainSignModal`. Discards any partial
+    /// signatures already returned — those are not merged into the PSBT
+    /// until all signers have responded.
     CancelKeychainSign,
     /// Retry a single signer whose session expired or was rejected.
     /// Carries the per-signer position in `KeychainSignModal::pending`.
