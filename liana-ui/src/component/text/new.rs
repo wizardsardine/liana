@@ -33,6 +33,6 @@ text_roles! {
     b5_bold,                B5_BOLD_SPEC,               font::BOLD,             16;
     caption,                CAPTION_SPEC,               font::REGULAR,          16;
     small_caption,          SMALL_CAPTION_SPEC,         font::REGULAR,          13;
-    button_text,            BUTTON_TEXT_SPEC,           font::MEDIUM,           16;
-    button_text_compact,    BUTTON_TEXT_COMPACT_SPEC,   font::MEDIUM,           13;
+    button_text,            BUTTON_TEXT_SPEC,           font::MEDIUM,           17;
+    button_text_compact,    BUTTON_TEXT_COMPACT_SPEC,   font::MEDIUM,           14;
 }

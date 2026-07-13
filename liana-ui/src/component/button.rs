@@ -355,11 +355,11 @@ pub fn device_with_height_clickable<'a, T: 'a + std::clone::Clone, C: Into<Eleme
 /// Button width presets.
 #[derive(Debug, Clone, Copy)]
 pub enum BtnWidth {
-    S = 80,
-    M = 112,
-    L = 145,
-    XL = 185,
-    XXL = 260,
+    S = 85,
+    M = 120,
+    L = 155,
+    XL = 195,
+    XXL = 275,
     /// Default to Length::Shrink
     Auto,
 }
