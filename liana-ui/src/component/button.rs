@@ -283,9 +283,9 @@ fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>, compact: bool) -> 
 }
 
 fn auxiliary_content<'a, T: 'a>(icon: Option<Text<'a>>, t: impl Display) -> Container<'a, T> {
-    let text = Text::new(t.to_string()).size(13).font(MANROPE_SEMIBOLD);
+    let text = Text::new(t.to_string()).size(16).font(MANROPE_SEMIBOLD);
     container(
-        row![icon.map(|icon| icon.size(13)), text]
+        row![icon.map(|icon| icon.size(16)), text]
             .spacing(10)
             .align_y(Vertical::Center),
     )
