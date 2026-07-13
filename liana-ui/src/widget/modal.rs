@@ -135,20 +135,28 @@ where
         &'b mut self,
         state: &'b mut Tree,
         layout: Layout<'b>,
-        _renderer: &Renderer,
-        _viewport: &Rectangle,
+        renderer: &Renderer,
+        viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        let modal = self.modal.as_mut()?;
-
-        Some(overlay::Element::new(Box::new(Overlay {
-            position: layout.position() + translation,
-            content: modal,
-            tree: &mut state.children[1],
-            size: layout.bounds().size(),
-            on_blur: self.on_blur.clone(),
-            backdrop: self.backdrop,
-        })))
+        if let Some(modal) = self.modal.as_mut() {
+            Some(overlay::Element::new(Box::new(Overlay {
+                position: layout.position() + translation,
+                content: modal,
+                tree: &mut state.children[1],
+                size: layout.bounds().size(),
+                on_blur: self.on_blur.clone(),
+                backdrop: self.backdrop,
+            })))
+        } else {
+            self.base.as_widget_mut().overlay(
+                &mut state.children[0],
+                layout,
+                renderer,
+                viewport,
+                translation,
+            )
+        }
     }
 
     fn mouse_interaction(
