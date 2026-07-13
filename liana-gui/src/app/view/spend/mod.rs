@@ -85,8 +85,12 @@ pub fn spend_view<'a>(
         row![delete].width(Length::Fill)
     } else {
         let previous = button::btn_previous((!currently_signing).then_some(Message::Previous));
-        let save =
-            button::btn_save((!currently_signing).then_some(Message::Spend(SpendTxMessage::Save)));
+        let save = button::btn_secondary(
+            None,
+            "Save",
+            button::BtnWidth::M,
+            (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save)),
+        );
         row![previous, Space::fill_width(), save].width(Length::Fill)
     };
 
@@ -228,7 +232,12 @@ pub fn create_spend_tx<'a>(
     let coin_selection = spend::coin_selection(coin_rows);
 
     let previous = (!is_first_step).then_some(button::btn_previous(Some(Message::Previous)));
-    let clear = button::btn_clear(Some(Message::CreateSpend(CreateSpendMessage::Clear)));
+    let clear = button::btn_tertiary(
+        None,
+        "Clear",
+        button::BtnWidth::M,
+        Some(Message::CreateSpend(CreateSpendMessage::Clear)),
+    );
     // Single source of truth for whether the spend can proceed: the same blocker
     // that drives the displayed reason also gates the Next button. `duplicate`
     // and `error` have their own UI feedback, so they only gate the button.

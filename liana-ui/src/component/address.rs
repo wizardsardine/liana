@@ -11,7 +11,10 @@ use iced::{
 };
 
 use crate::{
-    component::{button::btn_copy, text::new},
+    component::{
+        button::{btn_copy_with_style, ButtonStyle},
+        text::new,
+    },
     theme,
     widget::{Element as LianaElement, Row},
 };
@@ -20,8 +23,16 @@ pub fn copyable_address<'a, M: Clone + 'a>(
     address: impl Display,
     clipboard: M,
 ) -> LianaElement<'a, M> {
+    copyable_address_with_style(address, clipboard, theme::button::transparent)
+}
+
+pub fn copyable_address_with_style<'a, M: Clone + 'a>(
+    address: impl Display,
+    clipboard: M,
+    style: ButtonStyle,
+) -> LianaElement<'a, M> {
     let addr = Address::new(address.to_string());
-    let cpy = btn_copy(Some(clipboard));
+    let cpy = btn_copy_with_style(Some(clipboard), style);
     row![addr, cpy]
         .align_y(Alignment::Center)
         .spacing(12)

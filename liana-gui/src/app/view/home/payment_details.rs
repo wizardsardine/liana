@@ -154,7 +154,7 @@ pub fn payment_details_view<'a>(
                     .spacing(5),
             ))
             .push(
-                button::secondary(None, "See transaction details").on_press(Message::Menu(
+                button::tertiary(None, "See transaction details").on_press(Message::Menu(
                     Menu::TransactionPreSelected(tx.tx.compute_txid()),
                 )),
             )

@@ -50,7 +50,7 @@ pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
                     .spacing(10)
                     .push(Space::with_width(Length::Fill))
                     .push(
-                        button::secondary(Some(icon::chip_icon()), "Register on device")
+                        button::tertiary(Some(icon::chip_icon()), "Register on device")
                             .on_press(Msg::RegisterWallet),
                     ),
             )

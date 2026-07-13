@@ -96,7 +96,7 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                         Message::SelectDescriptorTemplate(
                             context::DescriptorTemplate::SimpleInheritance,
                         )
-                ).style(theme::button::secondary)
+                ).style(theme::button::tertiary)
                 .width(Length::Fill),
             )
             .push(
@@ -112,7 +112,7 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                         Message::SelectDescriptorTemplate(
                             context::DescriptorTemplate::MultisigSecurity,
                         )
-                ).style(theme::button::secondary)
+                ).style(theme::button::tertiary)
                 .width(Length::Fill),
             )
             .push(
@@ -128,7 +128,7 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                         Message::SelectDescriptorTemplate(
                             context::DescriptorTemplate::Custom,
                         )
-                ).style(theme::button::secondary)
+                ).style(theme::button::tertiary)
                 .width(Length::Fill),
             )
             .spacing(20),

@@ -18,7 +18,7 @@ use liana::{
 use liana_ui::{
     component::{
         self, badge,
-        button::{self, btn_secondary_with_tooltip, BtnWidth},
+        button::{self, btn_with_tooltip, BtnWidth},
         card, form,
         panels::setting::{
             export_section, header, settings_section, ImportExportKind, SectionKind,
@@ -942,15 +942,16 @@ pub fn wallet_settings<'a>(
         scrollable::horizontal_thin(Column::new().push(text(descriptor.to_string()).small()))
             .width(Length::Fill);
 
-    let btn_backup = btn_secondary_with_tooltip(
+    let btn_backup = btn_with_tooltip(
         Some(icon::backup_icon()),
         backup_label,
         Some(backup_tooltip),
         BtnWidth::Auto,
         Some(backup_msg),
+        theme::button::tertiary,
     );
     let btn_copy = button::btn_copy(Some(Message::Clipboard(descriptor.to_string())));
-    let btn_register = button::secondary(Some(icon::chip_icon()), "Register on hardware device")
+    let btn_register = button::tertiary(Some(icon::chip_icon()), "Register on hardware device")
         .on_press(Message::Settings(SettingsMessage::RegisterWallet));
 
     let descriptor_row = row![descriptor_s, btn_copy]

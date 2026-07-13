@@ -10,8 +10,8 @@ use iced::{
 use crate::{
     component::{
         self,
-        address::{address as address_view, copyable_address},
-        button::{btn_copy, btn_show_qr, btn_verify},
+        address::{address as address_view, copyable_address_with_style},
+        button::{btn_copy_with_style, btn_show_qr, btn_verify},
         text::{text, Text},
     },
     theme,
@@ -28,7 +28,7 @@ pub fn verify_address_modal<'a, M: Clone + 'static>(
     let address_row = row![
         text("Address:").bold(),
         address_view(address.to_string()),
-        btn_copy(Some(clipboard)),
+        btn_copy_with_style(Some(clipboard), theme::button::secondary),
     ]
     .spacing(10)
     .align_y(Alignment::Center);
@@ -62,7 +62,7 @@ pub fn show_address_modal<'a, M: 'a + Clone>(
     show_qr: M,
     clipboard: M,
 ) -> Element<'a, M> {
-    let addr_row = copyable_address(address, clipboard);
+    let addr_row = copyable_address_with_style(address, clipboard, theme::button::secondary);
     let btn_row = row![
         btn_verify(verify),
         Space::fill_width(),

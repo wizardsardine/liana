@@ -626,7 +626,7 @@ pub fn register_descriptor<'a>(
     );
 
     let next_button = if !created_desc || (done && !processing) {
-        button::secondary(None, "Next")
+        button::primary(None, "Next")
             .on_press(Message::Next)
             .width(200)
     } else {
@@ -1378,7 +1378,7 @@ pub fn start_internal_bitcoind<'a>(
             .spacing(50)
             .push(
                 Row::new().push(
-                    button::secondary(None, "Next")
+                    button::primary(None, "Next")
                         .width(Length::Fixed(200.0))
                         .on_press_maybe(if let Some(Ok(_)) = started {
                             Some(Message::Next)
@@ -1591,7 +1591,7 @@ pub fn backup_mnemonic<'a>(
                     .on_toggle(Message::UserActionDone),
             )
             .push(if done {
-                button::secondary(None, "Next")
+                button::primary(None, "Next")
                     .on_press(Message::Next)
                     .width(Length::Fixed(200.0))
             } else {
@@ -1849,12 +1849,14 @@ pub fn connection_step_enter_email<'a>(
         )
         .push(
             Row::new().push(Space::with_width(Length::Fill)).push(
-                button::secondary(None, "Send token")
-                    .on_press_maybe(if processing || !email.valid {
-                        None
-                    } else {
-                        Some(Message::SelectBackend(message::SelectBackend::RequestOTP))
-                    })
+                button::primary(None, "Send token")
+                    .on_press_maybe(
+                        if processing || !email.valid || email.value.trim().is_empty() {
+                            None
+                        } else {
+                            Some(Message::SelectBackend(message::SelectBackend::RequestOTP))
+                        },
+                    )
                     .width(Length::Fixed(200.0)),
             ),
         )
@@ -1886,11 +1888,11 @@ pub fn connection_step_enter_otp<'a>(
             Row::new()
                 .spacing(10)
                 .push(
-                    button::secondary(Some(icon::previous_icon()), "Change Email")
+                    button::tertiary(Some(icon::previous_icon()), "Change Email")
                         .on_press(Message::SelectBackend(message::SelectBackend::EditEmail)),
                 )
                 .push(
-                    button::secondary(None, "Resend token").on_press_maybe(if processing {
+                    button::tertiary(None, "Resend token").on_press_maybe(if processing {
                         None
                     } else {
                         Some(Message::SelectBackend(message::SelectBackend::RequestOTP))
@@ -1915,7 +1917,7 @@ pub fn connection_step_connected<'a>(
             Row::new()
                 .spacing(10)
                 .push(
-                    button::secondary(Some(icon::previous_icon()), "Change Email")
+                    button::tertiary(Some(icon::previous_icon()), "Change Email")
                         .on_press(Message::SelectBackend(message::SelectBackend::EditEmail)),
                 )
                 .push(
@@ -1958,7 +1960,7 @@ pub fn wallet_alias<'a>(
                     )),
             )
             .push(
-                button::secondary(None, "Next")
+                button::primary(None, "Next")
                     .width(Length::Fixed(200.0))
                     .on_press_maybe(if wallet_alias.valid {
                         Some(Message::Next)

@@ -107,7 +107,7 @@ pub fn psbt_view<'a>(
             .push(if saved {
                 Row::new()
                     .push(
-                        button::secondary(None, "Delete")
+                        button::tertiary(None, "Delete")
                             .width(Length::Fixed(200.0))
                             .on_press_maybe(if currently_signing {
                                 None
@@ -340,7 +340,7 @@ pub fn spend_overview_view<'a>(
     currently_signing: bool,
     saved: bool,
 ) -> Element<'a, Message> {
-    let export_button = button::secondary(Some(icon::backup_icon()), "Export").on_press_maybe(
+    let export_button = button::tertiary(Some(icon::backup_icon()), "Export").on_press_maybe(
         if currently_signing || !saved {
             None
         } else {
@@ -374,7 +374,7 @@ pub fn spend_overview_view<'a>(
                                                 ))
                                             })
                                             .push(
-                                                button::secondary(
+                                                button::tertiary(
                                                     Some(icon::restore_icon()),
                                                     "Import",
                                                 )

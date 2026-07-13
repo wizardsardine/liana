@@ -161,7 +161,7 @@ pub fn custom_template<'a>(
 
     let btn_row = Row::new()
         .push(
-            button::secondary(Some(icon::plus_icon()), "Add recovery option")
+            button::tertiary(Some(icon::plus_icon()), "Add recovery option")
                 .width(BtnWidth::XXL)
                 .on_press(Message::DefineDescriptor(
                     message::DefineDescriptor::AddRecoveryPath,
@@ -169,7 +169,7 @@ pub fn custom_template<'a>(
         )
         .push_maybe(
             safety_net_path.is_none().then_some(tooltip::Tooltip::new(
-                button::secondary(Some(icon::plus_icon()), "Add Safety Net")
+                button::tertiary(Some(icon::plus_icon()), "Add Safety Net")
                     .width(210)
                     .on_press(Message::DefineDescriptor(
                         message::DefineDescriptor::AddSafetyNetPath,

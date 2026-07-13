@@ -39,6 +39,7 @@ const BTN_PADDING: [u16; 2] = [9 /* Top/Bottom */, 14 /* Left/Right */];
 const BTN_PADDING_COMPACT: [u16; 2] = [7 /* Top/Bottom */, 12 /* Left/Right */];
 
 pub type ListEntryAccent = fn(&Theme) -> Color;
+pub type ButtonStyle = fn(&theme::Theme, Status) -> Style;
 
 pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str, compact: bool) -> Button<'a, T> {
     Button::new(
@@ -339,7 +340,7 @@ pub fn device_with_height_clickable<'a, T: 'a + std::clone::Clone, C: Into<Eleme
         content = content.center_y(h);
     }
     let style = if clickable {
-        theme::button::signing_devices
+        theme::button::tertiary
     } else {
         theme::button::signing_devices_non_clickable
     };
@@ -473,13 +474,13 @@ pub fn btn_high<'a, T: Clone + 'a>(selected: bool, msg: Option<T>) -> Button<'a,
     btn_feerate("High", selected, msg)
 }
 
-/// Secondary button with preset width.
-pub fn btn_secondary_with_tooltip<'a, T: Clone + 'a>(
+pub fn btn_with_tooltip<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
     label: &'a str,
     tooltip: Option<&'a str>,
     width: BtnWidth,
     msg: Option<T>,
+    style: ButtonStyle,
 ) -> Button<'a, T> {
     Button::new(content_with_tooltip(
         icon,
@@ -488,9 +489,20 @@ pub fn btn_secondary_with_tooltip<'a, T: Clone + 'a>(
         false,
     ))
     .width(width)
-    .style(theme::button::secondary)
+    .style(style)
     .on_press_maybe(msg)
     .padding(0)
+}
+
+/// Secondary button with preset width.
+pub fn btn_secondary_with_tooltip<'a, T: Clone + 'a>(
+    icon: Option<Text<'a>>,
+    label: &'a str,
+    tooltip: Option<&'a str>,
+    width: BtnWidth,
+    msg: Option<T>,
+) -> Button<'a, T> {
+    btn_with_tooltip(icon, label, tooltip, width, msg, theme::button::secondary)
 }
 
 /// Tertiary button with preset width.
@@ -603,11 +615,11 @@ pub fn btn_dismiss<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn btn_customize<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Customize", BtnWidth::M, msg)
+    btn_tertiary(None, "Customize", BtnWidth::M, msg)
 }
 
 pub fn btn_clear_all<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Clear all", BtnWidth::M, msg)
+    btn_tertiary(None, "Clear all", BtnWidth::M, msg)
 }
 
 pub fn btn_unlock<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -706,11 +718,11 @@ pub fn btn_skip_registration<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T>
 }
 
 pub fn btn_resend_token<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Resend token", BtnWidth::XL, msg)
+    btn_tertiary(None, "Resend token", BtnWidth::XL, msg)
 }
 
 pub fn btn_change_email<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(
+    btn_tertiary(
         Some(icon::previous_icon()),
         "Change email",
         BtnWidth::XL,
@@ -725,17 +737,17 @@ pub fn btn_connect_another_email<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a
 pub fn btn_verify_compact<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     button_compact(
         "Verify on hardware device",
-        theme::button::secondary,
+        theme::button::tertiary,
         Some(msg),
     )
 }
 
 pub fn btn_show_qr_compact<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
-    button_compact("Show QR Code", theme::button::secondary, Some(msg))
+    button_compact("Show QR Code", theme::button::tertiary, Some(msg))
 }
 
 pub fn btn_show_qr<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
-    btn_secondary(
+    btn_tertiary(
         Some(icon::qr_icon()),
         "Show QR Code",
         BtnWidth::XL,
@@ -744,7 +756,7 @@ pub fn btn_show_qr<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
 }
 
 pub fn btn_verify<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
-    btn_secondary(
+    btn_tertiary(
         Some(icon::usb_icon()),
         "Verify on hardware device",
         BtnWidth::XXL,
@@ -767,7 +779,7 @@ pub fn btn_show_qr_section<'a, M: 'a + 'static>(
             .align_y(Vertical::Center)
             .padding(15),
     )
-    .style(theme::button::secondary)
+    .style(theme::button::tertiary)
     .width(Length::Fill);
     if let Some(msg) = msg {
         btn = btn.on_press(msg);
@@ -778,6 +790,13 @@ pub fn btn_show_qr_section<'a, M: 'a + 'static>(
 const CLICKABLE_ICON_SIZE: u32 = 26;
 
 pub fn btn_copy<'a, T: Clone + 'a>(msg: Option<T>) -> BistateButton<'a, T> {
+    btn_copy_with_style(msg, theme::button::transparent)
+}
+
+pub fn btn_copy_with_style<'a, T: Clone + 'a>(
+    msg: Option<T>,
+    style: ButtonStyle,
+) -> BistateButton<'a, T> {
     let size = Length::Fixed(CLICKABLE_ICON_SIZE as f32);
     BistateButton::new(
         Container::new(icon::copy_icon().size(CLICKABLE_ICON_SIZE))
@@ -788,7 +807,7 @@ pub fn btn_copy<'a, T: Clone + 'a>(msg: Option<T>) -> BistateButton<'a, T> {
             .center_y(size),
     )
     .on_press_maybe(msg)
-    .style(theme::button::transparent)
+    .style(style)
 }
 
 pub fn btn_edit<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -802,11 +821,11 @@ pub fn btn_remove<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn btn_delete<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_destructive(None, "Delete", BtnWidth::M, msg)
+    btn_tertiary(None, "Delete", BtnWidth::M, msg)
 }
 
 pub fn btn_previous<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "< Previous", BtnWidth::M, msg)
+    btn_tertiary(None, "< Previous", BtnWidth::M, msg)
 }
 
 pub fn btn_next<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {

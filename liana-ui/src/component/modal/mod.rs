@@ -156,7 +156,7 @@ where
         .spacing(H_SPACING);
 
     Button::new(row)
-        .style(theme::button::transparent_border)
+        .style(theme::button::tertiary)
         .on_press(msg)
         .into()
 }

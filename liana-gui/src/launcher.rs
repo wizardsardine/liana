@@ -224,7 +224,7 @@ impl Launcher {
                         .push_maybe(if let State::Wallets { add_wallet, .. } = &self.state {
                             if *add_wallet {
                                 Some(
-                                    button::secondary(
+                                    button::tertiary(
                                         Some(icon::previous_icon()),
                                         "Back to wallet list",
                                     )
@@ -237,8 +237,7 @@ impl Launcher {
                             None
                         })
                         .push(
-                            button::secondary(None, "Share Xpubs")
-                                .on_press(ViewMessage::ShareXpubs),
+                            button::tertiary(None, "Share Xpubs").on_press(ViewMessage::ShareXpubs),
                         )
                         .push(
                             pick_list::pick_list(
@@ -283,7 +282,7 @@ impl Launcher {
                                         );
                                         col.push(
                                             Column::new().push(
-                                                button::secondary(
+                                                button::tertiary(
                                                     Some(icon::plus_icon()),
                                                     "Add wallet",
                                                 )
@@ -406,7 +405,7 @@ fn wallets_list_item(
             )
             .push(
                 Button::new(icon::trash_icon())
-                    .style(theme::button::secondary)
+                    .style(theme::button::tertiary)
                     .padding(10)
                     .on_press(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal(i))),
             ),
