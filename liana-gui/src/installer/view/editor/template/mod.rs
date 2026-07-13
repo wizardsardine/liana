@@ -83,56 +83,40 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
         Column::new()
             .max_width(800.0)
             .align_x(Alignment::Start)
-            .push(
-                Button::new(
-                    Column::new()
-                        .align_x(Alignment::Start)
-                        .push(h3("Simple inheritance"))
-                        .push(p2_regular("Two keys required, one for yourself to spend and another for your heir.").style(theme::text::secondary))
-                        .width(Length::Fill)
-                )
-                .padding(15)
-                .on_press(
-                        Message::SelectDescriptorTemplate(
-                            context::DescriptorTemplate::SimpleInheritance,
-                        )
-                ).style(theme::button::tertiary)
-                .width(Length::Fill),
-            )
-            .push(
-                Button::new(
-                    Column::new()
-                        .align_x(Alignment::Start)
-                        .push(h3("Expanding multisig"))
-                        .push(p2_regular("Two keys required to spend, with an extra key as a backup.").style(theme::text::secondary))
-                        .width(Length::Fill)
-                )
-                .padding(15)
-                .on_press(
-                        Message::SelectDescriptorTemplate(
-                            context::DescriptorTemplate::MultisigSecurity,
-                        )
-                ).style(theme::button::tertiary)
-                .width(Length::Fill),
-            )
-            .push(
-                Button::new(
-                    Column::new()
-                        .align_x(Alignment::Start)
-                        .push(h3("Build your own"))
-                        .push(p2_regular("Create a custom setup that fits all your needs.").style(theme::text::secondary))
-                        .width(Length::Fill)
-                )
-                .padding(15)
-                .on_press(
-                        Message::SelectDescriptorTemplate(
-                            context::DescriptorTemplate::Custom,
-                        )
-                ).style(theme::button::tertiary)
-                .width(Length::Fill),
-            )
+            .push(template_option(
+                "Simple inheritance",
+                "Two keys required, one for yourself to spend and another for your heir.",
+                context::DescriptorTemplate::SimpleInheritance,
+            ))
+            .push(template_option(
+                "Expanding multisig",
+                "Two keys required to spend, with an extra key as a backup.",
+                context::DescriptorTemplate::MultisigSecurity,
+            ))
+            .push(template_option(
+                "Build your own",
+                "Create a custom setup that fits all your needs.",
+                context::DescriptorTemplate::Custom,
+            ))
             .spacing(20),
         true,
         Some(Message::Previous),
+    )
+}
+
+fn template_option(
+    title: &'static str,
+    description: &'static str,
+    template: context::DescriptorTemplate,
+) -> Element<'static, Message> {
+    button::list_entry(
+        Column::new()
+            .align_x(Alignment::Start)
+            .push(h3(title))
+            .push(p2_regular(description).style(theme::text::secondary))
+            .width(Length::Fill),
+        None,
+        button::EntryWidth::Fill,
+        Some(Message::SelectDescriptorTemplate(template)),
     )
 }

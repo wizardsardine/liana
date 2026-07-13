@@ -837,5 +837,5 @@ pub fn btn_next<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn btn_add_payment<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(Some(icon::plus_icon()), "Add payment", BtnWidth::Auto, msg)
+    btn_tertiary(Some(icon::plus_icon()), "Add payment", BtnWidth::Auto, msg)
 }

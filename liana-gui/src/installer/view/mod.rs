@@ -1238,7 +1238,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                                 .width(Length::Fixed(300.0))
                                 .align_x(Alignment::Center)
                                 .push(
-                                    button::secondary(None, "Select")
+                                    button::tertiary(None, "Select")
                                         .width(Length::Fixed(300.0))
                                         .on_press(Message::SelectBitcoindType(
                                             message::SelectBitcoindTypeMsg::UseExternal(true),
@@ -1254,7 +1254,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                                 .width(Length::Fixed(300.0))
                                 .align_x(Alignment::Center)
                                 .push(
-                                    button::secondary(None, "Select")
+                                    button::tertiary(None, "Select")
                                         .width(Length::Fixed(300.0))
                                         .on_press(Message::SelectBitcoindType(
                                             message::SelectBitcoindTypeMsg::UseExternal(false),
@@ -1745,7 +1745,7 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
                     .spacing(20)
                     .push(
                         Container::new(
-                            button::secondary(None, "Select")
+                            button::tertiary(None, "Select")
                                 .on_press(Message::SelectBackend(
                                     message::SelectBackend::ContinueWithLocalWallet(true),
                                 ))
@@ -1755,7 +1755,7 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
                     )
                     .push(
                         Container::new(
-                            button::secondary(None, "Select")
+                            button::tertiary(None, "Select")
                                 .on_press(Message::SelectBackend(
                                     message::SelectBackend::ContinueWithLocalWallet(false),
                                 ))

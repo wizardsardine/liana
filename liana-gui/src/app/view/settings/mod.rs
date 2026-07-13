@@ -1031,9 +1031,9 @@ pub fn wallet_settings<'a>(
             None
         })
         .push(if !processing && wallet_alias.valid {
-            button::secondary(None, "Update").on_press(Message::Settings(SettingsMessage::Save))
+            button::tertiary(None, "Update").on_press(Message::Settings(SettingsMessage::Save))
         } else {
-            button::secondary(None, "Updating")
+            button::tertiary(None, "Updating")
         });
 
     col_content.push(last_row.into());

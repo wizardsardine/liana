@@ -195,7 +195,7 @@ pub fn defined_key<'a>(
                 None
             })
             .push(
-                button::secondary(Some(icon::pencil_icon()), "Edit")
+                button::tertiary(Some(icon::pencil_icon()), "Edit")
                     .on_press(message::DefineKey::EditAlias),
             )
             .push_maybe(if fixed {
@@ -203,7 +203,7 @@ pub fn defined_key<'a>(
             } else {
                 Some(
                     Button::new(icon::trash_icon())
-                        .style(theme::button::secondary)
+                        .style(theme::button::tertiary)
                         .padding(5)
                         .on_press(message::DefineKey::Delete),
                 )
@@ -243,7 +243,7 @@ pub fn undefined_key<'a>(
             } else {
                 Some(
                     Button::new(icon::trash_icon())
-                        .style(theme::button::secondary)
+                        .style(theme::button::tertiary)
                         .padding(5)
                         .on_press(message::DefineKey::Delete),
                 )

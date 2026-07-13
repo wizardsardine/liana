@@ -280,17 +280,11 @@ impl Launcher {
                                                 ))
                                             },
                                         );
-                                        col.push(
-                                            Column::new().push(
-                                                button::tertiary(
-                                                    Some(icon::plus_icon()),
-                                                    "Add wallet",
-                                                )
-                                                .on_press(ViewMessage::AddWalletToList(true))
-                                                .padding(10)
-                                                .width(Length::Fixed(500.0)),
-                                            ),
-                                        )
+                                        col.push(Column::new().push(button::auxiliary(
+                                            Some(icon::plus_icon()),
+                                            "Add wallet",
+                                            Some(ViewMessage::AddWalletToList(true)),
+                                        )))
                                     }
                                 }
                                 State::NoWallet => Column::new().push(add_wallet_menu()),
@@ -331,7 +325,7 @@ fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
                     .push(image::create_new_wallet_icon().width(Length::Fixed(100.0)))
                     .push(p1_regular("Create a new Liana wallet").style(theme::text::secondary))
                     .push(
-                        button::secondary(None, "Select")
+                        button::tertiary(None, "Select")
                             .width(Length::Fixed(200.0))
                             .on_press(ViewMessage::CreateWallet),
                     )
@@ -347,7 +341,7 @@ fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
                     .push(image::restore_wallet_icon().width(Length::Fixed(100.0)))
                     .push(p1_regular("Add an existing Liana wallet").style(theme::text::secondary))
                     .push(
-                        button::secondary(None, "Select")
+                        button::tertiary(None, "Select")
                             .width(Length::Fixed(200.0))
                             .on_press(ViewMessage::ImportWallet),
                     )

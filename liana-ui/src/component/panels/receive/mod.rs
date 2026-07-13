@@ -27,7 +27,7 @@ pub fn address_card<'a, M: Clone + 'static>(
     show_qr: M,
 ) -> Element<'a, M> {
     let label = label::editable_label(label, edit_label);
-    let addr_row = copyable_address_with_style(address, clipboard, theme::button::secondary);
+    let addr_row = copyable_address_with_style(address, clipboard, theme::button::transparent);
     let top = column![label, addr_row];
 
     let bottom = row![

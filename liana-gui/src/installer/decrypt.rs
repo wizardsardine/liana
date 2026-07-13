@@ -28,14 +28,14 @@ use liana::{
 use liana_ui::{
     color,
     component::{
-        card,
+        button, card,
         form::Value,
-        modal::{self, widget_style, BTN_W},
+        modal::{self, BTN_W},
         scrollable,
         text::{self, capitalize_first, p1_regular},
     },
     icon, theme,
-    widget::{modal::Modal, Button, Container, Element, Row, SpaceExt},
+    widget::{modal::Modal, Container, Element, Row, SpaceExt},
 };
 
 use crate::{
@@ -523,7 +523,7 @@ fn widget_signing_device(
     fingerprint: Option<Fingerprint>,
     message: &str,
     pairing_code: Option<String>,
-) -> Button<'_, installer::Message> {
+) -> Element<'_, installer::Message> {
     let message = if let Some(code) = pairing_code {
         column![
             p1_regular(message),
@@ -547,24 +547,25 @@ fn widget_signing_device(
         Space::with_width(Length::Fill)
     ]
     .align_y(alignment::Vertical::Center)
-    .spacing(10);
-    Button::new(row).style(widget_style).width(BTN_W)
+    .spacing(10)
+    .width(Length::Fill);
+    button::list_entry_with_state(row, None, button::EntryWidth::Fill, true, false, None)
 }
 
 fn cant_fetch_device(
     name: String,
     pairing_code: Option<String>,
-) -> Button<'static, installer::Message> {
+) -> Element<'static, installer::Message> {
     let message = "Please unlock or open app on the device";
     widget_signing_device(name, None, message, pairing_code)
 }
 
-fn fetching_device(name: String, fingerprint: Fingerprint) -> Button<'static, installer::Message> {
+fn fetching_device(name: String, fingerprint: Fingerprint) -> Element<'static, installer::Message> {
     let message = "Try to decrypt with this device...";
     widget_signing_device(name, Some(fingerprint), message, None)
 }
 
-fn fetched_device(name: String, fingerprint: Fingerprint) -> Button<'static, installer::Message> {
+fn fetched_device(name: String, fingerprint: Fingerprint) -> Element<'static, installer::Message> {
     let message = "Failed to decrypt file with this device";
     widget_signing_device(name, Some(fingerprint), message, None)
 }

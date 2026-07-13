@@ -28,7 +28,7 @@ pub fn verify_address_modal<'a, M: Clone + 'static>(
     let address_row = row![
         text("Address:").bold(),
         address_view(address.to_string()),
-        btn_copy_with_style(Some(clipboard), theme::button::secondary),
+        btn_copy_with_style(Some(clipboard), theme::button::transparent),
     ]
     .spacing(10)
     .align_y(Alignment::Center);
@@ -62,7 +62,7 @@ pub fn show_address_modal<'a, M: 'a + Clone>(
     show_qr: M,
     clipboard: M,
 ) -> Element<'a, M> {
-    let addr_row = copyable_address_with_style(address, clipboard, theme::button::secondary);
+    let addr_row = copyable_address_with_style(address, clipboard, theme::button::transparent);
     let btn_row = row![
         btn_verify(verify),
         Space::fill_width(),
