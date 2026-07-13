@@ -153,10 +153,10 @@ Users verify releases using the checksums file:
 gpg --import coincube-release-public.asc
 
 # Verify the checksums file signature
-gpg --verify coincube-1.5.0-SHA256SUMS.txt.asc
+gpg --verify SHA256SUMS-1.5.0.txt.asc
 
 # Verify artifact integrity
-sha256sum --check coincube-1.5.0-SHA256SUMS.txt --ignore-missing
+sha256sum --check SHA256SUMS-1.5.0.txt --ignore-missing
 ```
 
 This verifies both:

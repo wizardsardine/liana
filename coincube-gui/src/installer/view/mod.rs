@@ -1273,7 +1273,7 @@ pub fn select_bitcoind_type<'a>(
                     Container::new(Column::new().spacing(10).width(Length::Fixed(300.0)).push(
                         text(
                             "Select this option if you already have a Bitcoin node \
-                            running locally or remotely. Coincube will connect to it.",
+                            running locally or remotely. Tenshu will connect to it.",
                         ),
                     ))
                     .padding(20),
@@ -1281,7 +1281,7 @@ pub fn select_bitcoind_type<'a>(
                 .push(
                     Container::new(Column::new().spacing(10).width(Length::Fixed(300.0)).push(
                         text(
-                            "Coincube will install a pruned node on your computer. \
+                            "Tenshu will install a pruned node on your computer. \
                             No local node required beforehand.",
                         ),
                     ))
@@ -1356,7 +1356,7 @@ pub fn select_bitcoind_type<'a>(
                     Container::new(Column::new().spacing(10).width(Length::Fixed(300.0)).push(
                         text(
                             "Select this option if you already have a Bitcoin node \
-                        running locally or remotely. Coincube will connect to it.",
+                        running locally or remotely. Tenshu will connect to it.",
                         ),
                     ))
                     .padding(20),
@@ -1364,7 +1364,7 @@ pub fn select_bitcoind_type<'a>(
                 .push(
                     Container::new(Column::new().spacing(10).width(Length::Fixed(300.0)).push(
                         text(format!(
-                            "Coincube will download and configure a pruned Bitcoin node \
+                            "Tenshu will download and configure a pruned Bitcoin node \
                         on your computer (~{} GB of disk space required).",
                             disk_gb
                         )),
@@ -1415,7 +1415,7 @@ pub fn select_bitcoind_type<'a>(
             let node_description = if install_node {
                 let disk_gb = (prune_default_mb as f64 / 1024.0).round() as u32;
                 format!(
-                    "Coincube will download and configure a pruned {} node \
+                    "Tenshu will download and configure a pruned {} node \
                 (~{} GB of disk space required). \
                 Once synced, your Vault will automatically switch to your local node.",
                     node_flavor.display_name(),
@@ -1507,7 +1507,7 @@ pub fn select_bitcoind_type<'a>(
                         Container::new(Column::new().spacing(10).width(Length::Fixed(220.0)).push(
                             text(
                                 "Select this option if you already have a Bitcoin node \
-                                running locally or remotely. Coincube will connect to it.",
+                                running locally or remotely. Tenshu will connect to it.",
                             ),
                         ))
                         .padding(20),
@@ -1692,7 +1692,7 @@ pub fn start_internal_bitcoind<'a>(
                     .align_y(Alignment::Center)
                     .push(icon::square_check_icon().style(theme::text::success))
                     .push(
-                        text("Coincube-managed bitcoind already installed")
+                        text("Tenshu-managed bitcoind already installed")
                             .style(theme::text::success),
                     )
             } else if let Some(DownloadState::Downloading { progress, .. }) = download_state {

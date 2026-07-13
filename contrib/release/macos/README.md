@@ -54,7 +54,7 @@ Sign the packaged application using the `sign` command (mind `--code-signature-f
 
 ```
 
-./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign sign --code-signature-flags runtime --entitlements-xml-path contrib/release/macos/coincube.entitlements --pem-source coincubetech_coincube.key --der-source allen_robert_coincube_codesigning.cer Coincube.app
+./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign sign --code-signature-flags runtime --entitlements-xml-path contrib/release/macos/coincube.entitlements --pem-source coincubetech_coincube.key --der-source allen_robert_coincube_codesigning.cer Tenshu.app
 
 ```
 
@@ -81,7 +81,7 @@ https://gregoryszorc.com/docs/apple-codesign/main/apple_codesign_rcodesign.html#
 
 ```
 
-./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign notary-submit --max-wait-seconds 600 --api-key-path ./encoded_appstore_api_key.json --staple Coincube.app
+./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign notary-submit --max-wait-seconds 600 --api-key-path ./encoded_appstore_api_key.json --staple Tenshu.app
 
 ```
 

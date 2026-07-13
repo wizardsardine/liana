@@ -82,7 +82,7 @@ impl DuressActiveScreen {
             .push(text::h3("Duress Mode Activated"))
             .push(
                 text::p1_regular(
-                    "Use the COINCUBE app on a trusted device to manage your account.",
+                    "Use the Tenshu app on a trusted device to manage your account.",
                 )
                 .color(color::GREY_3),
             );

@@ -60,7 +60,7 @@
 
   <Product
     Id='*'
-    Name='COINCUBE'
+    Name='Tenshu'
     UpgradeCode='046BC7BE-9EFD-46F0-95C4-93E4B7EBBED1'
     Manufacturer='COINCUBE TECHNOLOGY LLC'
     Language='1033'
@@ -83,12 +83,12 @@
       DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.' />
 
     <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1' />
-    <Property Id='DiskPrompt' Value='COINCUBE Installation' />
+    <Property Id='DiskPrompt' Value='Tenshu Installation' />
 
     <Directory Id='TARGETDIR' Name='SourceDir'>
       <Directory Id="ProgramMenuFolder" />
       <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
-        <Directory Id='APPLICATIONFOLDER' Name='COINCUBE'>
+        <Directory Id='APPLICATIONFOLDER' Name='Tenshu'>
           <Component Id='License' Guid='*'>
             <File Id='LicenseFile'
               Source='LICENCE'
@@ -107,7 +107,7 @@
                 Id="StartMenuShortcut"
                 Directory="ProgramMenuFolder"
                 Advertise="yes"
-                Name="COINCUBE"
+                Name="Tenshu"
                 WorkingDirectory="APPLICATIONFOLDER" />
             </Component>
           </Directory>

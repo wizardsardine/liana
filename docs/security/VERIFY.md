@@ -11,8 +11,18 @@ Verifying releases ensures:
 ## Quick Verification (Recommended)
 
 For each release, we provide:
-- `coincube-X.Y.Z-SHA256SUMS.txt` - SHA256 checksums of all release artifacts
-- `coincube-X.Y.Z-SHA256SUMS.txt.asc` - GPG signature of the checksums file
+- `SHA256SUMS-X.Y.Z.txt` - SHA256 checksums of all release artifacts
+- `SHA256SUMS-X.Y.Z.txt.asc` - GPG signature of the checksums file
+
+Release artifacts are named `tenshu-<version>-<target>.<ext>`, where `<target>`
+is the Rust target triple. For version 1.5.0:
+
+| Platform | Filename |
+|----------|----------|
+| macOS (Apple Silicon) | `tenshu-1.5.0-aarch64-apple-darwin.dmg` |
+| macOS (Intel) | `tenshu-1.5.0-x86_64-apple-darwin.dmg` |
+| Windows | `tenshu-1.5.0-x86_64-pc-windows-msvc.msi` |
+| Linux | `tenshu-1.5.0-x86_64-unknown-linux-gnu.tar.gz` |
 
 ### Step 1: Import the Coincube GPG Public Key (One-Time Setup)
 
@@ -33,21 +43,21 @@ gpg: key 67F9701BF0D2DAF4: public key "Coincube Release Signing <releases@coincu
 Download the artifact you want to install plus the checksums files:
 
 ```bash
-# Example for macOS ARM64 version 1.5.0
-curl -LO https://github.com/coincubetech/coincube/releases/download/v1.5.0/Coincube-1.5.0-macos-arm64.dmg
-curl -LO https://github.com/coincubetech/coincube/releases/download/v1.5.0/coincube-1.5.0-SHA256SUMS.txt
-curl -LO https://github.com/coincubetech/coincube/releases/download/v1.5.0/coincube-1.5.0-SHA256SUMS.txt.asc
+# Example for macOS Apple Silicon (arm64), version 1.5.0
+curl -LO https://github.com/coincubetech/coincube/releases/download/v1.5.0/tenshu-1.5.0-aarch64-apple-darwin.dmg
+curl -LO https://github.com/coincubetech/coincube/releases/download/v1.5.0/SHA256SUMS-1.5.0.txt
+curl -LO https://github.com/coincubetech/coincube/releases/download/v1.5.0/SHA256SUMS-1.5.0.txt.asc
 ```
 
 ### Step 3: Verify the GPG Signature
 
 ```bash
-gpg --verify coincube-1.5.0-SHA256SUMS.txt.asc
+gpg --verify SHA256SUMS-1.5.0.txt.asc
 ```
 
 Expected output:
 ```bash
-gpg: assuming signed data in 'coincube-1.5.0-SHA256SUMS.txt'
+gpg: assuming signed data in 'SHA256SUMS-1.5.0.txt'
 gpg: Signature made [DATE]
 gpg:                using RSA key 67F9701BF0D2DAF4
 gpg: Good signature from "Coincube Release Signing <releases@coincube.io>"
@@ -58,12 +68,12 @@ gpg: Good signature from "Coincube Release Signing <releases@coincube.io>"
 ### Step 4: Verify the Artifact Checksum
 
 ```bash
-sha256sum --check coincube-1.5.0-SHA256SUMS.txt --ignore-missing
+sha256sum --check SHA256SUMS-1.5.0.txt --ignore-missing
 ```
 
 Expected output:
 ```bash
-Coincube-1.5.0-macos-arm64.dmg: OK
+tenshu-1.5.0-aarch64-apple-darwin.dmg: OK
 ```
 
 ✅ If both verifications pass, your download is authentic and safe to install.
@@ -79,14 +89,14 @@ gpg --import coincube-release-public.asc
 
 # Download files
 VERSION=1.5.0
-ARCH=arm64  # or x64 for Intel Macs
-curl -LO https://github.com/coincubetech/coincube/releases/download/v${VERSION}/Coincube-${VERSION}-macos-${ARCH}.dmg
-curl -LO https://github.com/coincubetech/coincube/releases/download/v${VERSION}/coincube-${VERSION}-SHA256SUMS.txt
-curl -LO https://github.com/coincubetech/coincube/releases/download/v${VERSION}/coincube-${VERSION}-SHA256SUMS.txt.asc
+TARGET=aarch64-apple-darwin  # or x86_64-apple-darwin for Intel Macs
+curl -LO https://github.com/coincubetech/coincube/releases/download/v${VERSION}/tenshu-${VERSION}-${TARGET}.dmg
+curl -LO https://github.com/coincubetech/coincube/releases/download/v${VERSION}/SHA256SUMS-${VERSION}.txt
+curl -LO https://github.com/coincubetech/coincube/releases/download/v${VERSION}/SHA256SUMS-${VERSION}.txt.asc
 
 # Verify
-gpg --verify coincube-${VERSION}-SHA256SUMS.txt.asc
-shasum -a 256 --check coincube-${VERSION}-SHA256SUMS.txt --ignore-missing
+gpg --verify SHA256SUMS-${VERSION}.txt.asc
+shasum -a 256 --check SHA256SUMS-${VERSION}.txt --ignore-missing
 ```
 
 ### Linux
@@ -98,13 +108,13 @@ gpg --import coincube-release-public.asc
 
 # Download files
 VERSION=1.5.0
-curl -LO https://github.com/coincubetech/coincube/releases/download/v${VERSION}/coincube-x86_64-unknown-linux-gnu.tar.gz
-curl -LO https://github.com/coincubetech/coincube/releases/download/v${VERSION}/coincube-${VERSION}-SHA256SUMS.txt
-curl -LO https://github.com/coincubetech/coincube/releases/download/v${VERSION}/coincube-${VERSION}-SHA256SUMS.txt.asc
+curl -LO https://github.com/coincubetech/coincube/releases/download/v${VERSION}/tenshu-${VERSION}-x86_64-unknown-linux-gnu.tar.gz
+curl -LO https://github.com/coincubetech/coincube/releases/download/v${VERSION}/SHA256SUMS-${VERSION}.txt
+curl -LO https://github.com/coincubetech/coincube/releases/download/v${VERSION}/SHA256SUMS-${VERSION}.txt.asc
 
 # Verify
-gpg --verify coincube-${VERSION}-SHA256SUMS.txt.asc
-sha256sum --check coincube-${VERSION}-SHA256SUMS.txt --ignore-missing
+gpg --verify SHA256SUMS-${VERSION}.txt.asc
+sha256sum --check SHA256SUMS-${VERSION}.txt --ignore-missing
 ```
 
 ### Windows (PowerShell)
@@ -117,16 +127,16 @@ gpg --import coincube-release-public.asc
 
 # Download files
 $VERSION = "1.5.0"
-Invoke-WebRequest -Uri "https://github.com/coincubetech/coincube/releases/download/v$VERSION/coincube-x86_64.msi" -OutFile "coincube-x86_64.msi"
-Invoke-WebRequest -Uri "https://github.com/coincubetech/coincube/releases/download/v$VERSION/coincube-$VERSION-SHA256SUMS.txt" -OutFile "coincube-$VERSION-SHA256SUMS.txt"
-Invoke-WebRequest -Uri "https://github.com/coincubetech/coincube/releases/download/v$VERSION/coincube-$VERSION-SHA256SUMS.txt.asc" -OutFile "coincube-$VERSION-SHA256SUMS.txt.asc"
+Invoke-WebRequest -Uri "https://github.com/coincubetech/coincube/releases/download/v$VERSION/tenshu-$VERSION-x86_64-pc-windows-msvc.msi" -OutFile "tenshu-$VERSION-x86_64-pc-windows-msvc.msi"
+Invoke-WebRequest -Uri "https://github.com/coincubetech/coincube/releases/download/v$VERSION/SHA256SUMS-$VERSION.txt" -OutFile "SHA256SUMS-$VERSION.txt"
+Invoke-WebRequest -Uri "https://github.com/coincubetech/coincube/releases/download/v$VERSION/SHA256SUMS-$VERSION.txt.asc" -OutFile "SHA256SUMS-$VERSION.txt.asc"
 
 # Verify signature
-gpg --verify "coincube-$VERSION-SHA256SUMS.txt.asc"
+gpg --verify "SHA256SUMS-$VERSION.txt.asc"
 
 # Verify checksum (manual check)
-Get-FileHash -Algorithm SHA256 coincube-x86_64.msi
-# Compare output with the hash in coincube-$VERSION-SHA256SUMS.txt
+Get-FileHash -Algorithm SHA256 tenshu-$VERSION-x86_64-pc-windows-msvc.msi
+# Compare output with the hash in SHA256SUMS-$VERSION.txt
 ```
 
 ## Troubleshooting

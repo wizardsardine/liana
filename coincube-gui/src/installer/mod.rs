@@ -748,9 +748,9 @@ pub fn daemon_check(cfg: coincubed::config::Config) -> Result<(), Error> {
     match coincubed::DaemonHandle::start_default(cfg, false) {
         Ok(daemon) => daemon
             .stop()
-            .map_err(|e| Error::Unexpected(format!("Failed to stop Coincube daemon: {}", e))),
+            .map_err(|e| Error::Unexpected(format!("Failed to stop Tenshu daemon: {}", e))),
         Err(e) => Err(Error::Unexpected(format!(
-            "Failed to start Coincube daemon: {}",
+            "Failed to start Tenshu daemon: {}",
             e
         ))),
     }
