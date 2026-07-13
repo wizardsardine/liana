@@ -270,16 +270,25 @@ pub enum ImportSpendMessage {
 pub enum SpendTxMessage {
     Delete,
     Sign,
-    /// Open the Keychain signing flow: contact-signers and self-signers
-    /// whose private keys live on a Connect-registered phone. Routed to
-    /// `KeychainSignModal` which fetches vault members, classifies the
-    /// required signers, and orchestrates `SigningSession` lifecycles
-    /// via gRPC.
-    SignKeychain,
+    /// Request a Keychain signature from one specific signer, chosen from
+    /// the unified signing picker. Carries the descriptor fingerprint of
+    /// the keychain signer to address. Creates just that signer's
+    /// `SigningSession` (see `KeychainSignModal::request_signer`) rather
+    /// than fanning out to everyone at once.
+    SelectKeychainSigner(Fingerprint),
+    /// Request a Keychain signature from every eligible signer at once —
+    /// the explicit "fan out to everyone" affordance. Flips all idle
+    /// keychain rows into the requested/waiting state.
+    RequestFromEveryone,
+    /// Expand/collapse an unavailable spending-path card in the signing picker.
+    /// Keyed by the path's recovery timelock: `None` is the primary path (which
+    /// is inactive during a recovery spend), `Some(seq)` a recovery path.
+    /// Inactive paths default to collapsed (header only).
+    ToggleSpendPath(Option<u16>),
     /// Cancel all non-terminal `SigningSession`s tracked by the open
-    /// `KeychainSignModal`. Discards any partial signatures already
-    /// returned — those are not merged into the PSBT until all signers
-    /// have responded.
+    /// signing picker's nested `KeychainSignModal`. Discards any partial
+    /// signatures already returned — those are not merged into the PSBT
+    /// until all signers have responded.
     CancelKeychainSign,
     /// Retry a single signer whose session expired or was rejected.
     /// Carries the per-signer position in `KeychainSignModal::pending`.
@@ -374,6 +383,8 @@ pub enum SettingsMessage {
     WalletAliasEdited(String),
     Save,
     GeneralSection,
+    /// Install the Recovery settings section (backup + Recovery Kit + alerts).
+    RecoverySection,
     DisplayUnitChanged(BitcoinDisplayUnit),
     Fiat(FiatMessage),
     NodeSettings(NodeSettingsMessage),
@@ -1088,6 +1099,22 @@ pub enum RecoveryProtectionMode {
     Both,
 }
 
+/// Result of the owner-self phone-key detection that runs automatically on
+/// entering the protection-choice screen (and via the "Check again" link).
+/// Distinguishes the expected "not registered yet" case (`Absent` — show
+/// guidance) from a genuine failure (`Failed` — show the error + retry), so the
+/// UI can gate the phone options without treating a missing key as an error.
+#[derive(Debug, Clone)]
+pub enum PhoneKeyOutcome {
+    /// A registered `owner-self` recovery key was found — phone options enable.
+    Present,
+    /// No `owner-self` recipient registered yet (the Keychain app must mint one
+    /// first, COIN-390). Phone options stay disabled with guidance copy.
+    Absent,
+    /// Detection failed (network / auth / not signed in). Display-safe message.
+    Failed(String),
+}
+
 /// Messages driving the Cube Recovery Kit flow. Mirrors the shape of
 /// `BackupWalletMessage` — a Debug impl below redacts every variant
 /// that carries key material (mnemonic, password, ciphertext) so the
@@ -1138,15 +1165,16 @@ pub enum RecoveryKitMessage {
     /// User picked a protection mode on the choice screen (PR 2). Routes to the
     /// password path (`Password`/`Both`) or runs the phone seal (`Phone`).
     SelectProtectionMode(RecoveryProtectionMode),
-    /// User clicked "Check for my phone key" on the choice screen (PR 1).
+    /// Re-run the owner-self phone-key detection on the choice screen. Fired
+    /// automatically on entering the screen, and by the "Check again" link.
     /// Provisioning is phone-initiated (COIN-390): the Keychain app mints +
     /// registers the `owner-self` recovery recipient. This action only *detects*
-    /// it — polls the recipients list until the row appears.
+    /// it — polls the recipients list to see whether the row exists yet.
     ProvisionPhone,
-    /// Async result of [`Self::ProvisionPhone`] (the detect): `Ok(())` once the
-    /// `owner-self` recipient exists; `Err` carries the "set this up on your
-    /// phone first" copy.
-    ProvisionResult(Result<(), String>),
+    /// Async result of [`Self::ProvisionPhone`] (the detect). Carries the
+    /// three-way [`PhoneKeyOutcome`] so the choice screen can enable the phone
+    /// options (`Present`), show guidance (`Absent`), or surface an error.
+    ProvisionResult(PhoneKeyOutcome),
     /// Async result of the phone seal+upload (PR 2). `Ok(())` on success; the
     /// error string is display-safe.
     PhoneSealResult(Result<(), String>),

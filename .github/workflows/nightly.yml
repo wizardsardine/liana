@@ -1,0 +1,223 @@
+name: Nightly Build
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: "0 5 * * *" # 05:00 UTC nightly (offset from the 06:00 connect-integration nightly)
+  workflow_dispatch: # manual "Run workflow" button for on-demand builds
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_RELEASE_LTO: true
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
+  BREEZ_API_KEY: ${{ secrets.BREEZ_API_KEY }}
+  COINCUBE_API_URL: ${{ vars.COINCUBE_API_URL }}
+
+jobs:
+  # Gate the build: a scheduled nightly is skipped when master has not changed
+  # in the last 24h. A manual workflow_dispatch always builds regardless.
+  check:
+    name: Check for new commits
+    runs-on: ubuntu-latest
+    if: github.repository == 'coincubetech/coincube'
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: check
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"          # manual run always builds
+          elif [ -n "$(git rev-list --after='24 hours' --max-count=1 ${{ github.sha }})" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"          # HEAD committed within last 24h
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"         # nothing new — skip
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: check
+    if: needs.check.outputs.should_run == 'true'
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+
+          # Windows
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows
+
+          # macOS Apple Silicon
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: macos
+            arch: arm64
+
+          # macOS Intel
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: macos
+            arch: x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install common tooling
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-wix,apple-codesign,jaq
+
+      - name: Set Coincube version from Cargo
+        shell: bash
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jaq -r '.packages[] | select(.name=="coincube-gui") | .version')
+          echo "COINCUBE_VERSION=$version" >> $GITHUB_ENV
+
+      - name: Set build tag
+        shell: bash
+        run: echo "BUILD_TAG=$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+          path: target
+
+      - name: Generate Icons for Installers
+        if: matrix.platform != 'linux'
+        run: |
+          pip install pillow icnsutil
+          python contrib/release/macos/icns-creator.py
+
+      # --------------------------------------------------
+      # Linux
+      # --------------------------------------------------
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config protobuf-compiler libdbus-1-dev libwebkit2gtk-4.1-dev
+
+      - name: Build Linux binary
+        if: matrix.platform == 'linux'
+        run: cargo build --package coincube-gui --bin coincube --profile minimal --target ${{ matrix.target }} --locked
+
+      - name: Upload Linux artifact
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coincube-nightly-${{ env.BUILD_TAG }}-${{ matrix.target }}
+          path: target/${{ matrix.target }}/minimal/coincube
+
+      # --------------------------------------------------
+      # Windows
+      # --------------------------------------------------
+
+      - name: Install Windows dependencies
+        if: matrix.platform == 'windows'
+        run: choco install protoc --yes --no-progress
+
+      - name: Build Windows MSI
+        if: matrix.platform == 'windows'
+        run: |
+          cargo build --package coincube-gui --profile minimal --locked
+          cargo wix --package coincube-gui --no-build --profile minimal --output "target/wix/coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
+
+      - name: Upload Windows artifact
+        if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coincube-nightly-${{ env.BUILD_TAG }}-${{ matrix.target }}
+          path: target/wix/coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi
+
+      # --------------------------------------------------
+      # macOS (arm64 + x64)
+      # --------------------------------------------------
+
+      - name: Install macOS dependencies
+        if: matrix.platform == 'macos'
+        run: brew install protobuf create-dmg
+
+      - name: Prepare Apple Developer ID certificate
+        if: matrix.platform == 'macos'
+        env:
+          P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.CERTIFICATE_P12_PASSWORD }}
+        run: |
+          echo "$P12_BASE64" | base64 --decode > cert.p12
+          echo "$P12_PASSWORD" > cert.pass
+
+      - name: Build Coincube (macOS ${{ matrix.arch }})
+        if: matrix.platform == 'macos'
+        env:
+          PROTOC: /opt/homebrew/bin/protoc
+        run: |
+          rustup target add ${{ matrix.target }}
+          cargo build --package coincube-gui --profile minimal --target ${{ matrix.target }} --locked
+
+      - name: Assemble .app bundle
+        if: matrix.platform == 'macos'
+        run: |
+          unzip contrib/release/macos/_coincube.zip
+          sed -i '' "s/VERSION_PLACEHOLDER/${{ env.COINCUBE_VERSION }}/g" Coincube.app/Contents/Info.plist
+          mv target/${{ matrix.target }}/minimal/coincube Coincube.app/Contents/MacOS/Coincube
+          mv contrib/release/macos/Coincube.icns Coincube.app/Contents/Resources/Coincube.icns
+
+      - name: Sign macOS app
+        if: matrix.platform == 'macos'
+        # --entitlements-xml-path: the local LAN signer (phone_signer
+        # module) needs com.apple.security.network.client under the
+        # hardened runtime to dial paired phones over TLS. Without
+        # this flag, signed/notarized builds get the hardened runtime
+        # with no network entitlements and the feature breaks at
+        # runtime. See contrib/release/macos/README.md and
+        # contrib/release/macos/coincube.entitlements.
+        run: rcodesign sign --for-notarization --entitlements-xml-path contrib/release/macos/coincube.entitlements --p12-file cert.p12 --p12-password-file cert.pass Coincube.app
+
+      - name: Notarize and staple app
+        if: matrix.platform == 'macos'
+        run: |
+          base64 -D <<< "${{ secrets.APPSTORECONNECT_KEY_JSON }}" > key.json
+          rcodesign notary-submit --api-key-path key.json --max-wait-seconds 1800 --staple Coincube.app
+          spctl --assess --type execute --verbose Coincube.app
+
+      - name: Create DMG
+        if: matrix.platform == 'macos'
+        run: |
+          create-dmg \
+            --volname "Coincube" \
+            --window-size 600 400 \
+            --icon-size 128 \
+            --icon "Coincube.app" 175 120 \
+            --app-drop-link 425 120 \
+            "coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg" \
+            Coincube.app
+
+      - name: Upload macOS artifact
+        if: matrix.platform == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coincube-nightly-${{ env.BUILD_TAG }}-${{ matrix.target }}
+          path: coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg
+
+      - name: Cleanup secrets
+        if: matrix.platform == 'macos' && always()
+        run: |
+          rm -f cert.p12 cert.pass key.json

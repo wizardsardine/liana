@@ -48,14 +48,16 @@ pub const RECOVER_VAULT_ENABLED: bool = is_truthy(option_env!("COINCUBE_ENABLE_R
 /// by approving a Keychain decrypt — no recovery password.
 ///
 /// Controlled by the `COINCUBE_OWNER_KEYCHAIN_RECOVERY` env var at build time.
-/// Defaults to `false`: the feature depends on net-new `coincube-api`
-/// (`recovery-kit/recipients`, `recovery-kit/envelope`) and `keychain-app`
-/// (owner-self key mint) surfaces, so it stays **Beta**/dark until those ship.
-/// When `false`, the wizard's protection-mode picker hides the phone branches and
+/// Defaults to `true` now that the feature's dependencies have shipped: the
+/// net-new `coincube-api` (`recovery-kit/recipients`, `recovery-kit/envelope`)
+/// surfaces and the `keychain-app` owner-self key mint (COIN-390). This is the
+/// one flag that defaults **on** — set `COINCUBE_OWNER_KEYCHAIN_RECOVERY=0`
+/// (or `false`/`no`) at build time as a kill switch to dark-ship it again. When
+/// disabled, the wizard's protection-mode picker hides the phone branches and
 /// the "Recover a Cube I own" entry is hidden; the code still compiles but is
 /// unreachable via UI.
 pub const OWNER_KEYCHAIN_RECOVERY_ENABLED: bool =
-    is_truthy(option_env!("COINCUBE_OWNER_KEYCHAIN_RECOVERY"));
+    !is_falsy(option_env!("COINCUBE_OWNER_KEYCHAIN_RECOVERY"));
 
 /// `const`-compatible truthy check: accepts `"1"`, `"true"`, `"yes"`
 /// (case-insensitive for the latter two). Anything else, including `None`,
@@ -69,6 +71,18 @@ const fn is_truthy(val: Option<&str>) -> bool {
     };
     let b = s.as_bytes();
     bytes_eq_ci(b, b"1") || bytes_eq_ci(b, b"true") || bytes_eq_ci(b, b"yes")
+}
+
+/// `const`-compatible falsy check: accepts `"0"`, `"false"`, `"no"`
+/// (case-insensitive for the latter two). Anything else, including `None`, is
+/// `false` (i.e. "not explicitly disabled"). Used to make a flag default **on**
+/// while keeping a build-time kill switch: `!is_falsy(option_env!(...))`.
+const fn is_falsy(val: Option<&str>) -> bool {
+    let Some(s) = val else {
+        return false;
+    };
+    let b = s.as_bytes();
+    bytes_eq_ci(b, b"0") || bytes_eq_ci(b, b"false") || bytes_eq_ci(b, b"no")
 }
 
 /// Case-insensitive byte-slice equality, const-stable.
@@ -123,5 +137,29 @@ mod tests {
         assert!(!is_truthy(Some("on")));
         assert!(!is_truthy(Some("off")));
         assert!(!is_truthy(Some("2")));
+    }
+
+    #[test]
+    fn is_falsy_accepts_disabling_values() {
+        assert!(is_falsy(Some("0")));
+        assert!(is_falsy(Some("false")));
+        assert!(is_falsy(Some("FALSE")));
+        assert!(is_falsy(Some("False")));
+        assert!(is_falsy(Some("no")));
+        assert!(is_falsy(Some("NO")));
+    }
+
+    #[test]
+    fn is_falsy_rejects_everything_else() {
+        // `None` / unset must NOT be falsy — that's what makes the flag
+        // default-on. Unknown strings likewise leave the feature enabled.
+        assert!(!is_falsy(None));
+        assert!(!is_falsy(Some("")));
+        assert!(!is_falsy(Some("1")));
+        assert!(!is_falsy(Some("true")));
+        assert!(!is_falsy(Some("yes")));
+        assert!(!is_falsy(Some("on")));
+        assert!(!is_falsy(Some("off")));
+        assert!(!is_falsy(Some("2")));
     }
 }

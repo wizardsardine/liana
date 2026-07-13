@@ -153,8 +153,21 @@ async fn update_unit_setting(
     }
 }
 
+/// Which face of the settings-content state to render. The General and Recovery
+/// sub-tabs share this one `State` type (they both own the local backup flow and
+/// flow through the same wrapper downcast); this discriminator selects the view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsSection {
+    /// App/display preferences (network, unit, display mode, badges, fiat).
+    General,
+    /// Backup & recovery: local paper backup + Recovery Kit + Vault alerts.
+    Recovery,
+}
+
 pub struct GeneralSettingsState {
     cube_id: String,
+    /// Which sub-tab's content this instance renders (General prefs vs Recovery).
+    section: SettingsSection,
     new_price_setting: PriceSetting,
     new_unit_setting: UnitSetting,
     currencies: Vec<Currency>,
@@ -182,6 +195,7 @@ impl From<GeneralSettingsState> for Box<dyn State> {
 impl GeneralSettingsState {
     pub fn new(
         cube_id: String,
+        section: SettingsSection,
         price_setting: PriceSetting,
         unit_setting: UnitSetting,
         datadir_path: &CoincubeDirectory,
@@ -191,6 +205,7 @@ impl GeneralSettingsState {
         let show_direction_badges = GlobalSettings::load_show_direction_badges(&global_path);
         Self {
             cube_id,
+            section,
             new_price_setting: price_setting,
             new_unit_setting: unit_setting,
             currencies: Vec::new(),
@@ -537,7 +552,8 @@ impl GeneralSettingsState {
         rk: &'a super::recovery_kit::RecoveryKit,
         ra: &'a super::recovery_alerts::RecoveryAlerts,
     ) -> Element<'a, view::Message> {
-        crate::app::view::settings::general::general_section(
+        crate::app::view::settings::general::settings_content_section(
+            self.section,
             menu,
             cache,
             &self.new_price_setting,
@@ -559,7 +575,8 @@ impl State for GeneralSettingsState {
     }
 
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        crate::app::view::settings::general::general_section(
+        crate::app::view::settings::general::settings_content_section(
+            self.section,
             menu,
             cache,
             &self.new_price_setting,

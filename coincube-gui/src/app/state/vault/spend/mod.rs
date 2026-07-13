@@ -37,6 +37,11 @@ pub struct CreateSpendPanel {
     /// Additional filtering should be performed by individual steps.
     coins: Vec<Coin>,
     tip_height: i32,
+    /// Whether the one-time "default to Normal feerate" fetch has been
+    /// dispatched. Fired on the first `reload` so the fee/amount compute
+    /// immediately, without the user first picking a feerate — but only once,
+    /// so a later re-entry doesn't clobber a feerate they set.
+    initial_feerate_requested: bool,
 }
 
 impl CreateSpendPanel {
@@ -75,6 +80,7 @@ impl CreateSpendPanel {
             ],
             coins: coins.to_vec(),
             tip_height: blockheight.try_into().expect("i32 by consensus"),
+            initial_feerate_requested: false,
         }
     }
 
@@ -121,6 +127,7 @@ impl CreateSpendPanel {
             ],
             coins: coins.to_vec(),
             tip_height: blockheight.try_into().expect("i32 by consensus"),
+            initial_feerate_requested: false,
         }
     }
 
@@ -161,6 +168,7 @@ impl CreateSpendPanel {
             ],
             coins: coins.to_vec(),
             tip_height: blockheight.try_into().expect("i32 by consensus"),
+            initial_feerate_requested: false,
         }
     }
 
@@ -229,8 +237,24 @@ impl State for CreateSpendPanel {
             // We still send this message to the current step below to update the values directly.
         }
 
+        // A recovery spend can't take the `reload` default (it opens on the
+        // path-selection step, which would drop the message). Instead fire the
+        // same "Normal" (~1h, 6-block target) default the first time we advance
+        // onto the DefineSpend step (index 1), so amounts/fees compute without
+        // the user first picking a feerate. The `initial_feerate_requested`
+        // guard keeps a later re-entry from clobbering a feerate they set.
+        let feerate_task =
+            if self.draft.is_recovery() && !self.initial_feerate_requested && self.current == 1 {
+                self.initial_feerate_requested = true;
+                Task::done(Message::View(view::Message::CreateSpend(
+                    view::CreateSpendMessage::FetchFeeEstimate(6),
+                )))
+            } else {
+                Task::none()
+            };
+
         if let Some(step) = self.steps.get_mut(self.current) {
-            return step.update(daemon, cache, message);
+            return Task::batch([feerate_task, step.update(daemon, cache, message)]);
         }
 
         Task::none()
@@ -263,7 +287,7 @@ impl State for CreateSpendPanel {
         // spendable balance reflects the optimistic spend immediately.
         let wallet_for_coins_1 = wallet.clone();
         let wallet_for_coins_2 = wallet.clone();
-        Task::batch(vec![
+        let mut tasks = vec![
             Task::perform(
                 async move {
                     (
@@ -308,7 +332,18 @@ impl State for CreateSpendPanel {
                 },
                 Message::Labels,
             ),
-        ])
+        ];
+        // Default the feerate to "Normal" (~1h, 6-block target) the first time
+        // this panel loads, so amounts/fees compute immediately. Recovery
+        // starts on the path-selection step, which wouldn't consume it, so it
+        // fires the same default from `update` on entering DefineSpend instead.
+        if !self.initial_feerate_requested && !self.draft.is_recovery() {
+            self.initial_feerate_requested = true;
+            tasks.push(Task::done(Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::FetchFeeEstimate(6),
+            ))));
+        }
+        Task::batch(tasks)
     }
 }
 

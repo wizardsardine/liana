@@ -1402,6 +1402,37 @@ pub struct RecoveryKitStatus {
     pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    /// Owner-keychain ("phone") recovery summary, folded into the same
+    /// `/recovery-kit/status` response by the API (presence/tier only, no
+    /// ciphertext). `None` when the Cube has never used the envelope path.
+    #[serde(default)]
+    pub owner_self: Option<OwnerSelfRecoverySummary>,
+}
+
+/// Presence/tier summary of the owner-keychain recovery mode, mirrored from the
+/// API's `ownerSelf` block on `/recovery-kit/status`. Carries no ciphertext.
+/// A registered recipient (`has_recipient`) means a phone key exists; a
+/// non-empty `envelope_kinds` means recovery material has actually been sealed
+/// and uploaded to it — the signal that drives the "Keychain" backup pill.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnerSelfRecoverySummary {
+    #[serde(default)]
+    pub has_recipient: bool,
+    #[serde(default)]
+    pub tier: String,
+    /// Distinct artifact kinds escrowed to the phone key (`"descriptor"`,
+    /// `"seed"`). Empty when a recipient is registered but nothing sealed yet.
+    #[serde(default)]
+    pub envelope_kinds: Vec<String>,
+}
+
+impl OwnerSelfRecoverySummary {
+    /// Whether recovery material has actually been sealed to the phone key
+    /// (not merely a recipient registered). Drives the "Keychain" backup pill.
+    pub fn has_envelope(&self) -> bool {
+        !self.envelope_kinds.is_empty()
+    }
 }
 
 /// Deserialize a field that may arrive as:

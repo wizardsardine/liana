@@ -12,7 +12,7 @@ use iced::Task;
 use coincube_ui::widget::Element;
 
 use about::AboutSettingsState;
-use general::GeneralSettingsState;
+use general::{GeneralSettingsState, SettingsSection};
 use install_stats::InstallStatsState;
 
 use crate::{
@@ -74,6 +74,25 @@ impl State for SettingsState {
                 self.setting = Some(
                     GeneralSettingsState::new(
                         self.cube_id.clone(),
+                        SettingsSection::General,
+                        self.current_price_setting.clone(),
+                        self.current_unit_setting.clone(),
+                        &cache.datadir_path,
+                    )
+                    .into(),
+                );
+                self.setting
+                    .as_mut()
+                    .map(|s| s.reload(daemon, None))
+                    .unwrap_or_else(Task::none)
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::RecoverySection)) => {
+                // Same content state, Recovery face — it hosts the local backup
+                // flow plus the Recovery-Kit and Vault-Alerts cards.
+                self.setting = Some(
+                    GeneralSettingsState::new(
+                        self.cube_id.clone(),
+                        SettingsSection::Recovery,
                         self.current_price_setting.clone(),
                         self.current_unit_setting.clone(),
                         &cache.datadir_path,
@@ -85,10 +104,10 @@ impl State for SettingsState {
                     .as_mut()
                     .map(|s| s.reload(daemon, None))
                     .unwrap_or_else(Task::none);
-                // Kick the Recovery-Kit status fetch so the card has
-                // fresh copy by the time the user looks at it. The
-                // handler is App-level (it needs the authenticated
-                // client); we just drop a message onto the queue.
+                // Kick the Recovery-Kit status fetch so the card has a fresh
+                // copy by the time the user looks at it. The handler is
+                // App-level (it needs the authenticated client); we just drop a
+                // message onto the queue.
                 let load_status = Task::done(Message::View(view::Message::Settings(
                     view::SettingsMessage::RecoveryKit(view::RecoveryKitMessage::LoadStatus),
                 )));
@@ -154,6 +173,7 @@ impl State for SettingsState {
             if let Some(wizard) = crate::app::view::settings::recovery_kit::dispatch(
                 &self.recovery_kit.flow,
                 &self.recovery_kit.pin,
+                self.recovery_kit.status.as_ref(),
             ) {
                 return crate::app::view::dashboard(
                     menu,

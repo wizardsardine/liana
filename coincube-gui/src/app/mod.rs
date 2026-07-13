@@ -1904,6 +1904,9 @@ impl App {
                     menu::CubeSettingsOption::General => {
                         Some(view::SettingsMessage::GeneralSection)
                     }
+                    menu::CubeSettingsOption::Recovery => {
+                        Some(view::SettingsMessage::RecoverySection)
+                    }
                     menu::CubeSettingsOption::About => Some(view::SettingsMessage::AboutSection),
                     menu::CubeSettingsOption::Stats => {
                         Some(view::SettingsMessage::InstallStatsSection)
@@ -3473,8 +3476,9 @@ impl App {
                     // the panel resets and the user can retry once the in-flight
                     // switch finishes.
                     return self.update_dispatch(Message::DaemonConfigLoaded(Err(Error::Config(
-                        "A Bitcoin backend switch is already in progress. \
-                         Please wait for it to finish, then try again."
+                        "A backend switch is already in progress. If a local node is still \
+                         scanning the blockchain this can take a while — please wait for it \
+                         to finish, then try again."
                             .to_string(),
                     ))));
                 } else {
@@ -3483,6 +3487,7 @@ impl App {
             }
             Message::DaemonRestarted(outcome) => {
                 self.daemon_switch_in_progress = false;
+                self.cache.daemon_switch_in_progress = false;
                 // Non-blocking toast emitted on top of the normal result (e.g. a
                 // switch that succeeded but couldn't be persisted to disk).
                 let mut extra = Task::none();
@@ -4404,6 +4409,8 @@ impl App {
         // Mark a switch in flight so subsequent sync probes / triggers don't
         // re-fire it before it completes (the config only changes on success).
         self.daemon_switch_in_progress = true;
+        // Mirror into the cache so the Node settings view reflects it.
+        self.cache.daemon_switch_in_progress = true;
         let old_daemon = self.daemon.clone();
         let network = cfg.bitcoin_config.network;
         let wallet_id = self.wallet.as_ref().expect("wallet should exist").id();

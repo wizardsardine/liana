@@ -258,6 +258,7 @@ impl RecoveryKitRestoreStep {
                             encryption_scheme: String::new(),
                             created_at: None,
                             updated_at: None,
+                            owner_self: None,
                         },
                         Err(e) => {
                             return Err(format!(
@@ -931,6 +932,7 @@ mod tests {
                 encryption_scheme: "aes-256-gcm".to_string(),
                 created_at: None,
                 updated_at: None,
+                owner_self: None,
             },
         }
     }
@@ -952,6 +954,7 @@ mod tests {
                 encryption_scheme: "aes-256-gcm".to_string(),
                 created_at: None,
                 updated_at: None,
+                owner_self: None,
             },
         }
     }

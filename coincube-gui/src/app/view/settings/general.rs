@@ -1,8 +1,10 @@
-use iced::widget::{pick_list, Column, Row, Space, Toggler};
+use iced::widget::{pick_list, tooltip, Column, Row, Space, Toggler};
 use iced::{Alignment, Length};
 
+use coincube_ui::color;
 use coincube_ui::component::text::*;
-use coincube_ui::component::{button, card};
+use coincube_ui::component::{button, card, tooltip_custom};
+use coincube_ui::icon;
 use coincube_ui::theme;
 use coincube_ui::widget::{ColumnExt, Element};
 
@@ -11,6 +13,7 @@ use crate::app::menu::Menu;
 use crate::app::settings::display::DisplayMode;
 use crate::app::settings::fiat::PriceSetting;
 use crate::app::settings::unit::{BitcoinDisplayUnit, UnitSetting};
+use crate::app::state::settings::general::SettingsSection;
 use crate::app::state::settings::recovery_alerts::RecoveryAlerts;
 use crate::app::state::settings::recovery_kit::RecoveryKit;
 use crate::app::view::dashboard;
@@ -19,8 +22,11 @@ use crate::services::coincube::{KeyholderDownloadPolicy, RecoveryKitStatus};
 use crate::services::fiat::{Currency, ALL_PRICE_SOURCES};
 use crate::services::inheritance::EscrowTier;
 
+/// Render whichever settings sub-tab is active. The General and Recovery tabs
+/// share `GeneralSettingsState`; this dispatches on the section discriminator.
 #[allow(clippy::too_many_arguments)]
-pub fn general_section<'a>(
+pub fn settings_content_section<'a>(
+    section: SettingsSection,
     menu: &'a Menu,
     cache: &'a cache::Cache,
     new_price_setting: &'a PriceSetting,
@@ -33,62 +39,119 @@ pub fn general_section<'a>(
     recovery_kit: Option<&'a RecoveryKit>,
     recovery_alerts: Option<&'a RecoveryAlerts>,
 ) -> Element<'a, Message> {
-    use crate::app::state::settings::general::BackupSeedState;
-
-    // When the backup flow is active, take over the entire settings page
-    // with the wizard view. This matches the UX the old Liquid Settings
-    // backup used and keeps the multi-step flow focused.
-    if !matches!(backup_state, BackupSeedState::None) {
-        if let Some(wizard) = super::backup::dispatch(backup_state, backup_pin, backup_mnemonic) {
-            return dashboard(menu, cache, Column::new().spacing(20).push(wizard));
-        }
+    match section {
+        SettingsSection::General => general_section(
+            menu,
+            cache,
+            new_price_setting,
+            new_unit_setting,
+            currencies_list,
+            show_direction_badges,
+        ),
+        SettingsSection::Recovery => recovery_section(
+            menu,
+            cache,
+            backup_state,
+            backup_pin,
+            backup_mnemonic,
+            recovery_kit,
+            recovery_alerts,
+        ),
     }
+}
 
-    // Normal settings rendering.
-    let mut col = Column::new()
+/// General tab: app/display preferences only.
+fn general_section<'a>(
+    menu: &'a Menu,
+    cache: &'a cache::Cache,
+    new_price_setting: &'a PriceSetting,
+    new_unit_setting: &'a UnitSetting,
+    currencies_list: &'a [Currency],
+    show_direction_badges: bool,
+) -> Element<'a, Message> {
+    let col = Column::new()
         .spacing(20)
         .push(super::header("General", SettingsMessage::GeneralSection))
         .push(network_row(cache.network))
         .push(bitcoin_display_unit(new_unit_setting))
         .push(display_mode_toggle(cache.display_mode))
         .push(direction_badges_toggle(show_direction_badges))
-        .push(fiat_price(new_price_setting, currencies_list))
+        .push(fiat_price(new_price_setting, currencies_list));
+
+    dashboard(menu, cache, col)
+}
+
+/// Recovery tab: local paper backup + Connect Recovery Kit + Vault Recovery
+/// Alerts. Hosts the local-backup wizard page takeover (unchanged from when it
+/// lived on General).
+#[allow(clippy::too_many_arguments)]
+fn recovery_section<'a>(
+    menu: &'a Menu,
+    cache: &'a cache::Cache,
+    backup_state: &'a crate::app::state::settings::general::BackupSeedState,
+    backup_pin: &'a crate::pin_input::PinInput,
+    backup_mnemonic: Option<&'a [String]>,
+    recovery_kit: Option<&'a RecoveryKit>,
+    recovery_alerts: Option<&'a RecoveryAlerts>,
+) -> Element<'a, Message> {
+    use crate::app::state::settings::general::BackupSeedState;
+
+    // When the local backup flow is active, take over the entire settings page
+    // with the wizard view. This keeps the multi-step PIN → reveal flow focused.
+    if !matches!(backup_state, BackupSeedState::None) {
+        if let Some(wizard) = super::backup::dispatch(backup_state, backup_pin, backup_mnemonic) {
+            return dashboard(menu, cache, Column::new().spacing(20).push(wizard));
+        }
+    }
+
+    let mut col = Column::new()
+        .spacing(20)
+        .push(super::header("Recovery", SettingsMessage::RecoverySection))
         .push(backup_master_seed_card(cache.current_cube_backed_up));
 
     // Connect-hosted Recovery Kit card. Render only when the outer
-    // SettingsState had a `RecoveryKit` on hand — i.e. when the
-    // downcasting wrapper invoked `view_with_recovery_kit`. Falling
-    // back to no-card when `None` keeps the trait-based `view`
-    // callers harmless.
+    // SettingsState had a `RecoveryKit` on hand — i.e. when the downcasting
+    // wrapper invoked `view_with_recovery_kit`. Falling back to no-card when
+    // `None` keeps the trait-based `view` callers harmless.
     if let Some(rk) = recovery_kit {
-        // W12 drift: compute on the fly by comparing the cached live
-        // fingerprint (refreshed every App tick) with the last-backed-up
-        // fingerprint (persisted on `CubeSettings`). Only meaningful
-        // when a descriptor has actually been backed up — otherwise
-        // the card's "incomplete" copy already prompts the user.
-        let server_has_descriptor = rk
-            .status
-            .as_ref()
-            .map(|s| s.has_encrypted_wallet_descriptor)
-            .unwrap_or(false);
-        let drift = descriptor_drift(
-            server_has_descriptor,
-            cache.current_descriptor_fingerprint.as_deref(),
-            cache
-                .recovery_kit_last_backed_up_descriptor_fingerprint
-                .as_deref(),
-        );
-        col = col.push(recovery_kit_card(
-            cache.current_cube_is_passkey,
-            cache.has_vault,
-            rk.status.as_ref(),
-            rk.status_loading,
-            drift,
-        ));
+        if !cache.connect_authenticated {
+            // The Recovery Kit lives in the Connect account, so it needs sign-in
+            // first. Reuse the shared Connect sign-in prompt (same card + "Sign
+            // In" → `OpenConnectSignIn` button used by Avatar / Members) rather
+            // than a "Create Recovery Kit" CTA that would only dead-end.
+            col = col.push(crate::app::view::connect::sign_in_prompt::sign_in_prompt(
+                "back up your Cube Recovery Kit",
+            ));
+        } else {
+            // W12 drift: compute on the fly by comparing the cached live
+            // fingerprint (refreshed every App tick) with the last-backed-up
+            // fingerprint (persisted on `CubeSettings`). Only meaningful when a
+            // descriptor has actually been backed up — otherwise the card's
+            // "incomplete" copy already prompts the user.
+            let server_has_descriptor = rk
+                .status
+                .as_ref()
+                .map(|s| s.has_encrypted_wallet_descriptor)
+                .unwrap_or(false);
+            let drift = descriptor_drift(
+                server_has_descriptor,
+                cache.current_descriptor_fingerprint.as_deref(),
+                cache
+                    .recovery_kit_last_backed_up_descriptor_fingerprint
+                    .as_deref(),
+            );
+            col = col.push(recovery_kit_card(
+                cache.current_cube_is_passkey,
+                cache.has_vault,
+                rk.status.as_ref(),
+                rk.status_loading,
+                drift,
+            ));
+        }
     }
 
-    // Vault Recovery Alerts card (Estate Notifications — PR 2). Same
-    // threading discipline as the Recovery Kit card above.
+    // Vault Recovery Alerts card (Estate Notifications — PR 2). Same threading
+    // discipline as the Recovery Kit card above.
     if let Some(ra) = recovery_alerts {
         col = col.push(recovery_alerts_card(ra));
     }
@@ -392,7 +455,7 @@ fn backup_master_seed_card<'a>(backed_up: bool) -> Element<'a, Message> {
     } else {
         (
             "Backup Master Seed Phrase",
-            "Write down your 12-word recovery phrase as a backup. This is the only way to recover your Cube if you forget your PIN.",
+            "Write down your 12-word recovery phrase as a backup. This is the only way to recover your Cube if you forget your PIN and do not have a Recovery Kit.",
             "Start Backup",
         )
     };
@@ -416,6 +479,56 @@ fn backup_master_seed_card<'a>(backed_up: bool) -> Element<'a, Message> {
     )
     .width(Length::Fill)
     .into()
+}
+
+/// Small rounded "pill" badge naming a Recovery-Kit backup method in use
+/// (e.g. "Password", "Keychain"). Subtle translucent-orange fill + orange
+/// border, but the label uses the **theme's primary text colour** (not orange)
+/// so it stays high-contrast in both dark and light mode — orange-on-orange was
+/// unreadable, especially on the light warm-paper background.
+pub(crate) fn backup_pill<'a>(label: &'static str) -> Element<'a, Message> {
+    iced::widget::container(text(label).size(12).bold())
+        .padding([3, 10])
+        .style(|t: &theme::Theme| iced::widget::container::Style {
+            text_color: Some(t.colors.text.primary),
+            background: Some(iced::Background::Color(color::TRANSPARENT_ORANGE)),
+            border: iced::Border {
+                radius: 10.0.into(),
+                width: 1.0,
+                color: color::ORANGE,
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+/// Which Recovery-Kit backup methods are actually in place, from the status.
+/// Returns `(password_present, keychain_present)`. Password = ciphertext on the
+/// password kit; Keychain = recovery material actually sealed to the owner's
+/// phone key (envelope uploaded, not merely a recipient registered). Shared by
+/// the Settings card and the protection-choice wizard screen.
+pub(crate) fn backup_methods_present(status: Option<&RecoveryKitStatus>) -> (bool, bool) {
+    let password = status
+        .map(|s| s.has_encrypted_seed || s.has_encrypted_wallet_descriptor)
+        .unwrap_or(false);
+    let keychain = status
+        .and_then(|s| s.owner_self.as_ref())
+        .map(|o| o.has_envelope())
+        .unwrap_or(false);
+    (password, keychain)
+}
+
+/// Format an RFC 3339 timestamp as the API returns it (e.g.
+/// `2026-05-08T14:36:50Z`) into a friendlier `8 May 2026, 14:36 UTC`. Falls
+/// back to the raw string if it can't be parsed.
+fn format_backup_time(raw: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Utc)
+                .format("%-d %b %Y, %H:%M UTC")
+                .to_string()
+        })
+        .unwrap_or_else(|_| raw.to_string())
 }
 
 /// Cube Recovery Kit card — rendered below the local paper-phrase
@@ -461,7 +574,13 @@ fn recovery_kit_card<'a>(
         match status {
             Some(s) if s.has_encrypted_wallet_descriptor => (
                 "Wallet Descriptor backed up",
-                format!("Last updated {}.", s.updated_at.as_deref().unwrap_or("—")),
+                format!(
+                    "Last updated {}.",
+                    s.updated_at
+                        .as_deref()
+                        .map(format_backup_time)
+                        .unwrap_or_else(|| "—".to_string())
+                ),
                 "Update",
                 RecoveryKitMode::Rotate,
             ),
@@ -501,7 +620,13 @@ fn recovery_kit_card<'a>(
             ),
             Some(s) => (
                 "Recovery Kit backed up",
-                format!("Last updated {}.", s.updated_at.as_deref().unwrap_or("—")),
+                format!(
+                    "Last updated {}.",
+                    s.updated_at
+                        .as_deref()
+                        .map(format_backup_time)
+                        .unwrap_or_else(|| "—".to_string())
+                ),
                 "Update",
                 RecoveryKitMode::Rotate,
             ),
@@ -547,11 +672,26 @@ fn recovery_kit_card<'a>(
         );
     }
 
+    // Which backup methods are actually in place — drives the method pills.
+    let (password_present, keychain_present) = backup_methods_present(status);
+
     let mut body = Column::new()
         .spacing(4)
         .width(Length::Fill)
         .push(text(title).bold())
         .push(text(subtitle).size(14));
+    if password_present || keychain_present {
+        let mut pills = Row::new().spacing(6).align_y(Alignment::Center);
+        if password_present {
+            pills = pills.push(backup_pill("Password"));
+        }
+        if keychain_present {
+            pills = pills.push(backup_pill("Keychain"));
+        }
+        body = body
+            .push(Space::new().height(Length::Fixed(2.0)))
+            .push(pills);
+    }
     if drift {
         body = body.push(
             text("⚠ Descriptor out of sync with your Connect backup.")
@@ -672,6 +812,11 @@ pub fn fiat_price<'a>(
                     .spacing(10)
                     .align_y(Alignment::Center)
                     .push(text("Fiat price:").bold())
+                    .push(tooltip_custom(
+                        "Fiat price data is provided by third-party services. Availability and accuracy are not guaranteed.",
+                        icon::warning_icon().color(color::ORANGE),
+                        tooltip::Position::Bottom,
+                    ))
                     .push(Space::new().width(Length::Fill))
                     .push(
                         Toggler::new(new_price_setting.is_enabled)

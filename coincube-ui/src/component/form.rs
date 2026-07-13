@@ -90,16 +90,29 @@ where
     /// - a function that produces a message when the [`Form`] changes
     pub fn new_amount_btc<F>(placeholder: &str, value: &'a Value<String>, on_change: F) -> Self
     where
-        F: 'static + Fn(String) -> Message,
+        F: 'static + Fn(String) -> Message + Clone,
     {
+        let on_change_clone = on_change.clone();
         Self {
-            input: text_input::TextInput::new(placeholder, &value.value).on_input(move |s| {
-                if bitcoin::Amount::from_str_in(&s, Denomination::Bitcoin).is_ok() || s.is_empty() {
-                    on_change(s)
-                } else {
-                    on_change(value.value.clone())
-                }
-            }),
+            input: text_input::TextInput::new(placeholder, &value.value)
+                .on_input(move |s| {
+                    if bitcoin::Amount::from_str_in(&s, Denomination::Bitcoin).is_ok()
+                        || s.is_empty()
+                        // In order to allow the user to fix an invalid pasted value, we allow
+                        // deletion even if the result is still invalid. Note that all invalid
+                        // characters must be deleted before the user can enter new valid values.
+                        || s.chars().count() < value.value.chars().count()
+                    {
+                        on_change(s)
+                    } else {
+                        on_change(value.value.clone())
+                    }
+                })
+                .on_paste(move |pasted| {
+                    // Keep the entire pasted content and perform any required checks or
+                    // modifications in the on_change message handler.
+                    on_change_clone(pasted)
+                }),
             warning: value.warning,
             valid: value.valid,
         }
@@ -174,6 +187,18 @@ where
     /// Sets the [`Form`] with a warning message
     pub fn maybe_warning(mut self, warning: Option<&'a str>) -> Self {
         self.warning = warning;
+        self
+    }
+
+    /// Forces the input into its invalid (red) style regardless of the value's
+    /// own format validity — e.g. to flag insufficient funds on an otherwise
+    /// well-formed amount. Suppresses the format warning text, since the reason
+    /// is surfaced elsewhere (e.g. the disabled-action hint).
+    pub fn invalid(mut self, is_invalid: bool) -> Self {
+        if is_invalid {
+            self.valid = false;
+            self.warning = None;
+        }
         self
     }
 

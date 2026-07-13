@@ -54,6 +54,16 @@ impl PriceSource {
         .map(|s| s.to_string())
     }
 
+    /// Returns the User-Agent header to use in requests, if any.
+    pub fn user_agent(&self) -> Option<String> {
+        match self {
+            // CoinGecko rejects requests that do not carry a User-Agent header.
+            Self::CoinGecko => Some(format!("coincube-gui/{}", env!("CARGO_PKG_VERSION"))),
+            Self::Coincube => None,
+            Self::MempoolSpace => None,
+        }
+    }
+
     /// Returns the URL to fetch the price for a given currency.
     pub fn get_price_url(&self, currency: Currency) -> String {
         match self {

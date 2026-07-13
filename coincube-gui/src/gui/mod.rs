@@ -113,8 +113,11 @@ async fn ctrl_c() -> Result<(), ()> {
 impl GUI {
     pub fn title(&self) -> String {
         match cfg!(debug_assertions) {
-            true => format!("COINCUBE v{} (development)", env!("CARGO_PKG_VERSION")),
-            false => format!("COINCUBE v{}", env!("CARGO_PKG_VERSION")),
+            true => format!(
+                "COINCUBE | Tenshu v{} (development)",
+                env!("CARGO_PKG_VERSION")
+            ),
+            false => format!("COINCUBE | Tenshu v{}", env!("CARGO_PKG_VERSION")),
         }
     }
 

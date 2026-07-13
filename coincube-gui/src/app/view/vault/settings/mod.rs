@@ -1322,8 +1322,13 @@ pub fn node_backend_status<'a>(
     can_switch_to_bitcoind: bool,
     can_setup_local_node: bool,
     processing: bool,
+    switch_in_progress: bool,
     warning: Option<String>,
 ) -> Element<'a, NodeSettingsMessage> {
+    // A backend switch (manual or the background auto-promotion) is running.
+    // Treat it like `processing` so the switch buttons are disabled rather
+    // than offering an action that just errors "already in progress".
+    let processing = processing || switch_in_progress;
     // Once the node reports it has left initial block download, treat it as
     // ready even if `verificationprogress` still pins at 1.0 — otherwise the
     // syncing copy/button label keep saying "syncing" at 100%.
@@ -1346,6 +1351,32 @@ pub fn node_backend_status<'a>(
         .padding(15)
         .width(Length::Fill),
     );
+
+    // Surface an in-flight backend switch so the disabled buttons read as
+    // "busy" rather than broken. This covers the promotion/rescan window
+    // after the pending node reports synced, where `pending_progress` is
+    // already cleared but the switch itself is still loading the wallet.
+    if switch_in_progress {
+        col = col.push(
+            Container::new(
+                Column::new()
+                    .spacing(8)
+                    .push(caption("Switching backend"))
+                    .push(text("Applying your node change…"))
+                    .push(
+                        p2_regular(
+                            "This may take a moment. If a local node is still scanning the \
+                             blockchain it can take a while. COINCUBE will finish the switch \
+                             automatically — no need to do anything.",
+                        )
+                        .style(theme::text::secondary),
+                    ),
+            )
+            .padding(15)
+            .width(Length::Fill)
+            .style(theme::card::border),
+        );
+    }
 
     if let Some(progress) = pending_progress.filter(|_| still_syncing) {
         let pace = if progress > 0.98 {
