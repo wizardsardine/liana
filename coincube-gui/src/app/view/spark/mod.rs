@@ -17,9 +17,9 @@ pub mod transactions;
 
 pub use overview::{SparkOverviewView, SparkPaymentMethod, SparkRecentTransaction, SparkStatus};
 pub use receive::SparkReceiveView;
-pub use sideshift_receive::spark_sideshift_receive_view;
 pub use send::SparkSendView;
 pub use settings::{SparkSettingsStatus, SparkSettingsView};
+pub use sideshift_receive::spark_sideshift_receive_view;
 pub use transactions::{SparkTransactionsStatus, SparkTransactionsView};
 
 /// View-level messages for the Spark Overview panel.
@@ -146,13 +146,19 @@ pub enum SparkSendMessage {
     QuoteTick,
     /// User asked for a fresh quote after the previous one expired.
     ReQuoteRequested,
+    /// User asked to retry a *failed* cross-chain send.
+    ///
+    /// Distinct from [`Self::ConfirmRequested`]: a retry has to re-run the
+    /// prepare (the bridge consumed the old handle when it executed the failed
+    /// send), while deliberately keeping the original idempotency key so the
+    /// retry can't double-pay. Only offered when the route's
+    /// [`RetryPolicy`](crate::app::state::spark::cross_chain::RetryPolicy)
+    /// permits it.
+    CrossChainRetryRequested,
     /// A cross-chain send failed. Carries the route's retry policy, so the
     /// panel can tell "safe to retry" apart from "check the payment's state
     /// first, because a retry might pay twice".
-    CrossChainSendFailed(
-        String,
-        crate::app::state::spark::cross_chain::RetryPolicy,
-    ),
+    CrossChainSendFailed(String, crate::app::state::spark::cross_chain::RetryPolicy),
 }
 
 /// View-level messages for the Phase 4c Spark Receive panel.

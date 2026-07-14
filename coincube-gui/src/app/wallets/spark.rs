@@ -17,9 +17,9 @@
 use std::sync::Arc;
 
 use coincube_spark_protocol::{
-    ClaimDepositOk, CrossChainRoute, CrossChainRoutesOk, GetInfoOk, GetUserSettingsOk,
-    ListPaymentsOk, ListUnclaimedDepositsOk, ParseInputOk, PrepareSendOk, ReceivePaymentOk,
-    SendPaymentOk,
+    ClaimDepositOk, CrossChainAddress, CrossChainRoute, CrossChainRoutesOk, GetInfoOk,
+    GetUserSettingsOk, ListPaymentsOk, ListUnclaimedDepositsOk, ParseInputOk, PrepareSendOk,
+    ReceivePaymentOk, SendPaymentOk,
 };
 
 use crate::app::breez_spark::{SparkClient, SparkClientError, SparkClientEvent};
@@ -116,13 +116,13 @@ impl SparkBackend {
     /// the handle is executed by the ordinary [`Self::send_payment`].
     pub async fn prepare_cross_chain(
         &self,
-        address: String,
+        destination: CrossChainAddress,
         route: CrossChainRoute,
         amount_sat: u64,
         max_slippage_bps: Option<u32>,
     ) -> Result<PrepareSendOk, SparkClientError> {
         self.client
-            .prepare_cross_chain(address, route, amount_sat, max_slippage_bps)
+            .prepare_cross_chain(destination, route, amount_sat, max_slippage_bps)
             .await
     }
 

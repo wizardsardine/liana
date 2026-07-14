@@ -2083,33 +2083,38 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         .push_maybe(spark_card)
         .push_maybe(has_liquid.then_some(liquid_card))
         .push(vault_card_element)
-        .push_maybe(transfer_available(has_liquid, has_vault, has_spark).then(|| {
-            // Disable Transfer while any wallet's balance hasn't been
-            // corroborated yet. The amount-entry view and wallet picker
-            // both consume the raw balance values to render available-
-            // funds hints and to cap validation; opening Transfer
-            // pre-load would surface a misleading zero / stale cap for
-            // whichever wallet hasn't finished syncing.
-            Container::new(
-                button::secondary(Some(arrow_down_up_icon()), "Transfer")
-                    .style(|t, _s| iced::widget::button::Style {
-                        text_color: color::ORANGE,
-                        border: iced::Border {
-                            color: color::ORANGE,
-                            width: 1.0,
-                            radius: 35.0.into(),
-                        },
-                        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-                        ..Default::default()
-                    })
-                    .width(Length::Fixed(150.0))
-                    .on_press_maybe(
-                        (!total_balance_loading).then_some(Message::Home(HomeMessage::NextStep)),
-                    ),
-            )
-            .width(Length::Fill)
-            .center_x(Length::Fill)
-        }))
+        .push_maybe(
+            transfer_available(has_liquid, has_vault, has_spark).then(|| {
+                // Disable Transfer while any wallet's balance hasn't been
+                // corroborated yet. The amount-entry view and wallet picker
+                // both consume the raw balance values to render available-
+                // funds hints and to cap validation; opening Transfer
+                // pre-load would surface a misleading zero / stale cap for
+                // whichever wallet hasn't finished syncing.
+                Container::new(
+                    button::secondary(Some(arrow_down_up_icon()), "Transfer")
+                        .style(|t, _s| iced::widget::button::Style {
+                            text_color: color::ORANGE,
+                            border: iced::Border {
+                                color: color::ORANGE,
+                                width: 1.0,
+                                radius: 35.0.into(),
+                            },
+                            background: Some(iced::Background::Color(
+                                t.colors.cards.simple.background,
+                            )),
+                            ..Default::default()
+                        })
+                        .width(Length::Fixed(150.0))
+                        .on_press_maybe(
+                            (!total_balance_loading)
+                                .then_some(Message::Home(HomeMessage::NextStep)),
+                        ),
+                )
+                .width(Length::Fill)
+                .center_x(Length::Fill)
+            }),
+        )
         .push_maybe(
             transfer_available(has_liquid, has_vault, has_spark)
                 .then(|| Space::new().height(Length::Fixed(30.0))),

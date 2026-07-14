@@ -114,7 +114,10 @@ impl QuoteCountdown {
 }
 
 /// Resolve a quote's `expires_at` against the current time.
-pub fn quote_countdown(quote: &CrossChainQuote, now: chrono::DateTime<chrono::Utc>) -> QuoteCountdown {
+pub fn quote_countdown(
+    quote: &CrossChainQuote,
+    now: chrono::DateTime<chrono::Utc>,
+) -> QuoteCountdown {
     let Ok(expires) = chrono::DateTime::parse_from_rfc3339(&quote.expires_at) else {
         return QuoteCountdown::Unknown;
     };
@@ -304,7 +307,10 @@ mod tests {
         let now = chrono::Utc::now();
         // An unreadable expiry is not evidence the quote is *good*. Failing
         // toward "re-quote" costs a second; failing toward "send" costs money.
-        assert_eq!(quote_countdown(&quote("", true), now), QuoteCountdown::Unknown);
+        assert_eq!(
+            quote_countdown(&quote("", true), now),
+            QuoteCountdown::Unknown
+        );
         assert_eq!(
             quote_countdown(&quote("not-a-timestamp", true), now),
             QuoteCountdown::Unknown

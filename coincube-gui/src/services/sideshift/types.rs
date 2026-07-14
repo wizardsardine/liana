@@ -323,8 +323,15 @@ impl ShiftStatusKind {
                 "This shift expired before a deposit arrived. Nothing was sent, and no funds \
                  are at risk."
             }
-            Self::Refunding | Self::Refunded => {
+            Self::Refunding => {
                 "The deposit is being returned to the refund address you gave, on its \
+                 original network."
+            }
+            // Distinct from `Refunding`: this one is finished. Telling a user
+            // their money "is being returned" when it already has been sends
+            // them looking for a transfer that has, in fact, arrived.
+            Self::Refunded => {
+                "The deposit has been returned to the refund address you gave, on its \
                  original network."
             }
             Self::Settled => "Your bitcoin has arrived in your Spark wallet.",
@@ -453,10 +460,14 @@ pub fn deposit_option_by_key(key: &str) -> Option<DepositOption> {
 /// happens (right address, wrong chain) without pretending to fully validate
 /// every chain's encoding.
 pub fn validate_refund_address(network: SideshiftNetwork, address: &str) -> Result<(), String> {
+    // Every message below names the network *after* a preposition rather than
+    // after an article. "a {}" reads as "a Ethereum" for half the catalogue,
+    // and the mismatch case can name two networks at once ("Ethereum or
+    // Binance"), which no single article fits.
     let addr = address.trim();
     if addr.is_empty() {
         return Err(format!(
-            "Enter a {} address to receive a refund if the shift can't complete.",
+            "Enter your address on {} — a refund is returned there if the shift can't complete.",
             network.network_name()
         ));
     }
@@ -464,7 +475,7 @@ pub fn validate_refund_address(network: SideshiftNetwork, address: &str) -> Resu
     let detected = SideshiftNetwork::detect_from_address(addr);
     if detected.is_empty() {
         return Err(format!(
-            "That doesn't look like a {} address.",
+            "That doesn't look like a valid address on {}.",
             network.network_name()
         ));
     }
@@ -472,14 +483,14 @@ pub fn validate_refund_address(network: SideshiftNetwork, address: &str) -> Resu
         // The high-value case: a Bitcoin address pasted as a Tron refund
         // address, or an EVM address for a Solana deposit. Name both chains so
         // the user can see what they've mixed up.
+        let detected_names = detected
+            .iter()
+            .map(|n| n.network_name())
+            .collect::<Vec<_>>()
+            .join(" or ");
         return Err(format!(
-            "This is {} address, but your refund must go back to {} — the network you're \
-             depositing from. Funds refunded to the wrong network are lost.",
-            detected
-                .iter()
-                .map(|n| n.network_name())
-                .collect::<Vec<_>>()
-                .join(" or a "),
+            "That address is on {detected_names}, but your refund must go back to {} — the \
+             network you're depositing from. Funds refunded to the wrong network are lost.",
             network.network_name(),
         ));
     }
@@ -499,7 +510,10 @@ mod tests {
         // spinner for a shift that will never move on its own.
         let review = ShiftStatusKind::from("review");
         assert_eq!(review, ShiftStatusKind::Review);
-        assert!(review.is_terminal(), "a held shift will not advance by itself");
+        assert!(
+            review.is_terminal(),
+            "a held shift will not advance by itself"
+        );
         assert!(review.needs_user_action());
         assert!(review.guidance().contains("contact SideShift"));
     }
@@ -523,12 +537,14 @@ mod tests {
     fn in_flight_states_keep_polling_and_set_expectations() {
         for s in ["waiting", "pending", "processing", "settling"] {
             let kind = ShiftStatusKind::from(s);
-            assert!(!kind.is_terminal(), "{s} should keep polling");
-            assert!(!kind.needs_user_action(), "{s} needs no user action");
+            assert!(!kind.is_terminal(), "{} should keep polling", s);
+            assert!(!kind.needs_user_action(), "{} needs no user action", s);
         }
         // On-chain settle means a confirmation wait; the copy must say so
         // rather than implying it's instant.
-        assert!(ShiftStatusKind::Settling.guidance().contains("confirmation"));
+        assert!(ShiftStatusKind::Settling
+            .guidance()
+            .contains("confirmation"));
     }
 
     #[test]
@@ -637,6 +653,49 @@ mod tests {
         let eth = deposit_option_by_key("usdt:ethereum").expect("usdt on ethereum");
         assert_ne!(tron.network, eth.network);
         assert_ne!(tron.key(), eth.key());
+    }
+
+    #[test]
+    fn a_completed_refund_is_not_described_as_still_in_progress() {
+        // "is being returned" for a refund that already landed sends the user
+        // looking for a transfer that has, in fact, arrived.
+        assert!(ShiftStatusKind::Refunding.guidance().contains("is being"));
+        assert!(ShiftStatusKind::Refunded.guidance().contains("has been"));
+        assert!(!ShiftStatusKind::Refunded.guidance().contains("is being"));
+    }
+
+    /// Every message names the network after a preposition, never after an
+    /// article — "a Ethereum address" is what you get otherwise, and the
+    /// mismatch case can name two networks at once, which no article fits.
+    #[test]
+    fn refund_errors_stay_grammatical_for_every_network() {
+        for option in deposit_options() {
+            let net = option.network;
+            for msg in [
+                validate_refund_address(net, "").unwrap_err(),
+                validate_refund_address(net, "definitely-not-an-address").unwrap_err(),
+            ] {
+                assert!(
+                    !msg.contains(&format!("a {}", net.network_name())),
+                    "ungrammatical article before the network name: {}",
+                    msg
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_multi_network_detection_reads_as_a_list_not_a_mangled_article() {
+        // An EVM address detects as Ethereum *and* Binance. The old phrasing
+        // joined them with " or a " and dropped the leading article entirely.
+        let err = validate_refund_address(
+            SideshiftNetwork::Solana,
+            "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        )
+        .unwrap_err();
+        assert!(err.contains("Ethereum or Binance"), "{}", err);
+        assert!(err.contains("Solana"));
+        assert!(err.contains("lost"));
     }
 
     #[test]

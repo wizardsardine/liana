@@ -198,7 +198,8 @@ pub async fn load_breez_client(
     let already_had_liquid = !pre_existing.is_empty();
 
     // Connect to Breez SDK with the signer
-    let breez_client = BreezClient::connect_with_signer(breez_config, liquid_signer.clone()).await?;
+    let breez_client =
+        BreezClient::connect_with_signer(breez_config, liquid_signer.clone()).await?;
 
     // Liquid sunset: a wallet that already exists on this machine, or an
     // account the server has grandfathered, keeps Liquid unconditionally.

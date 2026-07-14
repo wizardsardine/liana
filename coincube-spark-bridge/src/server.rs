@@ -23,9 +23,9 @@ use async_trait::async_trait;
 use breez_sdk_spark::{
     CheckLightningAddressRequest, ClaimDepositRequest, CrossChainAddressDetails,
     CrossChainAddressFamily, CrossChainRouteFilter, CrossChainRoutePair, EventListener,
-    GetInfoRequest, InputType, LightningAddressInfo as SdkLightningAddressInfo, ListPaymentsRequest,
-    ListUnclaimedDepositsRequest, LnurlPayRequest, PaymentDetails, PaymentRequest,
-    PrepareLnurlPayRequest, PrepareLnurlPayResponse, PrepareSendPaymentRequest,
+    GetInfoRequest, InputType, LightningAddressInfo as SdkLightningAddressInfo,
+    ListPaymentsRequest, ListUnclaimedDepositsRequest, LnurlPayRequest, PaymentDetails,
+    PaymentRequest, PrepareLnurlPayRequest, PrepareLnurlPayResponse, PrepareSendPaymentRequest,
     PrepareSendPaymentResponse, ReceivePaymentMethod, ReceivePaymentRequest,
     RegisterLightningAddressRequest, SdkEvent, SendPaymentMethod, SendPaymentRequest, SourceAsset,
     StableBalanceActiveLabel, UpdateUserSettingsRequest,
@@ -555,40 +555,7 @@ async fn handle_prepare_send(
             // to u64 for display. Bitcoin-side sends are well within
             // u64::MAX.
             let amount_sat = clamp_u128_to_u64(prepare.amount);
-            let (fee_sat, method_tag) = match &prepare.payment_method {
-                SendPaymentMethod::BitcoinAddress { fee_quote, .. } => {
-                    // Default to the medium-speed quote for display —
-                    // the gui can surface all three tiers in Phase 4d.
-                    let fee = fee_quote.speed_medium.user_fee_sat
-                        + fee_quote.speed_medium.l1_broadcast_fee_sat;
-                    (fee, "BitcoinAddress")
-                }
-                SendPaymentMethod::Bolt11Invoice {
-                    spark_transfer_fee_sats,
-                    lightning_fee_sats,
-                    ..
-                } => (
-                    spark_transfer_fee_sats.unwrap_or(0) + lightning_fee_sats,
-                    "Bolt11Invoice",
-                ),
-                SendPaymentMethod::SparkAddress { fee, .. } => {
-                    (clamp_u128_to_u64(*fee), "SparkAddress")
-                }
-                SendPaymentMethod::SparkInvoice { fee, .. } => {
-                    (clamp_u128_to_u64(*fee), "SparkInvoice")
-                }
-                // Unreachable in practice: `prepare_send` always passes
-                // `PaymentRequest::Input`, and the SDK never classifies raw
-                // input as cross-chain — a cross-chain send has to come through
-                // `prepare_cross_chain`, which carries an explicitly chosen
-                // route. Handled rather than `unreachable!()` so a future SDK
-                // that *does* auto-detect can't panic the bridge; the sats-typed
-                // fee field gets the only genuinely-sats component.
-                SendPaymentMethod::CrossChainAddress {
-                    source_transfer_fee_sats,
-                    ..
-                } => (*source_transfer_fee_sats, "CrossChainAddress"),
-            };
+            let (fee_sat, method_tag) = fee_and_method(&prepare.payment_method);
 
             let handle = Uuid::new_v4().to_string();
             state
@@ -655,12 +622,89 @@ fn sdk_route_to_protocol(route: &CrossChainRoutePair) -> coincube_spark_protocol
     }
 }
 
+/// The sats-denominated fee for a prepared send, plus the method tag the gui
+/// branches on.
+///
+/// Single definition on purpose: this used to be written out twice (once when
+/// preparing, once when executing), and two copies of a money-formatting match
+/// is two chances to disagree about what a fee is.
+///
+/// **The fee is in sats, and for a cross-chain send that is not the whole
+/// story.** Cross-chain's headline fee (`fee_amount`) is denominated in the
+/// *destination* asset's base units — USDC/USDT, not sats — so surfacing it
+/// through this field would misreport it by orders of magnitude. Only
+/// `source_transfer_fee_sats` is genuinely sats, so that is what's reported
+/// here; the full breakdown reaches the gui on the prepare response's
+/// `CrossChainQuote`, which is where the send panel renders it.
+fn fee_and_method(method: &SendPaymentMethod) -> (u64, &'static str) {
+    match method {
+        SendPaymentMethod::BitcoinAddress { fee_quote, .. } => {
+            // Default to the medium-speed quote for display — the gui can
+            // surface all three tiers in a later phase.
+            let fee =
+                fee_quote.speed_medium.user_fee_sat + fee_quote.speed_medium.l1_broadcast_fee_sat;
+            (fee, "BitcoinAddress")
+        }
+        SendPaymentMethod::Bolt11Invoice {
+            spark_transfer_fee_sats,
+            lightning_fee_sats,
+            ..
+        } => (
+            spark_transfer_fee_sats.unwrap_or(0) + lightning_fee_sats,
+            "Bolt11Invoice",
+        ),
+        SendPaymentMethod::SparkAddress { fee, .. } => (clamp_u128_to_u64(*fee), "SparkAddress"),
+        SendPaymentMethod::SparkInvoice { fee, .. } => (clamp_u128_to_u64(*fee), "SparkInvoice"),
+        SendPaymentMethod::CrossChainAddress {
+            source_transfer_fee_sats,
+            ..
+        } => (*source_transfer_fee_sats, "CrossChainAddress"),
+    }
+}
+
 fn family_str(family: CrossChainAddressFamily) -> &'static str {
     match family {
         CrossChainAddressFamily::Evm => "evm",
         CrossChainAddressFamily::Solana => "solana",
         CrossChainAddressFamily::Tron => "tron",
     }
+}
+
+/// Inverse of [`family_str`]. `None` for anything we didn't emit — the gui only
+/// ever echoes back a family string we produced, so an unknown one means the
+/// wire contract has drifted and the safe move is to refuse rather than guess a
+/// chain family for a money transfer.
+fn family_from_str(s: &str) -> Option<CrossChainAddressFamily> {
+    match s {
+        "evm" => Some(CrossChainAddressFamily::Evm),
+        "solana" => Some(CrossChainAddressFamily::Solana),
+        "tron" => Some(CrossChainAddressFamily::Tron),
+        _ => None,
+    }
+}
+
+/// Rebuild the SDK's address details from the destination the gui echoed back.
+///
+/// This is the *whole* reason [`coincube_spark_protocol::PrepareCrossChainParams`]
+/// round-trips a [`CrossChainAddress`] rather than a bare address string. The
+/// alternative — re-parsing the address here — silently discards the
+/// `contract_address` and `chain_id` that only a URI destination carries, and
+/// re-resolves routes against a broader destination than the one the user was
+/// actually offered a choice from. It survives today only because the SDK's
+/// route filter treats an absent contract filter as "match everything", so the
+/// broader set is a superset that still contains the chosen route. That's an
+/// implementation accident, not a guarantee, and it isn't one worth betting a
+/// send on.
+fn details_from_protocol(
+    destination: &coincube_spark_protocol::CrossChainAddress,
+) -> Option<CrossChainAddressDetails> {
+    Some(CrossChainAddressDetails {
+        address: destination.address.clone(),
+        address_family: family_from_str(&destination.family)?,
+        contract_address: destination.contract_address.clone(),
+        chain_id: destination.chain_id,
+        amount: destination.amount,
+    })
 }
 
 /// Classify a raw destination as a cross-chain address.
@@ -743,6 +787,72 @@ mod cross_chain_tests {
         assert!(!route_accepts_btc(&r));
         assert!(!route_is_retry_safe(&r));
         assert!(!sdk_route_to_protocol(&r).btc_source_supported);
+    }
+
+    fn protocol_address(
+        contract: Option<&str>,
+        chain_id: Option<u64>,
+    ) -> coincube_spark_protocol::CrossChainAddress {
+        coincube_spark_protocol::CrossChainAddress {
+            address: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F".to_string(),
+            family: "evm".to_string(),
+            contract_address: contract.map(str::to_string),
+            chain_id,
+            amount: Some(1_000_000),
+        }
+    }
+
+    #[test]
+    fn address_families_survive_a_round_trip_through_the_wire() {
+        for family in [
+            CrossChainAddressFamily::Evm,
+            CrossChainAddressFamily::Solana,
+            CrossChainAddressFamily::Tron,
+        ] {
+            assert_eq!(family_from_str(family_str(family)), Some(family));
+        }
+    }
+
+    #[test]
+    fn an_unknown_family_is_refused_rather_than_guessed() {
+        // The gui only ever echoes back a family we emitted. An unknown one
+        // means the wire contract drifted — guessing a chain for a money
+        // transfer is how funds end up on the wrong network.
+        assert_eq!(family_from_str("bitcoin"), None);
+        assert_eq!(family_from_str(""), None);
+        assert_eq!(family_from_str("EVM"), None);
+    }
+
+    /// The point of round-tripping the whole `CrossChainAddress`: a URI
+    /// destination carries a contract and chain id that a bare address does
+    /// not. Re-parsing the address string on the prepare side would drop them,
+    /// and the route would then be re-resolved against a *broader* destination
+    /// than the one the user was offered a choice from.
+    #[test]
+    fn uri_only_details_survive_into_the_sdk_filter() {
+        let details = details_from_protocol(&protocol_address(Some("0xA0b8991c"), Some(8453)))
+            .expect("known family");
+        assert_eq!(details.contract_address.as_deref(), Some("0xA0b8991c"));
+        assert_eq!(details.chain_id, Some(8453));
+        assert_eq!(details.address_family, CrossChainAddressFamily::Evm);
+        assert_eq!(
+            details.address,
+            "0x71C7656EC7ab88b098defB751B7401B5f6d8976F"
+        );
+    }
+
+    #[test]
+    fn a_bare_address_reconstructs_without_inventing_details() {
+        let details = details_from_protocol(&protocol_address(None, None)).expect("known family");
+        assert_eq!(details.contract_address, None);
+        assert_eq!(details.chain_id, None);
+    }
+
+    #[test]
+    fn a_destination_with_an_unknown_family_reconstructs_to_nothing() {
+        let mut bad = protocol_address(None, None);
+        bad.family = "dogecoin".to_string();
+        assert!(details_from_protocol(&bad).is_none());
     }
 
     #[test]
@@ -857,11 +967,15 @@ async fn handle_prepare_cross_chain(
     // may be seconds or minutes stale, and a `CrossChainRoutePair` carries
     // provider-internal fields we deliberately don't round-trip. Re-fetching
     // means the prepare always runs against a route the SDK currently offers.
-    let Some(details) = parse_cross_chain_input(&sdk, &params.address).await else {
+    //
+    // The details are *reconstructed*, not re-parsed — see
+    // `details_from_protocol`. Re-parsing would drop the URI-only fields and
+    // quietly widen the destination the routes are resolved against.
+    let Some(details) = details_from_protocol(&params.destination) else {
         return Response::err(
             id,
             ErrorKind::BadRequest,
-            "address is not a recognised cross-chain destination",
+            "destination is not a recognised cross-chain address",
         );
     };
     let filter = CrossChainRouteFilter::Send {
@@ -885,7 +999,10 @@ async fn handle_prepare_cross_chain(
 
     let request = PrepareSendPaymentRequest {
         payment_request: PaymentRequest::CrossChain {
-            address: params.address,
+            // The SDK wants the bare recipient address here, not the URI it may
+            // have come from — the URI's extra context has already done its job
+            // in the route filter above.
+            address: params.destination.address,
             route,
             max_slippage_bps: params.max_slippage_bps,
             // Leave the overpay pad at the SDK default (15 bps). It only
@@ -987,7 +1104,7 @@ async fn handle_send_payment(
 
     if let Some((_inserted_at, prepare)) = state.pending_lnurl_prepares.lock().await.remove(&handle)
     {
-        return execute_lnurl_send(id, sdk, prepare).await;
+        return execute_lnurl_send(id, sdk, prepare, params.idempotency_key).await;
     }
 
     Response::err(
@@ -1009,28 +1126,7 @@ async fn execute_regular_send(
     // Snapshot for the response so we can surface the final amount/fee
     // even after the SDK consumes the prepare response.
     let amount_sat = clamp_u128_to_u64(prepare.amount);
-    let fee_sat = match &prepare.payment_method {
-        SendPaymentMethod::BitcoinAddress { fee_quote, .. } => {
-            fee_quote.speed_medium.user_fee_sat + fee_quote.speed_medium.l1_broadcast_fee_sat
-        }
-        SendPaymentMethod::Bolt11Invoice {
-            spark_transfer_fee_sats,
-            lightning_fee_sats,
-            ..
-        } => spark_transfer_fee_sats.unwrap_or(0) + lightning_fee_sats,
-        SendPaymentMethod::SparkAddress { fee, .. } => clamp_u128_to_u64(*fee),
-        SendPaymentMethod::SparkInvoice { fee, .. } => clamp_u128_to_u64(*fee),
-        // Cross-chain's headline fee (`fee_amount`) is denominated in the
-        // *destination* asset's base units — USDC/USDT, not sats — so it can't
-        // be reported through this sats-typed field without lying. Only the
-        // Spark-side transfer fee is genuinely sats, so that's what goes here;
-        // the full fee breakdown reaches the gui on the prepare response
-        // (`CrossChainQuote`), which is where the send panel renders it.
-        SendPaymentMethod::CrossChainAddress {
-            source_transfer_fee_sats,
-            ..
-        } => *source_transfer_fee_sats,
-    };
+    let (fee_sat, _method) = fee_and_method(&prepare.payment_method);
 
     // Phase 4c ships the default send options (Medium speed for
     // on-chain, Spark-preferred routing for Bolt11 without a completion
@@ -1058,7 +1154,12 @@ async fn execute_regular_send(
     }
 }
 
-async fn execute_lnurl_send(id: u64, sdk: SdkHandle, prepare: PrepareLnurlPayResponse) -> Response {
+async fn execute_lnurl_send(
+    id: u64,
+    sdk: SdkHandle,
+    prepare: PrepareLnurlPayResponse,
+    idempotency_key: Option<String>,
+) -> Response {
     // The LNURL prepare response carries its own top-level
     // `amount_sats` / `fee_sats` fields (u64, already in sats — no
     // u128 clamping needed here). Snapshot them for the send response.
@@ -1067,7 +1168,11 @@ async fn execute_lnurl_send(id: u64, sdk: SdkHandle, prepare: PrepareLnurlPayRes
 
     let request = LnurlPayRequest {
         prepare_response: prepare,
-        idempotency_key: None,
+        // Honour the caller's key here too. Dropping it on this path alone
+        // would make `SendPaymentParams::idempotency_key` a promise the bridge
+        // silently breaks for LNURL sends — the retry would look guarded and
+        // wouldn't be.
+        idempotency_key,
     };
 
     match sdk.sdk.lnurl_pay(request).await {

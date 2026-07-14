@@ -240,8 +240,21 @@ pub struct GetCrossChainRoutesParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrepareCrossChainParams {
-    /// The destination address, echoed back from [`CrossChainAddress::address`].
-    pub address: String,
+    /// The destination, echoed back **whole** from
+    /// [`CrossChainRoutesOk::address`].
+    ///
+    /// The full [`CrossChainAddress`] rather than just the address string,
+    /// because the bridge has to rebuild the SDK's `CrossChainAddressDetails`
+    /// to re-resolve the route — and the extra fields (`contract_address`,
+    /// `chain_id`) only exist when the user pasted a URI. Sending the bare
+    /// address back would force the bridge to re-parse it, silently dropping
+    /// them, and re-resolve against a *broader* route set than the one the user
+    /// actually chose from. That happens to still work today only because the
+    /// SDK's route filter is monotone (an absent contract filter matches
+    /// everything), which is an accident of its implementation, not a promise.
+    /// Round-tripping the details keeps the prepare resolving against exactly
+    /// the destination the routes were offered for.
+    pub destination: CrossChainAddress,
     /// The route the user picked, echoed back from [`CrossChainRoute`].
     pub route: CrossChainRoute,
     /// Amount to send, in sats. v1 always funds cross-chain sends from the
@@ -272,7 +285,15 @@ pub struct CrossChainAddress {
     /// EIP-681 chain id, when the input carried an `@<chain_id>` suffix.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain_id: Option<u64>,
-    /// Amount named by the URI, in the destination asset's base units.
+    /// Amount named by the URI, in the **destination asset's** base units.
+    ///
+    /// Deliberately not used to prefill the send amount, and it would be a bug
+    /// to start: v1 funds cross-chain sends from the BTC balance and quotes
+    /// *amount-in sats*, so this figure is in the wrong denomination entirely
+    /// (10 USDC is not 10 sats). Honouring it needs an exact-out send, which
+    /// the SDK only offers on routes flagged `exact_out_eligible` — a follow-up.
+    /// Carried through so that follow-up has it, and so the gui can show the
+    /// requested amount for confirmation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<u128>,
 }

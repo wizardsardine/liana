@@ -45,13 +45,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use coincube_spark_protocol::{
-    CheckLightningAddressAvailableParams, ClaimDepositOk, ClaimDepositParams, CrossChainRoute,
-    CrossChainRoutesOk, ErrorKind, ErrorPayload, Event, Frame, GetCrossChainRoutesParams, GetInfoOk,
-    GetInfoParams, GetUserSettingsOk, InitParams, LightningAddressInfo, ListPaymentsOk,
-    ListPaymentsParams, ListUnclaimedDepositsOk, Method, OkPayload, ParseInputOk, ParseInputParams,
-    PrepareCrossChainParams, PrepareLnurlPayParams, PrepareSendOk, PrepareSendParams,
-    ReceiveBolt11Params, ReceiveOnchainParams, ReceivePaymentOk, RegisterLightningAddressParams,
-    Request, Response, ResponseResult, SendPaymentOk, SendPaymentParams, SetStableBalanceParams,
+    CheckLightningAddressAvailableParams, ClaimDepositOk, ClaimDepositParams, CrossChainAddress,
+    CrossChainRoute, CrossChainRoutesOk, ErrorKind, ErrorPayload, Event, Frame,
+    GetCrossChainRoutesParams, GetInfoOk, GetInfoParams, GetUserSettingsOk, InitParams,
+    LightningAddressInfo, ListPaymentsOk, ListPaymentsParams, ListUnclaimedDepositsOk, Method,
+    OkPayload, ParseInputOk, ParseInputParams, PrepareCrossChainParams, PrepareLnurlPayParams,
+    PrepareSendOk, PrepareSendParams, ReceiveBolt11Params, ReceiveOnchainParams, ReceivePaymentOk,
+    RegisterLightningAddressParams, Request, Response, ResponseResult, SendPaymentOk,
+    SendPaymentParams, SetStableBalanceParams,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -378,18 +379,24 @@ impl SparkClient {
     /// the quote in its `cross_chain` field (amount out, fees, expiry), and its
     /// handle is executed by the ordinary [`Self::send_payment`].
     ///
+    /// `destination` must be the [`CrossChainAddress`] returned by
+    /// [`Self::get_cross_chain_routes`], echoed back **whole** — not just its
+    /// address string. The bridge rebuilds the SDK's address details from it to
+    /// re-resolve the route, and a URI destination's `contract_address` /
+    /// `chain_id` only survive if they're carried along.
+    ///
     /// `max_slippage_bps` must be in `10..=500`; `None` takes the SDK's 100 bps
     /// default.
     pub async fn prepare_cross_chain(
         &self,
-        address: String,
+        destination: CrossChainAddress,
         route: CrossChainRoute,
         amount_sat: u64,
         max_slippage_bps: Option<u32>,
     ) -> Result<PrepareSendOk, SparkClientError> {
         match self
             .request(Method::PrepareCrossChain(PrepareCrossChainParams {
-                address,
+                destination,
                 route,
                 amount_sat,
                 max_slippage_bps,

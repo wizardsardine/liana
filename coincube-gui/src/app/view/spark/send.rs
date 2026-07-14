@@ -20,7 +20,8 @@ use iced::{
     Length,
 };
 
-use crate::app::state::spark::send::SparkSendPhase;
+use crate::app::state::spark::cross_chain;
+use crate::app::state::spark::send::{CrossChainContext, SparkSendPhase};
 use crate::app::view::spark::{last_tx::last_transactions_section, SparkRecentTransaction};
 use crate::app::view::{Message, SparkSendMessage};
 
@@ -36,14 +37,19 @@ pub struct SparkSendView<'a> {
     pub recent_transactions: &'a [SparkRecentTransaction],
     pub bitcoin_unit: BitcoinDisplayUnit,
     pub show_direction_badges: bool,
+    /// The cross-chain destination + routes for the current send, when there is
+    /// one. Lives on the panel rather than in the phase because it must survive
+    /// a failed send — a retry re-prepares from it.
+    pub cross_chain_ctx: Option<&'a CrossChainContext>,
     /// Cross-chain slippage tolerance, in basis points, as typed. Empty means
     /// the SDK default. Only rendered behind the advanced disclosure.
     pub slippage_input: &'a str,
     /// Whether the advanced (slippage) disclosure is open.
     pub advanced_open: bool,
-    /// Seconds left on the live cross-chain quote. `None` when there's no quote
-    /// on screen; `<= 0` means expired, which replaces Confirm with a re-quote.
-    pub quote_seconds_left: Option<i64>,
+    /// Life left on the live cross-chain quote. `None` means there is no quote
+    /// on screen — *not* "expired", which is its own variant. Anything other
+    /// than `Valid` replaces Confirm with a re-quote.
+    pub quote_countdown: Option<cross_chain::QuoteCountdown>,
 }
 
 impl<'a> SparkSendView<'a> {
@@ -107,9 +113,10 @@ impl<'a> SparkSendView<'a> {
         // ── Phase-specific body ───────────────────────────────────────
         content = content.push(phase_body(
             self.phase,
+            self.cross_chain_ctx,
             self.slippage_input,
             &self.advanced_open,
-            self.quote_seconds_left,
+            self.quote_countdown.clone(),
         ));
 
         // ── Last transactions ─────────────────────────────────────────
@@ -127,11 +134,11 @@ impl<'a> SparkSendView<'a> {
 
 fn phase_body<'a>(
     phase: &SparkSendPhase,
+    cross_chain_ctx: Option<&CrossChainContext>,
     slippage_input: &str,
     advanced_open: &bool,
-    quote_seconds_left: Option<i64>,
+    quote_countdown: Option<cross_chain::QuoteCountdown>,
 ) -> Element<'a, Message> {
-    use crate::app::state::spark::cross_chain;
     use crate::app::view::SparkSendMessage;
     use coincube_ui::component::amount::format_u64_as_string;
 
@@ -165,11 +172,17 @@ fn phase_body<'a>(
         // announce its network, and USDT exists on all of them — so the
         // detected chain and asset are spelled out in words, and the user has
         // to choose a route before anything is quoted.
-        SparkSendPhase::CrossChainRoutes {
-            address,
-            routes,
-            selected,
-        } => {
+        SparkSendPhase::CrossChainRoutes => {
+            let Some(ctx) = cross_chain_ctx else {
+                // The phase can't be reached without a context — but render an
+                // honest message rather than a blank card if it ever is.
+                return Container::new(p1_regular("No cross-chain destination selected."))
+                    .padding(16)
+                    .style(theme::card::simple)
+                    .into();
+            };
+            let (address, routes, selected) = (&ctx.address, &ctx.routes, &ctx.selected);
+
             let mut col = Column::new()
                 .spacing(12)
                 .push(h4_bold("Confirm the network"))
@@ -237,9 +250,7 @@ fn phase_body<'a>(
                     )))
                     .push(
                         text_input("100", slippage_input)
-                            .on_input(|v| {
-                                Message::SparkSend(SparkSendMessage::SlippageChanged(v))
-                            })
+                            .on_input(|v| Message::SparkSend(SparkSendMessage::SlippageChanged(v)))
                             .padding(10),
                     );
             }
@@ -272,7 +283,16 @@ fn phase_body<'a>(
             // they expire, so they get their own preview rather than being
             // squeezed into the sats-shaped one.
             if let Some(quote) = &ok.cross_chain {
-                let expired = quote_seconds_left.is_none_or(|s| s <= 0);
+                // A quote whose expiry we couldn't parse counts as expired: an
+                // unreadable expiry is not evidence the quote is *good*, and
+                // re-quoting costs a second where sending against an
+                // unknown-age rate costs money. `None` here means there is no
+                // quote at all, which can't happen inside this branch — the
+                // state sets the countdown the moment a quote lands.
+                let expired = !matches!(
+                    quote_countdown,
+                    Some(cross_chain::QuoteCountdown::Valid { .. })
+                );
                 let mut col = Column::new()
                     .spacing(14)
                     .push(h4_bold("Preview"))
@@ -311,13 +331,11 @@ fn phase_body<'a>(
                 // The countdown. Sending against a dead quote means sending
                 // against a rate the provider no longer honours, so Confirm is
                 // replaced — not merely disabled — once it runs out.
-                col = col.push(if expired {
-                    p1_regular("This quote has expired. Get a fresh one to continue.")
-                } else {
-                    p2_regular(format!(
-                        "Quote valid for {}s.",
-                        quote_seconds_left.unwrap_or(0)
-                    ))
+                col = col.push(match quote_countdown {
+                    Some(cross_chain::QuoteCountdown::Valid { seconds_left }) => {
+                        p2_regular(format!("Quote valid for {}s.", seconds_left))
+                    }
+                    _ => p1_regular("This quote has expired. Get a fresh one to continue."),
                 });
 
                 let action = if expired {
@@ -390,8 +408,13 @@ fn phase_body<'a>(
             let mut actions = Row::new().spacing(10);
             if policy.may_retry() {
                 actions = actions.push(
+                    // Not `ConfirmRequested`: the prepare handle died with the
+                    // failed send, so a retry has to re-prepare. It reuses the
+                    // original idempotency key, which is what makes it safe.
                     button::primary(None, "Try again")
-                        .on_press(Message::SparkSend(SparkSendMessage::ConfirmRequested))
+                        .on_press(Message::SparkSend(
+                            SparkSendMessage::CrossChainRetryRequested,
+                        ))
                         .width(Length::Fixed(160.0)),
                 );
             } else {

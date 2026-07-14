@@ -138,11 +138,20 @@ impl SparkSideshiftReceiveFlow {
 
     // ── Async steps ─────────────────────────────────────────────────────
 
+    /// Fetch the SideShift affiliate id from **our own** API
+    /// (`GET /api/v1/config/sideshift`) — not from SideShift. The name is
+    /// misleading; the call isn't. Errors here mean the Coincube backend is
+    /// unreachable or misconfigured, and must be reported that way, or support
+    /// goes looking at a third party that was never contacted.
     fn fetch_affiliate_id(&self) -> Task<Message> {
         let client = self.coincube_client.clone();
         Task::perform(
             async move { client.get_sideshift_affiliate_id().await },
-            |result| Message::View(view::Message::SparkSideshiftReceive(Msg::AffiliateFetched(result))),
+            |result| {
+                Message::View(view::Message::SparkSideshiftReceive(Msg::AffiliateFetched(
+                    result,
+                )))
+            },
         )
     }
 
@@ -181,7 +190,11 @@ impl SparkSideshiftReceiveFlow {
                     )
                     .await
             },
-            |result| Message::View(view::Message::SparkSideshiftReceive(Msg::ShiftCreated(result))),
+            |result| {
+                Message::View(view::Message::SparkSideshiftReceive(Msg::ShiftCreated(
+                    result,
+                )))
+            },
         )
     }
 
@@ -193,7 +206,11 @@ impl SparkSideshiftReceiveFlow {
         let shift_id = shift.id.clone();
         Task::perform(
             async move { client.get_shift_status(&shift_id).await },
-            |result| Message::View(view::Message::SparkSideshiftReceive(Msg::StatusUpdated(result))),
+            |result| {
+                Message::View(view::Message::SparkSideshiftReceive(Msg::StatusUpdated(
+                    result,
+                )))
+            },
         )
     }
 
@@ -262,7 +279,15 @@ impl SparkSideshiftReceiveFlow {
                     Err(e) => {
                         self.loading = false;
                         self.phase = SparkShiftPhase::Failed;
-                        self.error = Some(format!("Couldn't reach SideShift: {e}"));
+                        // This step talks to the *Coincube* API, not SideShift
+                        // (see `fetch_affiliate_id`). Naming SideShift here
+                        // would send whoever debugs it to the wrong service —
+                        // and reassure the user that a third party is at fault
+                        // when it's ours. No deposit address exists yet, so
+                        // nothing is at risk.
+                        self.error = Some(nothing_sent_yet(&format!(
+                            "Couldn't load swap settings from Coincube: {e}"
+                        )));
                         Task::none()
                     }
                 }
@@ -282,7 +307,13 @@ impl SparkSideshiftReceiveFlow {
                     }
                     Err(e) => {
                         self.phase = SparkShiftPhase::Failed;
-                        self.error = Some(format!("Couldn't start the shift: {e}"));
+                        // `create_shift` spans two services — the Spark bridge
+                        // (deposit address) and SideShift (the shift itself) —
+                        // and each already names itself in its error. Wrapping
+                        // them in a single "SideShift failed" prefix would
+                        // misattribute half of them, so pass the attributed
+                        // error through as-is.
+                        self.error = Some(nothing_sent_yet(e));
                     }
                 }
                 Task::none()
@@ -350,6 +381,22 @@ impl SparkSideshiftReceiveFlow {
     }
 }
 
+/// Frame a setup-stage failure with the one fact that actually settles the
+/// user's nerves: **no deposit address was ever produced, so nothing of theirs
+/// is in flight.** Every failure this wraps happens strictly before a deposit
+/// address exists, which is what makes the reassurance true rather than
+/// hopeful — do not reuse it once a shift is live.
+///
+/// The detail is passed through verbatim: the underlying errors already name
+/// the service that failed (Coincube, the Spark bridge, or SideShift), and
+/// re-prefixing them here is how they end up misattributed.
+fn nothing_sent_yet(detail: &str) -> String {
+    format!(
+        "{}. Nothing has been sent — try again.",
+        detail.trim_end().trim_end_matches('.')
+    )
+}
+
 /// Strip a BIP21 wrapper (`bitcoin:bc1…?amount=…`) down to the bare address.
 /// SideShift's `settleAddress` must be an address, not a URI — handing it a URI
 /// would either be rejected or, worse, settle somewhere unintended.
@@ -382,13 +429,15 @@ mod tests {
         for s in in_flight {
             assert!(
                 !ShiftStatusKind::from(s).is_terminal(),
-                "{s} must keep polling — the shift is still moving"
+                "{} must keep polling — the shift is still moving",
+                s
             );
         }
         for s in terminal {
             assert!(
                 ShiftStatusKind::from(s).is_terminal(),
-                "{s} must stop polling — the shift will not advance on its own"
+                "{} must stop polling — the shift will not advance on its own",
+                s
             );
         }
     }
@@ -419,6 +468,46 @@ mod tests {
         // Carried over to Solana, the very same address is invalid — which is
         // why the flow drops it rather than leaving it in the box.
         assert!(validate_refund_address(solana.network, tron_address).is_err());
+    }
+
+    /// The affiliate id comes from *our* API (`/api/v1/config/sideshift`), not
+    /// from SideShift. Blaming SideShift for a Coincube outage sends whoever
+    /// debugs it to a third party that was never contacted, and tells the user
+    /// someone else is at fault when it's us.
+    #[test]
+    fn a_backend_failure_is_not_blamed_on_sideshift() {
+        let msg = nothing_sent_yet("Couldn't load swap settings from Coincube: 503");
+        assert!(msg.contains("Coincube"));
+        assert!(
+            !msg.contains("SideShift"),
+            "a Coincube failure must not name SideShift: {}",
+            msg
+        );
+    }
+
+    /// The reassurance is only sound because every failure it wraps happens
+    /// before a deposit address exists. It's the difference between "retry
+    /// freely" and "you may have money in flight".
+    #[test]
+    fn setup_failures_say_the_funds_are_untouched() {
+        let msg = nothing_sent_yet("SideShift error 400: bad pair");
+        assert!(msg.contains("Nothing has been sent"));
+        // The underlying error survives verbatim — it's what support reads.
+        assert!(msg.contains("SideShift error 400: bad pair"));
+    }
+
+    #[test]
+    fn error_framing_does_not_produce_ragged_punctuation() {
+        // Errors arrive with and without trailing periods; neither should end
+        // up as ".." on screen.
+        assert_eq!(
+            nothing_sent_yet("it broke."),
+            "it broke. Nothing has been sent — try again."
+        );
+        assert_eq!(
+            nothing_sent_yet("it broke"),
+            "it broke. Nothing has been sent — try again."
+        );
     }
 
     #[test]

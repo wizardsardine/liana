@@ -58,7 +58,9 @@ fn setup_view(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
 
     // What you're depositing. Asset and chain together, because an asset alone
     // is ambiguous — USDt on Tron and USDt on Ethereum are not interchangeable.
-    let mut picker = Column::new().spacing(8).push(text("You send").size(P2_SIZE).bold());
+    let mut picker = Column::new()
+        .spacing(8)
+        .push(text("You send").size(P2_SIZE).bold());
     for option in deposit_options() {
         let row = Row::new()
             .spacing(12)
@@ -154,9 +156,7 @@ fn setup_view(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
     Column::new()
         .spacing(16)
         .push(back_btn)
-        .push(
-            Container::new(inner.max_width(600).width(Length::Fill)).center_x(Length::Fill),
-        )
+        .push(Container::new(inner.max_width(600).width(Length::Fill)).center_x(Length::Fill))
         .into()
 }
 
@@ -282,7 +282,9 @@ fn active_shift_view(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
 fn status_badge(status: &ShiftStatusKind) -> (&'static str, iced::Color) {
     match status {
         ShiftStatusKind::Waiting => ("Waiting for deposit", color::GREY_3),
-        ShiftStatusKind::Pending | ShiftStatusKind::Processing => ("Deposit detected", color::ORANGE),
+        ShiftStatusKind::Pending | ShiftStatusKind::Processing => {
+            ("Deposit detected", color::ORANGE)
+        }
         ShiftStatusKind::Settling => ("Settling…", color::ORANGE),
         ShiftStatusKind::Settled => ("Bitcoin received ✓", color::GREEN),
         ShiftStatusKind::Expired => ("Expired", color::RED),

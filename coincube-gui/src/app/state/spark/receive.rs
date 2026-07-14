@@ -291,9 +291,7 @@ impl State for SparkReceive {
         // `DepositsChanged` is the deliberate exception: the flow *sends* it
         // when a shift settles, so the claimable deposit is already loaded when
         // the user returns to the form.
-        if self.sideshift_flow.is_some()
-            && !matches!(msg, SparkReceiveMessage::DepositsChanged)
-        {
+        if self.sideshift_flow.is_some() && !matches!(msg, SparkReceiveMessage::DepositsChanged) {
             return Task::none();
         }
 
