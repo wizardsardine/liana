@@ -1515,7 +1515,7 @@ pub fn select_bitcoind_type<'a>(
                     .push(
                         Container::new(Column::new().spacing(10).width(Length::Fixed(220.0)).push(
                             text(
-                                "Coincube installs a pruned node on your computer \
+                                "Tenshu installs a pruned node on your computer \
                                 without COINCUBE | Connect as a fallback.",
                             ),
                         ))
