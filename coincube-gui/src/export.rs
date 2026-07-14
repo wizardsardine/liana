@@ -1112,8 +1112,7 @@ pub async fn import_backup(
         1 => backup.accounts.first().expect("already checked"),
         _ => {
             return Err(Error::BackupImport(
-                "Tenshu is actually not supporting import of backup with several accounts!"
-                    .into(),
+                "Tenshu is actually not supporting import of backup with several accounts!".into(),
             ));
         }
     };
@@ -1424,8 +1423,7 @@ pub async fn from_backup(sender: &UnboundedSender<Progress>, path: PathBuf) -> R
         1 => backup.accounts.first().expect("already checked"),
         _ => {
             return Err(Error::BackupImport(
-                "Tenshu is actually not supporting import of backup with several accounts!"
-                    .into(),
+                "Tenshu is actually not supporting import of backup with several accounts!".into(),
             ));
         }
     };
