@@ -17,8 +17,9 @@
 use std::sync::Arc;
 
 use coincube_spark_protocol::{
-    ClaimDepositOk, GetInfoOk, GetUserSettingsOk, ListPaymentsOk, ListUnclaimedDepositsOk,
-    ParseInputOk, PrepareSendOk, ReceivePaymentOk, SendPaymentOk,
+    ClaimDepositOk, CrossChainRoute, CrossChainRoutesOk, GetInfoOk, GetUserSettingsOk,
+    ListPaymentsOk, ListUnclaimedDepositsOk, ParseInputOk, PrepareSendOk, ReceivePaymentOk,
+    SendPaymentOk,
 };
 
 use crate::app::breez_spark::{SparkClient, SparkClientError, SparkClientEvent};
@@ -88,11 +89,41 @@ impl SparkBackend {
     }
 
     /// Phase 4c: execute a previously-prepared send.
+    ///
+    /// `idempotency_key` guards a retry after an ambiguous failure — see
+    /// [`crate::app::breez_spark::client::SparkClient::send_payment`]. It does
+    /// not protect a token-sourced cross-chain send.
     pub async fn send_payment(
         &self,
         prepare_handle: String,
+        idempotency_key: Option<String>,
     ) -> Result<SendPaymentOk, SparkClientError> {
-        self.client.send_payment(prepare_handle).await
+        self.client
+            .send_payment(prepare_handle, idempotency_key)
+            .await
+    }
+
+    /// Classify a destination and list the cross-chain routes reaching it.
+    /// `address: None` in the response means "not a cross-chain address".
+    pub async fn get_cross_chain_routes(
+        &self,
+        input: String,
+    ) -> Result<CrossChainRoutesOk, SparkClientError> {
+        self.client.get_cross_chain_routes(input).await
+    }
+
+    /// Prepare a cross-chain send. The quote rides on `PrepareSendOk.cross_chain`;
+    /// the handle is executed by the ordinary [`Self::send_payment`].
+    pub async fn prepare_cross_chain(
+        &self,
+        address: String,
+        route: CrossChainRoute,
+        amount_sat: u64,
+        max_slippage_bps: Option<u32>,
+    ) -> Result<PrepareSendOk, SparkClientError> {
+        self.client
+            .prepare_cross_chain(address, route, amount_sat, max_slippage_bps)
+            .await
     }
 
     /// Phase 4c: generate a BOLT11 invoice.

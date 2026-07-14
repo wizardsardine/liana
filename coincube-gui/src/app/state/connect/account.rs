@@ -3601,6 +3601,28 @@ impl ConnectAccountPanel {
         }
     }
 
+    /// The account-scoped Liquid grandfather flag from `GET /connect/features`
+    /// (`liquidEnabled`). Mirrored into [`crate::app::cache::Cache`], where it
+    /// is OR'd with on-disk Liquid state to produce the visibility gate.
+    ///
+    /// Defaults `false` while features are unloaded (in flight after sign-in,
+    /// fetch failed, or never signed in) and when the flag is absent — a fresh
+    /// install gets no Liquid unless the server grants it. Unlike
+    /// [`Self::marketplace_server_flags`], a `false` here is **not** the whole
+    /// story: it cannot hide a Liquid wallet that already exists on this
+    /// machine. See [`crate::app::features::LiquidGate`].
+    ///
+    /// The fetch is authenticated (`post_login_tasks` calls `set_token` before
+    /// spawning it) and `clear_session` drops `features` on logout, so this
+    /// reverts to `false` when the session ends rather than holding a stale
+    /// grant.
+    pub fn liquid_server_enabled(&self) -> bool {
+        self.features
+            .as_ref()
+            .and_then(|f| f.liquid_enabled)
+            .unwrap_or(false)
+    }
+
     /// Whether the pre-expiry renewal banner should render: the plan is
     /// within its renewal window AND the user hasn't dismissed it this
     /// session. The expired state has its own dedicated UX (D3), so the
@@ -5214,6 +5236,7 @@ mod plan_lifecycle_tests {
             pricing_schema_version: version,
             purchasing_enabled,
             marketplace_enabled: None,
+            liquid_enabled: None,
             buy_sell_enabled: None,
             p2p_enabled: None,
         }

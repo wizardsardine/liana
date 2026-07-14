@@ -143,6 +143,23 @@ pub enum Method {
     /// wallet. Idempotent — returns Ok even when no address is
     /// registered.
     DeleteLightningAddress,
+    /// Classify a raw destination string as a cross-chain address and list
+    /// the routes that can reach it. Returns [`CrossChainRoutesOk`], whose
+    /// `address` field is `None` when the input isn't a cross-chain address
+    /// at all (an ordinary BOLT11/Spark destination) — that's not an error,
+    /// it's how the gui's Send panel decides which flow to run.
+    ///
+    /// The SDK only offers cross-chain for USD-stable assets (USDT/USDC), and
+    /// only on mainnet.
+    GetCrossChainRoutes(GetCrossChainRoutesParams),
+    /// Prepare a cross-chain send along a route chosen from
+    /// [`Method::GetCrossChainRoutes`]. Distinct from [`Method::PrepareSend`]
+    /// because the SDK models it as a different `PaymentRequest` variant: it
+    /// carries an explicitly-selected route rather than a string for the SDK
+    /// to classify. Returns a [`PrepareSendOk`] whose `cross_chain` field is
+    /// populated with the quote (amount out, fees, provider, expiry), and an
+    /// opaque handle routed by the same [`Method::SendPayment`].
+    PrepareCrossChain(PrepareCrossChainParams),
     /// Gracefully disconnect and exit the bridge.
     Shutdown,
 }
@@ -200,6 +217,133 @@ pub struct SendPaymentParams {
     /// full `breez_sdk_spark::PrepareSendPaymentResponse`. Single-use —
     /// a successful or failed send consumes the entry.
     pub prepare_handle: String,
+    /// Caller-supplied idempotency key. When set, the SDK short-circuits a
+    /// repeat send with the same key instead of paying twice, which makes a
+    /// retry after an ambiguous failure safe.
+    ///
+    /// **It does not cover every leg.** Spark's token transfer
+    /// (`transfer_tokens`) has no idempotency hook, so a cross-chain send
+    /// whose *source* asset is a token gets no such protection — see
+    /// [`CrossChainQuote::retry_safe`]. Never blind-retry one of those; check
+    /// the payment state first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetCrossChainRoutesParams {
+    /// Raw destination string as typed/pasted by the user. May be a bare
+    /// address (`0xabc…`, a Solana base58 key, a `T…` Tron address) or a
+    /// canonical URI (`ethereum:0xabc…?chain=base&asset=usdc`).
+    pub input: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrepareCrossChainParams {
+    /// The destination address, echoed back from [`CrossChainAddress::address`].
+    pub address: String,
+    /// The route the user picked, echoed back from [`CrossChainRoute`].
+    pub route: CrossChainRoute,
+    /// Amount to send, in sats. v1 always funds cross-chain sends from the
+    /// BTC balance (pay-time conversion); sending *from* Stable Balance is a
+    /// follow-up.
+    pub amount_sat: u64,
+    /// Slippage tolerance in basis points. Must be in `10..=500`; `None` uses
+    /// the SDK default of 100 bps (1%). Exposed in the gui only behind an
+    /// advanced disclosure — normal users should never have to think in bps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_slippage_bps: Option<u32>,
+}
+
+/// A cross-chain destination the SDK recognised. Mirrors
+/// `breez_sdk_spark::CrossChainAddressDetails`, stringified to keep this crate
+/// free of SDK type dependencies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossChainAddress {
+    /// The bare recipient address, with any URI wrapper stripped.
+    pub address: String,
+    /// Address family: `"evm"`, `"solana"` or `"tron"`. The gui shows this to
+    /// the user for confirmation — a Tron address does not look obviously
+    /// Tron to a human, and sending USDT to the wrong chain loses it.
+    pub family: String,
+    /// Token contract / mint address, when the input was a URI that named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_address: Option<String>,
+    /// EIP-681 chain id, when the input carried an `@<chain_id>` suffix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_id: Option<u64>,
+    /// Amount named by the URI, in the destination asset's base units.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<u128>,
+}
+
+/// One way to get funds to a cross-chain destination. Mirrors
+/// `breez_sdk_spark::CrossChainRoutePair`; round-tripped back to the bridge
+/// verbatim on [`Method::PrepareCrossChain`], which re-resolves it against the
+/// SDK's live route list rather than trusting these fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CrossChainRoute {
+    /// `"orchestra"` (Spark transfer → bridge) or `"boltz"` (Lightning
+    /// reverse swap). Surfaced to the user as the route's provider.
+    pub provider: String,
+    /// Destination chain, e.g. `"base"`, `"solana"`, `"tron"`.
+    pub chain: String,
+    /// Stable chain identifier (EVM `chainId` as a decimal string). `None` for
+    /// chains that don't expose one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_id: Option<String>,
+    /// Destination asset symbol, e.g. `"USDC"`, `"USDT"`.
+    pub asset: String,
+    /// Token contract / mint on the destination chain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_address: Option<String>,
+    /// Decimal places of the destination asset — needed to render
+    /// [`CrossChainQuote::estimated_out`] as a human amount.
+    pub decimals: u8,
+    /// Whether this route can be funded from the BTC balance. v1 only offers
+    /// routes where this holds; token-funded routes are a follow-up.
+    pub btc_source_supported: bool,
+}
+
+/// Result of [`Method::GetCrossChainRoutes`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossChainRoutesOk {
+    /// The parsed destination, or `None` when the input isn't a cross-chain
+    /// address. `None` is the ordinary "this is a Lightning invoice, not an
+    /// EVM address" case, not an error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<CrossChainAddress>,
+    /// Routes that can reach it, BTC-fundable ones only. Empty with a `Some`
+    /// address means the address parsed but nothing can currently reach it —
+    /// the gui must say so rather than silently offering a normal send.
+    pub routes: Vec<CrossChainRoute>,
+}
+
+/// The quote attached to a prepared cross-chain send.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossChainQuote {
+    /// The route this quote is for.
+    pub route: CrossChainRoute,
+    /// Estimated amount the recipient receives, in the destination asset's
+    /// base units (scale by [`CrossChainRoute::decimals`]).
+    pub estimated_out: u128,
+    /// Total user-visible fee, in the destination asset's base units. Covers
+    /// provider spread, bridge/gas, and DEX slippage.
+    pub fee_amount: u128,
+    /// Sats debited from the wallet to move funds to the provider. Denominated
+    /// in sats, unlike the two fields above — don't add them together.
+    pub source_transfer_fee_sats: u64,
+    /// ISO8601 timestamp after which the quote is void. The gui counts down to
+    /// this and re-quotes on expiry rather than sending against a stale rate.
+    pub expires_at: String,
+    /// Whether a failed send can be safely retried with the same idempotency
+    /// key.
+    ///
+    /// `false` means the send's source leg is a Spark *token* transfer, which
+    /// has no idempotency hook in the SDK — a blind retry could pay twice. The
+    /// gui must check payment state before offering retry on one of these.
+    /// True for the v1 BTC-funded path.
+    pub retry_safe: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -307,6 +451,7 @@ pub enum OkPayload {
     /// shape-compatible previews so the gui state machine can treat
     /// them uniformly.
     PrepareSend(PrepareSendOk),
+    GetCrossChainRoutes(CrossChainRoutesOk),
     SendPayment(SendPaymentOk),
     ReceivePayment(ReceivePaymentOk),
     ListUnclaimedDeposits(ListUnclaimedDepositsOk),
@@ -491,9 +636,19 @@ pub struct PrepareSendOk {
     /// High-level send-method tag for display. Mirrors the variant
     /// names of `breez_sdk_spark::SendPaymentMethod` — one of
     /// "BitcoinAddress", "Bolt11Invoice", "SparkAddress",
-    /// "SparkInvoice". Stringified to keep the protocol crate free of
-    /// SDK type deps.
+    /// "SparkInvoice", "CrossChainAddress". Stringified to keep the
+    /// protocol crate free of SDK type deps.
     pub method: String,
+    /// The cross-chain quote, present only for a [`Method::PrepareCrossChain`]
+    /// prepare (`method == "CrossChainAddress"`).
+    ///
+    /// `amount_sat` / `fee_sat` above can't carry a cross-chain quote on their
+    /// own: the recipient amount and the headline fee are denominated in the
+    /// *destination* asset (USDC/USDT base units), not sats, so reporting them
+    /// through sats-typed fields would misprice the send by orders of
+    /// magnitude. Everything asset-denominated lives here instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cross_chain: Option<CrossChainQuote>,
 }
 
 /// Result of a successful [`Method::SendPayment`].

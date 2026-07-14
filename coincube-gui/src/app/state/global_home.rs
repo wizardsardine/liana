@@ -492,9 +492,13 @@ impl State for GlobalHome {
         // with coins on every `UpdateDaemonCache`, so any non-zero
         // value is a reliable "daemon has spoken" signal.
         let has_spark = self.spark_backend.is_some();
+        let has_liquid = cache.liquid_gate.show();
         let spark_pending = has_spark && !self.spark_balance_loaded;
-        let liquid_pending = !self.liquid_balance_loaded;
-        let usdt_pending = !self.usdt_balance_loaded;
+        // A gated-off Liquid wallet never loads, so it must not gate the Total
+        // Balance placeholder either — otherwise the aggregate would spin
+        // forever on a cube that has no Liquid at all.
+        let liquid_pending = has_liquid && !self.liquid_balance_loaded;
+        let usdt_pending = has_liquid && !self.usdt_balance_loaded;
         let vault_pending = cache.has_vault && cache.blockheight() <= 0;
         let total_balance_loading =
             spark_pending || liquid_pending || usdt_pending || vault_pending;
@@ -518,6 +522,7 @@ impl State for GlobalHome {
                 display_mode: cache.display_mode,
                 has_vault: cache.has_vault,
                 has_spark,
+                has_liquid,
                 current_view: self.current_view,
                 transfer_direction: self.transfer_direction,
                 transfer_from: self.transfer_from,
@@ -1152,7 +1157,7 @@ impl State for GlobalHome {
                         let amount_sats = transfer_amount.to_sat();
                         let to_kind = direction.to_kind();
                         Task::perform(
-                            async move { spark.send_payment(handle).await },
+                            async move { spark.send_payment(handle, None).await },
                             move |result| match result {
                                 Ok(_response) => Message::View(view::Message::Home(
                                     HomeMessage::TransferBroadcast {

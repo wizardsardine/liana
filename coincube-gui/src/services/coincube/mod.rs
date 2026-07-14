@@ -414,6 +414,22 @@ pub struct FeaturesResponse {
     /// `marketplace_enabled` is on. Fails closed (absent → off).
     #[serde(default, alias = "p2pEnabled", alias = "p2p_enabled")]
     pub p2p_enabled: Option<bool>,
+    /// Account-scoped grandfather flag for the Liquid wallet (sunset phase 1).
+    /// `Some(true)` means this account may create/see a Liquid wallet on a
+    /// fresh install; absent/`Some(false)` means it may not.
+    ///
+    /// **Only meaningful on an authenticated call.** `/connect/features` is
+    /// wrapped in *optional* JWT auth, so an anonymous request returns
+    /// `false` silently rather than erroring — there is no way to distinguish
+    /// "not granted" from "we forgot the bearer token". The desktop only ever
+    /// fetches features after `set_token` (see
+    /// `ConnectAccountPanel::post_login_tasks`), which is what makes this
+    /// readable at all.
+    ///
+    /// A `false` here never hides an *existing* Liquid wallet — see
+    /// [`crate::app::features::LiquidGate`], which OR's this with local state.
+    #[serde(default, alias = "liquidEnabled", alias = "liquid_enabled")]
+    pub liquid_enabled: Option<bool>,
 }
 
 // ── Checkout / Billing ──────────────────────────────────────────────────────

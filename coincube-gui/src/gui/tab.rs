@@ -687,6 +687,14 @@ impl Tab {
                                     network,
                                     seed.master_signer_fingerprint,
                                     seed.pin.as_str(),
+                                    // Restore-from-seed: there is no persisted
+                                    // grant yet (the cube is being created right
+                                    // now), so let the on-chain scan decide.
+                                    // That's the whole point of the probe — a
+                                    // restore with real L-BTC keeps its wallet
+                                    // even though the flag is off, and an empty
+                                    // one is discarded.
+                                    false,
                                 )
                                 .await
                                 {
@@ -1255,6 +1263,13 @@ impl Tab {
                                                 network_val,
                                                 fingerprint,
                                                 &pin,
+                                                // Last-seen `liquidEnabled` grant.
+                                                // Connect hasn't signed in yet at
+                                                // this point (and may never), so
+                                                // the persisted copy is the only
+                                                // one available — see
+                                                // `CubeSettings::liquid_granted`.
+                                                cube.liquid_granted.unwrap_or(false),
                                             )
                                             .await
                                         } else {
@@ -1955,6 +1970,10 @@ pub fn create_app_with_remote_backend(
             // Fail-closed until `/connect/features` loads and the account panel
             // mirrors the real flags in (see `App::update`'s ConnectAccount arm).
             marketplace_flags: crate::app::features::MarketplaceServerFlags::OFF,
+            // Liquid sunset gate. Both halves are filled in later: the local
+            // half in `App::new` (from whether the Liquid SDK actually
+            // connected), the server half when `/connect/features` loads.
+            liquid_gate: crate::app::features::LiquidGate::HIDDEN,
             // We ignore last poll fields for remote backend.
             last_poll_at_startup: None,
             daemon_cache: DaemonCache {

@@ -293,6 +293,24 @@ pub struct CubeSettings {
     /// Persisted pending Liquid -> Vault transfer, used to restore UX state across app restarts
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_liquid_to_vault_transfer: Option<PendingLiquidToVaultTransfer>,
+    /// Last-seen value of the account's `liquidEnabled` grant (Liquid sunset).
+    ///
+    /// A cache of server state, persisted because of an ordering problem: the
+    /// cube (and with it the Liquid SDK) opens at PIN entry, but the grant is
+    /// only known after Connect signs in — later, and not at all on a
+    /// local-daemon install. Without a persisted copy, an ungranted-looking
+    /// fresh wallet gets its scratch state discarded before the grant ever
+    /// arrives, and a granted user would never get a Liquid wallet.
+    ///
+    /// So: the grant is written here whenever `/connect/features` reports it,
+    /// and read back at the *next* cube open to decide whether to keep a fresh
+    /// Liquid wallet. The practical consequence is that a newly-granted user
+    /// gets their Liquid wallet on the next launch, not mid-session.
+    ///
+    /// Never consulted to *hide* an existing wallet — see
+    /// [`crate::app::features::LiquidGate`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquid_granted: Option<bool>,
     /// Passkey metadata for passkey-derived master keys (None for random-generated keys)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub passkey_metadata: Option<PasskeyMetadata>,
@@ -336,6 +354,10 @@ impl CubeSettings {
             vault_wallet_id: None,
             security_pin_hash: None,
             duress_pin_hash: None,
+            // Unknown until `/connect/features` answers for this account. A new
+            // cube is not granted Liquid; if the account is, the flag lands on
+            // the next features fetch and takes effect at the next cube open.
+            liquid_granted: None,
             master_signer_fingerprint: None,
             backed_up: false,
             mfa_done: false,

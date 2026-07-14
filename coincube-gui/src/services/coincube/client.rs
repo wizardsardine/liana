@@ -299,7 +299,15 @@ impl CoincubeClient {
         Ok(resp.data)
     }
 
-    /// GET /api/v1/connect/features (public — no auth required)
+    /// GET /api/v1/connect/features.
+    ///
+    /// Wrapped in *optional* JWT auth server-side: it answers an anonymous
+    /// request rather than rejecting it, but account-scoped flags then come
+    /// back `false` with no error to detect. `liquidEnabled` is such a flag,
+    /// so this must only be called on a client that has had `set_token` applied
+    /// — which is why the sole caller is `ConnectAccountPanel`'s `SessionLoaded`
+    /// handler, downstream of `post_login_tasks`. Calling it on an anonymous
+    /// client silently under-reports entitlements.
     pub async fn get_connect_features(&self) -> Result<FeaturesResponse, CoincubeError> {
         let url = format!("{}/api/v1/connect/features", self.base_url);
         let res = self.client.get(&url).send().await?;

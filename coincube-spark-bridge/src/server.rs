@@ -21,12 +21,14 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use breez_sdk_spark::{
-    CheckLightningAddressRequest, ClaimDepositRequest, EventListener, GetInfoRequest, InputType,
-    LightningAddressInfo as SdkLightningAddressInfo, ListPaymentsRequest,
-    ListUnclaimedDepositsRequest, LnurlPayRequest, PaymentDetails, PrepareLnurlPayRequest,
-    PrepareLnurlPayResponse, PrepareSendPaymentRequest, PrepareSendPaymentResponse,
-    ReceivePaymentMethod, ReceivePaymentRequest, RegisterLightningAddressRequest, SdkEvent,
-    SendPaymentMethod, SendPaymentRequest, StableBalanceActiveLabel, UpdateUserSettingsRequest,
+    CheckLightningAddressRequest, ClaimDepositRequest, CrossChainAddressDetails,
+    CrossChainAddressFamily, CrossChainRouteFilter, CrossChainRoutePair, EventListener,
+    GetInfoRequest, InputType, LightningAddressInfo as SdkLightningAddressInfo, ListPaymentsRequest,
+    ListUnclaimedDepositsRequest, LnurlPayRequest, PaymentDetails, PaymentRequest,
+    PrepareLnurlPayRequest, PrepareLnurlPayResponse, PrepareSendPaymentRequest,
+    PrepareSendPaymentResponse, ReceivePaymentMethod, ReceivePaymentRequest,
+    RegisterLightningAddressRequest, SdkEvent, SendPaymentMethod, SendPaymentRequest, SourceAsset,
+    StableBalanceActiveLabel, UpdateUserSettingsRequest,
 };
 use coincube_spark_protocol::{
     CheckLightningAddressAvailableOk, ClaimDepositOk, DepositInfo, ErrorKind,
@@ -208,6 +210,10 @@ async fn handle_request(request: Request, state: Arc<ServerState>) -> Response {
         Method::ParseInput(params) => handle_parse_input(id, params, state).await,
         Method::PrepareSend(params) => handle_prepare_send(id, params, state).await,
         Method::PrepareLnurlPay(params) => handle_prepare_lnurl_pay(id, params, state).await,
+        Method::GetCrossChainRoutes(params) => {
+            handle_get_cross_chain_routes(id, params, state).await
+        }
+        Method::PrepareCrossChain(params) => handle_prepare_cross_chain(id, params, state).await,
         Method::SendPayment(params) => handle_send_payment(id, params, state).await,
         Method::ReceiveBolt11(params) => handle_receive_bolt11(id, params, state).await,
         Method::ReceiveOnchain(params) => handle_receive_onchain(id, params, state).await,
@@ -329,8 +335,8 @@ impl EventListener for BridgeEventListener {
                 })
             }
             // Optimization events stay swallowed until a panel
-            // needs them.
-            SdkEvent::Optimization { .. } => None,
+            // needs them. (0.19.0 renamed this from `Optimization`.)
+            SdkEvent::AutoOptimization { .. } => None,
         };
 
         if let Some(ev) = protocol_event {
@@ -527,8 +533,14 @@ async fn handle_prepare_send(
         }
     };
 
+    // 0.19.0 turned `payment_request` from a bare `String` into an enum, so the
+    // regular send path now has to say explicitly that it's handing over raw
+    // user input for the SDK to classify (bolt11 / spark address / BIP-21 / …).
+    // The cross-chain path uses the other variant — see `prepare_cross_chain`.
     let request = PrepareSendPaymentRequest {
-        payment_request: params.input,
+        payment_request: PaymentRequest::Input {
+            input: params.input,
+        },
         amount: params.amount_sat.map(|a| a as u128),
         token_identifier: None,
         conversion_options: None,
@@ -565,6 +577,17 @@ async fn handle_prepare_send(
                 SendPaymentMethod::SparkInvoice { fee, .. } => {
                     (clamp_u128_to_u64(*fee), "SparkInvoice")
                 }
+                // Unreachable in practice: `prepare_send` always passes
+                // `PaymentRequest::Input`, and the SDK never classifies raw
+                // input as cross-chain — a cross-chain send has to come through
+                // `prepare_cross_chain`, which carries an explicitly chosen
+                // route. Handled rather than `unreachable!()` so a future SDK
+                // that *does* auto-detect can't panic the bridge; the sats-typed
+                // fee field gets the only genuinely-sats component.
+                SendPaymentMethod::CrossChainAddress {
+                    source_transfer_fee_sats,
+                    ..
+                } => (*source_transfer_fee_sats, "CrossChainAddress"),
             };
 
             let handle = Uuid::new_v4().to_string();
@@ -581,10 +604,358 @@ async fn handle_prepare_send(
                     amount_sat,
                     fee_sat,
                     method: method_tag.to_string(),
+                    // Regular sends carry no cross-chain quote — those come
+                    // from `prepare_cross_chain`.
+                    cross_chain: None,
                 }),
             )
         }
         Err(e) => Response::err(id, ErrorKind::Sdk, format!("prepare_send failed: {e}")),
+    }
+}
+
+// ── Cross-chain stablecoin send ────────────────────────────────────────────
+
+/// Whether a route can be funded from the wallet's BTC balance. v1 only offers
+/// these: the source asset is always BTC sats (converted at pay time), and
+/// sending *from* Stable Balance is deferred. This is also what makes the v1
+/// path retry-safe — see [`route_is_retry_safe`].
+fn route_accepts_btc(route: &CrossChainRoutePair) -> bool {
+    route
+        .supported_sources
+        .iter()
+        .any(|s| matches!(s, SourceAsset::Bitcoin))
+}
+
+/// Whether a failed send along this route can be blind-retried.
+///
+/// Retry safety is a property of the *source* leg. A BTC-funded send moves
+/// value with a Spark transfer, which honours the `idempotency_key` we pass to
+/// `send_payment`. A token-funded send goes through `spark_wallet::transfer_tokens`,
+/// which has no idempotency hook — retrying one could pay twice. Since v1 only
+/// offers BTC-funded routes this is always true today, but it's computed rather
+/// than hardcoded so that adding token sources later can't silently start
+/// telling the gui a token send is safe to retry.
+fn route_is_retry_safe(route: &CrossChainRoutePair) -> bool {
+    route_accepts_btc(route)
+}
+
+fn sdk_route_to_protocol(route: &CrossChainRoutePair) -> coincube_spark_protocol::CrossChainRoute {
+    coincube_spark_protocol::CrossChainRoute {
+        provider: match route.provider {
+            breez_sdk_spark::CrossChainProvider::Orchestra => "orchestra".to_string(),
+            breez_sdk_spark::CrossChainProvider::Boltz => "boltz".to_string(),
+        },
+        chain: route.chain.clone(),
+        chain_id: route.chain_id.clone(),
+        asset: route.asset.clone(),
+        contract_address: route.contract_address.clone(),
+        decimals: route.decimals,
+        btc_source_supported: route_accepts_btc(route),
+    }
+}
+
+fn family_str(family: CrossChainAddressFamily) -> &'static str {
+    match family {
+        CrossChainAddressFamily::Evm => "evm",
+        CrossChainAddressFamily::Solana => "solana",
+        CrossChainAddressFamily::Tron => "tron",
+    }
+}
+
+/// Classify a raw destination as a cross-chain address.
+///
+/// Delegates to the SDK's own `parse`, which already recognises both bare
+/// addresses (`0xabc…`, Solana base58, `T…` Tron) and canonical URIs
+/// (`ethereum:0xabc…?chain=base&asset=usdc`) and returns
+/// [`InputType::CrossChainAddress`]. Going through the SDK rather than
+/// `breez_sdk_common`'s standalone `detect_address_family` matters: the SDK
+/// re-declares `CrossChainAddressDetails` as its own type (with generated
+/// `From` impls to bridge the two), and `CrossChainRouteFilter::Send` wants
+/// *that* one. Using the SDK's parser keeps a single type in play and keeps
+/// detection consistent with whatever the SDK will accept at prepare time.
+///
+/// `None` for any non-cross-chain input — a BOLT11 invoice, a Spark address,
+/// an on-chain Bitcoin address, or plain garbage.
+async fn parse_cross_chain_input(sdk: &SdkHandle, input: &str) -> Option<CrossChainAddressDetails> {
+    match sdk.sdk.parse(input.trim()).await {
+        Ok(InputType::CrossChainAddress(details)) => Some(details),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod cross_chain_tests {
+    use super::*;
+    use breez_sdk_spark::CrossChainProvider;
+
+    fn route(provider: CrossChainProvider, sources: Vec<SourceAsset>) -> CrossChainRoutePair {
+        CrossChainRoutePair {
+            provider,
+            chain: "base".to_string(),
+            chain_id: Some("8453".to_string()),
+            asset: "USDC".to_string(),
+            contract_address: Some("0xabc".to_string()),
+            decimals: 6,
+            exact_out_eligible: true,
+            supported_sources: sources,
+        }
+    }
+
+    #[test]
+    fn address_families_map_to_stable_wire_strings() {
+        // The gui branches on these strings and shows them to the user; they
+        // are wire contract, not debug output.
+        assert_eq!(family_str(CrossChainAddressFamily::Evm), "evm");
+        assert_eq!(family_str(CrossChainAddressFamily::Solana), "solana");
+        assert_eq!(family_str(CrossChainAddressFamily::Tron), "tron");
+    }
+
+    #[test]
+    fn a_btc_fundable_route_is_offered_and_marked_retry_safe() {
+        let r = route(CrossChainProvider::Orchestra, vec![SourceAsset::Bitcoin]);
+        assert!(route_accepts_btc(&r));
+        assert!(route_is_retry_safe(&r));
+        let wire = sdk_route_to_protocol(&r);
+        assert_eq!(wire.provider, "orchestra");
+        assert_eq!(wire.asset, "USDC");
+        assert_eq!(wire.decimals, 6);
+        assert!(wire.btc_source_supported);
+    }
+
+    #[test]
+    fn boltz_routes_map_to_their_own_provider_string() {
+        let r = route(CrossChainProvider::Boltz, vec![SourceAsset::Bitcoin]);
+        assert_eq!(sdk_route_to_protocol(&r).provider, "boltz");
+    }
+
+    #[test]
+    fn a_token_only_route_is_neither_offered_nor_retry_safe() {
+        // v1 funds every send from BTC. A token-only route can't be prepared,
+        // and — critically — a token source leg has no idempotency hook, so it
+        // must never be reported to the gui as safe to blind-retry.
+        let r = route(
+            CrossChainProvider::Orchestra,
+            vec![SourceAsset::Token {
+                token_identifier: "btkn1xyz".to_string(),
+            }],
+        );
+        assert!(!route_accepts_btc(&r));
+        assert!(!route_is_retry_safe(&r));
+        assert!(!sdk_route_to_protocol(&r).btc_source_supported);
+    }
+
+    #[test]
+    fn a_route_accepting_both_sources_is_offered_via_its_btc_leg() {
+        let r = route(
+            CrossChainProvider::Orchestra,
+            vec![
+                SourceAsset::Token {
+                    token_identifier: "btkn1xyz".to_string(),
+                },
+                SourceAsset::Bitcoin,
+            ],
+        );
+        assert!(route_accepts_btc(&r));
+        assert!(route_is_retry_safe(&r));
+    }
+}
+
+async fn handle_get_cross_chain_routes(
+    id: u64,
+    params: coincube_spark_protocol::GetCrossChainRoutesParams,
+    state: Arc<ServerState>,
+) -> Response {
+    let sdk = match state.sdk.read().await.clone() {
+        Some(s) => s,
+        None => {
+            return Response::err(
+                id,
+                ErrorKind::NotConnected,
+                "init must succeed before get_cross_chain_routes",
+            );
+        }
+    };
+
+    // Not a cross-chain address — an ordinary BOLT11/Spark/on-chain
+    // destination. Not an error: this is exactly how the Send panel decides
+    // which flow to run, so it must be able to ask about any input.
+    let Some(details) = parse_cross_chain_input(&sdk, &params.input).await else {
+        return Response::ok(
+            id,
+            OkPayload::GetCrossChainRoutes(coincube_spark_protocol::CrossChainRoutesOk {
+                address: None,
+                routes: Vec::new(),
+            }),
+        );
+    };
+
+    let address = coincube_spark_protocol::CrossChainAddress {
+        address: details.address.clone(),
+        family: family_str(details.address_family).to_string(),
+        contract_address: details.contract_address.clone(),
+        chain_id: details.chain_id,
+        amount: details.amount,
+    };
+
+    let filter = CrossChainRouteFilter::Send {
+        address_details: details,
+    };
+    match sdk.sdk.get_cross_chain_routes(&filter).await {
+        Ok(routes) => {
+            // Drop routes we can't fund. Offering a token-only route while the
+            // v1 send path always debits BTC would produce a prepare that fails
+            // at the SDK — better to never show it.
+            let routes: Vec<_> = routes
+                .iter()
+                .filter(|r| route_accepts_btc(r))
+                .map(sdk_route_to_protocol)
+                .collect();
+            Response::ok(
+                id,
+                OkPayload::GetCrossChainRoutes(coincube_spark_protocol::CrossChainRoutesOk {
+                    address: Some(address),
+                    routes,
+                }),
+            )
+        }
+        Err(e) => Response::err(id, ErrorKind::Sdk, e.to_string()),
+    }
+}
+
+async fn handle_prepare_cross_chain(
+    id: u64,
+    params: coincube_spark_protocol::PrepareCrossChainParams,
+    state: Arc<ServerState>,
+) -> Response {
+    let sdk = match state.sdk.read().await.clone() {
+        Some(s) => s,
+        None => {
+            return Response::err(
+                id,
+                ErrorKind::NotConnected,
+                "init must succeed before prepare_cross_chain",
+            );
+        }
+    };
+
+    if let Some(bps) = params.max_slippage_bps {
+        // Bounds-check here rather than letting the SDK reject: a rejected
+        // prepare surfaces as an opaque SDK error, whereas the gui's advanced
+        // disclosure needs to say *what* is wrong with the number.
+        if !(10..=500).contains(&bps) {
+            return Response::err(
+                id,
+                ErrorKind::BadRequest,
+                format!("max_slippage_bps must be between 10 and 500, got {bps}"),
+            );
+        }
+    }
+
+    // Re-resolve the route against the SDK's live list rather than trusting the
+    // one the gui echoed back. The gui's copy is a stringified snapshot that
+    // may be seconds or minutes stale, and a `CrossChainRoutePair` carries
+    // provider-internal fields we deliberately don't round-trip. Re-fetching
+    // means the prepare always runs against a route the SDK currently offers.
+    let Some(details) = parse_cross_chain_input(&sdk, &params.address).await else {
+        return Response::err(
+            id,
+            ErrorKind::BadRequest,
+            "address is not a recognised cross-chain destination",
+        );
+    };
+    let filter = CrossChainRouteFilter::Send {
+        address_details: details,
+    };
+    let live_routes = match sdk.sdk.get_cross_chain_routes(&filter).await {
+        Ok(routes) => routes,
+        Err(e) => return Response::err(id, ErrorKind::Sdk, e.to_string()),
+    };
+    let Some(route) = live_routes
+        .into_iter()
+        .find(|r| sdk_route_to_protocol(r) == params.route)
+    else {
+        return Response::err(
+            id,
+            ErrorKind::BadRequest,
+            "the selected route is no longer offered — re-fetch routes and retry",
+        );
+    };
+    let retry_safe = route_is_retry_safe(&route);
+
+    let request = PrepareSendPaymentRequest {
+        payment_request: PaymentRequest::CrossChain {
+            address: params.address,
+            route,
+            max_slippage_bps: params.max_slippage_bps,
+            // Leave the overpay pad at the SDK default (15 bps). It only
+            // applies to `FeesExcluded` conversion sends and exists to stop the
+            // recipient landing *under* the requested amount; there's no user
+            // question here worth exposing.
+            target_overpay_bps: None,
+        },
+        amount: Some(params.amount_sat as u128),
+        token_identifier: None,
+        conversion_options: None,
+        fee_policy: None,
+    };
+
+    match sdk.sdk.prepare_send_payment(request).await {
+        Ok(prepare) => {
+            let amount_sat = clamp_u128_to_u64(prepare.amount);
+            let SendPaymentMethod::CrossChainAddress {
+                route,
+                estimated_out,
+                fee_amount,
+                source_transfer_fee_sats,
+                expires_at,
+                ..
+            } = &prepare.payment_method
+            else {
+                // The SDK answered a `PaymentRequest::CrossChain` with some
+                // other method. Refuse rather than guess: the amounts in the
+                // other variants are sats-denominated and would be rendered
+                // against a USDC/USDT scale.
+                return Response::err(
+                    id,
+                    ErrorKind::Sdk,
+                    "cross-chain prepare returned a non-cross-chain payment method",
+                );
+            };
+
+            // Copy every field we still need out of the borrow before handing
+            // `prepare` to the pending map — the insert moves it.
+            let fee_sat = *source_transfer_fee_sats;
+            let quote = coincube_spark_protocol::CrossChainQuote {
+                route: sdk_route_to_protocol(route),
+                estimated_out: *estimated_out,
+                fee_amount: *fee_amount,
+                source_transfer_fee_sats: fee_sat,
+                expires_at: expires_at.clone(),
+                retry_safe,
+            };
+
+            // Same pending map as a regular prepare, so `send_payment` routes
+            // the handle without needing to know it's cross-chain.
+            let handle = Uuid::new_v4().to_string();
+            state
+                .pending_prepares
+                .lock()
+                .await
+                .insert(handle.clone(), (Instant::now(), prepare));
+
+            Response::ok(
+                id,
+                OkPayload::PrepareSend(PrepareSendOk {
+                    handle,
+                    amount_sat,
+                    fee_sat,
+                    method: "CrossChainAddress".to_string(),
+                    cross_chain: Some(quote),
+                }),
+            )
+        }
+        Err(e) => Response::err(id, ErrorKind::Sdk, e.to_string()),
     }
 }
 
@@ -611,7 +982,7 @@ async fn handle_send_payment(
     let handle = params.prepare_handle;
 
     if let Some((_inserted_at, prepare)) = state.pending_prepares.lock().await.remove(&handle) {
-        return execute_regular_send(id, sdk, prepare).await;
+        return execute_regular_send(id, sdk, prepare, params.idempotency_key).await;
     }
 
     if let Some((_inserted_at, prepare)) = state.pending_lnurl_prepares.lock().await.remove(&handle)
@@ -633,6 +1004,7 @@ async fn execute_regular_send(
     id: u64,
     sdk: SdkHandle,
     prepare: PrepareSendPaymentResponse,
+    idempotency_key: Option<String>,
 ) -> Response {
     // Snapshot for the response so we can surface the final amount/fee
     // even after the SDK consumes the prepare response.
@@ -648,6 +1020,16 @@ async fn execute_regular_send(
         } => spark_transfer_fee_sats.unwrap_or(0) + lightning_fee_sats,
         SendPaymentMethod::SparkAddress { fee, .. } => clamp_u128_to_u64(*fee),
         SendPaymentMethod::SparkInvoice { fee, .. } => clamp_u128_to_u64(*fee),
+        // Cross-chain's headline fee (`fee_amount`) is denominated in the
+        // *destination* asset's base units — USDC/USDT, not sats — so it can't
+        // be reported through this sats-typed field without lying. Only the
+        // Spark-side transfer fee is genuinely sats, so that's what goes here;
+        // the full fee breakdown reaches the gui on the prepare response
+        // (`CrossChainQuote`), which is where the send panel renders it.
+        SendPaymentMethod::CrossChainAddress {
+            source_transfer_fee_sats,
+            ..
+        } => *source_transfer_fee_sats,
     };
 
     // Phase 4c ships the default send options (Medium speed for
@@ -657,7 +1039,10 @@ async fn execute_regular_send(
     let request = SendPaymentRequest {
         prepare_response: prepare,
         options: None,
-        idempotency_key: None,
+        // Passed through from the gui. For a cross-chain send this is what
+        // makes a retry after an ambiguous failure safe — but only on the
+        // BTC-funded path; see `route_is_retry_safe`.
+        idempotency_key,
     };
 
     match sdk.sdk.send_payment(request).await {
@@ -990,6 +1375,8 @@ async fn handle_prepare_lnurl_pay(
                     amount_sat,
                     fee_sat,
                     method,
+                    // LNURL-pay is a Lightning send; never cross-chain.
+                    cross_chain: None,
                 }),
             )
         }

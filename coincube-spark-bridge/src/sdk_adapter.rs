@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use breez_sdk_spark::{
-    connect, default_config, BreezSdk, ConnectRequest, Network as SparkNetwork, Seed,
+    default_config, BreezSdk, CrossChainConfig, Network as SparkNetwork, SdkBuilder, Seed,
     StableBalanceConfig, StableBalanceToken,
 };
 
@@ -73,6 +73,19 @@ pub fn mainnet_config(api_key: String) -> breez_sdk_spark::Config {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| DEFAULT_LNURL_DOMAIN.to_string());
     config.lnurl_domain = Some(lnurl_domain);
+    // Cross-chain stablecoin send (USDT/USDC to EVM/Solana/Tron). Opt-in: the
+    // providers (Orchestra, Boltz) run background work such as websockets, so
+    // the SDK leaves them off unless this is set. Mainnet-only, which is all
+    // this config builds.
+    //
+    // Both bounds are left at the SDK defaults — 100 bps (1%) slippage and a
+    // 15 bps overpay pad — because they're what the gui's advanced disclosure
+    // is calibrated around. A per-send override still rides on the prepare
+    // request; this is only the fallback.
+    config.cross_chain_config = Some(CrossChainConfig {
+        default_slippage_bps: None,
+        default_target_overpay_bps: None,
+    });
     config
 }
 
@@ -88,14 +101,16 @@ pub async fn connect_mainnet(
     storage_dir: String,
 ) -> anyhow::Result<SdkHandle> {
     let config = mainnet_config(api_key);
-    let request = ConnectRequest {
-        config,
-        seed: Seed::Mnemonic {
-            mnemonic,
-            passphrase,
-        },
-        storage_dir,
+    let seed = Seed::Mnemonic {
+        mnemonic,
+        passphrase,
     };
-    let sdk = connect(request).await?;
+    // 0.19.0 replaced the free `connect(ConnectRequest)` fn with `SdkBuilder`.
+    // `with_default_storage` is the builder's equivalent of the old
+    // `ConnectRequest::storage_dir` — same sqlite store, same directory.
+    let sdk = SdkBuilder::new(config, seed)
+        .with_default_storage(storage_dir)
+        .build()
+        .await?;
     Ok(SdkHandle { sdk: Arc::new(sdk) })
 }

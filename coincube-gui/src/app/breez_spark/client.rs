@@ -45,13 +45,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use coincube_spark_protocol::{
-    CheckLightningAddressAvailableParams, ClaimDepositOk, ClaimDepositParams, ErrorKind,
-    ErrorPayload, Event, Frame, GetInfoOk, GetInfoParams, GetUserSettingsOk, InitParams,
-    LightningAddressInfo, ListPaymentsOk, ListPaymentsParams, ListUnclaimedDepositsOk, Method,
-    OkPayload, ParseInputOk, ParseInputParams, PrepareLnurlPayParams, PrepareSendOk,
-    PrepareSendParams, ReceiveBolt11Params, ReceiveOnchainParams, ReceivePaymentOk,
-    RegisterLightningAddressParams, Request, Response, ResponseResult, SendPaymentOk,
-    SendPaymentParams, SetStableBalanceParams,
+    CheckLightningAddressAvailableParams, ClaimDepositOk, ClaimDepositParams, CrossChainRoute,
+    CrossChainRoutesOk, ErrorKind, ErrorPayload, Event, Frame, GetCrossChainRoutesParams, GetInfoOk,
+    GetInfoParams, GetUserSettingsOk, InitParams, LightningAddressInfo, ListPaymentsOk,
+    ListPaymentsParams, ListUnclaimedDepositsOk, Method, OkPayload, ParseInputOk, ParseInputParams,
+    PrepareCrossChainParams, PrepareLnurlPayParams, PrepareSendOk, PrepareSendParams,
+    ReceiveBolt11Params, ReceiveOnchainParams, ReceivePaymentOk, RegisterLightningAddressParams,
+    Request, Response, ResponseResult, SendPaymentOk, SendPaymentParams, SetStableBalanceParams,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -320,17 +320,85 @@ impl SparkClient {
     /// calling twice with the same handle returns a
     /// [`SparkClientError::BridgeError`] with
     /// [`ErrorKind::BadRequest`].
+    /// `idempotency_key` makes a retry after an ambiguous failure safe: the SDK
+    /// short-circuits a repeat send carrying the same key rather than paying
+    /// twice. Pass `None` only where a retry can't happen.
+    ///
+    /// It does **not** cover a cross-chain send whose source leg is a Spark
+    /// token transfer — that has no idempotency hook at all. Check
+    /// [`CrossChainQuote::retry_safe`] before retrying one of those.
     pub async fn send_payment(
         &self,
         prepare_handle: String,
+        idempotency_key: Option<String>,
     ) -> Result<SendPaymentOk, SparkClientError> {
         match self
-            .request(Method::SendPayment(SendPaymentParams { prepare_handle }))
+            .request(Method::SendPayment(SendPaymentParams {
+                prepare_handle,
+                idempotency_key,
+            }))
             .await?
         {
             OkPayload::SendPayment(sent) => Ok(sent),
             other => Err(SparkClientError::Protocol(format!(
                 "send_payment returned unexpected payload: {:?}",
+                other
+            ))),
+        }
+    }
+
+    /// Classify a destination as a cross-chain address and list the routes
+    /// that can reach it.
+    ///
+    /// A non-cross-chain input (BOLT11, Spark address, on-chain) is **not** an
+    /// error — it comes back with `address: None`, which is how the Send panel
+    /// decides between the normal and cross-chain flows. An `address` with an
+    /// empty `routes` means the address parsed but nothing can currently reach
+    /// it, which the panel must surface rather than silently falling back.
+    pub async fn get_cross_chain_routes(
+        &self,
+        input: String,
+    ) -> Result<CrossChainRoutesOk, SparkClientError> {
+        match self
+            .request(Method::GetCrossChainRoutes(GetCrossChainRoutesParams {
+                input,
+            }))
+            .await?
+        {
+            OkPayload::GetCrossChainRoutes(routes) => Ok(routes),
+            other => Err(SparkClientError::Protocol(format!(
+                "get_cross_chain_routes returned unexpected payload: {:?}",
+                other
+            ))),
+        }
+    }
+
+    /// Prepare a cross-chain send along a route from
+    /// [`Self::get_cross_chain_routes`]. The returned [`PrepareSendOk`] carries
+    /// the quote in its `cross_chain` field (amount out, fees, expiry), and its
+    /// handle is executed by the ordinary [`Self::send_payment`].
+    ///
+    /// `max_slippage_bps` must be in `10..=500`; `None` takes the SDK's 100 bps
+    /// default.
+    pub async fn prepare_cross_chain(
+        &self,
+        address: String,
+        route: CrossChainRoute,
+        amount_sat: u64,
+        max_slippage_bps: Option<u32>,
+    ) -> Result<PrepareSendOk, SparkClientError> {
+        match self
+            .request(Method::PrepareCrossChain(PrepareCrossChainParams {
+                address,
+                route,
+                amount_sat,
+                max_slippage_bps,
+            }))
+            .await?
+        {
+            OkPayload::PrepareSend(prepare) => Ok(prepare),
+            other => Err(SparkClientError::Protocol(format!(
+                "prepare_cross_chain returned unexpected payload: {:?}",
                 other
             ))),
         }

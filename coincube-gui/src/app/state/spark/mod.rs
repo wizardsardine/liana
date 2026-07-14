@@ -5,11 +5,13 @@
 //! (None when the cube has no Spark signer or the bridge subprocess
 //! failed to spawn) and renders an "unavailable" stub in that case.
 
+pub mod cross_chain;
 pub mod esplora;
 pub mod overview;
 pub mod receive;
 pub mod send;
 pub mod settings;
+pub mod sideshift_receive;
 pub mod transactions;
 
 pub use overview::SparkOverview;

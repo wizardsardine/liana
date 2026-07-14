@@ -37,6 +37,8 @@ use crate::app::view::spark::SparkRecentTransaction;
 use crate::app::view::FiatAmountConverter;
 use crate::app::wallets::SparkBackend;
 
+use super::sideshift_receive::SparkSideshiftReceiveFlow;
+
 /// Which receive flow the user has picked.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SparkReceiveMethod {
@@ -77,6 +79,11 @@ pub enum SparkReceivePhase {
 /// Real Spark Receive panel.
 pub struct SparkReceive {
     backend: Option<Arc<SparkBackend>>,
+    /// The "receive from another network" (SideShift → BTC) sub-flow, when the
+    /// user has entered it. While `Some`, it owns the panel: view, update and
+    /// subscription all delegate to it. Mirrors how the Liquid Receive panel
+    /// hosts its own SideShift flow.
+    sideshift_flow: Option<SparkSideshiftReceiveFlow>,
     /// Currently selected method. Toggling methods resets the phase.
     pub method: SparkReceiveMethod,
     /// Amount input for BOLT11. Ignored for on-chain.
@@ -135,6 +142,7 @@ impl SparkReceive {
     pub fn new(backend: Option<Arc<SparkBackend>>) -> Self {
         Self {
             backend,
+            sideshift_flow: None,
             method: SparkReceiveMethod::Bolt11,
             amount_input: String::new(),
             description_input: String::new(),
@@ -168,6 +176,12 @@ impl State for SparkReceive {
         menu: &'a Menu,
         cache: &'a Cache,
     ) -> Element<'a, crate::app::view::Message> {
+        // The SideShift bridge takes over the whole panel while it's running —
+        // it's a multi-step flow with its own back/reset, not a card that can
+        // sit alongside the invoice form.
+        if let Some(flow) = &self.sideshift_flow {
+            return flow.view(menu, cache);
+        }
         let backend_available = self.backend.is_some();
         crate::app::view::dashboard(
             menu,
@@ -212,6 +226,11 @@ impl State for SparkReceive {
     }
 
     fn subscription(&self) -> Subscription<Message> {
+        // While the bridge flow is up it owns the polling (shift status), and
+        // there's no deposit list on screen to tick confirmations for.
+        if let Some(flow) = &self.sideshift_flow {
+            return flow.subscription();
+        }
         // Esplora doesn't push — we poll on a fixed cadence while at
         // least one immature deposit is on screen so the "X / 3
         // confirmations" badge keeps ticking between block arrivals
@@ -236,11 +255,48 @@ impl State for SparkReceive {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        // Bridge-flow messages go to the flow, whenever it's up.
+        if let Message::View(crate::app::view::Message::SparkSideshiftReceive(ref msg)) = message {
+            let Some(flow) = &mut self.sideshift_flow else {
+                return Task::none();
+            };
+            // `Back`/`Reset` from the flow's *entry* screen means "leave the
+            // bridge", so tear it down and fall back to the ordinary receive
+            // form. The flow resets itself for any other phase.
+            let leaving = matches!(
+                msg,
+                crate::app::view::SparkSideshiftReceiveMessage::Back
+                    | crate::app::view::SparkSideshiftReceiveMessage::Reset
+            ) && matches!(
+                flow.phase(),
+                super::sideshift_receive::SparkShiftPhase::Setup
+            );
+            if leaving {
+                self.sideshift_flow = None;
+                return Task::none();
+            }
+            return flow.update(msg);
+        }
+
         let Message::View(crate::app::view::Message::SparkReceive(msg)) = message else {
             return Task::none();
         };
 
         use crate::app::view::SparkReceiveMessage;
+
+        // While the bridge flow owns the panel, ignore the invoice form's
+        // messages — its widgets aren't on screen, and a stale message landing
+        // here would mutate state the user can't see.
+        //
+        // `DepositsChanged` is the deliberate exception: the flow *sends* it
+        // when a shift settles, so the claimable deposit is already loaded when
+        // the user returns to the form.
+        if self.sideshift_flow.is_some()
+            && !matches!(msg, SparkReceiveMessage::DepositsChanged)
+        {
+            return Task::none();
+        }
+
         match msg {
             SparkReceiveMessage::MethodSelected(method) => {
                 self.method = method;
@@ -540,6 +596,23 @@ impl State for SparkReceive {
                 Task::none()
             }
             SparkReceiveMessage::DepositsChanged => fetch_deposits_task(self.backend.clone()),
+
+            SparkReceiveMessage::OpenCrossNetworkReceive => {
+                // Mainnet only. SideShift and the origin chains are all
+                // real-money networks with no test deployment, and Spark itself
+                // runs on regtest — so the panel's own availability check isn't
+                // enough to gate this. The view hides the entry point off
+                // mainnet; this is the backstop that makes a stale or replayed
+                // message harmless.
+                if !crate::app::state::spark::cross_chain::supported_on(cache.network) {
+                    return Task::none();
+                }
+                let Some(backend) = self.backend.clone() else {
+                    return Task::none();
+                };
+                self.sideshift_flow = Some(SparkSideshiftReceiveFlow::new(backend));
+                Task::none()
+            }
             SparkReceiveMessage::Reset => {
                 self.qr_data = None;
                 self.displayed_invoice = None;

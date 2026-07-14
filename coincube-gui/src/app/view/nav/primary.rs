@@ -35,7 +35,18 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
     let current: TopLevel = menu.into();
 
     let mut top: Column<Message> = Column::new().width(Length::Fixed(RAIL_WIDTH)).spacing(0);
-    for &t in &[TopLevel::Cube, TopLevel::Spark, TopLevel::Liquid] {
+    // Liquid is being sunset: it only appears for accounts the server has
+    // grandfathered, or on machines that already have a Liquid wallet. When
+    // neither holds it is *hidden*, like Marketplace below — a wallet this
+    // account will never have is not a "coming soon on this network" state, so
+    // greying it with a popover would be a lie. Once shown, it's network-gated
+    // like Spark.
+    let rails: &[TopLevel] = if ctx.liquid_gate.show() {
+        &[TopLevel::Cube, TopLevel::Spark, TopLevel::Liquid]
+    } else {
+        &[TopLevel::Cube, TopLevel::Spark]
+    };
+    for &t in rails {
         // Spark and Liquid are network-gated: greyed out with a popover
         // on networks where they have no backend. Cube is always enabled.
         let disabled_reason = match t {

@@ -12,10 +12,12 @@ pub mod overview;
 pub mod receive;
 pub mod send;
 pub mod settings;
+pub mod sideshift_receive;
 pub mod transactions;
 
 pub use overview::{SparkOverviewView, SparkPaymentMethod, SparkRecentTransaction, SparkStatus};
 pub use receive::SparkReceiveView;
+pub use sideshift_receive::spark_sideshift_receive_view;
 pub use send::SparkSendView;
 pub use settings::{SparkSettingsStatus, SparkSettingsView};
 pub use transactions::{SparkTransactionsStatus, SparkTransactionsView};
@@ -124,6 +126,33 @@ pub enum SparkSendMessage {
     SelectTransaction(usize),
     /// User tapped "View All Transactions".
     History,
+
+    // ── Cross-chain stablecoin send ─────────────────────────────────────
+    /// The destination parsed as a cross-chain address and the bridge
+    /// returned the routes that can reach it. Moves the panel into
+    /// `CrossChainRoutes`, where the user confirms the chain and asset.
+    CrossChainRoutesLoaded(coincube_spark_protocol::CrossChainRoutesOk),
+    /// User picked one of the offered routes (index into the phase's list).
+    CrossChainRouteSelected(usize),
+    /// User edited the slippage field (basis points).
+    SlippageChanged(String),
+    /// User toggled the advanced disclosure that hides the slippage field.
+    ToggleAdvanced,
+    /// User accepted the chain/asset confirmation — fetch a quote for the
+    /// selected route.
+    CrossChainQuoteRequested,
+    /// The countdown ticked. Recomputes the quote's remaining life and, at
+    /// zero, blocks Confirm until the user re-quotes.
+    QuoteTick,
+    /// User asked for a fresh quote after the previous one expired.
+    ReQuoteRequested,
+    /// A cross-chain send failed. Carries the route's retry policy, so the
+    /// panel can tell "safe to retry" apart from "check the payment's state
+    /// first, because a retry might pay twice".
+    CrossChainSendFailed(
+        String,
+        crate::app::state::spark::cross_chain::RetryPolicy,
+    ),
 }
 
 /// View-level messages for the Phase 4c Spark Receive panel.
@@ -170,6 +199,10 @@ pub enum SparkReceiveMessage {
     /// Phase 4f: app-level signal that the bridge emitted a
     /// `DepositsChanged` event. The panel re-fetches the list.
     DepositsChanged,
+    /// User tapped "Receive from another network" — opens the SideShift bridge
+    /// (deposit any supported asset, receive bitcoin). Mainnet only; the entry
+    /// point isn't rendered elsewhere.
+    OpenCrossNetworkReceive,
     /// An Esplora `/tx/<txid>/status` + tip query batch came back with
     /// per-deposit confirmation counts. Map key is `(txid, vout)`,
     /// value is `0` for mempool / unconfirmed and `>= 1` once mined.

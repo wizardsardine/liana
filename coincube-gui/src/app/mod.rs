@@ -1562,6 +1562,12 @@ impl App {
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
         cache_with_vault.has_p2p = panels.p2p.is_some();
+        // Liquid sunset gate, local half. `load_breez_client` owns the
+        // keep-or-discard policy (grandfathered wallet / server grant / a scan
+        // that found funds), and a wallet it decided to keep is exactly one it
+        // left connected — so a live SDK *is* the "Liquid exists here" signal.
+        // The server half is mirrored in separately when features load.
+        cache_with_vault.liquid_gate.local_state_exists = breez_client.is_connected();
         cache_with_vault.connect_tokens = connect_auth_arc.clone();
         cache_with_vault.connect_email = connect_email.clone();
         // A restored on-disk session (or a threaded remote-backend one) means
@@ -1673,6 +1679,9 @@ impl App {
         );
         let mut cache = cache;
         cache.has_p2p = panels.p2p.is_some();
+        // See the sibling assignment in `App::new`: a connected Liquid SDK is
+        // the "wallet exists on this machine" half of the sunset gate.
+        cache.liquid_gate.local_state_exists = breez_client.is_connected();
         cache.p2p_test_coordinator = panels
             .p2p
             .as_ref()
@@ -1886,6 +1895,38 @@ impl App {
             .as_ref()
             .map(|d| d.backend())
             .unwrap_or(DaemonBackend::RemoteBackend)
+    }
+
+    /// Write the account's latest `liquidEnabled` grant to this cube's settings
+    /// so the next cube open can act on it (see `CubeSettings::liquid_granted`
+    /// for why a persisted copy is needed at all).
+    ///
+    /// Best-effort: a failed write only costs the user a relaunch before a new
+    /// grant takes effect, and it can never hide an existing Liquid wallet —
+    /// that is decided by whether the wallet is on disk, not by this flag.
+    fn persist_liquid_grant(&self, granted: bool) -> Task<Message> {
+        let network_dir = self
+            .cache
+            .datadir_path
+            .network_directory(self.cache.network);
+        let cube_id = self.cache.cube_id.clone();
+        Task::perform(
+            async move {
+                settings::update_settings_file(&network_dir, move |mut current| {
+                    if let Some(cube) = current.cubes.iter_mut().find(|c| c.id == cube_id) {
+                        cube.liquid_granted = Some(granted);
+                    }
+                    Some(current)
+                })
+                .await
+            },
+            |res| {
+                if let Err(e) = res {
+                    log::warn!("Failed to persist the Liquid grant: {}", e);
+                }
+                Message::Tick
+            },
+        )
     }
 
     fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {
@@ -3669,6 +3710,23 @@ impl App {
                 // `features` back to fail-closed OFF via the accessor).
                 self.cache.marketplace_flags =
                     self.panels.connect.account.marketplace_server_flags();
+                // Same mirror for the Liquid sunset grant. Only the server half
+                // is refreshed here — `local_state_exists` reflects whether the
+                // Liquid SDK actually connected at cube-open, and must survive a
+                // logout: losing the session must never hide an existing wallet.
+                let liquid_granted = self.panels.connect.account.liquid_server_enabled();
+                let grant_changed = self.cache.liquid_gate.server_enabled != liquid_granted;
+                self.cache.liquid_gate.server_enabled = liquid_granted;
+                // Persist the grant so the *next* cube open can act on it. The
+                // Liquid SDK connects at PIN entry, long before Connect signs
+                // in, so without this a newly-granted account would have its
+                // (empty) Liquid wallet discarded on every launch and could
+                // never actually get one. See `CubeSettings::liquid_granted`.
+                let persist_grant = if grant_changed {
+                    self.persist_liquid_grant(liquid_granted)
+                } else {
+                    Task::none()
+                };
                 // Sync lightning address to cache for sidebar display
                 self.cache.lightning_address = self
                     .panels
@@ -3750,9 +3808,9 @@ impl App {
                             view::NodeSettingsMessage::SwitchToConnect,
                         ),
                     )));
-                    return Task::batch([task, nav, switch]);
+                    return Task::batch([task, persist_grant, nav, switch]);
                 }
-                return task;
+                return Task::batch([task, persist_grant]);
             }
             Message::View(view::Message::DismissReceivedCelebration) => {
                 self.show_received_celebration = false;
@@ -4518,6 +4576,7 @@ impl App {
             self.cache.network,
             self.cache.p2p_test_coordinator,
             self.cache.marketplace_flags,
+            self.cache.liquid_gate,
         )
         .reason()
         .map(str::to_string)

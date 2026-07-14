@@ -308,6 +308,10 @@ fn active_shift_view<'a>(
             ShiftStatusKind::Settling => ("Settling…", color::ORANGE),
             ShiftStatusKind::Settled => ("Settled ✓", color::GREEN),
             ShiftStatusKind::Expired => ("Expired", color::RED),
+            // A held shift needs the user to contact SideShift — it will not
+            // advance on its own, so it reads as a warning, not progress.
+            ShiftStatusKind::Review => ("On hold for review", color::RED),
+            ShiftStatusKind::Refunding => ("Refunding…", color::ORANGE),
             ShiftStatusKind::Refunded => ("Refunded", color::GREY_3),
             ShiftStatusKind::Error => ("Error", color::RED),
             ShiftStatusKind::Unknown(_) => ("Unknown", color::GREY_3),

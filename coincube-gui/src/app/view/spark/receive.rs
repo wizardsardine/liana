@@ -113,6 +113,33 @@ impl<'a> SparkReceiveView<'a> {
         .style(theme::card::simple);
         content = content.push(method_picker);
 
+        // ── Receive from another network (SideShift → BTC) ─────────────
+        // Mainnet only — SideShift and the origin chains have no test
+        // deployment, so off mainnet this entry point simply doesn't exist
+        // rather than being greyed out with a promise we can't keep.
+        if crate::app::state::spark::cross_chain::supported_on(self.network) {
+            content = content.push(
+                Container::new(
+                    Column::new()
+                        .spacing(8)
+                        .push(h4_bold("Receive from another network"))
+                        .push(p2_regular(
+                            "Send USDt, USDC or another supported asset from Ethereum, Tron, \
+                             BNB Chain or Solana. It arrives as bitcoin in your Spark wallet.",
+                        ))
+                        .push(
+                            button::secondary(None, "Start a cross-network receive")
+                                .on_press(Message::SparkReceive(
+                                    crate::app::view::SparkReceiveMessage::OpenCrossNetworkReceive,
+                                ))
+                                .width(Length::Fixed(260.0)),
+                        ),
+                )
+                .padding(16)
+                .style(theme::card::simple),
+            );
+        }
+
         // ── Method-specific inputs ────────────────────────────────────
         if self.method == SparkReceiveMethod::Bolt11 {
             let amount = text_input("Amount in sats (optional)", self.amount_input)

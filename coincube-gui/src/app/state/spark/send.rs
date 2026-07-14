@@ -27,11 +27,14 @@
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use coincube_spark_protocol::{ParseInputKind, PrepareSendOk, SendPaymentOk};
+use coincube_spark_protocol::{
+    CrossChainAddress, CrossChainRoute, ParseInputKind, PrepareSendOk, SendPaymentOk,
+};
 use coincube_ui::component::amount::format_u64_as_string;
 use coincube_ui::widget::Element;
 use iced::Task;
 
+use super::cross_chain;
 use crate::app::cache::Cache;
 use crate::app::menu::{Menu, SparkSubMenu};
 use crate::app::message::Message;
@@ -48,8 +51,25 @@ pub enum SparkSendPhase {
     Idle,
     /// Awaiting the `prepare_send` RPC response.
     Preparing,
+    /// The destination is a cross-chain address (EVM / Solana / Tron), and the
+    /// user must confirm *which chain and asset* before we quote.
+    ///
+    /// This is a mandatory stop, not a convenience. Address formats don't
+    /// announce their chain, and USDT exists on all three families — so the
+    /// panel states the detected chain in words and makes the user pick a
+    /// route before any money moves. See
+    /// [`cross_chain::chain_confirmation`](super::cross_chain::chain_confirmation).
+    CrossChainRoutes {
+        address: CrossChainAddress,
+        routes: Vec<CrossChainRoute>,
+        /// Index into `routes`. Pre-selected when there's only one.
+        selected: usize,
+    },
     /// `prepare_send` returned; the caller can review the preview and
     /// either confirm (→ `send_payment`) or go back to `Idle`.
+    ///
+    /// For a cross-chain send, `PrepareSendOk::cross_chain` carries the quote,
+    /// which expires — the panel counts down and blocks confirmation at zero.
     Prepared(PrepareSendOk),
     /// Awaiting the `send_payment` RPC response.
     Sending,
@@ -57,6 +77,15 @@ pub enum SparkSendPhase {
     Sent(SendPaymentOk),
     /// Any step failed. Carries the user-visible message.
     Error(String),
+    /// A *cross-chain* send failed. Kept apart from [`Self::Error`] because the
+    /// safe next step depends on the route: a BTC-funded send can be retried
+    /// with the same idempotency key, but a token-funded one has no idempotency
+    /// guarantee and a blind retry could pay twice. The panel must offer
+    /// "check status" rather than "try again" in that case.
+    CrossChainFailed {
+        message: String,
+        policy: cross_chain::RetryPolicy,
+    },
 }
 
 /// Real Spark Send panel.
@@ -80,6 +109,21 @@ pub struct SparkSend {
     /// Last few payments fetched from the bridge, rendered under the
     /// send form. Populated on reload and after each successful send.
     recent_transactions: Vec<SparkRecentTransaction>,
+    /// Slippage tolerance in basis points, as typed. Empty means "use the SDK
+    /// default" (100 bps). Only reachable behind the advanced disclosure —
+    /// a normal user should never have to think in basis points.
+    pub slippage_input: String,
+    /// Whether the advanced (slippage) disclosure is open.
+    pub advanced_open: bool,
+    /// Idempotency key for the in-flight send, minted once per user-initiated
+    /// send and **reused across retries of that same send**. That reuse is the
+    /// entire point: a fresh key on retry would defeat the SDK's dedup and
+    /// could pay twice. Cleared on success or reset.
+    send_idempotency_key: Option<String>,
+    /// Seconds left on the current cross-chain quote, recomputed on each tick.
+    /// `None` when there's no live quote. Drives the countdown and blocks
+    /// confirmation at zero.
+    pub quote_seconds_left: Option<i64>,
 }
 
 impl SparkSend {
@@ -97,12 +141,131 @@ impl SparkSend {
                 "lightning-send",
             ),
             recent_transactions: Vec::new(),
+            slippage_input: String::new(),
+            advanced_open: false,
+            send_idempotency_key: None,
+            quote_seconds_left: None,
         }
     }
 
     pub fn phase(&self) -> &SparkSendPhase {
         &self.phase
     }
+
+    /// The live cross-chain quote, if the panel is showing one.
+    pub fn cross_chain_quote(&self) -> Option<&coincube_spark_protocol::CrossChainQuote> {
+        match &self.phase {
+            SparkSendPhase::Prepared(ok) => ok.cross_chain.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Whether Confirm should be live. A cross-chain send is additionally
+    /// blocked once its quote expires — sending against a dead quote means
+    /// sending against a rate the provider no longer honours.
+    pub fn can_confirm(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+        match &self.phase {
+            SparkSendPhase::Prepared(ok) => match &ok.cross_chain {
+                None => true,
+                Some(quote) => cross_chain::quote_countdown(quote, now).can_send(),
+            },
+            _ => false,
+        }
+    }
+
+    /// Fetch (or re-fetch) a quote for the route the user selected. Shared by
+    /// the first quote and the post-expiry re-quote — they differ only in what
+    /// the user pressed, not in what has to happen.
+    fn quote_cross_chain(&mut self) -> Task<Message> {
+        let SparkSendPhase::CrossChainRoutes {
+            address,
+            routes,
+            selected,
+        } = &self.phase
+        else {
+            return Task::none();
+        };
+        let Some(route) = routes.get(*selected).cloned() else {
+            return Task::none();
+        };
+        let Some(backend) = self.backend.clone() else {
+            self.phase = SparkSendPhase::Error("Spark backend is not available.".to_string());
+            return Task::none();
+        };
+
+        let slippage = match cross_chain::parse_slippage_bps(&self.slippage_input) {
+            Ok(v) => v,
+            Err(e) => {
+                self.phase = SparkSendPhase::Error(e);
+                return Task::none();
+            }
+        };
+        let amount_sat = match self.amount_input.trim().parse::<u64>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                self.phase = SparkSendPhase::Error(
+                    "Enter the amount to send, in sats. Cross-chain sends are funded from your \
+                     Bitcoin balance and converted when they're paid."
+                        .to_string(),
+                );
+                return Task::none();
+            }
+        };
+
+        let address = address.address.clone();
+        self.phase = SparkSendPhase::Preparing;
+        Task::perform(
+            async move {
+                backend
+                    .prepare_cross_chain(address, route, amount_sat, slippage)
+                    .await
+                    .map_err(|e| format!("Couldn't quote this send: {e}"))
+            },
+            |result| match result {
+                Ok(ok) => Message::View(crate::app::view::Message::SparkSend(
+                    crate::app::view::SparkSendMessage::PrepareSucceeded(ok),
+                )),
+                Err(e) => Message::View(crate::app::view::Message::SparkSend(
+                    crate::app::view::SparkSendMessage::PrepareFailed(e),
+                )),
+            },
+        )
+    }
+}
+
+/// What a destination turned out to be.
+enum Resolved {
+    /// A cross-chain address, with the routes that can reach it. The user still
+    /// has to confirm the chain and pick a route before anything is quoted.
+    CrossChain(coincube_spark_protocol::CrossChainRoutesOk),
+    /// An ordinary Spark/Lightning/on-chain destination, already prepared.
+    Regular(PrepareSendOk),
+}
+
+/// Decide which send flow a destination belongs to.
+///
+/// Cross-chain is checked *first*, and deliberately so. The failure mode we're
+/// avoiding is a stablecoin address being treated as an ordinary destination
+/// and the funds going somewhere unrecoverable, so the more specific
+/// classification wins. An input the bridge doesn't recognise as cross-chain
+/// falls through to the existing BOLT11/LNURL/on-chain resolution untouched.
+async fn classify_and_prepare(
+    backend: Arc<SparkBackend>,
+    input: String,
+    amount_sat: Option<u64>,
+) -> Result<Resolved, String> {
+    let found = backend
+        .get_cross_chain_routes(input.clone())
+        .await
+        .map_err(|e| format!("Couldn't check this destination: {e}"))?;
+
+    if found.address.is_some() {
+        return Ok(Resolved::CrossChain(found));
+    }
+
+    resolve_and_prepare(backend, input, amount_sat)
+        .await
+        .map(Resolved::Regular)
 }
 
 impl State for SparkSend {
@@ -127,6 +290,9 @@ impl State for SparkSend {
                 recent_transactions: &self.recent_transactions,
                 bitcoin_unit: cache.bitcoin_unit,
                 show_direction_badges: cache.show_direction_badges,
+                slippage_input: &self.slippage_input,
+                advanced_open: self.advanced_open,
+                quote_seconds_left: self.quote_seconds_left,
             }
             .render(),
         )
@@ -138,6 +304,20 @@ impl State for SparkSend {
         _wallet: Option<Arc<crate::app::wallet::Wallet>>,
     ) -> Task<Message> {
         fetch_payments_task(self.backend.clone())
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        // Tick only while a cross-chain quote is on screen. Nothing else in
+        // this panel is time-sensitive, and a quote is the one thing that goes
+        // stale on its own — so the timer exists exactly as long as one does.
+        if self.cross_chain_quote().is_none() {
+            return iced::Subscription::none();
+        }
+        iced::time::every(std::time::Duration::from_secs(1)).map(|_| {
+            Message::View(crate::app::view::Message::SparkSend(
+                crate::app::view::SparkSendMessage::QuoteTick,
+            ))
+        })
     }
 
     fn update(
@@ -189,6 +369,40 @@ impl State for SparkSend {
                 };
                 let input = self.destination_input.trim().to_string();
                 self.phase = SparkSendPhase::Preparing;
+
+                // Cross-chain destinations branch off before the ordinary
+                // prepare: they need an explicit chain/asset confirmation and a
+                // route choice first, so we ask the bridge to classify the
+                // input rather than handing it straight to `prepare_send`.
+                //
+                // Only on mainnet — the providers and destination chains have
+                // no test deployment, so on regtest we skip the check entirely
+                // and let the normal path handle (and reject) the address.
+                if cross_chain::supported_on(cache.network) {
+                    let backend_cc = backend.clone();
+                    let cc_input = input.clone();
+                    let amount = amount_sat;
+                    return Task::perform(
+                        async move {
+                            classify_and_prepare(backend_cc, cc_input, amount).await
+                        },
+                        |result| match result {
+                            Ok(Resolved::CrossChain(routes)) => {
+                                Message::View(crate::app::view::Message::SparkSend(
+                                    SparkSendMessage::CrossChainRoutesLoaded(routes),
+                                ))
+                            }
+                            Ok(Resolved::Regular(ok)) => {
+                                Message::View(crate::app::view::Message::SparkSend(
+                                    SparkSendMessage::PrepareSucceeded(ok),
+                                ))
+                            }
+                            Err(e) => Message::View(crate::app::view::Message::SparkSend(
+                                SparkSendMessage::PrepareFailed(e),
+                            )),
+                        },
+                    );
+                }
                 // Phase 4e: chain `parse_input` + `prepare_*` in a
                 // single async task so the user only sees one
                 // "Preparing…" phase regardless of which SDK code
@@ -218,28 +432,121 @@ impl State for SparkSend {
                 self.phase = SparkSendPhase::Error(err);
                 Task::none()
             }
+            SparkSendMessage::CrossChainRoutesLoaded(found) => {
+                let Some(address) = found.address else {
+                    // Shouldn't happen — `classify_and_prepare` only emits this
+                    // message when the address parsed — but never fall through
+                    // to a send on an unclassified destination.
+                    self.phase = SparkSendPhase::Error(
+                        "This destination isn't a recognised cross-chain address.".to_string(),
+                    );
+                    return Task::none();
+                };
+                if found.routes.is_empty() {
+                    // The address parsed but nothing can reach it. Say so —
+                    // silently falling back to a normal Spark send here would
+                    // fire funds at an address on the wrong network.
+                    self.phase = SparkSendPhase::Error(format!(
+                        "No route can currently send to this {} address. \
+                         Cross-chain sends support USDT and USDC only.",
+                        address.family,
+                    ));
+                    return Task::none();
+                }
+                self.phase = SparkSendPhase::CrossChainRoutes {
+                    address,
+                    routes: found.routes,
+                    selected: 0,
+                };
+                Task::none()
+            }
+            SparkSendMessage::CrossChainRouteSelected(idx) => {
+                if let SparkSendPhase::CrossChainRoutes {
+                    routes, selected, ..
+                } = &mut self.phase
+                {
+                    if idx < routes.len() {
+                        *selected = idx;
+                    }
+                }
+                Task::none()
+            }
+            SparkSendMessage::SlippageChanged(value) => {
+                self.slippage_input = value;
+                Task::none()
+            }
+            SparkSendMessage::ToggleAdvanced => {
+                self.advanced_open = !self.advanced_open;
+                Task::none()
+            }
+            SparkSendMessage::CrossChainQuoteRequested | SparkSendMessage::ReQuoteRequested => {
+                self.quote_cross_chain()
+            }
+            SparkSendMessage::QuoteTick => {
+                // Recompute the countdown from the quote's own `expires_at`
+                // rather than decrementing a counter — a decrement drifts if
+                // ticks are dropped (a busy frame, a suspended laptop), and
+                // drifting *upward* would let a dead quote look live.
+                self.quote_seconds_left = self.cross_chain_quote().map(|quote| {
+                    match cross_chain::quote_countdown(quote, chrono::Utc::now()) {
+                        cross_chain::QuoteCountdown::Valid { seconds_left } => seconds_left,
+                        _ => 0,
+                    }
+                });
+                Task::none()
+            }
             SparkSendMessage::ConfirmRequested => {
                 let SparkSendPhase::Prepared(prepare) = &self.phase else {
                     return Task::none();
                 };
+                // A cross-chain quote that has run out must not be sent. The
+                // rate is no longer one the provider honours, so confirming
+                // would either fail or fill at a price the user never saw.
+                if !self.can_confirm(chrono::Utc::now()) {
+                    self.phase = SparkSendPhase::Error(
+                        "This quote has expired. Get a fresh quote before sending.".to_string(),
+                    );
+                    return Task::none();
+                }
                 let Some(backend) = self.backend.clone() else {
                     self.phase =
                         SparkSendPhase::Error("Spark backend is not available.".to_string());
                     return Task::none();
                 };
                 let handle = prepare.handle.clone();
+                let policy = prepare.cross_chain.as_ref().map(cross_chain::RetryPolicy::for_quote);
+
+                // Mint the idempotency key once per send, and hold onto it: a
+                // retry of *this* send must reuse it, or the SDK's dedup can't
+                // recognise the retry and we risk paying twice.
+                let key = self
+                    .send_idempotency_key
+                    .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
+                    .clone();
+
                 self.phase = SparkSendPhase::Sending;
                 Task::perform(
-                    async move { backend.send_payment(handle).await },
-                    |result| match result {
+                    async move { backend.send_payment(handle, Some(key)).await },
+                    move |result| match result {
                         Ok(ok) => Message::View(crate::app::view::Message::SparkSend(
                             SparkSendMessage::SendSucceeded(ok),
                         )),
-                        Err(e) => Message::View(crate::app::view::Message::SparkSend(
-                            SparkSendMessage::SendFailed(e.to_string()),
-                        )),
+                        Err(e) => {
+                            let msg = e.to_string();
+                            Message::View(crate::app::view::Message::SparkSend(match policy {
+                                Some(p) => SparkSendMessage::CrossChainSendFailed(msg, p),
+                                None => SparkSendMessage::SendFailed(msg),
+                            }))
+                        }
                     },
                 )
+            }
+            SparkSendMessage::CrossChainSendFailed(err, policy) => {
+                self.phase = SparkSendPhase::CrossChainFailed {
+                    message: err,
+                    policy,
+                };
+                Task::none()
             }
             SparkSendMessage::SendSucceeded(ok) => {
                 self.sent_amount_display =
@@ -248,6 +555,12 @@ impl State for SparkSend {
                 // Clear the inputs so a follow-up send doesn't re-use them.
                 self.destination_input.clear();
                 self.amount_input.clear();
+                // Retire the idempotency key with the send it belonged to. A
+                // *new* send must never reuse it, or the SDK would dedup it
+                // against this one and silently drop a payment the user meant
+                // to make.
+                self.send_idempotency_key = None;
+                self.quote_seconds_left = None;
                 // Refresh the Last Transactions list so the new payment
                 // appears under the send form once the user returns.
                 let refresh = fetch_payments_task(self.backend.clone());
@@ -280,6 +593,11 @@ impl State for SparkSend {
                 self.destination_input.clear();
                 self.amount_input.clear();
                 self.phase = SparkSendPhase::Idle;
+                // Reset abandons the send, so its key must go too — the next
+                // send is a different payment and needs a fresh one.
+                self.send_idempotency_key = None;
+                self.quote_seconds_left = None;
+                self.slippage_input.clear();
                 Task::none()
             }
             SparkSendMessage::PaymentsLoaded(payments) => {

@@ -2498,6 +2498,7 @@ mod renewal_banner_tests {
             pricing_schema_version: None,
             purchasing_enabled: enabled,
             marketplace_enabled: None,
+            liquid_enabled: None,
             buy_sell_enabled: None,
             p2p_enabled: None,
         }
