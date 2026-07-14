@@ -1,10 +1,12 @@
+use std::sync::LazyLock;
+
 use iced::{
     widget::{svg, Svg},
     window::icon,
 };
 
 use crate::theme::Theme;
-use crate::widget::Row;
+use crate::widget::{Column, Row};
 use crate::{color, font};
 
 pub fn coincube_window_icon() -> icon::Icon {
@@ -32,6 +34,37 @@ pub fn coincube_wordmark<'a, M: 'a>(size: f32) -> Row<'a, M> {
             .size(size)
             .style(theme::text::primary),
     ]
+}
+
+/// The Tenshu app-chrome brand mark: the sumi-e castle keep inside an orange
+/// *enso*, on a transparent background so it reads on both the dark and light
+/// sidebar. Decoded once — building a fresh `image::Handle` on every render
+/// makes the image flicker (same reason `quote_display` caches its handles).
+const TENSHU_MARK_BYTES: &[u8] =
+    include_bytes!("../static/images/tenshu-transparent-icon-2014.png");
+static TENSHU_MARK: LazyLock<iced::widget::image::Handle> =
+    LazyLock::new(|| iced::widget::image::Handle::from_bytes(TENSHU_MARK_BYTES));
+
+/// Tenshu app logo — the brand mark stacked above the word "Tenshu" in Space
+/// Grotesk Bold. Used only in app chrome (the nav-rail header and the home
+/// sidebar); the cloud-service surfaces keep [`coincube_wordmark`]. `size` is
+/// the label font size; the mark scales to 2× that so the two read as one
+/// lockup. The mark carries the orange accent; the label follows the theme's
+/// primary text color so it stays legible in light and dark modes.
+pub fn tenshu_wordmark<'a, M: 'a>(size: f32) -> Column<'a, M> {
+    use crate::theme;
+    let mark = size * 2.0;
+    iced::widget::column![
+        iced::widget::image(TENSHU_MARK.clone())
+            .width(iced::Length::Fixed(mark))
+            .height(iced::Length::Fixed(mark)),
+        iced::widget::text("Tenshu")
+            .font(font::SPACE_GROTESK_BOLD)
+            .size(size)
+            .style(theme::text::primary),
+    ]
+    .spacing(size * 0.15)
+    .align_x(iced::Alignment::Center)
 }
 
 /// Theme toggle button for sidebars. Shows sun/moon icon with "Light Mode"/"Dark Mode" label.

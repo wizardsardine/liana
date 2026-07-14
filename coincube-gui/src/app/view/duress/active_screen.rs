@@ -81,10 +81,8 @@ impl DuressActiveScreen {
             .push(iced::widget::Space::new().height(Length::Fill))
             .push(text::h3("Duress Mode Activated"))
             .push(
-                text::p1_regular(
-                    "Use the COINCUBE app on a trusted device to manage your account.",
-                )
-                .color(color::GREY_3),
+                text::p1_regular("Use the Tenshu app on a trusted device to manage your account.")
+                    .color(color::GREY_3),
             );
 
         let sign_in = if self.checking {

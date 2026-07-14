@@ -1,16 +1,16 @@
-# Quickly try out Coincube in a test environment
+# Quickly try out Tenshu in a test environment
 
-_(Updated on of 2023)_
+_(Updated July 2026)_
 
-This document is a short set of instructions for trying out Coincube on Bitcoin signet, a test network using value-less bitcoins. It does not attempt to
+This document is a short set of instructions for trying out Tenshu — the Coincube desktop
+app — on Bitcoin signet, a test network using value-less bitcoins. It does not attempt to
 give any nuance, details or describe alternative configurations.
 
-This guide will make use Coincube as a "hot wallet", and use the "Coincube managed" `bitcoind` option.
+This guide uses Tenshu as a "hot wallet" with the "Tenshu-managed" `bitcoind` option.
 You can find [here](./SIGNING_DEVICES.md) the list of supported signing devices.
-If you'd like to try out Coincube using emulators of
-hardware signing device you can use the [Specter
-simulator](https://github.com/cryptoadvance/specter-diy/blob/master/docs/simulator.md) or the
-[Ledger "Speculos" emulator](https://github.com/LedgerHQ/speculos).
+If you'd like to try out Tenshu using emulators of a hardware signing device you can use the
+[Specter simulator](https://github.com/cryptoadvance/specter-diy/blob/master/docs/simulator.md)
+or the [Ledger "Speculos" emulator](https://github.com/LedgerHQ/speculos).
 (emulators of the other hardware signers will work too when we finish their integration)
 
 ## Step 0: preparation
@@ -30,7 +30,7 @@ your system to follow the guide if you are running a Linux that isn't Debian- or
 
 We'll use basic tools which should already be present on your system, such as:
 
-- `shasum`
+- `sha256sum` (or `shasum` on macOS)
 - `tar`
 
 To verify binaries you will also need:
@@ -45,78 +45,54 @@ can wipe easily after testing.
 If you are using a Linux terminal:
 
 ```
-mkdir coincube_quicktry
-cd coincube_quicktry
+mkdir tenshu_quicktry
+cd tenshu_quicktry
 ```
 
-## Step 1: Coincube installer
+## Step 1: install Tenshu
 
-Get the COINCUBE software for your system on the [COINCUBE website](https://coincube.io).
+Get Tenshu for your system from the [Coincube website](https://coincube.io) or the
+[GitHub releases page](https://github.com/coincubetech/coincube/releases).
 
 A note for **Linux users only**: released binaries may not be working on your system if it is
 running a too old glibc. In this case you may have to build from source. See the [short section
 about this in the README](../README.md#a-note-on-linux-binaries-and-glibc-version).
 
-For every file available on the website, there is an accompanying `.asc` file with the same
-name on our [Github release page](https://github.com/coincubetech/coincube/releases).
+### Verify your download
 
-if Coincube version is inferior to v7:
+Every release is published on the [GitHub releases page](https://github.com/coincubetech/coincube/releases)
+alongside a signed checksums manifest:
 
-This is a GPG signature made with Antoine Poinsot's key:
-`590B7292695AFFA5B672CBB2E13FC145CD3F4304`. This key is available elsewhere for cross-checking, such
-as on [his Twitter profile](https://twitter.com/darosior) or his [personal
-website](http://download.darosior.ninja/antoine_poinsot_0xE13FC145CD3F4304.txt). It is recommended
-you verify your download against this key.
-Example for Linux (replace the signature name with the one corresponding to your download):
+- `SHA256SUMS-<version>.txt` — SHA256 checksums of every release artifact
+- `SHA256SUMS-<version>.txt.asc` — GPG signature of that manifest, made with the Coincube release
+  signing key (`67F9701BF0D2DAF4`, `Coincube Release Signing <releases@coincube.io>`)
 
-```
-gpg --keyserver hkps://keys.openpgp.org --receive 590B7292695AFFA5B672CBB2E13FC145CD3F4304
-gpg --verify coincube_2.0-1_amd64.deb.asc
-```
+Release artifacts are named `tenshu-<version>-<target>.<ext>`, e.g.
+`tenshu-1.5.0-aarch64-apple-darwin.dmg` (macOS Apple Silicon),
+`tenshu-1.5.0-x86_64-pc-windows-msvc.msi` (Windows), or
+`tenshu-1.5.0-x86_64-unknown-linux-gnu.tar.gz` (Linux).
 
-GPG should tell you the signature is valid for Antoine's key.
-
-If GPG told you that Antoine key has expired, you should refresh it.
-Example for Linux (replace the signature name with the one corresponding to your download):
+To verify your download (example for version 1.5.0):
 
 ```
-gpg --keyserver hkps://keys.openpgp.org --refresh-keys E13FC145CD3F4304
+# Import the Coincube release key (one-time)
+curl -O https://raw.githubusercontent.com/coincubetech/coincube/master/docs/security/coincube-release-public.asc
+gpg --import coincube-release-public.asc
+
+# Verify the checksums manifest, then check your artifact against it
+gpg --verify SHA256SUMS-1.5.0.txt.asc
+sha256sum --check SHA256SUMS-1.5.0.txt --ignore-missing
 ```
 
-if Coincube version is superior or equal to v7:
+`gpg --verify` should report a **Good signature** from the Coincube release key, and
+`sha256sum --check` should print `OK` next to the file you downloaded. See
+[docs/security/VERIFY.md](./security/VERIFY.md) for full per-platform instructions and the
+key fingerprint to cross-check.
 
-This is a GPG signature made with Edouard Paris key:
-`5B63F3B97699C7EEF3B040B19B7F629A53E77B83`. This key is available elsewhere for cross-checking, such
-as on his [personal website](https://edouard.paris/keys/5B63F3B97699C7EEF3B040B19B7F629A53E77B83.asc).
-It is recommended you verify your download against this key.
-Example for Linux (replace the signature name with the one corresponding to your download):
+If all is good, you can run Tenshu!
 
-```
-gpg --keyserver hkps://keys.openpgp.org --receive 5B63F3B97699C7EEF3B040B19B7F629A53E77B83
-gpg --verify coincube_7.0-1_amd64.deb.asc
-```
-
-GPG should tell you the signature is valid for Edouard's key.
-
-If GPG told you that Edouard key has expired, you should refresh it.
-Example for Linux (replace the signature name with the one corresponding to your download):
-
-```
-gpg --keyserver hkps://keys.openpgp.org --refresh-keys 5B63F3B97699C7EEF3B040B19B7F629A53E77B83
-```
-
-if Coincube version is superior or equal to v9:
-
-```
-gpg --keyserver hkps://keys.openpgp.org --receive 5B63F3B97699C7EEF3B040B19B7F629A53E77B83
-sha256sum --check coincube-9.0-shasums.txt
-gpg --verify coincube-9.0-shasums.txt.asc
-```
-
-If all is good, you can run Coincube!
-
-At startup, you will have the choice between starting Coincube using an existing configuration or to
-set up a new one. Choose to install Coincube on a new Bitcoin network.
+At startup, you will have the choice between starting Tenshu using an existing configuration or to
+set up a new one. Choose to install Tenshu on a new Bitcoin network.
 
 The next screen allows you to either configure a new wallet, participate in the configuration of a
 new wallet (if you are taking part in a multisig for instance), or to recover a wallet from backup.
@@ -134,7 +110,7 @@ the recovery key, and choose "This computer" again.
 
 Of course, it wouldn't make sense for a real wallet to use the same signing device to derive both
 the primary and recovery keys. Or even to use hot keys at all with a non-trivial amount of coins. We
-only do this for convenience in testing Coincube on Signet. If you'd like to try out signing with a
+only do this for convenience in testing Tenshu on Signet. If you'd like to try out signing with a
 hardware wallet you can use the "testnet" mode of a Specter, the "Bitcoin testnet" app of a Ledger,
 or the simulator of any of them (see the links at the top of this document).
 
@@ -143,16 +119,16 @@ mnemonic as well as the descriptor in the next two screens. Otherwise just make 
 ticking the boxes. If you are using a signing device or its simulator you'll have a step for registering
 the descriptor on it.
 
-You can then decide whether you would like to manage `bitcoind` yourself or let Coincube configure
+You can then decide whether you would like to manage `bitcoind` yourself or let Tenshu configure
 and start/stop it while the GUI is being used:
-For the purpose of this guide, we will use the simpler option: to let Coincube download and manage Bitcoin Core for us. It will get the software on [bitcoincore.org](https://bitcoincore.org/) and configure it in pruned mode with about 20GB of disk usage.
+For the purpose of this guide, we will use the simpler option: to let Tenshu download and manage Bitcoin Core for us. It will get the software on [bitcoincore.org](https://bitcoincore.org/) and configure it in pruned mode with about 20GB of disk usage.
 A full Initial Blocks Download (Bitcoin network synchronization, from the beginning of the chain) will take place, as we are using Signet it will be pretty quick.
 
 Click on continue until we finalize the installation.
 
 ## Step 2: have fun
 
-Once synchronized, Coincube will open the wallet.
+Once synchronized, Tenshu will open the wallet.
 You can generate a receive address in the "Receive" menu. You can get signet coins from the signet
 faucet at https://signet.bc-2.jp/.
 
@@ -162,27 +138,27 @@ my own configuration, but it depends on what you configured previously). Then yo
 
 Keep in mind that signet coins have no value!
 
-Signet is a network, so you can send coins to other people on signet, receive from them, etc. Feel free to explore Coincube!
+Signet is a network, so you can send coins to other people on signet, receive from them, etc. Feel free to explore Tenshu!
 
 ## Cleanup
 
 You need to remove:
 
-- The Coincube binary
+- The Tenshu application (the `coincube` binary)
 - its data directory
 
-For a user Alice the default Coincube data directory is:
+For a user Alice the default Tenshu data directory is:
 
 - /Users/Alice/Library/Application Support/Coincube on MacOS
 - C:\Users\Alice\AppData\Roaming\Coincube on Windows
 - /home/Alice/.coincube on Linux
 
 Assuming you used the throwaway folder as advised in step 0 and did not use custom `bitcoind` or
-Coincube data directories you can wipe everything using these commands on Linux:
+Tenshu data directories you can wipe everything using these commands on Linux:
 
 ```
 cd ..
-rm -rf coincube_quicktry
+rm -rf tenshu_quicktry
 rm -rf ~/.coincube/signet
 ```
 
@@ -193,9 +169,9 @@ rm -rf ~/.coincube/signet
 You can simulate multiple wallets by using different data directories. For instance:
 
 ```
-./coincube-gui --datadir test_alice
-./coincube-gui --datadir test_bob
-./coincube-gui --datadir test_charlie
+./coincube --datadir test_alice
+./coincube --datadir test_bob
+./coincube --datadir test_charlie
 ```
 
 The directory will be created if it doesn't exist.
@@ -207,5 +183,5 @@ build from source as follows:
 
 1. `git clone https://github.com/coincubetech/coincube.git && cd coincube`
 2. `nix develop` which will put you into a development shell with all dependencies available
-3. `cargo build --release` which will build `coincubed`, `coincube-cli`, and `coincube-gui`.
-4. `target/release/coincube-gui --datadir test_alice` will load up the gui and create/use `./test_alice` as the data directory for coincube.
+3. `cargo build --release` which will build the `coincubed` daemon, the `coincube-cli` tool, and the `coincube` GUI binary (from the `coincube-gui` crate).
+4. `target/release/coincube --datadir test_alice` will load up the GUI and create/use `./test_alice` as the data directory.

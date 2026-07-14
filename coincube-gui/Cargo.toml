@@ -226,7 +226,7 @@ result_large_err = "allow"
 
 [package.metadata.winresource]
 OriginalFilename = "coincube.exe"
-FileDescription = "COINCUBE - Secure Bitcoin wallet with multisig and inheritance"
+FileDescription = "Tenshu - Secure Bitcoin wallet with multisig and inheritance"
 CompanyName = "COINCUBE TECHNOLOGY LLC"
 InternalName = "Coincube"
 

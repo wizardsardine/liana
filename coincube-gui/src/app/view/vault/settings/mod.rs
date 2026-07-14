@@ -138,7 +138,7 @@ pub fn import_export<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Messag
     let description = Row::new()
         .push(Space::new().width(30))
         .push(text(
-            "A collection of the export and import functions present in Coincube.",
+            "A collection of the export and import functions present in Tenshu.",
         ))
         .push(Space::new().width(Length::Fill));
 
@@ -1366,7 +1366,7 @@ pub fn node_backend_status<'a>(
                     .push(
                         p2_regular(
                             "This may take a moment. If a local node is still scanning the \
-                             blockchain it can take a while. COINCUBE will finish the switch \
+                             blockchain it can take a while. Tenshu will finish the switch \
                              automatically — no need to do anything.",
                         )
                         .style(theme::text::secondary),
@@ -1392,7 +1392,7 @@ pub fn node_backend_status<'a>(
         // toggling to Connect.
         let desc = format!(
             "Bitcoin Core is running and syncing in the background. \
-             COINCUBE will automatically switch to this node once syncing is complete. {}",
+             Tenshu will automatically switch to this node once syncing is complete. {}",
             pace,
         );
 
@@ -1683,11 +1683,11 @@ pub fn node_setup_mode_picker_panel<'a>() -> Element<'a, NodeSettingsMessage> {
                     Row::new()
                         .spacing(10)
                         .push(badge::badge(icon::bitcoin_icon()))
-                        .push(text("COINCUBE-managed node (recommended)").bold())
+                        .push(text("Tenshu-managed node (recommended)").bold())
                         .align_y(Alignment::Center),
                 )
                 .push(
-                    text("COINCUBE downloads and runs a pruned node (~15 GB) automatically. No configuration needed.")
+                    text("Tenshu downloads and runs a pruned node (~15 GB) automatically. No configuration needed.")
                         .size(13)
                         .style(theme::text::secondary),
                 )
@@ -1794,7 +1794,7 @@ pub fn internal_node_setup_panel<'a>(
             .spacing(6)
             .push(text(format!("{name} is running and syncing in the background.")).bold())
             .push(
-                text("COINCUBE will automatically switch to this node once syncing is complete.")
+                text("Tenshu will automatically switch to this node once syncing is complete.")
                     .size(13)
                     .style(theme::text::secondary),
             );
@@ -2019,7 +2019,7 @@ pub fn inbound_tor_section<'a>(
     if enabled {
         col = col.push(
             text(
-                "Your node is reachable while COINCUBE is open and your computer is awake. \
+                "Your node is reachable while Tenshu is open and your computer is awake. \
                  Minimizing is fine; if the computer sleeps, connections reconnect \
                  automatically on wake.",
             )

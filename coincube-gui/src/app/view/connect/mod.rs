@@ -1547,7 +1547,7 @@ fn checking_duress_ux<'a>(status: DuressGateStatus) -> Element<'a, ConnectAccoun
                     text::p1_regular("We couldn't read your account status.").color(color::GREY_3),
                 )
                 .push(
-                    text::caption("Make sure COINCUBE is up to date, then try again.")
+                    text::caption("Make sure Tenshu is up to date, then try again.")
                         .color(color::GREY_3),
                 )
                 .push(

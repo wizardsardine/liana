@@ -35,7 +35,7 @@ pub fn about_section<'a>(
             .push(
                 Row::new().push(Space::new().width(Length::Fill)).push(
                     Column::new()
-                        .push(text(format!("COINCUBE | Tenshu v{}", crate::VERSION)).bold())
+                        .push(text(format!("Tenshu v{}", crate::VERSION)).bold())
                         .push(
                             text(format!("coincube-gui v{}", crate::VERSION))
                                 .style(coincube_ui::theme::text::secondary),

@@ -782,18 +782,18 @@ pub fn view<'a>(
         Step::Error(error) => {
             let headline = match error.as_ref() {
                 Error::Daemon(DaemonError::Start(StartupError::Bitcoind(_))) => {
-                    "Coincube failed to start, please check if bitcoind is running"
+                    "Tenshu failed to start, please check if bitcoind is running"
                 }
                 Error::Daemon(DaemonError::Start(StartupError::Esplora(_))) => {
-                    "Coincube failed to start: the Esplora chain backend is unreachable"
+                    "Tenshu failed to start: the Esplora chain backend is unreachable"
                 }
                 Error::Daemon(DaemonError::Start(StartupError::Electrum(_))) => {
-                    "Coincube failed to start: the Electrum chain backend is unreachable"
+                    "Tenshu failed to start: the Electrum chain backend is unreachable"
                 }
-                _ => "Coincube failed to start",
+                _ => "Tenshu failed to start",
             };
             cover(
-                Some(("Error while starting Coincube", error)),
+                Some(("Error while starting Tenshu", error)),
                 Column::new()
                     .spacing(20)
                     .width(Length::Fill)
@@ -999,7 +999,7 @@ impl std::fmt::Display for Error {
         match self {
             Self::Config(e) => write!(f, "Config error: {}", e),
             Self::Wallet(e) => write!(f, "Wallet error: {}", e),
-            Self::Daemon(e) => write!(f, "Coincube daemon error: {}", e),
+            Self::Daemon(e) => write!(f, "Tenshu daemon error: {}", e),
             Self::Bitcoind(e) => write!(f, "Bitcoind error: {}", e),
             Self::BitcoindLogs(e) => write!(f, "Bitcoind logs error: {}", e),
             Self::RestoreBackup(e) => write!(f, "Restore backup: {e}"),
