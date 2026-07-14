@@ -2346,7 +2346,7 @@ fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
         .spacing(0)
         .width(Length::Fill)
         .push(
-            Container::new(image::coincube_wordmark(28.0))
+            Container::new(image::tenshu_wordmark(28.0))
                 .padding(10)
                 .center_x(Length::Fill),
         )
@@ -3462,9 +3462,9 @@ impl DeleteCubeModal {
         };
 
         let help_text_2 = match self.internal_bitcoind {
-            Some(true) => Some("(The COINCUBE-managed Bitcoin node for this network will not be affected by this action.)"),
+            Some(true) => Some("(The Tenshu-managed Bitcoin node for this network will not be affected by this action.)"),
             Some(false) => None,
-            None if has_vault => Some("(If you are using a COINCUBE-managed Bitcoin node, it will not be affected by this action.)"),
+            None if has_vault => Some("(If you are using a Tenshu-managed Bitcoin node, it will not be affected by this action.)"),
             _ => None,
         };
         let help_text_3 = "WARNING: This cannot be undone.";

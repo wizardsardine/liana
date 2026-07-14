@@ -1,6 +1,6 @@
 # Info.plist additions for the local LAN signer
 
-The packaged `Coincube.app/Contents/Info.plist` lives inside the
+The packaged `Tenshu.app/Contents/Info.plist` lives inside the
 `_coincube.zip` template that the release workflow unpacks during
 notarization. Until the zip is regenerated, splice the keys below
 into that file by hand after unzipping. They unlock:
@@ -17,7 +17,7 @@ between the existing entries:
 
 ```xml
 <key>NSLocalNetworkUsageDescription</key>
-<string>Coincube uses your local network to pair and sign with phones running the Keychain app over Wi-Fi.</string>
+<string>Tenshu uses your local network to pair and sign with phones running the Keychain app over Wi-Fi.</string>
 
 <key>NSBonjourServices</key>
 <array>
@@ -35,7 +35,7 @@ rcodesign sign \
     --entitlements-xml-path contrib/release/macos/coincube.entitlements \
     --pem-source <key.pem> \
     --der-source <cert.der> \
-    Coincube.app
+    Tenshu.app
 ```
 
 `com.apple.security.network.server` + `com.apple.security.network.client`

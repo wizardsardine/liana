@@ -27,7 +27,7 @@ use coincube_ui::{
     color,
     component::text,
     icon::cube_icon,
-    image::{coincube_wordmark, theme_toggle_button},
+    image::{tenshu_wordmark, theme_toggle_button},
     theme,
     widget::{Button, Column, Element, Row},
 };
@@ -42,10 +42,10 @@ use iced::{
 /// the toast offset.
 pub const SIDEBAR_BASE_WIDTH: f32 = primary::RAIL_WIDTH + secondary::RAIL_WIDTH;
 
-/// Height of the wordmark header band that caps both rails.
-const WORDMARK_BAND_HEIGHT: f32 = 48.0;
-/// Wordmark font size — tuned to fit "COINCUBE" in the compact
-/// two-rail header (~120px usable after padding).
+/// Height of the logo header band that caps both rails. Tall enough for the
+/// stacked Tenshu lockup (mark ~2× the label + the "Tenshu" label).
+const WORDMARK_BAND_HEIGHT: f32 = 60.0;
+/// Label font size for the Tenshu lockup in the compact two-rail header.
 const WORDMARK_SIZE: f32 = 14.0;
 /// Fixed height for the identity block (avatar + cube name + LN
 /// address). Fixed so the tertiary overlay's top offset is deterministic.
@@ -60,7 +60,7 @@ pub const TERTIARY_TOP_OFFSET: f32 = WORDMARK_BAND_HEIGHT + IDENTITY_BLOCK_HEIGH
 ///
 /// Layout (top to bottom):
 /// ```text
-/// [ COINCUBE wordmark             ]  full 144px
+/// [ Tenshu logo (mark + label)    ]  full 144px
 /// [ avatar + cube name + LN addr  ]  full 144px — pushes both rails down
 /// [ primary (72px) | secondary (72px) ]
 /// [ dark/light toggle             ]  full 144px
@@ -74,7 +74,7 @@ pub fn sidebar<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
         .height(Length::Fill)
         .width(Length::Fixed(SIDEBAR_BASE_WIDTH));
 
-    let wordmark = container(coincube_wordmark(WORDMARK_SIZE))
+    let wordmark = container(tenshu_wordmark(WORDMARK_SIZE))
         .width(Length::Fixed(SIDEBAR_BASE_WIDTH))
         .height(Length::Fixed(WORDMARK_BAND_HEIGHT))
         .center_x(Length::Fixed(SIDEBAR_BASE_WIDTH))
