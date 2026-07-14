@@ -33,9 +33,9 @@ COINCUBE | Tenshu is designed for **trustless inheritance**, **loss protection**
 ## Usage
 
 COINCUBE | Tenshu is available on Windows, Mac and Linux. To install and start using it see
-[`doc/USAGE.md`](doc/USAGE.md).
+[`docs/USAGE.md`](docs/USAGE.md).
 
-If you just want to quickly try out COINCUBE | Tenshu on Bitcoin Signet or Testnet, see [`doc/TRY.md`](doc/TRY.md).
+If you just want to quickly try out COINCUBE | Tenshu on Bitcoin Signet or Testnet, see [`docs/TRY.md`](docs/TRY.md).
 
 ## Hacking on COINCUBE | Tenshu
 
