@@ -1982,7 +1982,9 @@ pub enum HomeMessage {
     /// "received" celebration once it lands. `amount_sat` is the swap's settle
     /// estimate, used only for the pending-indicator amount (the celebration
     /// uses the actual claimed amount).
-    SwapSettledAwaitingArrival { amount_sat: u64 },
+    SwapSettledAwaitingArrival {
+        amount_sat: u64,
+    },
     /// Fired when the Spark bridge reports `DepositsChanged`. The Home state
     /// re-queries `list_unclaimed_deposits` and decides whether to auto-claim
     /// a matured deposit or clear `pending_spark_incoming` (claimed already).

@@ -99,7 +99,10 @@ impl<'a> SparkReceiveView<'a> {
         // Tapping the THEY SEND card opens the unified picker modal (Bitcoin
         // rails + cross-network assets), wired at the state's `view()` since the
         // picker-open flag lives there.
-        content = content.push(spark_receive_cards(self.method, self.cross_network_selected));
+        content = content.push(spark_receive_cards(
+            self.method,
+            self.cross_network_selected,
+        ));
 
         if let Some(body) = self.sideshift_body {
             // Cross-network (SideShift) selected: its refund/deposit flow renders
@@ -609,11 +612,9 @@ pub fn sender_picker_modal<'a>(
 ) -> Element<'a, Message> {
     let is_mainnet = supported_on(network);
 
-    let mut list = Column::new().spacing(8).push(
-        text("Bitcoin")
-            .size(P2_SIZE)
-            .style(theme::text::secondary),
-    );
+    let mut list = Column::new()
+        .spacing(8)
+        .push(text("Bitcoin").size(P2_SIZE).style(theme::text::secondary));
 
     for method in [
         SparkReceiveMethod::Bolt11,
@@ -631,13 +632,11 @@ pub fn sender_picker_modal<'a>(
     }
 
     if is_mainnet {
-        list = list
-            .push(Space::new().height(Length::Fixed(6.0)))
-            .push(
-                text("From another network")
-                    .size(P2_SIZE)
-                    .style(theme::text::secondary),
-            );
+        list = list.push(Space::new().height(Length::Fixed(6.0))).push(
+            text("From another network")
+                .size(P2_SIZE)
+                .style(theme::text::secondary),
+        );
         for option in deposit_options() {
             list = list.push(spark_picker_row(
                 cross_network_logo(option, 36.0),

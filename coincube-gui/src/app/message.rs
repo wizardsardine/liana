@@ -165,7 +165,10 @@ pub enum Message {
     /// handled inline in `App::update` (the only place that owns the overlay
     /// state). `context` picks the Kage image (`"spark-receive"`); `amount_sat`
     /// is formatted for display against the user's bitcoin unit.
-    ShowReceivedCelebration { context: String, amount_sat: u64 },
+    ShowReceivedCelebration {
+        context: String,
+        amount_sat: u64,
+    },
     SettingsSaved,
     SettingsSaveFailed(Error),
     /// Store the Bitcoind handle produced by configure_and_start_internal_bitcoind so
