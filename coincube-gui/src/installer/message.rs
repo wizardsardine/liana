@@ -434,6 +434,8 @@ pub enum InternalBitcoindMsg {
     MaxMempoolEdited(String),
     /// One-click "Small computer" preset: 550 MB prune + 100 MB mempool.
     SmallComputerPreset,
+    /// One-click "Regular computer" preset: 15 GB prune + default mempool.
+    RegularComputerPreset,
     DefineConfig,
     Download,
     DownloadProgressed(super::step::DownloadUpdate),

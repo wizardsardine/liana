@@ -2046,6 +2046,7 @@ pub fn node_resources_section<'a>(
         NodeSettingsMessage::NodeResourcePruneEdited,
         NodeSettingsMessage::NodeResourceMaxMempoolEdited,
         NodeSettingsMessage::NodeResourceSmallComputer,
+        NodeSettingsMessage::NodeResourceRegularComputer,
     );
 
     let apply: Element<'_, NodeSettingsMessage> = if processing {

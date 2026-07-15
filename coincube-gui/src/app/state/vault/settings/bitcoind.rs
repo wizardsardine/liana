@@ -182,6 +182,17 @@ impl BitcoindSettingsState {
         }
     }
 
+    /// Apply a one-click machine-profile preset (Small/Regular computer) to the
+    /// node-resources editor fields. Nothing is written until the user hits
+    /// "Restart node to apply".
+    fn apply_node_resource_preset(&mut self, r: NodeResources) {
+        crate::node::bitcoind::set_prune_form_value(&mut self.node_prune_mb, r.prune_mb.to_string());
+        crate::node::bitcoind::set_max_mempool_form_value(
+            &mut self.node_max_mempool_mb,
+            r.max_mempool_mb.map(|mb| mb.to_string()).unwrap_or_default(),
+        );
+    }
+
     /// Build an `EsploraConfig` carrying `jwt` and dispatch a `LoadDaemonConfig`
     /// task that flips the active backend to Connect. Shared by the post-OTP
     /// path and the App-level fast path that reuses an existing Connect
@@ -787,15 +798,10 @@ impl State for BitcoindSettingsState {
                         );
                     }
                     NodeSettingsMessage::NodeResourceSmallComputer => {
-                        let r = NodeResources::small_computer();
-                        crate::node::bitcoind::set_prune_form_value(
-                            &mut self.node_prune_mb,
-                            r.prune_mb.to_string(),
-                        );
-                        crate::node::bitcoind::set_max_mempool_form_value(
-                            &mut self.node_max_mempool_mb,
-                            r.max_mempool_mb.map(|mb| mb.to_string()).unwrap_or_default(),
-                        );
+                        self.apply_node_resource_preset(NodeResources::small_computer());
+                    }
+                    NodeSettingsMessage::NodeResourceRegularComputer => {
+                        self.apply_node_resource_preset(NodeResources::regular_computer());
                     }
                     NodeSettingsMessage::NodeResourceApply => {
                         // Validate the fields; bail (leaving them flagged) on bad
