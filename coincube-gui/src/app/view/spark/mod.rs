@@ -16,7 +16,7 @@ pub mod sideshift_receive;
 pub mod transactions;
 
 pub use overview::{SparkOverviewView, SparkPaymentMethod, SparkRecentTransaction, SparkStatus};
-pub use receive::SparkReceiveView;
+pub use receive::{sender_picker_modal, SparkReceiveView};
 pub use send::SparkSendView;
 pub use settings::{SparkSettingsStatus, SparkSettingsView};
 pub use sideshift_receive::spark_sideshift_receive_view;
@@ -165,6 +165,18 @@ pub enum SparkSendMessage {
 #[derive(Debug, Clone)]
 pub enum SparkReceiveMessage {
     MethodSelected(crate::app::state::spark::receive::SparkReceiveMethod),
+    /// Open the unified "THEY SEND" picker modal (Bitcoin rails + cross-network
+    /// assets) that replaces the old Method chips + "Receive from another
+    /// network" card.
+    OpenSenderPicker,
+    /// Dismiss the "THEY SEND" picker without changing the selection.
+    CloseSenderPicker,
+    /// Picked a Bitcoin rail (Lightning / on-chain / Spark) in the picker —
+    /// sets the receive method and closes the modal.
+    SelectSenderRail(crate::app::state::spark::receive::SparkReceiveMethod),
+    /// Picked a cross-network asset (by `DepositOption` key) in the picker —
+    /// launches the SideShift flow pre-selected to that asset. Mainnet only.
+    SelectSenderCrossNetwork(String),
     AmountInputChanged(String),
     DescriptionInputChanged(String),
     GenerateRequested,

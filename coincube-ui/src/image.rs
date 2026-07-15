@@ -142,6 +142,7 @@ pub fn wrench_outline_icon<'a>(size: f32) -> Svg<'a, Theme> {
 const BTC_LOGO: &[u8] = include_bytes!("../static/logos/btc.svg");
 const LBTC_LOGO: &[u8] = include_bytes!("../static/logos/lbtc.svg");
 const USDT_LOGO: &[u8] = include_bytes!("../static/logos/usdt.svg");
+const USDC_LOGO: &[u8] = include_bytes!("../static/logos/usdc.svg");
 const ETH_LOGO: &[u8] = include_bytes!("../static/logos/eth.svg");
 const TRX_LOGO: &[u8] = include_bytes!("../static/logos/trx.svg");
 const BNB_LOGO: &[u8] = include_bytes!("../static/logos/bnb.svg");
@@ -161,6 +162,10 @@ pub fn lbtc_logo<'a>() -> Svg<'a, Theme> {
 
 pub fn usdt_logo<'a>() -> Svg<'a, Theme> {
     Svg::new(svg::Handle::from_memory(USDT_LOGO))
+}
+
+pub fn usdc_logo<'a>() -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(USDC_LOGO))
 }
 
 pub fn lightning_badge<'a>() -> Svg<'a, Theme> {
@@ -220,6 +225,7 @@ pub fn asset_logo<'a>(asset: &str) -> Svg<'a, Theme> {
     match asset {
         "btc" | "lbtc" => btc_logo(),
         "usdt" => usdt_logo(),
+        "usdc" => usdc_logo(),
         _ => btc_logo(),
     }
 }

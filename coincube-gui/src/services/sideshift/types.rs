@@ -429,21 +429,10 @@ pub fn deposit_options() -> &'static [DepositOption] {
             network: SideshiftNetwork::Solana,
             label: "USDC on Solana (SPL)",
         },
-        DepositOption {
-            coin: "eth",
-            network: SideshiftNetwork::Ethereum,
-            label: "Ether (ETH)",
-        },
-        DepositOption {
-            coin: "sol",
-            network: SideshiftNetwork::Solana,
-            label: "Solana (SOL)",
-        },
-        DepositOption {
-            coin: "trx",
-            network: SideshiftNetwork::Tron,
-            label: "Tron (TRX)",
-        },
+        // Stablecoins only. A Bitcoin wallet converting USD stablecoins to BTC is
+        // a defensible on-ramp; offering Ether/SOL/TRX → BTC is a generic altcoin
+        // swap that dilutes focus and invites unbounded coin-list creep. If those
+        // are ever wanted back, re-add them here (the whole flow is coin-agnostic).
         DepositOption {
             coin: "bnb",
             network: SideshiftNetwork::Binance,

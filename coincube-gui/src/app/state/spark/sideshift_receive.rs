@@ -62,6 +62,10 @@ pub struct SparkSideshiftReceiveFlow {
 
     phase: SparkShiftPhase,
     selected: DepositOption,
+    /// The asset was pre-chosen upstream (the Spark Receive "THEY SEND"
+    /// picker), so the setup step shows a confirmation summary instead of its
+    /// own asset picker. Cleared on reset.
+    asset_preselected: bool,
     refund_address: String,
     /// Validation error for the refund address, shown inline under the field.
     refund_error: Option<String>,
@@ -84,6 +88,7 @@ impl SparkSideshiftReceiveFlow {
             phase: SparkShiftPhase::Setup,
             // Safe to index: `deposit_options` is a non-empty const list.
             selected: deposit_options()[0],
+            asset_preselected: false,
             refund_address: String::new(),
             refund_error: None,
             affiliate_id: None,
@@ -95,11 +100,24 @@ impl SparkSideshiftReceiveFlow {
         }
     }
 
+    /// Launch the flow with the deposit asset already chosen (from the Spark
+    /// Receive "THEY SEND" picker). The setup step then skips its own asset
+    /// picker and goes straight to the refund address.
+    pub fn new_preselected(spark: Arc<SparkBackend>, option: DepositOption) -> Self {
+        let mut flow = Self::new(spark);
+        flow.selected = option;
+        flow.asset_preselected = true;
+        flow
+    }
+
     pub fn phase(&self) -> &SparkShiftPhase {
         &self.phase
     }
     pub fn selected(&self) -> DepositOption {
         self.selected
+    }
+    pub fn asset_preselected(&self) -> bool {
+        self.asset_preselected
     }
     pub fn refund_address(&self) -> &str {
         &self.refund_address
@@ -124,8 +142,10 @@ impl SparkSideshiftReceiveFlow {
     }
 
     fn reset(&mut self) {
+        // Keep `selected` / `asset_preselected`: inline, the asset is chosen via
+        // the Spark Receive THEY SEND card, and "Start over" returns to the
+        // refund step for the *same* asset, not a default.
         self.phase = SparkShiftPhase::Setup;
-        self.selected = deposit_options()[0];
         self.refund_address.clear();
         self.refund_error = None;
         self.affiliate_id = None;
@@ -330,13 +350,33 @@ impl SparkSideshiftReceiveFlow {
                     if settled {
                         // The bitcoin has landed at Spark's on-chain deposit
                         // address, which means it shows up as an *unclaimed
-                        // deposit* — not as a payment in history. Kick the
-                        // panel's deposit list so the user is offered the claim
-                        // instead of being left staring at a "settled" badge
-                        // with no money visible in the wallet.
-                        return Task::done(Message::View(view::Message::SparkReceive(
-                            view::SparkReceiveMessage::DepositsChanged,
-                        )));
+                        // deposit* — not as a payment in history. Two things
+                        // happen on settle:
+                        //   1. Kick the panel's deposit list so the pending
+                        //      deposit is loaded when the user returns to it.
+                        //   2. Register the arrival with the always-resident Home
+                        //      state, which auto-claims the deposit once it matures
+                        //      — wherever the user has since navigated — and fires
+                        //      the "bitcoin received" celebration when it lands.
+                        // The amount is the swap's settle estimate, used only for
+                        // the pending indicator; the celebration uses the actual
+                        // claimed amount.
+                        let settle_sat = status
+                            .settle_amount
+                            .as_deref()
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .map(|btc| (btc * 100_000_000.0).round() as u64)
+                            .unwrap_or(0);
+                        return Task::batch([
+                            Task::done(Message::View(view::Message::SparkReceive(
+                                view::SparkReceiveMessage::DepositsChanged,
+                            ))),
+                            Task::done(Message::View(view::Message::Home(
+                                view::HomeMessage::SwapSettledAwaitingArrival {
+                                    amount_sat: settle_sat,
+                                },
+                            ))),
+                        ]);
                     }
                 }
                 Task::none()

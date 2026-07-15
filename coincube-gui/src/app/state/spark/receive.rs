@@ -86,6 +86,8 @@ pub struct SparkReceive {
     sideshift_flow: Option<SparkSideshiftReceiveFlow>,
     /// Currently selected method. Toggling methods resets the phase.
     pub method: SparkReceiveMethod,
+    /// Whether the "THEY SEND" picker modal is open (overlays the panel).
+    sender_picker_open: bool,
     /// Amount input for BOLT11. Ignored for on-chain.
     pub amount_input: String,
     /// Invoice description shown to the payer for BOLT11. Ignored for on-chain.
@@ -144,6 +146,7 @@ impl SparkReceive {
             backend,
             sideshift_flow: None,
             method: SparkReceiveMethod::Bolt11,
+            sender_picker_open: false,
             amount_input: String::new(),
             description_input: String::new(),
             phase: SparkReceivePhase::Idle,
@@ -176,14 +179,22 @@ impl State for SparkReceive {
         menu: &'a Menu,
         cache: &'a Cache,
     ) -> Element<'a, crate::app::view::Message> {
-        // The SideShift bridge takes over the whole panel while it's running —
-        // it's a multi-step flow with its own back/reset, not a card that can
-        // sit alongside the invoice form.
-        if let Some(flow) = &self.sideshift_flow {
-            return flow.view(menu, cache);
-        }
         let backend_available = self.backend.is_some();
-        crate::app::view::dashboard(
+        // The cross-network (SideShift) flow renders *inline* below the two-card
+        // selector — not as a takeover — so its refund/deposit steps sit on the
+        // same page as the Bitcoin rail forms. Its messages route back through
+        // `SparkSideshiftReceive`.
+        let (sideshift_body, cross_network_selected) = match &self.sideshift_flow {
+            Some(flow) => (
+                Some(
+                    crate::app::view::spark::spark_sideshift_receive_view(flow)
+                        .map(crate::app::view::Message::SparkSideshiftReceive),
+                ),
+                Some(flow.selected()),
+            ),
+            None => (None, None),
+        };
+        let content = crate::app::view::dashboard(
             menu,
             cache,
             SparkReceiveView {
@@ -205,9 +216,25 @@ impl State for SparkReceive {
                 recent_transactions: &self.recent_transactions,
                 bitcoin_unit: cache.bitcoin_unit,
                 show_direction_badges: cache.show_direction_badges,
+                sideshift_body,
+                cross_network_selected,
             }
             .render(),
-        )
+        );
+
+        // The "THEY SEND" picker overlays the whole panel when open — same
+        // pattern as Liquid Receive. Owned here because the open flag lives in
+        // this state.
+        if self.sender_picker_open {
+            let modal_content =
+                crate::app::view::spark::sender_picker_modal(self.method, cache.network);
+            return coincube_ui::widget::modal::Modal::new(content, modal_content)
+                .on_blur(Some(crate::app::view::Message::SparkReceive(
+                    crate::app::view::SparkReceiveMessage::CloseSenderPicker,
+                )))
+                .into();
+        }
+        content
     }
 
     fn reload(
@@ -226,27 +253,26 @@ impl State for SparkReceive {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        // While the bridge flow is up it owns the polling (shift status), and
-        // there's no deposit list on screen to tick confirmations for.
+        // The cross-network flow now renders inline, so its shift-status poll
+        // AND the deposit-confirmation poll can be live at once — batch them.
+        // Esplora doesn't push, so we tick on a fixed cadence while at least one
+        // immature deposit is on screen so the "X / 3 confirmations" badge keeps
+        // updating between blocks (the SDK only re-emits `DepositsChanged` at
+        // maturity / refund-status transitions, not on every new confirmation).
+        let mut subs = Vec::new();
         if let Some(flow) = &self.sideshift_flow {
-            return flow.subscription();
+            subs.push(flow.subscription());
         }
-        // Esplora doesn't push — we poll on a fixed cadence while at
-        // least one immature deposit is on screen so the "X / 3
-        // confirmations" badge keeps ticking between block arrivals
-        // (the SDK only re-emits `DepositsChanged` at maturity /
-        // refund-status transitions, not on every new confirmation).
-        // The poll stops automatically the moment the list is empty
-        // or every deposit has matured.
-        let has_immature = self.pending_deposits.iter().any(|d| !d.is_mature);
-        if !has_immature {
-            return Subscription::none();
+        if self.pending_deposits.iter().any(|d| !d.is_mature) {
+            subs.push(
+                iced::time::every(std::time::Duration::from_secs(30)).map(|_| {
+                    Message::View(crate::app::view::Message::SparkReceive(
+                        crate::app::view::SparkReceiveMessage::RefreshConfirmations,
+                    ))
+                }),
+            );
         }
-        iced::time::every(std::time::Duration::from_secs(30)).map(|_| {
-            Message::View(crate::app::view::Message::SparkReceive(
-                crate::app::view::SparkReceiveMessage::RefreshConfirmations,
-            ))
-        })
+        Subscription::batch(subs)
     }
 
     fn update(
@@ -284,14 +310,21 @@ impl State for SparkReceive {
 
         use crate::app::view::SparkReceiveMessage;
 
-        // While the bridge flow owns the panel, ignore the invoice form's
-        // messages — its widgets aren't on screen, and a stale message landing
-        // here would mutate state the user can't see.
-        //
-        // `DepositsChanged` is the deliberate exception: the flow *sends* it
-        // when a shift settles, so the claimable deposit is already loaded when
-        // the user returns to the form.
-        if self.sideshift_flow.is_some() && !matches!(msg, SparkReceiveMessage::DepositsChanged) {
+        // While the cross-network flow is active, the Bitcoin invoice form's
+        // messages are gated out (its widgets aren't on screen). Exceptions:
+        // `DepositsChanged` (the flow sends it on settle) and the two-card /
+        // THEY SEND picker messages, which stay live so the user can switch the
+        // selection even mid-swap.
+        if self.sideshift_flow.is_some()
+            && !matches!(
+                msg,
+                SparkReceiveMessage::DepositsChanged
+                    | SparkReceiveMessage::OpenSenderPicker
+                    | SparkReceiveMessage::CloseSenderPicker
+                    | SparkReceiveMessage::SelectSenderRail(_)
+                    | SparkReceiveMessage::SelectSenderCrossNetwork(_)
+            )
+        {
             return Task::none();
         }
 
@@ -301,6 +334,43 @@ impl State for SparkReceive {
                 self.phase = SparkReceivePhase::Idle;
                 self.qr_data = None;
                 self.displayed_invoice = None;
+                Task::none()
+            }
+            SparkReceiveMessage::OpenSenderPicker => {
+                self.sender_picker_open = true;
+                Task::none()
+            }
+            SparkReceiveMessage::CloseSenderPicker => {
+                self.sender_picker_open = false;
+                Task::none()
+            }
+            SparkReceiveMessage::SelectSenderRail(method) => {
+                // A Bitcoin rail: clear any cross-network flow, set the method,
+                // close the picker.
+                self.sender_picker_open = false;
+                self.sideshift_flow = None;
+                self.method = method;
+                self.phase = SparkReceivePhase::Idle;
+                self.qr_data = None;
+                self.displayed_invoice = None;
+                Task::none()
+            }
+            SparkReceiveMessage::SelectSenderCrossNetwork(key) => {
+                // A cross-network asset: hand off to the SideShift flow,
+                // pre-selected so it skips its own asset picker. Mainnet only —
+                // the picker hides these off mainnet; this is the backstop.
+                self.sender_picker_open = false;
+                if !crate::app::state::spark::cross_chain::supported_on(cache.network) {
+                    return Task::none();
+                }
+                let Some(backend) = self.backend.clone() else {
+                    return Task::none();
+                };
+                let Some(option) = crate::services::sideshift::deposit_option_by_key(&key) else {
+                    return Task::none();
+                };
+                self.sideshift_flow =
+                    Some(SparkSideshiftReceiveFlow::new_preselected(backend, option));
                 Task::none()
             }
             SparkReceiveMessage::AmountInputChanged(value) => {
@@ -580,20 +650,37 @@ impl State for SparkReceive {
                     },
                 )
             }
-            SparkReceiveMessage::ClaimDepositSucceeded(_ok) => {
-                // The actual reload happens via the DepositsChanged
-                // event the SDK fires post-claim, but we also refresh
-                // here defensively in case the event got dropped.
+            SparkReceiveMessage::ClaimDepositSucceeded(ok) => {
                 self.claiming = None;
                 self.claim_error = None;
-                fetch_deposits_task(self.backend.clone())
+                Task::batch(vec![
+                    // Drop the claimed row from the pending-deposits list.
+                    fetch_deposits_task(self.backend.clone()),
+                    // Refresh "Last transactions" so the just-claimed deposit
+                    // shows without navigating away and back — a claim fires only
+                    // `DepositsChanged`, not a payment event, so nothing else
+                    // repopulates the payments list here.
+                    fetch_payments_task(self.backend.clone()),
+                    // The bitcoin just landed in the spendable balance — fire the
+                    // global "received" splash, same as an auto-claimed swap.
+                    Task::done(Message::ShowReceivedCelebration {
+                        context: "spark-receive".to_string(),
+                        amount_sat: ok.amount_sat,
+                    }),
+                ])
             }
             SparkReceiveMessage::ClaimDepositFailed(err) => {
                 self.claiming = None;
                 self.claim_error = Some(err);
                 Task::none()
             }
-            SparkReceiveMessage::DepositsChanged => fetch_deposits_task(self.backend.clone()),
+            SparkReceiveMessage::DepositsChanged => Task::batch(vec![
+                fetch_deposits_task(self.backend.clone()),
+                // Also refresh Last transactions: a claim (or any deposit landing)
+                // surfaces a new payment, and the panel won't otherwise repopulate
+                // the list until the next navigation.
+                fetch_payments_task(self.backend.clone()),
+            ]),
 
             SparkReceiveMessage::OpenCrossNetworkReceive => {
                 // Mainnet only. SideShift and the origin chains are all
