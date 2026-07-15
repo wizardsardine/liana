@@ -411,6 +411,14 @@ pub fn deposit_options() -> &'static [DepositOption] {
             network: SideshiftNetwork::Solana,
             label: "USDt on Solana (SPL)",
         },
+        // Liquid USDt has no "-20" token standard — it's a native Liquid
+        // asset, so no parenthetical. Natural for users winding down a
+        // grandfathered Liquid wallet who want their USDt as Spark BTC.
+        DepositOption {
+            coin: "usdt",
+            network: SideshiftNetwork::Liquid,
+            label: "USDt on Liquid",
+        },
         DepositOption {
             coin: "usdc",
             network: SideshiftNetwork::Ethereum,
@@ -609,23 +617,19 @@ mod tests {
         // The invariant that makes the curated list a safety property rather
         // than a convenience: we must never offer a deposit whose refund
         // address we can't validate, or we've built a way to lose money.
-        // `Liquid` has no place here — it isn't an origin chain for this flow.
         for option in deposit_options() {
-            assert_ne!(
-                option.network,
-                SideshiftNetwork::Liquid,
-                "{} is not an origin chain for the Spark bridge",
-                option.label
-            );
-            // A representative address for each family must validate against
-            // the option's network — i.e. validation actually covers it.
+            // A representative address for each network must validate against
+            // that network — i.e. refund validation actually covers it.
             let sample = match option.network {
                 SideshiftNetwork::Tron => "TJRyWwFs9wTFGZg3JbrVriFbNfCug5tDeC",
                 SideshiftNetwork::Ethereum | SideshiftNetwork::Binance => {
                     "0x71C7656EC7ab88b098defB751B7401B5f6d8976F"
                 }
                 SideshiftNetwork::Solana => "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
-                SideshiftNetwork::Liquid => unreachable!(),
+                // A blech32 (`lq1`) confidential Liquid address.
+                SideshiftNetwork::Liquid => {
+                    "lq1qqwsq50k0h9y4rmwjr8t6dhtxcuyj8kn9h9lyqfaj2ple62rk3rgc46t6ck7mpstf7z6htg8p8vnac9c6k5xhntw5r0z3s7q8"
+                }
             };
             assert!(
                 validate_refund_address(option.network, sample).is_ok(),
@@ -633,6 +637,40 @@ mod tests {
                 option.label
             );
         }
+    }
+
+    #[test]
+    fn liquid_usdt_is_offered_and_refund_validates_on_liquid() {
+        // The Spark bridge accepts Liquid USDt in (settled as Spark BTC) — a
+        // natural exit for users winding down a grandfathered Liquid wallet.
+        let liquid_usdt = deposit_options()
+            .iter()
+            .find(|o| o.coin == "usdt" && o.network == SideshiftNetwork::Liquid)
+            .expect("USDt on Liquid must be an offered deposit");
+        assert_eq!(liquid_usdt.key(), "usdt:liquid");
+
+        // A refund of a Liquid deposit goes back to a Liquid address. Cover the
+        // three address shapes SideShift/Blockstream emit: blech32, confidential
+        // (VJL), and unconfidential (Q, 34 chars).
+        for addr in [
+            "lq1qqwsq50k0h9y4rmwjr8t6dhtxcuyj8kn9h9lyqfaj2ple62rk3rgc46t6ck7mpstf7z6htg8p8vnac9c6k5xhntw5r0z3s7q8",
+            "VJLBnap7fdedYbn8ez5c3Abz9nCP7oV6JGYUpvPthkbe4QC4XjNGaFN4jNRVBWvNJUnMkmVpB",
+            "QLZKYZ7c8p9Np8xkU6Qk8Xz4rQ9k5m3nDe",
+        ] {
+            assert!(
+                validate_refund_address(SideshiftNetwork::Liquid, addr).is_ok(),
+                "Liquid refund address rejected: {}",
+                addr
+            );
+        }
+
+        // And a non-Liquid address as a Liquid refund is refused — the wrong
+        // network loses the funds.
+        assert!(validate_refund_address(
+            SideshiftNetwork::Liquid,
+            "0x71C7656EC7ab88b098defB751B7401B5f6d8976F"
+        )
+        .is_err());
     }
 
     #[test]
