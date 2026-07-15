@@ -36,7 +36,7 @@ use crate::{
             internal_bitcoind_config_path, internal_bitcoind_cookie_path,
             internal_bitcoind_datadir, internal_bitcoind_directory, internal_bitcoind_exe_path,
             Bitcoind, InternalBitcoindConfig, InternalBitcoindConfigError,
-            InternalBitcoindNetworkConfig, NodeFlavor, RpcAuthType, RpcAuthValues,
+            InternalBitcoindNetworkConfig, NodeFlavor, NodeResources, RpcAuthType, RpcAuthValues,
         },
         NodeType,
     },
@@ -85,6 +85,11 @@ pub struct BitcoindSettingsState {
     /// A managed-node flavour the user picked from the node-card dropdown but
     /// hasn't confirmed yet — while `Some`, a confirmation panel is shown.
     pending_flavor_switch: Option<NodeFlavor>,
+    /// Node-resources editor for the internal managed node: prune target (MB) and
+    /// mempool cap (MB, blank = bitcoind's 300 MB default). Loaded from the
+    /// on-disk `bitcoin.conf` for the active network; applied via a force-restart.
+    node_prune_mb: form::Value<String>,
+    node_max_mempool_mb: form::Value<String>,
 }
 
 impl BitcoindSettingsState {
@@ -107,6 +112,24 @@ impl BitcoindSettingsState {
                 }
                 _ => (None, None),
             };
+        // Pre-fill the node-resources editor from the on-disk managed config for
+        // the active network, so the fields reflect reality. Absent config (e.g.
+        // an external/Connect backend) falls back to the defaults; the section is
+        // only shown for the internal managed node anyway.
+        let managed_conf = InternalBitcoindConfig::from_file(&internal_bitcoind_config_path(
+            &internal_bitcoind_datadir(&cache.datadir_path),
+        ))
+        .ok();
+        let managed_prune_mb = managed_conf
+            .as_ref()
+            .and_then(|c| c.networks.get(&cache.network))
+            .map(|n| n.prune)
+            .unwrap_or(PRUNE_DEFAULT);
+        let managed_max_mempool_mb = managed_conf
+            .as_ref()
+            .and_then(|c| c.max_mempool_mb)
+            .map(|mb| mb.to_string())
+            .unwrap_or_default();
         BitcoindSettingsState {
             warning: None,
             config_updated: false,
@@ -139,6 +162,16 @@ impl BitcoindSettingsState {
             cancel_node_setup_in_flight: false,
             inbound_tor_pref: crate::node::tor::InboundTorPreference::load(&cache.datadir_path),
             pending_flavor_switch: None,
+            node_prune_mb: form::Value {
+                value: managed_prune_mb.to_string(),
+                valid: true,
+                warning: None,
+            },
+            node_max_mempool_mb: form::Value {
+                value: managed_max_mempool_mb,
+                valid: true,
+                warning: None,
+            },
         }
     }
 
@@ -221,7 +254,7 @@ impl BitcoindSettingsState {
         if exe_exists {
             setup.internal_stage = InternalSetupStage::Installing;
             Task::perform(
-                ensure_tor_and_start_managed(coincube_datadir, network, flavor, None, false),
+                ensure_tor_and_start_managed(coincube_datadir, network, flavor, None, false, None),
                 |r| {
                     Message::View(view::Message::Settings(
                         view::SettingsMessage::NodeSettings(
@@ -472,6 +505,7 @@ impl State for BitcoindSettingsState {
                                                 flavor,
                                                 Some((bytes, manifest)),
                                                 false,
+                                                None,
                                             )
                                             .await
                                         },
@@ -732,6 +766,78 @@ impl State for BitcoindSettingsState {
                                 flavor,
                                 None,
                                 true,
+                                None,
+                            ),
+                            |r| {
+                                Message::View(view::Message::Settings(
+                                    view::SettingsMessage::NodeSettings(
+                                        view::NodeSettingsMessage::SetupLocalNodeStartResult(r),
+                                    ),
+                                ))
+                            },
+                        );
+                    }
+                    NodeSettingsMessage::NodeResourcePruneEdited(value) => {
+                        crate::node::bitcoind::set_prune_form_value(&mut self.node_prune_mb, value);
+                    }
+                    NodeSettingsMessage::NodeResourceMaxMempoolEdited(value) => {
+                        crate::node::bitcoind::set_max_mempool_form_value(
+                            &mut self.node_max_mempool_mb,
+                            value,
+                        );
+                    }
+                    NodeSettingsMessage::NodeResourceSmallComputer => {
+                        let r = NodeResources::small_computer();
+                        crate::node::bitcoind::set_prune_form_value(
+                            &mut self.node_prune_mb,
+                            r.prune_mb.to_string(),
+                        );
+                        crate::node::bitcoind::set_max_mempool_form_value(
+                            &mut self.node_max_mempool_mb,
+                            r.max_mempool_mb.map(|mb| mb.to_string()).unwrap_or_default(),
+                        );
+                    }
+                    NodeSettingsMessage::NodeResourceApply => {
+                        // Validate the fields; bail (leaving them flagged) on bad
+                        // input so nothing below bitcoind's floors reaches disk.
+                        let Some(resources) = crate::node::bitcoind::resources_from_forms(
+                            &mut self.node_prune_mb,
+                            &mut self.node_max_mempool_mb,
+                        ) else {
+                            return Task::none();
+                        };
+                        // Only the internal managed node carries resource settings.
+                        let Some(flavor) = self
+                            .bitcoind_settings
+                            .as_ref()
+                            .and_then(|s| s.managed_flavor)
+                        else {
+                            return Task::none();
+                        };
+                        // Reuse the setup progress panel + result handler; the
+                        // force-restart applies the rewritten conf (same flavour,
+                        // so `maybe_start` would otherwise reuse the running node).
+                        self.pending_node_setup = Some(PendingNodeSetup {
+                            mode: Some(true),
+                            addr: form::Value::default(),
+                            rpc_auth_vals: RpcAuthValues::default(),
+                            selected_auth_type: RpcAuthType::CookieFile,
+                            processing: true,
+                            flavor,
+                            internal_stage: InternalSetupStage::Installing,
+                            internal_error: None,
+                            download_progress: 100.0,
+                        });
+                        let coincube_datadir = cache.datadir_path.clone();
+                        let network = cache.network;
+                        return Task::perform(
+                            ensure_tor_and_start_managed(
+                                coincube_datadir,
+                                network,
+                                flavor,
+                                None,
+                                true,
+                                Some(resources),
                             ),
                             |r| {
                                 Message::View(view::Message::Settings(
@@ -922,6 +1028,32 @@ impl State for BitcoindSettingsState {
                     );
                 }
 
+                // "Node resources": prune target + mempool cap for the internal
+                // managed node. All networks (unlike inbound-Tor), the managed
+                // node only, and hidden during a setup/flavour switch/restart.
+                if self.pending_node_setup.is_none()
+                    && self
+                        .bitcoind_settings
+                        .as_ref()
+                        .and_then(|s| s.managed_flavor)
+                        .is_some()
+                    && matches!(
+                        self.full_config
+                            .as_ref()
+                            .and_then(|c| c.bitcoin_backend.as_ref()),
+                        Some(BitcoinBackend::Bitcoind(_))
+                    )
+                {
+                    setting_panels.push(
+                        view::vault::settings::node_resources_section(
+                            &self.node_prune_mb,
+                            &self.node_max_mempool_mb,
+                            false,
+                        )
+                        .map(map_node_msg),
+                    );
+                }
+
                 if let Some(settings) = self.electrum_settings.as_ref() {
                     setting_panels.push(settings.view(cache, can_edit_electrum_settings).map(
                         move |msg| {
@@ -969,29 +1101,25 @@ impl From<BitcoindSettingsState> for Box<dyn State> {
 /// (verified against the manifest) and `None` for Core (verified by code hash).
 type ManagedNodeInstall = (Vec<u8>, Option<(String, String)>);
 
-/// Configure and start an internally-managed pruned node of `flavor`.
-/// If `install` is `Some((bytes, manifest))`, the binary is first verified and
-/// installed from those bytes. Returns the `BitcoindConfig` and the live
-/// `Bitcoind` handle (which keeps the lock file alive) to be stored by the
-/// caller.
-fn configure_and_start_internal_bitcoind(
-    coincube_datadir: CoincubeDirectory,
+/// Load-or-create the managed `bitcoin.conf`, apply `flavor` (RDTS enforcement),
+/// ensure ports, apply any node-`resources` override, and write it back —
+/// returning the `BitcoindConfig` (RPC endpoint) to connect to. Pure with respect
+/// to process start (no `Bitcoind::maybe_start`), so the config-rewrite rules are
+/// unit-testable; [`configure_and_start_internal_bitcoind`] calls this and then
+/// launches bitcoind.
+///
+/// `resources: Some` overwrites `prune` on the (possibly pre-existing) network
+/// section — keeping its ports/rpc_auth — and sets the global `max_mempool_mb`.
+/// Without that overwrite, editing prune on an existing datadir would silently
+/// no-op (the wholesale reuse of the existing section). `None` preserves whatever
+/// is on disk untouched (it already round-trips through `from_file`/`to_file`).
+fn write_internal_bitcoind_config(
+    coincube_datadir: &CoincubeDirectory,
     network: Network,
     flavor: NodeFlavor,
-    install: Option<ManagedNodeInstall>,
-    // When true, stop any running managed node first so the (re)start applies
-    // the fresh config even at the same flavour — used by the "restart to apply"
-    // action. `maybe_start` alone only restarts on a flavour change.
-    force_restart: bool,
-) -> Result<(BitcoindConfig, Bitcoind), String> {
-    if let Some((bytes, manifest)) = install {
-        let verification = DownloadVerification::for_flavor(flavor, manifest)
-            .ok_or_else(|| "Missing release SHA256SUMS manifest for verification.".to_string())?;
-        let install_dir = internal_bitcoind_directory(&coincube_datadir);
-        install_bitcoind(&install_dir, &bytes, &verification).map_err(|e| format!("{:?}", e))?;
-    }
-
-    let bitcoind_datadir = internal_bitcoind_datadir(&coincube_datadir);
+    resources: Option<NodeResources>,
+) -> Result<BitcoindConfig, String> {
+    let bitcoind_datadir = internal_bitcoind_datadir(coincube_datadir);
     let config_path = internal_bitcoind_config_path(&bitcoind_datadir);
 
     let mut conf = match InternalBitcoindConfig::from_file(&config_path) {
@@ -1016,14 +1144,56 @@ fn configure_and_start_internal_bitcoind(
         (rpc, p2p)
     };
 
-    let network_conf = existing.unwrap_or(InternalBitcoindNetworkConfig {
+    let mut network_conf = existing.unwrap_or(InternalBitcoindNetworkConfig {
         rpc_port,
         p2p_port,
-        prune: PRUNE_DEFAULT,
+        prune: resources.map(|r| r.prune_mb).unwrap_or(PRUNE_DEFAULT),
         rpc_auth: None,
     });
+    if let Some(r) = resources {
+        network_conf.prune = r.prune_mb;
+        conf.max_mempool_mb = r.max_mempool_mb;
+    }
     conf.networks.insert(network, network_conf);
     conf.to_file(&config_path).map_err(|e| e.to_string())?;
+
+    let cookie_path = internal_bitcoind_cookie_path(&bitcoind_datadir, &network);
+    Ok(BitcoindConfig {
+        rpc_auth: BitcoindRpcAuth::CookieFile(cookie_path),
+        addr: internal_bitcoind_address(rpc_port),
+    })
+}
+
+/// Configure and start an internally-managed pruned node of `flavor`.
+/// If `install` is `Some((bytes, manifest))`, the binary is first verified and
+/// installed from those bytes. Returns the `BitcoindConfig` and the live
+/// `Bitcoind` handle (which keeps the lock file alive) to be stored by the
+/// caller.
+fn configure_and_start_internal_bitcoind(
+    coincube_datadir: CoincubeDirectory,
+    network: Network,
+    flavor: NodeFlavor,
+    install: Option<ManagedNodeInstall>,
+    // When true, stop any running managed node first so the (re)start applies
+    // the fresh config even at the same flavour — used by the "restart to apply"
+    // action. `maybe_start` alone only restarts on a flavour change.
+    force_restart: bool,
+    // A node-resources edit (prune target + mempool cap). `Some` overwrites
+    // `prune` on the (possibly pre-existing) network conf and sets the global
+    // mempool cap; `None` preserves whatever is already on disk untouched.
+    resources: Option<NodeResources>,
+) -> Result<(BitcoindConfig, Bitcoind), String> {
+    if let Some((bytes, manifest)) = install {
+        let verification = DownloadVerification::for_flavor(flavor, manifest)
+            .ok_or_else(|| "Missing release SHA256SUMS manifest for verification.".to_string())?;
+        let install_dir = internal_bitcoind_directory(&coincube_datadir);
+        install_bitcoind(&install_dir, &bytes, &verification).map_err(|e| format!("{:?}", e))?;
+    }
+
+    // Load-or-create + rewrite the managed `bitcoin.conf` (flavour/RDTS, ports,
+    // and any resource override) and get the RPC endpoint to connect to.
+    let bitcoind_config =
+        write_internal_bitcoind_config(&coincube_datadir, network, flavor, resources)?;
 
     // Default-ON inbound-over-Tor for a freshly set-up enforcing (Knots) node on
     // mainnet — the point of the wedge is more reachable RDTS-enforcing nodes,
@@ -1041,12 +1211,6 @@ fn configure_and_start_internal_bitcoind(
             warn!("could not write default inbound-tor preference: {e}");
         }
     }
-
-    let cookie_path = internal_bitcoind_cookie_path(&bitcoind_datadir, &network);
-    let bitcoind_config = BitcoindConfig {
-        rpc_auth: BitcoindRpcAuth::CookieFile(cookie_path),
-        addr: internal_bitcoind_address(rpc_port),
-    };
 
     // Force a clean restart when asked (same-flavour reconfigure), so the new
     // config below is actually applied rather than a running node reused.
@@ -1078,6 +1242,7 @@ async fn ensure_tor_and_start_managed(
     flavor: NodeFlavor,
     install: Option<ManagedNodeInstall>,
     force_restart: bool,
+    resources: Option<NodeResources>,
 ) -> Result<(BitcoindConfig, Bitcoind), String> {
     crate::node::tor::ensure_tor_installed_if_wanted(&coincube_datadir).await;
     tokio::task::spawn_blocking(move || {
@@ -1087,6 +1252,7 @@ async fn ensure_tor_and_start_managed(
             flavor,
             install,
             force_restart,
+            resources,
         )
     })
     .await
@@ -1563,3 +1729,118 @@ const MAINNET_GENESIS_BLOCK_TIMESTAMP: i64 = 1231006505;
 const TESTNET3_GENESIS_BLOCK_TIMESTAMP: i64 = 1296688602;
 const TESTNET4_GENESIS_BLOCK_TIMESTAMP: i64 = 1714777860;
 const SIGNET_GENESIS_BLOCK_TIMESTAMP: i64 = 1598918400;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::bitcoind::RpcAuth;
+
+    // A node-resources apply on a pre-existing datadir must overwrite prune and
+    // the mempool cap while preserving the network section's ports and rpc_auth
+    // (and the flavour/RDTS marker) — the "sharp edge" the settings path fixes. A
+    // `None` apply must leave every value untouched.
+    #[test]
+    fn node_resources_apply_preserves_ports_and_rpcauth() {
+        use std::fs;
+        let base = std::env::temp_dir()
+            .join(format!("coincube-settings-noderes-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let datadir = CoincubeDirectory::new(base.clone());
+        let config_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(&datadir));
+
+        // Seed a pre-existing managed conf: Knots (RDTS on), fixed ports + a
+        // user/pass rpc_auth, prune 15000, and an explicit 300 MB mempool.
+        let rpc_auth: RpcAuth = "myuser:mysalt$myhmac".parse().unwrap();
+        let mut seed = InternalBitcoindConfig::for_flavor(NodeFlavor::Knots);
+        seed.max_mempool_mb = Some(300);
+        seed.networks.insert(
+            Network::Bitcoin,
+            InternalBitcoindNetworkConfig {
+                rpc_port: 45001,
+                p2p_port: 45002,
+                prune: 15_000,
+                rpc_auth: Some(rpc_auth.clone()),
+            },
+        );
+        seed.to_file(&config_path).unwrap();
+
+        // A `None` apply preserves everything (ports/rpc_auth/prune/mempool).
+        let cfg_none =
+            write_internal_bitcoind_config(&datadir, Network::Bitcoin, NodeFlavor::Knots, None)
+                .unwrap();
+        assert_eq!(cfg_none.addr.port(), 45001);
+        let after_none = InternalBitcoindConfig::from_file(&config_path).unwrap();
+        let net_none = after_none.networks.get(&Network::Bitcoin).unwrap();
+        assert_eq!(net_none.prune, 15_000);
+        assert_eq!(net_none.rpc_port, 45001);
+        assert_eq!(net_none.p2p_port, 45002);
+        assert_eq!(net_none.rpc_auth, Some(rpc_auth.clone()));
+        assert_eq!(after_none.max_mempool_mb, Some(300));
+
+        // A resource apply updates prune + mempool, keeps ports + rpc_auth + RDTS.
+        let cfg = write_internal_bitcoind_config(
+            &datadir,
+            Network::Bitcoin,
+            NodeFlavor::Knots,
+            Some(NodeResources {
+                prune_mb: 550,
+                max_mempool_mb: Some(100),
+            }),
+        )
+        .unwrap();
+        assert_eq!(cfg.addr.port(), 45001); // reused the existing RPC port
+        let after = InternalBitcoindConfig::from_file(&config_path).unwrap();
+        let net = after.networks.get(&Network::Bitcoin).unwrap();
+        assert_eq!(net.prune, 550); // updated
+        assert_eq!(net.rpc_port, 45001); // preserved
+        assert_eq!(net.p2p_port, 45002); // preserved
+        assert_eq!(net.rpc_auth, Some(rpc_auth)); // preserved
+        assert_eq!(after.max_mempool_mb, Some(100)); // updated
+        assert!(after.enforce_rdts); // flavour/RDTS preserved
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    // Choosing the "Default" mempool (blank field) clears the cap back to the
+    // key-omitted state, so the config returns to byte-identical-with-default.
+    #[test]
+    fn node_resources_default_mempool_clears_key() {
+        use std::fs;
+        let base = std::env::temp_dir()
+            .join(format!("coincube-settings-noderes-def-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let datadir = CoincubeDirectory::new(base.clone());
+        let config_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(&datadir));
+
+        let mut seed = InternalBitcoindConfig::for_flavor(NodeFlavor::Core);
+        seed.max_mempool_mb = Some(100);
+        seed.networks.insert(
+            Network::Bitcoin,
+            InternalBitcoindNetworkConfig {
+                rpc_port: 46001,
+                p2p_port: 46002,
+                prune: 550,
+                rpc_auth: None,
+            },
+        );
+        seed.to_file(&config_path).unwrap();
+
+        // Apply Default (max_mempool_mb = None) → the key is dropped.
+        write_internal_bitcoind_config(
+            &datadir,
+            Network::Bitcoin,
+            NodeFlavor::Core,
+            Some(NodeResources {
+                prune_mb: 15_000,
+                max_mempool_mb: None,
+            }),
+        )
+        .unwrap();
+        let after = InternalBitcoindConfig::from_file(&config_path).unwrap();
+        assert_eq!(after.max_mempool_mb, None);
+        assert!(after.to_ini().general_section().get("maxmempool").is_none());
+        assert_eq!(after.networks.get(&Network::Bitcoin).unwrap().prune, 15_000);
+
+        let _ = fs::remove_dir_all(&base);
+    }
+}

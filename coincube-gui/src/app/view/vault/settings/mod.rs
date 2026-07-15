@@ -2031,6 +2031,72 @@ pub fn inbound_tor_section<'a>(
     card::simple(col).width(Length::Fill).into()
 }
 
+/// The "Node resources" panel: tune the managed node's prune target and mempool
+/// cap, then apply via a force-restart. Reuses the installer's shared controls so
+/// the presets/fields never drift, and adds the honesty copy about what changing
+/// each value actually does. `processing` is true while a restart is in flight.
+pub fn node_resources_section<'a>(
+    prune: &'a form::Value<String>,
+    max_mempool: &'a form::Value<String>,
+    processing: bool,
+) -> Element<'a, NodeSettingsMessage> {
+    let controls = crate::installer::node_resources_controls(
+        prune,
+        max_mempool,
+        NodeSettingsMessage::NodeResourcePruneEdited,
+        NodeSettingsMessage::NodeResourceMaxMempoolEdited,
+        NodeSettingsMessage::NodeResourceSmallComputer,
+    );
+
+    let apply: Element<'_, NodeSettingsMessage> = if processing {
+        button::secondary(None, "Restarting node…").into()
+    } else {
+        button::secondary(None, "Restart node to apply")
+            .padding([8, 14])
+            .on_press(NodeSettingsMessage::NodeResourceApply)
+            .into()
+    };
+
+    let col = Column::new()
+        .spacing(15)
+        .push(text("Node resources").bold().size(18))
+        .push(controls)
+        .push(separation().width(Length::Fill))
+        // Honesty copy — one sentence each, same plain voice as the inbound-Tor
+        // lines. Changing prune has irreversible and asymmetric effects.
+        .push(
+            text(
+                "Lowering the target prunes more block data now, and that can't \
+                 be undone.",
+            )
+            .size(12)
+            .style(theme::text::secondary),
+        )
+        .push(
+            text(
+                "Raising it keeps more blocks from now on — blocks already pruned \
+                 don't come back.",
+            )
+            .size(12)
+            .style(theme::text::secondary),
+        )
+        .push(
+            text(
+                "Restoring an old wallet may require re-downloading blocks below \
+                 the prune depth.",
+            )
+            .size(12)
+            .style(theme::text::secondary),
+        )
+        .push(
+            Row::new()
+                .push(Column::new().width(Length::Fill))
+                .push(apply),
+        );
+
+    card::simple(col).width(Length::Fill).into()
+}
+
 pub fn register_wallet_modal<'a>(
     hws: &'a [HardwareWallet],
     processing: bool,

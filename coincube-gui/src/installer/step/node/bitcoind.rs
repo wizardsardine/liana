@@ -33,8 +33,8 @@ use crate::{
     node::bitcoind::{
         self, bitcoind_network_dir, internal_bitcoind_cookie_path, internal_bitcoind_datadir,
         internal_bitcoind_directory, Bitcoind, ConfigField, InternalBitcoindConfig,
-        InternalBitcoindConfigError, InternalBitcoindNetworkConfig, NodeFlavor, RpcAuthType,
-        RpcAuthValues, StartInternalBitcoindError,
+        InternalBitcoindConfigError, InternalBitcoindNetworkConfig, NodeFlavor, NodeResources,
+        RpcAuthType, RpcAuthValues, StartInternalBitcoindError,
     },
 };
 
@@ -109,8 +109,11 @@ impl Download {
     }
 }
 
-/// Default prune value used by internal bitcoind.
-pub const PRUNE_DEFAULT: u32 = 15_000;
+/// Default prune value used by internal bitcoind. Re-exported from
+/// [`crate::node::bitcoind`], where all node-resource constants now live
+/// together, so existing `installer::step::node::bitcoind::PRUNE_DEFAULT`
+/// call sites keep resolving.
+pub use crate::node::bitcoind::PRUNE_DEFAULT;
 /// Default ports used by bitcoind across all networks.
 pub const BITCOIND_DEFAULT_PORTS: [u16; 10] = [
     8332, 8333, 18332, 18333, 18443, 18444, 48332, 48333, 38332, 38333,
@@ -929,6 +932,17 @@ pub struct InternalBitcoindStep {
     /// Gate: the download/install/start flow only runs once the user confirms
     /// the flavour on this screen. Until then the flavour picker is shown.
     flavor_confirmed: bool,
+    /// Node-resources advanced disclosure open on the flavour screen.
+    show_advanced: bool,
+    /// Custom prune-target field (MB). Source of truth for the written `prune`;
+    /// presets just set it. Pre-filled from any existing on-disk config.
+    prune_mb: form::Value<String>,
+    /// Custom mempool-cap field (MB). Empty = bitcoind's 300 MB default (key
+    /// omitted). Source of truth for `max_mempool_mb`; presets just set it.
+    max_mempool_mb: form::Value<String>,
+    /// One-shot guard so `load_context` pre-fills the resource fields from the
+    /// existing config exactly once (it runs every frame).
+    resources_loaded: bool,
 }
 
 impl From<InternalBitcoindStep> for Box<dyn Step> {
@@ -955,7 +969,33 @@ impl InternalBitcoindStep {
             internal_bitcoind: None,
             existing_flavor: None,
             flavor_confirmed: false,
+            show_advanced: false,
+            prune_mb: form::Value {
+                value: PRUNE_DEFAULT.to_string(),
+                valid: true,
+                warning: None,
+            },
+            max_mempool_mb: form::Value::default(),
+            resources_loaded: false,
         }
+    }
+
+    /// Set the prune field and refresh its validity (shared with the settings
+    /// editor via [`bitcoind::set_prune_form_value`]).
+    fn set_prune_field(&mut self, value: String) {
+        bitcoind::set_prune_form_value(&mut self.prune_mb, value);
+    }
+
+    /// Set the mempool field and refresh its validity (shared with settings).
+    fn set_max_mempool_field(&mut self, value: String) {
+        bitcoind::set_max_mempool_form_value(&mut self.max_mempool_mb, value);
+    }
+
+    /// Validate both resource fields and return the chosen values, marking the
+    /// offending field invalid on failure. Returns `None` so `DefineConfig` bails
+    /// without writing.
+    fn resource_values(&mut self) -> Option<NodeResources> {
+        bitcoind::resources_from_forms(&mut self.prune_mb, &mut self.max_mempool_mb)
     }
 }
 
@@ -993,6 +1033,30 @@ impl Step for InternalBitcoindStep {
         if self.network != ctx.bitcoin_config.network {
             self.internal_bitcoind_config = None;
             self.network = ctx.bitcoin_config.network;
+            // Prune is per-network, so re-read the resource fields for the new one.
+            self.resources_loaded = false;
+        }
+        // Pre-fill the node-resource fields from any existing on-disk config
+        // exactly once (this runs every frame). An untouched fresh install has no
+        // config, so the constructor defaults (15000 MB prune, blank mempool)
+        // stand. Reusing an existing datadir shows its current values instead.
+        if !self.resources_loaded {
+            self.resources_loaded = true;
+            if let Ok(conf) = InternalBitcoindConfig::from_file(
+                &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
+            ) {
+                if let Some(net_conf) = conf.networks.get(&self.network) {
+                    self.prune_mb.value = net_conf.prune.to_string();
+                    self.prune_mb.valid = true;
+                    self.prune_mb.warning = None;
+                }
+                self.max_mempool_mb.value = conf
+                    .max_mempool_mb
+                    .map(|mb| mb.to_string())
+                    .unwrap_or_default();
+                self.max_mempool_mb.valid = true;
+                self.max_mempool_mb.warning = None;
+            }
         }
         if let Some(Ok(_)) = self.started {
             // This case can arise if a user switches from internal bitcoind to external and back to internal.
@@ -1052,7 +1116,41 @@ impl Step for InternalBitcoindStep {
                     }
                     return self.load();
                 }
+                message::InternalBitcoindMsg::ToggleAdvanced => {
+                    self.show_advanced = !self.show_advanced;
+                }
+                message::InternalBitcoindMsg::PruneEdited(value) => {
+                    self.set_prune_field(value);
+                }
+                message::InternalBitcoindMsg::MaxMempoolEdited(value) => {
+                    self.set_max_mempool_field(value);
+                }
+                message::InternalBitcoindMsg::SmallComputerPreset => {
+                    let r = NodeResources::small_computer();
+                    self.set_prune_field(r.prune_mb.to_string());
+                    self.set_max_mempool_field(
+                        r.max_mempool_mb.map(|mb| mb.to_string()).unwrap_or_default(),
+                    );
+                    // Reveal the controls if the preset was reachable some other
+                    // way; harmless when already open.
+                    self.show_advanced = true;
+                }
                 message::InternalBitcoindMsg::DefineConfig => {
+                    // Validate the node-resource choices before touching files, so
+                    // bad input fails fast and re-opens the advanced disclosure.
+                    let resources = match self.resource_values() {
+                        Some(r) => r,
+                        None => {
+                            self.show_advanced = true;
+                            self.error = Some(
+                                "Enter a prune target of at least 550 MB, and a mempool cap \
+                                 of at least 5 MB (or leave the mempool field blank for the \
+                                 300 MB default)."
+                                    .to_string(),
+                            );
+                            return Task::none();
+                        }
+                    };
                     let mut conf = match InternalBitcoindConfig::from_file(
                         &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
                     ) {
@@ -1123,16 +1221,21 @@ impl Step for InternalBitcoindStep {
                     };
                     // Use existing network conf if it exists as it may have rpc_auth field set.
                     // This ensures an existing wallet using username/password authentication will continue to work.
-                    let network_conf =
+                    let mut network_conf =
                         network_conf
                             .cloned()
                             .unwrap_or(InternalBitcoindNetworkConfig {
                                 rpc_port,
                                 p2p_port,
-                                prune: PRUNE_DEFAULT,
+                                prune: resources.prune_mb,
                                 rpc_auth: None, // can be omitted for new bitcoin.conf entries
                             });
+                    // Overwrite prune even for an existing datadir so an edited
+                    // target actually applies (keeping ports/rpc_auth). The
+                    // mempool cap is a global key on the whole config.
+                    network_conf.prune = resources.prune_mb;
                     conf.networks.insert(self.network, network_conf);
+                    conf.max_mempool_mb = resources.max_mempool_mb;
                     if let Err(e) = conf.to_file(&bitcoind::internal_bitcoind_config_path(
                         &self.bitcoind_datadir,
                     )) {
@@ -1374,6 +1477,9 @@ impl Step for InternalBitcoindStep {
             self.flavor,
             self.existing_flavor,
             self.flavor_confirmed,
+            self.show_advanced,
+            &self.prune_mb,
+            &self.max_mempool_mb,
             self.exe_path.as_ref(),
             self.started.as_ref(),
             self.error.as_ref(),
@@ -1408,6 +1514,104 @@ mod tests {
     #[test]
     fn installer_defaults_to_knots() {
         assert_eq!(SelectBitcoindTypeStep::new().node_flavor, NodeFlavor::Knots);
+    }
+
+    // Drive the InternalBitcoindStep's `DefineConfig` and return the on-disk
+    // `bitcoin.conf` it wrote, retrying past the rare equal-ephemeral-port case.
+    fn define_config(step: &mut InternalBitcoindStep) -> InternalBitcoindConfig {
+        use crate::hw::HardwareWallets;
+        let mut hws = HardwareWallets::new(step.coincube_datadir.clone(), step.network);
+        for _ in 0..5 {
+            let _ = step.update(
+                &mut hws,
+                Message::InternalBitcoind(message::InternalBitcoindMsg::DefineConfig),
+            );
+            let path = bitcoind::internal_bitcoind_config_path(&step.bitcoind_datadir);
+            if let Ok(conf) = InternalBitcoindConfig::from_file(&path) {
+                return conf;
+            }
+        }
+        panic!("DefineConfig never produced a config: {:?}", step.error);
+    }
+
+    // A "Small computer" selection writes `prune=550` in the network section and
+    // `maxmempool=100` in the general section; the untouched default path writes
+    // today's values (15000 MB prune, mempool key omitted → byte-identical).
+    #[test]
+    fn installer_node_resources_written() {
+        use std::fs;
+
+        // Small-computer preset → 550 prune + 100 maxmempool.
+        let base =
+            std::env::temp_dir().join(format!("coincube-noderes-sc-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let datadir = CoincubeDirectory::new(base.clone());
+        let mut step = InternalBitcoindStep::new(&datadir);
+        let _ = step.update(
+            &mut crate::hw::HardwareWallets::new(datadir.clone(), Network::Bitcoin),
+            Message::InternalBitcoind(message::InternalBitcoindMsg::SmallComputerPreset),
+        );
+        let conf = define_config(&mut step);
+        assert_eq!(
+            conf.networks
+                .get(&Network::Bitcoin)
+                .expect("main section")
+                .prune,
+            550
+        );
+        assert_eq!(conf.max_mempool_mb, Some(100));
+        // Emitted general section carries the standalone maxmempool key.
+        assert_eq!(conf.to_ini().general_section().get("maxmempool"), Some("100"));
+        let _ = fs::remove_dir_all(&base);
+
+        // Untouched default path → 15000 prune, no maxmempool key.
+        let base2 =
+            std::env::temp_dir().join(format!("coincube-noderes-def-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base2);
+        let datadir2 = CoincubeDirectory::new(base2.clone());
+        let mut step2 = InternalBitcoindStep::new(&datadir2);
+        let conf2 = define_config(&mut step2);
+        assert_eq!(
+            conf2
+                .networks
+                .get(&Network::Bitcoin)
+                .expect("main section")
+                .prune,
+            PRUNE_DEFAULT
+        );
+        assert_eq!(conf2.max_mempool_mb, None);
+        assert!(conf2.to_ini().general_section().get("maxmempool").is_none());
+        let _ = fs::remove_dir_all(&base2);
+    }
+
+    // Below-floor input is rejected: `DefineConfig` refuses to write and flags
+    // the field, so no `prune=0`/tiny-mempool config can reach disk (invariant
+    // I1 + the maxmempool floor).
+    #[test]
+    fn installer_rejects_below_floor_resources() {
+        use std::fs;
+        let base =
+            std::env::temp_dir().join(format!("coincube-noderes-bad-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let datadir = CoincubeDirectory::new(base.clone());
+        let mut step = InternalBitcoindStep::new(&datadir);
+        let mut hws = crate::hw::HardwareWallets::new(datadir.clone(), Network::Bitcoin);
+        // 100 MB prune is below bitcoind's 550 floor.
+        let _ = step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::PruneEdited("100".to_string())),
+        );
+        assert!(!step.prune_mb.valid);
+        let _ = step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::DefineConfig),
+        );
+        assert!(step.error.is_some());
+        assert!(
+            !bitcoind::internal_bitcoind_config_path(&step.bitcoind_datadir).exists(),
+            "no config should be written for an invalid prune target"
+        );
+        let _ = fs::remove_dir_all(&base);
     }
 
     // The real published release manifest and its detached signature. Used to

@@ -515,6 +515,142 @@ pub const MAX_UPLOAD_TARGET_MB_DAY_DEFAULT: u32 = 1000;
 /// inbound slots.
 pub const MAX_CONNECTIONS_DEFAULT: u16 = 20;
 
+// --- Node-resource settings (prune target + mempool cap) -------------------
+//
+// The managed node exposes two resource knobs (see the node-resources UI in the
+// installer and Vault settings). `prune` is per-network and already first-class;
+// `maxmempool` is a standalone general-section key. Presets are a thin setter
+// layer over the two source-of-truth values below (see [`NodeResources`]).
+
+/// bitcoind's minimum legal `prune` target, in MiB. The managed node is *always*
+/// pruned (invariant I1: no "keep everything" option), so this is the floor for
+/// every prune choice — no UI path emits a smaller value or `prune=0`. Enforced
+/// by input validation before a value is written.
+pub const PRUNE_MIN: u32 = 550;
+
+/// "Minimal" prune preset — bitcoind's floor, 550 MB of block data.
+pub const PRUNE_MINIMAL_MB: u32 = 550;
+
+/// "Compact" prune preset — 5 GB of block data.
+pub const PRUNE_COMPACT_MB: u32 = 5_000;
+
+/// Default prune target for new managed nodes — 15 GB of block data. Historical
+/// default, kept here so every node-resource constant lives in one place.
+pub const PRUNE_DEFAULT: u32 = 15_000;
+
+/// bitcoind's minimum legal `maxmempool`, in MB. Below this bitcoind refuses to
+/// start ("-maxmempool must be at least N MB"). The floor is
+/// `ceil(limitdescendantsize_kvB * 1000 * 40 / 1_000_000)` = `ceil(101 * 40 /
+/// 1000)` = 5 MB with the default descendant-size limit, which the pinned Knots
+/// build inherits unchanged from Core. Enforced by input validation before we
+/// emit the key.
+pub const MAX_MEMPOOL_MB_MIN: u32 = 5;
+
+/// "Small" mempool preset — a 100 MB cap.
+pub const MAX_MEMPOOL_SMALL_MB: u32 = 100;
+
+/// bitcoind's own default mempool cap, 300 MB. Represented as
+/// `max_mempool_mb = None` (key omitted), so choosing "Default" restores
+/// byte-identical output (invariant I2).
+pub const MAX_MEMPOOL_DEFAULT_MB: u32 = 300;
+
+/// Rough non-prunable footprint (GB) added on top of the prune target for the
+/// estimated-total-disk line: chainstate (~12–15 GB, unprunable) plus block
+/// index / undo / overhead (~1–2 GB). The prune choice only bounds *block* data,
+/// so the honest total is always `prune + this` — the UI must not pretend the
+/// chainstate floor away.
+pub const CHAINSTATE_OVERHEAD_GB: u32 = 14;
+
+/// Estimated total on-disk footprint, in GB, of a managed node keeping
+/// `prune_mb` of block data: the prune target rounded to GB plus the unprunable
+/// [`CHAINSTATE_OVERHEAD_GB`]. Backs the node-resources "estimated total disk"
+/// line so the number the user picks reflects reality.
+pub fn estimated_total_disk_gb(prune_mb: u32) -> u32 {
+    (prune_mb as f64 / 1024.0).round() as u32 + CHAINSTATE_OVERHEAD_GB
+}
+
+/// A user's node-resource choices, applied onto an [`InternalBitcoindConfig`]:
+/// the per-network prune target (MiB) and the global mempool cap
+/// (`None` = bitcoind's 300 MB default, key omitted). Presets — Minimal /
+/// Compact / Default, Small / Default, and one-click "Small computer" — are a
+/// thin setter layer over these two fields, so a future "Miner" preset can be
+/// added without reworking the surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodeResources {
+    pub prune_mb: u32,
+    pub max_mempool_mb: Option<u32>,
+}
+
+impl NodeResources {
+    /// The one-click "Small computer" preset: bitcoind's floor prune (550 MB)
+    /// plus a 100 MB mempool cap. Deliberately does *not* trim `maxconnections`
+    /// — the always-on ~1 GB/day `maxuploadtarget` is the real bandwidth guard.
+    pub fn small_computer() -> Self {
+        Self {
+            prune_mb: PRUNE_MINIMAL_MB,
+            max_mempool_mb: Some(MAX_MEMPOOL_SMALL_MB),
+        }
+    }
+}
+
+/// Validate and store a prune-target value in `field` (the text widget already
+/// restricts input to digits): it must be non-empty and at least [`PRUNE_MIN`].
+/// Shared by the installer and settings node-resource editors so their
+/// validation never drifts.
+pub fn set_prune_form_value(field: &mut form::Value<String>, value: String) {
+    field.value = value;
+    let ok = field
+        .value
+        .parse::<u32>()
+        .map(|n| n >= PRUNE_MIN)
+        .unwrap_or(false);
+    field.valid = ok;
+    field.warning = if ok { None } else { Some("Minimum is 550 MB.") };
+}
+
+/// Validate and store a mempool-cap value in `field`: blank = bitcoind's 300 MB
+/// default (valid, emitted as `None`), otherwise at least [`MAX_MEMPOOL_MB_MIN`].
+pub fn set_max_mempool_form_value(field: &mut form::Value<String>, value: String) {
+    field.value = value;
+    let ok = field.value.is_empty()
+        || field
+            .value
+            .parse::<u32>()
+            .map(|n| n >= MAX_MEMPOOL_MB_MIN)
+            .unwrap_or(false);
+    field.valid = ok;
+    field.warning = if ok {
+        None
+    } else {
+        Some("Minimum is 5 MB (or leave blank for the default).")
+    };
+}
+
+/// Read validated [`NodeResources`] from two editor fields, re-validating both
+/// first so a value pre-filled from disk (which never went through the edit
+/// handlers) is still checked. Returns `None` — and leaves the offending field
+/// flagged invalid — when either is out of range, so callers can refuse to write.
+pub fn resources_from_forms(
+    prune: &mut form::Value<String>,
+    mempool: &mut form::Value<String>,
+) -> Option<NodeResources> {
+    set_prune_form_value(prune, prune.value.clone());
+    set_max_mempool_form_value(mempool, mempool.value.clone());
+    if !prune.valid || !mempool.valid {
+        return None;
+    }
+    let prune_mb = prune.value.parse::<u32>().ok()?;
+    let max_mempool_mb = if mempool.value.is_empty() {
+        None
+    } else {
+        Some(mempool.value.parse::<u32>().ok()?)
+    };
+    Some(NodeResources {
+        prune_mb,
+        max_mempool_mb,
+    })
+}
+
 /// Loopback host bitcoind uses to reach the co-located managed `tor` daemon's
 /// control and SOCKS ports (`torcontrol`/`proxy`).
 const TOR_LOOPBACK_HOST: &str = "127.0.0.1";
@@ -550,6 +686,11 @@ pub struct InternalBitcoindConfig {
     /// Total connection cap emitted as `maxconnections`. `None` = bitcoind's
     /// own default (key omitted). Only emitted when `inbound_tor` is set.
     pub max_connections: Option<u16>,
+    /// Mempool memory cap emitted as `maxmempool` (MB). `None` = bitcoind's own
+    /// 300 MB default (key omitted). A **standalone** resource key — unlike the
+    /// bandwidth caps above it is *not* gated on `inbound_tor`; it is emitted
+    /// whenever set, and an untouched (`None`) config stays byte-identical.
+    pub max_mempool_mb: Option<u32>,
     /// Local control port of the managed `tor` daemon. Injected by the Tor
     /// lifecycle manager once Tor is up (see `node/tor.rs`); needed to emit
     /// `torcontrol=127.0.0.1:<port>`. Runtime-only — re-derived each start.
@@ -616,6 +757,7 @@ impl InternalBitcoindConfig {
             outbound_via_tor: false,
             max_upload_target_mb_day: None,
             max_connections: None,
+            max_mempool_mb: None,
             tor_control_port: None,
             tor_socks_port: None,
         }
@@ -639,6 +781,7 @@ impl InternalBitcoindConfig {
             outbound_via_tor: false,
             max_upload_target_mb_day: None,
             max_connections: None,
+            max_mempool_mb: None,
             tor_control_port: None,
             tor_socks_port: None,
         }
@@ -664,6 +807,7 @@ impl InternalBitcoindConfig {
         let mut outbound_via_tor = false;
         let mut max_upload_target_mb_day = None;
         let mut max_connections = None;
+        let mut max_mempool_mb = None;
         let mut tor_control_port = None;
         let mut tor_socks_port = None;
         for (maybe_sec, prop) in ini {
@@ -743,6 +887,13 @@ impl InternalBitcoindConfig {
                                 InternalBitcoindConfigError::CouldNotParseValue(e.to_string())
                             })?);
                         }
+                        // Standalone resource key: parsed back whether or not
+                        // inbound-over-Tor is on.
+                        "maxmempool" => {
+                            max_mempool_mb = Some(value.parse::<u32>().map_err(|e| {
+                                InternalBitcoindConfigError::CouldNotParseValue(e.to_string())
+                            })?);
+                        }
                         _ => {
                             return Err(InternalBitcoindConfigError::UnexpectedSection(format!(
                                 "Unexpected key in general section: {key}"
@@ -768,6 +919,7 @@ impl InternalBitcoindConfig {
             outbound_via_tor,
             max_upload_target_mb_day,
             max_connections,
+            max_mempool_mb,
             tor_control_port,
             tor_socks_port,
         })
@@ -835,6 +987,17 @@ impl InternalBitcoindConfig {
                     general.set("proxy", format!("{TOR_LOOPBACK_HOST}:{socks_port}"));
                 }
             }
+        }
+
+        // Mempool memory cap — a standalone resource key, emitted whenever set
+        // (deliberately NOT gated on `inbound_tor`, unlike the bandwidth caps
+        // above). It lives in the section-less general part alongside the Tor
+        // keys. `None` means bitcoind's own 300 MB default, so the key is omitted
+        // and an untouched config produces a byte-identical file (invariant I2).
+        if let Some(mb) = self.max_mempool_mb {
+            conf_ini
+                .with_general_section()
+                .set("maxmempool", mb.to_string());
         }
 
         for (network, network_conf) in &self.networks {
@@ -1566,6 +1729,84 @@ mod tests {
     // Helper: does an emitted config carry the inbound marker?
     fn general_marker_inbound(ini: &ini::Ini) -> bool {
         ini.general_section().get("listenonion") == Some("1")
+    }
+
+    // `maxmempool` is emitted only when set, is NOT gated on inbound-over-Tor (a
+    // standalone resource key), works on Core as well as Knots, and round-trips
+    // through `to_ini`/`from_ini`. Untouched (`None`) stays byte-identical (I2).
+    #[test]
+    fn max_mempool_emission() {
+        let net = InternalBitcoindNetworkConfig {
+            rpc_port: 12345,
+            p2p_port: 12346,
+            prune: PRUNE_MINIMAL_MB,
+            rpc_auth: None,
+        };
+
+        // Untouched (None) on a plain Core config: no `maxmempool`, and the
+        // general section stays empty — byte-identical to today's output.
+        let mut off = InternalBitcoindConfig::for_flavor(NodeFlavor::Core);
+        off.networks.insert(Network::Bitcoin, net.clone());
+        assert_eq!(off.max_mempool_mb, None);
+        let off_ini = off.to_ini();
+        assert!(off_ini.general_section().get("maxmempool").is_none());
+        assert!(off_ini.general_section().is_empty());
+
+        // Set on a Core config with inbound-over-Tor OFF: still emitted (proves
+        // it is standalone, not Tor-gated, and not flavour-gated).
+        let mut on = InternalBitcoindConfig::for_flavor(NodeFlavor::Core);
+        on.max_mempool_mb = Some(MAX_MEMPOOL_SMALL_MB);
+        on.networks.insert(Network::Bitcoin, net.clone());
+        assert!(!on.inbound_tor);
+        let on_ini = on.to_ini();
+        assert_eq!(on_ini.general_section().get("maxmempool"), Some("100"));
+
+        // Round-trip preserves `Some`.
+        assert_eq!(
+            InternalBitcoindConfig::from_ini(&on_ini)
+                .expect("parse maxmempool conf")
+                .max_mempool_mb,
+            Some(100)
+        );
+
+        // Round-trip preserves `None` (the "Default 300 MB" choice).
+        assert_eq!(
+            InternalBitcoindConfig::from_ini(&off_ini)
+                .expect("parse default conf")
+                .max_mempool_mb,
+            None
+        );
+
+        // Coexists with the inbound-over-Tor keys and RDTS: every preference
+        // round-trips together.
+        let mut both =
+            InternalBitcoindConfig::for_flavor(NodeFlavor::Knots).with_inbound_tor_defaults();
+        both.max_mempool_mb = Some(300);
+        both.tor_control_port = Some(9151);
+        both.tor_socks_port = Some(9150);
+        both.networks.insert(Network::Bitcoin, net);
+        let both_ini = both.to_ini();
+        assert_eq!(both_ini.general_section().get("maxmempool"), Some("300"));
+        assert!(general_marker_inbound(&both_ini));
+        let parsed = InternalBitcoindConfig::from_ini(&both_ini).expect("parse combined conf");
+        assert_eq!(parsed.max_mempool_mb, Some(300));
+        assert!(parsed.inbound_tor);
+        assert!(parsed.enforce_rdts);
+        assert_eq!(parsed.max_upload_target_mb_day, Some(1000));
+    }
+
+    // The one-click "Small computer" preset: bitcoind's floor prune plus a
+    // 100 MB mempool cap, and it leaves `maxconnections` alone (Decision 3.6).
+    #[test]
+    fn small_computer_preset_values() {
+        let r = NodeResources::small_computer();
+        assert_eq!(r.prune_mb, PRUNE_MIN);
+        assert_eq!(r.prune_mb, 550);
+        assert_eq!(r.max_mempool_mb, Some(100));
+        // The estimated total is honest about the unprunable chainstate floor:
+        // 550 MB of block data rounds to ~1 GB, plus the ~14 GB overhead.
+        assert_eq!(estimated_total_disk_gb(PRUNE_MINIMAL_MB), 1 + CHAINSTATE_OVERHEAD_GB);
+        assert_eq!(estimated_total_disk_gb(PRUNE_DEFAULT), 15 + CHAINSTATE_OVERHEAD_GB);
     }
 
     // When both flavours are installed, the launched binary must match the
