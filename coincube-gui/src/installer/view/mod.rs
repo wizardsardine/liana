@@ -1780,9 +1780,11 @@ pub fn start_internal_bitcoind<'a>(
         let mut col = Column::new()
             .spacing(25)
             .push(node_flavor_selector(flavor, existing_flavor))
-            .push(button::transparent(None, adv_label).on_press(Message::InternalBitcoind(
-                message::InternalBitcoindMsg::ToggleAdvanced,
-            )));
+            .push(
+                button::transparent(None, adv_label).on_press(Message::InternalBitcoind(
+                    message::InternalBitcoindMsg::ToggleAdvanced,
+                )),
+            );
         if show_advanced {
             col = col.push(card::simple(node_resources_controls(
                 prune,

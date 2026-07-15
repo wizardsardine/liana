@@ -1129,7 +1129,9 @@ impl Step for InternalBitcoindStep {
                     let r = NodeResources::small_computer();
                     self.set_prune_field(r.prune_mb.to_string());
                     self.set_max_mempool_field(
-                        r.max_mempool_mb.map(|mb| mb.to_string()).unwrap_or_default(),
+                        r.max_mempool_mb
+                            .map(|mb| mb.to_string())
+                            .unwrap_or_default(),
                     );
                     // Reveal the controls if the preset was reachable some other
                     // way; harmless when already open.
@@ -1542,8 +1544,7 @@ mod tests {
         use std::fs;
 
         // Small-computer preset → 550 prune + 100 maxmempool.
-        let base =
-            std::env::temp_dir().join(format!("coincube-noderes-sc-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("coincube-noderes-sc-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         let datadir = CoincubeDirectory::new(base.clone());
         let mut step = InternalBitcoindStep::new(&datadir);
@@ -1561,7 +1562,10 @@ mod tests {
         );
         assert_eq!(conf.max_mempool_mb, Some(100));
         // Emitted general section carries the standalone maxmempool key.
-        assert_eq!(conf.to_ini().general_section().get("maxmempool"), Some("100"));
+        assert_eq!(
+            conf.to_ini().general_section().get("maxmempool"),
+            Some("100")
+        );
         let _ = fs::remove_dir_all(&base);
 
         // Untouched default path → 15000 prune, no maxmempool key.

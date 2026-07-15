@@ -1805,8 +1805,14 @@ mod tests {
         assert_eq!(r.max_mempool_mb, Some(100));
         // The estimated total is honest about the unprunable chainstate floor:
         // 550 MB of block data rounds to ~1 GB, plus the ~14 GB overhead.
-        assert_eq!(estimated_total_disk_gb(PRUNE_MINIMAL_MB), 1 + CHAINSTATE_OVERHEAD_GB);
-        assert_eq!(estimated_total_disk_gb(PRUNE_DEFAULT), 15 + CHAINSTATE_OVERHEAD_GB);
+        assert_eq!(
+            estimated_total_disk_gb(PRUNE_MINIMAL_MB),
+            1 + CHAINSTATE_OVERHEAD_GB
+        );
+        assert_eq!(
+            estimated_total_disk_gb(PRUNE_DEFAULT),
+            15 + CHAINSTATE_OVERHEAD_GB
+        );
     }
 
     // When both flavours are installed, the launched binary must match the
