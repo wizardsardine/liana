@@ -668,8 +668,15 @@ pub struct PrepareSendOk {
     /// *destination* asset (USDC/USDT base units), not sats, so reporting them
     /// through sats-typed fields would misprice the send by orders of
     /// magnitude. Everything asset-denominated lives here instead.
+    ///
+    /// **Boxed on purpose.** A `CrossChainQuote` is large and `None` on every
+    /// ordinary send (Lightning, on-chain, Spark) — which is the overwhelming
+    /// majority. Inlining it made `PrepareSendOk` the fat variant of
+    /// `OkPayload`, pushing `ResponseResult` past clippy's `large_enum_variant`
+    /// threshold and bloating every small response. The box keeps the common
+    /// path pointer-sized and only allocates when a quote is actually present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cross_chain: Option<CrossChainQuote>,
+    pub cross_chain: Option<Box<CrossChainQuote>>,
 }
 
 /// Result of a successful [`Method::SendPayment`].

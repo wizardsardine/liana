@@ -196,7 +196,8 @@ impl SparkSend {
     /// The live cross-chain quote, if the panel is showing one.
     pub fn cross_chain_quote(&self) -> Option<&coincube_spark_protocol::CrossChainQuote> {
         match &self.phase {
-            SparkSendPhase::Prepared(ok) => ok.cross_chain.as_ref(),
+            // `as_deref` peels the `Box`, so callers still see `&CrossChainQuote`.
+            SparkSendPhase::Prepared(ok) => ok.cross_chain.as_deref(),
             _ => None,
         }
     }
@@ -612,7 +613,7 @@ impl State for SparkSend {
                 let handle = prepare.handle.clone();
                 let policy = prepare
                     .cross_chain
-                    .as_ref()
+                    .as_deref()
                     .map(cross_chain::RetryPolicy::for_quote);
 
                 // Mint the idempotency key once per send, and hold onto it: a
@@ -922,14 +923,14 @@ mod tests {
             amount_sat: 1_000,
             fee_sat: 10,
             method: "CrossChainAddress".to_string(),
-            cross_chain: Some(coincube_spark_protocol::CrossChainQuote {
+            cross_chain: Some(Box::new(coincube_spark_protocol::CrossChainQuote {
                 route: route(),
                 estimated_out: 1_000_000,
                 fee_amount: 1_000,
                 source_transfer_fee_sats: 10,
                 expires_at: expires_at.to_string(),
                 retry_safe: true,
-            }),
+            })),
         }
     }
 

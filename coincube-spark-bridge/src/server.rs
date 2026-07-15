@@ -728,149 +728,6 @@ async fn parse_cross_chain_input(sdk: &SdkHandle, input: &str) -> Option<CrossCh
     }
 }
 
-#[cfg(test)]
-mod cross_chain_tests {
-    use super::*;
-    use breez_sdk_spark::CrossChainProvider;
-
-    fn route(provider: CrossChainProvider, sources: Vec<SourceAsset>) -> CrossChainRoutePair {
-        CrossChainRoutePair {
-            provider,
-            chain: "base".to_string(),
-            chain_id: Some("8453".to_string()),
-            asset: "USDC".to_string(),
-            contract_address: Some("0xabc".to_string()),
-            decimals: 6,
-            exact_out_eligible: true,
-            supported_sources: sources,
-        }
-    }
-
-    #[test]
-    fn address_families_map_to_stable_wire_strings() {
-        // The gui branches on these strings and shows them to the user; they
-        // are wire contract, not debug output.
-        assert_eq!(family_str(CrossChainAddressFamily::Evm), "evm");
-        assert_eq!(family_str(CrossChainAddressFamily::Solana), "solana");
-        assert_eq!(family_str(CrossChainAddressFamily::Tron), "tron");
-    }
-
-    #[test]
-    fn a_btc_fundable_route_is_offered_and_marked_retry_safe() {
-        let r = route(CrossChainProvider::Orchestra, vec![SourceAsset::Bitcoin]);
-        assert!(route_accepts_btc(&r));
-        assert!(route_is_retry_safe(&r));
-        let wire = sdk_route_to_protocol(&r);
-        assert_eq!(wire.provider, "orchestra");
-        assert_eq!(wire.asset, "USDC");
-        assert_eq!(wire.decimals, 6);
-        assert!(wire.btc_source_supported);
-    }
-
-    #[test]
-    fn boltz_routes_map_to_their_own_provider_string() {
-        let r = route(CrossChainProvider::Boltz, vec![SourceAsset::Bitcoin]);
-        assert_eq!(sdk_route_to_protocol(&r).provider, "boltz");
-    }
-
-    #[test]
-    fn a_token_only_route_is_neither_offered_nor_retry_safe() {
-        // v1 funds every send from BTC. A token-only route can't be prepared,
-        // and — critically — a token source leg has no idempotency hook, so it
-        // must never be reported to the gui as safe to blind-retry.
-        let r = route(
-            CrossChainProvider::Orchestra,
-            vec![SourceAsset::Token {
-                token_identifier: "btkn1xyz".to_string(),
-            }],
-        );
-        assert!(!route_accepts_btc(&r));
-        assert!(!route_is_retry_safe(&r));
-        assert!(!sdk_route_to_protocol(&r).btc_source_supported);
-    }
-
-    fn protocol_address(
-        contract: Option<&str>,
-        chain_id: Option<u64>,
-    ) -> coincube_spark_protocol::CrossChainAddress {
-        coincube_spark_protocol::CrossChainAddress {
-            address: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F".to_string(),
-            family: "evm".to_string(),
-            contract_address: contract.map(str::to_string),
-            chain_id,
-            amount: Some(1_000_000),
-        }
-    }
-
-    #[test]
-    fn address_families_survive_a_round_trip_through_the_wire() {
-        for family in [
-            CrossChainAddressFamily::Evm,
-            CrossChainAddressFamily::Solana,
-            CrossChainAddressFamily::Tron,
-        ] {
-            assert_eq!(family_from_str(family_str(family)), Some(family));
-        }
-    }
-
-    #[test]
-    fn an_unknown_family_is_refused_rather_than_guessed() {
-        // The gui only ever echoes back a family we emitted. An unknown one
-        // means the wire contract drifted — guessing a chain for a money
-        // transfer is how funds end up on the wrong network.
-        assert_eq!(family_from_str("bitcoin"), None);
-        assert_eq!(family_from_str(""), None);
-        assert_eq!(family_from_str("EVM"), None);
-    }
-
-    /// The point of round-tripping the whole `CrossChainAddress`: a URI
-    /// destination carries a contract and chain id that a bare address does
-    /// not. Re-parsing the address string on the prepare side would drop them,
-    /// and the route would then be re-resolved against a *broader* destination
-    /// than the one the user was offered a choice from.
-    #[test]
-    fn uri_only_details_survive_into_the_sdk_filter() {
-        let details = details_from_protocol(&protocol_address(Some("0xA0b8991c"), Some(8453)))
-            .expect("known family");
-        assert_eq!(details.contract_address.as_deref(), Some("0xA0b8991c"));
-        assert_eq!(details.chain_id, Some(8453));
-        assert_eq!(details.address_family, CrossChainAddressFamily::Evm);
-        assert_eq!(
-            details.address,
-            "0x71C7656EC7ab88b098defB751B7401B5f6d8976F"
-        );
-    }
-
-    #[test]
-    fn a_bare_address_reconstructs_without_inventing_details() {
-        let details = details_from_protocol(&protocol_address(None, None)).expect("known family");
-        assert_eq!(details.contract_address, None);
-        assert_eq!(details.chain_id, None);
-    }
-
-    #[test]
-    fn a_destination_with_an_unknown_family_reconstructs_to_nothing() {
-        let mut bad = protocol_address(None, None);
-        bad.family = "dogecoin".to_string();
-        assert!(details_from_protocol(&bad).is_none());
-    }
-
-    #[test]
-    fn a_route_accepting_both_sources_is_offered_via_its_btc_leg() {
-        let r = route(
-            CrossChainProvider::Orchestra,
-            vec![
-                SourceAsset::Token {
-                    token_identifier: "btkn1xyz".to_string(),
-                },
-                SourceAsset::Bitcoin,
-            ],
-        );
-        assert!(route_accepts_btc(&r));
-        assert!(route_is_retry_safe(&r));
-    }
-}
-
 async fn handle_get_cross_chain_routes(
     id: u64,
     params: coincube_spark_protocol::GetCrossChainRoutesParams,
@@ -1068,7 +925,7 @@ async fn handle_prepare_cross_chain(
                     amount_sat,
                     fee_sat,
                     method: "CrossChainAddress".to_string(),
-                    cross_chain: Some(quote),
+                    cross_chain: Some(Box::new(quote)),
                 }),
             )
         }
@@ -1841,5 +1698,148 @@ async fn sweep_expired_prepares(state: &Arc<ServerState>) {
             evicted_regular,
             evicted_lnurl
         );
+    }
+}
+
+#[cfg(test)]
+mod cross_chain_tests {
+    use super::*;
+    use breez_sdk_spark::CrossChainProvider;
+
+    fn route(provider: CrossChainProvider, sources: Vec<SourceAsset>) -> CrossChainRoutePair {
+        CrossChainRoutePair {
+            provider,
+            chain: "base".to_string(),
+            chain_id: Some("8453".to_string()),
+            asset: "USDC".to_string(),
+            contract_address: Some("0xabc".to_string()),
+            decimals: 6,
+            exact_out_eligible: true,
+            supported_sources: sources,
+        }
+    }
+
+    #[test]
+    fn address_families_map_to_stable_wire_strings() {
+        // The gui branches on these strings and shows them to the user; they
+        // are wire contract, not debug output.
+        assert_eq!(family_str(CrossChainAddressFamily::Evm), "evm");
+        assert_eq!(family_str(CrossChainAddressFamily::Solana), "solana");
+        assert_eq!(family_str(CrossChainAddressFamily::Tron), "tron");
+    }
+
+    #[test]
+    fn a_btc_fundable_route_is_offered_and_marked_retry_safe() {
+        let r = route(CrossChainProvider::Orchestra, vec![SourceAsset::Bitcoin]);
+        assert!(route_accepts_btc(&r));
+        assert!(route_is_retry_safe(&r));
+        let wire = sdk_route_to_protocol(&r);
+        assert_eq!(wire.provider, "orchestra");
+        assert_eq!(wire.asset, "USDC");
+        assert_eq!(wire.decimals, 6);
+        assert!(wire.btc_source_supported);
+    }
+
+    #[test]
+    fn boltz_routes_map_to_their_own_provider_string() {
+        let r = route(CrossChainProvider::Boltz, vec![SourceAsset::Bitcoin]);
+        assert_eq!(sdk_route_to_protocol(&r).provider, "boltz");
+    }
+
+    #[test]
+    fn a_token_only_route_is_neither_offered_nor_retry_safe() {
+        // v1 funds every send from BTC. A token-only route can't be prepared,
+        // and — critically — a token source leg has no idempotency hook, so it
+        // must never be reported to the gui as safe to blind-retry.
+        let r = route(
+            CrossChainProvider::Orchestra,
+            vec![SourceAsset::Token {
+                token_identifier: "btkn1xyz".to_string(),
+            }],
+        );
+        assert!(!route_accepts_btc(&r));
+        assert!(!route_is_retry_safe(&r));
+        assert!(!sdk_route_to_protocol(&r).btc_source_supported);
+    }
+
+    fn protocol_address(
+        contract: Option<&str>,
+        chain_id: Option<u64>,
+    ) -> coincube_spark_protocol::CrossChainAddress {
+        coincube_spark_protocol::CrossChainAddress {
+            address: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F".to_string(),
+            family: "evm".to_string(),
+            contract_address: contract.map(str::to_string),
+            chain_id,
+            amount: Some(1_000_000),
+        }
+    }
+
+    #[test]
+    fn address_families_survive_a_round_trip_through_the_wire() {
+        for family in [
+            CrossChainAddressFamily::Evm,
+            CrossChainAddressFamily::Solana,
+            CrossChainAddressFamily::Tron,
+        ] {
+            assert_eq!(family_from_str(family_str(family)), Some(family));
+        }
+    }
+
+    #[test]
+    fn an_unknown_family_is_refused_rather_than_guessed() {
+        // The gui only ever echoes back a family we emitted. An unknown one
+        // means the wire contract drifted — guessing a chain for a money
+        // transfer is how funds end up on the wrong network.
+        assert_eq!(family_from_str("bitcoin"), None);
+        assert_eq!(family_from_str(""), None);
+        assert_eq!(family_from_str("EVM"), None);
+    }
+
+    /// The point of round-tripping the whole `CrossChainAddress`: a URI
+    /// destination carries a contract and chain id that a bare address does
+    /// not. Re-parsing the address string on the prepare side would drop them,
+    /// and the route would then be re-resolved against a *broader* destination
+    /// than the one the user was offered a choice from.
+    #[test]
+    fn uri_only_details_survive_into_the_sdk_filter() {
+        let details = details_from_protocol(&protocol_address(Some("0xA0b8991c"), Some(8453)))
+            .expect("known family");
+        assert_eq!(details.contract_address.as_deref(), Some("0xA0b8991c"));
+        assert_eq!(details.chain_id, Some(8453));
+        assert_eq!(details.address_family, CrossChainAddressFamily::Evm);
+        assert_eq!(
+            details.address,
+            "0x71C7656EC7ab88b098defB751B7401B5f6d8976F"
+        );
+    }
+
+    #[test]
+    fn a_bare_address_reconstructs_without_inventing_details() {
+        let details = details_from_protocol(&protocol_address(None, None)).expect("known family");
+        assert_eq!(details.contract_address, None);
+        assert_eq!(details.chain_id, None);
+    }
+
+    #[test]
+    fn a_destination_with_an_unknown_family_reconstructs_to_nothing() {
+        let mut bad = protocol_address(None, None);
+        bad.family = "dogecoin".to_string();
+        assert!(details_from_protocol(&bad).is_none());
+    }
+
+    #[test]
+    fn a_route_accepting_both_sources_is_offered_via_its_btc_leg() {
+        let r = route(
+            CrossChainProvider::Orchestra,
+            vec![
+                SourceAsset::Token {
+                    token_identifier: "btkn1xyz".to_string(),
+                },
+                SourceAsset::Bitcoin,
+            ],
+        );
+        assert!(route_accepts_btc(&r));
+        assert!(route_is_retry_safe(&r));
     }
 }
