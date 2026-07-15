@@ -24,7 +24,7 @@ use breez_sdk_spark::{
     CheckLightningAddressRequest, ClaimDepositRequest, CrossChainAddressDetails,
     CrossChainAddressFamily, CrossChainRouteFilter, CrossChainRoutePair, EventListener,
     GetInfoRequest, InputType, LightningAddressInfo as SdkLightningAddressInfo,
-    ListPaymentsRequest, ListUnclaimedDepositsRequest, LnurlPayRequest, PaymentDetails,
+    ListPaymentsRequest, ListUnclaimedDepositsRequest, LnurlPayRequest, MaxFee, PaymentDetails,
     PaymentRequest, PrepareLnurlPayRequest, PrepareLnurlPayResponse, PrepareSendPaymentRequest,
     PrepareSendPaymentResponse, ReceivePaymentMethod, ReceivePaymentRequest,
     RegisterLightningAddressRequest, SdkEvent, SendPaymentMethod, SendPaymentRequest, SourceAsset,
@@ -1415,10 +1415,16 @@ async fn handle_claim_deposit(
     let request = ClaimDepositRequest {
         txid: params.txid,
         vout: params.vout,
-        // Phase 4f uses the SDK default fee policy (None → SDK picks
-        // a network-recommended rate). A user-facing fee tier picker
-        // for claims is a Phase 4g+ polish item.
-        max_fee: None,
+        // Cap the claim fee at the network's fastest recommended rate plus a
+        // small leeway. NOT `None`: the SDK defaults that to a 1 sat/vbyte cap
+        // (`max_deposit_claim_fee`), which fails with `MaxDepositClaimFeeExceeded`
+        // the moment the network needs more than 1 sat/vbyte — stranding the
+        // deposit until fees happen to drop that low. `NetworkRecommended`
+        // adapts to current conditions; the SDK still pays only the rate
+        // required to confirm, this is just the ceiling.
+        max_fee: Some(MaxFee::NetworkRecommended {
+            leeway_sat_per_vbyte: 5,
+        }),
     };
 
     match sdk.sdk.claim_deposit(request).await {
