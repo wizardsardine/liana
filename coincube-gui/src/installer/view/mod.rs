@@ -1204,8 +1204,10 @@ where
         PRUNE_DEFAULT, PRUNE_MINIMAL_MB,
     };
 
-    // Current values back the honest disk/memory estimate. A blank/invalid field
-    // falls back to the default so the line is always meaningful.
+    // Current values back the honest disk/memory estimate, updating live as the
+    // user types. A blank or unparseable field falls back to the default so the
+    // line is always meaningful; a parseable-but-below-floor value (e.g. 100) is
+    // shown as-is here and caught by validation on apply.
     let prune_mb = prune.value.parse::<u32>().unwrap_or(PRUNE_DEFAULT);
     let mem_mb = if max_mempool.value.is_empty() {
         MAX_MEMPOOL_DEFAULT_MB
@@ -1804,9 +1806,11 @@ pub fn start_internal_bitcoind<'a>(
         let mut col = Column::new()
             .spacing(25)
             .push(node_flavor_selector(flavor, existing_flavor))
-            .push(button::transparent(None, adv_label).on_press(Message::InternalBitcoind(
-                message::InternalBitcoindMsg::ToggleAdvanced,
-            )));
+            .push(
+                button::transparent(None, adv_label).on_press(Message::InternalBitcoind(
+                    message::InternalBitcoindMsg::ToggleAdvanced,
+                )),
+            );
         if show_advanced {
             col = col.push(card::simple(node_resources_controls(
                 prune,

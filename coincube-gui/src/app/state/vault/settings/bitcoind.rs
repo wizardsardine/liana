@@ -186,10 +186,15 @@ impl BitcoindSettingsState {
     /// node-resources editor fields. Nothing is written until the user hits
     /// "Restart node to apply".
     fn apply_node_resource_preset(&mut self, r: NodeResources) {
-        crate::node::bitcoind::set_prune_form_value(&mut self.node_prune_mb, r.prune_mb.to_string());
+        crate::node::bitcoind::set_prune_form_value(
+            &mut self.node_prune_mb,
+            r.prune_mb.to_string(),
+        );
         crate::node::bitcoind::set_max_mempool_form_value(
             &mut self.node_max_mempool_mb,
-            r.max_mempool_mb.map(|mb| mb.to_string()).unwrap_or_default(),
+            r.max_mempool_mb
+                .map(|mb| mb.to_string())
+                .unwrap_or_default(),
         );
     }
 
@@ -1748,8 +1753,8 @@ mod tests {
     #[test]
     fn node_resources_apply_preserves_ports_and_rpcauth() {
         use std::fs;
-        let base = std::env::temp_dir()
-            .join(format!("coincube-settings-noderes-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("coincube-settings-noderes-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         let datadir = CoincubeDirectory::new(base.clone());
         let config_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(&datadir));
@@ -1812,8 +1817,10 @@ mod tests {
     #[test]
     fn node_resources_default_mempool_clears_key() {
         use std::fs;
-        let base = std::env::temp_dir()
-            .join(format!("coincube-settings-noderes-def-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!(
+            "coincube-settings-noderes-def-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&base);
         let datadir = CoincubeDirectory::new(base.clone());
         let config_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(&datadir));

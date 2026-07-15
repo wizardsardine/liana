@@ -593,9 +593,10 @@ impl NodeResources {
     }
 
     /// The one-click "Regular computer" preset: the out-of-the-box profile —
-    /// bitcoind's 15 GB default prune and default 300 MB mempool (key omitted).
-    /// The inverse of [`Self::small_computer`], and the middle of the
-    /// machine-profile row a future "Miner" preset joins.
+    /// the managed-node default 15 GB prune target ([`PRUNE_DEFAULT`]) and
+    /// bitcoind's own default 300 MB mempool (key omitted). The inverse of
+    /// [`Self::small_computer`], and the middle of the machine-profile row a
+    /// future "Miner" preset joins.
     pub fn regular_computer() -> Self {
         Self {
             prune_mb: PRUNE_DEFAULT,
@@ -1816,8 +1817,14 @@ mod tests {
         assert_eq!(r.max_mempool_mb, Some(100));
         // The estimated total is honest about the unprunable chainstate floor:
         // 550 MB of block data rounds to ~1 GB, plus the ~14 GB overhead.
-        assert_eq!(estimated_total_disk_gb(PRUNE_MINIMAL_MB), 1 + CHAINSTATE_OVERHEAD_GB);
-        assert_eq!(estimated_total_disk_gb(PRUNE_DEFAULT), 15 + CHAINSTATE_OVERHEAD_GB);
+        assert_eq!(
+            estimated_total_disk_gb(PRUNE_MINIMAL_MB),
+            1 + CHAINSTATE_OVERHEAD_GB
+        );
+        assert_eq!(
+            estimated_total_disk_gb(PRUNE_DEFAULT),
+            15 + CHAINSTATE_OVERHEAD_GB
+        );
 
         // "Regular computer" is the out-of-the-box default profile: 15 GB prune
         // and the key-omitted (300 MB) mempool default — the inverse of Small.
