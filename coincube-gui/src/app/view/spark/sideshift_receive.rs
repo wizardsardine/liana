@@ -9,7 +9,7 @@ use coincube_ui::{
     color,
     component::{button, text::*},
     icon::{clipboard_icon, previous_icon},
-    image::usdt_network_logo,
+    image::{network_logo, usdt_network_logo},
     theme,
     widget::Element,
 };
@@ -30,6 +30,30 @@ pub fn spark_sideshift_receive_view(flow: &SparkSideshiftReceiveFlow) -> Element
         }
         SparkShiftPhase::Active => active_shift_view(flow),
         SparkShiftPhase::Failed => error_view(flow.error()),
+    }
+}
+
+/// The logo for a deposit option, sized to `size`.
+///
+/// Only USDt has a coin SVG in the asset library, so it gets the composite
+/// (USDt coin badged with its network). Every other asset — USDC, ETH, SOL,
+/// TRX, BNB — would fall back to a *wrong* coin logo (BTC via `asset_logo`, or
+/// USDt via `usdt_network_logo`), so those show the plain network logo instead.
+/// The row's label carries the asset name, so the network logo is accurate, not
+/// merely least-wrong. Showing a USDt or BTC coin next to "Ether" in a
+/// funds-critical picker is the kind of thing that gets money sent to the wrong
+/// place.
+fn deposit_option_logo<'a>(
+    option: &crate::services::sideshift::DepositOption,
+    size: f32,
+) -> Element<'a, Msg> {
+    if option.coin == "usdt" {
+        usdt_network_logo(option.network.network_slug(), size)
+    } else {
+        network_logo(option.network.network_slug())
+            .width(Length::Fixed(size))
+            .height(Length::Fixed(size))
+            .into()
     }
 }
 
@@ -65,7 +89,7 @@ fn setup_view(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
         let row = Row::new()
             .spacing(12)
             .align_y(Alignment::Center)
-            .push(usdt_network_logo(option.network.network_slug(), 32.0))
+            .push(deposit_option_logo(option, 32.0))
             .push(text(option.label).size(P1_SIZE));
 
         let card = Container::new(row)
@@ -172,7 +196,7 @@ fn active_shift_view(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
     let title = Column::new()
         .spacing(8)
         .align_x(Alignment::Center)
-        .push(usdt_network_logo(selected.network.network_slug(), 48.0))
+        .push(deposit_option_logo(&selected, 48.0))
         .push(h3(format!("Send {}", selected.label)))
         .push(
             text("It arrives as bitcoin in your Spark wallet.")
