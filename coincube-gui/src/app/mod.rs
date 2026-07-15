@@ -3874,6 +3874,26 @@ impl App {
                     .update(self.daemon.clone(), &self.cache, msg);
             }
 
+            Message::ShowReceivedCelebration {
+                context,
+                amount_sat,
+            } => {
+                // Drive the same global overlay the Liquid `PaymentSucceeded`
+                // handler uses, but for a Spark deposit that just claimed (the
+                // Spark bridge has no distinct "payment received" event for a
+                // claim — only `DepositsChanged` — so the celebration is fired
+                // explicitly from the auto-claim watcher in `GlobalHome`).
+                use coincube_ui::component::amount::DisplayAmount;
+                self.received_celebration_amount = bitcoin::Amount::from_sat(amount_sat)
+                    .to_formatted_string_with_unit(self.cache.bitcoin_unit);
+                self.received_celebration_quote =
+                    coincube_ui::component::quote_display::random_quote(&context);
+                self.received_celebration_image =
+                    coincube_ui::component::quote_display::image_handle_for_context(&context);
+                self.received_celebration_context = context;
+                self.show_received_celebration = true;
+            }
+
             Message::SparkEvent(client_event) => {
                 use coincube_spark_protocol::Event as SparkEvent;
                 let crate::app::breez_spark::SparkClientEvent(event) = client_event;

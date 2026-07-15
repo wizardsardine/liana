@@ -159,6 +159,13 @@ pub enum Message {
     /// app-level message doesn't depend on `coincube_spark_protocol`
     /// directly.
     SparkEvent(crate::app::breez_spark::SparkClientEvent),
+    /// Show the global "payment received" celebration overlay for an incoming
+    /// deposit that just landed in the spendable balance — e.g. a claimed
+    /// SideShift-swap deposit. Emitted from `GlobalHome` on auto-claim success;
+    /// handled inline in `App::update` (the only place that owns the overlay
+    /// state). `context` picks the Kage image (`"spark-receive"`); `amount_sat`
+    /// is formatted for display against the user's bitcoin unit.
+    ShowReceivedCelebration { context: String, amount_sat: u64 },
     SettingsSaved,
     SettingsSaveFailed(Error),
     /// Store the Bitcoind handle produced by configure_and_start_internal_bitcoind so
