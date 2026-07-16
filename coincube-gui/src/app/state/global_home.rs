@@ -288,6 +288,13 @@ pub struct GlobalHome {
     /// still in-flight would clear the badge prematurely. Reset alongside
     /// `pending_spark_incoming` so each new transfer starts fresh.
     pending_spark_deposit_seen: bool,
+    /// True when the pending incoming Spark deposit came from a SideShift swap
+    /// rather than a Vault/Liquid→Spark transfer. Swaps reuse the very same
+    /// auto-claim watcher; this flag is what makes the successful claim
+    /// additionally fire the global "bitcoin received" celebration. Set only by
+    /// `SwapSettledAwaitingArrival`, and reset wherever `pending_spark_incoming`
+    /// is cleared or replaced so it can never leak onto a transfer's claim.
+    pending_spark_incoming_is_swap: bool,
     /// Prepared Spark send handle, populated on step 1→2 for Spark-sourced
     /// transfers (SparkToVault, SparkToLiquid). Consumed by `ConfirmSparkSend`.
     spark_send_handle: Option<String>,
@@ -362,6 +369,7 @@ impl GlobalHome {
             pending_spark_incoming: None,
             pending_spark_incoming_swap_id: None,
             pending_spark_deposit_seen: false,
+            pending_spark_incoming_is_swap: false,
             spark_send_handle: None,
             spark_send_fee_sat: None,
             auto_claiming_spark_deposit: None,
@@ -427,6 +435,7 @@ impl GlobalHome {
             pending_spark_incoming: None,
             pending_spark_incoming_swap_id: None,
             pending_spark_deposit_seen: false,
+            pending_spark_incoming_is_swap: false,
             spark_send_handle: None,
             spark_send_fee_sat: None,
             auto_claiming_spark_deposit: None,
@@ -492,9 +501,13 @@ impl State for GlobalHome {
         // with coins on every `UpdateDaemonCache`, so any non-zero
         // value is a reliable "daemon has spoken" signal.
         let has_spark = self.spark_backend.is_some();
+        let has_liquid = cache.liquid_gate.show();
         let spark_pending = has_spark && !self.spark_balance_loaded;
-        let liquid_pending = !self.liquid_balance_loaded;
-        let usdt_pending = !self.usdt_balance_loaded;
+        // A gated-off Liquid wallet never loads, so it must not gate the Total
+        // Balance placeholder either — otherwise the aggregate would spin
+        // forever on a cube that has no Liquid at all.
+        let liquid_pending = has_liquid && !self.liquid_balance_loaded;
+        let usdt_pending = has_liquid && !self.usdt_balance_loaded;
         let vault_pending = cache.has_vault && cache.blockheight() <= 0;
         let total_balance_loading =
             spark_pending || liquid_pending || usdt_pending || vault_pending;
@@ -518,6 +531,7 @@ impl State for GlobalHome {
                 display_mode: cache.display_mode,
                 has_vault: cache.has_vault,
                 has_spark,
+                has_liquid,
                 current_view: self.current_view,
                 transfer_direction: self.transfer_direction,
                 transfer_from: self.transfer_from,
@@ -644,34 +658,6 @@ impl State for GlobalHome {
                         btc,
                         stable_balance,
                     } => {
-                        // Fold any USDB holding into the displayed
-                        // Spark balance using the current BTC/USD
-                        // reference price. Stable Balance auto-sweeps
-                        // the BTC balance into USDB, so without this
-                        // the Home card would read 0 even though the
-                        // wallet has spendable value (the SDK
-                        // converts back to sats on send).
-                        //
-                        // Fallback: `cache.btc_usd_price` is only set
-                        // when the user's fiat preference is USD. For
-                        // EUR/GBP/etc. fall back to the user-fiat
-                        // converter price so the holding still shows
-                        // up (with a small FX-spread approximation)
-                        // instead of collapsing to zero.
-                        let reference_price = cache.btc_usd_price.or_else(|| {
-                            let converter: Option<view::FiatAmountConverter> =
-                                cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
-                            converter.map(|c| c.price_per_btc())
-                        });
-                        let usdb_as_sats = stable_balance
-                            .map(|sb| {
-                                crate::app::breez_spark::assets::stable_token_as_sats(
-                                    sb.balance,
-                                    sb.decimals,
-                                    reference_price,
-                                )
-                            })
-                            .unwrap_or(0);
                         self.spark_balance_loading = false;
                         // The in-flight fetch was issued before
                         // `Synced` arrived — its value reflects the
@@ -682,8 +668,16 @@ impl State for GlobalHome {
                             self.spark_pending_resync = false;
                             return self.load_spark_balance().unwrap_or_else(Task::none);
                         }
+                        // Fold any Stable Balance (USDB) holding into the shown
+                        // Spark balance — auto-sweep means a BTC-only reading
+                        // would understate a funded wallet. Shared with the
+                        // Send/Receive cards via `unified_spark_balance_sats`.
                         self.spark_balance =
-                            Amount::from_sat(btc.to_sat().saturating_add(usdb_as_sats));
+                            Amount::from_sat(crate::app::state::spark::unified_spark_balance_sats(
+                                btc.to_sat(),
+                                stable_balance.as_ref(),
+                                cache,
+                            ));
                         self.spark_balance_received = true;
                         // Trust the response once the bridge has
                         // confirmed at least one `Synced` event — until
@@ -1152,7 +1146,7 @@ impl State for GlobalHome {
                         let amount_sats = transfer_amount.to_sat();
                         let to_kind = direction.to_kind();
                         Task::perform(
-                            async move { spark.send_payment(handle).await },
+                            async move { spark.send_payment(handle, None).await },
                             move |result| match result {
                                 Ok(_response) => Message::View(view::Message::Home(
                                     HomeMessage::TransferBroadcast {
@@ -1225,6 +1219,9 @@ impl State for GlobalHome {
                                 // Fresh transfer — we haven't observed the new
                                 // deposit in Spark's unclaimed list yet.
                                 self.pending_spark_deposit_seen = false;
+                                // A transfer, not a swap: clear any stale swap flag
+                                // so it can't fire a celebration on this claim.
+                                self.pending_spark_incoming_is_swap = false;
                                 // Drop any in-flight auto-claim tracker from a
                                 // prior transfer: its result would otherwise
                                 // land with the new pending set and stamp this
@@ -1693,6 +1690,40 @@ impl State for GlobalHome {
                         self.pending_usdt_receive_sats = usdt_receive_sats;
                         Task::none()
                     }
+                    HomeMessage::SwapSettledAwaitingArrival { amount_sat } => {
+                        // A SideShift swap just settled: bitcoin is en route to the
+                        // Spark wallet's static on-chain deposit address.
+                        // Structurally that's identical to a Vault→Spark transfer
+                        // arrival — an on-chain deposit that matures and must be
+                        // claimed — so register it exactly like one and let the
+                        // watcher below auto-claim it. `is_swap` makes the eventual
+                        // claim additionally fire the "bitcoin received" celebration.
+                        //
+                        // Don't clobber an in-flight transfer: if we're already
+                        // tracking a pending incoming deposit, skip global tracking
+                        // (the swap stays claimable from the Receive panel's
+                        // pending-deposits card) rather than corrupting the
+                        // transfer's reconciliation.
+                        if self.pending_spark_incoming.is_some() {
+                            return Task::none();
+                        }
+                        self.pending_spark_incoming = Some(PendingTransfer {
+                            amount: Amount::from_sat(amount_sat),
+                            stage: TransferStage::PendingDeposit,
+                        });
+                        // No Breez swap id — swaps use the generic deposit-based
+                        // path (same as Vault→Spark), not the peg-out correlation.
+                        self.pending_spark_incoming_swap_id = None;
+                        self.pending_spark_deposit_seen = false;
+                        self.pending_spark_incoming_is_swap = true;
+                        self.auto_claiming_spark_deposit = None;
+                        // Reconcile immediately — the deposit may already be in the
+                        // unclaimed list (it can land before we register here), and
+                        // otherwise we'd wait for the next bridge event.
+                        Task::done(Message::View(view::Message::Home(
+                            HomeMessage::SparkDepositsChanged,
+                        )))
+                    }
                     HomeMessage::SparkDepositsChanged => {
                         // The Spark bridge signalled a change to the unclaimed-deposit
                         // list — could be a new deposit appearing, one maturing, or one
@@ -1743,6 +1774,7 @@ impl State for GlobalHome {
                             self.pending_spark_incoming = None;
                             self.pending_spark_incoming_swap_id = None;
                             self.pending_spark_deposit_seen = false;
+                            self.pending_spark_incoming_is_swap = false;
                             self.auto_claiming_spark_deposit = None;
                             return Task::none();
                         }
@@ -1810,10 +1842,24 @@ impl State for GlobalHome {
                         // the user can retry from the Receive panel.
                         self.auto_claiming_spark_deposit = None;
                         match result {
-                            Ok(_amount) => {
+                            Ok(amount) => {
+                                // Capture before the block below may clear it.
+                                let celebrate_swap = self.pending_spark_incoming_is_swap;
                                 if let Some(mut pending) = self.pending_spark_incoming {
                                     pending.stage = TransferStage::Completed;
                                     self.pending_spark_incoming = Some(pending);
+                                }
+                                if celebrate_swap {
+                                    // The swap's bitcoin has landed in the Spark
+                                    // wallet — fire the global "received" splash.
+                                    // Reset the flag first so the follow-up
+                                    // DepositsChanged (which clears
+                                    // pending_spark_incoming) can't re-fire it.
+                                    self.pending_spark_incoming_is_swap = false;
+                                    return Task::done(Message::ShowReceivedCelebration {
+                                        context: "spark-receive".to_string(),
+                                        amount_sat: amount,
+                                    });
                                 }
                                 Task::none()
                             }
@@ -1944,6 +1990,7 @@ impl State for GlobalHome {
                             self.pending_spark_incoming = None;
                             self.pending_spark_incoming_swap_id = None;
                             self.pending_spark_deposit_seen = false;
+                            self.pending_spark_incoming_is_swap = false;
                             return Task::done(Message::View(view::Message::ShowError(
                                 "Liquid to Spark transfer failed. Please retry.".to_string(),
                             )));
@@ -1998,6 +2045,7 @@ impl State for GlobalHome {
                             self.pending_spark_incoming = None;
                             self.pending_spark_incoming_swap_id = None;
                             self.pending_spark_deposit_seen = false;
+                            self.pending_spark_incoming_is_swap = false;
                         }
                         Task::none()
                     }

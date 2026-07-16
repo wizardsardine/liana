@@ -150,6 +150,7 @@ pub fn dashboard_with_info<'a, T: Into<Element<'a, Message>>>(
         network: cache.network,
         p2p_test_coordinator: cache.p2p_test_coordinator,
         marketplace_flags: cache.marketplace_flags,
+        liquid_gate: cache.liquid_gate,
         cube_name,
         lightning_address,
         avatar: avatar_handle,
@@ -164,9 +165,16 @@ pub fn dashboard_with_info<'a, T: Into<Element<'a, Message>>>(
             Container::new(
                 scrollable(row!(
                     Space::new().width(Length::FillPortion(1)),
-                    column!(Space::new().height(Length::Fixed(30.0)), content.into())
-                        .width(Length::FillPortion(8))
-                        .max_width(1500),
+                    column!(
+                        Space::new().height(Length::Fixed(30.0)),
+                        content.into(),
+                        // Symmetric bottom breathing room so the last element
+                        // of any screen doesn't sit flush against the viewport
+                        // edge when the content fills the height.
+                        Space::new().height(Length::Fixed(30.0)),
+                    )
+                    .width(Length::FillPortion(8))
+                    .max_width(1500),
                     Space::new().width(Length::FillPortion(1)),
                 ))
                 .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),

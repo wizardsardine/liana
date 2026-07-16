@@ -1,0 +1,336 @@
+//! Inline view for the Spark "receive from another network" (SideShift) flow.
+//!
+//! Rendered **below the Spark Receive two-card selector**, in place of the
+//! Bitcoin rail form — the THEY SEND card shows which asset was picked, so this
+//! body carries only what the swap adds: a refund-address field, a third-party
+//! disclosure, and the deposit address once a shift is live. Copy always says
+//! **bitcoin arrives**, never "receive USDT". No standalone title / asset
+//! picker / Back button — navigation happens via the cards + THEY SEND modal.
+
+use coincube_ui::{
+    color,
+    component::{button, text::*},
+    icon::clipboard_icon,
+    theme,
+    widget::Element,
+};
+use iced::{
+    widget::{qr_code, scrollable, Column, Container, Row, Space, TextInput},
+    Alignment, Length,
+};
+
+use crate::app::state::spark::esplora::DEPOSIT_MATURITY_CONFIRMATIONS;
+use crate::app::state::spark::sideshift_receive::{SparkShiftPhase, SparkSideshiftReceiveFlow};
+use crate::app::view::SparkSideshiftReceiveMessage as Msg;
+use crate::services::sideshift::{ShiftResponse, ShiftStatusKind};
+
+pub fn spark_sideshift_receive_view(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
+    match flow.phase() {
+        SparkShiftPhase::Setup => setup_body(flow),
+        SparkShiftPhase::FetchingAffiliate | SparkShiftPhase::CreatingShift => {
+            loading_body("Setting up your deposit address…")
+        }
+        SparkShiftPhase::Active => active_body(flow),
+        SparkShiftPhase::Failed => error_body(flow.error()),
+    }
+}
+
+// ── Setup: give a refund address, generate the deposit ──────────────────────
+
+fn setup_body(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
+    let selected = flow.selected();
+
+    // The refund address. Collected *before* any deposit address is shown,
+    // because a shift that fails or gets held has to have somewhere to send the
+    // money back to — and asking for it afterwards is useless.
+    let mut refund = Column::new()
+        .spacing(10)
+        .push(h4_bold("Refund address"))
+        .push(
+            text(format!(
+                "Your {} address. If the swap can't complete, your deposit is returned here — \
+                 on {}, not as bitcoin.",
+                selected.network.network_name(),
+                selected.network.network_name(),
+            ))
+            .size(P2_SIZE)
+            .style(theme::text::secondary),
+        )
+        .push(
+            TextInput::new(
+                &format!("Your {} address", selected.network.network_name()),
+                flow.refund_address(),
+            )
+            .on_input(Msg::RefundAddressEdited)
+            .padding([10, 14])
+            .size(P1_SIZE),
+        );
+    if let Some(err) = flow.refund_error() {
+        refund = refund.push(text(err).size(P2_SIZE).color(color::RED));
+    }
+    let refund_card = Container::new(refund)
+        .padding(16)
+        .width(Length::Fill)
+        .style(theme::card::simple);
+
+    // Master invariant 9: name the third party and the jurisdictional caveat.
+    // The user is handing funds to SideShift, not to us, and they should know
+    // that before they do it — not after something goes wrong.
+    let disclosure = Container::new(
+        text(format!(
+            "Conversion is performed by SideShift, a third-party service. It isn't available \
+             in all jurisdictions, and swaps may be held for review. Bitcoin arrives on-chain \
+             and is added to your wallet after about {DEPOSIT_MATURITY_CONFIRMATIONS} \
+             confirmations.",
+        ))
+        .size(P2_SIZE)
+        .style(theme::text::secondary),
+    )
+    .padding([8, 12])
+    .width(Length::Fill)
+    .style(theme::card::simple);
+
+    let generate_btn = if flow.is_loading() {
+        button::primary(None, "Generating…").width(Length::Fill)
+    } else {
+        button::primary(None, "Generate deposit address")
+            .on_press(Msg::Generate)
+            .width(Length::Fill)
+    };
+
+    let mut col = Column::new().spacing(20).push(refund_card).push(disclosure);
+    if let Some(err) = flow.error() {
+        col = col.push(
+            Container::new(text(err).size(P2_SIZE).color(color::RED))
+                .padding([8, 12])
+                .width(Length::Fill)
+                .style(theme::card::error),
+        );
+    }
+    col.push(generate_btn).into()
+}
+
+// ── Active shift: deposit address + status ──────────────────────────────────
+
+fn active_body(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
+    let Some(shift) = flow.shift() else {
+        return error_body(Some("Shift data missing."));
+    };
+    let selected = flow.selected();
+    let status = flow.shift_status();
+
+    // Sending the wrong asset or chain to this address loses it, and sending an
+    // amount outside SideShift's min/max gets it refunded rather than converted.
+    // Neither can be caught at input — the deposit is an external send — so both
+    // constraints are restated here, next to the address, where the quiet
+    // "Limits" row in the details card below is easy to miss.
+    let mut warning_lines = Column::new().spacing(2).align_x(Alignment::Center).push(
+        text(format!(
+            "Only send {} on {} ({})",
+            selected.coin.to_uppercase(),
+            selected.network.network_name(),
+            selected.network.standard_label(),
+        ))
+        .size(P2_SIZE),
+    );
+    if let (Some(min), Some(max)) = (&shift.deposit_min, &shift.deposit_max) {
+        warning_lines = warning_lines.push(
+            text(format!(
+                "Send between {min} and {max} {} — amounts outside this range are refunded.",
+                selected.coin.to_uppercase(),
+            ))
+            .size(P2_SIZE),
+        );
+    }
+    let warning_badge = Container::new(
+        Container::new(warning_lines)
+            .padding([6, 12])
+            .style(theme::pill::warning),
+    )
+    .center_x(Length::Fill);
+
+    let qr_section: Element<Msg> = if let Some(data) = flow.qr_data() {
+        Container::new(
+            Container::new(qr_code(data).cell_size(10))
+                .padding(20)
+                .style(theme::card::simple),
+        )
+        .center_x(Length::Fill)
+        .into()
+    } else {
+        Space::new().height(Length::Fixed(0.0)).into()
+    };
+
+    // The address is a ~100-char monospace string; bound the row to `Fill` and
+    // let it scroll horizontally so it stays inside the card and the copy button
+    // stays visible (see `liquid::receive` / `vault::receive`).
+    let address_row = Row::new()
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .push(
+            Container::new(
+                scrollable(
+                    Column::new()
+                        .push(Space::new().height(Length::Fixed(4.0)))
+                        .push(
+                            text(&shift.deposit_address)
+                                .size(P2_SIZE)
+                                .font(iced::Font::MONOSPACE),
+                        )
+                        .push(Space::new().height(Length::Fixed(4.0))),
+                )
+                .direction(scrollable::Direction::Horizontal(
+                    scrollable::Scrollbar::new().width(2).scroller_width(2),
+                )),
+            )
+            .padding([8, 12])
+            .style(theme::card::simple)
+            .width(Length::Fill),
+        )
+        .push(
+            iced::widget::button(clipboard_icon().size(16))
+                .on_press(Msg::Copy)
+                .style(theme::button::transparent_border),
+        );
+
+    let status_section: Element<Msg> = if let Some(status) = status {
+        let (label, style_color) = status_badge(status);
+        Column::new()
+            .spacing(8)
+            .align_x(Alignment::Center)
+            .width(Length::Fill)
+            .push(
+                Container::new(text(label).size(P2_SIZE).color(style_color))
+                    .padding([4, 10])
+                    .style(theme::pill::simple),
+            )
+            .push(
+                text(spark_shift_guidance(status))
+                    .size(P2_SIZE)
+                    .style(theme::text::secondary),
+            )
+            .into()
+    } else {
+        Space::new().height(Length::Fixed(0.0)).into()
+    };
+
+    Container::new(
+        Column::new()
+            .spacing(18)
+            .width(Length::Fill)
+            .push(warning_badge)
+            .push(qr_section)
+            .push(address_row)
+            .push(info_card(shift, &selected))
+            .push(status_section),
+    )
+    .padding(16)
+    .width(Length::Fill)
+    .style(theme::card::simple)
+    .into()
+}
+
+/// Spark-specific status guidance. Diverges from the shared
+/// [`ShiftStatusKind::guidance`] at `Settled`: a Spark settle lands as on-chain
+/// BTC in the wallet's static deposit address, so it *hasn't* arrived in the
+/// spendable balance yet — it's confirming, and gets added automatically once it
+/// matures. The shared copy says "has arrived", which is what sent users looking
+/// for a transaction that wasn't there yet.
+fn spark_shift_guidance(status: &ShiftStatusKind) -> &'static str {
+    match status {
+        ShiftStatusKind::Settled => {
+            "Converting complete. Your bitcoin is arriving on-chain and will be added to your \
+             wallet automatically after about 3 confirmations — usually a few minutes."
+        }
+        other => other.guidance(),
+    }
+}
+
+fn status_badge(status: &ShiftStatusKind) -> (&'static str, iced::Color) {
+    match status {
+        ShiftStatusKind::Waiting => ("Waiting for deposit", color::GREY_3),
+        ShiftStatusKind::Pending | ShiftStatusKind::Processing => {
+            ("Deposit detected", color::ORANGE)
+        }
+        ShiftStatusKind::Settling => ("Settling…", color::ORANGE),
+        // Not "received": a Spark settle is on-chain BTC into the wallet's
+        // static deposit address, so at this point it's confirming, not yet
+        // spendable. Orange (in-progress), not green (done) — the green
+        // "arrived" moment is the celebration that fires once it's claimed.
+        ShiftStatusKind::Settled => ("Bitcoin arriving", color::ORANGE),
+        ShiftStatusKind::Expired => ("Expired", color::RED),
+        // Not a spinner: a held shift stays here until the user acts.
+        ShiftStatusKind::Review => ("On hold for review", color::RED),
+        ShiftStatusKind::Refunding => ("Refunding…", color::ORANGE),
+        ShiftStatusKind::Refunded => ("Refunded", color::GREY_3),
+        ShiftStatusKind::Error => ("Failed", color::RED),
+        ShiftStatusKind::Unknown(_) => ("Checking…", color::GREY_3),
+    }
+}
+
+fn info_card<'a>(
+    shift: &'a ShiftResponse,
+    selected: &crate::services::sideshift::DepositOption,
+) -> Element<'a, Msg> {
+    let mut rows = Column::new()
+        .spacing(8)
+        .push(kv("Shift ID", shift.id.clone()))
+        .push(kv("You send", selected.label.to_string()))
+        .push(kv("You receive", "Bitcoin (BTC)".to_string()));
+
+    if let (Some(min), Some(max)) = (&shift.deposit_min, &shift.deposit_max) {
+        rows = rows.push(kv("Limits", format!("{min} – {max}")));
+    }
+
+    Container::new(rows)
+        .padding([12, 16])
+        .width(Length::Fill)
+        .style(theme::card::border)
+        .into()
+}
+
+fn kv<'a>(label: &'a str, value: String) -> Element<'a, Msg> {
+    Row::new()
+        .push(text(label).size(P2_SIZE).style(theme::text::secondary))
+        .push(Space::new().width(Length::Fill))
+        .push(text(value).size(P2_SIZE))
+        .into()
+}
+
+// ── Loading / error ─────────────────────────────────────────────────────────
+
+fn loading_body<'a>(label: &'a str) -> Element<'a, Msg> {
+    Container::new(text(label).size(P1_SIZE).style(theme::text::secondary))
+        .padding(24)
+        .width(Length::Fill)
+        .center_x(Length::Fill)
+        .style(theme::card::simple)
+        .into()
+}
+
+fn error_body(error: Option<&str>) -> Element<'_, Msg> {
+    Column::new()
+        .spacing(16)
+        .push(
+            Container::new(
+                Column::new()
+                    .spacing(8)
+                    .push(h4_bold("Something went wrong"))
+                    .push(
+                        text(error.unwrap_or("The swap couldn't be set up."))
+                            .size(P2_SIZE)
+                            .style(theme::text::secondary),
+                    ),
+            )
+            .padding(16)
+            .width(Length::Fill)
+            .style(theme::card::error),
+        )
+        .push(
+            button::primary(None, "Start over")
+                .on_press(Msg::Reset)
+                .width(Length::Fixed(160.0)),
+        )
+        .into()
+}

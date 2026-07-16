@@ -522,6 +522,7 @@ fn wallet_selector_popup<'a>(
     editing: PickerSide,
     has_vault: bool,
     has_spark: bool,
+    has_liquid: bool,
     liquid_balance: Amount,
     spark_balance: Amount,
     vault_balance: Amount,
@@ -568,7 +569,7 @@ fn wallet_selector_popup<'a>(
         .max_width(420)
         .push(text(title_label).size(H4_SIZE).bold());
 
-    if hidden != Some(WalletKind::Liquid) {
+    if has_liquid && hidden != Some(WalletKind::Liquid) {
         col = col.push(row_for(WalletKind::Liquid, liquid_balance));
     }
     if has_spark && hidden != Some(WalletKind::Spark) {
@@ -1402,9 +1403,13 @@ pub struct GlobalViewConfig<'a> {
     pub has_vault: bool,
     /// Whether this cube has a working Spark backend. Mirrors
     /// `spark_backend.is_some()` in the state layer. Drives the Spark card
-    /// visibility and is part of the `has_vault || has_spark` gate on the
-    /// Transfer button (a cube with only Liquid has nothing to transfer with).
+    /// visibility and feeds [`transfer_available`].
     pub has_spark: bool,
+    /// Whether the Liquid wallet is shown at all — the sunset gate
+    /// (`cache.liquid_gate.show()`). Drives the Liquid card, the Liquid row in
+    /// the wallet picker, and Liquid's contribution to the Total Balance.
+    /// Liquid used to be unconditional on every cube; it no longer is.
+    pub has_liquid: bool,
     pub current_view: HomeView,
     pub transfer_direction: Option<TransferDirection>,
     pub transfer_from: Option<WalletKind>,
@@ -1486,6 +1491,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         display_mode,
         has_vault,
         has_spark,
+        has_liquid,
         current_view,
         transfer_direction,
         transfer_from,
@@ -1538,6 +1544,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                         editing,
                         has_vault,
                         has_spark,
+                        has_liquid,
                         liquid_balance,
                         spark_balance,
                         vault_balance,
@@ -1593,7 +1600,15 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
     } else {
         0
     };
-    let total_sats = liquid_balance.to_sat() + usdt_as_sats;
+    // A gated-off Liquid wallet contributes nothing to the aggregate. Its
+    // balances are zero in that state anyway (the state layer skips the
+    // loaders), but stating it here keeps the Total Balance honest even if a
+    // stale value ever survived the gate flipping.
+    let total_sats = if has_liquid {
+        liquid_balance.to_sat() + usdt_as_sats
+    } else {
+        0
+    };
     let total_amount = Amount::from_sat(total_sats);
     let total_fiat = fiat_converter.as_ref().map(|c| c.convert(total_amount));
     let lbtc_fiat = fiat_converter.as_ref().map(|c| c.convert(liquid_balance));
@@ -2066,48 +2081,60 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 .align_y(Alignment::Center),
         )
         .push_maybe(spark_card)
-        .push(liquid_card)
+        .push_maybe(has_liquid.then_some(liquid_card))
         .push(vault_card_element)
-        .push_maybe(transfer_available(has_vault, has_spark).then(|| {
-            // Disable Transfer while any wallet's balance hasn't been
-            // corroborated yet. The amount-entry view and wallet picker
-            // both consume the raw balance values to render available-
-            // funds hints and to cap validation; opening Transfer
-            // pre-load would surface a misleading zero / stale cap for
-            // whichever wallet hasn't finished syncing.
-            Container::new(
-                button::secondary(Some(arrow_down_up_icon()), "Transfer")
-                    .style(|t, _s| iced::widget::button::Style {
-                        text_color: color::ORANGE,
-                        border: iced::Border {
-                            color: color::ORANGE,
-                            width: 1.0,
-                            radius: 35.0.into(),
-                        },
-                        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-                        ..Default::default()
-                    })
-                    .width(Length::Fixed(150.0))
-                    .on_press_maybe(
-                        (!total_balance_loading).then_some(Message::Home(HomeMessage::NextStep)),
-                    ),
-            )
-            .width(Length::Fill)
-            .center_x(Length::Fill)
-        }))
         .push_maybe(
-            transfer_available(has_vault, has_spark)
+            transfer_available(has_liquid, has_vault, has_spark).then(|| {
+                // Disable Transfer while any wallet's balance hasn't been
+                // corroborated yet. The amount-entry view and wallet picker
+                // both consume the raw balance values to render available-
+                // funds hints and to cap validation; opening Transfer
+                // pre-load would surface a misleading zero / stale cap for
+                // whichever wallet hasn't finished syncing.
+                Container::new(
+                    button::secondary(Some(arrow_down_up_icon()), "Transfer")
+                        .style(|t, _s| iced::widget::button::Style {
+                            text_color: color::ORANGE,
+                            border: iced::Border {
+                                color: color::ORANGE,
+                                width: 1.0,
+                                radius: 35.0.into(),
+                            },
+                            background: Some(iced::Background::Color(
+                                t.colors.cards.simple.background,
+                            )),
+                            ..Default::default()
+                        })
+                        .width(Length::Fixed(150.0))
+                        .on_press_maybe(
+                            (!total_balance_loading)
+                                .then_some(Message::Home(HomeMessage::NextStep)),
+                        ),
+                )
+                .width(Length::Fill)
+                .center_x(Length::Fill)
+            }),
+        )
+        .push_maybe(
+            transfer_available(has_liquid, has_vault, has_spark)
                 .then(|| Space::new().height(Length::Fixed(30.0))),
         )
         .into()
 }
 
-/// Gate for the page-level Transfer button. Liquid is always present on every
-/// cube, so transferring is only possible when at least one *other* wallet is
-/// available — Vault (a separate signer) or Spark (a separate bridge-backed
-/// wallet).
-fn transfer_available(has_vault: bool, has_spark: bool) -> bool {
-    has_vault || has_spark
+/// Gate for the page-level Transfer button: a transfer needs two wallets to
+/// move funds between, so at least two of the three must be present.
+///
+/// This used to be `has_vault || has_spark`, on the assumption that Liquid was
+/// present on every cube and so only a *second* wallet was in question. The
+/// Liquid sunset gate breaks that assumption — a new cube can now have Spark
+/// alone, which has nothing to transfer with — so the count is now explicit.
+fn transfer_available(has_liquid: bool, has_vault: bool, has_spark: bool) -> bool {
+    [has_liquid, has_vault, has_spark]
+        .iter()
+        .filter(|present| **present)
+        .count()
+        >= 2
 }
 
 #[cfg(test)]
@@ -2185,13 +2212,23 @@ mod tests {
         assert_eq!(WalletKind::Vault.badge(), "VAULT");
     }
 
-    /// The page-level Transfer button is only visible when at least one
-    /// non-Liquid wallet exists (Liquid alone has nothing to transfer with).
+    /// Transfer needs two wallets to move funds between: any one wallet alone
+    /// has nothing to transfer with, any two will do.
     #[test]
-    fn transfer_available_gate() {
-        assert!(!transfer_available(false, false));
-        assert!(transfer_available(true, false));
-        assert!(transfer_available(false, true));
-        assert!(transfer_available(true, true));
+    fn transfer_available_needs_two_wallets() {
+        // (liquid, vault, spark)
+        assert!(!transfer_available(false, false, false), "no wallets");
+        assert!(!transfer_available(true, false, false), "liquid alone");
+        assert!(!transfer_available(false, true, false), "vault alone");
+        assert!(
+            !transfer_available(false, false, true),
+            "spark alone — the new post-sunset default cube, and the case the \
+             old `has_vault || has_spark` gate got wrong"
+        );
+
+        assert!(transfer_available(true, true, false));
+        assert!(transfer_available(true, false, true));
+        assert!(transfer_available(false, true, true));
+        assert!(transfer_available(true, true, true));
     }
 }

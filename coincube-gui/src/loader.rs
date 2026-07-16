@@ -634,6 +634,10 @@ pub async fn load_application(
         // Fail-closed until `/connect/features` loads and the account panel
         // mirrors the real flags in (see `App::update`'s ConnectAccount arm).
         marketplace_flags: crate::app::features::MarketplaceServerFlags::OFF,
+        // Liquid sunset gate. Both halves are filled in later: the local half
+        // in `App::new` (from whether the Liquid SDK actually connected), the
+        // server half when `/connect/features` loads.
+        liquid_gate: crate::app::features::LiquidGate::HIDDEN,
         last_poll_at_startup: config.info.last_poll_timestamp,
         daemon_cache: DaemonCache {
             blockheight: config.info.block_height,
