@@ -91,10 +91,10 @@ pub fn chain_confirmation(address: &CrossChainAddress, route: &CrossChainRoute) 
 /// How the quote's expiry should be presented, and whether sending is still
 /// allowed.
 ///
-/// The SDK hands back an ISO8601 `expires_at`. Past it, the quoted rate is void
-/// and the provider will reject (or worse, re-price) the send — so the panel
-/// counts down and blocks confirmation at zero rather than letting the user
-/// send against a number that is no longer true.
+/// Past `expires_at`, the quoted rate is void and the provider will reject (or
+/// worse, re-price) the send — so the panel counts down and blocks confirmation
+/// at zero rather than letting the user send against a number that is no longer
+/// true. See [`parse_expires_at`] for the two on-wire timestamp formats.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QuoteCountdown {
     /// Still valid, with this many whole seconds left.
@@ -113,15 +113,32 @@ impl QuoteCountdown {
     }
 }
 
+/// Parse a quote's `expires_at` into a UTC instant.
+///
+/// The SDK is not consistent across cross-chain providers: the **Orchestra**
+/// path emits an RFC3339 timestamp (`2026-07-16T05:35:30Z`), while the **Boltz**
+/// path emits a bare **Unix epoch seconds** string (`1784180130`) — see the
+/// `validate_quote_expiry` helpers in each provider module of `breez-sdk-spark`.
+/// The bridge passes whichever through verbatim, so accept both here; parsing
+/// only RFC3339 read every boltz quote as already-expired.
+fn parse_expires_at(expires_at: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let trimmed = expires_at.trim();
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    // Boltz: bare Unix epoch seconds.
+    chrono::DateTime::from_timestamp(trimmed.parse().ok()?, 0)
+}
+
 /// Resolve a quote's `expires_at` against the current time.
 pub fn quote_countdown(
     quote: &CrossChainQuote,
     now: chrono::DateTime<chrono::Utc>,
 ) -> QuoteCountdown {
-    let Ok(expires) = chrono::DateTime::parse_from_rfc3339(&quote.expires_at) else {
+    let Some(expires) = parse_expires_at(&quote.expires_at) else {
         return QuoteCountdown::Unknown;
     };
-    let seconds_left = (expires.with_timezone(&chrono::Utc) - now).num_seconds();
+    let seconds_left = (expires - now).num_seconds();
     if seconds_left > 0 {
         QuoteCountdown::Valid { seconds_left }
     } else {
@@ -298,6 +315,27 @@ mod tests {
             .unwrap()
             .with_timezone(&chrono::Utc);
         let q = quote("2026-07-14T12:00:30Z", true);
+        assert_eq!(quote_countdown(&q, now), QuoteCountdown::Expired);
+        assert!(!quote_countdown(&q, now).can_send());
+    }
+
+    #[test]
+    fn a_future_boltz_epoch_seconds_quote_is_valid_and_counts_down() {
+        // Boltz carries expires_at as bare Unix epoch seconds, not RFC3339 —
+        // the exact shape from the bug report. 1784180130 == 2026-07-16T05:35:30Z.
+        let now = chrono::DateTime::from_timestamp(1_784_180_100, 0).unwrap();
+        let q = quote("1784180130", true);
+        assert_eq!(
+            quote_countdown(&q, now),
+            QuoteCountdown::Valid { seconds_left: 30 }
+        );
+        assert!(quote_countdown(&q, now).can_send());
+    }
+
+    #[test]
+    fn an_elapsed_boltz_epoch_seconds_quote_is_expired() {
+        let now = chrono::DateTime::from_timestamp(1_784_180_131, 0).unwrap();
+        let q = quote("1784180130", true);
         assert_eq!(quote_countdown(&q, now), QuoteCountdown::Expired);
         assert!(!quote_countdown(&q, now).can_send());
     }

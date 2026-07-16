@@ -467,8 +467,11 @@ pub struct CrossChainQuote {
     /// Sats debited from the wallet to move funds to the provider. Denominated
     /// in sats, unlike the two fields above — don't add them together.
     pub source_transfer_fee_sats: u64,
-    /// ISO8601 timestamp after which the quote is void. The gui counts down to
-    /// this and re-quotes on expiry rather than sending against a stale rate.
+    /// Timestamp after which the quote is void — the gui counts down to it and
+    /// re-quotes on expiry rather than sending against a stale rate. Format is
+    /// provider-dependent and passed through from the SDK verbatim: Orchestra
+    /// sends RFC3339, Boltz sends a bare Unix epoch seconds string. The gui's
+    /// `quote_countdown` parses both.
     pub expires_at: String,
     /// Whether a failed send can be safely retried with the same idempotency
     /// key.
