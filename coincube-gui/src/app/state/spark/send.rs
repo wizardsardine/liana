@@ -186,6 +186,23 @@ impl SparkSendTarget {
             Self::Usdc => "Recipient's USDC address on Ethereum, Tron, or Solana",
         }
     }
+
+    /// For a bitcoin rail, whether a parsed destination is consistent with this
+    /// selection. `false` only for a *definite* cross-rail mismatch — e.g. an
+    /// on-chain address while Lightning is selected. Ambiguous kinds (`Other`:
+    /// BOLT12 / silent payment) pass, so a destination the SDK can still route
+    /// isn't blocked. Stablecoin targets never reach this path.
+    fn accepts_parsed(self, kind: &ParseInputKind) -> bool {
+        let rail = match kind {
+            ParseInputKind::Bolt11Invoice
+            | ParseInputKind::LnurlPay
+            | ParseInputKind::LightningAddress => Some(Self::Lightning),
+            ParseInputKind::BitcoinAddress => Some(Self::OnChain),
+            ParseInputKind::SparkAddress | ParseInputKind::SparkInvoice => Some(Self::Spark),
+            ParseInputKind::Other => None,
+        };
+        rail.is_none_or(|r| r == self)
+    }
 }
 
 /// Real Spark Send panel.
@@ -628,8 +645,9 @@ impl State for SparkSend {
                 // dispatch to the right prepare RPC (`prepare_send` /
                 // `prepare_lnurl_pay`) in one task, so the user sees a single
                 // "Preparing…" regardless of the underlying rail.
+                let target = self.receive_target;
                 Task::perform(
-                    async move { resolve_and_prepare(backend, input, amount_sat).await },
+                    async move { resolve_and_prepare(backend, input, amount_sat, target).await },
                     |result| match result {
                         Ok(ok) => Message::View(crate::app::view::Message::SparkSend(
                             SparkSendMessage::PrepareSucceeded(ok),
@@ -889,11 +907,33 @@ async fn resolve_and_prepare(
     backend: Arc<SparkBackend>,
     input: String,
     amount_sat: Option<u64>,
+    target: SparkSendTarget,
 ) -> Result<PrepareSendOk, String> {
     let parsed = backend
         .parse_input(input.clone())
         .await
         .map_err(|e| format!("parse failed: {e}"))?;
+
+    // Enforce the picked rail. The destination itself dictates the mechanism —
+    // you can't send Lightning to an on-chain address — so a parsed rail that
+    // clearly contradicts the selection must not prepare and reach the review
+    // screen, where the "They receive" card badge (e.g. "Lightning") would
+    // misrepresent an on-chain send. Reject the clear mismatches; `Other` is
+    // ambiguous and passes.
+    if !target.accepts_parsed(&parsed.kind) {
+        let detected = match parsed.kind {
+            ParseInputKind::Bolt11Invoice => "a Lightning invoice",
+            ParseInputKind::LnurlPay | ParseInputKind::LightningAddress => "a Lightning address",
+            ParseInputKind::BitcoinAddress => "an on-chain Bitcoin address",
+            ParseInputKind::SparkAddress | ParseInputKind::SparkInvoice => "a Spark destination",
+            ParseInputKind::Other => "an unrecognised destination",
+        };
+        return Err(format!(
+            "This looks like {detected}, but you picked {} for what they receive. \
+             Change that selection, or paste a matching destination.",
+            target.badge(),
+        ));
+    }
 
     match parsed.kind {
         ParseInputKind::LnurlPay | ParseInputKind::LightningAddress => {
@@ -1080,6 +1120,36 @@ mod tests {
             matches!(panel.phase, SparkSendPhase::CrossChainFailed { .. }),
             "an unsafe retry must not re-send, even if the message arrives"
         );
+    }
+
+    /// A bitcoin rail must not prepare a destination from a different rail —
+    /// otherwise a mismatched send reaches review under a card badge that lies
+    /// about what's happening. `resolve_and_prepare` gates on this.
+    #[test]
+    fn a_bitcoin_rail_target_only_accepts_its_own_destination_kind() {
+        use coincube_spark_protocol::ParseInputKind as K;
+
+        // Lightning accepts the Lightning family, not on-chain / Spark.
+        assert!(SparkSendTarget::Lightning.accepts_parsed(&K::Bolt11Invoice));
+        assert!(SparkSendTarget::Lightning.accepts_parsed(&K::LightningAddress));
+        assert!(SparkSendTarget::Lightning.accepts_parsed(&K::LnurlPay));
+        assert!(!SparkSendTarget::Lightning.accepts_parsed(&K::BitcoinAddress));
+        assert!(!SparkSendTarget::Lightning.accepts_parsed(&K::SparkAddress));
+
+        // On-chain accepts only a bitcoin address.
+        assert!(SparkSendTarget::OnChain.accepts_parsed(&K::BitcoinAddress));
+        assert!(!SparkSendTarget::OnChain.accepts_parsed(&K::Bolt11Invoice));
+        assert!(!SparkSendTarget::OnChain.accepts_parsed(&K::SparkInvoice));
+
+        // Spark accepts Spark destinations, not on-chain.
+        assert!(SparkSendTarget::Spark.accepts_parsed(&K::SparkAddress));
+        assert!(SparkSendTarget::Spark.accepts_parsed(&K::SparkInvoice));
+        assert!(!SparkSendTarget::Spark.accepts_parsed(&K::BitcoinAddress));
+
+        // `Other` (BOLT12 / silent payment) is ambiguous — never rejected.
+        assert!(SparkSendTarget::Lightning.accepts_parsed(&K::Other));
+        assert!(SparkSendTarget::OnChain.accepts_parsed(&K::Other));
+        assert!(SparkSendTarget::Spark.accepts_parsed(&K::Other));
     }
 
     fn prepared_with_quote(expires_at: &str) -> PrepareSendOk {
