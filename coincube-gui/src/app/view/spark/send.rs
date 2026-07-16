@@ -313,10 +313,6 @@ fn phase_body<'a>(
                     .spacing(14)
                     .push(h4_bold("Preview"))
                     .push(kv_row(
-                        "You send",
-                        format!("{} sats", format_u64_as_string(ok.amount_sat, ",")),
-                    ))
-                    .push(kv_row(
                         "They receive",
                         format!(
                             "≈ {} {}",
@@ -331,17 +327,36 @@ fn phase_body<'a>(
                         "Network",
                         format!("{} — via {}", quote.route.chain, quote.route.provider),
                     ))
+                    // The old single mixed-unit "Fee" line hid how much each part
+                    // cost. Split it: a sats network fee (moving BTC to the
+                    // provider) and a destination-asset conversion fee (provider
+                    // spread + gas, already netted out of "They receive").
                     .push(kv_row(
-                        "Fee",
+                        "Network fee",
                         format!(
-                            "{} {} + {} sats network",
+                            "{} sats",
+                            format_u64_as_string(quote.source_transfer_fee_sats, ",")
+                        ),
+                    ))
+                    .push(kv_row(
+                        "Conversion fee",
+                        format!(
+                            "{} {}",
                             cross_chain::format_asset_amount(
                                 quote.fee_amount,
                                 quote.route.decimals
                             ),
                             quote.route.asset,
-                            quote.source_transfer_fee_sats,
                         ),
+                    ))
+                    // Headline: the full sats debit from the wallet, fees
+                    // included. Set apart at the bottom so the user sees exactly
+                    // what they'll pay — and it matches the amount the post-send
+                    // celebration reports as sent.
+                    .push(Space::new().height(Length::Fixed(4.0)))
+                    .push(total_row(
+                        "Total you send",
+                        format!("{} sats", format_u64_as_string(ok.amount_sat, ",")),
                     ));
 
                 // The countdown. Sending against a dead quote means sending
@@ -503,6 +518,24 @@ fn kv_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
             Column::new()
                 .width(Length::FillPortion(3))
                 .push(p1_regular(value)),
+        )
+        .into()
+}
+
+/// Like [`kv_row`] but with an emphasised (bold) value — for the headline
+/// "total" line the eye should land on.
+fn total_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
+    Row::new()
+        .spacing(20)
+        .push(
+            Column::new()
+                .width(Length::FillPortion(1))
+                .push(h4_bold(label)),
+        )
+        .push(
+            Column::new()
+                .width(Length::FillPortion(3))
+                .push(h4_bold(value)),
         )
         .into()
 }
