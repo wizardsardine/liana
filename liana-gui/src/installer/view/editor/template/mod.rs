@@ -3,15 +3,15 @@ pub mod inheritance;
 pub mod multisig_security_wallet;
 
 use iced::{
-    widget::{row, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
 
 use liana_ui::{
     component::{
-        button::{btn_clear_all, btn_customize, btn_next},
+        button::{self, btn_clear_all, btn_customize, btn_next},
         collapse,
-        text::{h3, p1_bold, p2_regular},
+        text::{new, p1_bold},
     },
     icon, theme,
     widget::*,
@@ -69,63 +69,52 @@ pub fn template_footer<'a>(valid: bool, processing: bool, customize: bool) -> Ro
 }
 
 pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, Message> {
+    let simple_inheritance = template_option(
+        "Simple inheritance",
+        "Two keys required, one for yourself to spend and another for your heir.",
+        context::DescriptorTemplate::SimpleInheritance,
+    );
+    let expanding_multisig = template_option(
+        "Expanding multisig",
+        "Two keys required to spend, with an extra key as a backup.",
+        context::DescriptorTemplate::MultisigSecurity,
+    );
+    let custom = template_option(
+        "Build your own",
+        "Create a custom setup that fits all your needs.",
+        context::DescriptorTemplate::Custom,
+    );
+    let content = column![simple_inheritance, expanding_multisig, custom,]
+        .max_width(800.0)
+        .align_x(Alignment::Start)
+        .spacing(20);
+
     layout(
         progress,
         None,
         "Choose wallet type",
-        Column::new()
-            .max_width(800.0)
-            .align_x(Alignment::Start)
-            .push(
-                Button::new(
-                    Column::new()
-                        .align_x(Alignment::Start)
-                        .push(h3("Simple inheritance"))
-                        .push(p2_regular("Two keys required, one for yourself to spend and another for your heir.").style(theme::text::secondary))
-                        .width(Length::Fill)
-                )
-                .padding(15)
-                .on_press(
-                        Message::SelectDescriptorTemplate(
-                            context::DescriptorTemplate::SimpleInheritance,
-                        )
-                ).style(theme::button::secondary)
-                .width(Length::Fill),
-            )
-            .push(
-                Button::new(
-                    Column::new()
-                        .align_x(Alignment::Start)
-                        .push(h3("Expanding multisig"))
-                        .push(p2_regular("Two keys required to spend, with an extra key as a backup.").style(theme::text::secondary))
-                        .width(Length::Fill)
-                )
-                .padding(15)
-                .on_press(
-                        Message::SelectDescriptorTemplate(
-                            context::DescriptorTemplate::MultisigSecurity,
-                        )
-                ).style(theme::button::secondary)
-                .width(Length::Fill),
-            )
-            .push(
-                Button::new(
-                    Column::new()
-                        .align_x(Alignment::Start)
-                        .push(h3("Build your own"))
-                        .push(p2_regular("Create a custom setup that fits all your needs.").style(theme::text::secondary))
-                        .width(Length::Fill)
-                )
-                .padding(15)
-                .on_press(
-                        Message::SelectDescriptorTemplate(
-                            context::DescriptorTemplate::Custom,
-                        )
-                ).style(theme::button::secondary)
-                .width(Length::Fill),
-            )
-            .spacing(20),
+        content,
         true,
         Some(Message::Previous),
+    )
+}
+
+fn template_option(
+    title: &'static str,
+    description: &'static str,
+    template: context::DescriptorTemplate,
+) -> Element<'static, Message> {
+    let content = column![
+        new::b1_bold(title),
+        new::caption(description).style(theme::text::secondary),
+    ]
+    .align_x(Alignment::Start)
+    .width(Length::Fill);
+
+    button::list_entry(
+        content,
+        None,
+        button::EntryWidth::Fill,
+        Some(Message::SelectDescriptorTemplate(template)),
     )
 }
