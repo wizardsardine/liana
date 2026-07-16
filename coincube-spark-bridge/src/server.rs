@@ -463,9 +463,37 @@ async fn handle_list_payments(
 /// a wildly inflated headline number. Token payments populate the
 /// dedicated `token_*` fields and zero out the sat fields; the gui
 /// renders them with the token's own ticker / decimals.
+/// A human description for a cross-chain conversion leg, so payment history
+/// names the real destination (e.g. "Sent USDT on Solana") instead of the raw
+/// hold-invoice memo the Lightning source leg carries (e.g. "Send to TBTC
+/// address"). A Boltz reverse swap / Orchestra order carries the destination
+/// asset + chain on its `ConversionInfo`; AMM (Spark↔Spark token) conversions
+/// and plain Lightning payments have no cross-chain destination, so they keep
+/// the invoice memo.
+fn cross_chain_leg_description(info: Option<&breez_sdk_spark::ConversionInfo>) -> Option<String> {
+    use breez_sdk_spark::ConversionInfo;
+    let (asset, chain) = match info? {
+        ConversionInfo::Boltz { asset, chain, .. }
+        | ConversionInfo::Orchestra { asset, chain, .. } => (asset, chain),
+        ConversionInfo::Amm { .. } => return None,
+    };
+    // Chain names arrive lowercase ("solana"); title-case the first char for
+    // display. Asset tickers are already upper ("USDT").
+    let mut chars = chain.chars();
+    let chain = match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => chain.clone(),
+    };
+    Some(format!("Sent {asset} on {chain}"))
+}
+
 fn payment_to_summary(p: breez_sdk_spark::Payment) -> PaymentSummary {
     let description = match &p.details {
-        Some(PaymentDetails::Lightning { description, .. }) => description.clone(),
+        Some(PaymentDetails::Lightning {
+            description,
+            conversion_info,
+            ..
+        }) => cross_chain_leg_description(conversion_info.as_ref()).or_else(|| description.clone()),
         _ => None,
     };
     let token_metadata = match &p.details {
