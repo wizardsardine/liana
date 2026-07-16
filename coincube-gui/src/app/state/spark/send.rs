@@ -1101,7 +1101,7 @@ mod tests {
                 cross_chain::RetryPolicy::MustCheckStateFirst,
                 "an expired-quote retry must downgrade to check-state-first"
             ),
-            other => panic!("expected CrossChainFailed, got {other:?}"),
+            other => panic!("expected CrossChainFailed, got {:?}", other),
         }
         assert!(
             panel.cross_chain_prepare.is_none(),
