@@ -284,18 +284,18 @@ impl Palette {
                     active: ButtonPalette {
                         background: color::GREY_6,
                         text: color::GREY_2,
-                        border: color::TRANSPARENT.into(),
+                        border: color::GREY_7.into(),
                         shadow: Default::default(),
                     },
                     hovered: ButtonPalette {
                         background: color::GREY_6,
-                        text: color::GREY_2,
+                        text: color::GREEN,
                         border: color::GREEN.into(),
                         shadow: Default::default(),
                     },
                     pressed: Some(ButtonPalette {
-                        background: color::GREY_6,
-                        text: color::GREY_2,
+                        background: BTN_SECONDARY_HOVER_BGD,
+                        text: color::GREEN,
                         border: color::GREEN.into(),
                         shadow: Default::default(),
                     }),
