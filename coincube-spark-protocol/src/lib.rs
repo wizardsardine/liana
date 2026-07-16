@@ -324,15 +324,18 @@ pub struct SendPaymentParams {
     /// full `breez_sdk_spark::PrepareSendPaymentResponse`. Single-use —
     /// a successful or failed send consumes the entry.
     pub prepare_handle: String,
-    /// Caller-supplied idempotency key. When set, the SDK short-circuits a
-    /// repeat send with the same key instead of paying twice, which makes a
-    /// retry after an ambiguous failure safe.
+    /// Caller-supplied idempotency key. On the plain bitcoin rails (Lightning /
+    /// on-chain / Spark) the SDK honours it: a repeat send with the same key
+    /// short-circuits instead of paying twice, so a retry after an ambiguous
+    /// failure is safe.
     ///
-    /// **It does not cover every leg.** Spark's token transfer
-    /// (`transfer_tokens`) has no idempotency hook, so a cross-chain send
-    /// whose *source* asset is a token gets no such protection — see
-    /// [`CrossChainQuote::retry_safe`]. Never blind-retry one of those; check
-    /// the payment state first.
+    /// **It does not cover a token or conversion leg.** The SDK rejects an
+    /// idempotency key on any send that has one, so the bridge drops the key
+    /// there — and that is *every* cross-chain (USDt/USDC) send, BTC-funded ones
+    /// included, because they carry an AMM conversion. Do not infer idempotency
+    /// for a cross-chain retry from this field: that safety instead comes from
+    /// re-sending the *same* prepared quote (the provider dedups on its swap id),
+    /// gated by [`CrossChainQuote::retry_safe`] and the panel's retry policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
 }
