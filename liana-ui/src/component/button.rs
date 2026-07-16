@@ -959,3 +959,9 @@ pub fn btn_delete_wallet<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
         .width(Length::Fixed(200.0))
         .on_press_maybe(msg)
 }
+
+pub fn btn_optional_section<'a, T: Clone + 'a>(content: Row<'a, T>, msg: T) -> Button<'a, T> {
+    Button::new(content)
+        .style(theme::button::optional_section)
+        .on_press(msg)
+}

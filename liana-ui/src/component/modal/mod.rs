@@ -155,10 +155,7 @@ where
         .align_y(Vertical::Center)
         .spacing(H_SPACING);
 
-    Button::new(row)
-        .style(theme::button::tertiary)
-        .on_press(msg)
-        .into()
+    button::btn_optional_section(row, msg).into()
 }
 
 /// Outer shell for a collapsible key/signer entry, routed through selectable

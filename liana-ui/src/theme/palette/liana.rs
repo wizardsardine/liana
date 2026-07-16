@@ -524,6 +524,27 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                optional_section: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: btn_disabled(),
+                },
             },
             cards: Cards {
                 simple: ContainerPalette {
