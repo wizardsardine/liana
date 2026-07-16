@@ -310,11 +310,12 @@ impl State for SparkReceive {
 
         use crate::app::view::SparkReceiveMessage;
 
-        // While the cross-network flow is active, the Bitcoin invoice form's
-        // messages are gated out (its widgets aren't on screen). Exceptions:
-        // `DepositsChanged` (the flow sends it on settle) and the two-card /
-        // THEY SEND picker messages, which stay live so the user can switch the
-        // selection even mid-swap.
+        // The cross-network flow renders *inline*, so the two-card / THEY SEND
+        // picker AND the pending-deposits card stay on screen while it's active —
+        // only the Bitcoin invoice form's messages are gated out (its widgets
+        // aren't shown). Let the picker, `DepositsChanged`, and the whole
+        // pending-deposit lifecycle (list refresh, confirmation ticks, claim +
+        // its result) through so those on-screen controls keep working mid-swap.
         if self.sideshift_flow.is_some()
             && !matches!(
                 msg,
@@ -323,6 +324,13 @@ impl State for SparkReceive {
                     | SparkReceiveMessage::CloseSenderPicker
                     | SparkReceiveMessage::SelectSenderRail(_)
                     | SparkReceiveMessage::SelectSenderCrossNetwork(_)
+                    | SparkReceiveMessage::ClaimDepositRequested { .. }
+                    | SparkReceiveMessage::RefreshConfirmations
+                    | SparkReceiveMessage::DepositConfirmationsUpdated(_)
+                    | SparkReceiveMessage::PendingDepositsLoaded(_)
+                    | SparkReceiveMessage::PendingDepositsFailed(_)
+                    | SparkReceiveMessage::ClaimDepositSucceeded(_)
+                    | SparkReceiveMessage::ClaimDepositFailed(_)
             )
         {
             return Task::none();
