@@ -20,6 +20,113 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Serde codec that carries a `u128` on the wire as a decimal **string**.
+///
+/// Two independent reasons force this for the cross-chain token-amount fields:
+///
+/// 1. [`Request`] and [`Response`] both use `#[serde(flatten)]`, and serde's
+///    flatten path buffers values through `FlatMapDeserializer`, which does not
+///    implement `deserialize_u128`. A bare `u128` field anywhere beneath a
+///    flattened envelope therefore fails to parse with the exact error
+///    "u128 is not supported" (serde issue #1183). Every response is flattened
+///    at `Response.result`, so this hits all of them.
+/// 2. A JSON number above 2^53 silently loses precision in many parsers. An
+///    18-decimal token amount can exceed that, so a bare number would be unsafe
+///    on the wire even without (1).
+///
+/// The bridge and gui both link this crate, so annotating the field with
+/// `#[serde(with = "u128_dec")]` keeps their serialize/deserialize in lockstep.
+mod u128_dec {
+    use serde::{de, Deserializer, Serializer};
+    use std::fmt;
+
+    pub fn serialize<S: Serializer>(value: &u128, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    /// Accepts a `u128` from a decimal string (what we emit) or a bare JSON
+    /// integer (tolerated so an older number-format frame still parses). Goes
+    /// through `deserialize_any` rather than `deserialize_u128` — the latter is
+    /// the method serde's flatten / `Content` replay path leaves unimplemented,
+    /// which is the whole reason a bare `u128` failed here.
+    pub(super) struct U128Visitor;
+
+    impl de::Visitor<'_> for U128Visitor {
+        type Value = u128;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a u128 as a decimal string or a JSON integer")
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<u128, E> {
+            v.parse().map_err(de::Error::custom)
+        }
+
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<u128, E> {
+            Ok(u128::from(v))
+        }
+
+        fn visit_u128<E: de::Error>(self, v: u128) -> Result<u128, E> {
+            Ok(v)
+        }
+
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<u128, E> {
+            u128::try_from(v).map_err(de::Error::custom)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u128, D::Error> {
+        deserializer.deserialize_any(U128Visitor)
+    }
+}
+
+/// [`u128_dec`] for `Option<u128>`. Pairs with `#[serde(default,
+/// skip_serializing_if = "Option::is_none")]`: `None` is omitted from the wire,
+/// `Some` is a decimal string.
+mod opt_u128_dec {
+    use super::u128_dec::U128Visitor;
+    use serde::{de, Deserializer, Serializer};
+    use std::fmt;
+
+    pub fn serialize<S: Serializer>(
+        value: &Option<u128>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(v) => serializer.serialize_str(&v.to_string()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    struct OptU128Visitor;
+
+    impl<'de> de::Visitor<'de> for OptU128Visitor {
+        type Value = Option<u128>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("an optional u128 as a decimal string or a JSON integer")
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Option<u128>, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Option<u128>, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<Option<u128>, D::Error> {
+            d.deserialize_any(U128Visitor).map(Some)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<u128>, D::Error> {
+        deserializer.deserialize_option(OptU128Visitor)
+    }
+}
+
 /// A request from the gui to the bridge. `id` is echoed back in the matching
 /// [`Response`] so the client can correlate concurrent in-flight calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -294,7 +401,11 @@ pub struct CrossChainAddress {
     /// the SDK only offers on routes flagged `exact_out_eligible` — a follow-up.
     /// Carried through so that follow-up has it, and so the gui can show the
     /// requested amount for confirmation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "opt_u128_dec"
+    )]
     pub amount: Option<u128>,
 }
 
@@ -347,9 +458,11 @@ pub struct CrossChainQuote {
     pub route: CrossChainRoute,
     /// Estimated amount the recipient receives, in the destination asset's
     /// base units (scale by [`CrossChainRoute::decimals`]).
+    #[serde(with = "u128_dec")]
     pub estimated_out: u128,
     /// Total user-visible fee, in the destination asset's base units. Covers
     /// provider spread, bridge/gas, and DEX slippage.
+    #[serde(with = "u128_dec")]
     pub fee_amount: u128,
     /// Sats debited from the wallet to move funds to the provider. Denominated
     /// in sats, unlike the two fields above — don't add them together.
@@ -905,4 +1018,130 @@ pub enum Frame {
     Request(Request),
     Response(Response),
     Event(Event),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The exact `prepare_send` response (USDT on Solana) that used to fail to
+    /// parse with "u128 is not supported": its `estimated_out` / `fee_amount`
+    /// are `u128`, nested under the flattened [`Response`] envelope. Kept verbatim
+    /// from the bug report — bare integers, the pre-fix on-wire form — so this
+    /// also proves the deserializer still tolerates that shape.
+    const CROSS_CHAIN_PREPARE_FRAME: &str = r#"{"type":"response","id":79,"ok":{"kind":"prepare_send","data":{"handle":"97f19c3d-1a09-4240-ab15-61571e6ceaba","amount_sat":10173,"fee_sat":43,"method":"CrossChainAddress","cross_chain":{"route":{"provider":"boltz","chain":"Solana","asset":"USDT","decimals":6,"btc_source_supported":true},"estimated_out":6499079,"fee_amount":102531,"source_transfer_fee_sats":43,"expires_at":"1784180130","retry_safe":true}}}}"#;
+
+    fn prepare_ok_from_frame(frame: &str) -> PrepareSendOk {
+        let parsed: Frame = serde_json::from_str(frame).expect("frame must parse");
+        let Frame::Response(resp) = parsed else {
+            panic!("expected a Response frame");
+        };
+        let ResponseResult::Ok(OkPayload::PrepareSend(prep)) = resp.result else {
+            panic!("expected an Ok(PrepareSend) payload");
+        };
+        prep
+    }
+
+    #[test]
+    fn cross_chain_prepare_frame_with_integer_amounts_parses() {
+        // Before the fix this returned Err("u128 is not supported").
+        let prep = prepare_ok_from_frame(CROSS_CHAIN_PREPARE_FRAME);
+        let quote = prep.cross_chain.expect("cross_chain quote present");
+        assert_eq!(quote.estimated_out, 6_499_079);
+        assert_eq!(quote.fee_amount, 102_531);
+        assert_eq!(quote.source_transfer_fee_sats, 43);
+    }
+
+    #[test]
+    fn cross_chain_quote_round_trips_u128_beyond_u64() {
+        // A value past u64::MAX proves we keep the full u128 range (and that a
+        // bare JSON number would have been unsafe — this can't be one).
+        let big = u128::from(u64::MAX) + 1; // 18446744073709551616
+        let frame = Frame::Response(Response {
+            id: 79,
+            result: ResponseResult::Ok(OkPayload::PrepareSend(PrepareSendOk {
+                handle: "h".into(),
+                amount_sat: 10173,
+                fee_sat: 43,
+                method: "CrossChainAddress".into(),
+                cross_chain: Some(Box::new(CrossChainQuote {
+                    route: CrossChainRoute {
+                        provider: "boltz".into(),
+                        chain: "Solana".into(),
+                        chain_id: None,
+                        asset: "USDT".into(),
+                        contract_address: None,
+                        decimals: 6,
+                        btc_source_supported: true,
+                    },
+                    estimated_out: big,
+                    fee_amount: 102_531,
+                    source_transfer_fee_sats: 43,
+                    expires_at: "1784180130".into(),
+                    retry_safe: true,
+                })),
+            })),
+        });
+
+        let json = serde_json::to_string(&frame).expect("serialize");
+        // On the wire the u128 fields are decimal strings, never bare numbers.
+        assert!(
+            json.contains(r#""estimated_out":"18446744073709551616""#),
+            "u128 must serialize as a string: {json}"
+        );
+
+        let quote = prepare_ok_from_frame(&json)
+            .cross_chain
+            .expect("quote survives round-trip");
+        assert_eq!(quote.estimated_out, big);
+        assert_eq!(quote.fee_amount, 102_531);
+    }
+
+    #[test]
+    fn cross_chain_address_optional_amount_round_trips_and_omits_none() {
+        // `amount: Option<u128>` under the flattened GetCrossChainRoutes payload.
+        let big = u128::from(u64::MAX) + 5;
+        let present = Frame::Response(Response {
+            id: 1,
+            result: ResponseResult::Ok(OkPayload::GetCrossChainRoutes(CrossChainRoutesOk {
+                address: Some(CrossChainAddress {
+                    address: "0xabc".into(),
+                    family: "evm".into(),
+                    contract_address: None,
+                    chain_id: None,
+                    amount: Some(big),
+                }),
+                routes: vec![],
+            })),
+        });
+        let json = serde_json::to_string(&present).expect("serialize");
+        assert!(
+            json.contains(r#""amount":"18446744073709551620""#),
+            "{json}"
+        );
+
+        let parsed: Frame = serde_json::from_str(&json).expect("parse");
+        let Frame::Response(Response {
+            result: ResponseResult::Ok(OkPayload::GetCrossChainRoutes(ok)),
+            ..
+        }) = parsed
+        else {
+            panic!("expected GetCrossChainRoutes");
+        };
+        assert_eq!(ok.address.and_then(|a| a.amount), Some(big));
+
+        // A `None` amount must be omitted entirely, not emitted as null/"".
+        let absent = CrossChainAddress {
+            address: "0xabc".into(),
+            family: "evm".into(),
+            contract_address: None,
+            chain_id: None,
+            amount: None,
+        };
+        let json = serde_json::to_string(&absent).expect("serialize");
+        assert!(
+            !json.contains("amount"),
+            "None amount must be omitted: {json}"
+        );
+    }
 }
