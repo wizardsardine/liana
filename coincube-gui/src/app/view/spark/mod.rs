@@ -12,12 +12,14 @@ pub mod overview;
 pub mod receive;
 pub mod send;
 pub mod settings;
+pub mod sideshift_receive;
 pub mod transactions;
 
 pub use overview::{SparkOverviewView, SparkPaymentMethod, SparkRecentTransaction, SparkStatus};
-pub use receive::SparkReceiveView;
-pub use send::SparkSendView;
+pub use receive::{sender_picker_modal, SparkReceiveView};
+pub use send::{send_target_picker_modal, SparkSendView};
 pub use settings::{SparkSettingsStatus, SparkSettingsView};
+pub use sideshift_receive::spark_sideshift_receive_view;
 pub use transactions::{SparkTransactionsStatus, SparkTransactionsView};
 
 /// View-level messages for the Spark Overview panel.
@@ -105,6 +107,12 @@ pub enum SparkSettingsMessage {
 pub enum SparkSendMessage {
     DestinationInputChanged(String),
     AmountInputChanged(String),
+    /// Open the "THEY RECEIVE" picker modal (bitcoin rails + USDt/USDC).
+    OpenReceivePicker,
+    /// Dismiss the "THEY RECEIVE" picker without changing the selection.
+    CloseReceivePicker,
+    /// Pick what the recipient receives (a bitcoin rail or a stablecoin).
+    SetReceiveTarget(crate::app::state::spark::send::SparkSendTarget),
     PrepareRequested,
     PrepareSucceeded(coincube_spark_protocol::PrepareSendOk),
     PrepareFailed(String),
@@ -115,6 +123,10 @@ pub enum SparkSendMessage {
     /// prepared/sent state. Fired from the "Send another" / "Try
     /// again" / "Cancel" buttons.
     Reset,
+    /// The Spark wallet balance for the YOU SEND card — BTC sats plus the Stable
+    /// Balance snapshot, folded into a unified total by the handler. `None` when
+    /// the `get_info` fetch failed; the card keeps its last value.
+    BalanceLoaded(Option<(u64, Option<coincube_spark_protocol::StableBalanceSnapshot>)>),
     /// A `list_payments` RPC completed — used to populate the Last
     /// Transactions section under the Send form.
     PaymentsLoaded(Vec<coincube_spark_protocol::PaymentSummary>),
@@ -124,12 +136,56 @@ pub enum SparkSendMessage {
     SelectTransaction(usize),
     /// User tapped "View All Transactions".
     History,
+
+    // ── Cross-chain stablecoin send ─────────────────────────────────────
+    /// The destination parsed as a cross-chain address and the bridge
+    /// returned the routes that can reach it. Moves the panel into
+    /// `CrossChainRoutes`, where the user confirms the chain and asset.
+    CrossChainRoutesLoaded(coincube_spark_protocol::CrossChainRoutesOk),
+    /// User picked one of the offered routes (index into the phase's list).
+    CrossChainRouteSelected(usize),
+    /// User edited the slippage field (basis points).
+    SlippageChanged(String),
+    /// User toggled the advanced disclosure that hides the slippage field.
+    ToggleAdvanced,
+    /// User accepted the chain/asset confirmation — fetch a quote for the
+    /// selected route.
+    CrossChainQuoteRequested,
+    /// The countdown ticked. Recomputes the quote's remaining life and, at
+    /// zero, blocks Confirm until the user re-quotes.
+    QuoteTick,
+    /// User asked for a fresh quote after the previous one expired.
+    ReQuoteRequested,
+    /// User asked to retry a *failed* cross-chain send.
+    ///
+    /// Distinct from [`Self::ConfirmRequested`]: a retry has to re-run the
+    /// prepare (the bridge consumed the old handle when it executed the failed
+    /// send), while deliberately keeping the original idempotency key so the
+    /// retry can't double-pay. Only offered when the route's
+    /// [`RetryPolicy`](crate::app::state::spark::cross_chain::RetryPolicy)
+    /// permits it.
+    CrossChainRetryRequested,
+    /// A cross-chain send failed. Carries the route's retry policy, so the
+    /// panel can tell "safe to retry" apart from "check the payment's state
+    /// first, because a retry might pay twice".
+    CrossChainSendFailed(String, crate::app::state::spark::cross_chain::RetryPolicy),
 }
 
 /// View-level messages for the Phase 4c Spark Receive panel.
 #[derive(Debug, Clone)]
 pub enum SparkReceiveMessage {
-    MethodSelected(crate::app::state::spark::receive::SparkReceiveMethod),
+    /// Open the unified "THEY SEND" picker modal (Bitcoin rails + cross-network
+    /// assets) that replaces the old Method chips + "Receive from another
+    /// network" card.
+    OpenSenderPicker,
+    /// Dismiss the "THEY SEND" picker without changing the selection.
+    CloseSenderPicker,
+    /// Picked a Bitcoin rail (Lightning / on-chain / Spark) in the picker —
+    /// sets the receive method and closes the modal.
+    SelectSenderRail(crate::app::state::spark::receive::SparkReceiveMethod),
+    /// Picked a cross-network asset (by `DepositOption` key) in the picker —
+    /// launches the SideShift flow pre-selected to that asset. Mainnet only.
+    SelectSenderCrossNetwork(String),
     AmountInputChanged(String),
     DescriptionInputChanged(String),
     GenerateRequested,
@@ -182,6 +238,10 @@ pub enum SparkReceiveMessage {
     /// not on every new confirmation).
     RefreshConfirmations,
     Reset,
+    /// The Spark wallet balance for the YOU RECEIVE card — BTC sats plus the
+    /// Stable Balance snapshot, folded into a unified total by the handler.
+    /// `None` when `get_info` failed; the card keeps its last value.
+    BalanceLoaded(Option<(u64, Option<coincube_spark_protocol::StableBalanceSnapshot>)>),
     /// A `list_payments` RPC completed — used to populate the Last
     /// Transactions section under the Receive form.
     PaymentsLoaded(Vec<coincube_spark_protocol::PaymentSummary>),

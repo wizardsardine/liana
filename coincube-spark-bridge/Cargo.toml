@@ -24,7 +24,14 @@ mismatched_lifetime_syntaxes = "allow"
 
 [dependencies]
 coincube-spark-protocol = { path = "../coincube-spark-protocol" }
-breez-sdk-spark = { git = "https://github.com/breez/spark-sdk", tag = "0.13.1" }
+# 0.19.0 made the sqlite storage backend an opt-in feature (it was implicit in
+# 0.13.1, where the now-removed free `connect()` fn wired it up). Without it
+# `SdkBuilder::with_default_storage` doesn't exist and the bridge has nowhere
+# to persist. This is the `rusqlite`/`libsqlite3-sys` edge that makes this crate
+# a separate workspace — see the `[workspace]` note above.
+breez-sdk-spark = { git = "https://github.com/breez/spark-sdk", tag = "0.19.0", features = [
+    "sqlite",
+] }
 async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

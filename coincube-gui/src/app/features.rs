@@ -96,6 +96,63 @@ fn marketplace_off() -> Availability {
     }
 }
 
+/// Whether the Liquid wallet is shown at all. This is the sunset gate: Liquid
+/// is being wound down, so new installs don't get it, but anyone who already
+/// has a Liquid wallet keeps full access to it forever.
+///
+/// Two independent inputs, OR'd — and note this deliberately does **not**
+/// behave like [`MarketplaceServerFlags`]:
+///
+/// - `server_enabled` — the account-scoped `liquidEnabled` grandfather flag
+///   from `GET /connect/features`. Only meaningful on an *authenticated* call;
+///   pre-login the API silently reports `false`, so this stays `false` until
+///   features load for a signed-in user.
+/// - `local_state_exists` — a Liquid wallet has already been initialized on
+///   this machine (see [`crate::app::breez_liquid::local_state_exists`]).
+///
+/// **Fails open on the local dimension, by design.** Marketplace is a launch
+/// kill-switch and fails closed: hiding it costs a user nothing. Liquid holds
+/// *funds*. If Connect is unreachable, the token expired, or the user never
+/// made a Connect account at all, an existing Liquid wallet must still show —
+/// otherwise the gate strands real L-BTC/L-USDt behind a network outage. So
+/// local state alone is sufficient to surface the wallet, and the server flag
+/// only ever *adds* visibility (for a fresh install the operator has
+/// grandfathered).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct LiquidGate {
+    /// `liquidEnabled` from `/connect/features` (authenticated). Defaults
+    /// `false`: a fresh install gets no Liquid unless the server grants it.
+    pub server_enabled: bool,
+    /// A Liquid wallet has been initialized on this machine. Never cleared by
+    /// an API response — funds access must not depend on Connect.
+    pub local_state_exists: bool,
+}
+
+impl LiquidGate {
+    /// Nothing granted, nothing on disk — a fresh install before features
+    /// load. The starting value everywhere.
+    pub const HIDDEN: Self = Self {
+        server_enabled: false,
+        local_state_exists: false,
+    };
+
+    /// The single source of truth for "should the Liquid surface exist".
+    /// Consulted by the nav rails, the route guard, global home, and the
+    /// wallet-creation entry points.
+    pub fn show(&self) -> bool {
+        self.server_enabled || self.local_state_exists
+    }
+}
+
+/// Reason shown for a Liquid route reached while the wallet is gated off —
+/// a restored or deep-linked route, since the nav hides Liquid entirely in
+/// this state. Not a per-network message: Liquid is sunset for new wallets.
+fn liquid_sunset() -> Availability {
+    Availability::Unavailable {
+        reason: "The Liquid wallet isn't available on this account.".to_string(),
+    }
+}
+
 /// Display name for a network, used in popover text.
 fn net_label(n: Network) -> &'static str {
     match n {
@@ -168,10 +225,19 @@ pub fn route_availability(
     net: Network,
     p2p_test_coordinator: bool,
     flags: MarketplaceServerFlags,
+    liquid_gate: LiquidGate,
 ) -> Availability {
     match menu {
         Menu::Spark(_) => spark(net),
-        Menu::Liquid(_) => liquid(net),
+        // Sunset gate first, then the per-network gate — a gated-off Liquid
+        // reads as "not on this account", not "not on this network".
+        Menu::Liquid(_) => {
+            if liquid_gate.show() {
+                liquid(net)
+            } else {
+                liquid_sunset()
+            }
+        }
         // Buy/Sell: hidden entirely when the server switch is off, otherwise
         // subject to the per-network gate.
         Menu::Marketplace(MarketplaceSubMenu::BuySell) => {
@@ -284,9 +350,20 @@ mod tests {
         Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Settings))
     }
 
+    /// Marketplace/Spark route checks; Liquid is granted here so these stay
+    /// about the flag under test. Liquid's own gate has its own tests below.
     fn avail(menu: &Menu, net: Network, flags: MarketplaceServerFlags) -> bool {
-        route_availability(menu, net, false, flags).is_available()
+        route_availability(menu, net, false, flags, LIQUID_GRANTED).is_available()
     }
+
+    const LIQUID_GRANTED: LiquidGate = LiquidGate {
+        server_enabled: true,
+        local_state_exists: false,
+    };
+    const LIQUID_LOCAL_ONLY: LiquidGate = LiquidGate {
+        server_enabled: false,
+        local_state_exists: true,
+    };
 
     #[test]
     fn server_flags_default_and_off_are_fail_closed() {
@@ -374,6 +451,80 @@ mod tests {
             MarketplaceServerFlags::OFF
         ));
         assert!(!avail(&spark_route, Network::Signet, ALL_ON));
+    }
+
+    // ── Liquid sunset gate ──────────────────────────────────────────────
+    //
+    // The four scenarios from PLAN-liquid-sunset PR 1. The load-bearing one
+    // is the last: unlike Marketplace, an unreachable API must never hide a
+    // funded wallet.
+
+    #[test]
+    fn fresh_install_with_flag_off_hides_liquid() {
+        assert!(!LiquidGate::HIDDEN.show());
+        assert_eq!(LiquidGate::default(), LiquidGate::HIDDEN);
+        assert!(!avail_liquid(Network::Bitcoin, LiquidGate::HIDDEN));
+    }
+
+    #[test]
+    fn server_flag_grants_liquid_on_a_fresh_install() {
+        assert!(LIQUID_GRANTED.show());
+        assert!(avail_liquid(Network::Bitcoin, LIQUID_GRANTED));
+    }
+
+    #[test]
+    fn local_wallet_shows_liquid_even_with_the_flag_off() {
+        // The grandfather case: the server says no (or has never been asked),
+        // but this machine already has a Liquid wallet. Funds win.
+        assert!(LIQUID_LOCAL_ONLY.show());
+        assert!(avail_liquid(Network::Bitcoin, LIQUID_LOCAL_ONLY));
+    }
+
+    #[test]
+    fn unreachable_api_still_shows_a_funded_local_wallet() {
+        // An unreachable/silent API reads as `server_enabled: false` — the
+        // same value as a real "no". Local state must still surface the
+        // wallet, or a network outage strands the user's L-BTC. This is the
+        // deliberate divergence from `MarketplaceServerFlags`' fail-closed
+        // behavior; if someone "fixes" this to fail closed, that's a bug.
+        let api_down = LiquidGate {
+            server_enabled: false,
+            local_state_exists: true,
+        };
+        assert!(api_down.show());
+    }
+
+    #[test]
+    fn network_gate_still_applies_to_a_granted_liquid_wallet() {
+        // Being grandfathered in doesn't conjure a Liquid backend on signet.
+        assert!(!avail_liquid(Network::Signet, LIQUID_GRANTED));
+        assert!(!avail_liquid(Network::Regtest, LIQUID_LOCAL_ONLY));
+    }
+
+    #[test]
+    fn gated_off_liquid_route_reads_as_account_scoped_not_network_scoped() {
+        assert_eq!(
+            route_availability(
+                &Menu::Liquid(crate::app::menu::LiquidSubMenu::Overview),
+                Network::Bitcoin,
+                false,
+                MarketplaceServerFlags::OFF,
+                LiquidGate::HIDDEN,
+            )
+            .reason(),
+            Some("The Liquid wallet isn't available on this account.")
+        );
+    }
+
+    fn avail_liquid(net: Network, gate: LiquidGate) -> bool {
+        route_availability(
+            &Menu::Liquid(crate::app::menu::LiquidSubMenu::Overview),
+            net,
+            false,
+            MarketplaceServerFlags::OFF,
+            gate,
+        )
+        .is_available()
     }
 
     #[test]

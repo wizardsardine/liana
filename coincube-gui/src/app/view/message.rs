@@ -206,6 +206,12 @@ pub enum Message {
     DismissToast(usize),
     SideshiftReceive(SideshiftReceiveMessage),
     SideshiftSend(SideshiftSendMessage),
+    /// Spark's "receive from another network" bridge — deposit any supported
+    /// asset, receive Bitcoin. Kept separate from [`Self::SideshiftReceive`]
+    /// (the Liquid USDt flow) rather than shared: that flow settles Liquid USDt
+    /// and is being sunset, this one settles on-chain BTC and collects a refund
+    /// address. Folding them together would couple the survivor to the corpse.
+    SparkSideshiftReceive(SparkSideshiftReceiveMessage),
     ConnectAccount(ConnectAccountMessage),
     ConnectCube(ConnectCubeMessage),
     P2P(P2PMessage),
@@ -678,6 +684,26 @@ pub enum SideshiftReceiveMessage {
     Back,
     Reset,
     Error(String),
+}
+
+/// Messages for the Spark "receive from another network" bridge.
+#[derive(Debug, Clone)]
+pub enum SparkSideshiftReceiveMessage {
+    /// User picked what to deposit, by [`crate::services::sideshift::DepositOption::key`].
+    /// Changing chain clears the refund address — it belonged to the old one.
+    SelectDeposit(String),
+    /// Refund address edited. Validated live against the *origin* chain.
+    RefundAddressEdited(String),
+    /// Create the shift. Refused unless the refund address validates.
+    Generate,
+    AffiliateFetched(Result<String, String>),
+    ShiftCreated(Result<ShiftResponse, String>),
+    PollStatus,
+    StatusUpdated(Result<ShiftStatus, String>),
+    /// Copy the deposit address.
+    Copy,
+    Back,
+    Reset,
 }
 
 #[derive(Debug, Clone)]
@@ -1962,6 +1988,16 @@ pub enum HomeMessage {
         usdt_send_sats: u64,
         liquid_receive_sats: u64,
         usdt_receive_sats: u64,
+    },
+    /// Fired by the SideShift-swap flow the moment its shift settles: bitcoin
+    /// is now en route to the Spark wallet's static on-chain deposit address.
+    /// The Home state registers it as a pending incoming Spark deposit so the
+    /// existing auto-claim watcher claims it on maturity and fires the
+    /// "received" celebration once it lands. `amount_sat` is the swap's settle
+    /// estimate, used only for the pending-indicator amount (the celebration
+    /// uses the actual claimed amount).
+    SwapSettledAwaitingArrival {
+        amount_sat: u64,
     },
     /// Fired when the Spark bridge reports `DepositsChanged`. The Home state
     /// re-queries `list_unclaimed_deposits` and decides whether to auto-claim

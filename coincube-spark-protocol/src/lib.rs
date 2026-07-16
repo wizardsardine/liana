@@ -20,6 +20,113 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Serde codec that carries a `u128` on the wire as a decimal **string**.
+///
+/// Two independent reasons force this for the cross-chain token-amount fields:
+///
+/// 1. [`Request`] and [`Response`] both use `#[serde(flatten)]`, and serde's
+///    flatten path buffers values through `FlatMapDeserializer`, which does not
+///    implement `deserialize_u128`. A bare `u128` field anywhere beneath a
+///    flattened envelope therefore fails to parse with the exact error
+///    "u128 is not supported" (serde issue #1183). Every response is flattened
+///    at `Response.result`, so this hits all of them.
+/// 2. A JSON number above 2^53 silently loses precision in many parsers. An
+///    18-decimal token amount can exceed that, so a bare number would be unsafe
+///    on the wire even without (1).
+///
+/// The bridge and gui both link this crate, so annotating the field with
+/// `#[serde(with = "u128_dec")]` keeps their serialize/deserialize in lockstep.
+mod u128_dec {
+    use serde::{de, Deserializer, Serializer};
+    use std::fmt;
+
+    pub fn serialize<S: Serializer>(value: &u128, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    /// Accepts a `u128` from a decimal string (what we emit) or a bare JSON
+    /// integer (tolerated so an older number-format frame still parses). Goes
+    /// through `deserialize_any` rather than `deserialize_u128` — the latter is
+    /// the method serde's flatten / `Content` replay path leaves unimplemented,
+    /// which is the whole reason a bare `u128` failed here.
+    pub(super) struct U128Visitor;
+
+    impl<'de> de::Visitor<'de> for U128Visitor {
+        type Value = u128;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a u128 as a decimal string or a JSON integer")
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<u128, E> {
+            v.parse().map_err(de::Error::custom)
+        }
+
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<u128, E> {
+            Ok(u128::from(v))
+        }
+
+        fn visit_u128<E: de::Error>(self, v: u128) -> Result<u128, E> {
+            Ok(v)
+        }
+
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<u128, E> {
+            u128::try_from(v).map_err(de::Error::custom)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u128, D::Error> {
+        deserializer.deserialize_any(U128Visitor)
+    }
+}
+
+/// [`u128_dec`] for `Option<u128>`. Pairs with `#[serde(default,
+/// skip_serializing_if = "Option::is_none")]`: `None` is omitted from the wire,
+/// `Some` is a decimal string.
+mod opt_u128_dec {
+    use super::u128_dec::U128Visitor;
+    use serde::{de, Deserializer, Serializer};
+    use std::fmt;
+
+    pub fn serialize<S: Serializer>(
+        value: &Option<u128>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(v) => serializer.serialize_str(&v.to_string()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    struct OptU128Visitor;
+
+    impl<'de> de::Visitor<'de> for OptU128Visitor {
+        type Value = Option<u128>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("an optional u128 as a decimal string or a JSON integer")
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Option<u128>, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Option<u128>, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<Option<u128>, D::Error> {
+            d.deserialize_any(U128Visitor).map(Some)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<u128>, D::Error> {
+        deserializer.deserialize_option(OptU128Visitor)
+    }
+}
+
 /// A request from the gui to the bridge. `id` is echoed back in the matching
 /// [`Response`] so the client can correlate concurrent in-flight calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +250,23 @@ pub enum Method {
     /// wallet. Idempotent — returns Ok even when no address is
     /// registered.
     DeleteLightningAddress,
+    /// Classify a raw destination string as a cross-chain address and list
+    /// the routes that can reach it. Returns [`CrossChainRoutesOk`], whose
+    /// `address` field is `None` when the input isn't a cross-chain address
+    /// at all (an ordinary BOLT11/Spark destination) — that's not an error,
+    /// it's how the gui's Send panel decides which flow to run.
+    ///
+    /// The SDK only offers cross-chain for USD-stable assets (USDT/USDC), and
+    /// only on mainnet.
+    GetCrossChainRoutes(GetCrossChainRoutesParams),
+    /// Prepare a cross-chain send along a route chosen from
+    /// [`Method::GetCrossChainRoutes`]. Distinct from [`Method::PrepareSend`]
+    /// because the SDK models it as a different `PaymentRequest` variant: it
+    /// carries an explicitly-selected route rather than a string for the SDK
+    /// to classify. Returns a [`PrepareSendOk`] whose `cross_chain` field is
+    /// populated with the quote (amount out, fees, provider, expiry), and an
+    /// opaque handle routed by the same [`Method::SendPayment`].
+    PrepareCrossChain(PrepareCrossChainParams),
     /// Gracefully disconnect and exit the bridge.
     Shutdown,
 }
@@ -200,6 +324,166 @@ pub struct SendPaymentParams {
     /// full `breez_sdk_spark::PrepareSendPaymentResponse`. Single-use —
     /// a successful or failed send consumes the entry.
     pub prepare_handle: String,
+    /// Caller-supplied idempotency key. On the plain bitcoin rails (Lightning /
+    /// on-chain / Spark) the SDK honours it: a repeat send with the same key
+    /// short-circuits instead of paying twice, so a retry after an ambiguous
+    /// failure is safe.
+    ///
+    /// **It does not cover a token or conversion leg.** The SDK rejects an
+    /// idempotency key on any send that has one, so the bridge drops the key
+    /// there — and that is *every* cross-chain (USDt/USDC) send, BTC-funded ones
+    /// included, because they carry an AMM conversion. Do not infer idempotency
+    /// for a cross-chain retry from this field: that safety instead comes from
+    /// re-sending the *same* prepared quote (the provider dedups on its swap id),
+    /// gated by [`CrossChainQuote::retry_safe`] and the panel's retry policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetCrossChainRoutesParams {
+    /// Raw destination string as typed/pasted by the user. May be a bare
+    /// address (`0xabc…`, a Solana base58 key, a `T…` Tron address) or a
+    /// canonical URI (`ethereum:0xabc…?chain=base&asset=usdc`).
+    pub input: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrepareCrossChainParams {
+    /// The destination, echoed back **whole** from
+    /// [`CrossChainRoutesOk::address`].
+    ///
+    /// The full [`CrossChainAddress`] rather than just the address string,
+    /// because the bridge has to rebuild the SDK's `CrossChainAddressDetails`
+    /// to re-resolve the route — and the extra fields (`contract_address`,
+    /// `chain_id`) only exist when the user pasted a URI. Sending the bare
+    /// address back would force the bridge to re-parse it, silently dropping
+    /// them, and re-resolve against a *broader* route set than the one the user
+    /// actually chose from. That happens to still work today only because the
+    /// SDK's route filter is monotone (an absent contract filter matches
+    /// everything), which is an accident of its implementation, not a promise.
+    /// Round-tripping the details keeps the prepare resolving against exactly
+    /// the destination the routes were offered for.
+    pub destination: CrossChainAddress,
+    /// The route the user picked, echoed back from [`CrossChainRoute`].
+    pub route: CrossChainRoute,
+    /// Amount to send, in sats. v1 always funds cross-chain sends from the
+    /// BTC balance (pay-time conversion); sending *from* Stable Balance is a
+    /// follow-up.
+    pub amount_sat: u64,
+    /// Slippage tolerance in basis points. Must be in `10..=500`; `None` uses
+    /// the SDK default of 100 bps (1%). Exposed in the gui only behind an
+    /// advanced disclosure — normal users should never have to think in bps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_slippage_bps: Option<u32>,
+}
+
+/// A cross-chain destination the SDK recognised. Mirrors
+/// `breez_sdk_spark::CrossChainAddressDetails`, stringified to keep this crate
+/// free of SDK type dependencies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossChainAddress {
+    /// The bare recipient address, with any URI wrapper stripped.
+    pub address: String,
+    /// Address family: `"evm"`, `"solana"` or `"tron"`. The gui shows this to
+    /// the user for confirmation — a Tron address does not look obviously
+    /// Tron to a human, and sending USDT to the wrong chain loses it.
+    pub family: String,
+    /// Token contract / mint address, when the input was a URI that named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_address: Option<String>,
+    /// EIP-681 chain id, when the input carried an `@<chain_id>` suffix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_id: Option<u64>,
+    /// Amount named by the URI, in the **destination asset's** base units.
+    ///
+    /// Deliberately not used to prefill the send amount, and it would be a bug
+    /// to start: v1 funds cross-chain sends from the BTC balance and quotes
+    /// *amount-in sats*, so this figure is in the wrong denomination entirely
+    /// (10 USDC is not 10 sats). Honouring it needs an exact-out send, which
+    /// the SDK only offers on routes flagged `exact_out_eligible` — a follow-up.
+    /// Carried through so that follow-up has it, and so the gui can show the
+    /// requested amount for confirmation.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "opt_u128_dec"
+    )]
+    pub amount: Option<u128>,
+}
+
+/// One way to get funds to a cross-chain destination. Mirrors
+/// `breez_sdk_spark::CrossChainRoutePair`; round-tripped back to the bridge
+/// verbatim on [`Method::PrepareCrossChain`], which re-resolves it against the
+/// SDK's live route list rather than trusting these fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CrossChainRoute {
+    /// `"orchestra"` (Spark transfer → bridge) or `"boltz"` (Lightning
+    /// reverse swap). Surfaced to the user as the route's provider.
+    pub provider: String,
+    /// Destination chain, e.g. `"base"`, `"solana"`, `"tron"`.
+    pub chain: String,
+    /// Stable chain identifier (EVM `chainId` as a decimal string). `None` for
+    /// chains that don't expose one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_id: Option<String>,
+    /// Destination asset symbol, e.g. `"USDC"`, `"USDT"`.
+    pub asset: String,
+    /// Token contract / mint on the destination chain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_address: Option<String>,
+    /// Decimal places of the destination asset — needed to render
+    /// [`CrossChainQuote::estimated_out`] as a human amount.
+    pub decimals: u8,
+    /// Whether this route can be funded from the BTC balance. v1 only offers
+    /// routes where this holds; token-funded routes are a follow-up.
+    pub btc_source_supported: bool,
+}
+
+/// Result of [`Method::GetCrossChainRoutes`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossChainRoutesOk {
+    /// The parsed destination, or `None` when the input isn't a cross-chain
+    /// address. `None` is the ordinary "this is a Lightning invoice, not an
+    /// EVM address" case, not an error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<CrossChainAddress>,
+    /// Routes that can reach it, BTC-fundable ones only. Empty with a `Some`
+    /// address means the address parsed but nothing can currently reach it —
+    /// the gui must say so rather than silently offering a normal send.
+    pub routes: Vec<CrossChainRoute>,
+}
+
+/// The quote attached to a prepared cross-chain send.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossChainQuote {
+    /// The route this quote is for.
+    pub route: CrossChainRoute,
+    /// Estimated amount the recipient receives, in the destination asset's
+    /// base units (scale by [`CrossChainRoute::decimals`]).
+    #[serde(with = "u128_dec")]
+    pub estimated_out: u128,
+    /// Total user-visible fee, in the destination asset's base units. Covers
+    /// provider spread, bridge/gas, and DEX slippage.
+    #[serde(with = "u128_dec")]
+    pub fee_amount: u128,
+    /// Sats debited from the wallet to move funds to the provider. Denominated
+    /// in sats, unlike the two fields above — don't add them together.
+    pub source_transfer_fee_sats: u64,
+    /// Timestamp after which the quote is void — the gui counts down to it and
+    /// re-quotes on expiry rather than sending against a stale rate. Format is
+    /// provider-dependent and passed through from the SDK verbatim: Orchestra
+    /// sends RFC3339, Boltz sends a bare Unix epoch seconds string. The gui's
+    /// `quote_countdown` parses both.
+    pub expires_at: String,
+    /// Whether a failed send can be safely retried with the same idempotency
+    /// key.
+    ///
+    /// `false` means the send's source leg is a Spark *token* transfer, which
+    /// has no idempotency hook in the SDK — a blind retry could pay twice. The
+    /// gui must check payment state before offering retry on one of these.
+    /// True for the v1 BTC-funded path.
+    pub retry_safe: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -307,6 +591,7 @@ pub enum OkPayload {
     /// shape-compatible previews so the gui state machine can treat
     /// them uniformly.
     PrepareSend(PrepareSendOk),
+    GetCrossChainRoutes(CrossChainRoutesOk),
     SendPayment(SendPaymentOk),
     ReceivePayment(ReceivePaymentOk),
     ListUnclaimedDeposits(ListUnclaimedDepositsOk),
@@ -491,9 +776,26 @@ pub struct PrepareSendOk {
     /// High-level send-method tag for display. Mirrors the variant
     /// names of `breez_sdk_spark::SendPaymentMethod` — one of
     /// "BitcoinAddress", "Bolt11Invoice", "SparkAddress",
-    /// "SparkInvoice". Stringified to keep the protocol crate free of
-    /// SDK type deps.
+    /// "SparkInvoice", "CrossChainAddress". Stringified to keep the
+    /// protocol crate free of SDK type deps.
     pub method: String,
+    /// The cross-chain quote, present only for a [`Method::PrepareCrossChain`]
+    /// prepare (`method == "CrossChainAddress"`).
+    ///
+    /// `amount_sat` / `fee_sat` above can't carry a cross-chain quote on their
+    /// own: the recipient amount and the headline fee are denominated in the
+    /// *destination* asset (USDC/USDT base units), not sats, so reporting them
+    /// through sats-typed fields would misprice the send by orders of
+    /// magnitude. Everything asset-denominated lives here instead.
+    ///
+    /// **Boxed on purpose.** A `CrossChainQuote` is large and `None` on every
+    /// ordinary send (Lightning, on-chain, Spark) — which is the overwhelming
+    /// majority. Inlining it made `PrepareSendOk` the fat variant of
+    /// `OkPayload`, pushing `ResponseResult` past clippy's `large_enum_variant`
+    /// threshold and bloating every small response. The box keeps the common
+    /// path pointer-sized and only allocates when a quote is actually present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cross_chain: Option<Box<CrossChainQuote>>,
 }
 
 /// Result of a successful [`Method::SendPayment`].
@@ -722,4 +1024,130 @@ pub enum Frame {
     Request(Request),
     Response(Response),
     Event(Event),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The exact `prepare_send` response (USDT on Solana) that used to fail to
+    /// parse with "u128 is not supported": its `estimated_out` / `fee_amount`
+    /// are `u128`, nested under the flattened [`Response`] envelope. Kept verbatim
+    /// from the bug report — bare integers, the pre-fix on-wire form — so this
+    /// also proves the deserializer still tolerates that shape.
+    const CROSS_CHAIN_PREPARE_FRAME: &str = r#"{"type":"response","id":79,"ok":{"kind":"prepare_send","data":{"handle":"97f19c3d-1a09-4240-ab15-61571e6ceaba","amount_sat":10173,"fee_sat":43,"method":"CrossChainAddress","cross_chain":{"route":{"provider":"boltz","chain":"Solana","asset":"USDT","decimals":6,"btc_source_supported":true},"estimated_out":6499079,"fee_amount":102531,"source_transfer_fee_sats":43,"expires_at":"1784180130","retry_safe":true}}}}"#;
+
+    fn prepare_ok_from_frame(frame: &str) -> PrepareSendOk {
+        let parsed: Frame = serde_json::from_str(frame).expect("frame must parse");
+        let Frame::Response(resp) = parsed else {
+            panic!("expected a Response frame");
+        };
+        let ResponseResult::Ok(OkPayload::PrepareSend(prep)) = resp.result else {
+            panic!("expected an Ok(PrepareSend) payload");
+        };
+        prep
+    }
+
+    #[test]
+    fn cross_chain_prepare_frame_with_integer_amounts_parses() {
+        // Before the fix this returned Err("u128 is not supported").
+        let prep = prepare_ok_from_frame(CROSS_CHAIN_PREPARE_FRAME);
+        let quote = prep.cross_chain.expect("cross_chain quote present");
+        assert_eq!(quote.estimated_out, 6_499_079);
+        assert_eq!(quote.fee_amount, 102_531);
+        assert_eq!(quote.source_transfer_fee_sats, 43);
+    }
+
+    #[test]
+    fn cross_chain_quote_round_trips_u128_beyond_u64() {
+        // A value past u64::MAX proves we keep the full u128 range (and that a
+        // bare JSON number would have been unsafe — this can't be one).
+        let big = u128::from(u64::MAX) + 1; // 18446744073709551616
+        let frame = Frame::Response(Response {
+            id: 79,
+            result: ResponseResult::Ok(OkPayload::PrepareSend(PrepareSendOk {
+                handle: "h".into(),
+                amount_sat: 10173,
+                fee_sat: 43,
+                method: "CrossChainAddress".into(),
+                cross_chain: Some(Box::new(CrossChainQuote {
+                    route: CrossChainRoute {
+                        provider: "boltz".into(),
+                        chain: "Solana".into(),
+                        chain_id: None,
+                        asset: "USDT".into(),
+                        contract_address: None,
+                        decimals: 6,
+                        btc_source_supported: true,
+                    },
+                    estimated_out: big,
+                    fee_amount: 102_531,
+                    source_transfer_fee_sats: 43,
+                    expires_at: "1784180130".into(),
+                    retry_safe: true,
+                })),
+            })),
+        });
+
+        let json = serde_json::to_string(&frame).expect("serialize");
+        // On the wire the u128 fields are decimal strings, never bare numbers.
+        assert!(
+            json.contains(r#""estimated_out":"18446744073709551616""#),
+            "u128 must serialize as a string: {json}"
+        );
+
+        let quote = prepare_ok_from_frame(&json)
+            .cross_chain
+            .expect("quote survives round-trip");
+        assert_eq!(quote.estimated_out, big);
+        assert_eq!(quote.fee_amount, 102_531);
+    }
+
+    #[test]
+    fn cross_chain_address_optional_amount_round_trips_and_omits_none() {
+        // `amount: Option<u128>` under the flattened GetCrossChainRoutes payload.
+        let big = u128::from(u64::MAX) + 5;
+        let present = Frame::Response(Response {
+            id: 1,
+            result: ResponseResult::Ok(OkPayload::GetCrossChainRoutes(CrossChainRoutesOk {
+                address: Some(CrossChainAddress {
+                    address: "0xabc".into(),
+                    family: "evm".into(),
+                    contract_address: None,
+                    chain_id: None,
+                    amount: Some(big),
+                }),
+                routes: vec![],
+            })),
+        });
+        let json = serde_json::to_string(&present).expect("serialize");
+        assert!(
+            json.contains(r#""amount":"18446744073709551620""#),
+            "{json}"
+        );
+
+        let parsed: Frame = serde_json::from_str(&json).expect("parse");
+        let Frame::Response(Response {
+            result: ResponseResult::Ok(OkPayload::GetCrossChainRoutes(ok)),
+            ..
+        }) = parsed
+        else {
+            panic!("expected GetCrossChainRoutes");
+        };
+        assert_eq!(ok.address.and_then(|a| a.amount), Some(big));
+
+        // A `None` amount must be omitted entirely, not emitted as null/"".
+        let absent = CrossChainAddress {
+            address: "0xabc".into(),
+            family: "evm".into(),
+            contract_address: None,
+            chain_id: None,
+            amount: None,
+        };
+        let json = serde_json::to_string(&absent).expect("serialize");
+        assert!(
+            !json.contains("amount"),
+            "None amount must be omitted: {json}"
+        );
+    }
 }

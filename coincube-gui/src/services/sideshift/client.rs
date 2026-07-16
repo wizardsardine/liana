@@ -4,6 +4,7 @@ use crate::services::http::ResponseExt;
 
 use super::types::{
     FixedShiftRequest, QuoteRequest, ShiftQuote, ShiftResponse, ShiftStatus, VariableShiftRequest,
+    BTC_COIN, BTC_NETWORK,
 };
 
 const SIDESHIFT_BASE_URL: &str = "https://sideshift.ai/api/v2";
@@ -141,6 +142,38 @@ impl SideshiftClient {
         .await
     }
 
+    /// Create a variable-rate shift that settles as **Bitcoin** into the Spark
+    /// wallet's on-chain deposit address (`btc_settle_address`).
+    ///
+    /// This is the Spark receive bridge: any SideShift-supported asset in, BTC
+    /// out. SideShift has no Lightning rail, so the settle leg is on-chain —
+    /// the funds land after roughly one confirmation, not instantly, and the
+    /// status UI has to say so.
+    ///
+    /// `refund_address` is on the **origin** chain (see
+    /// [`super::types::validate_refund_address`]) and is mandatory here even
+    /// though SideShift treats it as optional: a shift that fails or gets held
+    /// with no refund address leaves the user's funds stranded at a third party.
+    pub async fn create_btc_receive_shift(
+        &self,
+        deposit_coin: &str,
+        deposit_network: &str,
+        btc_settle_address: &str,
+        refund_address: &str,
+        affiliate_id: &str,
+    ) -> Result<ShiftResponse, String> {
+        self.post_variable_shift(VariableShiftRequest {
+            deposit_coin: deposit_coin.to_string(),
+            deposit_network: deposit_network.to_string(),
+            settle_coin: BTC_COIN.to_string(),
+            settle_network: BTC_NETWORK.to_string(),
+            settle_address: btc_settle_address.to_string(),
+            affiliate_id: affiliate_id.to_string(),
+            refund_address: Some(refund_address.to_string()),
+        })
+        .await
+    }
+
     async fn create_variable_shift(
         &self,
         deposit_network: &str,
@@ -148,15 +181,26 @@ impl SideshiftClient {
         settle_address: &str,
         affiliate_id: &str,
     ) -> Result<ShiftResponse, String> {
-        let url = format!("{}/shifts/variable", SIDESHIFT_BASE_URL);
-        let body = VariableShiftRequest {
+        self.post_variable_shift(VariableShiftRequest {
             deposit_coin: USDT_COIN.to_string(),
             deposit_network: deposit_network.to_string(),
             settle_coin: USDT_COIN.to_string(),
             settle_network: settle_network.to_string(),
             settle_address: settle_address.to_string(),
             affiliate_id: affiliate_id.to_string(),
-        };
+            // The pre-existing Liquid USDt flows don't collect one. Left as-is
+            // rather than quietly changing their behaviour — the Liquid side is
+            // being sunset, and PR 3's new BTC flow collects it properly.
+            refund_address: None,
+        })
+        .await
+    }
+
+    async fn post_variable_shift(
+        &self,
+        body: VariableShiftRequest,
+    ) -> Result<ShiftResponse, String> {
+        let url = format!("{}/shifts/variable", SIDESHIFT_BASE_URL);
 
         let response = self
             .client

@@ -4211,6 +4211,7 @@ impl State for P2PPanel {
                                         network: cache.network,
                                         p2p_test_coordinator: cache.p2p_test_coordinator,
                                         marketplace_flags: cache.marketplace_flags,
+                                        liquid_gate: cache.liquid_gate,
                                         cube_name: &cache.cube_name,
                                         lightning_address: None,
                                         avatar: None,
@@ -4375,6 +4376,7 @@ impl State for P2PPanel {
                                             network: cache.network,
                                             p2p_test_coordinator: cache.p2p_test_coordinator,
                                             marketplace_flags: cache.marketplace_flags,
+                                            liquid_gate: cache.liquid_gate,
                                             cube_name: &cache.cube_name,
                                             lightning_address: None,
                                             avatar: None,
@@ -4435,6 +4437,7 @@ impl State for P2PPanel {
                                             network: cache.network,
                                             p2p_test_coordinator: cache.p2p_test_coordinator,
                                             marketplace_flags: cache.marketplace_flags,
+                                            liquid_gate: cache.liquid_gate,
                                             cube_name: &cache.cube_name,
                                             lightning_address: None,
                                             avatar: None,
@@ -4567,6 +4570,7 @@ impl State for P2PPanel {
                                             network: cache.network,
                                             p2p_test_coordinator: cache.p2p_test_coordinator,
                                             marketplace_flags: cache.marketplace_flags,
+                                            liquid_gate: cache.liquid_gate,
                                             cube_name: &cache.cube_name,
                                             lightning_address: None,
                                             avatar: None,
@@ -4624,6 +4628,7 @@ impl State for P2PPanel {
                                             network: cache.network,
                                             p2p_test_coordinator: cache.p2p_test_coordinator,
                                             marketplace_flags: cache.marketplace_flags,
+                                            liquid_gate: cache.liquid_gate,
                                             cube_name: &cache.cube_name,
                                             lightning_address: None,
                                             avatar: None,
@@ -5588,7 +5593,7 @@ impl State for P2PPanel {
                 let handle = prepared.handle.clone();
                 self.spark_pay_phase = SparkPayPhase::Sending;
                 return Task::perform(
-                    async move { spark.send_payment(handle).await },
+                    async move { spark.send_payment(handle, None).await },
                     move |result| match result {
                         Ok(ok) => Message::View(view::Message::P2P(P2PMessage::SparkPaySent {
                             order_id: session_id.clone(),

@@ -258,6 +258,11 @@ pub struct NavContext<'a> {
     /// [`MarketplaceServerFlags::OFF`](crate::app::features::MarketplaceServerFlags::OFF)
     /// until features load, hiding the section while the API stance is unknown.
     pub marketplace_flags: crate::app::features::MarketplaceServerFlags,
+    /// Whether the Liquid wallet is shown at all (sunset gate). When this is
+    /// hidden the Liquid top-level entry disappears from the primary rail —
+    /// hidden, not greyed, since "not on this account" isn't a per-network
+    /// state. See [`crate::app::features::LiquidGate`].
+    pub liquid_gate: crate::app::features::LiquidGate,
     pub cube_name: &'a str,
     pub lightning_address: Option<&'a str>,
     pub avatar: Option<&'a iced::widget::image::Handle>,

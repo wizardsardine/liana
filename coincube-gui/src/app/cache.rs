@@ -117,6 +117,17 @@ pub struct Cache {
     /// features load, so a launch build hides the untested money feature while
     /// the API stance is unknown.
     pub marketplace_flags: crate::app::features::MarketplaceServerFlags,
+    /// Whether the Liquid wallet is shown at all (sunset gate). Two inputs:
+    /// the account-scoped `liquidEnabled` grant, mirrored from the Connect
+    /// account panel alongside `marketplace_flags`; and whether a Liquid wallet
+    /// already exists on disk, resolved once at cube-open.
+    ///
+    /// Starts [`LiquidGate::HIDDEN`](crate::app::features::LiquidGate::HIDDEN),
+    /// but note this is **not** fail-closed in the Marketplace sense — the
+    /// local-state input can't be cleared by an API response, so an existing
+    /// wallet stays reachable when Connect is down. See
+    /// [`crate::app::features::LiquidGate`].
+    pub liquid_gate: crate::app::features::LiquidGate,
     /// Current theme mode (dark/light) — used for theme-aware widget rendering
     pub theme_mode: coincube_ui::theme::palette::ThemeMode,
     /// BTC price in USD, always fetched regardless of the user's selected fiat
@@ -208,6 +219,7 @@ impl std::default::Default for Cache {
             has_p2p: false,
             p2p_test_coordinator: false,
             marketplace_flags: crate::app::features::MarketplaceServerFlags::OFF,
+            liquid_gate: crate::app::features::LiquidGate::HIDDEN,
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
             btc_usd_price: None,
             show_direction_badges: true,
