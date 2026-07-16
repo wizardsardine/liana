@@ -567,6 +567,8 @@ pub enum NodeSettingsMessage {
     NodeResourceMaxMempoolEdited(String),
     /// One-click "Small computer" preset: 550 MB prune + 100 MB mempool.
     NodeResourceSmallComputer,
+    /// One-click "Regular computer" preset: 15 GB prune + default mempool.
+    NodeResourceRegularComputer,
     /// Validate the fields and restart the managed node to apply the new prune
     /// target / mempool cap.
     NodeResourceApply,

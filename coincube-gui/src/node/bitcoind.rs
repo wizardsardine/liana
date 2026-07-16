@@ -591,6 +591,18 @@ impl NodeResources {
             max_mempool_mb: Some(MAX_MEMPOOL_SMALL_MB),
         }
     }
+
+    /// The one-click "Regular computer" preset: the out-of-the-box profile —
+    /// the managed-node default 15 GB prune target ([`PRUNE_DEFAULT`]) and
+    /// bitcoind's own default 300 MB mempool (key omitted). The inverse of
+    /// [`Self::small_computer`], and the middle of the machine-profile row a
+    /// future "Miner" preset joins.
+    pub fn regular_computer() -> Self {
+        Self {
+            prune_mb: PRUNE_DEFAULT,
+            max_mempool_mb: None,
+        }
+    }
 }
 
 /// Validate and store a prune-target value in `field` (the text widget already
@@ -1813,6 +1825,12 @@ mod tests {
             estimated_total_disk_gb(PRUNE_DEFAULT),
             15 + CHAINSTATE_OVERHEAD_GB
         );
+
+        // "Regular computer" is the out-of-the-box default profile: 15 GB prune
+        // and the key-omitted (300 MB) mempool default — the inverse of Small.
+        let reg = NodeResources::regular_computer();
+        assert_eq!(reg.prune_mb, PRUNE_DEFAULT);
+        assert_eq!(reg.max_mempool_mb, None);
     }
 
     // When both flavours are installed, the launched binary must match the
