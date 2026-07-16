@@ -658,34 +658,6 @@ impl State for GlobalHome {
                         btc,
                         stable_balance,
                     } => {
-                        // Fold any USDB holding into the displayed
-                        // Spark balance using the current BTC/USD
-                        // reference price. Stable Balance auto-sweeps
-                        // the BTC balance into USDB, so without this
-                        // the Home card would read 0 even though the
-                        // wallet has spendable value (the SDK
-                        // converts back to sats on send).
-                        //
-                        // Fallback: `cache.btc_usd_price` is only set
-                        // when the user's fiat preference is USD. For
-                        // EUR/GBP/etc. fall back to the user-fiat
-                        // converter price so the holding still shows
-                        // up (with a small FX-spread approximation)
-                        // instead of collapsing to zero.
-                        let reference_price = cache.btc_usd_price.or_else(|| {
-                            let converter: Option<view::FiatAmountConverter> =
-                                cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
-                            converter.map(|c| c.price_per_btc())
-                        });
-                        let usdb_as_sats = stable_balance
-                            .map(|sb| {
-                                crate::app::breez_spark::assets::stable_token_as_sats(
-                                    sb.balance,
-                                    sb.decimals,
-                                    reference_price,
-                                )
-                            })
-                            .unwrap_or(0);
                         self.spark_balance_loading = false;
                         // The in-flight fetch was issued before
                         // `Synced` arrived — its value reflects the
@@ -696,8 +668,16 @@ impl State for GlobalHome {
                             self.spark_pending_resync = false;
                             return self.load_spark_balance().unwrap_or_else(Task::none);
                         }
+                        // Fold any Stable Balance (USDB) holding into the shown
+                        // Spark balance — auto-sweep means a BTC-only reading
+                        // would understate a funded wallet. Shared with the
+                        // Send/Receive cards via `unified_spark_balance_sats`.
                         self.spark_balance =
-                            Amount::from_sat(btc.to_sat().saturating_add(usdb_as_sats));
+                            Amount::from_sat(crate::app::state::spark::unified_spark_balance_sats(
+                                btc.to_sat(),
+                                stable_balance.as_ref(),
+                                cache,
+                            ));
                         self.spark_balance_received = true;
                         // Trust the response once the bridge has
                         // confirmed at least one `Synced` event — until

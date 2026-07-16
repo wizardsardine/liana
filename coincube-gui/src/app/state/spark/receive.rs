@@ -79,8 +79,9 @@ pub enum SparkReceivePhase {
 /// Real Spark Receive panel.
 pub struct SparkReceive {
     backend: Option<Arc<SparkBackend>>,
-    /// The Spark wallet's spendable BTC balance (sats), shown on the YOU RECEIVE
-    /// card. Refreshed on reload via `get_info`; `0` until the first fetch.
+    /// The Spark wallet's unified balance in sats (BTC + Stable Balance), shown
+    /// on the YOU RECEIVE card. Refreshed on reload via `get_info`; `0` until
+    /// the first fetch.
     balance_sats: u64,
     /// The "receive from another network" (SideShift → BTC) sub-flow, when the
     /// user has entered it. While `Some`, it owns the panel: view, update and
@@ -695,8 +696,9 @@ impl State for SparkReceive {
                 Task::none()
             }
             SparkReceiveMessage::BalanceLoaded(balance) => {
-                if let Some(sats) = balance {
-                    self.balance_sats = sats;
+                if let Some((btc_sats, stable)) = balance {
+                    self.balance_sats =
+                        super::unified_spark_balance_sats(btc_sats, stable.as_ref(), cache);
                 }
                 Task::none()
             }

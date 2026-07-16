@@ -123,9 +123,10 @@ pub enum SparkSendMessage {
     /// prepared/sent state. Fired from the "Send another" / "Try
     /// again" / "Cancel" buttons.
     Reset,
-    /// The Spark wallet's spendable BTC balance (sats), for the YOU SEND card.
-    /// `None` when the `get_info` fetch failed — the card keeps its last value.
-    BalanceLoaded(Option<u64>),
+    /// The Spark wallet balance for the YOU SEND card — BTC sats plus the Stable
+    /// Balance snapshot, folded into a unified total by the handler. `None` when
+    /// the `get_info` fetch failed; the card keeps its last value.
+    BalanceLoaded(Option<(u64, Option<coincube_spark_protocol::StableBalanceSnapshot>)>),
     /// A `list_payments` RPC completed — used to populate the Last
     /// Transactions section under the Send form.
     PaymentsLoaded(Vec<coincube_spark_protocol::PaymentSummary>),
@@ -237,9 +238,10 @@ pub enum SparkReceiveMessage {
     /// not on every new confirmation).
     RefreshConfirmations,
     Reset,
-    /// The Spark wallet's spendable BTC balance (sats), for the YOU RECEIVE
-    /// card. `None` when `get_info` failed — the card keeps its last value.
-    BalanceLoaded(Option<u64>),
+    /// The Spark wallet balance for the YOU RECEIVE card — BTC sats plus the
+    /// Stable Balance snapshot, folded into a unified total by the handler.
+    /// `None` when `get_info` failed; the card keeps its last value.
+    BalanceLoaded(Option<(u64, Option<coincube_spark_protocol::StableBalanceSnapshot>)>),
     /// A `list_payments` RPC completed — used to populate the Last
     /// Transactions section under the Receive form.
     PaymentsLoaded(Vec<coincube_spark_protocol::PaymentSummary>),

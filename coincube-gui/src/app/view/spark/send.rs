@@ -40,7 +40,7 @@ pub struct SparkSendView<'a> {
     pub sent_quote: &'a coincube_ui::component::quote_display::Quote,
     pub sent_image_handle: &'a iced::widget::image::Handle,
     pub recent_transactions: &'a [SparkRecentTransaction],
-    /// Spendable BTC balance (sats), shown on the YOU SEND card.
+    /// Unified balance (sats: BTC + Stable Balance), shown on the YOU SEND card.
     pub balance_sats: u64,
     pub bitcoin_unit: BitcoinDisplayUnit,
     pub show_direction_badges: bool,
@@ -630,9 +630,17 @@ fn spark_send_cards<'a>(
                     ),
             )
             .push(
-                text(Amount::from_sat(balance_sats).to_formatted_string_with_unit(bitcoin_unit))
-                    .size(P2_SIZE)
-                    .style(theme::text::secondary),
+                text(format!(
+                    "{} {}",
+                    Amount::from_sat(balance_sats).to_formatted_string_with_unit(bitcoin_unit),
+                    if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                        "BTC"
+                    } else {
+                        "SATS"
+                    }
+                ))
+                .size(P2_SIZE)
+                .style(theme::text::secondary),
             )
             .push(orange_badge("SPARK")),
     )
