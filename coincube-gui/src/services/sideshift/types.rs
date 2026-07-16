@@ -340,7 +340,7 @@ impl ShiftStatusKind {
             // watching a spinner will assume something has gone wrong.
             Self::Settling | Self::Processing | Self::Pending => {
                 "Converting to bitcoin and sending it to your Spark wallet. This arrives \
-                 after about one confirmation, so it may take a few minutes."
+                 after about three confirmations, so it may take a few minutes."
             }
             Self::Waiting => "Send the exact asset and network shown above to the deposit address.",
             Self::Unknown(_) => "Checking the status of this shift.",
