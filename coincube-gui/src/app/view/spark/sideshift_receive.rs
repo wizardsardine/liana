@@ -19,6 +19,7 @@ use iced::{
     Alignment, Length,
 };
 
+use crate::app::state::spark::esplora::DEPOSIT_MATURITY_CONFIRMATIONS;
 use crate::app::state::spark::sideshift_receive::{SparkShiftPhase, SparkSideshiftReceiveFlow};
 use crate::app::view::SparkSideshiftReceiveMessage as Msg;
 use crate::services::sideshift::{ShiftResponse, ShiftStatusKind};
@@ -76,11 +77,12 @@ fn setup_body(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
     // The user is handing funds to SideShift, not to us, and they should know
     // that before they do it — not after something goes wrong.
     let disclosure = Container::new(
-        text(
+        text(format!(
             "Conversion is performed by SideShift, a third-party service. It isn't available \
-             in all jurisdictions, and swaps may be held for review. Bitcoin arrives on-chain, \
-             after about one confirmation.",
-        )
+             in all jurisdictions, and swaps may be held for review. Bitcoin arrives on-chain \
+             and is added to your wallet after about {DEPOSIT_MATURITY_CONFIRMATIONS} \
+             confirmations.",
+        ))
         .size(P2_SIZE)
         .style(theme::text::secondary),
     )
