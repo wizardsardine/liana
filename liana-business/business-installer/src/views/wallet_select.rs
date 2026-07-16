@@ -2,18 +2,15 @@ use crate::{
     backend::Backend,
     state::{Msg, State},
 };
-use iced::{
-    widget::{column, row},
-    Alignment, Length,
-};
+use iced::{widget::column, Alignment, Length};
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
 use liana_ui::{
     component::{
-        list::{self, EntryStatus},
+        list::{self, EntryAccent},
         pill,
-        text::{self, truncate},
+        text::{self},
     },
-    spacing::{HSpacing, VSpacing},
+    spacing::VSpacing,
     theme,
     widget::*,
 };
@@ -58,7 +55,7 @@ fn derive_user_role(
 }
 
 /// Render a colored status badge for wallet status
-fn status_badge(wallet: &Wallet, user_email: &str) -> Element<'static, Msg> {
+fn status_pill(wallet: &Wallet, user_email: &str) -> Element<'static, Msg> {
     match wallet.effective_status(user_email) {
         WalletStatus::Registration => pill::register(),
         WalletStatus::Created | WalletStatus::Drafted => pill::draft(),
@@ -69,7 +66,7 @@ fn status_badge(wallet: &Wallet, user_email: &str) -> Element<'static, Msg> {
     .into()
 }
 
-fn role_badge(role: &UserRole) -> Option<Element<'static, Msg>> {
+fn role_pill(role: &UserRole) -> Option<Element<'static, Msg>> {
     match role {
         UserRole::WizardSardineAdmin => None,
         UserRole::WalletManager => Some(pill::role_manager().into()),
@@ -95,31 +92,27 @@ pub fn wallet_card<'a>(
     last_edit_info: Option<Element<'a, Msg>>,
     user_email: &str,
 ) -> Element<'a, Msg> {
-    let alias = truncate(&wallet.alias, 25);
-    let role = role_badge(role);
-    let trailing = row![status_badge(wallet, user_email), list::entry_chevron()]
-        .spacing(HSpacing::ML)
-        .align_y(Alignment::Center);
-
+    let role = role_pill(role);
+    let status = Some(status_pill(wallet, user_email));
     let message = Some(Msg::OrgWalletSelected(wallet.id));
 
     list::entry_wallet(
-        wallet_entry_status(wallet, user_email),
-        alias,
-        role,
+        Some(wallet_accent(wallet, user_email)),
+        &wallet.alias,
         last_edit_info,
-        Some(trailing.into()),
+        role,
+        status,
         message,
     )
 }
 
-fn wallet_entry_status(wallet: &Wallet, user_email: &str) -> EntryStatus {
+fn wallet_accent(wallet: &Wallet, user_email: &str) -> EntryAccent {
     match wallet.effective_status(user_email) {
         WalletStatus::Registration | WalletStatus::Locked | WalletStatus::Validated => {
-            EntryStatus::Warning
+            EntryAccent::Warning
         }
-        WalletStatus::Created | WalletStatus::Drafted => EntryStatus::Simple,
-        WalletStatus::Finalized => EntryStatus::Success,
+        WalletStatus::Created | WalletStatus::Drafted => EntryAccent::Simple,
+        WalletStatus::Finalized => EntryAccent::Success,
     }
 }
 

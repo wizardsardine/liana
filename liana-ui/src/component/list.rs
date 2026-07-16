@@ -8,6 +8,7 @@ use iced::{
 };
 
 use crate::{
+    color,
     component::{
         badge::{self, Tile},
         button::{self, EntryWidth, ListEntryAccent},
@@ -15,15 +16,21 @@ use crate::{
         text::{self, new::caption},
         tooltip,
     },
-    icon, theme,
+    icon,
+    spacing::HSpacing,
+    theme,
     widget::{Button, Container, Element, Row},
 };
 
+use super::text::truncate;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum EntryStatus {
+pub enum EntryAccent {
     Simple,
     Warning,
     Success,
+    Bitcoin,
+    Testnet,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -283,18 +290,29 @@ fn with_delete_button<'a, M: Clone + 'a>(
 }
 
 pub fn entry_wallet<'a, M: Clone + 'a>(
-    status: EntryStatus,
+    accent: Option<EntryAccent>,
     title: impl Display,
-    role: Option<Element<'a, M>>,
     subtitle: Option<Element<'a, M>>,
-    trailing: Option<Element<'a, M>>,
+    role_pill: Option<Element<'a, M>>,
+    status_pill: Option<Element<'a, M>>,
     msg: Option<M>,
 ) -> Element<'a, M> {
+    let title = title.to_string();
+    let title = truncate(&title, 25);
+    let trailing = Some(
+        row![status_pill, entry_chevron()]
+            .spacing(HSpacing::ML)
+            .align_y(Alignment::Center)
+            .into(),
+    );
+
+    let accent = accent.map(|s| entry_accent(s));
+
     list_entry_row(
         Some(badge::tile(Tile::Wallet).into()),
-        wallet_body(title, role, subtitle),
+        wallet_body(title, role_pill, subtitle),
         trailing,
-        Some(status_accent(status)),
+        accent,
         EntryWidth::Standard,
         msg,
     )
@@ -611,9 +629,9 @@ fn body<'a, M: 'a>(
     Container::new(content).width(Length::Fill).into()
 }
 
-fn status_accent(status: EntryStatus) -> ListEntryAccent {
+fn entry_accent(status: EntryAccent) -> ListEntryAccent {
     match status {
-        EntryStatus::Simple => |theme| {
+        EntryAccent::Simple => |theme| {
             theme
                 .colors
                 .pills
@@ -621,7 +639,7 @@ fn status_accent(status: EntryStatus) -> ListEntryAccent {
                 .border
                 .unwrap_or(theme.colors.general.accent)
         },
-        EntryStatus::Warning => |theme| {
+        EntryAccent::Warning => |theme| {
             theme
                 .colors
                 .pills
@@ -629,7 +647,7 @@ fn status_accent(status: EntryStatus) -> ListEntryAccent {
                 .border
                 .unwrap_or(theme.colors.text.warning)
         },
-        EntryStatus::Success => |theme| {
+        EntryAccent::Success => |theme| {
             theme
                 .colors
                 .pills
@@ -637,6 +655,8 @@ fn status_accent(status: EntryStatus) -> ListEntryAccent {
                 .border
                 .unwrap_or(theme.colors.text.success)
         },
+        EntryAccent::Bitcoin => |t| t.colors.general.accent,
+        EntryAccent::Testnet => |_| color::BLUE,
     }
 }
 

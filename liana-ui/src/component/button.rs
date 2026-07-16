@@ -246,11 +246,25 @@ pub fn list_entry_with_state<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
             .style(move |theme| container::Style {
                 background: Some(Background::Color(color(theme))),
                 border: Border {
-                    radius: theme.colors.buttons.list_entry_radius.unwrap_or(0.0).into(),
+                    radius: theme
+                        .colors
+                        .buttons
+                        .list_entry_radius
+                        .unwrap_or(theme::button::BUTTON_RADIUS)
+                        .into(),
                     ..Default::default()
                 },
                 shadow: theme.colors.buttons.list_entry.active.shadow,
                 ..Default::default()
+            });
+        let accent_card = Container::new(accent_card)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(Padding {
+                top: 1.0,
+                right: 1.0,
+                bottom: 1.0,
+                left: 0.0,
             });
         // White card inset on the left by the accent width so the accent card behind shows as a
         // stripe that wraps the left rounded corners.
