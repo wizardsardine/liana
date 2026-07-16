@@ -1179,6 +1179,156 @@ pub fn define_coincube_connect<'a>(
 /// selected flavour is primary-styled. Because the headless node never shows
 /// Knots' own confirmation prompt, this one-line blurb is where the user
 /// consents to RDTS enforcement.
+/// Node-resource controls (prune target + mempool cap) shared by the installer's
+/// advanced disclosure and the Vault node settings, so the two surfaces never
+/// drift. Presets are a thin setter layer over the two custom MB fields:
+/// `on_prune`/`on_mempool` receive the raw MB string the widget produces (an
+/// empty mempool string means "leave blank" = bitcoind's 300 MB default =
+/// `max_mempool_mb: None`). `small_computer` is the one-click preset that sets
+/// both. The estimated-total line is honest about the unprunable chainstate
+/// floor — the prune choice only bounds block data.
+#[allow(clippy::too_many_arguments)]
+pub fn node_resources_controls<'a, M>(
+    prune: &'a form::Value<String>,
+    max_mempool: &'a form::Value<String>,
+    on_prune: impl Fn(String) -> M + Clone + 'static,
+    on_mempool: impl Fn(String) -> M + Clone + 'static,
+    small_computer: M,
+) -> Column<'a, M>
+where
+    M: Clone + 'a,
+{
+    use crate::node::bitcoind::{
+        estimated_total_disk_gb, MAX_MEMPOOL_DEFAULT_MB, MAX_MEMPOOL_SMALL_MB, PRUNE_COMPACT_MB,
+        PRUNE_DEFAULT, PRUNE_MINIMAL_MB,
+    };
+
+    // Current values back the honest disk/memory estimate. A blank/invalid field
+    // falls back to the default so the line is always meaningful.
+    let prune_mb = prune.value.parse::<u32>().unwrap_or(PRUNE_DEFAULT);
+    let mem_mb = if max_mempool.value.is_empty() {
+        MAX_MEMPOOL_DEFAULT_MB
+    } else {
+        max_mempool
+            .value
+            .parse::<u32>()
+            .unwrap_or(MAX_MEMPOOL_DEFAULT_MB)
+    };
+
+    // Prune presets: highlight the one matching the current value.
+    let prune_preset = |label: &'static str, val: u32, on: &dyn Fn() -> M| {
+        let btn = if prune_mb == val {
+            button::primary(None, label)
+        } else {
+            button::secondary(None, label)
+        };
+        btn.width(Length::Fixed(120.0)).on_press(on())
+    };
+    let prune_row = Row::new()
+        .spacing(10)
+        .push(prune_preset("Minimal", PRUNE_MINIMAL_MB, &|| {
+            on_prune(PRUNE_MINIMAL_MB.to_string())
+        }))
+        .push(prune_preset("Compact", PRUNE_COMPACT_MB, &|| {
+            on_prune(PRUNE_COMPACT_MB.to_string())
+        }))
+        .push(prune_preset("Default", PRUNE_DEFAULT, &|| {
+            on_prune(PRUNE_DEFAULT.to_string())
+        }));
+    // Custom prune field last, so `on_prune` can be moved into it.
+    let prune_field = Container::new(Element::from(form::Form::new_amount_sats(
+        "15000", prune, on_prune,
+    )))
+    .width(Length::Fixed(140.0));
+
+    // Mempool presets: "Default" writes an empty string (key omitted); highlight
+    // it whenever the field is blank.
+    let mem_is_default = max_mempool.value.is_empty();
+    let mem_is_small = max_mempool.value.parse::<u32>().ok() == Some(MAX_MEMPOOL_SMALL_MB);
+    let small_btn = if mem_is_small {
+        button::primary(None, "Small (100 MB)")
+    } else {
+        button::secondary(None, "Small (100 MB)")
+    }
+    .width(Length::Fixed(160.0))
+    .on_press(on_mempool(MAX_MEMPOOL_SMALL_MB.to_string()));
+    let default_btn = if mem_is_default {
+        button::primary(None, "Default (300 MB)")
+    } else {
+        button::secondary(None, "Default (300 MB)")
+    }
+    .width(Length::Fixed(160.0))
+    .on_press(on_mempool(String::new()));
+    let mem_row = Row::new().spacing(10).push(small_btn).push(default_btn);
+    let mem_field = Container::new(Element::from(form::Form::new_amount_sats(
+        "300",
+        max_mempool,
+        on_mempool,
+    )))
+    .width(Length::Fixed(140.0));
+
+    Column::new()
+        .spacing(12)
+        .push(text("Node data to keep").bold())
+        .push(
+            text(
+                "How much block data your node keeps on disk. The chainstate \
+                 (~14 GB) is always kept and can't be pruned, so total disk use \
+                 is always higher than this number.",
+            )
+            .size(12)
+            .style(theme::text::secondary),
+        )
+        .push(prune_row)
+        .push(
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(text("Custom (MB):"))
+                .push(prune_field),
+        )
+        .push(Space::new().height(Length::Fixed(8.0)))
+        .push(text("Mempool memory cap").bold())
+        .push(
+            text(
+                "Memory reserved for unconfirmed transactions. During heavy \
+                 congestion a small cap can delay when small incoming payments \
+                 first appear, until they confirm.",
+            )
+            .size(12)
+            .style(theme::text::secondary),
+        )
+        .push(mem_row)
+        .push(
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(text("Custom (MB):"))
+                .push(mem_field)
+                .push(
+                    text("Leave blank for the default (300 MB).")
+                        .size(12)
+                        .style(theme::text::secondary),
+                ),
+        )
+        .push(Space::new().height(Length::Fixed(8.0)))
+        .push(
+            button::secondary(None, "Small computer")
+                .width(Length::Fixed(180.0))
+                .on_press(small_computer),
+        )
+        .push(
+            text(format!(
+                "Estimated total: about {} GB of disk, and up to {} MB of memory \
+                 for the mempool.",
+                estimated_total_disk_gb(prune_mb),
+                mem_mb,
+            ))
+            .size(12)
+            .style(theme::text::secondary),
+        )
+}
+
 fn node_flavor_selector<'a>(
     selected: crate::node::bitcoind::NodeFlavor,
     existing: Option<crate::node::bitcoind::NodeFlavor>,
@@ -1605,6 +1755,9 @@ pub fn start_internal_bitcoind<'a>(
     flavor: crate::node::bitcoind::NodeFlavor,
     existing_flavor: Option<crate::node::bitcoind::NodeFlavor>,
     flavor_confirmed: bool,
+    show_advanced: bool,
+    prune: &'a form::Value<String>,
+    max_mempool: &'a form::Value<String>,
     exe_path: Option<&PathBuf>,
     started: Option<&Result<(), StartInternalBitcoindError>>,
     error: Option<&'a String>,
@@ -1615,24 +1768,46 @@ pub fn start_internal_bitcoind<'a>(
     let flavor_name = flavor.display_name();
 
     // Choose the node software first; nothing is downloaded or started until the
-    // user confirms here.
+    // user confirms here. The advanced disclosure lets the user tune node
+    // resources (prune target + mempool cap) before the node is configured — the
+    // chosen values are threaded into `DefineConfig` (this same step).
     if !flavor_confirmed {
+        let adv_label = if show_advanced {
+            "▾  Advanced options"
+        } else {
+            "▸  Advanced options"
+        };
+        let mut col = Column::new()
+            .spacing(25)
+            .push(node_flavor_selector(flavor, existing_flavor))
+            .push(
+                button::transparent(None, adv_label).on_press(Message::InternalBitcoind(
+                    message::InternalBitcoindMsg::ToggleAdvanced,
+                )),
+            );
+        if show_advanced {
+            col = col.push(card::simple(node_resources_controls(
+                prune,
+                max_mempool,
+                |v| Message::InternalBitcoind(message::InternalBitcoindMsg::PruneEdited(v)),
+                |v| Message::InternalBitcoind(message::InternalBitcoindMsg::MaxMempoolEdited(v)),
+                Message::InternalBitcoind(message::InternalBitcoindMsg::SmallComputerPreset),
+            )));
+        }
+        col = col.push(
+            Row::new().push(
+                button::secondary(None, "Download & start")
+                    .width(Length::Fixed(220.0))
+                    .on_press(Message::InternalBitcoind(
+                        message::InternalBitcoindMsg::ConfirmFlavor,
+                    )),
+            ),
+        );
         return layout(
             progress,
             None,
             "Start Bitcoin full node",
-            Column::new()
-                .spacing(25)
-                .push(node_flavor_selector(flavor, existing_flavor))
-                .push(
-                    Row::new().push(
-                        button::secondary(None, "Download & start")
-                            .width(Length::Fixed(220.0))
-                            .on_press(Message::InternalBitcoind(
-                                message::InternalBitcoindMsg::ConfirmFlavor,
-                            )),
-                    ),
-                ),
+            col,
             true,
             Some(message::Message::InternalBitcoind(
                 message::InternalBitcoindMsg::Previous,

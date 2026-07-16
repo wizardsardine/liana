@@ -558,6 +558,18 @@ pub enum NodeSettingsMessage {
     RestartNodeToApply,
     /// Copy a value (e.g. the onion address) to the clipboard.
     CopyToClipboard(String),
+    // "Node resources" editor (prune target + mempool cap) for the internal
+    // managed node. Field edits update the pending value; Apply validates and
+    // restarts the node so the rewritten bitcoin.conf takes effect.
+    /// Edit the custom prune-target field (raw MB string).
+    NodeResourcePruneEdited(String),
+    /// Edit the custom mempool-cap field (raw MB string; empty = 300 MB default).
+    NodeResourceMaxMempoolEdited(String),
+    /// One-click "Small computer" preset: 550 MB prune + 100 MB mempool.
+    NodeResourceSmallComputer,
+    /// Validate the fields and restart the managed node to apply the new prune
+    /// target / mempool cap.
+    NodeResourceApply,
 }
 
 #[derive(Debug, Clone)]

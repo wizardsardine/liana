@@ -8,6 +8,10 @@ mod prompt;
 pub(crate) mod step;
 mod view;
 
+// Shared node-resources control (prune + mempool presets/fields + disk
+// estimate), reused by the Vault node settings so the two surfaces never drift.
+pub(crate) use view::node_resources_controls;
+
 pub(crate) fn connect_url(network: bitcoin::Network) -> String {
     let network_path = match network {
         bitcoin::Network::Bitcoin => "bitcoin/mainnet",
