@@ -935,3 +935,7 @@ pub fn btn_next<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 pub fn btn_add_payment<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_tertiary(Some(icon::plus_icon()), "Add payment", BtnWidth::Auto, msg)
 }
+
+pub fn btn_add_label<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_tertiary(Some(icon::edit_icon()), "Edit label", BtnWidth::L, msg)
+}

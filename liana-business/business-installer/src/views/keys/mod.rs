@@ -120,7 +120,7 @@ fn keys_list(state: &State, editable: bool) -> Element<'static, Msg> {
         .map(|(key_id, key)| {
             let signer = key_signer(key);
             let trailing: Element<'static, Msg> = if editable {
-                icon::pencil_icon()
+                icon::edit_icon()
                     .size(16)
                     .style(theme::text::tertiary)
                     .into()

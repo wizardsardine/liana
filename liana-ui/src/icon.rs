@@ -141,10 +141,6 @@ pub fn trash_icon() -> Text<'static> {
     bootstrap_icon('\u{F5DE}')
 }
 
-pub fn pencil_icon() -> Text<'static> {
-    bootstrap_icon('\u{F4CB}')
-}
-
 pub fn collapse_icon() -> Text<'static> {
     bootstrap_icon('\u{F285}')
 }

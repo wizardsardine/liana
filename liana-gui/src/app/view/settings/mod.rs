@@ -18,7 +18,9 @@ use liana::{
 use liana_ui::{
     component::{
         self, badge,
-        button::{self, btn_backup_encrypt_descriptor, btn_register_on_device, btn_update},
+        button::{
+            self, btn_backup_encrypt_descriptor, btn_icon_edit, btn_register_on_device, btn_update,
+        },
         card, form,
         panels::setting::{
             export_section, header, settings_section, ImportExportKind, SectionKind,
@@ -553,13 +555,9 @@ pub fn bitcoind<'a>(
                             .align_y(Alignment::Center)
                             .width(Length::Fill),
                     )
-                    .push(if can_edit {
-                        Button::new(icon::pencil_icon())
-                            .style(theme::button::transparent_border)
-                            .on_press(SettingsEditMessage::Select)
-                    } else {
-                        Button::new(icon::pencil_icon()).style(theme::button::transparent_border)
-                    })
+                    .push(btn_icon_edit(
+                        can_edit.then_some(SettingsEditMessage::Select),
+                    ))
                     .align_y(Alignment::Center),
             )
             .push(separation().width(Length::Fill))
@@ -741,13 +739,9 @@ pub fn electrum<'a>(
                             .align_y(Alignment::Center)
                             .width(Length::Fill),
                     )
-                    .push(if can_edit {
-                        Button::new(icon::pencil_icon())
-                            .style(theme::button::transparent_border)
-                            .on_press(SettingsEditMessage::Select)
-                    } else {
-                        Button::new(icon::pencil_icon()).style(theme::button::transparent_border)
-                    })
+                    .push(btn_icon_edit(
+                        can_edit.then_some(SettingsEditMessage::Select),
+                    ))
                     .align_y(Alignment::Center),
             )
             .push(separation().width(Length::Fill))

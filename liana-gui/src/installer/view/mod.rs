@@ -23,7 +23,8 @@ use liana::{
 };
 use liana_ui::{
     component::{
-        button, card, collapse, form,
+        button::{self},
+        card, collapse, form,
         list::DeviceStatus,
         modal, scrollable, separation,
         text::{h2, h3, h4_bold, p1_bold, p1_regular, text, Text},
@@ -1450,7 +1451,7 @@ pub fn defined_threshold<'a>(
                     threshold.1,
                     if threshold.1 > 1 { "s" } else { "" },
                 )))
-                .push(icon::pencil_icon()),
+                .push(icon::edit_icon()),
         )
         .padding(10)
         .on_press(message::DefinePath::EditThreshold)
@@ -1514,7 +1515,7 @@ pub fn defined_sequence<'a>(
                                     .style(theme::text::secondary),
                             )
                             .push(
-                                Button::new(duration_row.push(icon::pencil_icon()))
+                                Button::new(duration_row.push(icon::edit_icon()))
                                     .style(theme::button::secondary)
                                     .on_press(message::DefinePath::EditSequence),
                             ),
