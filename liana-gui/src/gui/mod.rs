@@ -786,7 +786,15 @@ where
                     .map(|(id, msg)| Message::Pane(id, msg)),
             );
         }
-        Subscription::batch(vec)
+        Subscription::batch(vec).with_filter(|event| {
+            matches!(
+                event,
+                iced::advanced::subscription::Event::Interaction {
+                    event: iced::Event::Keyboard(_) | iced::Event::Window(_),
+                    ..
+                }
+            )
+        })
     }
 
     #[cfg(not(feature = "debugger"))]

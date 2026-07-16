@@ -94,17 +94,17 @@ bitcoin = "0.32"
 
 # Routed to our fork for native dashed/dotted border styles.
 [patch.crates-io]
-iced = { git = "https://github.com/wizardsardine/iced", rev = "d6d040973e601151e4e89bc766c87c989f02da63" }
-iced_core = { git = "https://github.com/wizardsardine/iced", rev = "d6d040973e601151e4e89bc766c87c989f02da63" }
-iced_runtime = { git = "https://github.com/wizardsardine/iced", rev = "d6d040973e601151e4e89bc766c87c989f02da63" }
-iced_widget = { git = "https://github.com/wizardsardine/iced", rev = "d6d040973e601151e4e89bc766c87c989f02da63" }
-iced_graphics = { git = "https://github.com/wizardsardine/iced", rev = "d6d040973e601151e4e89bc766c87c989f02da63" }
-iced_renderer = { git = "https://github.com/wizardsardine/iced", rev = "d6d040973e601151e4e89bc766c87c989f02da63" }
-iced_futures = { git = "https://github.com/wizardsardine/iced", rev = "d6d040973e601151e4e89bc766c87c989f02da63" }
-iced_winit = { git = "https://github.com/wizardsardine/iced", rev = "d6d040973e601151e4e89bc766c87c989f02da63" }
-iced_wgpu = { git = "https://github.com/wizardsardine/iced", rev = "d6d040973e601151e4e89bc766c87c989f02da63" }
-iced_tiny_skia = { git = "https://github.com/wizardsardine/iced", rev = "d6d040973e601151e4e89bc766c87c989f02da63" }
-iced_program = { git = "https://github.com/wizardsardine/iced", rev = "d6d040973e601151e4e89bc766c87c989f02da63" }
-iced_debug = { git = "https://github.com/wizardsardine/iced", rev = "d6d040973e601151e4e89bc766c87c989f02da63" }
+iced = { git = "https://github.com/wizardsardine/iced", rev = "ccf011541eff660ed2bc6a01f9f00e150b501453" }
+iced_core = { git = "https://github.com/wizardsardine/iced", rev = "ccf011541eff660ed2bc6a01f9f00e150b501453" }
+iced_runtime = { git = "https://github.com/wizardsardine/iced", rev = "ccf011541eff660ed2bc6a01f9f00e150b501453" }
+iced_widget = { git = "https://github.com/wizardsardine/iced", rev = "ccf011541eff660ed2bc6a01f9f00e150b501453" }
+iced_graphics = { git = "https://github.com/wizardsardine/iced", rev = "ccf011541eff660ed2bc6a01f9f00e150b501453" }
+iced_renderer = { git = "https://github.com/wizardsardine/iced", rev = "ccf011541eff660ed2bc6a01f9f00e150b501453" }
+iced_futures = { git = "https://github.com/wizardsardine/iced", rev = "ccf011541eff660ed2bc6a01f9f00e150b501453" }
+iced_winit = { git = "https://github.com/wizardsardine/iced", rev = "ccf011541eff660ed2bc6a01f9f00e150b501453" }
+iced_wgpu = { git = "https://github.com/wizardsardine/iced", rev = "ccf011541eff660ed2bc6a01f9f00e150b501453" }
+iced_tiny_skia = { git = "https://github.com/wizardsardine/iced", rev = "ccf011541eff660ed2bc6a01f9f00e150b501453" }
+iced_program = { git = "https://github.com/wizardsardine/iced", rev = "ccf011541eff660ed2bc6a01f9f00e150b501453" }
+iced_debug = { git = "https://github.com/wizardsardine/iced", rev = "ccf011541eff660ed2bc6a01f9f00e150b501453" }
 # iced_aw constructs Border literals exhaustively, so it needs the same fork's Border style field.
 iced_aw = { git = "https://github.com/wizardsardine/iced_aw", rev = "488248db097769cd2269af75b5f93d5c65f45a38" }
