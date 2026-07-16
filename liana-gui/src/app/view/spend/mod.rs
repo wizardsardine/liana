@@ -54,7 +54,7 @@ pub fn spend_view<'a>(
     }))
     .width(Length::Fill);
 
-    let warnings = (!(spend_warnings.is_empty() || saved)).then(|| {
+    let warnings = (!(spend_warnings.is_empty() || saved)).then_some({
         let rows = spend_warnings.iter().map(|warning| {
             let warn_icon = icon::warning_icon().style(theme::text::warning);
             let warn_text = new::caption(warning).style(theme::text::warning);

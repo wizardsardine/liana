@@ -1,19 +1,21 @@
 use crate::{
     state::{message::Msg, State},
-    views::{layout, INSTALLER_STEPS},
+    views::{intro_prompt, layout, screen_intro, INSTALLER_STEPS},
 };
 use iced::{
-    widget::{row, Space},
+    widget::{column, row},
     Length,
 };
 use liana_ui::{
     component::{
         button::{btn_change_email, btn_resend_token},
-        form, text,
+        form,
     },
-    theme,
+    spacing::{HSpacing, VSpacing},
     widget::*,
 };
+
+use super::LOGIN_WIDTH;
 
 pub fn login_code_view(state: &State) -> Element<'_, Msg> {
     let form = if !state.views.login.code.processing {
@@ -37,33 +39,32 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
         .then_some(Msg::LoginResendToken);
     let btn_resend_token = btn_resend_token(resend_msg);
 
-    let btn_row = row![btn_previous, btn_resend_token].spacing(10);
+    let btn_row = row![btn_previous, btn_resend_token].spacing(HSpacing::M);
 
-    let liana_business = row![
-        Space::with_width(Length::Fill),
-        text::h2("Liana Business"),
-        Space::with_width(Length::Fill),
-    ];
-
-    let content = Column::new()
-        .push(liana_business)
-        .push(Space::with_height(20))
-        .push(row![
-            text::p1_medium("An authentication token has been emailed to ")
-                .style(theme::text::primary),
-            text::p1_medium(&state.views.login.email.form.value).style(theme::text::accent)
-        ])
-        .push(form)
-        .push(btn_row)
-        .spacing(20)
-        .padding(40);
+    let content = Container::new(
+        column![
+            screen_intro(
+                "Liana Business",
+                Some(intro_prompt(
+                    "An authentication token has been emailed to ",
+                    Some(&state.views.login.email.form.value),
+                )),
+                true,
+            ),
+            form,
+            btn_row,
+        ]
+        .spacing(VSpacing::L)
+        .width(LOGIN_WIDTH),
+    )
+    .padding(40)
+    .center_x(Length::Fill);
 
     layout(
         (2, INSTALLER_STEPS),
         None,
         &["Login".to_string()],
         content,
-        true,
         Some(Msg::NavigateBack),
     )
 }

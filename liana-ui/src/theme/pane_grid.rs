@@ -24,6 +24,7 @@ pub fn primary(theme: &Theme) -> Style {
                 color: theme.colors.pane_grid.highlight_border,
                 width: 1.0,
                 radius: 0.0.into(),
+                ..Default::default()
             },
         },
         picked_split: Line {

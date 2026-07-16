@@ -16,12 +16,17 @@ directory = "/vendor"
 [source.crates-io]
 replace-with = "vendored_sources"
 
-[source."https://github.com/edouardparis/iced"]
-git = "https://github.com/edouardparis/iced"
-branch = "patch-0.12.3"
+[source."git+https://github.com/wizardsardine/iced?rev=ccf011541eff660ed2bc6a01f9f00e150b501453"]
+git = "https://github.com/wizardsardine/iced"
+rev = "ccf011541eff660ed2bc6a01f9f00e150b501453"
 replace-with = "vendored_sources"
 
-[source."https://github.com/wizardsardine/bdk"]
+[source."git+https://github.com/wizardsardine/iced_aw?rev=488248db097769cd2269af75b5f93d5c65f45a38"]
+git = "https://github.com/wizardsardine/iced_aw"
+rev = "488248db097769cd2269af75b5f93d5c65f45a38"
+replace-with = "vendored_sources"
+
+[source."git+https://github.com/wizardsardine/bdk?branch=release/1.0.0-alpha.13"]
 git = "https://github.com/wizardsardine/bdk"
 branch = "release/1.0.0-alpha.13"
 replace-with = "vendored_sources"

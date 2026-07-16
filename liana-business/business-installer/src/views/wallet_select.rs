@@ -3,22 +3,24 @@ use crate::{
     state::{Msg, State},
 };
 use iced::{
-    widget::{row, Space},
+    widget::{column, row},
     Alignment, Length,
 };
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
 use liana_ui::{
     component::{
+        list::{self, EntryStatus},
         pill,
         text::{self, truncate},
     },
+    spacing::{HSpacing, VSpacing},
     theme,
     widget::*,
 };
 
 use super::{
-    format_last_edit_info, menu_entry, select_list_view, SelectListView, SelectSearch,
-    INSTALLER_STEPS,
+    format_last_edit_info, select_list_view, SelectListView, SelectSearch, INSTALLER_STEPS,
+    SEARCH_ENTRY_THRESHOLD,
 };
 
 /// Derive the user's role for a specific wallet based on wallet data and global role
@@ -67,12 +69,11 @@ fn status_badge(wallet: &Wallet, user_email: &str) -> Element<'static, Msg> {
     .into()
 }
 
-/// Get a display label for the user role
-fn role_label(role: &UserRole) -> &'static str {
+fn role_badge(role: &UserRole) -> Option<Element<'static, Msg>> {
     match role {
-        UserRole::WizardSardineAdmin => "Admin",
-        UserRole::WalletManager => "Manager",
-        UserRole::Participant => "Participant",
+        UserRole::WizardSardineAdmin => None,
+        UserRole::WalletManager => Some(pill::role_manager().into()),
+        UserRole::Participant => Some(pill::role_participant().into()),
     }
 }
 
@@ -91,77 +92,48 @@ fn status_sort_priority(wallet: &Wallet, user_email: &str) -> u8 {
 pub fn wallet_card<'a>(
     wallet: &Wallet,
     role: &UserRole,
-    last_edit_info: Option<String>,
+    last_edit_info: Option<Element<'a, Msg>>,
     user_email: &str,
-) -> Container<'a, Msg> {
-    let key_count = wallet.template.as_ref().map(|t| t.keys.len()).unwrap_or(0);
-    let keys = match key_count {
-        0 => "".to_string(),
-        1 => "(1 key)".to_string(),
-        c => format!("({c} keys)"),
-    };
-
+) -> Element<'a, Msg> {
     let alias = truncate(&wallet.alias, 25);
-    // Left side: wallet name, key count, and edit info
-    let mut left_col = Column::new()
-        .push(
-            row![
-                text::h3(alias),
-                text::p1_medium(keys).style(theme::text::primary)
-            ]
-            .spacing(5)
-            .align_y(Alignment::Center),
-        )
-        .spacing(5);
-
-    if let Some(info) = last_edit_info {
-        left_col = left_col.push(text::caption(info).style(liana_ui::theme::text::secondary));
-    }
-
-    // Right side: status badge and role label
-    // Don't show "Manager" role - it's already in the header for WS Admin users
-    let mut right_col = Column::new()
-        .push(status_badge(wallet, user_email))
-        .spacing(4)
-        .width(pill::PillWidth::M)
-        .align_x(Alignment::Center);
-
-    // Only show role for Wallet Manager and Participant (not WS Admin)
-    if !matches!(role, UserRole::WizardSardineAdmin) {
-        right_col = right_col.push(text::p2_medium(role_label(role)).style(theme::text::primary));
-    }
-
-    let content = Row::new()
-        .push(left_col)
-        .push(Space::with_width(Length::Fill))
-        .push(right_col)
-        .align_y(Alignment::Center)
-        .height(Length::Fill);
+    let role = role_badge(role);
+    let trailing = row![status_badge(wallet, user_email), list::entry_chevron()]
+        .spacing(HSpacing::ML)
+        .align_y(Alignment::Center);
 
     let message = Some(Msg::OrgWalletSelected(wallet.id));
 
-    menu_entry(content, message)
+    list::entry_wallet(
+        wallet_entry_status(wallet, user_email),
+        alias,
+        role,
+        last_edit_info,
+        Some(trailing.into()),
+        message,
+    )
+}
+
+fn wallet_entry_status(wallet: &Wallet, user_email: &str) -> EntryStatus {
+    match wallet.effective_status(user_email) {
+        WalletStatus::Registration | WalletStatus::Locked | WalletStatus::Validated => {
+            EntryStatus::Warning
+        }
+        WalletStatus::Created | WalletStatus::Drafted => EntryStatus::Simple,
+        WalletStatus::Finalized => EntryStatus::Success,
+    }
 }
 
 pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
     // Determine if there are wallets and get wallet count
-    let has_wallets = if let Some(org_id) = state.app.selected_org {
-        if let Some(org) = state.backend.get_org(org_id) {
-            !org.wallets.is_empty()
-        } else {
-            false
-        }
-    } else {
-        false
-    };
+    let wallet_count = state
+        .app
+        .selected_org
+        .and_then(|org_id| state.backend.get_org(org_id))
+        .map(|org| org.wallets.len())
+        .unwrap_or(0);
+    let has_wallets = wallet_count > 0;
 
     // Set title based on whether wallets exist
-    let title_text = if has_wallets {
-        "Select wallet"
-    } else {
-        "Create a wallet"
-    };
-
     // Get current user email for role derivation
     let current_user_email = &state.views.login.email.form.value;
     let hide_finalized = state.views.wallet_select.hide_finalized;
@@ -173,10 +145,10 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
     );
 
     // Scrollable list content: wallet cards
-    let mut list_content = Column::new()
-        .spacing(10)
-        .align_x(Alignment::Center)
-        .padding([0, 20]);
+    let mut list_content = column![]
+        .spacing(VSpacing::M)
+        .width(Length::Fill)
+        .align_x(Alignment::Center);
 
     // Filter wallets by search text (case-insensitive)
     let search_filter = state.views.wallet_select.search_filter.to_lowercase();
@@ -241,8 +213,8 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                 // Show message when search filter returns no results
                 if wallets_to_display.is_empty() && !search_filter.is_empty() {
                     list_content = list_content.push(
-                        text::p1_medium("No wallets found matching your search.")
-                            .style(theme::text::primary),
+                        text::new::caption("No wallets found matching your search.")
+                            .style(theme::text::secondary),
                     );
                 } else {
                     let current_user_email_lower = current_user_email.to_lowercase();
@@ -279,8 +251,8 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         email: current_user_email,
         is_ws_admin,
         breadcrumb,
-        title: title_text.to_string(),
-        search: has_wallets.then_some(SelectSearch {
+        title: "Wallets".to_string(),
+        search: (wallet_count > SEARCH_ENTRY_THRESHOLD).then_some(SelectSearch {
             placeholder: "Filter wallets...",
             value: &state.views.wallet_select.search_filter,
             on_change: Msg::WalletSelectUpdateSearchFilter,

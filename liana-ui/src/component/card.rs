@@ -1,32 +1,63 @@
-use crate::{color, component::text::text, icon, theme, widget::*};
-use iced::{widget::button, Alignment, Padding};
+use crate::{
+    color,
+    component::text::{new, text},
+    icon, theme,
+    widget::*,
+};
+use iced::{
+    widget::{button, row},
+    Alignment, Length, Padding,
+};
 const CARD_PADDING: [u16; 2] = [15, 30];
+pub(crate) const SOFT_CARD_PADDING: [u16; 2] = [13, 16];
 
-pub fn modal<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
-    Container::new(content)
-        .padding(15)
-        .style(theme::card::modal)
+macro_rules! cards {
+    ($($entry:tt),* $(,)?) => {
+        $( cards!(@one $entry); )*
+    };
+    // Runtime-padding card: the caller supplies the padding, e.g. `(flat, pad_arg)`.
+    (@one ($name:ident, pad_arg)) => {
+        pub fn $name<'a, T: 'a, C: Into<Element<'a, T>>>(
+            content: C,
+            padding: impl Into<Padding>,
+        ) -> Container<'a, T> {
+            Container::new(content)
+                .padding(padding)
+                .style(theme::card::$name)
+        }
+    };
+    // Element-returning card, e.g. `(warning, elem, 20)`.
+    (@one ($name:ident, elem, $padding:expr)) => {
+        pub fn $name<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Element<'a, T> {
+            Container::new(content)
+                .padding($padding)
+                .style(theme::card::$name)
+                .into()
+        }
+    };
+    // Constant-padding card, e.g. `(modal, 15)`.
+    (@one ($name:ident, $padding:expr)) => {
+        pub fn $name<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
+            Container::new(content)
+                .padding($padding)
+                .style(theme::card::$name)
+        }
+    };
+    // Bare ident defaults to the soft-card padding.
+    (@one $name:ident) => {
+        cards!(@one ($name, SOFT_CARD_PADDING));
+    };
 }
 
-pub fn simple<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
-    Container::new(content)
-        .padding(15)
-        .style(theme::card::simple)
-}
-
-pub fn flat<'a, T: 'a, C: Into<Element<'a, T>>>(
-    content: C,
-    padding: impl Into<Padding>,
-) -> Container<'a, T> {
-    Container::new(content)
-        .padding(padding)
-        .style(theme::card::flat)
-}
-
-pub fn invalid<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
-    Container::new(content)
-        .padding(15)
-        .style(theme::card::invalid)
+cards! {
+    soft_warning,
+    success,
+    (modal, 15),
+    (simple, 15),
+    (invalid, 15),
+    (section, 0),
+    (flat, pad_arg),
+    (warning, elem, 20),
 }
 
 /// display an error card with the message and the error in a tooltip.
@@ -60,14 +91,14 @@ pub fn error<'a, T: 'a>(message: &'static str, error: String) -> Container<'a, T
     .style(theme::card::error)
 }
 
-pub fn clickable_card<'a, M>(content: Row<'a, M>, msg: Option<M>) -> Element<'a, M>
+pub fn list_entry<'a, M>(content: Row<'a, M>, msg: Option<M>) -> Element<'a, M>
 where
     M: Clone + 'a,
 {
-    clickable_card_with_padding(content, msg, CARD_PADDING)
+    list_entry_with_padding(content, msg, CARD_PADDING)
 }
 
-pub fn clickable_card_with_padding<'a, M>(
+pub fn list_entry_with_padding<'a, M>(
     content: Row<'a, M>,
     msg: Option<M>,
     padding: impl Into<Padding>,
@@ -77,47 +108,20 @@ where
 {
     button(content.align_y(Alignment::Center).padding(padding.into()))
         .on_press_maybe(msg)
-        .style(theme::button::clickable_card)
+        .style(theme::button::list_entry)
         .into()
 }
 
-pub fn warning<'a, T, M>(content: T) -> Element<'a, M>
-where
-    T: Into<Element<'a, M>>,
-    M: Clone + 'a,
-{
-    warning_with_padding(content, 20)
-}
-
-fn warning_with_padding<'a, T, M>(content: T, padding: impl Into<Padding>) -> Element<'a, M>
-where
-    T: Into<Element<'a, M>>,
-    M: Clone + 'a,
-{
-    Container::new(content)
-        .padding(padding)
-        .style(theme::card::warning)
-        .into()
-}
-
-pub fn soft_warning<'a, T, M>(content: T) -> Element<'a, M>
-where
-    T: Into<Element<'a, M>>,
-    M: Clone + 'a,
-{
-    Container::new(content)
-        .padding(CARD_PADDING)
-        .style(theme::card::soft_warning)
-        .into()
-}
-
-pub fn info<'a, T, M>(content: T) -> Element<'a, M>
-where
-    T: Into<Element<'a, M>>,
-    M: Clone + 'a,
-{
-    Container::new(content)
-        .padding(CARD_PADDING)
-        .style(theme::card::info)
-        .into()
+pub fn info<'a, M: 'a>(body: impl std::fmt::Display + 'a) -> Container<'a, M> {
+    Container::new(
+        row![
+            icon::tooltip_icon().size(16).style(theme::text::secondary),
+            new::caption(body).style(theme::text::secondary),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding(SOFT_CARD_PADDING)
+    .style(theme::card::info)
 }

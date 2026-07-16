@@ -1,19 +1,25 @@
 use crate::{
     backend::Backend,
     state::{Msg, State},
-    views::{format_last_edit_info, layout_with_scrollable_list, menu_key_entry, MENU_ENTRY_WIDTH},
+    views::{
+        entry_key_kind, intro_description, key_kind_label, layout_with_scrollable_list,
+        screen_intro, INSTALLER_STEPS,
+    },
 };
 use iced::{
-    widget::{row, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
-use liana_connect::ws_business::{self, UserRole};
+use liana_connect::ws_business::{self, KeyIdentity, KeyType, UserRole};
 use liana_ui::{
     component::{
+        badge, button,
+        list::{self, EntrySetKeyOwner},
         pill,
         text::{self},
     },
-    icon, theme,
+    spacing::{HSpacing, VSpacing},
+    theme,
     widget::*,
 };
 
@@ -30,13 +36,76 @@ fn xpub_status_badge(has_xpub: bool) -> Element<'static, Msg> {
 fn xpub_key_card(
     key_id: u8,
     key: &ws_business::Key,
-    last_edit_info: Option<String>,
-) -> Container<'static, Msg> {
-    let icon = icon::key_icon();
-    let pill = xpub_status_badge(key.xpub.is_some());
+    owner: EntrySetKeyOwner,
+) -> Element<'static, Msg> {
+    let status = xpub_status_badge(key.xpub.is_some());
     let msg = Some(Msg::XpubSelectKey(key_id));
+    let title = row![
+        text::new::b5_medium(text::truncate(&key.alias, 25)),
+        pill::key_kind(entry_key_kind(&key.key_type), key_kind_label(&key.key_type))
+    ]
+    .spacing(HSpacing::M)
+    .align_y(Alignment::Center);
+    let body = column![
+        title,
+        text::new::caption(short_identity(key)).style(theme::text::tertiary)
+    ]
+    .spacing(3)
+    .width(Length::Fill);
 
-    menu_key_entry(key, last_edit_info, icon, pill, msg)
+    list::list_entry_row(
+        Some(badge::tile(entry_key_kind(&key.key_type).into()).into()),
+        body,
+        Some(status),
+        Some(owner_accent(owner)),
+        button::EntryWidth::Standard,
+        msg,
+    )
+}
+
+fn owner_accent(owner: EntrySetKeyOwner) -> button::ListEntryAccent {
+    match owner {
+        EntrySetKeyOwner::Own => |theme| theme.colors.general.accent,
+        EntrySetKeyOwner::Other => |theme| {
+            theme
+                .colors
+                .pills
+                .safety_net
+                .border
+                .unwrap_or(theme.colors.text.secondary)
+        },
+    }
+}
+
+fn short_identity(key: &ws_business::Key) -> String {
+    let identity = match (&key.key_type, &key.identity) {
+        (
+            KeyType::Cosigner | KeyType::SafetyNet,
+            KeyIdentity::TokenWithProvider {
+                provider: Some(provider),
+                ..
+            },
+        ) => provider.name.clone(),
+        _ => key.identity.to_string(),
+    };
+
+    if identity.is_empty() {
+        "-".to_string()
+    } else {
+        text::short_email(&identity, 40)
+    }
+}
+
+fn section_heading<'a>(label: &'a str, top_padding: f32) -> Element<'a, Msg> {
+    Container::new(text::new::h3_semi(label).style(theme::text::primary))
+        .width(button::STANDARD_ENTRY_WIDTH)
+        .padding(iced::Padding {
+            top: top_padding,
+            left: 4.0,
+            right: 4.0,
+            bottom: 12.0,
+        })
+        .into()
 }
 
 pub fn xpub_view(state: &State) -> Element<'_, Msg> {
@@ -61,134 +130,108 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         .and_then(|id| state.backend.get_wallet(id))
         .map(|w| w.alias.clone())
         .unwrap_or_else(|| "Wallet".to_string());
-    let breadcrumb = vec![org_name, wallet_name.clone(), "Set Keys".to_string()];
+    let breadcrumb = vec![org_name, wallet_name, "Set Keys".to_string()];
 
-    // Filter keys based on role (needed before header to determine waiting state)
     let current_user_email_lower = current_user_email.to_lowercase();
     let mut owned_keys = Vec::new();
-    let mut non_owned_keys = Vec::new();
-    state.app.keys.iter().for_each(|(id, key)| {
-        if key.identity.to_string().to_lowercase() == current_user_email_lower {
-            owned_keys.push((id, key));
+    let mut other_participant_keys = Vec::new();
+    let mut external_keys = Vec::new();
+    state
+        .app
+        .keys()
+        .iter()
+        .for_each(|(id, key)| match key.key_type {
+            KeyType::Internal => {
+                if key.identity.to_string().to_lowercase() == current_user_email_lower {
+                    owned_keys.push((id, key));
+                } else {
+                    other_participant_keys.push((id, key));
+                }
+            }
+            KeyType::External => {
+                external_keys.push((id, key));
+            }
+            _ => {}
+        });
+
+    let owned_keys_set = owned_keys.iter().all(|(_, key)| key.xpub.is_some());
+    let all_keys_set = owned_keys_set
+        && other_participant_keys
+            .iter()
+            .all(|(_, key)| key.xpub.is_some())
+        && external_keys.iter().all(|(_, key)| key.xpub.is_some());
+
+    let instruction = if is_wallet_manager {
+        if all_keys_set {
+            "All keys are set. Once the other participants finish this step, the wallet will be ready."
         } else {
-            non_owned_keys.push((id, key));
+            "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf."
         }
-    });
-
-    // Check if all user's keys are already set (for waiting state)
-    let all_keys_set = owned_keys.iter().all(|(_, key)| key.xpub.is_some())
-        && non_owned_keys.iter().all(|(_, key)| key.xpub.is_some());
-
-    // Fixed header content - show waiting message if all keys are set
-    let instruction: Element<'_, Msg> = if all_keys_set {
-        let keys_set_msg = if owned_keys.len() == 1 {
-            "Your key is set."
-        } else {
-            "Your keys are set."
-        };
-        Container::new(
-            Row::new()
-                .spacing(10)
-                .align_y(Alignment::Center)
-                .push(icon::clock_icon())
-                .push(
-                    Column::new()
-                        .spacing(5)
-                        .push(text::p1_bold(keys_set_msg))
-                        .push(text::p1_medium(
-                            "Once the other participants complete their key setup, you'll be able to access the wallet.",
-                        ).style(theme::text::primary)),
-                ),
-        )
-        .align_x(Alignment::Center)
-        .width(Length::Fill)
-        .into()
+    } else if owned_keys_set {
+        "Your assigned keys are set. Waiting for the other participants to finish this step."
     } else {
-        text::p1_medium(
-            "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf. You can connect a hardware device (recommended) or manually add an extended public key (xpub).",
-        )
-        .style(theme::text::primary)
-        .into()
+        "Select a key assigned to you to complete its setup. You can connect a hardware device or add an extended public key manually."
     };
 
-    let header_content = Column::new()
-        .spacing(10)
-        .align_x(Alignment::Center)
-        .padding(20)
-        .push(text::h2(format!("{wallet_name} - Set Keys")))
-        .push(Space::with_height(10))
-        .push(instruction);
+    let header_content = screen_intro("Set Keys", Some(intro_description(instruction)), false);
 
-    // Build scrollable key list
-    let mut list_content = Column::new()
-        .spacing(10)
-        .padding(20)
-        .align_x(Alignment::Center)
-        .push(Space::with_height(20));
-
-    if owned_keys.is_empty() {
-        // Empty state: no keys match filter
-        let empty_message = match user_role.as_ref() {
-            Some(UserRole::Participant) => "No keys assigned to you",
-            _ => "No keys found",
-        };
-        list_content =
-            list_content.push(text::p1_medium(empty_message).style(theme::text::primary));
+    let owned_entries = if owned_keys.is_empty() {
+        column![text::new::caption("No keys assigned to you.").style(theme::text::secondary)]
+            .spacing(VSpacing::M)
+            .width(button::STANDARD_ENTRY_WIDTH)
     } else {
-        list_content = list_content.push(
-            row![
-                Space::with_width(10),
-                text::h3("Your keys:").style(theme::text::primary),
-                Space::with_width(Length::Fill)
-            ]
-            .width(MENU_ENTRY_WIDTH),
-        );
-        // Always show key cards so users can edit/reset xpubs
-        for (key_id, key) in owned_keys {
-            let last_edit_info = format_last_edit_info(
-                key.last_edited,
-                key.last_editor,
-                state,
-                &current_user_email_lower,
-            );
+        owned_keys
+            .iter()
+            .fold(column![].spacing(VSpacing::M), |column, (key_id, key)| {
+                column.push(xpub_key_card(**key_id, key, EntrySetKeyOwner::Own))
+            })
+            .width(button::STANDARD_ENTRY_WIDTH)
+    };
 
-            list_content = list_content.push(xpub_key_card(*key_id, key, last_edit_info));
-        }
+    let mut list_content = column![
+        section_heading("Your keys", 4.0),
+        owned_entries,
+        Space::with_height(VSpacing::XL)
+    ]
+    .padding([0, 20])
+    .align_x(Alignment::Center)
+    .spacing(0);
+
+    if is_wallet_manager && !other_participant_keys.is_empty() {
+        let entries = other_participant_keys
+            .iter()
+            .fold(column![].spacing(VSpacing::M), |column, (key_id, key)| {
+                column.push(xpub_key_card(**key_id, key, EntrySetKeyOwner::Other))
+            })
+            .width(button::STANDARD_ENTRY_WIDTH);
+        list_content = list_content
+            .push(section_heading("Other participants' keys", 0.0))
+            .push(entries)
+            .push(Space::with_height(VSpacing::XL));
     }
 
-    if is_wallet_manager {
-        list_content = list_content.push(Space::with_height(20)).push(
-            row![
-                Space::with_width(10),
-                text::h3("Other participants' keys:").style(theme::text::primary),
-                Space::with_width(Length::Fill)
-            ]
-            .width(MENU_ENTRY_WIDTH),
-        );
-        // Always show key cards so users can edit/reset xpubs
-        for (key_id, key) in non_owned_keys {
-            let last_edit_info = format_last_edit_info(
-                key.last_edited,
-                key.last_editor,
-                state,
-                &current_user_email_lower,
-            );
-
-            list_content = list_content.push(xpub_key_card(*key_id, key, last_edit_info));
-        }
+    if is_wallet_manager && !external_keys.is_empty() {
+        let entries = external_keys
+            .iter()
+            .fold(column![].spacing(VSpacing::M), |column, (key_id, key)| {
+                column.push(xpub_key_card(**key_id, key, EntrySetKeyOwner::Other))
+            })
+            .width(button::STANDARD_ENTRY_WIDTH);
+        list_content = list_content
+            .push(section_heading("External keys", 0.0))
+            .push(entries)
+            .push(Space::with_height(VSpacing::XL));
     }
-
-    list_content = list_content.push(Space::with_height(50));
 
     layout_with_scrollable_list(
-        (0, 0), // No progress indicator
+        (6, INSTALLER_STEPS),
         Some(current_user_email),
         is_ws_admin,
         &breadcrumb,
-        header_content,
+        Some(header_content),
         list_content,
-        None, // No footer needed
-        true,
+        None,
+        None,
         Some(Msg::NavigateBack),
     )
 }

@@ -42,6 +42,11 @@ const CARD_SHADOW_HOVER: Shadow = Shadow {
 
 color!(INPUT_BG, 0xF3F4F5);
 color!(INPUT_BORDER, 0xCED4DA);
+color!(GREEN_TINT_LIGHT, 0xF1FBF4);
+color!(GREEN_BORDER_LIGHT, 0xC9EBD4);
+color!(AMBER_TINT_LIGHT, 0xFFF8EB);
+color!(AMBER_BORDER_LIGHT, 0xFCE3B4);
+color!(RED_TINT_LIGHT, 0xFEECEC);
 
 pub const MENU_BG: Color = color::WHITE;
 color!(MENU_BG_HOVER, 0xE9ECEF);
@@ -49,6 +54,10 @@ color!(MENU_BG_HOVER, 0xE9ECEF);
 color!(EXTERNAL, 0x0F172A);
 color!(SAFETY_NET, 0x475569);
 color!(FINGERPRINT_BACKGROUND, 0xE9F4FF);
+const BLUE_TINT_LIGHT: Color = FINGERPRINT_BACKGROUND;
+color!(LIGHT_BLUE_TINT, 0xE5F5FF);
+color!(BUSINESS_BLUE_SECTION, 0xC1E9F7);
+const ROLE_MANAGER_TEXT: Color = BTN_PRIMARY_PRESSED;
 
 impl Palette {
     pub fn business() -> Self {
@@ -64,6 +73,8 @@ impl Palette {
             text: Text {
                 primary: color::BUSINESS_BLACK,
                 secondary: color::DARK_TEXT_SECONDARY,
+                muted: color::DARK_TEXT_TERTIARY,
+                border: color::LIGHT_BORDER,
                 warning: color::ORANGE,
                 success: color::DARK_GREEN,
                 error: color::RED,
@@ -124,6 +135,33 @@ impl Palette {
                         shadow: BTN_SHADOW,
                     }),
                     disabled: btn_disabled(),
+                },
+                auxiliary: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_PRIMARY_PRESSED,
+                        border: Some(INPUT_BORDER),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLUE,
+                        border: color::BUSINESS_BLUE.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLUE,
+                        border: color::BUSINESS_BLUE.into(),
+                        shadow: Default::default(),
+                    }),
+                    // Disabled looks identical to active (the button is inert, not greyed).
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_PRIMARY_PRESSED,
+                        border: Some(INPUT_BORDER),
+                        shadow: Default::default(),
+                    }),
                 },
                 feerate: feerate_button(color::BUSINESS_LIGHT_BLUE, color::BUSINESS_BLACK),
                 feerate_unselected: feerate_unselected_button(
@@ -194,6 +232,33 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                remove: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLACK,
+                        border: None,
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLUE,
+                        border: None,
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLUE,
+                        border: None,
+                        shadow: Default::default(),
+                    }),
+                    // Inert (disabled) keeps the active look.
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLACK,
+                        border: None,
+                        shadow: Default::default(),
+                    }),
+                },
                 transparent_border: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
@@ -236,7 +301,7 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
-                clickable_card: Button {
+                list_entry: Button {
                     active: ButtonPalette {
                         background: BTN_TERTIARY_BG,
                         text: BTN_TERTIARY_FG,
@@ -246,12 +311,14 @@ impl Palette {
                     hovered: ButtonPalette {
                         background: BTN_TERTIARY_BG,
                         text: BTN_TERTIARY_FG,
-                        border: BTN_TERTIARY_BG.into(),
+                        border: color::BUSINESS_BLUE.into(),
                         shadow: CARD_SHADOW_HOVER,
                     },
                     pressed: None,
                     disabled: None,
                 },
+                list_entry_radius: Some(16.0),
+                list_entry_hover_border_width: Some(2.0),
                 container: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
@@ -378,6 +445,27 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                link_subtle: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_PILL_SIMPLE,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: SAFETY_NET,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: SAFETY_NET,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: btn_disabled(),
+                },
                 pick_list: Button {
                     active: ButtonPalette {
                         background: INPUT_BG,
@@ -401,29 +489,19 @@ impl Palette {
                 },
                 signing_devices: Button {
                     active: ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: BTN_PRIMARY_BG,
-                        border: BTN_PRIMARY_BG.into(),
-                        shadow: Default::default(),
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_TERTIARY_FG,
+                        border: BTN_TERTIARY_BG.into(),
+                        shadow: CARD_SHADOW,
                     },
                     hovered: ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: BTN_PRIMARY_BG,
-                        border: BTN_PRIMARY_BG.into(),
-                        shadow: BTN_SHADOW,
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_TERTIARY_FG,
+                        border: color::BUSINESS_BLUE.into(),
+                        shadow: CARD_SHADOW_HOVER,
                     },
-                    pressed: Some(ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: BTN_PRIMARY_PRESSED,
-                        border: BTN_PRIMARY_PRESSED.into(),
-                        shadow: BTN_SHADOW,
-                    }),
-                    disabled: Some(ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: BTN_DISABLED,
-                        border: BTN_DISABLED.into(),
-                        shadow: Default::default(),
-                    }),
+                    pressed: None,
+                    disabled: None,
                 },
             },
             cards: Cards {
@@ -463,29 +541,34 @@ impl Palette {
                     border: color::TRANSPARENT.into(),
                 },
                 soft_warning: ContainerPalette {
-                    background: color::TRANSPARENT,
-                    text: color::ORANGE.into(),
-                    border: color::LIGHT_BORDER.into(),
+                    background: AMBER_TINT_LIGHT,
+                    text: None,
+                    border: AMBER_BORDER_LIGHT.into(),
                 },
                 info: ContainerPalette {
-                    background: color::TRANSPARENT,
-                    text: color::DARK_TEXT_SECONDARY.into(),
-                    border: color::LIGHT_BORDER.into(),
+                    background: INPUT_BG,
+                    text: None,
+                    border: color::LIGHT_BG_SECONDARY.into(),
                 },
+                success: Some(ContainerPalette {
+                    background: GREEN_TINT_LIGHT,
+                    text: None,
+                    border: GREEN_BORDER_LIGHT.into(),
+                }),
                 error: ContainerPalette {
                     background: color::LIGHT_BG,
                     text: color::RED.into(),
                     border: color::RED.into(),
                 },
                 section: ContainerPalette {
-                    background: color::BUSINESS_BLUE_SECTION,
+                    background: BUSINESS_BLUE_SECTION,
                     text: None,
-                    border: Some(color::TRANSPARENT),
+                    border: None,
                 },
                 flat: ContainerPalette {
                     background: BTN_TERTIARY_BG,
                     text: None,
-                    border: Some(color::TRANSPARENT),
+                    border: None,
                 },
             },
             banners: Banners {
@@ -516,6 +599,35 @@ impl Palette {
                     text: color::WHITE.into(),
                     border: color::TRANSPARENT.into(),
                 },
+                avatar: ContainerPalette {
+                    background: BLUE_TINT_LIGHT,
+                    text: BTN_PRIMARY_PRESSED.into(),
+                    border: color::TRANSPARENT.into(),
+                },
+                danger: Some(ContainerPalette {
+                    background: RED_TINT_LIGHT,
+                    text: color::RED.into(),
+                    border: color::TRANSPARENT.into(),
+                }),
+            },
+            tile_tones: Tiles {
+                background: INPUT_BG,
+                accent: Tile {
+                    fg: color::BUSINESS_BLUE,
+                    bg: None,
+                },
+                neutral: Tile {
+                    fg: SAFETY_NET,
+                    bg: None,
+                },
+                muted: Tile {
+                    fg: color::LIGHT_BORDER,
+                    bg: None,
+                },
+                danger: Tile {
+                    fg: color::RED,
+                    bg: Some(RED_TINT_LIGHT),
+                },
             },
             pills: Pills {
                 simple: ContainerPalette {
@@ -537,6 +649,16 @@ impl Palette {
                     background: color::TRANSPARENT,
                     text: color::AMBER.into(),
                     border: color::AMBER.into(),
+                },
+                role_manager: ContainerPalette {
+                    background: BLUE_TINT_LIGHT,
+                    text: ROLE_MANAGER_TEXT.into(),
+                    border: BLUE_TINT_LIGHT.into(),
+                },
+                role_participant: ContainerPalette {
+                    background: INPUT_BG,
+                    text: color::DARK_TEXT_TERTIARY.into(),
+                    border: INPUT_BG.into(),
                 },
                 success: ContainerPalette {
                     background: color::SUCCESS_GREEN,
@@ -563,6 +685,13 @@ impl Palette {
                     text: SAFETY_NET.into(),
                     border: FINGERPRINT_BACKGROUND.into(),
                 },
+            },
+            tabs: Tabs {
+                active: color::BUSINESS_BLUE,
+                inactive: color::DARK_TEXT_TERTIARY,
+                strip: color::LIGHT_BG_SECONDARY,
+                dot_ready: color::SUCCESS_GREEN,
+                dot_pending: color::AMBER,
             },
             notifications: Notifications {
                 pending: ContainerPalette {
@@ -614,6 +743,10 @@ impl Palette {
                     },
                 },
             },
+            combobox: Combobox {
+                selected: LIGHT_BLUE_TINT,
+                header: color::LIGHT_BORDER,
+            },
             checkboxes: Checkboxes {
                 icon: color::BUSINESS_BLUE,
                 text: color::BUSINESS_BLACK,
@@ -664,7 +797,7 @@ impl Palette {
                     text: color::BLACK,
                     selected_text: color::BLACK,
                     background: color::WHITE,
-                    selected_background: MENU_BG_HOVER,
+                    selected_background: BLUE_TINT_LIGHT,
                 },
             },
             spinner: Spinner {

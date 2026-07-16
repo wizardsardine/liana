@@ -29,6 +29,7 @@ pub fn primary(theme: &Theme) -> Style {
                 radius: 25.0.into(),
                 width: 1.0,
                 color,
+                ..Default::default()
             }
         } else {
             Border {

@@ -241,7 +241,7 @@ where
 
         state.placeholder.update(placeholder_text);
 
-        let secure_value = self.is_secure.then(|| value.secure());
+        let secure_value = self.is_secure.then_some(value.secure());
         let value = secure_value.as_ref().unwrap_or(value);
 
         state.value.update(Text {
@@ -314,13 +314,16 @@ where
         let value = value.unwrap_or(&self.value);
         let is_disabled = self.on_input.is_none();
 
-        let secure_value = self.is_secure.then(|| value.secure());
+        let secure_value = self.is_secure.then_some(value.secure());
         let value = secure_value.as_ref().unwrap_or(value);
 
         let bounds = layout.bounds();
 
         let mut children_layout = layout.children();
-        let text_bounds = children_layout.next().unwrap().bounds();
+        let text_bounds = children_layout
+            .next()
+            .map(|layout| layout.bounds())
+            .unwrap_or(bounds);
 
         let is_mouse_over = cursor.is_over(bounds);
 
@@ -347,9 +350,7 @@ where
             style.background,
         );
 
-        if self.icon.is_some() {
-            let icon_layout = children_layout.next().unwrap();
-
+        if let (true, Some(icon_layout)) = (self.icon.is_some(), children_layout.next()) {
             let icon = state.icon.raw();
 
             renderer.fill_paragraph(
@@ -600,11 +601,8 @@ where
                 };
 
                 if let Some(cursor_position) = click_position {
-                    let text_layout = layout.children().next().unwrap();
-
+                    let text_bounds = text_bounds(&layout);
                     let target = {
-                        let text_bounds = text_layout.bounds();
-
                         let alignment_offset = alignment_offset(
                             text_bounds.width,
                             state.value.raw().min_width(),
@@ -626,7 +624,7 @@ where
                                     self.value.clone()
                                 };
 
-                                find_cursor_position(text_layout.bounds(), &value, state, target)
+                                find_cursor_position(text_bounds, &value, state, target)
                             } else {
                                 None
                             }
@@ -645,13 +643,9 @@ where
                             if self.is_secure {
                                 state.cursor.select_all(&self.value);
                             } else {
-                                let position = find_cursor_position(
-                                    text_layout.bounds(),
-                                    &self.value,
-                                    state,
-                                    target,
-                                )
-                                .unwrap_or(0);
+                                let position =
+                                    find_cursor_position(text_bounds, &self.value, state, target)
+                                        .unwrap_or(0);
 
                                 state.cursor.select_range(
                                     self.value.previous_start_of_word(position),
@@ -680,11 +674,9 @@ where
                 let state = state::<Renderer>(tree);
 
                 if state.is_dragging {
-                    let text_layout = layout.children().next().unwrap();
+                    let text_bounds = text_bounds(&layout);
 
                     let target = {
-                        let text_bounds = text_layout.bounds();
-
                         let alignment_offset = alignment_offset(
                             text_bounds.width,
                             state.value.raw().min_width(),
@@ -701,8 +693,7 @@ where
                     };
 
                     let position =
-                        find_cursor_position(text_layout.bounds(), &value, state, target)
-                            .unwrap_or(0);
+                        find_cursor_position(text_bounds, &value, state, target).unwrap_or(0);
 
                     state
                         .cursor
@@ -1086,8 +1077,7 @@ where
                 y: 0.0,
             };
 
-            let mut children_layout = layout.children();
-            let text_bounds = children_layout.next().unwrap().bounds();
+            let text_bounds = text_bounds(&layout);
             let selected_text = if let Some((start, end)) = state.cursor.selection(&self.value) {
                 self.value.select(start, end).to_string()
             } else {
@@ -1460,8 +1450,7 @@ fn replace_paragraph<Renderer>(
     let font = font.unwrap_or_else(|| renderer.default_font());
     let text_size = text_size.unwrap_or_else(|| renderer.default_size());
 
-    let mut children_layout = layout.children();
-    let text_bounds = children_layout.next().unwrap().bounds();
+    let text_bounds = text_bounds(&layout);
 
     state.value = paragraph::Plain::new(Text {
         font,
@@ -1474,6 +1463,14 @@ fn replace_paragraph<Renderer>(
         shaping: text::Shaping::Advanced,
         wrapping: text::Wrapping::default(),
     });
+}
+
+fn text_bounds(layout: &Layout<'_>) -> Rectangle {
+    layout
+        .children()
+        .next()
+        .map(|layout| layout.bounds())
+        .unwrap_or_else(|| layout.bounds())
 }
 
 const CURSOR_BLINK_INTERVAL_MILLIS: u128 = 500;

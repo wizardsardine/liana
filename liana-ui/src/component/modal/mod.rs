@@ -4,9 +4,7 @@ use iced::{
     alignment::{Horizontal, Vertical},
     widget::{
         button::{Status, Style},
-        column, row,
-        tooltip::Position,
-        Space,
+        column, row, Space,
     },
     Length, Padding,
 };
@@ -18,8 +16,9 @@ use bitcoin::bip32::{ChildNumber, Fingerprint};
 use crate::{
     color,
     component::{
-        badge, button,
+        button,
         form::{self, Value},
+        list::{self, DeviceStatus},
         pick_list,
         text::new::{b1_bold, b4_medium, b5_bold, b5_medium, caption},
         tooltip,
@@ -28,13 +27,16 @@ use crate::{
     theme::{self, Theme},
 };
 
-use crate::widget::{Button, CheckBox, Column, Element, SpaceExt, Text};
+use crate::{
+    spacing::{HSpacing, VSpacing},
+    widget::{Button, CheckBox, Column, Element, PickList, SpaceExt, Text},
+};
 
 pub const BTN_W: u32 = 500;
-pub const V_SPACING: u32 = 10;
-pub const H_SPACING: u32 = 5;
+pub const V_SPACING: VSpacing = VSpacing::S;
+pub const H_SPACING: HSpacing = HSpacing::S;
 const MODAL_PADDING: f32 = 20.0;
-const MODAL_SPACING: u32 = 15;
+const MODAL_SPACING: VSpacing = VSpacing::M;
 
 /// Modal width presets.
 #[derive(Debug, Clone, Copy)]
@@ -335,67 +337,6 @@ impl Display for Account {
     }
 }
 
-pub enum DeviceMark {
-    Processing,
-    NotInPath,
-    Unrelated,
-    WrongNetwork,
-    ConnectionError,
-    Locked(Option<String>),
-    OutdatedFirmware(String),
-    Signed,
-    Registered,
-    Selected,
-}
-
-impl Display for DeviceMark {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DeviceMark::Processing => write!(f, "Processing, please check your device"),
-            DeviceMark::NotInPath => write!(f, "This signer is not part of this spending path."),
-            DeviceMark::Unrelated => {
-                write!(
-                    f,
-                    "This signing device is not related to this Liana wallet."
-                )
-            }
-            DeviceMark::WrongNetwork => write!(f, "Wrong network in the device settings"),
-            DeviceMark::ConnectionError => write!(f, "Connection error"),
-            DeviceMark::Locked(Some(code)) => write!(f, "Locked, check code: {code}"),
-            DeviceMark::Locked(None) => write!(f, "Locked"),
-            DeviceMark::OutdatedFirmware(version) => {
-                write!(f, "Install firmware version {version} or later")
-            }
-            DeviceMark::Signed => write!(f, "Signed"),
-            DeviceMark::Registered => write!(f, "Registered"),
-            DeviceMark::Selected => Ok(()),
-        }
-    }
-}
-
-impl DeviceMark {
-    pub fn element<'a, M: 'static>(&self) -> Element<'a, M> {
-        match self {
-            DeviceMark::Signed | DeviceMark::Registered => success_mark(Some(self.to_string())),
-            DeviceMark::Selected => success_mark(None),
-            _ => b5_medium(self.to_string()).into(),
-        }
-    }
-
-    pub fn warning(&self) -> Option<&'static str> {
-        match self {
-            DeviceMark::WrongNetwork => Some(
-                "The wrong bitcoin application is open or the device was initialized with the wrong network",
-            ),
-            DeviceMark::OutdatedFirmware(_) => Some("Please upgrade firmware"),
-            DeviceMark::ConnectionError => {
-                Some("Make sure your device is unlocked and a supported Bitcoin application is opened.")
-            }
-            _ => None,
-        }
-    }
-}
-
 fn device_icon(is_device: bool) -> Text<'static> {
     if is_device {
         icon::usb_drive_icon()
@@ -427,19 +368,11 @@ fn device_designation<'a, M: 'a>(
     .align_x(Horizontal::Left)
 }
 
-fn success_mark<'a, M: 'static>(label: Option<String>) -> Element<'a, M> {
-    row![label.map(b5_medium), badge::success()]
-        .align_y(Vertical::Center)
-        .spacing(H_SPACING)
-        .into()
-}
-
 pub fn device_entry<'a, M, F, K, A>(
     fingerprint: Option<F>,
     kind: Option<K>,
     alias: Option<A>,
-    mark: Option<DeviceMark>,
-    warning: Option<&'static str>,
+    status: DeviceStatus,
     on_press: Option<M>,
 ) -> Element<'a, M>
 where
@@ -449,15 +382,37 @@ where
     A: Display + 'a,
 {
     let icon = device_icon(kind.is_some());
-    let warning = warning.or_else(|| mark.as_ref().and_then(DeviceMark::warning));
-    let mark: Option<Element<'a, M>> = mark.map(|m| m.element());
-    let warning =
-        warning.map(|w| tooltip::tooltip_custom(w, icon::warning_icon(), Position::Bottom));
     let designation = device_designation(kind, alias, fingerprint);
-    let row = row![icon, designation, Space::fill_width(), mark, warning]
-        .align_y(Vertical::Center)
-        .spacing(H_SPACING);
+    let row = row![
+        icon,
+        designation,
+        Space::fill_width(),
+        Option::<Element<'a, M>>::from(status)
+    ]
+    .align_y(Vertical::Center)
+    .spacing(H_SPACING);
     button::device(row, on_press)
+}
+
+/// Derivation-account picker: a dropdown over accounts 0..10 for the given device.
+pub fn account_pick_list<'a, Message: Clone + 'a>(
+    fingerprint: Fingerprint,
+    selected: Option<ChildNumber>,
+    on_select: impl Fn(Account) -> Message + 'a,
+) -> PickList<'a, Account, Vec<Account>, Account, Message> {
+    let accounts: Vec<Account> = (0..10)
+        .map(|i| {
+            Account::new(
+                ChildNumber::from_hardened_idx(i).expect("hardcoded"),
+                fingerprint,
+            )
+        })
+        .collect();
+    let selected = Account::new(
+        selected.unwrap_or(ChildNumber::from_hardened_idx(0).expect("hardcoded")),
+        fingerprint,
+    );
+    pick_list::pick_list(accounts, Some(selected), on_select)
 }
 
 pub fn account_device_entry<'a, M, K, A>(
@@ -472,19 +427,7 @@ where
     K: Display + 'a,
     A: Display + 'a,
 {
-    let accounts: Vec<Account> = (0..10)
-        .map(|i| {
-            Account::new(
-                ChildNumber::from_hardened_idx(i).expect("hardcoded"),
-                fingerprint,
-            )
-        })
-        .collect();
-    let selected = Account::new(
-        selected.unwrap_or(ChildNumber::from_hardened_idx(0).expect("hardcoded")),
-        fingerprint,
-    );
-    let picker = pick_list::pick_list(accounts, Some(selected), |a: Account| {
+    let picker = account_pick_list(fingerprint, selected, |a: Account| {
         (a.fingerprint, a.index).into()
     });
     let icon = device_icon(kind.is_some());
@@ -500,6 +443,7 @@ pub fn registration_key_entry<'a, Message, M>(
     fingerprint: String,
     kind: Option<String>,
     alias: Option<String>,
+    entry_status: list::EntryRegisterStatus,
     status: Option<String>,
     on_press: Option<M>,
 ) -> Element<'a, Message>
@@ -507,20 +451,16 @@ where
     M: 'static + Fn() -> Message,
     Message: Clone + 'static,
 {
-    let icon = device_icon(kind.is_some());
-    let status = status.map(b5_medium);
-    let designation = device_designation(kind, alias, Some(fingerprint));
-    let row = row![
-        icon,
-        designation,
-        Space::fill_width(),
-        status,
-        Space::fill_width()
-    ]
-    .align_y(Vertical::Center)
-    .spacing(H_SPACING);
     let msg = on_press.map(|f| f());
-    button::device(row, msg)
+    let title = alias.unwrap_or_else(|| kind.unwrap_or_else(|| fingerprint.clone()));
+    let status: Option<Element<'a, Message>> = status.map(|status| b5_medium(status).into());
+    let title = b5_medium(title);
+    let fingerprint = caption(fingerprint).style(theme::text::secondary);
+    let body = column![title, fingerprint, status]
+        .spacing(2)
+        .width(Length::Fill);
+
+    list::entry_register(entry_status, body, None, msg.is_some(), msg)
 }
 
 pub fn button_entry<'a, Message, M>(

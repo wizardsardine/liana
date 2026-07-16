@@ -3,13 +3,13 @@ use std::fmt::Display;
 use super::{
     modal::BTN_W,
     text::{
-        new::{button_text, button_text_compact, BUTTON_TEXT_COMPACT_SPEC},
+        new::{button_text, button_text_compact, caption, BUTTON_TEXT_COMPACT_SPEC},
         p1_regular, panel_title, text,
     },
     tooltip,
 };
 use crate::{
-    font::{BOLD, MEDIUM},
+    font::{BOLD, MANROPE_SEMIBOLD, MEDIUM},
     icon::{self, ICON_SIZE_L},
     theme::{self, button::round_icon_btn, Theme},
     widget::*,
@@ -18,19 +18,27 @@ use iced::{
     alignment::{Horizontal, Vertical},
     widget::{
         button::{Status, Style},
-        container, row,
+        container, row, Space,
     },
-    Length,
+    Background, Border, Color, Length, Padding,
 };
 
-const MENU_BTN_PADDING: [u16; 2] = [4 /* Top/Bottom */, 12 /* Left/Right */];
+const MENU_BTN_PADDING: [u16; 2] = [9 /* Top/Bottom */, 22 /* Left/Right */];
 const MENU_TEXT_SIZE: u32 = 22;
 const MENU_TEXT_COMPACT_SIZE: u32 = 18;
 const MENU_ICON_SIZE: u32 = ICON_SIZE_L as u32;
+const AUXILIARY_PADDING: [u16; 2] = [14 /* Top/Bottom */, 20 /* Left/Right */];
+const LIST_ENTRY_ACCENT_WIDTH: f32 = 4.0;
+const LIST_ENTRY_PADDING: [u16; 2] = [14 /* Top/Bottom */, 20 /* Left/Right */];
 
 const ICON_BTN_SIZE: f32 = 40.0;
 const ICON_BTN_PADDING: f32 = 10.0;
 pub const DEVICE_BTN_H: u32 = 40;
+
+const BTN_PADDING: [u16; 2] = [9 /* Top/Bottom */, 14 /* Left/Right */];
+const BTN_PADDING_COMPACT: [u16; 2] = [7 /* Top/Bottom */, 12 /* Left/Right */];
+
+pub type ListEntryAccent = fn(&Theme) -> Color;
 
 pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str, compact: bool) -> Button<'a, T> {
     Button::new(
@@ -43,6 +51,7 @@ pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str, compact: bool) -
         .padding(MENU_BTN_PADDING),
     )
     .style(theme::button::menu)
+    .padding(0)
 }
 
 pub fn menu_active<'a, T: 'a>(
@@ -52,6 +61,7 @@ pub fn menu_active<'a, T: 'a>(
 ) -> Button<'a, T> {
     Button::new(content_menu(icon, t, true, compact).padding(MENU_BTN_PADDING))
         .style(theme::button::menu_pressed)
+        .padding(0)
 }
 
 pub fn menu_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
@@ -61,6 +71,7 @@ pub fn menu_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
             .align_x(Horizontal::Center),
     )
     .style(theme::button::menu)
+    .padding(0)
 }
 
 pub fn menu_active_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
@@ -70,6 +81,7 @@ pub fn menu_active_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
             .align_x(Horizontal::Center),
     )
     .style(theme::button::menu_pressed)
+    .padding(0)
 }
 
 fn content_menu<'a, T: 'a>(
@@ -112,7 +124,9 @@ pub fn button_with_theme<'a, T: 'a>(
             icon.map(|i| i.size(BUTTON_TEXT_COMPACT_SPEC.size.expect("size"))),
         )
     };
-    Button::new(content(icon, text, compact)).style(style)
+    Button::new(content(icon, text, compact))
+        .style(style)
+        .padding(0)
 }
 
 pub fn button_compact<'a, T: 'a>(
@@ -151,16 +165,107 @@ button_helpers!(
     link,
 );
 
-pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, panel_title(t), false)).style(theme::button::breadcrumb)
-}
-pub fn clickable_card<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
-    content: T,
-    msg: Option<M>,
-) -> Button<'a, M> {
-    Button::new(content.into())
-        .style(theme::button::clickable_card)
+pub fn auxiliary<'a, T: 'a + Clone>(
+    icon: Option<Text<'a>>,
+    t: impl Display,
+    msg: Option<T>,
+) -> Button<'a, T> {
+    Button::new(auxiliary_content(icon, t))
+        .style(theme::button::auxiliary)
         .on_press_maybe(msg)
+        .width(STANDARD_ENTRY_WIDTH)
+        .padding(0)
+}
+
+pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    Button::new(content(icon, panel_title(t), false))
+        .style(theme::button::breadcrumb)
+        .padding(0)
+}
+
+pub fn list_entry<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
+    content: T,
+    accent: Option<ListEntryAccent>,
+    width: EntryWidth,
+    msg: Option<M>,
+) -> Element<'a, M> {
+    list_entry_with_state(content, accent, width, msg.is_some(), msg.is_some(), msg)
+}
+
+pub fn list_entry_with_enabled<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
+    content: T,
+    accent: Option<ListEntryAccent>,
+    width: EntryWidth,
+    enabled: bool,
+    msg: Option<M>,
+) -> Element<'a, M> {
+    list_entry_with_state(content, accent, width, enabled, msg.is_some(), msg)
+}
+
+pub fn list_entry_with_state<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
+    content: T,
+    accent: Option<ListEntryAccent>,
+    width: EntryWidth,
+    enabled: bool,
+    clickable: bool,
+    msg: Option<M>,
+) -> Element<'a, M> {
+    let clickable = enabled && clickable;
+    let msg = clickable.then_some(msg).flatten();
+    let button = Button::new(
+        container(content.into())
+            .padding(LIST_ENTRY_PADDING)
+            .width(Length::Fill),
+    )
+    .style(move |theme, status| {
+        let status = if !clickable && status == Status::Disabled {
+            Status::Active
+        } else {
+            status
+        };
+        let mut style = theme::button::list_entry(theme, status);
+        if let Some(color) = accent {
+            // The accent card behind carries the shadow; keep the inner card flat.
+            style.shadow = Default::default();
+            if status == Status::Hovered {
+                // Hover border matches the entry's accent stripe.
+                style.border.color = color(theme);
+            }
+        }
+        style
+    })
+    .on_press_maybe(msg)
+    .padding(0)
+    .width(Length::Fill);
+
+    let entry: Element<'a, M> = if let Some(color) = accent {
+        let accent_card = Container::new(Space::with_height(Length::Fill))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |theme| container::Style {
+                background: Some(Background::Color(color(theme))),
+                border: Border {
+                    radius: theme.colors.buttons.list_entry_radius.unwrap_or(0.0).into(),
+                    ..Default::default()
+                },
+                shadow: theme.colors.buttons.list_entry.active.shadow,
+                ..Default::default()
+            });
+        // White card inset on the left by the accent width so the accent card behind shows as a
+        // stripe that wraps the left rounded corners.
+        Stack::new()
+            .width(Length::Fill)
+            .push(Container::new(button).padding(Padding {
+                left: LIST_ENTRY_ACCENT_WIDTH,
+                ..Padding::ZERO
+            }))
+            .push_under(accent_card)
+            .into()
+    } else {
+        button.into()
+    };
+
+    container(entry).width(width).into()
 }
 
 pub fn clickable_section<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
@@ -177,22 +282,35 @@ fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>, compact: bool) -> 
     content_with_tooltip(icon, text, None, compact)
 }
 
+fn auxiliary_content<'a, T: 'a>(icon: Option<Text<'a>>, t: impl Display) -> Container<'a, T> {
+    let text = Text::new(t.to_string()).size(16).font(MANROPE_SEMIBOLD);
+    container(
+        row![icon.map(|icon| icon.size(16)), text]
+            .spacing(10)
+            .align_y(Vertical::Center),
+    )
+    .align_x(Horizontal::Center)
+    .padding(AUXILIARY_PADDING)
+    .width(Length::Fill)
+}
+
 fn content_with_tooltip<'a, T: 'a>(
     icon: Option<Text<'a>>,
     text: Text<'a>,
     tooltip: Option<&'a str>,
     compact: bool,
 ) -> Container<'a, T> {
-    let mut row: Row<'a, T> = Row::new().spacing(10).align_y(Vertical::Center);
-    if let Some(icon) = icon {
-        row = row.push(icon);
-    }
-    row = row.push(text);
-    if let Some(tt) = tooltip {
-        row = row.push(tooltip::tooltip(tt));
-    }
-    let padding = if compact { 2 } else { 4 };
-    container(row).align_x(Horizontal::Center).padding(padding)
+    let content = row![icon, text, tooltip.map(tooltip::tooltip)]
+        .spacing(10)
+        .align_y(Vertical::Center);
+    let padding = if compact {
+        BTN_PADDING_COMPACT
+    } else {
+        BTN_PADDING
+    };
+    container(content)
+        .align_x(Horizontal::Center)
+        .padding(padding)
 }
 
 pub fn device<'a, T: 'a + std::clone::Clone, C: Into<Element<'a, T>>>(
@@ -251,6 +369,31 @@ impl From<BtnWidth> for Length {
         match value {
             BtnWidth::Auto => Length::Shrink,
             v => (v as u16 as u32).into(),
+        }
+    }
+}
+
+pub const STANDARD_ENTRY_WIDTH: f32 = 600.0;
+pub const ENTRY_DELETE_SLOT: f32 = 40.0;
+pub const ENTRY_DELETE_GAP: f32 = 10.0;
+
+pub enum EntryWidth {
+    Standard,
+    Deletable,
+    Fill,
+    Shrink,
+}
+
+impl From<EntryWidth> for Length {
+    fn from(value: EntryWidth) -> Self {
+        match value {
+            EntryWidth::Standard => Length::Fixed(STANDARD_ENTRY_WIDTH),
+            // A deletable row matches the standard width, reserving room for its delete button.
+            EntryWidth::Deletable => {
+                Length::Fixed(STANDARD_ENTRY_WIDTH - ENTRY_DELETE_SLOT - ENTRY_DELETE_GAP)
+            }
+            EntryWidth::Fill => Length::Fill,
+            EntryWidth::Shrink => Length::Shrink,
         }
     }
 }
@@ -347,6 +490,7 @@ pub fn btn_secondary_with_tooltip<'a, T: Clone + 'a>(
     .width(width)
     .style(theme::button::secondary)
     .on_press_maybe(msg)
+    .padding(0)
 }
 
 /// Tertiary button with preset width.
@@ -406,6 +550,17 @@ pub fn btn_ok<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "OK", BtnWidth::M, msg)
 }
 
+pub fn btn_email_wizardsardine<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Email WS", BtnWidth::Auto, msg)
+}
+
+pub fn btn_modal_close<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    Button::new(icon::cross_icon().size(40))
+        .padding(0)
+        .style(theme::button::transparent)
+        .on_press_maybe(msg)
+}
+
 pub fn btn_generate<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "Generate", BtnWidth::M, msg)
 }
@@ -463,8 +618,8 @@ pub fn btn_reload<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "Reload", BtnWidth::M, msg)
 }
 
-pub fn btn_approve_template<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Approve template", BtnWidth::XL, msg)
+pub fn btn_approve<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Approve", BtnWidth::XL, msg)
 }
 
 pub fn btn_send_for_approval<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -477,6 +632,31 @@ pub fn btn_keep_changes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 
 pub fn btn_send_token<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "Send token", BtnWidth::L, msg)
+}
+
+pub fn btn_paste_icon<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    clickable_icon_with_size(icon::paste_icon(), msg, 20)
+}
+
+pub fn subtle_link<'a, T: Clone + 'a>(label: impl Display, msg: Option<T>) -> Element<'a, T> {
+    let link = Button::new(caption(label).size(14))
+        .padding(0)
+        .style(theme::button::link_subtle)
+        .on_press_maybe(msg);
+    let underline =
+        Container::new(iced::widget::rule::horizontal(1).style(theme::rule::link_underline))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_y(Vertical::Bottom);
+    Stack::new()
+        .width(Length::Shrink)
+        .push(link)
+        .push(underline)
+        .into()
+}
+
+pub fn btn_template_help<'a, T: Clone + 'a>(msg: Option<T>) -> Element<'a, T> {
+    subtle_link("Something’s wrong with this template?", msg)
 }
 
 pub fn btn_breadcrumb_previous<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -494,6 +674,14 @@ pub fn btn_manage_keys<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Butt
     }
 }
 
+pub fn btn_mark_keys_ready<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Mark keys as ready", BtnWidth::XL, msg)
+}
+
+pub fn btn_edit_keys<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(Some(icon::edit_icon()), "Edit keys", BtnWidth::L, msg)
+}
+
 /// Generate-address button: a plus icon and "Generate address" label.
 pub fn btn_generate_address<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     let icon = Some(icon::plus_icon());
@@ -501,8 +689,20 @@ pub fn btn_generate_address<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> 
     btn_primary(icon, label, BtnWidth::Auto, msg)
 }
 
+pub fn btn_add_key<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    auxiliary(Some(icon::plus_icon()), "Add a key", msg)
+}
+
+pub fn btn_add_recovery_path<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    auxiliary(Some(icon::plus_icon()), "Add a recovery path", msg)
+}
+
 pub fn btn_skip<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_secondary(None, "Skip", BtnWidth::XL, msg)
+}
+
+pub fn btn_skip_registration<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Skip registration", BtnWidth::XL, msg)
 }
 
 pub fn btn_resend_token<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -519,7 +719,7 @@ pub fn btn_change_email<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn btn_connect_another_email<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(None, "Connect with another email", BtnWidth::XXL, msg)
+    auxiliary(None, "Connect with another email", msg)
 }
 
 pub fn btn_verify_compact<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
@@ -596,11 +796,13 @@ pub fn btn_edit<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn btn_remove<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    clickable_icon_with_size(icon::cross_icon(), msg, CLICKABLE_ICON_SIZE)
+    Button::new(icon::cross_icon().size(CLICKABLE_ICON_SIZE))
+        .on_press_maybe(msg)
+        .style(theme::button::remove)
 }
 
 pub fn btn_delete<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Delete", BtnWidth::L, msg)
+    btn_destructive(None, "Delete", BtnWidth::M, msg)
 }
 
 pub fn btn_previous<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {

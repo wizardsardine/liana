@@ -13,6 +13,7 @@ fn notification(palette: &ContainerPalette) -> Style {
                 width: 1.0,
                 color,
                 radius: 25.0.into(),
+                ..Default::default()
             }
         } else {
             Border {

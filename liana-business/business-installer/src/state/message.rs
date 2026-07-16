@@ -1,6 +1,10 @@
 use liana_connect::ws_business;
 use uuid::Uuid;
 
+use crate::state::views::paths;
+
+pub type HardwareWalletRequestId = u64;
+
 /// All application messages
 #[derive(Debug, Clone)]
 #[rustfmt::skip]
@@ -33,10 +37,12 @@ pub enum Msg {
     KeyEdit(u8),                         // Open modal to edit key by index
     KeyDelete(u8),                       // Delete key by index
     KeySave,                             // Save key changes
+    MarkKeysReady(bool),                 // Toggle keys_ready for the current wallet
     KeyCancelModal,                      // Close key modal
     KeyUpdateAlias(String),              // Update key alias field
     KeyUpdateDescr(String),              // Update key description field
     KeyUpdateEmail(String),              // Update key email field
+    KeySelectSigner(String),             // Select signer from quick-pick
     KeyUpdateToken(String),              // Update key token field
     KeyUpdateType(ws_business::KeyType), // Update key type
 
@@ -57,10 +63,13 @@ pub enum Msg {
     TemplateCancelPathModal,                                    // Close path modal
     TemplateUpdateThreshold(String),                            // Update threshold field
     TemplateUpdateTimelock(String),                             // Update timelock field
-    TemplateUpdateTimelockUnit(crate::state::views::path::TimelockUnit), // Update timelock unit
+    TemplateUpdateTimelockUnit(paths::TimelockUnit),            // Update timelock unit
     TemplateLock,                                               // Lock template (Draft → Locked)
     TemplateUnlock,                                             // Unlock template (Locked → Draft)
     TemplateValidate,                                           // Validate template
+    TemplateHelpShowModal,                                      // Open the contact-admin template-help modal
+    TemplateHelpCloseModal,                                     // Close the contact-admin template-help modal
+    TemplateHelpEmailWs,                                        // Open an email draft for Wizardsardine
 
     // Navigation
     NavigateToHome,         // Navigate to home view
@@ -75,7 +84,7 @@ pub enum Msg {
     BackendDisconnected,                        // Backend connection lost
 
     // Hardware Wallets
-    HardwareWallets(async_hwi::service::SigningDeviceMsg), // Hardware wallet service message
+    HardwareWallets(async_hwi::service::SigningDeviceMsg<HardwareWalletRequestId>), // Hardware wallet service message
 
     // Xpub management
     XpubSelectKey(u8),                                          // Open modal for key
@@ -85,6 +94,7 @@ pub enum Msg {
     XpubFetchFromDevice(
         miniscript::bitcoin::bip32::Fingerprint,
         miniscript::bitcoin::bip32::ChildNumber,
+        HardwareWalletRequestId,
     ),                                                          // Fetch xpub from HW device
     XpubRetry,                                                  // Retry fetch after error
     XpubLoadFromFile,                                           // Trigger file picker
@@ -125,8 +135,8 @@ pub enum Msg {
 pub type Message = Msg;
 
 /// Required by HwiService<Message> to send notifications through the shared channel
-impl From<async_hwi::service::SigningDeviceMsg> for Msg {
-    fn from(msg: async_hwi::service::SigningDeviceMsg) -> Self {
+impl From<async_hwi::service::SigningDeviceMsg<HardwareWalletRequestId>> for Msg {
+    fn from(msg: async_hwi::service::SigningDeviceMsg<HardwareWalletRequestId>) -> Self {
         Msg::HardwareWallets(msg)
     }
 }

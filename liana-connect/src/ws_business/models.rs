@@ -380,6 +380,8 @@ pub struct PolicyTemplate {
     pub keys: BTreeMap<u8, Key>,
     pub primary_path: SpendingPath,
     pub secondary_paths: Vec<SecondaryPath>,
+    #[serde(default)]
+    pub keys_ready: bool,
 }
 
 impl PolicyTemplate {
@@ -388,6 +390,7 @@ impl PolicyTemplate {
             keys: BTreeMap::new(),
             primary_path: SpendingPath::new(true, 1, Vec::new()),
             secondary_paths: Vec::new(),
+            keys_ready: false,
         }
     }
     pub fn is_valid(&self) -> bool {
@@ -754,6 +757,7 @@ mod wire_format_tests {
             keys,
             primary_path: SpendingPath::new(true, 1, vec![0]),
             secondary_paths: vec![],
+            keys_ready: false,
         };
         let json = serde_json::to_value(&template).unwrap();
         // Keys should be keyed by string "0", not integer
@@ -1087,7 +1091,8 @@ mod wire_format_tests {
                     "threshold_n": 2,
                     "key_ids": [0, 1]
                 },
-                "secondary_paths": []
+                "secondary_paths": [],
+                "keys_ready": false
             }
         }"#;
 
@@ -1145,6 +1150,7 @@ mod wire_format_tests {
                     last_editor: None,
                 },
                 secondary_paths: vec![],
+                keys_ready: false,
             }),
             last_edited: None,
             last_editor: None,
@@ -1449,7 +1455,8 @@ mod wire_format_tests {
                     "key_ids": [0],
                     "timelock": {"blocks": 52560}
                 }
-            ]
+            ],
+            "keys_ready": true
         }"#;
 
         let parsed: PolicyTemplate = serde_json::from_str(json).expect("wire format must parse");
@@ -1492,10 +1499,27 @@ mod wire_format_tests {
                 },
                 timelock: Timelock::new(52560),
             }],
+            keys_ready: true,
         };
 
         assert_eq!(parsed, expected);
         roundtrip(&parsed);
+    }
+
+    #[test]
+    fn test_policy_template_keys_ready_defaults_false() {
+        let json = r#"{
+            "keys": {},
+            "primary_path": {
+                "is_primary": true,
+                "threshold_n": 0,
+                "key_ids": []
+            },
+            "secondary_paths": []
+        }"#;
+
+        let parsed: PolicyTemplate = serde_json::from_str(json).expect("wire format must parse");
+        assert!(!parsed.keys_ready);
     }
 
     // ==================== ENUM EXHAUSTIVE WIRE FORMAT TESTS ====================
@@ -1724,6 +1748,7 @@ mod wire_format_tests {
             keys,
             primary_path: SpendingPath::new(true, 1, vec![0]),
             secondary_paths: vec![],
+            keys_ready: false,
         };
         assert!(!template.is_valid());
     }
@@ -1741,6 +1766,7 @@ mod wire_format_tests {
                 path: SpendingPath::new(false, 1, vec![2]),
                 timelock: Timelock::new(52560),
             }],
+            keys_ready: false,
         };
         assert!(template.is_valid());
     }
@@ -1754,6 +1780,7 @@ mod wire_format_tests {
             keys,
             primary_path: SpendingPath::new(true, 1, vec![1]),
             secondary_paths: vec![],
+            keys_ready: false,
         };
         assert!(!template.is_valid());
     }
@@ -1767,6 +1794,7 @@ mod wire_format_tests {
             keys,
             primary_path: SpendingPath::new(true, 0, vec![0]),
             secondary_paths: vec![],
+            keys_ready: false,
         };
         assert!(!template.is_valid());
     }
@@ -1782,6 +1810,7 @@ mod wire_format_tests {
                 path: SpendingPath::new(false, 1, vec![0]),
                 timelock: Timelock::new(0), // invalid: zero timelock
             }],
+            keys_ready: false,
         };
         assert!(!template.is_valid());
     }
@@ -1797,6 +1826,7 @@ mod wire_format_tests {
                 path: SpendingPath::new(false, 1, vec![1]), // key_id=1 out of range
                 timelock: Timelock::new(144),
             }],
+            keys_ready: false,
         };
         assert!(!template.is_valid());
     }
@@ -1807,6 +1837,7 @@ mod wire_format_tests {
             keys: BTreeMap::new(),
             primary_path: SpendingPath::new(true, 1, vec![0]),
             secondary_paths: vec![],
+            keys_ready: false,
         };
         assert!(!template.is_valid());
     }
@@ -1819,6 +1850,7 @@ mod wire_format_tests {
             keys,
             primary_path: SpendingPath::new(true, 1, vec![]),
             secondary_paths: vec![],
+            keys_ready: false,
         };
         assert!(!template.is_valid());
     }
@@ -1841,6 +1873,7 @@ mod wire_format_tests {
                     timelock: Timelock::new(52560),
                 },
             ],
+            keys_ready: false,
         };
         assert!(template.is_valid());
     }
@@ -1863,6 +1896,7 @@ mod wire_format_tests {
                     timelock: Timelock::new(70000), // exceeds 65535
                 },
             ],
+            keys_ready: false,
         };
         assert!(!template.is_valid());
     }

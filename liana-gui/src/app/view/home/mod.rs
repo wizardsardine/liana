@@ -52,7 +52,7 @@ pub fn home_view<'a>(
         ))
         .push_maybe(sync.map(home::syncing))
         .push_maybe(
-            (unconfirmed_balance.to_sat() != 0 && sync_status.is_synced()).then(|| {
+            (unconfirmed_balance.to_sat() != 0 && sync_status.is_synced()).then_some({
                 home::unconfirmed_balance(
                     unconfirmed_balance,
                     fiat_unconfirmed.map(|fiat| fiat.to_display_string()),
@@ -74,7 +74,7 @@ pub fn home_view<'a>(
         Some(recovery_warning(expiring_coins))
     };
 
-    let rescan_warn = show_rescan_warning.then(|| {
+    let rescan_warn = show_rescan_warning.then_some({
         rescan_warning(
             Message::Menu(Menu::SettingsPreSelected(menu::SettingsOption::Node)),
             Message::HideRescanWarning,
@@ -99,7 +99,7 @@ pub fn home_view<'a>(
     });
 
     let see_more = (!is_last_page && !events.is_empty())
-        .then(|| component::list::see_more(processing, Message::Next));
+        .then_some(component::list::see_more(processing, Message::Next));
 
     #[rustfmt::skip]
     let payment_list = column![
