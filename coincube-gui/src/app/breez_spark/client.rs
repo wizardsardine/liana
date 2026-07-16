@@ -317,17 +317,21 @@ impl SparkClient {
     /// Phase 4c: execute a previously-prepared send.
     ///
     /// `prepare_handle` must come from a prior [`Self::prepare_send`]
-    /// response. It is consumed by the bridge on success or failure —
-    /// calling twice with the same handle returns a
-    /// [`SparkClientError::BridgeError`] with
-    /// [`ErrorKind::BadRequest`].
-    /// `idempotency_key` makes a retry after an ambiguous failure safe: the SDK
-    /// short-circuits a repeat send carrying the same key rather than paying
-    /// twice. Pass `None` only where a retry can't happen.
+    /// response. The bridge consumes it on success and on a failed
+    /// bitcoin-rail send; a failed *cross-chain* send instead keeps it
+    /// re-sendable, so a retry can re-submit the same quote (same provider swap
+    /// id). Reusing a consumed handle returns a
+    /// [`SparkClientError::BridgeError`] with [`ErrorKind::BadRequest`].
     ///
-    /// It does **not** cover a cross-chain send whose source leg is a Spark
-    /// token transfer — that has no idempotency hook at all. Check
-    /// [`CrossChainQuote::retry_safe`] before retrying one of those.
+    /// `idempotency_key` makes a retry safe **only on the plain bitcoin rails**
+    /// (Lightning / on-chain / Spark), where the SDK honours it and
+    /// short-circuits a repeat send carrying the same key. The bridge **drops
+    /// it for any send with a token or conversion leg** — the SDK rejects it
+    /// there — which is *every* cross-chain (USDt/USDC) send, BTC-funded
+    /// included. Don't rely on this key for a cross-chain retry; that safety
+    /// comes from re-sending the same quote, gated by
+    /// [`CrossChainQuote::retry_safe`]. Pass `None` only where a retry can't
+    /// happen.
     pub async fn send_payment(
         &self,
         prepare_handle: String,
