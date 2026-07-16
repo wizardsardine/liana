@@ -164,7 +164,6 @@ pub enum SparkSendMessage {
 /// View-level messages for the Phase 4c Spark Receive panel.
 #[derive(Debug, Clone)]
 pub enum SparkReceiveMessage {
-    MethodSelected(crate::app::state::spark::receive::SparkReceiveMethod),
     /// Open the unified "THEY SEND" picker modal (Bitcoin rails + cross-network
     /// assets) that replaces the old Method chips + "Receive from another
     /// network" card.
@@ -217,10 +216,6 @@ pub enum SparkReceiveMessage {
     /// Phase 4f: app-level signal that the bridge emitted a
     /// `DepositsChanged` event. The panel re-fetches the list.
     DepositsChanged,
-    /// User tapped "Receive from another network" — opens the SideShift bridge
-    /// (deposit any supported asset, receive bitcoin). Mainnet only; the entry
-    /// point isn't rendered elsewhere.
-    OpenCrossNetworkReceive,
     /// An Esplora `/tx/<txid>/status` + tip query batch came back with
     /// per-deposit confirmation counts. Map key is `(txid, vout)`,
     /// value is `0` for mempool / unconfirmed and `>= 1` once mined.

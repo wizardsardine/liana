@@ -329,13 +329,6 @@ impl State for SparkReceive {
         }
 
         match msg {
-            SparkReceiveMessage::MethodSelected(method) => {
-                self.method = method;
-                self.phase = SparkReceivePhase::Idle;
-                self.qr_data = None;
-                self.displayed_invoice = None;
-                Task::none()
-            }
             SparkReceiveMessage::OpenSenderPicker => {
                 self.sender_picker_open = true;
                 Task::none()
@@ -681,23 +674,6 @@ impl State for SparkReceive {
                 // the list until the next navigation.
                 fetch_payments_task(self.backend.clone()),
             ]),
-
-            SparkReceiveMessage::OpenCrossNetworkReceive => {
-                // Mainnet only. SideShift and the origin chains are all
-                // real-money networks with no test deployment, and Spark itself
-                // runs on regtest — so the panel's own availability check isn't
-                // enough to gate this. The view hides the entry point off
-                // mainnet; this is the backstop that makes a stale or replayed
-                // message harmless.
-                if !crate::app::state::spark::cross_chain::supported_on(cache.network) {
-                    return Task::none();
-                }
-                let Some(backend) = self.backend.clone() else {
-                    return Task::none();
-                };
-                self.sideshift_flow = Some(SparkSideshiftReceiveFlow::new(backend));
-                Task::none()
-            }
             SparkReceiveMessage::Reset => {
                 self.qr_data = None;
                 self.displayed_invoice = None;
