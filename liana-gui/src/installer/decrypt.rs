@@ -591,6 +591,9 @@ fn valid_content(state: &DecryptModal) -> Container<'static, installer::Message>
     );
 
     let mut col = Column::new().spacing(5).push(description);
+    if devices.is_empty() {
+        col = col.push(modal::modal_no_devices_placeholder());
+    }
     for d in devices {
         col = col.push(d);
     }
