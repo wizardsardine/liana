@@ -13,6 +13,7 @@ use crate::font;
 //     }
 #[rustfmt::skip]
 text_roles! {
+    d0,                     D0_SPEC,                    font::MANROPE_BOLD,     50;
     d2,                     D2_SPEC,                    font::MANROPE_BOLD,     32;
     d3,                     D3_SPEC,                    font::MANROPE_BOLD,     26;
     d4,                     D4_SPEC,                    font::MANROPE_BOLD,     22;
