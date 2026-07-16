@@ -985,6 +985,18 @@ async fn execute_regular_send(
     let amount_sat = clamp_u128_to_u64(prepare.amount);
     let (fee_sat, _method) = fee_and_method(&prepare.payment_method);
 
+    // The SDK rejects an idempotency key on any payment with a token transfer
+    // leg — a direct token send or an AMM conversion (see `orchestrate_send`).
+    // A cross-chain send funds a stablecoin from BTC, so it always carries a
+    // conversion leg; forwarding the gui's key made `send_payment` fail with
+    // "Idempotency key is not supported for payments with a token transfer leg".
+    // Dropping it costs nothing: with no key the provider derives the BTC-leg
+    // `TransferId` deterministically from its own quote/swap id, so the source
+    // transfer still dedups at the Spark protocol level (see
+    // `derive_btc_leg_transfer_id`). Mirrors the SDK's own `has_token_leg` gate.
+    let has_token_leg = prepare.token_identifier.is_some() || prepare.conversion_estimate.is_some();
+    let idempotency_key = if has_token_leg { None } else { idempotency_key };
+
     // Phase 4c ships the default send options (Medium speed for
     // on-chain, Spark-preferred routing for Bolt11 without a completion
     // timeout). User-configurable options (fee tier picker) land in
@@ -992,9 +1004,6 @@ async fn execute_regular_send(
     let request = SendPaymentRequest {
         prepare_response: prepare,
         options: None,
-        // Passed through from the gui. For a cross-chain send this is what
-        // makes a retry after an ambiguous failure safe — but only on the
-        // BTC-funded path; see `route_is_retry_safe`.
         idempotency_key,
     };
 
