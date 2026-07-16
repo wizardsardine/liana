@@ -10,7 +10,7 @@ use iced::{
 use liana_ui::{
     component::{
         button::{self, btn_clear_all, btn_customize, btn_next},
-        collapse,
+        collapse, list,
         text::{new, p1_bold},
     },
     icon, theme,
@@ -111,10 +111,12 @@ fn template_option(
     .align_x(Alignment::Start)
     .width(Length::Fill);
 
-    button::list_entry(
+    list::list_entry_chevron(
+        None,
         content,
         None,
-        button::EntryWidth::Fill,
+        None,
+        button::EntryWidth::Standard,
         Some(Message::SelectDescriptorTemplate(template)),
     )
 }
