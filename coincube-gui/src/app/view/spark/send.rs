@@ -7,21 +7,22 @@
 //! lands in a later phase once the bridge write path has soaked a bit.
 
 use coincube_ui::{
-    component::{
-        amount::BitcoinDisplayUnit,
-        button,
-        text::{h4_bold, p1_regular, p2_regular},
-    },
+    color,
+    component::{amount::BitcoinDisplayUnit, button, text::*},
+    image::{asset_logo, asset_network_logo},
     theme,
     widget::{Column, ColumnExt, Container, Element, Row},
 };
 use iced::{
-    widget::{text_input, Space},
-    Length,
+    widget::{button as iced_button, container, text_input, Space},
+    Alignment, Background, Length,
 };
 
-use crate::app::state::spark::cross_chain;
-use crate::app::state::spark::send::{CrossChainContext, SparkSendPhase};
+use coincube_core::miniscript::bitcoin::Network;
+
+use crate::app::state::spark::cross_chain::{self, supported_on};
+use crate::app::state::spark::send::{CrossChainContext, SparkSendPhase, SparkSendTarget};
+use crate::app::view::shared::picker::picker_row;
 use crate::app::view::spark::{last_tx::last_transactions_section, SparkRecentTransaction};
 use crate::app::view::{Message, SparkSendMessage};
 
@@ -37,6 +38,12 @@ pub struct SparkSendView<'a> {
     pub recent_transactions: &'a [SparkRecentTransaction],
     pub bitcoin_unit: BitcoinDisplayUnit,
     pub show_direction_badges: bool,
+    /// The "THEY RECEIVE" selection — drives the two-card selector and the
+    /// destination placeholder.
+    pub receive_target: SparkSendTarget,
+    /// Bitcoin network the cube runs on — gates the stablecoin picker options
+    /// (cross-chain is mainnet-only).
+    pub network: Network,
     /// The cross-chain destination + routes for the current send, when there is
     /// one. Lives on the panel rather than in the phase because it must survive
     /// a failed send — a retry re-prepares from it.
@@ -78,9 +85,14 @@ impl<'a> SparkSendView<'a> {
 
         let mut content = Column::new().spacing(20);
 
+        // ── Two-card selector: YOU SEND (Bitcoin) → THEY RECEIVE ───────
+        // YOU SEND is fixed (the Spark wallet spends bitcoin); THEY RECEIVE is
+        // the picker (bitcoin rails + USDt/USDC). Wired at the state's `view()`.
+        content = content.push(spark_send_cards(self.receive_target));
+
         // ── Input card ────────────────────────────────────────────────
         let destination = text_input(
-            "Spark address/invoice, BOLT11 invoice, Lightning address, BIP21 URI, or Bitcoin address",
+            self.receive_target.destination_placeholder(),
             self.destination_input,
         )
         .on_input(|v| {
@@ -90,12 +102,16 @@ impl<'a> SparkSendView<'a> {
         })
         .padding(10);
 
-        let amount = text_input(
-            "Amount in sats (optional for invoices with amount)",
-            self.amount_input,
-        )
-        .on_input(|v| Message::SparkSend(crate::app::view::SparkSendMessage::AmountInputChanged(v)))
-        .padding(10);
+        let amount_placeholder = if self.receive_target.is_stablecoin() {
+            "Amount in sats — funded from your Bitcoin balance"
+        } else {
+            "Amount in sats (optional for invoices with amount)"
+        };
+        let amount = text_input(amount_placeholder, self.amount_input)
+            .on_input(|v| {
+                Message::SparkSend(crate::app::view::SparkSendMessage::AmountInputChanged(v))
+            })
+            .padding(10);
 
         let input_card = Container::new(
             Column::new()
@@ -487,5 +503,185 @@ fn kv_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
                 .width(Length::FillPortion(3))
                 .push(p1_regular(value)),
         )
+        .into()
+}
+
+// ── Two-card "YOU SEND → THEY RECEIVE" selector + picker ─────────────────────
+
+/// Logo for a send target: bitcoin rails get the BTC coin badged with the rail;
+/// stablecoins get the plain coin (the destination chain isn't known until a
+/// route is picked, so there's no network badge to show yet).
+fn target_logo<'a>(target: SparkSendTarget, size: f32) -> Element<'a, Message> {
+    match target {
+        SparkSendTarget::Lightning => asset_network_logo("btc", "lightning", size),
+        SparkSendTarget::OnChain => asset_network_logo("btc", "bitcoin", size),
+        SparkSendTarget::Spark => asset_network_logo("btc", "spark", size),
+        SparkSendTarget::Usdt => asset_logo("usdt")
+            .width(Length::Fixed(size))
+            .height(Length::Fixed(size))
+            .into(),
+        SparkSendTarget::Usdc => asset_logo("usdc")
+            .width(Length::Fixed(size))
+            .height(Length::Fixed(size))
+            .into(),
+    }
+}
+
+/// Small orange-outlined pill (asset network / rail label).
+fn orange_badge<'a>(label: &str) -> Element<'a, Message> {
+    Container::new(text(label.to_uppercase()).size(11).color(color::ORANGE))
+        .padding([2, 8])
+        .style(|_: &theme::Theme| container::Style {
+            border: iced::Border {
+                color: color::ORANGE,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+/// Hover-highlight style for the tappable THEY RECEIVE card.
+fn card_button_style(
+    _: &theme::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    iced::widget::button::Style {
+        background: Some(Background::Color(color::TRANSPARENT)),
+        border: iced::Border {
+            color: if matches!(status, iced::widget::button::Status::Hovered) {
+                color::ORANGE
+            } else {
+                color::TRANSPARENT
+            },
+            width: 1.0,
+            radius: 16.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+/// The "YOU SEND (Bitcoin) → THEY RECEIVE (target)" pair. YOU SEND is fixed —
+/// the Spark wallet always spends bitcoin — so only THEY RECEIVE is tappable.
+fn spark_send_cards<'a>(target: SparkSendTarget) -> Element<'a, Message> {
+    let you_send = Container::new(
+        Column::new()
+            .spacing(6)
+            .push(text("YOU SEND").size(P2_SIZE).style(theme::text::secondary))
+            .push(
+                Row::new()
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .push(asset_network_logo("btc", "spark", 40.0))
+                    .push(
+                        text("Bitcoin")
+                            .size(H3_SIZE)
+                            .bold()
+                            .style(theme::text::primary),
+                    ),
+            )
+            .push(
+                text("From your Spark wallet")
+                    .size(P2_SIZE)
+                    .style(theme::text::secondary),
+            )
+            .push(orange_badge("SPARK")),
+    )
+    .padding(16)
+    .width(Length::Fill)
+    .height(Length::Fixed(160.0))
+    .style(theme::card::simple);
+
+    let they_receive = iced_button(
+        Container::new(
+            Column::new()
+                .spacing(6)
+                .push(
+                    text("THEY RECEIVE")
+                        .size(P2_SIZE)
+                        .style(theme::text::secondary),
+                )
+                .push(
+                    Row::new()
+                        .spacing(8)
+                        .align_y(Alignment::Center)
+                        .push(target_logo(target, 40.0))
+                        .push(
+                            text(target.label())
+                                .size(H3_SIZE)
+                                .bold()
+                                .style(theme::text::primary),
+                        ),
+                )
+                .push(Space::new().height(Length::Fixed(18.0)))
+                .push(orange_badge(target.badge())),
+        )
+        .padding(16)
+        .width(Length::Fill)
+        .height(Length::Fixed(160.0))
+        .style(theme::card::simple),
+    )
+    .padding(0)
+    .on_press(Message::SparkSend(SparkSendMessage::OpenReceivePicker))
+    .style(card_button_style);
+
+    Row::new()
+        .spacing(12)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .push(Container::new(you_send).width(Length::FillPortion(1)))
+        .push(text("→").size(H3_SIZE).style(theme::text::secondary))
+        .push(Container::new(they_receive).width(Length::FillPortion(1)))
+        .into()
+}
+
+/// The "THEY RECEIVE" picker modal: bitcoin rails, then (mainnet only) the
+/// cross-chain stablecoins. Overlaid by the state's `view()`.
+pub fn send_target_picker_modal<'a>(
+    current: SparkSendTarget,
+    network: Network,
+) -> Element<'a, Message> {
+    let row = |target: SparkSendTarget| {
+        picker_row(
+            target_logo(target, 36.0),
+            target.label(),
+            "",
+            target.badge(),
+            current == target,
+            Message::SparkSend(SparkSendMessage::SetReceiveTarget(target)),
+        )
+    };
+
+    let mut list = Column::new()
+        .spacing(8)
+        .push(text("Bitcoin").size(P2_SIZE).style(theme::text::secondary));
+    for target in [
+        SparkSendTarget::Lightning,
+        SparkSendTarget::OnChain,
+        SparkSendTarget::Spark,
+    ] {
+        list = list.push(row(target));
+    }
+
+    // Cross-chain stablecoins are mainnet-only (providers/chains have no test
+    // deployment), so they only appear there.
+    if supported_on(network) {
+        list = list.push(Space::new().height(Length::Fixed(6.0))).push(
+            text("Stablecoin (cross-chain)")
+                .size(P2_SIZE)
+                .style(theme::text::secondary),
+        );
+        for target in [SparkSendTarget::Usdt, SparkSendTarget::Usdc] {
+            list = list.push(row(target));
+        }
+    }
+
+    Column::new()
+        .spacing(12)
+        .padding(24)
+        .max_width(460)
+        .push(text("THEY RECEIVE").size(16).bold())
+        .push(list)
         .into()
 }

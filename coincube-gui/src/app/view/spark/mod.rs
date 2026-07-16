@@ -17,7 +17,7 @@ pub mod transactions;
 
 pub use overview::{SparkOverviewView, SparkPaymentMethod, SparkRecentTransaction, SparkStatus};
 pub use receive::{sender_picker_modal, SparkReceiveView};
-pub use send::SparkSendView;
+pub use send::{send_target_picker_modal, SparkSendView};
 pub use settings::{SparkSettingsStatus, SparkSettingsView};
 pub use sideshift_receive::spark_sideshift_receive_view;
 pub use transactions::{SparkTransactionsStatus, SparkTransactionsView};
@@ -107,6 +107,12 @@ pub enum SparkSettingsMessage {
 pub enum SparkSendMessage {
     DestinationInputChanged(String),
     AmountInputChanged(String),
+    /// Open the "THEY RECEIVE" picker modal (bitcoin rails + USDt/USDC).
+    OpenReceivePicker,
+    /// Dismiss the "THEY RECEIVE" picker without changing the selection.
+    CloseReceivePicker,
+    /// Pick what the recipient receives (a bitcoin rail or a stablecoin).
+    SetReceiveTarget(crate::app::state::spark::send::SparkSendTarget),
     PrepareRequested,
     PrepareSucceeded(coincube_spark_protocol::PrepareSendOk),
     PrepareFailed(String),

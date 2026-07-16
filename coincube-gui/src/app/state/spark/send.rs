@@ -112,6 +112,82 @@ impl CrossChainContext {
     }
 }
 
+/// The "THEY RECEIVE" selection: what the recipient ends up with. The wallet
+/// always spends *bitcoin*; the stablecoin targets are BTC-funded cross-chain
+/// sends, converted at the route's rate. Mirrors the Spark Receive two-card
+/// selector, in the send direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SparkSendTarget {
+    /// Bitcoin over Lightning (BOLT11 / Lightning address).
+    Lightning,
+    /// Bitcoin on-chain.
+    OnChain,
+    /// Bitcoin over Spark (Spark address / invoice).
+    Spark,
+    /// USDt on another chain — a BTC-funded cross-chain send.
+    Usdt,
+    /// USDC on another chain — a BTC-funded cross-chain send.
+    Usdc,
+}
+
+impl SparkSendTarget {
+    /// Display order for the picker.
+    pub fn all() -> [SparkSendTarget; 5] {
+        [
+            Self::Lightning,
+            Self::OnChain,
+            Self::Spark,
+            Self::Usdt,
+            Self::Usdc,
+        ]
+    }
+
+    /// The destination-asset symbol for a cross-chain (stablecoin) send — used
+    /// to filter the routes the bridge returns to the picked coin. `None` for
+    /// the bitcoin rails, which don't go through the cross-chain path at all.
+    pub fn stablecoin(self) -> Option<&'static str> {
+        match self {
+            Self::Usdt => Some("USDT"),
+            Self::Usdc => Some("USDC"),
+            _ => None,
+        }
+    }
+
+    pub fn is_stablecoin(self) -> bool {
+        self.stablecoin().is_some()
+    }
+
+    /// Card / picker-row asset label.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Lightning | Self::OnChain | Self::Spark => "Bitcoin",
+            Self::Usdt => "USDt",
+            Self::Usdc => "USDC",
+        }
+    }
+
+    /// Card / picker-row network (rail) badge.
+    pub fn badge(self) -> &'static str {
+        match self {
+            Self::Lightning => "Lightning",
+            Self::OnChain => "On-chain",
+            Self::Spark => "Spark",
+            Self::Usdt | Self::Usdc => "Cross-chain",
+        }
+    }
+
+    /// Destination-field placeholder, tuned to the target.
+    pub fn destination_placeholder(self) -> &'static str {
+        match self {
+            Self::Lightning => "Lightning invoice or Lightning address",
+            Self::OnChain => "Bitcoin address",
+            Self::Spark => "Spark address or invoice",
+            Self::Usdt => "Recipient's USDt address on Ethereum, Tron, or Solana",
+            Self::Usdc => "Recipient's USDC address on Ethereum, Tron, or Solana",
+        }
+    }
+}
+
 /// Real Spark Send panel.
 pub struct SparkSend {
     backend: Option<Arc<SparkBackend>>,
@@ -159,6 +235,12 @@ pub struct SparkSend {
     /// inherited the previous quote's stale `0` and showed a brand-new valid
     /// quote as expired. `None` now means exactly one thing: no quote.
     quote_countdown: Option<cross_chain::QuoteCountdown>,
+    /// The "THEY RECEIVE" selection (a bitcoin rail or a stablecoin). Drives the
+    /// two-card selector, the destination placeholder, and which send path
+    /// `PrepareRequested` takes.
+    receive_target: SparkSendTarget,
+    /// Whether the "THEY RECEIVE" picker modal is open.
+    receive_picker_open: bool,
 }
 
 impl SparkSend {
@@ -181,6 +263,8 @@ impl SparkSend {
             advanced_open: false,
             send_idempotency_key: None,
             quote_countdown: None,
+            receive_target: SparkSendTarget::Lightning,
+            receive_picker_open: false,
         }
     }
 
@@ -305,41 +389,6 @@ impl SparkSend {
     }
 }
 
-/// What a destination turned out to be.
-enum Resolved {
-    /// A cross-chain address, with the routes that can reach it. The user still
-    /// has to confirm the chain and pick a route before anything is quoted.
-    CrossChain(coincube_spark_protocol::CrossChainRoutesOk),
-    /// An ordinary Spark/Lightning/on-chain destination, already prepared.
-    Regular(PrepareSendOk),
-}
-
-/// Decide which send flow a destination belongs to.
-///
-/// Cross-chain is checked *first*, and deliberately so. The failure mode we're
-/// avoiding is a stablecoin address being treated as an ordinary destination
-/// and the funds going somewhere unrecoverable, so the more specific
-/// classification wins. An input the bridge doesn't recognise as cross-chain
-/// falls through to the existing BOLT11/LNURL/on-chain resolution untouched.
-async fn classify_and_prepare(
-    backend: Arc<SparkBackend>,
-    input: String,
-    amount_sat: Option<u64>,
-) -> Result<Resolved, String> {
-    let found = backend
-        .get_cross_chain_routes(input.clone())
-        .await
-        .map_err(|e| format!("Couldn't check this destination: {e}"))?;
-
-    if found.address.is_some() {
-        return Ok(Resolved::CrossChain(found));
-    }
-
-    resolve_and_prepare(backend, input, amount_sat)
-        .await
-        .map(Resolved::Regular)
-}
-
 impl State for SparkSend {
     fn view<'a>(
         &'a self,
@@ -347,7 +396,7 @@ impl State for SparkSend {
         cache: &'a Cache,
     ) -> Element<'a, crate::app::view::Message> {
         let backend_available = self.backend.is_some();
-        crate::app::view::dashboard(
+        let content = crate::app::view::dashboard(
             menu,
             cache,
             SparkSendView {
@@ -366,9 +415,26 @@ impl State for SparkSend {
                 slippage_input: &self.slippage_input,
                 advanced_open: self.advanced_open,
                 quote_countdown: self.quote_countdown.clone(),
+                receive_target: self.receive_target,
+                network: cache.network,
             }
             .render(),
-        )
+        );
+
+        // The "THEY RECEIVE" picker overlays the panel when open — same pattern
+        // as the Spark Receive redesign.
+        if self.receive_picker_open {
+            let modal_content = crate::app::view::spark::send_target_picker_modal(
+                self.receive_target,
+                cache.network,
+            );
+            return coincube_ui::widget::modal::Modal::new(content, modal_content)
+                .on_blur(Some(crate::app::view::Message::SparkSend(
+                    crate::app::view::SparkSendMessage::CloseReceivePicker,
+                )))
+                .into();
+        }
+        content
     }
 
     fn reload(
@@ -423,6 +489,26 @@ impl State for SparkSend {
                 self.abandon_payment_intent();
                 Task::none()
             }
+            SparkSendMessage::OpenReceivePicker => {
+                self.receive_picker_open = true;
+                Task::none()
+            }
+            SparkSendMessage::CloseReceivePicker => {
+                self.receive_picker_open = false;
+                Task::none()
+            }
+            SparkSendMessage::SetReceiveTarget(target) => {
+                // Switching what the recipient gets is a different payment —
+                // clear the destination/amount and any in-flight prepare.
+                self.receive_picker_open = false;
+                self.receive_target = target;
+                self.phase = SparkSendPhase::Idle;
+                self.destination_input.clear();
+                self.amount_input.clear();
+                self.abandon_payment_intent();
+                self.cross_chain = None;
+                Task::none()
+            }
             SparkSendMessage::PrepareRequested => {
                 let Some(backend) = self.backend.clone() else {
                     self.phase =
@@ -449,45 +535,39 @@ impl State for SparkSend {
                 let input = self.destination_input.trim().to_string();
                 self.phase = SparkSendPhase::Preparing;
 
-                // Cross-chain destinations branch off before the ordinary
-                // prepare: they need an explicit chain/asset confirmation and a
-                // route choice first, so we ask the bridge to classify the
-                // input rather than handing it straight to `prepare_send`.
-                //
-                // Only on mainnet — the providers and destination chains have
-                // no test deployment, so on regtest we skip the check entirely
-                // and let the normal path handle (and reject) the address.
-                if cross_chain::supported_on(cache.network) {
-                    let backend_cc = backend.clone();
-                    let cc_input = input.clone();
-                    let amount = amount_sat;
+                // The THEY RECEIVE selection decides the path. A stablecoin
+                // target is a BTC-funded cross-chain send: ask the bridge for
+                // routes, then confirm a chain + quote before anything moves.
+                // Providers/chains have no test deployment, so it's mainnet-only.
+                if self.receive_target.is_stablecoin() {
+                    if !cross_chain::supported_on(cache.network) {
+                        self.phase = SparkSendPhase::Error(
+                            "Stablecoin sends aren't available on this network.".to_string(),
+                        );
+                        return Task::none();
+                    }
                     return Task::perform(
-                        async move { classify_and_prepare(backend_cc, cc_input, amount).await },
+                        async move {
+                            backend
+                                .get_cross_chain_routes(input)
+                                .await
+                                .map_err(|e| format!("Couldn't check this destination: {e}"))
+                        },
                         |result| match result {
-                            Ok(Resolved::CrossChain(routes)) => {
-                                Message::View(crate::app::view::Message::SparkSend(
-                                    SparkSendMessage::CrossChainRoutesLoaded(routes),
-                                ))
-                            }
-                            Ok(Resolved::Regular(ok)) => {
-                                Message::View(crate::app::view::Message::SparkSend(
-                                    SparkSendMessage::PrepareSucceeded(ok),
-                                ))
-                            }
+                            Ok(found) => Message::View(crate::app::view::Message::SparkSend(
+                                SparkSendMessage::CrossChainRoutesLoaded(found),
+                            )),
                             Err(e) => Message::View(crate::app::view::Message::SparkSend(
                                 SparkSendMessage::PrepareFailed(e),
                             )),
                         },
                     );
                 }
-                // Phase 4e: chain `parse_input` + `prepare_*` in a
-                // single async task so the user only sees one
-                // "Preparing…" phase regardless of which SDK code
-                // path runs underneath. The closure returns
-                // `Result<PrepareSendOk, String>` so the existing
-                // `PrepareSucceeded` / `PrepareFailed` messages
-                // handle both regular sends and LNURL-pay sends
-                // uniformly.
+
+                // A bitcoin rail: classify the destination via `parse_input` and
+                // dispatch to the right prepare RPC (`prepare_send` /
+                // `prepare_lnurl_pay`) in one task, so the user sees a single
+                // "Preparing…" regardless of the underlying rail.
                 Task::perform(
                     async move { resolve_and_prepare(backend, input, amount_sat).await },
                     |result| match result {
@@ -517,28 +597,35 @@ impl State for SparkSend {
             }
             SparkSendMessage::CrossChainRoutesLoaded(found) => {
                 let Some(address) = found.address else {
-                    // Shouldn't happen — `classify_and_prepare` only emits this
-                    // message when the address parsed — but never fall through
-                    // to a send on an unclassified destination.
-                    self.phase = SparkSendPhase::Error(
-                        "This destination isn't a recognised cross-chain address.".to_string(),
-                    );
+                    // The picked target is a stablecoin, but the pasted string
+                    // isn't a recognised cross-chain address. Say so rather than
+                    // firing funds somewhere unrecoverable.
+                    self.phase = SparkSendPhase::Error(format!(
+                        "That doesn't look like a {} address. Paste the recipient's {} address \
+                         on Ethereum, Tron, or Solana.",
+                        self.receive_target.label(),
+                        self.receive_target.label(),
+                    ));
                     return Task::none();
                 };
-                if found.routes.is_empty() {
-                    // The address parsed but nothing can reach it. Say so —
-                    // silently falling back to a normal Spark send here would
-                    // fire funds at an address on the wrong network.
+                // Keep only routes that deliver the coin the user picked in the
+                // THEY RECEIVE card (USDt vs USDC) — the address alone reaches
+                // both, and the picker is what disambiguates.
+                let mut routes = found.routes;
+                if let Some(symbol) = self.receive_target.stablecoin() {
+                    routes.retain(|r| r.asset.eq_ignore_ascii_case(symbol));
+                }
+                if routes.is_empty() {
                     self.phase = SparkSendPhase::Error(format!(
-                        "No route can currently send to this {} address. \
-                         Cross-chain sends support USDT and USDC only.",
+                        "No route can currently send {} to this {} address.",
+                        self.receive_target.label(),
                         address.family,
                     ));
                     return Task::none();
                 }
                 self.cross_chain = Some(CrossChainContext {
                     address,
-                    routes: found.routes,
+                    routes,
                     selected: 0,
                 });
                 self.phase = SparkSendPhase::CrossChainRoutes;
