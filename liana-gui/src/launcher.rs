@@ -1,14 +1,19 @@
 use iced::{
     alignment::Horizontal,
-    widget::{checkbox, column, row, Button, Space},
+    widget::{checkbox, column, row, Space},
     Alignment, Length, Subscription, Task,
 };
 
 use liana::miniscript::bitcoin::Network;
 use liana_ui::{
     component::{
-        button::{self, btn_delete_wallet},
-        card, network_banner, notification, pick_list, scrollable,
+        button::{
+            self, btn_add_wallet, btn_delete_wallet, btn_remove, btn_select, btn_share_xpubs,
+            EntryWidth,
+        },
+        card,
+        list::{self, EntryAccent},
+        network_banner, notification, pick_list, scrollable,
         text::new,
     },
     icon, image, theme,
@@ -226,8 +231,7 @@ impl Launcher {
             _ => None,
         };
 
-        let share_xpubs =
-            button::secondary(None, "Share Xpubs").on_press(Message::View(ViewMessage::ShareXpubs));
+        let share_xpubs = btn_share_xpubs(Some(Message::View(ViewMessage::ShareXpubs)));
 
         let network_picker = pick_list::pick_list(
             self.displayed_networks.as_slice(),
@@ -261,17 +265,12 @@ impl Launcher {
                     let list = wallets.iter().enumerate().fold(
                         Column::new().spacing(20),
                         |col, (i, settings)| {
-                            col.push(
-                                wallets_list_item(self.network, settings, i).map(Message::View),
-                            )
+                            col.push(entry_wallet(self.network, settings, i).map(Message::View))
                         },
                     );
                     let add_wallet_msg = Message::View(ViewMessage::AddWalletToList(true));
                     let add_wallet =
-                        column![button::secondary(Some(icon::plus_icon()), "Add wallet")
-                            .on_press(add_wallet_msg)
-                            .padding(10)
-                            .width(500)];
+                        column![btn_add_wallet(Some(add_wallet_msg))].width(EntryWidth::Standard);
 
                     list.push(add_wallet).into()
                 }
@@ -311,9 +310,7 @@ fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
     let create_wallet = column![
         image::create_new_wallet_icon().width(ICON_SIZE),
         new::caption("Create a new Liana wallet").style(theme::text::secondary),
-        button::secondary(None, "Select")
-            .width(200)
-            .on_press(ViewMessage::CreateWallet),
+        btn_select(Some(ViewMessage::CreateWallet)),
     ]
     .spacing(20)
     .align_x(Alignment::Center);
@@ -321,9 +318,7 @@ fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
     let add_existing_wallet = column![
         image::restore_wallet_icon().width(ICON_SIZE),
         new::caption("Add an existing Liana wallet").style(theme::text::secondary),
-        button::secondary(None, "Select")
-            .width(200)
-            .on_press(ViewMessage::ImportWallet),
+        btn_select(Some(ViewMessage::ImportWallet)),
     ]
     .spacing(20)
     .align_x(Alignment::Center);
@@ -337,47 +332,41 @@ fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
     .into()
 }
 
-fn wallets_list_item(
-    network: Network,
-    settings: &WalletSettings,
-    i: usize,
-) -> Element<'_, ViewMessage> {
-    let title = if let Some(alias) = &settings.alias {
-        new::b5_bold(alias)
-    } else {
-        new::b5_bold(format!("My Liana {network:?} wallet"))
-    };
+fn entry_wallet(network: Network, settings: &WalletSettings, i: usize) -> Element<'_, ViewMessage> {
+    let title = settings
+        .alias
+        .clone()
+        .unwrap_or(format!("My Liana {network:?} wallet"));
 
     let checksum = new::caption(format!("Liana-{}", settings.descriptor_checksum))
         .style(theme::text::secondary);
-
     let email = settings.remote_backend_auth.as_ref().map(|auth| {
         row![
             Space::fill_width(),
             new::caption(&auth.email).style(theme::text::secondary)
         ]
     });
+    let subtitle = Some(column![checksum, email].into());
 
-    let wallet_details = column![title, checksum, email];
-    let wallet_button = Container::new(
-        Button::new(wallet_details)
-            .on_press(ViewMessage::Run(i))
-            .padding(15)
-            .style(theme::button::container_border)
-            .width(500),
-    )
-    .style(theme::card::simple);
-    let delete_button = Button::new(icon::trash_icon())
-        .style(theme::button::secondary)
-        .padding(10)
-        .on_press(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal(i)));
+    let accent = Some(match network {
+        Network::Bitcoin => EntryAccent::Bitcoin,
+        _ => EntryAccent::Testnet,
+    });
 
-    Container::new(
-        row![wallet_button, delete_button]
-            .align_y(Alignment::Center)
-            .spacing(20),
-    )
-    .into()
+    let entry = list::entry_wallet(
+        accent,
+        title,
+        subtitle,
+        None,
+        None,
+        Some(ViewMessage::Run(i)),
+    );
+
+    let delete_button = btn_remove(Some(ViewMessage::DeleteWallet(
+        DeleteWalletMessage::ShowModal(i),
+    )));
+
+    row![entry, delete_button].align_y(Alignment::Center).into()
 }
 
 /// Returns the list of displayed networks.
