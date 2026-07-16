@@ -156,13 +156,13 @@ where
         .spacing(H_SPACING);
 
     Button::new(row)
-        .style(theme::button::transparent_border)
+        .style(theme::button::tertiary)
         .on_press(msg)
         .into()
 }
 
-/// Outer shell for a collapsible key/signer entry, routed through the
-/// `button::device*` helpers.
+/// Outer shell for a collapsible key/signer entry, routed through selectable
+/// list entries.
 pub fn collapsible_button<'a, Message, Closed, Expanded, Collapse>(
     collapsed: bool,
     closed_content: Closed,
@@ -176,9 +176,21 @@ where
     Message: Clone + 'static,
 {
     if collapsed {
-        button::device_with_height_clickable(expanded_content, None, None, false)
+        button::list_entry_with_state(
+            expanded_content,
+            None,
+            button::EntryWidth::Fill,
+            true,
+            false,
+            None,
+        )
     } else {
-        button::device(closed_content, Some(collapse_message()))
+        button::list_entry(
+            closed_content,
+            None,
+            button::EntryWidth::Fill,
+            Some(collapse_message()),
+        )
     }
 }
 
@@ -205,7 +217,7 @@ where
         form::Form::new_disabled(&input_placeholder, input_value)
     }
     .padding(10);
-    let paste = paste_message.map(|m| Button::new(icon::paste_icon()).on_press(m()));
+    let paste = paste_message.map(|m| button::btn_paste_icon(Some(m())));
 
     if collapsed {
         let icon = icon.map(|i| i.style(theme::text::primary));
@@ -222,12 +234,18 @@ where
             .align_y(Vertical::Center)
             .spacing(H_SPACING)
             .width(Length::Fill);
-        button::device_with_height_clickable(content, None, None, false)
+        button::list_entry_with_state(content, None, button::EntryWidth::Fill, true, false, None)
     } else {
         let content = row![icon, caption(label)]
             .spacing(H_SPACING)
-            .align_y(Vertical::Center);
-        button::device(content, Some(collapse_message()))
+            .align_y(Vertical::Center)
+            .width(Length::Fill);
+        button::list_entry(
+            content,
+            None,
+            button::EntryWidth::Fill,
+            Some(collapse_message()),
+        )
     }
 }
 
@@ -314,8 +332,14 @@ pub fn key_entry<'a, M: 'a + Clone>(
         tt
     ]
     .align_y(Vertical::Center)
-    .spacing(H_SPACING);
-    button::device(row, on_press)
+    .spacing(H_SPACING)
+    .width(Length::Fill);
+    button::list_entry(
+        row,
+        None,
+        button::EntryWidth::Custom(BTN_W as f32),
+        on_press,
+    )
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -390,8 +414,9 @@ where
         Option::<Element<'a, M>>::from(status)
     ]
     .align_y(Vertical::Center)
-    .spacing(H_SPACING);
-    button::device(row, on_press)
+    .spacing(H_SPACING)
+    .width(Length::Fill);
+    button::list_entry(row, None, button::EntryWidth::Fill, on_press)
 }
 
 /// Derivation-account picker: a dropdown over accounts 0..10 for the given device.
@@ -434,8 +459,9 @@ where
     let designation = device_designation(kind, alias, Some(format!("#{fingerprint}")));
     let row = row![icon, designation, Space::fill_width(), picker]
         .align_y(Vertical::Center)
-        .spacing(H_SPACING);
-    button::device(row, on_press)
+        .spacing(H_SPACING)
+        .width(Length::Fill);
+    button::list_entry(row, None, button::EntryWidth::Fill, on_press)
 }
 
 /// Row entry for an expected key in a registration-style flow.
@@ -490,7 +516,7 @@ where
     let col = column![row, error].width(Length::Fill);
 
     let msg = on_press.map(|f| f());
-    button::device(col, msg)
+    button::list_entry(col, None, button::EntryWidth::Fill, msg)
 }
 
 pub fn modal_no_devices_placeholder<'a, M: 'a>() -> Element<'a, M> {

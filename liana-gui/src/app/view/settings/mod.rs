@@ -18,7 +18,7 @@ use liana::{
 use liana_ui::{
     component::{
         self, badge,
-        button::{self, btn_secondary_with_tooltip, BtnWidth},
+        button::{self, btn_backup_encrypt_descriptor, btn_register_on_device, btn_update},
         card, form,
         panels::setting::{
             export_section, header, settings_section, ImportExportKind, SectionKind,
@@ -932,26 +932,17 @@ pub fn wallet_settings<'a>(
         Some(SettingsMessage::EditWalletSettings.into()),
     );
 
-    let backup_label = "Back up encrypted descriptor";
-    let backup_tooltip = "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.";
-    let backup_msg = Message::Settings(SettingsMessage::ExportEncryptedDescriptor);
-
     // ------------------------- Descriptor card -------------------------
     let title = text("Wallet descriptor:").bold();
     let descriptor_s =
         scrollable::horizontal_thin(Column::new().push(text(descriptor.to_string()).small()))
             .width(Length::Fill);
 
-    let btn_backup = btn_secondary_with_tooltip(
-        Some(icon::backup_icon()),
-        backup_label,
-        Some(backup_tooltip),
-        BtnWidth::Auto,
-        Some(backup_msg),
-    );
+    let backup_msg = Message::Settings(SettingsMessage::ExportEncryptedDescriptor);
+    let btn_backup = btn_backup_encrypt_descriptor(backup_msg);
+
     let btn_copy = button::btn_copy(Some(Message::Clipboard(descriptor.to_string())));
-    let btn_register = button::secondary(Some(icon::chip_icon()), "Register on hardware device")
-        .on_press(Message::Settings(SettingsMessage::RegisterWallet));
+    let btn_register = btn_register_on_device(Message::Settings(SettingsMessage::RegisterWallet));
 
     let descriptor_row = row![descriptor_s, btn_copy]
         .spacing(10)
@@ -1016,6 +1007,8 @@ pub fn wallet_settings<'a>(
         col_content.push(key_alias_entry(fg, name));
     }
 
+    let update_msg =
+        (!processing && wallet_alias.valid).then_some(Message::Settings(SettingsMessage::Save));
     let last_row = Row::new()
         .align_y(Alignment::Center)
         .push(Space::with_width(Length::Fill))
@@ -1029,11 +1022,7 @@ pub fn wallet_settings<'a>(
         } else {
             None
         })
-        .push(if !processing && wallet_alias.valid {
-            button::secondary(None, "Update").on_press(Message::Settings(SettingsMessage::Save))
-        } else {
-            button::secondary(None, "Updating")
-        });
+        .push(btn_update(update_msg));
 
     col_content.push(last_row.into());
 

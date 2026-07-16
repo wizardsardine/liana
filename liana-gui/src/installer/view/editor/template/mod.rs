@@ -9,7 +9,7 @@ use iced::{
 
 use liana_ui::{
     component::{
-        button::{self, btn_clear_all, btn_customize},
+        button::{btn_clear_all, btn_customize, btn_next},
         collapse,
         text::{h3, p1_bold, p2_regular},
     },
@@ -60,19 +60,12 @@ pub fn template_footer<'a>(valid: bool, processing: bool, customize: bool) -> Ro
     ))));
 
     let msg = (!processing & valid).then_some(Message::Next);
-    let msg_label = if processing {
-        "Processing..."
-    } else {
-        "Continue"
-    };
-    let contin = button::primary(None, msg_label)
-        .width(210)
-        .on_press_maybe(msg);
+    let next = btn_next(msg);
 
     row![clear_all, Space::with_width(40)]
         .push_maybe(customize)
         .push(Space::fill_width())
-        .push(contin)
+        .push(next)
 }
 
 pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, Message> {

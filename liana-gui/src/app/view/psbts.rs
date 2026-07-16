@@ -1,7 +1,13 @@
 use iced::{widget::Space, Alignment, Length};
 
 use liana_ui::{
-    component::{amount::*, badge, button, card, form, pill, text::*},
+    component::{
+        amount::*,
+        badge,
+        button::{btn_import, btn_new, btn_processing},
+        card, form, pill,
+        text::*,
+    },
     icon, theme,
     widget::*,
 };
@@ -34,12 +40,11 @@ pub fn import_psbt_view<'a>(
                 )
                 .push(Row::new().push(Space::with_width(Length::Fill)).push(
                     if imported.valid && !imported.value.is_empty() && !processing {
-                        button::secondary(None, "Import")
-                            .on_press(Message::ImportSpend(ImportSpendMessage::Confirm))
+                        btn_import(Some(Message::ImportSpend(ImportSpendMessage::Confirm)))
                     } else if processing {
-                        button::secondary(None, "Processing...")
+                        btn_processing()
                     } else {
-                        button::secondary(None, "Import")
+                        btn_import(None)
                     },
                 )),
         ))
@@ -67,14 +72,8 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
                 .align_y(Alignment::Center)
                 .spacing(10)
                 .push(Container::new(panel_title(Menu::PSBTs.title())).width(Length::Fill))
-                .push(
-                    button::secondary(Some(icon::restore_icon()), "Import")
-                        .on_press(Message::ImportPsbt),
-                )
-                .push(
-                    button::secondary(Some(icon::plus_icon()), "New")
-                        .on_press(Message::Menu(Menu::CreateSpendTx)),
-                ),
+                .push(btn_import(Some(Message::ImportPsbt)))
+                .push(btn_new(Some(Message::Menu(Menu::CreateSpendTx)))),
         )
         .push(
             Column::new().spacing(10).push(

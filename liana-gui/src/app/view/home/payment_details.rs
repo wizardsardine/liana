@@ -10,7 +10,8 @@ use liana::miniscript::bitcoin;
 use liana_ui::{
     component::{
         amount::amount_with_font,
-        button, card, form,
+        button::{self, btn_see_transaction_details},
+        card, form,
         text::{legacy, Text},
     },
     theme,
@@ -153,11 +154,9 @@ pub fn payment_details_view<'a>(
                     )
                     .spacing(5),
             ))
-            .push(
-                button::secondary(None, "See transaction details").on_press(Message::Menu(
-                    Menu::TransactionPreSelected(tx.tx.compute_txid()),
-                )),
-            )
+            .push(btn_see_transaction_details(Message::Menu(
+                Menu::TransactionPreSelected(tx.tx.compute_txid()),
+            )))
             .spacing(20),
     )
 }

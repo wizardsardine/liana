@@ -85,8 +85,8 @@ pub fn spend_view<'a>(
         row![delete].width(Length::Fill)
     } else {
         let previous = button::btn_previous((!currently_signing).then_some(Message::Previous));
-        let save =
-            button::btn_save((!currently_signing).then_some(Message::Spend(SpendTxMessage::Save)));
+        let save_msg = (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save));
+        let save = button::btn_save(save_msg, false);
         row![previous, Space::fill_width(), save].width(Length::Fill)
     };
 

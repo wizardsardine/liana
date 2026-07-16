@@ -10,7 +10,7 @@ use iced::{
 };
 
 use liana::miniscript::bitcoin::bip32::ChildNumber;
-use liana_ui::component::button::BtnWidth;
+use liana_ui::component::button::{btn_next, BtnWidth};
 use liana_ui::component::text::{self, p2_regular};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -625,13 +625,8 @@ pub fn register_descriptor<'a>(
             .on_toggle(Message::UserActionDone),
     );
 
-    let next_button = if !created_desc || (done && !processing) {
-        button::secondary(None, "Next")
-            .on_press(Message::Next)
-            .width(200)
-    } else {
-        button::secondary(None, "Next").width(200)
-    };
+    let next = (!created_desc || (done && !processing)).then_some(Message::Next);
+    let next_button = btn_next(next);
 
     let content = Column::new()
         .push_maybe(warning)
@@ -1563,6 +1558,7 @@ pub fn backup_mnemonic<'a>(
     words: &'a [&'static str; 12],
     done: bool,
 ) -> Element<'a, Message> {
+    let msg_next = done.then_some(Message::Next);
     layout(
         progress,
         email,
@@ -1590,13 +1586,7 @@ pub fn backup_mnemonic<'a>(
                     .label("I have backed up my mnemonic")
                     .on_toggle(Message::UserActionDone),
             )
-            .push(if done {
-                button::secondary(None, "Next")
-                    .on_press(Message::Next)
-                    .width(Length::Fixed(200.0))
-            } else {
-                button::secondary(None, "Next").width(Length::Fixed(200.0))
-            })
+            .push(btn_next(msg_next))
             .push(Space::with_height(20.0))
             .spacing(50),
         true,
@@ -1938,6 +1928,7 @@ pub fn wallet_alias<'a>(
     email: Option<&'a str>,
     wallet_alias: &form::Value<String>,
 ) -> Element<'a, Message> {
+    let msg_next = wallet_alias.valid.then_some(Message::Next);
     layout(
         progress,
         email,
@@ -1957,15 +1948,7 @@ pub fn wallet_alias<'a>(
                         "You will be able to change it later in Settings > Wallet",
                     )),
             )
-            .push(
-                button::secondary(None, "Next")
-                    .width(Length::Fixed(200.0))
-                    .on_press_maybe(if wallet_alias.valid {
-                        Some(Message::Next)
-                    } else {
-                        None
-                    }),
-            )
+            .push(btn_next(msg_next))
             .spacing(50),
         true,
         Some(Message::Previous),

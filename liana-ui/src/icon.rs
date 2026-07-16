@@ -133,7 +133,7 @@ pub fn warning_fill_icon() -> Text<'static> {
     bootstrap_icon('\u{F33A}')
 }
 
-pub fn chip_icon() -> Text<'static> {
+pub fn chip_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F2D6}')
 }
 
@@ -181,11 +181,11 @@ pub fn round_key_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F44E}')
 }
 
-pub fn backup_icon() -> Text<'static> {
+pub fn backup_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F356}')
 }
 
-pub fn restore_icon() -> Text<'static> {
+pub fn restore_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F358}')
 }
 

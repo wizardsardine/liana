@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{
-    widget::{tooltip, Space},
+    widget::{row, tooltip, Space},
     Alignment, Length,
 };
 
@@ -18,7 +18,8 @@ use liana_ui::{
     component::{
         address::address as address_view,
         amount::*,
-        button, card,
+        button::{self, btn_broadcast, btn_delete, btn_export, btn_import, btn_save, btn_sign},
+        card,
         collapse::Collapse,
         form,
         list::DeviceStatus,
@@ -54,6 +55,11 @@ pub fn psbt_view<'a>(
     currently_signing: bool,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
+    let delete_msg = if currently_signing {
+        None
+    } else {
+        Some(Message::Spend(SpendTxMessage::Delete))
+    };
     dashboard(
         &Menu::PSBTs,
         cache,
@@ -105,29 +111,14 @@ pub fn psbt_view<'a>(
                     )),
             )
             .push(if saved {
-                Row::new()
-                    .push(
-                        button::secondary(None, "Delete")
-                            .width(Length::Fixed(200.0))
-                            .on_press_maybe(if currently_signing {
-                                None
-                            } else {
-                                Some(Message::Spend(SpendTxMessage::Delete))
-                            }),
-                    )
-                    .width(Length::Fill)
+                row![btn_delete(delete_msg)].width(Length::Fill)
             } else {
                 Row::new()
                     .push(Space::with_width(Length::Fill))
-                    .push(
-                        button::secondary(None, "Save")
-                            .width(Length::Fixed(150.0))
-                            .on_press_maybe(if currently_signing {
-                                None
-                            } else {
-                                Some(Message::Spend(SpendTxMessage::Save))
-                            }),
-                    )
+                    .push(btn_save(
+                        (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save)),
+                        false,
+                    ))
                     .width(Length::Fill)
             })
             .push(Space::with_height(10)),
@@ -230,12 +221,10 @@ pub fn broadcast_action<'a>(
                         ),
                     )
                 })
-                .push(
-                    Row::new().push(Column::new().width(Length::Fill)).push(
-                        button::primary(None, "Broadcast")
-                            .on_press(Message::Spend(SpendTxMessage::Confirm)),
-                    ),
-                ),
+                .push(row![
+                    Space::fill_width(),
+                    btn_broadcast(Some(Message::Spend(SpendTxMessage::Confirm)))
+                ]),
         )
         .width(Length::Fixed(if conflicting_txids.is_empty() {
             400.0
@@ -340,13 +329,13 @@ pub fn spend_overview_view<'a>(
     currently_signing: bool,
     saved: bool,
 ) -> Element<'a, Message> {
-    let export_button = button::secondary(Some(icon::backup_icon()), "Export").on_press_maybe(
-        if currently_signing || !saved {
-            None
-        } else {
-            Some(Message::ExportPsbt)
-        },
-    );
+    let enabled = saved && !currently_signing;
+    let export_msg = enabled.then_some(Message::ExportPsbt);
+    let export_button = btn_export(export_msg);
+
+    let import_msg = enabled.then_some(Message::ImportPsbt);
+    let import_button = btn_import(import_msg);
+
     Column::new()
         .spacing(20)
         .push(
@@ -373,17 +362,7 @@ pub fn spend_overview_view<'a>(
                                                     tooltip::Position::Top,
                                                 ))
                                             })
-                                            .push(
-                                                button::secondary(
-                                                    Some(icon::restore_icon()),
-                                                    "Import",
-                                                )
-                                                .on_press_maybe(if currently_signing || !saved {
-                                                    None
-                                                } else {
-                                                    Some(Message::ImportPsbt)
-                                                }),
-                                            ),
+                                            .push(import_button),
                                     )
                                     .align_y(Alignment::Center),
                             )
@@ -413,15 +392,11 @@ pub fn spend_overview_view<'a>(
                     .push(Space::with_width(Length::Fill))
                     .push_maybe(if tx.path_ready().is_none() {
                         Some(
-                            button::primary(None, "Sign")
-                                .on_press(Message::Spend(SpendTxMessage::Sign))
-                                .width(Length::Fixed(150.0)),
+                            btn_sign(Some(Message::Spend(SpendTxMessage::Sign))),
                         )
                     } else {
                         Some(
-                            button::primary(None, "Broadcast")
-                                .on_press(Message::Spend(SpendTxMessage::Broadcast))
-                                .width(Length::Fixed(150.0)),
+                            btn_broadcast(Some(Message::Spend(SpendTxMessage::Broadcast))),
                         )
                     })
                     .align_y(Alignment::Center)

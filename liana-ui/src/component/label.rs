@@ -11,7 +11,7 @@ use crate::{
 };
 
 use super::{
-    button::{btn_cancel, btn_edit, btn_generate, btn_save},
+    button::{btn_cancel, btn_generate, btn_icon_edit, btn_save},
     form::{Form, Value},
     modal::modal_view,
 };
@@ -21,7 +21,7 @@ pub fn editable_label<'a, M: 'a + Clone>(label: impl Display, msg: M) -> Element
     if label.is_empty() {
         label = "(No label)".to_string();
     }
-    let edit = btn_edit(Some(msg));
+    let edit = btn_icon_edit(Some(msg));
     let label = new::h2(label);
     row![label, edit]
         .spacing(10)
@@ -60,7 +60,7 @@ where
     let ok = if is_new {
         btn_generate(confirm)
     } else {
-        btn_save(confirm)
+        btn_save(confirm, true)
     };
     let btn_row = row![Space::fill_width(), cancel, ok].spacing(12);
     let content = column![input, btn_row].spacing(28);

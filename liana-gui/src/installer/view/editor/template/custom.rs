@@ -1,16 +1,16 @@
 use iced::{
     alignment,
-    widget::{tooltip, Container, Space},
+    widget::{row, Container, Space},
     Alignment, Length,
 };
 
 use liana_ui::{
     color,
     component::{
-        button::{self, BtnWidth},
-        text::{h3, p1_regular, text},
+        button::{btn_add_recovery_option, btn_add_safety_net, btn_next},
+        text::{h3, p1_regular},
     },
-    icon, image, theme,
+    image, theme,
     widget::*,
 };
 
@@ -22,8 +22,6 @@ use crate::installer::{
         layout,
     },
 };
-
-const SAFETY_NET_DESCRIPTION: &str = "This adds a final recovery option containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens.";
 
 pub fn custom_template_description(progress: (usize, usize)) -> Element<'static, Message> {
     layout(
@@ -45,7 +43,7 @@ pub fn custom_template_description(progress: (usize, usize)) -> Element<'static,
                 .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::custom_template_description().width(Length::Fill))
-            .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
+            .push(row![Space::fill_width(), btn_next(Some(Message::Next))])
             .push(Space::with_height(50.0))
             .spacing(20),
         true,
@@ -159,27 +157,20 @@ pub fn custom_template<'a>(
         },
     );
 
+    let add_recov_option = Some(Message::DefineDescriptor(
+        message::DefineDescriptor::AddRecoveryPath,
+    ));
+
+    let safety_net =
+        safety_net_path
+            .is_none()
+            .then_some(btn_add_safety_net(Some(Message::DefineDescriptor(
+                message::DefineDescriptor::AddSafetyNetPath,
+            ))));
+
     let btn_row = Row::new()
-        .push(
-            button::secondary(Some(icon::plus_icon()), "Add recovery option")
-                .width(BtnWidth::XXL)
-                .on_press(Message::DefineDescriptor(
-                    message::DefineDescriptor::AddRecoveryPath,
-                )),
-        )
-        .push_maybe(
-            safety_net_path.is_none().then_some(tooltip::Tooltip::new(
-                button::secondary(Some(icon::plus_icon()), "Add Safety Net")
-                    .width(210)
-                    .on_press(Message::DefineDescriptor(
-                        message::DefineDescriptor::AddSafetyNetPath,
-                    )),
-                Container::new(text(SAFETY_NET_DESCRIPTION))
-                    .style(theme::card::simple)
-                    .padding(10),
-                tooltip::Position::Bottom,
-            )),
-        )
+        .push(btn_add_recovery_option(add_recov_option))
+        .push_maybe(safety_net)
         .spacing(10);
 
     let safety_net = safety_net_path.map(|(sn_index, sn_path)| {

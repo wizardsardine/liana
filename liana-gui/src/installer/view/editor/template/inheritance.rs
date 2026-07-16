@@ -1,9 +1,13 @@
-use iced::{alignment, widget::Space, Alignment, Length};
+use iced::{
+    alignment,
+    widget::{row, Space},
+    Alignment, Length,
+};
 
 use liana_ui::{
     color,
     component::{
-        button,
+        button::btn_next,
         text::{h3, p1_regular, Text, H3_SIZE},
     },
     icon, image, theme,
@@ -55,7 +59,7 @@ After a period of inactivity (but not before that) your Inheritance Key will bec
                 .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::inheritance_template_description().width(Length::Fill))
-            .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
+            .push(row![Space::fill_width(), btn_next(Some(Message::Next))])
             .push(Space::with_height(50.0))
             .spacing(20),
         true,
