@@ -1562,12 +1562,18 @@ impl App {
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
         cache_with_vault.has_p2p = panels.p2p.is_some();
-        // Liquid sunset gate, local half. `load_breez_client` owns the
+        // Liquid sunset gate, local half. `load_breez_client` has already run its
         // keep-or-discard policy (grandfathered wallet / server grant / a scan
-        // that found funds), and a wallet it decided to keep is exactly one it
-        // left connected — so a live SDK *is* the "Liquid exists here" signal.
-        // The server half is mirrored in separately when features load.
-        cache_with_vault.liquid_gate.local_state_exists = breez_client.is_connected();
+        // that found funds), leaving `storage.sql` on disk only for a wallet
+        // worth surfacing. Probe that on-disk state rather than the live
+        // connection: on a network without a Liquid backend (Testnet, regtest
+        // without Esplora) the SDK is returned *disconnected* even when a funded
+        // wallet exists on disk, so keying the gate off `is_connected()` there
+        // would hide the rail entirely instead of showing it network-gated. The
+        // probe is also what the discard's "failed delete → spurious nav entry"
+        // fallback assumes. The server half is mirrored in separately later.
+        cache_with_vault.liquid_gate.local_state_exists =
+            crate::app::breez_liquid::local_state_exists(data_dir.path(), cache_with_vault.network);
         cache_with_vault.connect_tokens = connect_auth_arc.clone();
         cache_with_vault.connect_email = connect_email.clone();
         // A restored on-disk session (or a threaded remote-backend one) means
@@ -1679,9 +1685,13 @@ impl App {
         );
         let mut cache = cache;
         cache.has_p2p = panels.p2p.is_some();
-        // See the sibling assignment in `App::new`: a connected Liquid SDK is
-        // the "wallet exists on this machine" half of the sunset gate.
-        cache.liquid_gate.local_state_exists = breez_client.is_connected();
+        // See the sibling assignment in `App::new`: probe the on-disk Liquid
+        // state (not the live connection) for the "wallet exists on this machine"
+        // half of the sunset gate — a backend-gated network returns the SDK
+        // disconnected even for a funded on-disk wallet, which would wrongly
+        // hide the rail.
+        cache.liquid_gate.local_state_exists =
+            crate::app::breez_liquid::local_state_exists(datadir.path(), network);
         cache.p2p_test_coordinator = panels
             .p2p
             .as_ref()
