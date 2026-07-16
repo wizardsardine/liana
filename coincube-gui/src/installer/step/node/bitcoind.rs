@@ -991,6 +991,18 @@ impl InternalBitcoindStep {
         bitcoind::set_max_mempool_form_value(&mut self.max_mempool_mb, value);
     }
 
+    /// Apply a one-click machine-profile preset (Small/Regular computer) to both
+    /// resource fields, revealing the advanced disclosure so the change is seen.
+    fn apply_resource_preset(&mut self, r: NodeResources) {
+        self.set_prune_field(r.prune_mb.to_string());
+        self.set_max_mempool_field(
+            r.max_mempool_mb
+                .map(|mb| mb.to_string())
+                .unwrap_or_default(),
+        );
+        self.show_advanced = true;
+    }
+
     /// Validate both resource fields and return the chosen values, marking the
     /// offending field invalid on failure. Returns `None` so `DefineConfig` bails
     /// without writing.
@@ -1126,16 +1138,10 @@ impl Step for InternalBitcoindStep {
                     self.set_max_mempool_field(value);
                 }
                 message::InternalBitcoindMsg::SmallComputerPreset => {
-                    let r = NodeResources::small_computer();
-                    self.set_prune_field(r.prune_mb.to_string());
-                    self.set_max_mempool_field(
-                        r.max_mempool_mb
-                            .map(|mb| mb.to_string())
-                            .unwrap_or_default(),
-                    );
-                    // Reveal the controls if the preset was reachable some other
-                    // way; harmless when already open.
-                    self.show_advanced = true;
+                    self.apply_resource_preset(NodeResources::small_computer());
+                }
+                message::InternalBitcoindMsg::RegularComputerPreset => {
+                    self.apply_resource_preset(NodeResources::regular_computer());
                 }
                 message::InternalBitcoindMsg::DefineConfig => {
                     // Validate the node-resource choices before touching files, so

@@ -1184,9 +1184,11 @@ pub fn define_coincube_connect<'a>(
 /// drift. Presets are a thin setter layer over the two custom MB fields:
 /// `on_prune`/`on_mempool` receive the raw MB string the widget produces (an
 /// empty mempool string means "leave blank" = bitcoind's 300 MB default =
-/// `max_mempool_mb: None`). `small_computer` is the one-click preset that sets
-/// both. The estimated-total line is honest about the unprunable chainstate
-/// floor — the prune choice only bounds block data.
+/// `max_mempool_mb: None`). `small_computer` and `regular_computer` are the
+/// one-click machine-profile presets that set both fields at once — 550 MB prune
+/// with a 100 MB mempool cap, and the 15 GB / 300 MB defaults respectively. The
+/// estimated-total line is honest about the unprunable chainstate floor — the
+/// prune choice only bounds block data.
 #[allow(clippy::too_many_arguments)]
 pub fn node_resources_controls<'a, M>(
     prune: &'a form::Value<String>,
@@ -1194,6 +1196,7 @@ pub fn node_resources_controls<'a, M>(
     on_prune: impl Fn(String) -> M + Clone + 'static,
     on_mempool: impl Fn(String) -> M + Clone + 'static,
     small_computer: M,
+    regular_computer: M,
 ) -> Column<'a, M>
 where
     M: Clone + 'a,
@@ -1203,8 +1206,10 @@ where
         PRUNE_DEFAULT, PRUNE_MINIMAL_MB,
     };
 
-    // Current values back the honest disk/memory estimate. A blank/invalid field
-    // falls back to the default so the line is always meaningful.
+    // Current values back the honest disk/memory estimate, updating live as the
+    // user types. A blank or unparseable field falls back to the default so the
+    // line is always meaningful; a parseable-but-below-floor value (e.g. 100) is
+    // shown as-is here and caught by validation on apply.
     let prune_mb = prune.value.parse::<u32>().unwrap_or(PRUNE_DEFAULT);
     let mem_mb = if max_mempool.value.is_empty() {
         MAX_MEMPOOL_DEFAULT_MB
@@ -1214,6 +1219,11 @@ where
             .parse::<u32>()
             .unwrap_or(MAX_MEMPOOL_DEFAULT_MB)
     };
+    // "Default" mempool is the blank (key-omitted) state; "Small" is exactly the
+    // 100 MB cap. Used to highlight both the mempool presets and the one-click
+    // machine-profile buttons.
+    let mem_is_default = max_mempool.value.is_empty();
+    let mem_is_small = max_mempool.value.parse::<u32>().ok() == Some(MAX_MEMPOOL_SMALL_MB);
 
     // Prune presets: highlight the one matching the current value.
     let prune_preset = |label: &'static str, val: u32, on: &dyn Fn() -> M| {
@@ -1243,8 +1253,6 @@ where
 
     // Mempool presets: "Default" writes an empty string (key omitted); highlight
     // it whenever the field is blank.
-    let mem_is_default = max_mempool.value.is_empty();
-    let mem_is_small = max_mempool.value.parse::<u32>().ok() == Some(MAX_MEMPOOL_SMALL_MB);
     let small_btn = if mem_is_small {
         button::primary(None, "Small (100 MB)")
     } else {
@@ -1312,10 +1320,30 @@ where
                 ),
         )
         .push(Space::new().height(Length::Fixed(8.0)))
+        // One-click machine profiles. "Small computer" = 550 MB prune + 100 MB
+        // mempool; "Regular computer" = the 15 GB / 300 MB defaults. Highlighted
+        // when the current values match. A future "Miner" preset joins this row.
         .push(
-            button::secondary(None, "Small computer")
-                .width(Length::Fixed(180.0))
-                .on_press(small_computer),
+            Row::new()
+                .spacing(10)
+                .push(
+                    if prune_mb == PRUNE_MINIMAL_MB && mem_is_small {
+                        button::primary(None, "Small computer")
+                    } else {
+                        button::secondary(None, "Small computer")
+                    }
+                    .width(Length::Fixed(180.0))
+                    .on_press(small_computer),
+                )
+                .push(
+                    if prune_mb == PRUNE_DEFAULT && mem_is_default {
+                        button::primary(None, "Regular computer")
+                    } else {
+                        button::secondary(None, "Regular computer")
+                    }
+                    .width(Length::Fixed(180.0))
+                    .on_press(regular_computer),
+                ),
         )
         .push(
             text(format!(
@@ -1792,6 +1820,7 @@ pub fn start_internal_bitcoind<'a>(
                 |v| Message::InternalBitcoind(message::InternalBitcoindMsg::PruneEdited(v)),
                 |v| Message::InternalBitcoind(message::InternalBitcoindMsg::MaxMempoolEdited(v)),
                 Message::InternalBitcoind(message::InternalBitcoindMsg::SmallComputerPreset),
+                Message::InternalBitcoind(message::InternalBitcoindMsg::RegularComputerPreset),
             )));
         }
         col = col.push(
