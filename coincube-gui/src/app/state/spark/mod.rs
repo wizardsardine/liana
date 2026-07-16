@@ -49,3 +49,20 @@ pub(crate) fn fetch_payments_task(
         },
     )
 }
+
+/// Fetch the Spark wallet's spendable BTC balance (sats) via `get_info`, for
+/// the two-card "YOU SEND / YOU RECEIVE" balance line. Best-effort UI polish:
+/// an error resolves to `None` so the caller keeps its last value rather than
+/// surfacing a failure. Reports the *Bitcoin* balance only, not the unified
+/// BTC + Stable Balance total — the card is labelled "Bitcoin".
+pub(crate) fn fetch_balance_task(
+    backend: Option<Arc<SparkBackend>>,
+    on_result: impl FnOnce(Option<u64>) -> Message + Send + 'static,
+) -> Task<Message> {
+    let Some(backend) = backend else {
+        return Task::none();
+    };
+    Task::perform(async move { backend.get_info().await }, move |result| {
+        on_result(result.ok().map(|info| info.balance_sats))
+    })
+}

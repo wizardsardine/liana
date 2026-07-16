@@ -8,7 +8,11 @@
 
 use coincube_ui::{
     color,
-    component::{amount::BitcoinDisplayUnit, button, text::*},
+    component::{
+        amount::{BitcoinDisplayUnit, DisplayAmount},
+        button,
+        text::*,
+    },
     image::{asset_logo, asset_network_logo},
     theme,
     widget::{Column, ColumnExt, Container, Element, Row},
@@ -18,7 +22,7 @@ use iced::{
     Alignment, Background, Length,
 };
 
-use coincube_core::miniscript::bitcoin::Network;
+use coincube_core::miniscript::bitcoin::{Amount, Network};
 
 use crate::app::state::spark::cross_chain::{self, supported_on};
 use crate::app::state::spark::send::{CrossChainContext, SparkSendPhase, SparkSendTarget};
@@ -36,6 +40,8 @@ pub struct SparkSendView<'a> {
     pub sent_quote: &'a coincube_ui::component::quote_display::Quote,
     pub sent_image_handle: &'a iced::widget::image::Handle,
     pub recent_transactions: &'a [SparkRecentTransaction],
+    /// Spendable BTC balance (sats), shown on the YOU SEND card.
+    pub balance_sats: u64,
     pub bitcoin_unit: BitcoinDisplayUnit,
     pub show_direction_badges: bool,
     /// The "THEY RECEIVE" selection — drives the two-card selector and the
@@ -88,7 +94,11 @@ impl<'a> SparkSendView<'a> {
         // ── Two-card selector: YOU SEND (Bitcoin) → THEY RECEIVE ───────
         // YOU SEND is fixed (the Spark wallet spends bitcoin); THEY RECEIVE is
         // the picker (bitcoin rails + USDt/USDC). Wired at the state's `view()`.
-        content = content.push(spark_send_cards(self.receive_target));
+        content = content.push(spark_send_cards(
+            self.receive_target,
+            self.balance_sats,
+            self.bitcoin_unit,
+        ));
 
         // ── Input card ────────────────────────────────────────────────
         let destination = text_input(
@@ -598,7 +608,11 @@ fn card_button_style(
 
 /// The "YOU SEND (Bitcoin) → THEY RECEIVE (target)" pair. YOU SEND is fixed —
 /// the Spark wallet always spends bitcoin — so only THEY RECEIVE is tappable.
-fn spark_send_cards<'a>(target: SparkSendTarget) -> Element<'a, Message> {
+fn spark_send_cards<'a>(
+    target: SparkSendTarget,
+    balance_sats: u64,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<'a, Message> {
     let you_send = Container::new(
         Column::new()
             .spacing(6)
@@ -616,7 +630,7 @@ fn spark_send_cards<'a>(target: SparkSendTarget) -> Element<'a, Message> {
                     ),
             )
             .push(
-                text("From your Spark wallet")
+                text(Amount::from_sat(balance_sats).to_formatted_string_with_unit(bitcoin_unit))
                     .size(P2_SIZE)
                     .style(theme::text::secondary),
             )

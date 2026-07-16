@@ -79,6 +79,9 @@ pub enum SparkReceivePhase {
 /// Real Spark Receive panel.
 pub struct SparkReceive {
     backend: Option<Arc<SparkBackend>>,
+    /// The Spark wallet's spendable BTC balance (sats), shown on the YOU RECEIVE
+    /// card. Refreshed on reload via `get_info`; `0` until the first fetch.
+    balance_sats: u64,
     /// The "receive from another network" (SideShift → BTC) sub-flow, when the
     /// user has entered it. While `Some`, it owns the panel: view, update and
     /// subscription all delegate to it. Mirrors how the Liquid Receive panel
@@ -144,6 +147,7 @@ impl SparkReceive {
     pub fn new(backend: Option<Arc<SparkBackend>>) -> Self {
         Self {
             backend,
+            balance_sats: 0,
             sideshift_flow: None,
             method: SparkReceiveMethod::Bolt11,
             sender_picker_open: false,
@@ -214,6 +218,7 @@ impl State for SparkReceive {
                 received_quote: &self.received_quote,
                 received_image_handle: &self.received_image_handle,
                 recent_transactions: &self.recent_transactions,
+                balance_sats: self.balance_sats,
                 bitcoin_unit: cache.bitcoin_unit,
                 show_direction_badges: cache.show_direction_badges,
                 sideshift_body,
@@ -249,6 +254,7 @@ impl State for SparkReceive {
         Task::batch(vec![
             fetch_deposits_task(self.backend.clone()),
             fetch_payments_task(self.backend.clone()),
+            fetch_balance_task(self.backend.clone()),
         ])
     }
 
@@ -688,6 +694,12 @@ impl State for SparkReceive {
                 self.phase = SparkReceivePhase::Idle;
                 Task::none()
             }
+            SparkReceiveMessage::BalanceLoaded(balance) => {
+                if let Some(sats) = balance {
+                    self.balance_sats = sats;
+                }
+                Task::none()
+            }
             SparkReceiveMessage::PaymentsLoaded(payments) => {
                 let fiat_converter: Option<FiatAmountConverter> =
                     cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
@@ -742,6 +754,15 @@ fn fetch_payments_task(backend: Option<Arc<SparkBackend>>) -> Task<Message> {
             ))
         },
     )
+}
+
+/// Spark-Receive-flavoured wrapper around [`super::fetch_balance_task`].
+fn fetch_balance_task(backend: Option<Arc<SparkBackend>>) -> Task<Message> {
+    super::fetch_balance_task(backend, |balance| {
+        Message::View(crate::app::view::Message::SparkReceive(
+            crate::app::view::SparkReceiveMessage::BalanceLoaded(balance),
+        ))
+    })
 }
 
 /// Kick off an Esplora confirmation-count fetch for every immature

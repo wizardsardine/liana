@@ -2,10 +2,14 @@
 
 use std::collections::HashMap;
 
-use coincube_core::miniscript::bitcoin::Network;
+use coincube_core::miniscript::bitcoin::{Amount, Network};
 use coincube_ui::{
     color,
-    component::{amount::BitcoinDisplayUnit, button, text::*},
+    component::{
+        amount::{BitcoinDisplayUnit, DisplayAmount},
+        button,
+        text::*,
+    },
     icon,
     image::{asset_network_logo, network_logo, usdt_network_logo},
     theme,
@@ -53,6 +57,8 @@ pub struct SparkReceiveView<'a> {
     pub received_quote: &'a coincube_ui::component::quote_display::Quote,
     pub received_image_handle: &'a iced::widget::image::Handle,
     pub recent_transactions: &'a [SparkRecentTransaction],
+    /// Spendable BTC balance (sats), shown on the YOU RECEIVE card.
+    pub balance_sats: u64,
     pub bitcoin_unit: BitcoinDisplayUnit,
     pub show_direction_badges: bool,
     /// When the cross-network (SideShift) flow is active, its inline body —
@@ -102,6 +108,8 @@ impl<'a> SparkReceiveView<'a> {
         content = content.push(spark_receive_cards(
             self.method,
             self.cross_network_selected,
+            self.balance_sats,
+            self.bitcoin_unit,
         ));
 
         if let Some(body) = self.sideshift_body {
@@ -407,6 +415,8 @@ fn card_button_style(
 fn spark_receive_cards<'a>(
     method: SparkReceiveMethod,
     cross: Option<DepositOption>,
+    balance_sats: u64,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let you_receive = Container::new(
         Column::new()
@@ -429,7 +439,7 @@ fn spark_receive_cards<'a>(
                     ),
             )
             .push(
-                text("In your Spark wallet")
+                text(Amount::from_sat(balance_sats).to_formatted_string_with_unit(bitcoin_unit))
                     .size(P2_SIZE)
                     .style(theme::text::secondary),
             )

@@ -208,6 +208,9 @@ impl SparkSendTarget {
 /// Real Spark Send panel.
 pub struct SparkSend {
     backend: Option<Arc<SparkBackend>>,
+    /// The Spark wallet's spendable BTC balance (sats), shown on the YOU SEND
+    /// card. Refreshed on reload via `get_info`; `0` until the first fetch.
+    balance_sats: u64,
     /// Free-text destination input (BOLT11 / BIP21 / on-chain address).
     pub destination_input: String,
     /// Amount override for amountless invoices / on-chain sends, in sats.
@@ -276,6 +279,7 @@ impl SparkSend {
     pub fn new(backend: Option<Arc<SparkBackend>>) -> Self {
         Self {
             backend,
+            balance_sats: 0,
             destination_input: String::new(),
             amount_input: String::new(),
             phase: SparkSendPhase::Idle,
@@ -486,6 +490,7 @@ impl State for SparkSend {
                 sent_quote: &self.sent_quote,
                 sent_image_handle: &self.sent_image_handle,
                 recent_transactions: &self.recent_transactions,
+                balance_sats: self.balance_sats,
                 bitcoin_unit: cache.bitcoin_unit,
                 show_direction_badges: cache.show_direction_badges,
                 cross_chain_ctx: self.cross_chain.as_ref(),
@@ -519,7 +524,10 @@ impl State for SparkSend {
         _daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
         _wallet: Option<Arc<crate::app::wallet::Wallet>>,
     ) -> Task<Message> {
-        fetch_payments_task(self.backend.clone())
+        Task::batch(vec![
+            fetch_payments_task(self.backend.clone()),
+            fetch_balance_task(self.backend.clone()),
+        ])
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
@@ -855,6 +863,12 @@ impl State for SparkSend {
                 self.cross_chain = None;
                 Task::none()
             }
+            SparkSendMessage::BalanceLoaded(balance) => {
+                if let Some(sats) = balance {
+                    self.balance_sats = sats;
+                }
+                Task::none()
+            }
             SparkSendMessage::PaymentsLoaded(payments) => {
                 let fiat_converter: Option<FiatAmountConverter> =
                     cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
@@ -986,6 +1000,15 @@ fn fetch_payments_task(backend: Option<Arc<SparkBackend>>) -> Task<Message> {
             ))
         },
     )
+}
+
+/// Spark-Send-flavoured wrapper around [`super::fetch_balance_task`].
+fn fetch_balance_task(backend: Option<Arc<SparkBackend>>) -> Task<Message> {
+    super::fetch_balance_task(backend, |balance| {
+        Message::View(crate::app::view::Message::SparkSend(
+            crate::app::view::SparkSendMessage::BalanceLoaded(balance),
+        ))
+    })
 }
 
 #[cfg(test)]
