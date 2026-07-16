@@ -51,7 +51,7 @@ mod u128_dec {
     /// which is the whole reason a bare `u128` failed here.
     pub(super) struct U128Visitor;
 
-    impl de::Visitor<'_> for U128Visitor {
+    impl<'de> de::Visitor<'de> for U128Visitor {
         type Value = u128;
 
         fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
