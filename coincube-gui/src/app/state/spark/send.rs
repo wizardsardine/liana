@@ -78,10 +78,11 @@ pub enum SparkSendPhase {
     /// Any step failed. Carries the user-visible message.
     Error(String),
     /// A *cross-chain* send failed. Kept apart from [`Self::Error`] because the
-    /// safe next step depends on the route: a BTC-funded send can be retried
-    /// with the same idempotency key, but a token-funded one has no idempotency
-    /// guarantee and a blind retry could pay twice. The panel must offer
-    /// "check status" rather than "try again" in that case.
+    /// safe next step depends on the route *and* the quote: a retry re-sends the
+    /// **same** prepared quote — dedup-safe via the provider's swap id — while
+    /// it's still valid, but once it expires (or on a route with no idempotency
+    /// guarantee at all) a blind retry could pay twice, so the panel offers
+    /// "check status" instead. See [`SparkSend::cross_chain_prepare`].
     CrossChainFailed {
         message: String,
         policy: cross_chain::RetryPolicy,
@@ -92,12 +93,11 @@ pub enum SparkSendPhase {
 /// reach it. Held on the panel rather than inside [`SparkSendPhase`] because it
 /// has to **outlive the phases that use it**.
 ///
-/// Concretely: a failed send lands in [`SparkSendPhase::CrossChainFailed`], and
-/// retrying from there means running `prepare_cross_chain` again — the bridge
-/// consumes a prepare handle when it executes a send, whether or not the send
-/// succeeded, so the old handle is dead and only a fresh prepare can be sent.
-/// That re-prepare needs the address and route, so they can't have been thrown
-/// away with the previous phase.
+/// Concretely: when a quote expires the user re-quotes (`ReQuoteRequested`),
+/// which runs `prepare_cross_chain` again — and that needs the address and the
+/// selected route, so they can't have been thrown away with the phase that
+/// showed the dead quote. (A *failed send*, by contrast, retries by re-sending
+/// the retained quote itself — see [`SparkSend::cross_chain_prepare`].)
 #[derive(Debug, Clone)]
 pub struct CrossChainContext {
     pub address: CrossChainAddress,
@@ -220,10 +220,22 @@ pub struct SparkSend {
     /// Whether the advanced (slippage) disclosure is open.
     pub advanced_open: bool,
     /// Idempotency key for the in-flight send, minted once per user-initiated
-    /// send and **reused across retries of that same send**. That reuse is the
-    /// entire point: a fresh key on retry would defeat the SDK's dedup and
-    /// could pay twice. Cleared on success or reset.
+    /// send and **reused across retries of that same send**. On the bitcoin
+    /// rails (Lightning / on-chain / Spark) this is the dedup: a fresh key on
+    /// retry would defeat the SDK's dedup and could pay twice. A *cross-chain*
+    /// send can't use it — the SDK rejects a key on a token/conversion leg — so
+    /// there the retry guard is [`Self::cross_chain_prepare`] instead. Cleared
+    /// on success or reset.
     send_idempotency_key: Option<String>,
+    /// The prepared cross-chain quote of the in-flight send, retained so a
+    /// failed send can be retried by re-sending the **same handle** — same
+    /// provider swap id, which dedups the BTC leg at the Spark protocol level.
+    /// Reusing the quote is only safe while it hasn't expired; past that the
+    /// retry falls back to "verify state first" rather than re-preparing, which
+    /// would mint a fresh swap id with no dedup against a maybe-landed attempt.
+    /// `None` for bitcoin-rail sends and once the send succeeds / resets /
+    /// is abandoned.
+    cross_chain_prepare: Option<PrepareSendOk>,
     /// How much life the current cross-chain quote has left, recomputed on
     /// every tick **and set the instant the quote arrives**.
     ///
@@ -262,6 +274,7 @@ impl SparkSend {
             slippage_input: String::new(),
             advanced_open: false,
             send_idempotency_key: None,
+            cross_chain_prepare: None,
             quote_countdown: None,
             receive_target: SparkSendTarget::Lightning,
             receive_picker_open: false,
@@ -313,6 +326,7 @@ impl SparkSend {
     /// visible failure, so the key dies with the intent that minted it.
     fn abandon_payment_intent(&mut self) {
         self.send_idempotency_key = None;
+        self.cross_chain_prepare = None;
         self.quote_countdown = None;
     }
 
@@ -384,6 +398,52 @@ impl SparkSend {
                 Err(e) => Message::View(crate::app::view::Message::SparkSend(
                     crate::app::view::SparkSendMessage::PrepareFailed(e),
                 )),
+            },
+        )
+    }
+
+    /// Fire the `send_payment` task for a prepared send.
+    ///
+    /// A cross-chain send additionally stashes its quote in
+    /// [`Self::cross_chain_prepare`] so a retry can re-send *this same handle* —
+    /// same provider swap id, which is what dedups the BTC leg. The idempotency
+    /// key is minted once and reused across retries; the bridge drops it for a
+    /// cross-chain send (the SDK forbids a key on a token leg), so there the
+    /// swap-id reuse is the real guard, while it stays load-bearing for the
+    /// bitcoin rails.
+    fn dispatch_send(&mut self, prepare: PrepareSendOk) -> Task<Message> {
+        use crate::app::view::SparkSendMessage;
+        let Some(backend) = self.backend.clone() else {
+            self.phase = SparkSendPhase::Error("Spark backend is not available.".to_string());
+            return Task::none();
+        };
+        let handle = prepare.handle.clone();
+        let policy = prepare
+            .cross_chain
+            .as_deref()
+            .map(cross_chain::RetryPolicy::for_quote);
+        if prepare.cross_chain.is_some() {
+            self.cross_chain_prepare = Some(prepare);
+        }
+        let key = self
+            .send_idempotency_key
+            .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
+            .clone();
+
+        self.phase = SparkSendPhase::Sending;
+        Task::perform(
+            async move { backend.send_payment(handle, Some(key)).await },
+            move |result| match result {
+                Ok(ok) => Message::View(crate::app::view::Message::SparkSend(
+                    SparkSendMessage::SendSucceeded(ok),
+                )),
+                Err(e) => {
+                    let msg = e.to_string();
+                    Message::View(crate::app::view::Message::SparkSend(match policy {
+                        Some(p) => SparkSendMessage::CrossChainSendFailed(msg, p),
+                        None => SparkSendMessage::SendFailed(msg),
+                    }))
+                }
             },
         )
     }
@@ -651,29 +711,48 @@ impl State for SparkSend {
                 self.quote_cross_chain()
             }
             SparkSendMessage::CrossChainRetryRequested => {
-                // Retrying a failed cross-chain send means **re-preparing**, not
-                // re-confirming. The bridge consumes a prepare handle when it
-                // executes a send — whether or not the send succeeded — so the
-                // handle from the failed attempt is dead and `send_payment`
-                // would just reject it. Only a fresh prepare can be sent.
+                // A cross-chain retry re-sends the **same prepared quote**, not a
+                // fresh one. The bridge keeps a token-leg prepare re-sendable
+                // after a failure, so re-sending the identical handle reuses the
+                // provider's swap id and the BTC leg dedups at the protocol level
+                // — it can't pay twice. (The SDK never honoured `idempotency_key`
+                // for these sends, so swap-id reuse is the real guard, not the
+                // key the gui still threads through for the bitcoin rails.)
                 //
-                // What must NOT be refreshed is `send_idempotency_key`: it is
-                // deliberately left in place so the retry carries the same key
-                // as the attempt that failed. That is the entire safety
-                // mechanism — if the first attempt actually landed despite
-                // reporting failure, the SDK recognises the key and
-                // short-circuits instead of paying a second time.
-                let SparkSendPhase::CrossChainFailed { policy, .. } = &self.phase else {
+                // Option-1 fallback: once the quote has expired we can't reuse
+                // it, and re-preparing would mint a *new* swap id with no dedup
+                // against an attempt that may already have moved funds. So stop
+                // offering a blind retry and route the user to verify state.
+                let SparkSendPhase::CrossChainFailed { message, policy } = &self.phase else {
                     return Task::none();
                 };
+                let policy = *policy;
+                let message = message.clone();
                 // Defense in depth: the view only offers this button when the
-                // policy allows it, but a token-sourced send has no idempotency
-                // guarantee at all, and a blind retry there could double-pay.
-                // Never act on a stale or replayed message that says otherwise.
+                // policy allows it. Never act on a stale or replayed message.
                 if !policy.may_retry() {
                     return Task::none();
                 }
-                self.quote_cross_chain()
+                let reusable = self
+                    .cross_chain_prepare
+                    .as_ref()
+                    .and_then(|p| p.cross_chain.as_deref())
+                    .is_some_and(|q| {
+                        cross_chain::quote_countdown(q, chrono::Utc::now()).can_send()
+                    });
+                if !reusable {
+                    self.cross_chain_prepare = None;
+                    self.phase = SparkSendPhase::CrossChainFailed {
+                        message,
+                        policy: cross_chain::RetryPolicy::MustCheckStateFirst,
+                    };
+                    return Task::none();
+                }
+                let prepare = self
+                    .cross_chain_prepare
+                    .clone()
+                    .expect("reusable implies a retained prepare");
+                self.dispatch_send(prepare)
             }
             SparkSendMessage::QuoteTick => {
                 self.refresh_quote_countdown();
@@ -683,6 +762,7 @@ impl State for SparkSend {
                 let SparkSendPhase::Prepared(prepare) = &self.phase else {
                     return Task::none();
                 };
+                let prepare = prepare.clone();
                 // A cross-chain quote that has run out must not be sent. The
                 // rate is no longer one the provider honours, so confirming
                 // would either fail or fill at a price the user never saw.
@@ -692,41 +772,7 @@ impl State for SparkSend {
                     );
                     return Task::none();
                 }
-                let Some(backend) = self.backend.clone() else {
-                    self.phase =
-                        SparkSendPhase::Error("Spark backend is not available.".to_string());
-                    return Task::none();
-                };
-                let handle = prepare.handle.clone();
-                let policy = prepare
-                    .cross_chain
-                    .as_deref()
-                    .map(cross_chain::RetryPolicy::for_quote);
-
-                // Mint the idempotency key once per send, and hold onto it: a
-                // retry of *this* send must reuse it, or the SDK's dedup can't
-                // recognise the retry and we risk paying twice.
-                let key = self
-                    .send_idempotency_key
-                    .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
-                    .clone();
-
-                self.phase = SparkSendPhase::Sending;
-                Task::perform(
-                    async move { backend.send_payment(handle, Some(key)).await },
-                    move |result| match result {
-                        Ok(ok) => Message::View(crate::app::view::Message::SparkSend(
-                            SparkSendMessage::SendSucceeded(ok),
-                        )),
-                        Err(e) => {
-                            let msg = e.to_string();
-                            Message::View(crate::app::view::Message::SparkSend(match policy {
-                                Some(p) => SparkSendMessage::CrossChainSendFailed(msg, p),
-                                None => SparkSendMessage::SendFailed(msg),
-                            }))
-                        }
-                    },
-                )
+                self.dispatch_send(prepare)
             }
             SparkSendMessage::CrossChainSendFailed(err, policy) => {
                 self.phase = SparkSendPhase::CrossChainFailed {
@@ -747,6 +793,7 @@ impl State for SparkSend {
                 // against this one and silently drop a payment the user meant
                 // to make.
                 self.send_idempotency_key = None;
+                self.cross_chain_prepare = None;
                 self.quote_countdown = None;
                 self.cross_chain = None;
                 // Refresh the Last Transactions list so the new payment
@@ -784,6 +831,7 @@ impl State for SparkSend {
                 // Reset abandons the send, so its key must go too — the next
                 // send is a different payment and needs a fresh one.
                 self.send_idempotency_key = None;
+                self.cross_chain_prepare = None;
                 self.quote_countdown = None;
                 self.slippage_input.clear();
                 self.cross_chain = None;
@@ -917,9 +965,10 @@ mod tests {
         }
     }
 
-    /// A panel sitting on a failed cross-chain send, with the context and
-    /// idempotency key the failed attempt left behind.
-    fn failed_panel(policy: cross_chain::RetryPolicy) -> SparkSend {
+    /// A panel sitting on a failed cross-chain send, holding the retained quote
+    /// (with the given expiry) plus the idempotency key the failed attempt left
+    /// behind — the exact state a retry acts on.
+    fn failed_panel_with_expiry(policy: cross_chain::RetryPolicy, expires_at: &str) -> SparkSend {
         let mut panel = SparkSend::new(None);
         panel.cross_chain = Some(CrossChainContext {
             address: CrossChainAddress {
@@ -933,11 +982,18 @@ mod tests {
             selected: 0,
         });
         panel.send_idempotency_key = Some("key-from-the-failed-attempt".to_string());
+        panel.cross_chain_prepare = Some(prepared_with_quote(expires_at));
         panel.phase = SparkSendPhase::CrossChainFailed {
             message: "connection lost".to_string(),
             policy,
         };
         panel
+    }
+
+    /// [`failed_panel_with_expiry`] with a quote that's still well in date.
+    fn failed_panel(policy: cross_chain::RetryPolicy) -> SparkSend {
+        let future = (chrono::Utc::now() + chrono::Duration::seconds(60)).to_rfc3339();
+        failed_panel_with_expiry(policy, &future)
     }
 
     fn send(panel: &mut SparkSend, msg: SparkSendMessage) -> Task<Message> {
@@ -965,29 +1021,51 @@ mod tests {
         );
     }
 
-    /// The real retry path: re-prepare, rather than re-confirm a dead handle.
+    /// The retry path: re-send the **same** retained quote (same swap id), not a
+    /// re-prepare — so the provider dedups the BTC leg instead of paying twice.
     #[test]
-    fn retry_re_prepares_and_keeps_the_original_idempotency_key() {
+    fn retry_resends_the_same_quote_while_it_is_still_valid() {
         let mut panel = failed_panel(cross_chain::RetryPolicy::SafeToRetry);
         let _ = send(&mut panel, SparkSendMessage::CrossChainRetryRequested);
 
-        // It left the failed state — i.e. the button actually did something,
-        // which is exactly what the old `ConfirmRequested` wiring did not.
-        // This panel has no backend, so the re-prepare gets as far as the
-        // backend check and stops there; the point is that it *ran*.
+        // With a still-valid retained quote the retry fires the send. This panel
+        // has no backend, so it stops at the backend check — the point is it
+        // reached the *send* (reusing the quote), not a re-prepare or a refusal.
         assert!(
             matches!(panel.phase, SparkSendPhase::Error(_)),
-            "retry must reach the re-prepare (which then fails on the absent backend), \
-             not sit in CrossChainFailed"
+            "a valid-quote retry must reach the send path (backend-absent here)"
         );
 
-        // The key is the whole safety mechanism. If the failed attempt actually
-        // landed, the retry carrying the SAME key lets the SDK dedup it instead
-        // of paying twice. Minting a fresh key here would be a double-spend.
+        // A retry never mints a fresh key — reusing it keeps the bitcoin-rail
+        // path dedup-safe, and it's harmless (dropped by the bridge) for this
+        // cross-chain send.
         assert_eq!(
             panel.send_idempotency_key.as_deref(),
             Some("key-from-the-failed-attempt"),
             "a retry must reuse the failed attempt's idempotency key"
+        );
+    }
+
+    /// Option-1 fallback: a retry whose quote has already expired can't reuse it
+    /// (re-preparing would mint a new swap id and could double-send), so it
+    /// downgrades to "check state first" instead of firing.
+    #[test]
+    fn retry_falls_back_to_check_state_when_the_quote_has_expired() {
+        let past = (chrono::Utc::now() - chrono::Duration::seconds(5)).to_rfc3339();
+        let mut panel = failed_panel_with_expiry(cross_chain::RetryPolicy::SafeToRetry, &past);
+        let _ = send(&mut panel, SparkSendMessage::CrossChainRetryRequested);
+
+        match &panel.phase {
+            SparkSendPhase::CrossChainFailed { policy, .. } => assert_eq!(
+                *policy,
+                cross_chain::RetryPolicy::MustCheckStateFirst,
+                "an expired-quote retry must downgrade to check-state-first"
+            ),
+            other => panic!("expected CrossChainFailed, got {other:?}"),
+        }
+        assert!(
+            panel.cross_chain_prepare.is_none(),
+            "the unusable quote must be dropped so it can't be retried again"
         );
     }
 
@@ -1000,7 +1078,7 @@ mod tests {
         let _ = send(&mut panel, SparkSendMessage::CrossChainRetryRequested);
         assert!(
             matches!(panel.phase, SparkSendPhase::CrossChainFailed { .. }),
-            "an unsafe retry must not re-prepare, even if the message arrives"
+            "an unsafe retry must not re-send, even if the message arrives"
         );
     }
 

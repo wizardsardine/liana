@@ -164,8 +164,11 @@ pub fn quote_countdown(
 /// offering an unsafe retry button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryPolicy {
-    /// The send carried an idempotency key the SDK honours — retrying with the
-    /// same key cannot double-pay.
+    /// The route's source leg is BTC, so a retry can re-send the **same**
+    /// prepared quote and the provider's swap-id dedup stops the BTC leg paying
+    /// twice — while that quote is still valid. The panel downgrades to
+    /// [`Self::MustCheckStateFirst`] once it expires (a re-prepare would mint a
+    /// new swap id with no dedup against a maybe-landed attempt).
     SafeToRetry,
     /// No idempotency guarantee on this route's source leg. The panel must send
     /// the user to check the payment's real state instead of offering a retry.
@@ -185,8 +188,7 @@ impl RetryPolicy {
     pub fn guidance(&self) -> &'static str {
         match self {
             RetryPolicy::SafeToRetry => {
-                "This send can be safely retried — it carries an idempotency key, \
-                 so a retry cannot pay twice."
+                "Try again re-sends this same quote, so it can't pay twice."
             }
             RetryPolicy::MustCheckStateFirst => {
                 "Check this payment's status in Transactions before retrying. \

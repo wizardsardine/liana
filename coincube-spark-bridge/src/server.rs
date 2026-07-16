@@ -955,8 +955,30 @@ async fn handle_send_payment(
     // and dispatch to `sdk.lnurl_pay` instead of `sdk.send_payment`.
     let handle = params.prepare_handle;
 
-    if let Some((_inserted_at, prepare)) = state.pending_prepares.lock().await.remove(&handle) {
-        return execute_regular_send(id, sdk, prepare, params.idempotency_key).await;
+    // Clone the prepare rather than removing it up front. A cross-chain
+    // (token-leg) send must stay re-sendable under the *same* handle after a
+    // failure: the provider derives its BTC-leg `TransferId` from this prepare's
+    // swap id, so re-sending the identical quote dedups at the Spark protocol
+    // level instead of paying a second time (see `derive_btc_leg_transfer_id` in
+    // the SDK). A regular send has no such retry path, and a success consumes
+    // the handle either way. The `PREPARE_TTL` sweep evicts a retained-but-
+    // abandoned prepare after five minutes.
+    let peeked = {
+        let guard = state.pending_prepares.lock().await;
+        guard.get(&handle).map(|(_, prepare)| prepare.clone())
+    };
+    if let Some(prepare) = peeked {
+        let retain_on_failure =
+            prepare.token_identifier.is_some() || prepare.conversion_estimate.is_some();
+        let response = execute_regular_send(id, sdk, prepare, params.idempotency_key).await;
+        let succeeded = matches!(
+            &response.result,
+            coincube_spark_protocol::ResponseResult::Ok(_)
+        );
+        if succeeded || !retain_on_failure {
+            state.pending_prepares.lock().await.remove(&handle);
+        }
+        return response;
     }
 
     if let Some((_inserted_at, prepare)) = state.pending_lnurl_prepares.lock().await.remove(&handle)

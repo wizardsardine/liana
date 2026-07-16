@@ -424,9 +424,10 @@ fn phase_body<'a>(
             let mut actions = Row::new().spacing(10);
             if policy.may_retry() {
                 actions = actions.push(
-                    // Not `ConfirmRequested`: the prepare handle died with the
-                    // failed send, so a retry has to re-prepare. It reuses the
-                    // original idempotency key, which is what makes it safe.
+                    // Not `ConfirmRequested` (that only fires from `Prepared`).
+                    // `CrossChainRetryRequested` re-sends the same retained quote
+                    // — same swap id, so the BTC leg can't pay twice — or, once
+                    // the quote has expired, downgrades to "check status".
                     button::primary(None, "Try again")
                         .on_press(Message::SparkSend(
                             SparkSendMessage::CrossChainRetryRequested,
