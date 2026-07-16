@@ -1184,9 +1184,11 @@ pub fn define_coincube_connect<'a>(
 /// drift. Presets are a thin setter layer over the two custom MB fields:
 /// `on_prune`/`on_mempool` receive the raw MB string the widget produces (an
 /// empty mempool string means "leave blank" = bitcoind's 300 MB default =
-/// `max_mempool_mb: None`). `small_computer` is the one-click preset that sets
-/// both. The estimated-total line is honest about the unprunable chainstate
-/// floor — the prune choice only bounds block data.
+/// `max_mempool_mb: None`). `small_computer` and `regular_computer` are the
+/// one-click machine-profile presets that set both fields at once (550 MB prune
+/// + 100 MB mempool, and the 15 GB / 300 MB defaults respectively). The
+/// estimated-total line is honest about the unprunable chainstate floor — the
+/// prune choice only bounds block data.
 #[allow(clippy::too_many_arguments)]
 pub fn node_resources_controls<'a, M>(
     prune: &'a form::Value<String>,
