@@ -424,7 +424,7 @@ fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
             Tile::Import,
             "Import extended public key file",
             None::<String>,
-            Some(list::entry_chevron()),
+            Some(list::right_chevron()),
             button::EntryWidth::Standard,
             Some(Msg::XpubLoadFromFile),
         );
@@ -433,7 +433,7 @@ fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
             Tile::Paste,
             "Paste an extended public key",
             None::<String>,
-            Some(list::entry_chevron()),
+            Some(list::right_chevron()),
             button::EntryWidth::Standard,
             Some(Msg::XpubSelectPaste),
         );

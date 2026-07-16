@@ -204,7 +204,7 @@ pub fn registration_key_entry(
     let trailing = if done {
         Some(pill::registered().into())
     } else if can_register {
-        Some(list::entry_chevron())
+        Some(list::right_chevron())
     } else {
         Some(text::new::caption("-").style(theme::text::tertiary).into())
     };

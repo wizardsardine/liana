@@ -169,7 +169,7 @@ pub fn list_entry_row<'a, M: Clone + 'a>(
     button::list_entry(content, accent, width, msg)
 }
 
-pub fn entry_chevron<'a, M: 'a>() -> Element<'a, M> {
+pub fn right_chevron<'a, M: 'a>() -> Element<'a, M> {
     icon::chevron_right()
         .size(18)
         .style(theme::text::secondary)
@@ -225,13 +225,12 @@ pub fn entry_paste_xpub<'a, M: Clone + 'a>(
 pub fn entry_organization<'a, M: Clone + 'a>(
     title: impl Display,
     subtitle: Option<impl Display>,
-    trailing: Option<Element<'a, M>>,
     msg: Option<M>,
 ) -> Element<'a, M> {
-    list_entry_row(
+    list_entry_chevron(
         Some(badge::tile(Tile::Org).into()),
         section_body(title, subtitle),
-        trailing,
+        None,
         None,
         EntryWidth::Standard,
         msg,
@@ -265,7 +264,7 @@ pub fn account_entry<'a, M: Clone + 'a>(
     let entry = list_entry_row(
         Some(badge::tile(Tile::Account).into()),
         body,
-        Some(entry_chevron()),
+        Some(right_chevron()),
         None,
         EntryWidth::Deletable,
         on_select,
@@ -299,23 +298,37 @@ pub fn entry_wallet<'a, M: Clone + 'a>(
 ) -> Element<'a, M> {
     let title = title.to_string();
     let title = truncate(&title, 25);
-    let trailing = Some(
-        row![status_pill, entry_chevron()]
-            .spacing(HSpacing::ML)
-            .align_y(Alignment::Center)
-            .into(),
-    );
 
     let accent = accent.map(|s| entry_accent(s));
 
-    list_entry_row(
+    list_entry_chevron(
         Some(badge::tile(Tile::Wallet).into()),
         wallet_body(title, role_pill, subtitle),
-        trailing,
+        status_pill,
         accent,
         EntryWidth::Standard,
         msg,
     )
+}
+
+pub fn list_entry_chevron<'a, M: Clone + 'a>(
+    tile: Option<Element<'a, M>>,
+    body: impl Into<Element<'a, M>>,
+    trailing: Option<Element<'a, M>>,
+    accent: Option<ListEntryAccent>,
+    width: EntryWidth,
+    msg: Option<M>,
+) -> Element<'a, M> {
+    let trailing = row![trailing, right_chevron()]
+        .spacing(HSpacing::ML)
+        .align_y(Alignment::Center);
+    let body = Container::new(body).width(Length::Fill);
+    let content = row![tile, body, trailing]
+        .spacing(16)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+
+    button::list_entry(content, accent, width, msg)
 }
 
 /// "(1 key)" / "({n} keys)" caption shown beside a wallet title; `None` for no keys.
