@@ -635,31 +635,30 @@ pub fn backup_descriptor<'a>(
     done: bool,
     help_open: bool,
 ) -> Element<'a, Message> {
-    let descriptor_str = descriptor.to_string();
-
-    let backup_button = btn_backup_descriptor(Some(Message::BackupDescriptor), done);
-
-    let copy_button = button::btn_copy(Some(Message::Clipboard(descriptor_str.clone())));
-
     let help_button = modal::optional_section(
         help_open,
         "Learn more".to_string(),
-        || Message::ShowBackupDescriptorHelp(false),
         || Message::ShowBackupDescriptorHelp(true),
+        || Message::ShowBackupDescriptorHelp(false),
     );
     let help = help_open.then_some(text::new::caption(prompt::BACKUP_DESCRIPTOR_HELP));
     let intro = column![
         text::new::caption(prompt::BACKUP_DESCRIPTOR_MESSAGE),
         help_button,
         help,
-    ]
-    .max_width(1000);
+    ];
 
     let error_card = error.map(|e| card::error("Failed to export backup", e.to_string()));
 
+    let descriptor_str = descriptor.to_string();
+
+    let backup_button = btn_backup_descriptor(Some(Message::BackupDescriptor), !done);
+    let copy_button = column![
+        button::btn_copy(Some(Message::Clipboard(descriptor_str.clone()))),
+        Space::with_height(10)
+    ];
     let descriptor_scroll =
-        scrollable::horizontal_thin(column![text::new::caption(descriptor_str)])
-            .width(Length::Fill);
+        scrollable::horizontal_thin(text::new::caption(descriptor_str)).width(Length::Fill);
     let descriptor_actions = row![Space::fill_width(), backup_button];
     let descriptor_header = row![descriptor_scroll, copy_button]
         .align_y(Alignment::Center)
@@ -671,18 +670,16 @@ pub fn backup_descriptor<'a>(
             descriptor_actions,
         ]
         .spacing(10),
-    )
-    .max_width(1500);
+    );
 
-    let policy_card = card::simple(display_policy(descriptor.policy(), keys))
-        .width(Length::Fill)
-        .max_width(1500);
+    let policy_card = card::simple(display_policy(descriptor.policy(), keys)).width(Length::Fill);
 
     let backup_checkbox = checkbox(done)
         .label("I have backed up my descriptor")
         .on_toggle(Message::UserActionDone);
 
-    let next_button = btn_next(done.then_some(Message::Next));
+    let button_next = btn_next(done.then_some(Message::Next));
+    let row_next = row![Space::fill_width(), button_next];
 
     let content = column![
         intro,
@@ -690,9 +687,10 @@ pub fn backup_descriptor<'a>(
         descriptor_card,
         policy_card,
         backup_checkbox,
-        next_button,
+        row_next,
         Space::with_height(20),
     ]
+    .max_width(800)
     .spacing(50);
 
     layout(
