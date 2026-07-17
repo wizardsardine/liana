@@ -642,6 +642,25 @@ impl Tab {
                     let network = i.network;
                     let originating_cube_id = i.cube_settings.as_ref().map(|c| c.id.clone());
 
+                    // Recovery-Kit *seed* restore: the deleted Cube's original
+                    // UUID + name, threaded through the context by
+                    // `RecoveryKitRestoreStep` from the decrypted kit.
+                    // `find_or_create_cube` re-mints the Cube with this UUID so
+                    // Connect re-registration reactivates the deleted Cube
+                    // instead of creating a duplicate. Gated on
+                    // `cube_settings.is_none()`: that's the wiped-install
+                    // recovery flow (launched from Home with no local Cube to
+                    // attach to). When a Cube shell already exists locally
+                    // (`cube_settings.is_some()`, e.g. AddWallet inside a Cube)
+                    // the `originating_cube_id` path owns that association, and
+                    // `context.cube_id` there is that existing Cube's identity —
+                    // not a restore target — so we deliberately skip it.
+                    let restored_cube = if i.cube_settings.is_none() {
+                        i.context.cube_id.clone().zip(i.context.cube_name.clone())
+                    } else {
+                        None
+                    };
+
                     // Capture restore-flow state up-front. Cloning the
                     // `Zeroizing<String>` here means the PIN copy
                     // carried into the Task is its own heap-zeroing
@@ -666,6 +685,7 @@ impl Tab {
                                 &wallet_alias,
                                 network,
                                 originating_cube_id,
+                                restored_cube,
                                 restore_seed.as_ref(),
                             )
                             .await?;
@@ -1714,11 +1734,16 @@ async fn find_or_create_cube(
     wallet_alias: &Option<String>,
     network: bitcoin::Network,
     originating_cube_id: Option<String>,
+    // `(original_uuid, original_name)` for a Recovery-Kit *seed* restore. When
+    // present, the restored Cube reuses the deleted Cube's UUID so the Connect
+    // `register_cube` call (idempotent on UUID) reactivates it rather than
+    // creating a duplicate. `None` for every non-restore flow.
+    restored_cube: Option<(String, String)>,
     restore_seed: Option<&RestoreCubeSeed>,
 ) -> Result<app::settings::CubeSettings, String> {
     // Helper: decorate a freshly-minted CubeSettings with
     // PIN + master-signer-fingerprint when we're on the restore path.
-    // Pulled out so the three "new cube" branches share one code path.
+    // Pulled out so the "new cube" branches share one code path.
     let decorate_new =
         |mut cube: app::settings::CubeSettings| -> Result<app::settings::CubeSettings, String> {
             if let Some(seed) = restore_seed {
@@ -1729,6 +1754,27 @@ async fn find_or_create_cube(
             }
             Ok(cube)
         };
+
+    // Base CubeSettings for a *brand-new* Cube. On the Recovery-Kit restore
+    // path we reuse the deleted Cube's original UUID + name; otherwise fall
+    // back to a fresh UUID + the wallet alias. The UUID is preserved verbatim
+    // (not round-tripped through `uuid::Uuid`) so the server-side UUID string
+    // match `register_cube` relies on stays exact.
+    let new_cube_base = || -> app::settings::CubeSettings {
+        match &restored_cube {
+            Some((uuid, name)) => {
+                let mut cube = app::settings::CubeSettings::new(name.clone(), network);
+                cube.id = uuid.clone();
+                cube
+            }
+            None => app::settings::CubeSettings::new(
+                wallet_alias
+                    .clone()
+                    .unwrap_or_else(|| format!("My {} Cube", network)),
+                network,
+            ),
+        }
+    };
 
     match app::settings::Settings::from_file(network_dir) {
         Ok(mut settings_data) => {
@@ -1744,6 +1790,48 @@ async fn find_or_create_cube(
                 .find(|c| c.vault_wallet_id.as_ref() == Some(wallet_id))
             {
                 return Ok(existing_cube.clone());
+            }
+
+            // Recovery-Kit restore: the restored Cube must carry the deleted
+            // Cube's *original* UUID so the Connect `register_cube` call
+            // (idempotent on UUID) reactivates it instead of minting a
+            // duplicate — the reported bug where recovery produced a new Cube
+            // and left the original still listed as recoverable. This is
+            // checked before the originating / empty-cube reuse below on
+            // purpose: attaching the wallet to a *different* local Cube (with
+            // its own UUID) is exactly the duplicate we're trying to avoid. If
+            // a local Cube already carries the original UUID (a re-run),
+            // reuse it; otherwise mint one with that UUID.
+            if let Some((uuid, _)) = &restored_cube {
+                if let Some(idx) = settings_data.cubes.iter().position(|c| &c.id == uuid) {
+                    if settings_data.cubes[idx].vault_wallet_id.is_some() {
+                        return Err(format!(
+                            "Cube '{}' has already been recovered on this device.",
+                            settings_data.cubes[idx].name
+                        ));
+                    }
+                    let mut cube = settings_data.cubes[idx].clone();
+                    cube.vault_wallet_id = Some(wallet_id.clone());
+                    let cube = decorate_new(cube)?;
+                    settings_data.cubes[idx] = cube.clone();
+
+                    info!(
+                        "Reactivating recovered cube '{}' ({}) with wallet {} on {} network",
+                        cube.name, uuid, wallet_id, network
+                    );
+
+                    return save_cube_settings(network_dir, cube, network, settings_data).await;
+                }
+
+                let cube = decorate_new(new_cube_base().with_vault(wallet_id.clone()))?;
+
+                info!(
+                    "Re-minting recovered cube '{}' ({}) for wallet {} on {} network",
+                    cube.name, uuid, wallet_id, network
+                );
+
+                settings_data.cubes.push(cube.clone());
+                return save_cube_settings(network_dir, cube, network, settings_data).await;
             }
 
             // Second, if we have an originating cube ID, validate and use it
@@ -1814,16 +1902,10 @@ async fn find_or_create_cube(
                 return save_cube_settings(network_dir, empty_cube, network, settings_data).await;
             }
 
-            // Third, create a new cube for this wallet
-            let cube = decorate_new(
-                app::settings::CubeSettings::new(
-                    wallet_alias
-                        .clone()
-                        .unwrap_or_else(|| format!("My {} Cube", network)),
-                    network,
-                )
-                .with_vault(wallet_id.clone()),
-            )?;
+            // Finally, create a new cube for this wallet. `restored_cube` is
+            // `None` here (the restore branch above returns early), so
+            // `new_cube_base` yields the alias-based fresh-UUID cube.
+            let cube = decorate_new(new_cube_base().with_vault(wallet_id.clone()))?;
             let cube_name = cube.name.clone();
 
             info!(
@@ -1835,16 +1917,9 @@ async fn find_or_create_cube(
             save_cube_settings(network_dir, cube, network, settings_data).await
         }
         Err(_) => {
-            // No settings file yet, create first cube
-            let cube = decorate_new(
-                app::settings::CubeSettings::new(
-                    wallet_alias
-                        .clone()
-                        .unwrap_or_else(|| format!("My {} Cube", network)),
-                    network,
-                )
-                .with_vault(wallet_id.clone()),
-            )?;
+            // No settings file yet, create first cube. On the restore path
+            // `new_cube_base` reuses the deleted Cube's original UUID + name.
+            let cube = decorate_new(new_cube_base().with_vault(wallet_id.clone()))?;
             let cube_name = cube.name.clone();
 
             info!(
@@ -2143,5 +2218,153 @@ mod duress_wipe_target_tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod find_or_create_cube_tests {
+    //! Regression tests for the Recovery-Kit restore bug: recovering a
+    //! deleted Cube must reuse the deleted Cube's *original* UUID so the
+    //! Connect `register_cube` call (idempotent on UUID) reactivates it
+    //! rather than minting a brand-new Cube (which left the original still
+    //! listed as recoverable and let the flow be repeated indefinitely).
+    use super::*;
+
+    const ORIG_UUID: &str = "11111111-2222-3333-4444-555555555555";
+
+    fn temp_network_dir(tag: &str) -> NetworkDirectory {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "coincube-foc-{}-{}-{}",
+            tag,
+            std::process::id(),
+            seq
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        NetworkDirectory::new(path)
+    }
+
+    fn wallet_id() -> WalletId {
+        WalletId::new("abcd1234".to_string(), Some(1_700_000_000))
+    }
+
+    /// The reported scenario: recovery on a wiped install (no settings
+    /// file). The restored Cube must carry the original UUID + name, not a
+    /// freshly generated one.
+    #[tokio::test]
+    async fn restore_on_wiped_install_reuses_original_uuid() {
+        let nd = temp_network_dir("wiped");
+        let wid = wallet_id();
+        let cube = find_or_create_cube(
+            &nd,
+            &wid,
+            &Some("Ignored Alias".to_string()),
+            bitcoin::Network::Bitcoin,
+            None, // originating_cube_id
+            Some((ORIG_UUID.to_string(), "My Vault".to_string())),
+            None, // restore_seed
+        )
+        .await
+        .expect("restore should succeed");
+
+        assert_eq!(
+            cube.id, ORIG_UUID,
+            "restored Cube must keep the original UUID"
+        );
+        assert_eq!(cube.name, "My Vault", "restored Cube keeps the original name");
+        assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
+    }
+
+    /// Recovery on an install that already holds other, unrelated Cubes:
+    /// the restore must mint a *new* Cube carrying the original UUID, never
+    /// attach the restored wallet to an unrelated local Cube.
+    #[tokio::test]
+    async fn restore_with_other_cubes_mints_cube_with_original_uuid() {
+        let nd = temp_network_dir("others");
+        let mut settings = app::settings::Settings::default();
+        let other =
+            app::settings::CubeSettings::new("Other".to_string(), bitcoin::Network::Bitcoin)
+                .with_vault(WalletId::new("otherchk".to_string(), Some(1)));
+        let other_id = other.id.clone();
+        settings.cubes.push(other);
+        update_settings_file(&nd, |_| Some(settings)).await.unwrap();
+
+        let wid = wallet_id();
+        let cube = find_or_create_cube(
+            &nd,
+            &wid,
+            &None,
+            bitcoin::Network::Bitcoin,
+            None,
+            Some((ORIG_UUID.to_string(), "My Vault".to_string())),
+            None,
+        )
+        .await
+        .expect("restore should succeed");
+
+        assert_eq!(cube.id, ORIG_UUID);
+        assert_ne!(cube.id, other_id, "must not reuse the unrelated Cube");
+        let reloaded = app::settings::Settings::from_file(&nd).unwrap();
+        assert_eq!(reloaded.cubes.len(), 2, "unrelated Cube is preserved");
+    }
+
+    /// If a vault-less local Cube already carries the original UUID (e.g. a
+    /// partial earlier run), reactivate it in place — don't duplicate it.
+    #[tokio::test]
+    async fn restore_reactivates_existing_cube_with_original_uuid() {
+        let nd = temp_network_dir("reactivate");
+        let mut settings = app::settings::Settings::default();
+        let mut shell =
+            app::settings::CubeSettings::new("Shell".to_string(), bitcoin::Network::Bitcoin);
+        shell.id = ORIG_UUID.to_string();
+        settings.cubes.push(shell);
+        update_settings_file(&nd, |_| Some(settings)).await.unwrap();
+
+        let wid = wallet_id();
+        let cube = find_or_create_cube(
+            &nd,
+            &wid,
+            &None,
+            bitcoin::Network::Bitcoin,
+            None,
+            Some((ORIG_UUID.to_string(), "My Vault".to_string())),
+            None,
+        )
+        .await
+        .expect("restore should succeed");
+
+        assert_eq!(cube.id, ORIG_UUID);
+        assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
+        let reloaded = app::settings::Settings::from_file(&nd).unwrap();
+        assert_eq!(
+            reloaded.cubes.len(),
+            1,
+            "must reactivate in place, not create a duplicate"
+        );
+    }
+
+    /// Non-restore install is unchanged: a fresh UUID and the wallet alias.
+    #[tokio::test]
+    async fn non_restore_install_mints_fresh_uuid() {
+        let nd = temp_network_dir("fresh");
+        let wid = wallet_id();
+        let cube = find_or_create_cube(
+            &nd,
+            &wid,
+            &Some("My Alias".to_string()),
+            bitcoin::Network::Bitcoin,
+            None,
+            None, // no restored_cube
+            None,
+        )
+        .await
+        .expect("install should succeed");
+
+        assert_ne!(cube.id, ORIG_UUID);
+        assert_eq!(cube.name, "My Alias");
+        assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
     }
 }
