@@ -656,7 +656,11 @@ impl Tab {
                     // `context.cube_id` there is that existing Cube's identity —
                     // not a restore target — so we deliberately skip it.
                     let restored_cube = if i.cube_settings.is_none() {
-                        i.context.cube_id.clone().zip(i.context.cube_name.clone())
+                        i.context
+                            .cube_id
+                            .clone()
+                            .zip(i.context.cube_name.clone())
+                            .map(|(uuid, name)| RestoreCubeIdentity { uuid, name })
                     } else {
                         None
                     };
@@ -1728,17 +1732,31 @@ struct RestoreCubeSeed {
     master_signer_fingerprint: bitcoin::bip32::Fingerprint,
 }
 
+/// The deleted Cube's original identity, carried out of the decrypted
+/// kit/envelope by the restore steps (via `ctx.cube_id` / `ctx.cube_name`).
+/// Both fields are always present together: a restore either knows the full
+/// original identity or it isn't a seed restore at all — which is why
+/// `find_or_create_cube` takes `Option<RestoreCubeIdentity>` rather than a
+/// struct of `Option`s.
+struct RestoreCubeIdentity {
+    /// Original UUID, preserved verbatim (see `CubeSettings::new_with_raw_id`).
+    uuid: String,
+    /// Original display name, so the revived Cube doesn't inherit the
+    /// wallet-alias default.
+    name: String,
+}
+
 async fn find_or_create_cube(
     network_dir: &NetworkDirectory,
     wallet_id: &WalletId,
     wallet_alias: &Option<String>,
     network: bitcoin::Network,
     originating_cube_id: Option<String>,
-    // `(original_uuid, original_name)` for a Recovery-Kit *seed* restore. When
-    // present, the restored Cube reuses the deleted Cube's UUID so the Connect
+    // Original Cube identity for a Recovery-Kit *seed* restore. When present,
+    // the restored Cube reuses the deleted Cube's UUID so the Connect
     // `register_cube` call (idempotent on UUID) reactivates it rather than
     // creating a duplicate. `None` for every non-restore flow.
-    restored_cube: Option<(String, String)>,
+    restored_cube: Option<RestoreCubeIdentity>,
     restore_seed: Option<&RestoreCubeSeed>,
 ) -> Result<app::settings::CubeSettings, String> {
     // Helper: decorate a freshly-minted CubeSettings with
@@ -1756,17 +1774,16 @@ async fn find_or_create_cube(
         };
 
     // Base CubeSettings for a *brand-new* Cube. On the Recovery-Kit restore
-    // path we reuse the deleted Cube's original UUID + name; otherwise fall
-    // back to a fresh UUID + the wallet alias. The UUID is preserved verbatim
-    // (not round-tripped through `uuid::Uuid`) so the server-side UUID string
-    // match `register_cube` relies on stays exact.
+    // path we reuse the deleted Cube's original UUID + name (verbatim — see
+    // `new_with_raw_id`); otherwise fall back to a fresh UUID + the wallet
+    // alias.
     let new_cube_base = || -> app::settings::CubeSettings {
         match &restored_cube {
-            Some((uuid, name)) => {
-                let mut cube = app::settings::CubeSettings::new(name.clone(), network);
-                cube.id = uuid.clone();
-                cube
-            }
+            Some(identity) => app::settings::CubeSettings::new_with_raw_id(
+                identity.uuid.clone(),
+                identity.name.clone(),
+                network,
+            ),
             None => app::settings::CubeSettings::new(
                 wallet_alias
                     .clone()
@@ -1802,7 +1819,7 @@ async fn find_or_create_cube(
             // its own UUID) is exactly the duplicate we're trying to avoid. If
             // a local Cube already carries the original UUID (a re-run),
             // reuse it; otherwise mint one with that UUID.
-            if let Some((uuid, _)) = &restored_cube {
+            if let Some(RestoreCubeIdentity { uuid, .. }) = &restored_cube {
                 if let Some(idx) = settings_data.cubes.iter().position(|c| &c.id == uuid) {
                     if settings_data.cubes[idx].vault_wallet_id.is_some() {
                         return Err(format!(
@@ -2264,7 +2281,10 @@ mod find_or_create_cube_tests {
             &Some("Ignored Alias".to_string()),
             bitcoin::Network::Bitcoin,
             None, // originating_cube_id
-            Some((ORIG_UUID.to_string(), "My Vault".to_string())),
+            Some(RestoreCubeIdentity {
+                uuid: ORIG_UUID.to_string(),
+                name: "My Vault".to_string(),
+            }),
             None, // restore_seed
         )
         .await
@@ -2302,7 +2322,10 @@ mod find_or_create_cube_tests {
             &None,
             bitcoin::Network::Bitcoin,
             None,
-            Some((ORIG_UUID.to_string(), "My Vault".to_string())),
+            Some(RestoreCubeIdentity {
+                uuid: ORIG_UUID.to_string(),
+                name: "My Vault".to_string(),
+            }),
             None,
         )
         .await
@@ -2333,7 +2356,10 @@ mod find_or_create_cube_tests {
             &None,
             bitcoin::Network::Bitcoin,
             None,
-            Some((ORIG_UUID.to_string(), "My Vault".to_string())),
+            Some(RestoreCubeIdentity {
+                uuid: ORIG_UUID.to_string(),
+                name: "My Vault".to_string(),
+            }),
             None,
         )
         .await
