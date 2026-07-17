@@ -2274,7 +2274,10 @@ mod find_or_create_cube_tests {
             cube.id, ORIG_UUID,
             "restored Cube must keep the original UUID"
         );
-        assert_eq!(cube.name, "My Vault", "restored Cube keeps the original name");
+        assert_eq!(
+            cube.name, "My Vault",
+            "restored Cube keeps the original name"
+        );
         assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
     }
 
