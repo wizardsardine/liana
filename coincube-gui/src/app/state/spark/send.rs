@@ -493,6 +493,7 @@ impl State for SparkSend {
                 recent_transactions: &self.recent_transactions,
                 balance_sats: self.balance_sats,
                 bitcoin_unit: cache.bitcoin_unit,
+                reference_btc_usd_price: super::reference_btc_usd_price(cache),
                 show_direction_badges: cache.show_direction_badges,
                 cross_chain_ctx: self.cross_chain.as_ref(),
                 slippage_input: &self.slippage_input,
@@ -951,6 +952,25 @@ async fn resolve_and_prepare(
         ));
     }
 
+    // A cross-chain (Solana / EVM / Tron) address parses as `Other` here — the
+    // SDK's Bitcoin parser drops it in the catch-all. Under a bitcoin rail
+    // that's a wrong-network paste, so probe the cross-chain parser and, if it
+    // recognises the address, reject with the chain named rather than letting
+    // it fail cryptically at prepare. A genuine `Other` (BOLT12) has no
+    // cross-chain address and falls through to the normal prepare below.
+    if matches!(parsed.kind, ParseInputKind::Other) {
+        if let Ok(routes) = backend.get_cross_chain_routes(input.clone()).await {
+            if let Some(addr) = routes.address {
+                return Err(format!(
+                    "This looks like {}, which can't receive bitcoin. Choose USDt or \
+                     USDC for what they receive to send there, or paste a Bitcoin \
+                     destination.",
+                    cross_chain_family_label(&addr.family),
+                ));
+            }
+        }
+    }
+
     match parsed.kind {
         ParseInputKind::LnurlPay | ParseInputKind::LightningAddress => {
             let amount = amount_sat.ok_or_else(|| {
@@ -982,6 +1002,17 @@ async fn resolve_and_prepare(
             .prepare_send(input, amount_sat)
             .await
             .map_err(|e| format!("prepare_send failed: {e}")),
+    }
+}
+
+/// Human label for a [`coincube_spark_protocol::CrossChainAddress`] family
+/// (`"evm"` / `"solana"` / `"tron"`), for the wrong-network error copy.
+fn cross_chain_family_label(family: &str) -> &'static str {
+    match family {
+        "solana" => "a Solana address",
+        "tron" => "a Tron address",
+        "evm" => "an EVM (Ethereum) address",
+        _ => "a cross-chain address",
     }
 }
 
@@ -1175,6 +1206,17 @@ mod tests {
         assert!(SparkSendTarget::Lightning.accepts_parsed(&K::Other));
         assert!(SparkSendTarget::OnChain.accepts_parsed(&K::Other));
         assert!(SparkSendTarget::Spark.accepts_parsed(&K::Other));
+    }
+
+    #[test]
+    fn cross_chain_family_label_names_the_chain() {
+        assert_eq!(cross_chain_family_label("solana"), "a Solana address");
+        assert_eq!(cross_chain_family_label("tron"), "a Tron address");
+        assert_eq!(cross_chain_family_label("evm"), "an EVM (Ethereum) address");
+        assert_eq!(
+            cross_chain_family_label("dogecoin"),
+            "a cross-chain address"
+        );
     }
 
     fn prepared_with_quote(expires_at: &str) -> PrepareSendOk {

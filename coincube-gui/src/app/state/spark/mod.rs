@@ -83,15 +83,7 @@ pub(crate) fn unified_spark_balance_sats(
     stable: Option<&StableBalanceSnapshot>,
     cache: &Cache,
 ) -> u64 {
-    // `btc_usd_price` is only set when the user's fiat preference is USD; for
-    // other fiats fall back to the user-fiat converter's per-BTC price so the
-    // holding still shows (with a small FX-spread approximation) rather than
-    // collapsing to zero. Mirrors `global_home`'s SparkBalanceUpdated handler.
-    let reference_price = cache.btc_usd_price.or_else(|| {
-        let converter: Option<crate::app::view::FiatAmountConverter> =
-            cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
-        converter.map(|c| c.price_per_btc())
-    });
+    let reference_price = reference_btc_usd_price(cache);
     let usdb_as_sats = stable
         .map(|sb| {
             crate::app::breez_spark::assets::stable_token_as_sats(
@@ -102,4 +94,17 @@ pub(crate) fn unified_spark_balance_sats(
         })
         .unwrap_or(0);
     btc_sats.saturating_add(usdb_as_sats)
+}
+
+/// The BTC/USD price used to value USD-pegged tokens (USDB / USDT / USDC) in
+/// sats. `btc_usd_price` is only set when the user's fiat preference is USD; for
+/// other fiats fall back to the user-fiat converter's per-BTC price so a holding
+/// still shows (with a small FX-spread approximation) rather than collapsing to
+/// zero. `None` when no price is known. Mirrors `global_home`'s balance handler.
+pub(crate) fn reference_btc_usd_price(cache: &Cache) -> Option<f64> {
+    cache.btc_usd_price.or_else(|| {
+        let converter: Option<crate::app::view::FiatAmountConverter> =
+            cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+        converter.map(|c| c.price_per_btc())
+    })
 }

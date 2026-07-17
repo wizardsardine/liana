@@ -24,6 +24,7 @@ use iced::{
 
 use coincube_core::miniscript::bitcoin::{Amount, Network};
 
+use crate::app::breez_spark::assets::stable_token_as_sats;
 use crate::app::state::spark::cross_chain::{self, supported_on};
 use crate::app::state::spark::send::{CrossChainContext, SparkSendPhase, SparkSendTarget};
 use crate::app::view::shared::picker::picker_row;
@@ -43,6 +44,9 @@ pub struct SparkSendView<'a> {
     /// Unified balance (sats: BTC + Stable Balance), shown on the YOU SEND card.
     pub balance_sats: u64,
     pub bitcoin_unit: BitcoinDisplayUnit,
+    /// BTC/USD reference price for the cross-chain conversion-fee sats estimate.
+    /// `None` when no price is known — the fee then shows in the asset only.
+    pub reference_btc_usd_price: Option<f64>,
     pub show_direction_badges: bool,
     /// The "THEY RECEIVE" selection — drives the two-card selector and the
     /// destination placeholder.
@@ -143,6 +147,8 @@ impl<'a> SparkSendView<'a> {
             self.slippage_input,
             &self.advanced_open,
             self.quote_countdown.clone(),
+            self.reference_btc_usd_price,
+            self.bitcoin_unit,
         ));
 
         // ── Last transactions ─────────────────────────────────────────
@@ -164,6 +170,8 @@ fn phase_body<'a>(
     slippage_input: &str,
     advanced_open: &bool,
     quote_countdown: Option<cross_chain::QuoteCountdown>,
+    reference_btc_usd_price: Option<f64>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     use crate::app::view::SparkSendMessage;
     use coincube_ui::component::amount::format_u64_as_string;
@@ -350,13 +358,12 @@ fn phase_body<'a>(
                     ))
                     .push(kv_row(
                         "Conversion fee",
-                        format!(
-                            "{} {}",
-                            cross_chain::format_asset_amount(
-                                quote.fee_amount,
-                                quote.route.decimals
-                            ),
-                            quote.route.asset,
+                        conversion_fee_display(
+                            quote.fee_amount,
+                            quote.route.decimals,
+                            &quote.route.asset,
+                            reference_btc_usd_price,
+                            bitcoin_unit,
                         ),
                     ))
                     // Headline: the full sats debit from the wallet, fees
@@ -514,6 +521,43 @@ fn phase_body<'a>(
         .style(theme::card::simple)
         .into(),
     }
+}
+
+/// The cross-chain conversion fee for the preview: the fee in the destination
+/// asset, with a sats (or BTC) approximation alongside — the fee is quoted in
+/// USDT/USDC but the user spends bitcoin, so the sats figure is what compares
+/// against "Total you send". Asset-only when no BTC/USD price is available.
+fn conversion_fee_display(
+    fee_amount: u128,
+    decimals: u8,
+    asset: &str,
+    reference_btc_usd_price: Option<f64>,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> String {
+    let asset_part = format!(
+        "{} {}",
+        cross_chain::format_asset_amount(fee_amount, decimals),
+        asset,
+    );
+    // USDT/USDC are USD-pegged, so value the fee in sats the same way the wallet
+    // values its Stable Balance holding.
+    let sats = stable_token_as_sats(
+        fee_amount.min(u64::MAX as u128) as u64,
+        u32::from(decimals),
+        reference_btc_usd_price,
+    );
+    if sats == 0 {
+        return asset_part;
+    }
+    let unit = if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+        "BTC"
+    } else {
+        "SATS"
+    };
+    format!(
+        "{asset_part} (≈ {} {unit})",
+        Amount::from_sat(sats).to_formatted_string_with_unit(bitcoin_unit),
+    )
 }
 
 fn kv_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
@@ -740,4 +784,22 @@ pub fn send_target_picker_modal<'a>(
         .push(text("THEY RECEIVE").size(16).bold())
         .push(list)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conversion_fee_shows_a_sats_estimate_when_a_price_is_known() {
+        // 0.097921 USDT at $65,000/BTC ≈ 150 sats.
+        let s = conversion_fee_display(97_921, 6, "USDT", Some(65_000.0), BitcoinDisplayUnit::Sats);
+        assert_eq!(s, "0.097921 USDT (≈ 150 SATS)");
+    }
+
+    #[test]
+    fn conversion_fee_is_asset_only_without_a_price() {
+        let s = conversion_fee_display(97_921, 6, "USDT", None, BitcoinDisplayUnit::Sats);
+        assert_eq!(s, "0.097921 USDT");
+    }
 }
