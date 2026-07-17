@@ -7,13 +7,6 @@ use iced::{
     Alignment, Length,
 };
 
-use std::{
-    collections::{HashMap, HashSet},
-    net::{Ipv4Addr, Ipv6Addr},
-    path::PathBuf,
-    str::FromStr,
-};
-
 use liana::{
     descriptors::{LianaDescriptor, LianaPolicy},
     miniscript::bitcoin::{
@@ -22,17 +15,23 @@ use liana::{
         Network,
     },
 };
+use std::{
+    collections::{HashMap, HashSet},
+    net::{Ipv4Addr, Ipv6Addr},
+    path::PathBuf,
+    str::FromStr,
+};
 
 use liana_ui::{
     component::{
         button::{
-            self, btn_backend_options_help, btn_backup_descriptor, btn_check_connection, btn_next,
-            btn_select, EntryWidth,
+            self, btn_accept, btn_backend_options_help, btn_backup_descriptor,
+            btn_check_connection, btn_next, btn_select, EntryWidth,
         },
         card, collapse, form, installer as installer_layout,
         list::DeviceStatus,
         modal, scrollable, separation,
-        text::{self, h2, h4_bold, new, p1_bold, p1_regular, text, Text as _},
+        text::{self, h2, new, p1_regular, text, Text as _},
     },
     icon, theme,
     widget::*,
@@ -69,161 +68,150 @@ pub fn import_wallet_or_descriptor<'a>(
     error: Option<&'a String>,
     wallets: Vec<(&'a String, Option<&'a String>)>,
 ) -> Element<'a, Message> {
-    let mut col_wallets = Column::new()
-        .spacing(20)
-        .push(h4_bold("Load a previously used wallet"));
     let no_wallets = wallets.is_empty();
-    for (i, (name, alias)) in wallets.into_iter().enumerate() {
-        col_wallets = col_wallets.push(
-            Button::new(
-                Column::new()
-                    .push_maybe(alias.map(p1_bold))
-                    .push(p1_regular(name))
-                    .width(Length::Fill),
-            )
-            .style(theme::button::secondary)
-            .padding(10)
-            .on_press(Message::Select(i)),
-        );
-    }
-    let card_wallets: Element<'a, Message> = if no_wallets {
-        h4_bold("You have no current wallets").into()
+    let wallets: Element<'a, Message> = if no_wallets {
+        new::h3_semi("You have no current wallets").into()
     } else {
-        card::simple(col_wallets).into()
+        card::simple(wallets.into_iter().enumerate().fold(
+            column![new::h3_semi("Load a previously used wallet")].spacing(20),
+            |wallets, (i, (name, alias))| {
+                let content = column![
+                    alias.map(new::b5_bold),
+                    new::caption(name).style(theme::text::secondary),
+                ]
+                .width(Length::Fill);
+                wallets.push(
+                    Button::new(content)
+                        .style(theme::button::secondary)
+                        .padding(10)
+                        .on_press(Message::Select(i)),
+                )
+            },
+        ))
+        .into()
     };
 
-    let msg_next = (!invitation.value.is_empty()).then_some(Message::ImportRemoteWallet(
+    let fetch_invitation = (!invitation.value.is_empty()).then_some(Message::ImportRemoteWallet(
         message::ImportRemoteWallet::FetchInvitation,
     ));
-    let row_next = row![Space::fill_width(), btn_next(msg_next)];
-
-    let col_invitation_token = collapse::Collapse::new(
-        Column::new()
-            .spacing(5)
-            .push(h4_bold("Load a shared wallet").style(theme::text::primary))
-            .push(
-                text("If you received an invitation to join a shared wallet")
-                    .style(theme::text::secondary),
-            ),
-        Column::new()
-            .spacing(5)
-            .push(h4_bold("Load a shared wallet").style(theme::text::primary))
-            .push(
-                text("Type the invitation token you received by email")
-                    .style(theme::text::secondary),
-            ),
-        if let Some(wallet) = invitation_wallet {
-            Element::<'a, Message>::from(
-                Column::new()
-                    .push(Space::with_height(0))
-                    .push(
-                        Row::new()
-                            .spacing(5)
-                            .push(Space::with_width(15))
-                            .push(text("Accept invitation for wallet:"))
-                            .push(text(wallet).bold()),
-                    )
-                    .push(
-                        Row::new()
-                            .push(Space::with_width(Length::Fill))
-                            .push(
-                                button::secondary(None, "Accept")
-                                    .width(Length::Fixed(200.0))
-                                    .on_press(Message::ImportRemoteWallet(
-                                        message::ImportRemoteWallet::AcceptInvitation,
-                                    )),
-                            )
-                            .push(Space::with_width(Length::Fill)),
-                    )
-                    .push(Space::with_width(5))
-                    .spacing(20),
-            )
-        } else {
-            Element::<'a, Message>::from(
-                Container::new(
-                    Column::new()
-                        .push(Space::with_height(0))
-                        .push(
-                            Column::new()
-                                .push(text("Paste invitation:").bold())
-                                .push(
-                                    form::Form::new_trimmed("Invitation", invitation, |msg| {
-                                        Message::ImportRemoteWallet(
-                                            message::ImportRemoteWallet::ImportInvitationToken(msg),
-                                        )
-                                    })
-                                    .warning("Invitation token is invalid or expired")
-                                    .size(text::P1_SIZE)
-                                    .padding(10),
-                                )
-                                .spacing(10),
-                        )
-                        .push(row_next)
-                        .spacing(20),
-                )
-                .padding(15),
-            )
-        },
-    )
-    .padding(15);
-
-    let msg_next = (!imported_descriptor.value.is_empty() && imported_descriptor.valid).then_some(
-        Message::ImportRemoteWallet(message::ImportRemoteWallet::ConfirmDescriptor),
-    );
-    let row_next = row![Space::fill_width(), btn_next(msg_next)];
-
-    let col_descriptor = collapse::Collapse::new(
-        Column::new()
-            .spacing(5)
-            .push(h4_bold("Load a wallet from descriptor").style(theme::text::primary))
-            .push(text("Creates a new wallet from the descriptor").style(theme::text::secondary)),
-        Column::new()
-            .spacing(5)
-            .push(h4_bold("Load a wallet from descriptor").style(theme::text::primary))
-            .push(text("Creates a new wallet from the descriptor").style(theme::text::secondary)),
+    let invitation_form = column![
+        new::b5_bold("Paste invitation:"),
+        form::Form::new_trimmed("Invitation", invitation, |msg| {
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportInvitationToken(msg))
+        })
+        .warning("Invitation token is invalid or expired"),
+    ]
+    .spacing(10);
+    let invitation_content: Element<'a, Message> = if let Some(wallet) = invitation_wallet {
+        let wallet_label = row![
+            Space::with_width(15),
+            new::caption("Accept invitation for wallet:"),
+            new::b5_bold(wallet),
+        ]
+        .spacing(5);
+        let accept = row![
+            Space::fill_width(),
+            btn_accept(Some(Message::ImportRemoteWallet(
+                message::ImportRemoteWallet::AcceptInvitation,
+            ))),
+            Space::fill_width(),
+        ];
+        column![
+            Space::with_height(0),
+            wallet_label,
+            accept,
+            Space::with_width(5),
+        ]
+        .spacing(20)
+        .into()
+    } else {
         Container::new(
-            Column::new()
-                .push(Space::with_height(0))
-                .push(
-                    Column::new()
-                        .push(text("Descriptor:").bold())
-                        .push(
-                            form::Form::new_trimmed("Descriptor", imported_descriptor, |msg| {
-                                Message::ImportRemoteWallet(
-                                    message::ImportRemoteWallet::ImportDescriptor(msg),
-                                )
-                            })
-                            .warning("Either descriptor is invalid or incompatible with network")
-                            .size(text::P1_SIZE)
-                            .padding(10),
-                        )
-                        .push(text("or").bold())
-                        .push(button::primary(None, "Import descriptor").on_press(
-                            Message::ImportRemoteWallet(
-                                message::ImportRemoteWallet::ImportDescriptorFromFile,
-                            ),
-                        ))
-                        .spacing(10),
-                )
-                .push(row_next)
-                .spacing(20),
+            column![
+                Space::with_height(0),
+                invitation_form,
+                row![Space::fill_width(), btn_next(fetch_invitation)],
+            ]
+            .spacing(20),
         )
-        .padding(15),
+        .padding(15)
+        .into()
+    };
+
+    let invitation = collapse::Collapse::new(
+        column![
+            new::h3_semi("Load a shared wallet").style(theme::text::primary),
+            new::caption("If you received an invitation to join a shared wallet")
+                .style(theme::text::secondary),
+        ]
+        .spacing(5),
+        column![
+            new::h3_semi("Load a shared wallet").style(theme::text::primary),
+            new::caption("Type the invitation token you received by email")
+                .style(theme::text::secondary),
+        ]
+        .spacing(5),
+        invitation_content,
     )
     .padding(15);
+
+    let confirm_descriptor = (!imported_descriptor.value.is_empty() && imported_descriptor.valid)
+        .then_some(Message::ImportRemoteWallet(
+            message::ImportRemoteWallet::ConfirmDescriptor,
+        ));
+    let descriptor_form = column![
+        new::b5_bold("Descriptor:"),
+        form::Form::new_trimmed("Descriptor", imported_descriptor, |msg| {
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportDescriptor(msg))
+        })
+        .warning("Either descriptor is invalid or incompatible with network"),
+        new::b5_bold("or"),
+        button::primary(None, "Import descriptor").on_press(Message::ImportRemoteWallet(
+            message::ImportRemoteWallet::ImportDescriptorFromFile,
+        )),
+    ]
+    .spacing(10);
+    let descriptor_content = Container::new(
+        column![
+            Space::with_height(0),
+            descriptor_form,
+            row![Space::fill_width(), btn_next(confirm_descriptor)],
+        ]
+        .spacing(20),
+    )
+    .padding(15);
+
+    let descriptor = collapse::Collapse::new(
+        column![
+            new::h3_semi("Load a wallet from descriptor").style(theme::text::primary),
+            new::caption("Creates a new wallet from the descriptor").style(theme::text::secondary),
+        ]
+        .spacing(5),
+        column![
+            new::h3_semi("Load a wallet from descriptor").style(theme::text::primary),
+            new::caption("Creates a new wallet from the descriptor").style(theme::text::secondary),
+        ]
+        .spacing(5),
+        descriptor_content,
+    )
+    .padding(15);
+
+    let error = error.map(|e| card::error("Something wrong happened", e.to_string()));
+    let other_options = column![
+        card::simple(invitation).padding(0),
+        card::simple(descriptor).padding(0)
+    ]
+    .spacing(20);
+    let content = column![error, wallets, other_options, Space::with_height(10),]
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .spacing(50);
 
     layout(
         progress,
         network,
         email,
         "Add wallet",
-        Column::new()
-            .spacing(50)
-            .push_maybe(error.map(|e| card::error("Something wrong happened", e.to_string())))
-            .push(card_wallets)
-            .push(card::simple(col_invitation_token).padding(0))
-            .push(card::simple(col_descriptor).padding(0))
-            .push(Space::with_height(10)),
+        content,
         Some(Message::Previous),
     )
 }

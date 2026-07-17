@@ -995,3 +995,7 @@ pub fn btn_backend_options_help<T: Clone + 'static>(msg: T) -> Button<'static, T
     )
     .on_press(msg)
 }
+
+pub fn btn_accept<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Accept", BtnWidth::M, msg)
+}
