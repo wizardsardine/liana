@@ -10,7 +10,9 @@ use iced::{
 };
 
 use liana::miniscript::bitcoin::bip32::ChildNumber;
-use liana_ui::component::button::{btn_backup_descriptor, btn_next, btn_select, BtnWidth};
+use liana_ui::component::button::{
+    btn_backup_descriptor, btn_next, btn_secondary, btn_select, BtnWidth,
+};
 use liana_ui::component::text::{self, p2_regular};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -880,84 +882,61 @@ pub fn define_bitcoin_node<'a>(
 ) -> Element<'a, Message> {
     let msg_next = is_running.and_then(|r| r.is_ok().then_some(Message::Next));
     let button_next = btn_next(msg_next);
-
-    let col = Column::new()
-        .push(
-            available_node_types.fold(
-                Row::new()
-                    .push(text("Node type:").small().bold())
-                    .spacing(10),
-                |row, node_type| {
-                    row.push(radio(
-                        match node_type {
-                            NodeType::Bitcoind => "Bitcoin Core",
-                            NodeType::Electrum => "Electrum",
-                        },
-                        node_type,
-                        Some(selected_node_type),
-                        |new_selection| {
-                            Message::DefineNode(message::DefineNode::NodeTypeSelected(
-                                new_selection,
-                            ))
-                        },
-                    ))
-                    .spacing(30)
-                    .align_y(Alignment::Center)
+    let node_type = available_node_types.fold(
+        row![text::new::b5_bold("Node type:")].spacing(10),
+        |row, node_type| {
+            row.push(radio(
+                match node_type {
+                    NodeType::Bitcoind => "Bitcoin Core",
+                    NodeType::Electrum => "Electrum",
                 },
-            ),
-        )
-        .push(node_view)
-        .push_maybe(if waiting_for_ping_result {
-            Some(Container::new(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(text("Checking connection...")),
+                node_type,
+                Some(selected_node_type),
+                |new_selection| {
+                    Message::DefineNode(message::DefineNode::NodeTypeSelected(new_selection))
+                },
             ))
-        } else if is_running.is_some() {
-            is_running.map(|res| {
-                if res.is_ok() {
-                    Container::new(
-                        Row::new()
-                            .spacing(10)
-                            .align_y(Alignment::Center)
-                            .push(icon::circle_check_icon().style(theme::text::success))
-                            .push(text("Connection checked").style(theme::text::success)),
-                    )
-                } else {
-                    Container::new(
-                        Row::new()
-                            .spacing(10)
-                            .align_y(Alignment::Center)
-                            .push(icon::circle_cross_icon().style(theme::text::error))
-                            .push(text("Connection failed").style(theme::text::error)),
-                    )
-                }
-            })
+            .spacing(30)
+            .align_y(Alignment::Center)
+        },
+    );
+
+    let connection_status = if waiting_for_ping_result {
+        Container::new(row![text::new::caption("Checking connection...")].spacing(10))
+    } else if let Some(res) = is_running {
+        let status = if res.is_ok() {
+            row![
+                icon::circle_check_icon().style(theme::text::success),
+                text::new::caption("Connection checked").style(theme::text::success),
+            ]
         } else {
-            Some(Container::new(Space::with_height(Length::Fixed(21.0))))
-        })
-        .push(
-            Row::new()
-                .spacing(10)
-                .push(Container::new(
-                    button::secondary(None, "Check connection")
-                        .on_press_maybe(if can_try_ping && !waiting_for_ping_result {
-                            Some(Message::DefineNode(DefineNode::Ping))
-                        } else {
-                            None
-                        })
-                        .width(BtnWidth::XL),
-                ))
-                .push(button_next),
-        )
-        .spacing(50);
+            row![
+                icon::circle_cross_icon().style(theme::text::error),
+                text::new::caption("Connection failed").style(theme::text::error),
+            ]
+        };
+        Container::new(status.align_y(Alignment::Center).spacing(10))
+    } else {
+        Container::new(Space::with_height(21))
+    };
+
+    let check_connection =
+        (can_try_ping && !waiting_for_ping_result).then_some(Message::DefineNode(DefineNode::Ping));
+    let button_check_connection = Container::new(btn_secondary(
+        None,
+        "Check connection",
+        BtnWidth::XL,
+        check_connection,
+    ));
+    let actions = row![button_check_connection, button_next].spacing(10);
+
+    let content = column![node_type, node_view, connection_status, actions].spacing(50);
 
     layout(
         progress,
         None,
         "Set up connection to the Bitcoin node",
-        col,
+        content,
         true,
         Some(Message::Previous),
     )
@@ -979,129 +958,108 @@ pub fn define_bitcoind<'a>(
         false
     };
 
-    let col_address = Column::new()
-        .push(text("Address:").bold())
-        .push(
-            form::Form::new_trimmed("Address", address, |msg| {
-                Message::DefineNode(DefineNode::DefineBitcoind(
-                    DefineBitcoind::ConfigFieldEdited(ConfigField::Address, msg),
-                ))
-            })
-            .warning("Please enter correct address")
-            .size(text::P1_SIZE)
-            .padding(10),
+    let address_msg = |msg| {
+        Message::DefineNode(DefineNode::DefineBitcoind(
+            DefineBitcoind::ConfigFieldEdited(ConfigField::Address, msg),
+        ))
+    };
+    let address_input = form::Form::new_trimmed("Address", address, address_msg)
+        .warning("Please enter correct address")
+        .component_label(text::new::b5_bold("Address:"))
+        .padding(10);
+    let loopback_warning = (!is_loopback && address.valid).then_some(
+        text::new::caption(
+            "Connection to a remote Bitcoin node is not supported. Insert an IP address bound to the same machine running Liana (ignore this warning if that's already the case)",
         )
-        .push_maybe(if !is_loopback && address.valid {
-            Some(
-                iced::widget::Text::new(
-                    "Connection to a remote Bitcoin node \
-                    is not supported. Insert an IP address bound to the same machine \
-                    running Liana (ignore this warning if that's already the case)",
-                )
-                .style(theme::text::warning)
-                .size(text::CAPTION_SIZE),
-            )
-        } else {
-            None
-        })
-        .spacing(10);
+        .style(theme::text::warning),
+    );
+    let address = column![address_input, loopback_warning].spacing(10);
 
-    let col_auth = Column::new()
-        .push(
-            [RpcAuthType::CookieFile, RpcAuthType::UserPass]
-                .iter()
-                .fold(
-                    Row::new()
-                        .push(text("RPC authentication:").small().bold())
-                        .spacing(10),
-                    |row, auth_type| {
-                        row.push(radio(
-                            format!("{auth_type}"),
-                            *auth_type,
-                            Some(*selected_auth_type),
-                            |new_selection| {
-                                Message::DefineNode(DefineNode::DefineBitcoind(
-                                    DefineBitcoind::RpcAuthTypeSelected(new_selection),
-                                ))
-                            },
+    let auth_type = [RpcAuthType::CookieFile, RpcAuthType::UserPass]
+        .iter()
+        .fold(
+            row![text::new::b5_bold("RPC authentication:")].spacing(10),
+            |row, auth_type| {
+                row.push(radio(
+                    format!("{auth_type}"),
+                    *auth_type,
+                    Some(*selected_auth_type),
+                    |new_selection| {
+                        Message::DefineNode(DefineNode::DefineBitcoind(
+                            DefineBitcoind::RpcAuthTypeSelected(new_selection),
                         ))
-                        .spacing(30)
-                        .align_y(Alignment::Center)
                     },
-                ),
-        )
-        .push(match selected_auth_type {
-            RpcAuthType::CookieFile => Row::new().push(
+                ))
+                .spacing(30)
+                .align_y(Alignment::Center)
+            },
+        );
+    let auth_fields = match selected_auth_type {
+        RpcAuthType::CookieFile => {
+            row![
                 form::Form::new_trimmed("Cookie path", &rpc_auth_vals.cookie_path, |msg| {
                     Message::DefineNode(DefineNode::DefineBitcoind(
                         DefineBitcoind::ConfigFieldEdited(ConfigField::CookieFilePath, msg),
                     ))
                 })
                 .warning("Please enter correct path")
-                .size(text::P1_SIZE)
                 .padding(10),
-            ),
-            RpcAuthType::UserPass => Row::new()
-                .push(
-                    form::Form::new_trimmed("User", &rpc_auth_vals.user, |msg| {
-                        Message::DefineNode(DefineNode::DefineBitcoind(
-                            DefineBitcoind::ConfigFieldEdited(ConfigField::User, msg),
-                        ))
-                    })
-                    .warning("Please enter correct user")
-                    .size(text::P1_SIZE)
-                    .padding(10),
-                )
-                .push(
-                    form::Form::new_trimmed("Password", &rpc_auth_vals.password, |msg| {
-                        Message::DefineNode(DefineNode::DefineBitcoind(
-                            DefineBitcoind::ConfigFieldEdited(ConfigField::Password, msg),
-                        ))
-                    })
-                    .warning("Please enter correct password")
-                    .size(text::P1_SIZE)
-                    .padding(10),
-                )
-                .spacing(10),
-        })
-        .spacing(10);
+            ]
+        }
+        RpcAuthType::UserPass => row![
+            form::Form::new_trimmed("User", &rpc_auth_vals.user, |msg| {
+                Message::DefineNode(DefineNode::DefineBitcoind(
+                    DefineBitcoind::ConfigFieldEdited(ConfigField::User, msg),
+                ))
+            })
+            .warning("Please enter correct user")
+            .padding(10),
+            form::Form::new_trimmed("Password", &rpc_auth_vals.password, |msg| {
+                Message::DefineNode(DefineNode::DefineBitcoind(
+                    DefineBitcoind::ConfigFieldEdited(ConfigField::Password, msg),
+                ))
+            })
+            .warning("Please enter correct password")
+            .padding(10),
+        ]
+        .spacing(10),
+    };
+    let auth = column![auth_type, auth_fields].spacing(10);
 
-    Column::new()
-        .push(col_address)
-        .push(col_auth)
-        .spacing(50)
-        .into()
+    column![address, auth].spacing(50).into()
 }
 
 pub fn define_electrum<'a>(
     address: &form::Value<String>,
     validate_domain: bool,
 ) -> Element<'a, Message> {
-    let checkbox = validate_domain_checkbox(address, validate_domain, |b| {
+    let validate_certificate_msg = |b| {
         Message::DefineNode(DefineNode::DefineElectrum(
             message::DefineElectrum::ValidDomainChanged(b),
         ))
-    });
-    let col_address = Column::new()
-        .push(text("Address:").bold())
-        .push(
-            form::Form::new_trimmed("127.0.0.1:50001", address, |msg| {
-                Message::DefineNode(DefineNode::DefineElectrum(
-                    message::DefineElectrum::ConfigFieldEdited(electrum::ConfigField::Address, msg),
-                ))
-            })
-            .warning(
-                "Please enter correct address (including port), \
-                optionally prefixed with tcp:// or ssl://",
-            )
-            .size(text::P1_SIZE)
-            .padding(10),
-        )
-        .push_maybe(checkbox)
-        .push(text(electrum::ADDRESS_NOTES))
-        .spacing(10);
+    };
+    let checkbox = validate_domain_checkbox(address, validate_domain, validate_certificate_msg);
 
-    Column::new().push(col_address).spacing(50).into()
+    let address_msg = |msg| {
+        Message::DefineNode(DefineNode::DefineElectrum(
+            message::DefineElectrum::ConfigFieldEdited(electrum::ConfigField::Address, msg),
+        ))
+    };
+    let address_input = form::Form::new_trimmed("127.0.0.1:50001", address, address_msg)
+        .warning(
+            "Please enter correct address (including port), \
+        optionally prefixed with tcp:// or ssl://",
+        )
+        .component_label(text::new::b5_bold("Address:"))
+        .padding(10);
+    let address = column![
+        address_input,
+        checkbox,
+        text::new::caption(electrum::ADDRESS_NOTES),
+    ]
+    .spacing(10);
+
+    column![address].spacing(50).into()
 }
 
 pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {
