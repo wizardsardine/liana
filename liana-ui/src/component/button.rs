@@ -987,3 +987,11 @@ pub fn btn_check_connection<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) ->
         btn_secondary(None, label, width, msg)
     }
 }
+
+pub fn btn_backend_options_help<T: Clone + 'static>(msg: T) -> Button<'static, T> {
+    link(
+        Some(icon::link_icon()),
+        "More information about backend and node options",
+    )
+    .on_press(msg)
+}

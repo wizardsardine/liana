@@ -26,12 +26,13 @@ use liana::{
 use liana_ui::{
     component::{
         button::{
-            self, btn_backup_descriptor, btn_check_connection, btn_next, btn_select, EntryWidth,
+            self, btn_backend_options_help, btn_backup_descriptor, btn_check_connection, btn_next,
+            btn_select, EntryWidth,
         },
         card, collapse, form, installer as installer_layout,
         list::DeviceStatus,
         modal, scrollable, separation,
-        text::{self, h2, h3, h4_bold, new, p1_bold, p1_regular, text, Text as _},
+        text::{self, h2, h4_bold, new, p1_bold, p1_regular, text, Text as _},
     },
     icon, theme,
     widget::*,
@@ -1581,71 +1582,70 @@ pub fn recover_mnemonic<'a>(
 }
 
 pub fn choose_backend(progress: (usize, usize), network: Network) -> Element<'static, Message> {
+    const PADDING: [u16; 2] = [0, 10];
+    let local_title = Container::new(text::new::b1_bold("Use your own node"))
+        .padding(PADDING)
+        .width(Length::FillPortion(1));
+    let remote_title = Container::new(text::new::b1_bold("Use Liana Connect"))
+        .padding(PADDING)
+        .width(Length::FillPortion(1));
+    let titles = row![local_title, remote_title].spacing(20);
+
+    let local_description =
+        Container::new(text::new::caption(LOCAL_WALLET_DESC).style(theme::text::secondary))
+            .padding(PADDING)
+            .width(Length::FillPortion(1));
+    let remote_description =
+        Container::new(text::new::caption(REMOTE_BACKEND_DESC).style(theme::text::secondary))
+            .padding(PADDING)
+            .width(Length::FillPortion(1));
+    let descriptions = row![local_description, remote_description].spacing(20);
+
+    let local_action = Container::new(
+        button::secondary(None, "Select")
+            .on_press(Message::SelectBackend(
+                message::SelectBackend::ContinueWithLocalWallet(true),
+            ))
+            .width(200),
+    )
+    .padding(PADDING)
+    .center_x(Length::FillPortion(1));
+    let remote_action = Container::new(
+        button::secondary(None, "Select")
+            .on_press(Message::SelectBackend(
+                message::SelectBackend::ContinueWithLocalWallet(false),
+            ))
+            .width(200),
+    )
+    .padding(PADDING)
+    .center_x(Length::FillPortion(1));
+    let actions = row![local_action, remote_action].spacing(20);
+
+    let help_link = tooltip::Tooltip::new(
+        btn_backend_options_help(Message::OpenUrl(
+            help::CHANGE_BACKEND_OR_NODE_URL.to_string(),
+        )),
+        Container::new(new::caption(help::CHANGE_BACKEND_OR_NODE_URL))
+            .style(theme::card::simple)
+            .padding(10),
+        tooltip::Position::Bottom,
+    );
+
+    let content = column![
+        titles,
+        descriptions,
+        actions,
+        Space::with_height(20),
+        help_link,
+    ]
+    .spacing(20);
+
     layout(
         progress,
         network,
         None,
         "Choose backend",
-        Column::new()
-            .push(
-                Row::new()
-                    .spacing(20)
-                    .push(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::FillPortion(1))
-                            .push(h3("Use your own node"))
-                            .push(text::p2_medium(LOCAL_WALLET_DESC).style(theme::text::secondary)),
-                    )
-                    .push(
-                        Column::new()
-                            .spacing(20)
-                            .width(Length::FillPortion(1))
-                            .push(h3("Use Liana Connect"))
-                            .push(
-                                text::p2_medium(REMOTE_BACKEND_DESC).style(theme::text::secondary),
-                            ),
-                    ),
-            )
-            .push(
-                Row::new()
-                    .spacing(20)
-                    .push(
-                        Container::new(
-                            button::secondary(None, "Select")
-                                .on_press(Message::SelectBackend(
-                                    message::SelectBackend::ContinueWithLocalWallet(true),
-                                ))
-                                .width(Length::Fixed(200.0)),
-                        )
-                        .width(Length::FillPortion(1)),
-                    )
-                    .push(
-                        Container::new(
-                            button::secondary(None, "Select")
-                                .on_press(Message::SelectBackend(
-                                    message::SelectBackend::ContinueWithLocalWallet(false),
-                                ))
-                                .width(Length::Fixed(200.0)),
-                        )
-                        .width(Length::FillPortion(1)),
-                    ),
-            )
-            .push(Space::with_height(20)) // ensures mouse cursor is not already on link when arriving at this step
-            .push(tooltip::Tooltip::new(
-                button::link(
-                    Some(icon::link_icon()),
-                    "More information about backend and node options",
-                )
-                .on_press(Message::OpenUrl(
-                    help::CHANGE_BACKEND_OR_NODE_URL.to_string(),
-                )),
-                Container::new(text(help::CHANGE_BACKEND_OR_NODE_URL))
-                    .style(theme::card::simple)
-                    .padding(10),
-                tooltip::Position::Bottom,
-            ))
-            .spacing(20),
+        content,
         Some(Message::Previous),
     )
 }
