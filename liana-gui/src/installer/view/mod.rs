@@ -11,7 +11,7 @@ use iced::{
 
 use liana::miniscript::bitcoin::bip32::ChildNumber;
 use liana_ui::component::button::{
-    btn_backup_descriptor, btn_next, btn_secondary, btn_select, BtnWidth,
+    btn_backup_descriptor, btn_check_connection, btn_next, btn_select,
 };
 use liana_ui::component::text::{self, p2_regular};
 use std::collections::HashMap;
@@ -29,7 +29,7 @@ use liana_ui::{
         card, collapse, form,
         list::DeviceStatus,
         modal, scrollable, separation,
-        text::{h2, h3, h4_bold, p1_bold, p1_regular, text, Text},
+        text::{h2, h3, h4_bold, new, p1_bold, p1_regular, text, Text},
     },
     icon, theme,
     widget::*,
@@ -492,7 +492,9 @@ pub fn share_xpubs<'a>(
             tooltip::Position::Bottom,
         ));
     let title = Row::new()
-        .push(text("Import an extended public key by selecting a signing device:").bold())
+        .push(new::b5_bold(
+            "Import an extended public key by selecting a signing device:",
+        ))
         .push(Space::with_width(10))
         .push(info)
         .push(Space::with_width(Length::Fill));
@@ -507,7 +509,7 @@ pub fn share_xpubs<'a>(
             } else {
                 Column::with_children(hws).spacing(10).into()
             },
-            Container::new(text("Or create a new random key:").bold()).width(Length::Fill),
+            Container::new(new::b5_bold("Or create a new random key:")).width(Length::Fill),
             signer,
             Space::with_height(10),
         ]
@@ -519,8 +521,8 @@ pub fn share_xpubs<'a>(
 }
 
 pub fn policy_entry_card(title: String, content: String) -> Container<'static, Message> {
-    let title = text(title).small().bold();
-    let scroll = scrollable::horizontal_thin(column![text(content).small()]);
+    let title = new::b5_bold(title);
+    let scroll = scrollable::horizontal_thin(column![new::caption(content)]);
     card::simple(column![title, scroll].spacing(10)).width(Length::Fill)
 }
 
@@ -871,6 +873,8 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
     }
 }
 
+const RADIO_TITLE_WIDTH: u32 = 160;
+
 pub fn define_bitcoin_node<'a>(
     progress: (usize, usize),
     available_node_types: impl Iterator<Item = NodeType>,
@@ -880,10 +884,8 @@ pub fn define_bitcoin_node<'a>(
     can_try_ping: bool,
     waiting_for_ping_result: bool,
 ) -> Element<'a, Message> {
-    let msg_next = is_running.and_then(|r| r.is_ok().then_some(Message::Next));
-    let button_next = btn_next(msg_next);
     let node_type = available_node_types.fold(
-        row![text::new::b5_bold("Node type:")].spacing(10),
+        row![text::new::b5_bold("Node type:").width(RADIO_TITLE_WIDTH)].spacing(10),
         |row, node_type| {
             row.push(radio(
                 match node_type {
@@ -901,10 +903,10 @@ pub fn define_bitcoin_node<'a>(
         },
     );
 
-    let connection_status = if waiting_for_ping_result {
-        Container::new(row![text::new::caption("Checking connection...")].spacing(10))
+    let connection_status: Element<'a, Message> = if waiting_for_ping_result {
+        text::new::caption("Checking connection...").into()
     } else if let Some(res) = is_running {
-        let status = if res.is_ok() {
+        if res.is_ok() {
             row![
                 icon::circle_check_icon().style(theme::text::success),
                 text::new::caption("Connection checked").style(theme::text::success),
@@ -914,23 +916,25 @@ pub fn define_bitcoin_node<'a>(
                 icon::circle_cross_icon().style(theme::text::error),
                 text::new::caption("Connection failed").style(theme::text::error),
             ]
-        };
-        Container::new(status.align_y(Alignment::Center).spacing(10))
+        }
+        .align_y(Alignment::Center)
+        .into()
     } else {
-        Container::new(Space::with_height(21))
+        Container::new(Space::with_height(21)).into()
     };
+    let node_view = column![node_view, connection_status].spacing(5);
 
-    let check_connection =
+    let msg_next = is_running.and_then(|r| r.is_ok().then_some(Message::Next));
+
+    let msg_check_connection =
         (can_try_ping && !waiting_for_ping_result).then_some(Message::DefineNode(DefineNode::Ping));
-    let button_check_connection = Container::new(btn_secondary(
-        None,
-        "Check connection",
-        BtnWidth::XL,
-        check_connection,
-    ));
-    let actions = row![button_check_connection, button_next].spacing(10);
+    let button_check_connection = btn_check_connection(msg_check_connection, msg_next.is_none());
+    let button_next = btn_next(msg_next);
+    let actions = row![Space::fill_width(), button_check_connection, button_next].spacing(10);
 
-    let content = column![node_type, node_view, connection_status, actions].spacing(50);
+    let content = column![node_type, node_view, actions]
+        .max_width(800)
+        .spacing(50);
 
     layout(
         progress,
@@ -965,7 +969,7 @@ pub fn define_bitcoind<'a>(
     };
     let address_input = form::Form::new_trimmed("Address", address, address_msg)
         .warning("Please enter correct address")
-        .component_label(text::new::b5_bold("Address:"))
+        .label("Address:")
         .padding(10);
     let loopback_warning = (!is_loopback && address.valid).then_some(
         text::new::caption(
@@ -978,7 +982,7 @@ pub fn define_bitcoind<'a>(
     let auth_type = [RpcAuthType::CookieFile, RpcAuthType::UserPass]
         .iter()
         .fold(
-            row![text::new::b5_bold("RPC authentication:")].spacing(10),
+            row![text::new::b5_bold("RPC authentication:").width(RADIO_TITLE_WIDTH)].spacing(10),
             |row, auth_type| {
                 row.push(radio(
                     format!("{auth_type}"),
@@ -1003,7 +1007,6 @@ pub fn define_bitcoind<'a>(
                     ))
                 })
                 .warning("Please enter correct path")
-                .padding(10),
             ]
         }
         RpcAuthType::UserPass => row![
@@ -1012,21 +1015,19 @@ pub fn define_bitcoind<'a>(
                     DefineBitcoind::ConfigFieldEdited(ConfigField::User, msg),
                 ))
             })
-            .warning("Please enter correct user")
-            .padding(10),
+            .warning("Please enter correct user"),
             form::Form::new_trimmed("Password", &rpc_auth_vals.password, |msg| {
                 Message::DefineNode(DefineNode::DefineBitcoind(
                     DefineBitcoind::ConfigFieldEdited(ConfigField::Password, msg),
                 ))
             })
             .warning("Please enter correct password")
-            .padding(10),
         ]
         .spacing(10),
     };
     let auth = column![auth_type, auth_fields].spacing(10);
 
-    column![address, auth].spacing(50).into()
+    column![address, auth].max_width(800).spacing(50).into()
 }
 
 pub fn define_electrum<'a>(
@@ -1050,7 +1051,7 @@ pub fn define_electrum<'a>(
             "Please enter correct address (including port), \
         optionally prefixed with tcp:// or ssl://",
         )
-        .component_label(text::new::b5_bold("Address:"))
+        .label("Address")
         .padding(10);
     let address = column![
         address_input,
@@ -1059,7 +1060,7 @@ pub fn define_electrum<'a>(
     ]
     .spacing(10);
 
-    column![address].spacing(50).into()
+    column![address].max_width(800).spacing(50).into()
 }
 
 pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {
@@ -1124,6 +1125,11 @@ pub fn start_internal_bitcoind<'a>(
     install_state: Option<&InstallState>,
 ) -> Element<'a, Message> {
     let version = crate::node::bitcoind::VERSION;
+    let msg_next = if let Some(Ok(_)) = started {
+        Some(Message::Next)
+    } else {
+        None
+    };
     layout(
         progress,
         None,
@@ -1135,18 +1141,21 @@ pub fn start_internal_bitcoind<'a>(
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(icon::circle_check_icon().style(theme::text::success))
-                        .push(text("Download complete").style(theme::text::success)),
+                        .push(new::caption("Download complete").style(theme::text::success)),
                     DownloadState::Downloading { progress } => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push(text(format!(
+                        .push(new::caption(format!(
                             "Downloading Bitcoin Core {version}... {progress:.2}%"
                         ))),
                     DownloadState::Errored(e) => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(icon::circle_cross_icon().style(theme::text::error))
-                        .push(text(format!("Download failed: '{e}'.")).style(theme::text::error)),
+                        .push(
+                            new::caption(format!("Download failed: '{e}'."))
+                                .style(theme::text::error),
+                        ),
                     _ => Row::new().spacing(10).align_y(Alignment::Center),
                 }
             }))
@@ -1160,13 +1169,14 @@ pub fn start_internal_bitcoind<'a>(
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(icon::circle_check_icon().style(theme::text::success))
-                        .push(text("Installation complete").style(theme::text::success)),
+                        .push(new::caption("Installation complete").style(theme::text::success)),
                     InstallState::Errored(e) => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(icon::circle_cross_icon().style(theme::text::error))
                         .push(
-                            text(format!("Installation failed: '{e}'.")).style(theme::text::error),
+                            new::caption(format!("Installation failed: '{e}'."))
+                                .style(theme::text::error),
                         ),
                 }
             } else if exe_path.is_some() {
@@ -1175,7 +1185,7 @@ pub fn start_internal_bitcoind<'a>(
                     .align_y(Alignment::Center)
                     .push(icon::circle_check_icon().style(theme::text::success))
                     .push(
-                        text("Liana-managed bitcoind already installed")
+                        new::caption("Liana-managed bitcoind already installed")
                             .style(theme::text::success),
                     )
             } else if let Some(DownloadState::Downloading { progress }) = download_state {
@@ -1194,7 +1204,7 @@ pub fn start_internal_bitcoind<'a>(
                                 .spacing(10)
                                 .align_y(Alignment::Center)
                                 .push(icon::circle_check_icon().style(theme::text::success))
-                                .push(text("Started").style(theme::text::success)),
+                                .push(new::caption("Started").style(theme::text::success)),
                         )
                     } else {
                         Container::new(
@@ -1203,7 +1213,7 @@ pub fn start_internal_bitcoind<'a>(
                                 .align_y(Alignment::Center)
                                 .push(icon::circle_cross_icon().style(theme::text::error))
                                 .push(
-                                    text(res.as_ref().err().unwrap().to_string())
+                                    new::caption(res.as_ref().err().unwrap().to_string())
                                         .style(theme::text::error),
                                 ),
                         )
@@ -1216,24 +1226,14 @@ pub fn start_internal_bitcoind<'a>(
                         Row::new()
                             .spacing(10)
                             .align_y(Alignment::Center)
-                            .push(text("Starting...")),
+                            .push(new::caption("Starting...")),
                     )),
                     _ => Some(Container::new(Space::with_height(Length::Fixed(25.0)))),
                 }
             })
             .spacing(50)
-            .push(
-                Row::new().push(
-                    button::secondary(None, "Next")
-                        .width(Length::Fixed(200.0))
-                        .on_press_maybe(if let Some(Ok(_)) = started {
-                            Some(Message::Next)
-                        } else {
-                            None
-                        }),
-                ),
-            )
-            .push_maybe(error.map(|e| card::invalid(text(e)))),
+            .push(btn_next(msg_next))
+            .push_maybe(error.map(|e| card::invalid(new::caption(e)))),
         true,
         Some(message::Message::InternalBitcoind(
             message::InternalBitcoindMsg::Previous,
@@ -1258,16 +1258,16 @@ pub fn install<'a>(
         email,
         "Finalize installation",
         Column::new()
-            .push_maybe(warning.map(|e| card::invalid(text(e))))
+            .push_maybe(warning.map(|e| card::invalid(new::caption(e))))
             .push(if generating {
-                Container::new(text("Installing..."))
+                Container::new(new::caption("Installing..."))
             } else if installed {
                 Container::new(
                     Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(icon::circle_check_icon().style(theme::text::success))
-                        .push(text("Installed").style(theme::text::success)),
+                        .push(new::caption("Installed").style(theme::text::success)),
                 )
             } else {
                 Container::new(Space::with_height(Length::Fixed(25.0)))
@@ -1295,7 +1295,7 @@ pub fn defined_threshold<'a>(
                         row.push(icon::round_key_icon())
                     }
                 }))
-                .push(text(format!(
+                .push(new::caption(format!(
                     "{} out of {} key{}",
                     threshold.0,
                     threshold.1,
@@ -1318,7 +1318,7 @@ pub fn defined_threshold<'a>(
                         row.push(icon::round_key_icon())
                     }
                 }))
-                .push(text(format!(
+                .push(new::caption(format!(
                     "{} out of {} key{}",
                     threshold.0,
                     threshold.1,
@@ -1338,7 +1338,7 @@ pub fn defined_sequence<'a>(
         .padding(5)
         .spacing(5)
         .align_y(Alignment::Center)
-        .push(text(
+        .push(new::caption(
             format_sequence_duration(sequence.as_u16(), true)
                 .iter()
                 .filter_map(|(n, unit)| {
@@ -1361,7 +1361,7 @@ pub fn defined_sequence<'a>(
                             .align_y(Alignment::Center)
                             .spacing(5)
                             .push(
-                                text::p1_regular("Available after inactivity of ~")
+                                new::caption("Available after inactivity of ~")
                                     .style(theme::text::secondary),
                             )
                             .push(
@@ -1376,7 +1376,7 @@ pub fn defined_sequence<'a>(
                 ),
                 PathSequence::Primary => Row::new()
                     .push(
-                        p1_regular("Able to move the funds at any time.")
+                        new::caption("Able to move the funds at any time.")
                             .style(theme::text::secondary),
                     )
                     .padding(5),
@@ -1386,7 +1386,7 @@ pub fn defined_sequence<'a>(
                             .align_y(Alignment::Center)
                             .spacing(5)
                             .push(
-                                text::p1_regular("Available after inactivity of ~")
+                                new::caption("Available after inactivity of ~")
                                     .style(theme::text::secondary),
                             )
                             .push(duration_row),
@@ -1396,7 +1396,7 @@ pub fn defined_sequence<'a>(
                     .align_y(alignment::Vertical::Center),
                 ),
             })
-            .push_maybe(warning.map(|w| text(w.message()).small().style(theme::text::error)))
+            .push_maybe(warning.map(|w| new::small_caption(w.message()).style(theme::text::error)))
             .spacing(15),
     )
     .padding(5)

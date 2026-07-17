@@ -976,3 +976,14 @@ pub fn btn_backup_descriptor<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -
         btn_secondary(icon, label, width, msg)
     }
 }
+
+pub fn btn_check_connection<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Button<'a, T> {
+    let label = "Check connection";
+    let width = BtnWidth::L;
+
+    if primary {
+        btn_primary(None, label, width, msg)
+    } else {
+        btn_secondary(None, label, width, msg)
+    }
+}
