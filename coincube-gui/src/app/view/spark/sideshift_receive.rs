@@ -7,9 +7,14 @@
 //! **bitcoin arrives**, never "receive USDT". No standalone title / asset
 //! picker / Back button — navigation happens via the cards + THEY SEND modal.
 
+use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
-    component::{button, text::*},
+    component::{
+        amount::{BitcoinDisplayUnit, DisplayAmount},
+        button,
+        text::*,
+    },
     icon::clipboard_icon,
     theme,
     widget::Element,
@@ -24,13 +29,16 @@ use crate::app::state::spark::sideshift_receive::{SparkShiftPhase, SparkSideshif
 use crate::app::view::SparkSideshiftReceiveMessage as Msg;
 use crate::services::sideshift::{ShiftResponse, ShiftStatusKind};
 
-pub fn spark_sideshift_receive_view(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
+pub fn spark_sideshift_receive_view(
+    flow: &SparkSideshiftReceiveFlow,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<'_, Msg> {
     match flow.phase() {
         SparkShiftPhase::Setup => setup_body(flow),
         SparkShiftPhase::FetchingAffiliate | SparkShiftPhase::CreatingShift => {
             loading_body("Setting up your deposit address…")
         }
-        SparkShiftPhase::Active => active_body(flow),
+        SparkShiftPhase::Active => active_body(flow, bitcoin_unit),
         SparkShiftPhase::Failed => error_body(flow.error()),
     }
 }
@@ -112,7 +120,10 @@ fn setup_body(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
 
 // ── Active shift: deposit address + status ──────────────────────────────────
 
-fn active_body(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
+fn active_body(
+    flow: &SparkSideshiftReceiveFlow,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<'_, Msg> {
     let Some(shift) = flow.shift() else {
         return error_body(Some("Shift data missing."));
     };
@@ -196,7 +207,7 @@ fn active_body(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
 
     let status_section: Element<Msg> = if let Some(status) = status {
         let (label, style_color) = status_badge(status);
-        Column::new()
+        let mut col = Column::new()
             .spacing(8)
             .align_x(Alignment::Center)
             .width(Length::Fill)
@@ -204,13 +215,34 @@ fn active_body(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
                 Container::new(text(label).size(P2_SIZE).color(style_color))
                     .padding([4, 10])
                     .style(theme::pill::simple),
-            )
-            .push(
-                text(spark_shift_guidance(status))
-                    .size(P2_SIZE)
-                    .style(theme::text::secondary),
-            )
-            .into()
+            );
+        // Once SideShift reports the settle output, show how much bitcoin is on
+        // the way — in whichever unit the user has chosen. Gated on `Settled`
+        // so it sits under the "Bitcoin arriving" badge, where the amount is
+        // finalised; earlier states can carry a moving estimate.
+        if matches!(status, ShiftStatusKind::Settled) {
+            if let Some(sats) = flow.settle_amount_sat() {
+                col = col.push(
+                    text(format!(
+                        "{} {}",
+                        Amount::from_sat(sats).to_formatted_string_with_unit(bitcoin_unit),
+                        if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                            "BTC"
+                        } else {
+                            "SATS"
+                        },
+                    ))
+                    .size(P1_SIZE)
+                    .bold(),
+                );
+            }
+        }
+        col.push(
+            text(spark_shift_guidance(status))
+                .size(P2_SIZE)
+                .style(theme::text::secondary),
+        )
+        .into()
     } else {
         Space::new().height(Length::Fixed(0.0)).into()
     };
@@ -241,7 +273,7 @@ fn spark_shift_guidance(status: &ShiftStatusKind) -> &'static str {
     match status {
         ShiftStatusKind::Settled => {
             "Converting complete. Your bitcoin is arriving on-chain and will be added to your \
-             wallet automatically after about 3 confirmations — usually a few minutes."
+             wallet automatically after about 3 confirmations — ~30 minutes."
         }
         other => other.guidance(),
     }

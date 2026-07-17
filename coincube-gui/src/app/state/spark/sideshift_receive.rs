@@ -73,6 +73,11 @@ pub struct SparkSideshiftReceiveFlow {
     affiliate_id: Option<String>,
     shift: Option<ShiftResponse>,
     shift_status: Option<ShiftStatusKind>,
+    /// The BTC amount SideShift last reported as the settle output, in sats.
+    /// Sourced from the poll status (which carries the real figure once a
+    /// deposit is detected), not the create-time estimate. Shown next to the
+    /// "Bitcoin arriving" status so the user sees how much is on the way.
+    settle_amount_sat: Option<u64>,
     qr_data: Option<qr_code::Data>,
 
     loading: bool,
@@ -94,6 +99,7 @@ impl SparkSideshiftReceiveFlow {
             affiliate_id: None,
             shift: None,
             shift_status: None,
+            settle_amount_sat: None,
             qr_data: None,
             loading: false,
             error: None,
@@ -131,6 +137,9 @@ impl SparkSideshiftReceiveFlow {
     pub fn shift_status(&self) -> Option<&ShiftStatusKind> {
         self.shift_status.as_ref()
     }
+    pub fn settle_amount_sat(&self) -> Option<u64> {
+        self.settle_amount_sat
+    }
     pub fn qr_data(&self) -> Option<&qr_code::Data> {
         self.qr_data.as_ref()
     }
@@ -151,6 +160,7 @@ impl SparkSideshiftReceiveFlow {
         self.affiliate_id = None;
         self.shift = None;
         self.shift_status = None;
+        self.settle_amount_sat = None;
         self.qr_data = None;
         self.loading = false;
         self.error = None;
@@ -237,7 +247,7 @@ impl SparkSideshiftReceiveFlow {
     // ── View ────────────────────────────────────────────────────────────
 
     pub fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let body = view::spark::spark_sideshift_receive_view(self);
+        let body = view::spark::spark_sideshift_receive_view(self, cache.bitcoin_unit);
         view::dashboard(menu, cache, body.map(view::Message::SparkSideshiftReceive))
     }
 
@@ -347,6 +357,17 @@ impl SparkSideshiftReceiveFlow {
                     let settled = kind == ShiftStatusKind::Settled
                         && self.shift_status.as_ref() != Some(&ShiftStatusKind::Settled);
                     self.shift_status = Some(kind);
+                    // SideShift reports the settle output (BTC, as a decimal
+                    // string) once a deposit is detected. Keep the latest so the
+                    // view can show how much bitcoin is arriving.
+                    let settle_sat = status
+                        .settle_amount
+                        .as_deref()
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .map(|btc| (btc * 100_000_000.0).round() as u64);
+                    if settle_sat.is_some() {
+                        self.settle_amount_sat = settle_sat;
+                    }
                     if settled {
                         // The bitcoin has landed at Spark's on-chain deposit
                         // address, which means it shows up as an *unclaimed
@@ -361,19 +382,13 @@ impl SparkSideshiftReceiveFlow {
                         // The amount is the swap's settle estimate, used only for
                         // the pending indicator; the celebration uses the actual
                         // claimed amount.
-                        let settle_sat = status
-                            .settle_amount
-                            .as_deref()
-                            .and_then(|s| s.parse::<f64>().ok())
-                            .map(|btc| (btc * 100_000_000.0).round() as u64)
-                            .unwrap_or(0);
                         return Task::batch([
                             Task::done(Message::View(view::Message::SparkReceive(
                                 view::SparkReceiveMessage::DepositsChanged,
                             ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::SwapSettledAwaitingArrival {
-                                    amount_sat: settle_sat,
+                                    amount_sat: settle_sat.unwrap_or(0),
                                 },
                             ))),
                         ]);
