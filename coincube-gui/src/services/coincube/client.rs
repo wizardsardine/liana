@@ -1672,7 +1672,6 @@ impl CoincubeClient {
         let res = self.client.post(&url).json(&req).send().await?;
         let res = res.check_success().await?;
         let resp: ApiResponse<super::DuressAlertContact> = res.json().await?;
-        print!("resp on create_duress_alert_contact: {:?}", resp);
         Ok(resp.data)
     }
 

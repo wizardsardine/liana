@@ -6,6 +6,7 @@ use crate::{
         message::Message,
         view::{
             self, ConnectAccountMessage, ContactsMessage, DuressContactsMessage, DuressMessage,
+            RecoveryKitMessage::RemoveResult,
         },
     },
     services::coincube::{
@@ -1382,26 +1383,36 @@ impl ConnectAccountPanel {
 
                 return iced::Task::perform(
                     async move { client.delete_verified_device(id).await },
-                    move |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::VerifiedDeviceDeleted(id_for_result, gen),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Error(e.to_string()),
-                        )),
+                    move |res| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::VerifiedDeviceDeleted(
+                                id_for_result,
+                                gen,
+                                res.map_err(|e| e.to_string()),
+                            ),
+                        ))
                     },
                 );
             }
 
-            ConnectAccountMessage::VerifiedDeviceDeleted(id, gen) => {
+            ConnectAccountMessage::VerifiedDeviceDeleted(id, gen, result) => {
                 if gen != self.session_generation {
                     return iced::Task::none();
                 }
 
                 self.verified_devices_state.deleting_ids.remove(&id);
 
-                if let Some(devices) = self.verified_devices.as_mut() {
-                    devices.retain(|d| d.id != id);
+                match result {
+                    Ok(()) => {
+                        if let Some(devices) = self.verified_devices.as_mut() {
+                            devices.retain(|d| d.id != id);
+                        }
+                    }
+                    Err(err) => {
+                        return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Error(err),
+                        )));
+                    }
                 }
             }
 

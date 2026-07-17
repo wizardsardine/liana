@@ -2,13 +2,14 @@ use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-fn device_fingerprint_path() -> PathBuf {
-    let base = dirs::config_dir().unwrap_or_else(std::env::temp_dir);
-    base.join("coincube").join("device_fingerprint")
+fn device_fingerprint_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|base| base.join("coincube").join("device_fingerprint"))
 }
 
 pub fn get_or_create_device_fingerprint() -> String {
-    let path = device_fingerprint_path();
+    let Some(path) = device_fingerprint_path() else {
+        return Uuid::new_v4().to_string();
+    };
     if let Ok(existing) = fs::read_to_string(&path) {
         let trimmed = existing.trim();
         if !trimmed.is_empty() {
@@ -16,7 +17,9 @@ pub fn get_or_create_device_fingerprint() -> String {
         }
     }
     let fingerprint = Uuid::new_v4().to_string();
-    let _ = fs::create_dir_all(path.parent().unwrap());
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
     let _ = fs::write(&path, &fingerprint);
     fingerprint
 }

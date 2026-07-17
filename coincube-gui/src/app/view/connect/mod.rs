@@ -1421,11 +1421,18 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                     .push(text::p2_regular(label).style(theme::text::primary));
 
                 if !d.is_current {
-                    row = row.push(
-                        button::secondary(None, "Delete")
-                            .on_press(ConnectAccountMessage::DeleteVerifiedDevice(d.id))
-                            .width(Length::Shrink),
-                    );
+                    let is_deleting = state.verified_devices_state.deleting_ids.contains(&d.id);
+
+                    let mut delete_button =
+                        button::secondary(None, if is_deleting { "Deleting..." } else { "Delete" })
+                            .width(Length::Shrink);
+
+                    if !is_deleting {
+                        delete_button = delete_button
+                            .on_press(ConnectAccountMessage::DeleteVerifiedDevice(d.id));
+                    }
+
+                    row = row.push(delete_button);
                 }
 
                 row = row
