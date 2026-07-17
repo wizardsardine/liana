@@ -341,13 +341,16 @@ pub struct PendingLiquidToVaultTransfer {
 }
 
 impl CubeSettings {
-    /// Create a new `CubeSettings` with a caller-supplied UUID.
-    ///
-    /// The frontend should generate this UUID before initiating the creation
-    /// request so that retries reuse the same identifier (idempotent creation).
-    pub fn new_with_id(id: uuid::Uuid, name: String, network: Network) -> Self {
+    /// Create a new `CubeSettings` with a caller-supplied id string, taken
+    /// verbatim — no round-trip through `uuid::Uuid`, so the byte-exact value
+    /// is preserved. Used by Cube recovery, where the restored Cube's id must
+    /// string-match the server-side record for the idempotent `register_cube`
+    /// call to reactivate the original Cube instead of minting a duplicate
+    /// (parsing + re-formatting would normalize case; a malformed value would
+    /// force a lossy fallback).
+    pub fn new_with_raw_id(id: String, name: String, network: Network) -> Self {
         Self {
-            id: id.to_string(),
+            id,
             name,
             network,
             created_at: chrono::Utc::now().timestamp(),
@@ -370,6 +373,14 @@ impl CubeSettings {
             balance_masked: false,
             recovery_kit_last_backed_up_descriptor_fingerprint: None,
         }
+    }
+
+    /// Create a new `CubeSettings` with a caller-supplied UUID.
+    ///
+    /// The frontend should generate this UUID before initiating the creation
+    /// request so that retries reuse the same identifier (idempotent creation).
+    pub fn new_with_id(id: uuid::Uuid, name: String, network: Network) -> Self {
+        Self::new_with_raw_id(id.to_string(), name, network)
     }
 
     pub fn new(name: String, network: Network) -> Self {

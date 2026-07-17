@@ -835,6 +835,25 @@ impl Step for RecoveryKitRestoreStep {
             ctx.recovered_signer = Some(Arc::new(s));
         }
 
+        // Carry the *original* Cube identity (UUID + name) out of the
+        // decrypted kit so the post-install `find_or_create_cube` re-mints
+        // the same Cube instead of a fresh one. Reusing the UUID makes the
+        // Connect `register_cube` call (idempotent on UUID) reactivate the
+        // deleted Cube rather than create a duplicate — without this, a
+        // Recovery-Kit restore spawned a brand-new Cube and left the
+        // original still listed as recoverable, so the flow could be
+        // repeated indefinitely.
+        //
+        // Full scope only: `DescriptorOnly` (W14/W15) restores into a Cube
+        // that already exists on disk with its own identity, so we must not
+        // overwrite `cube_id`/`cube_name` there.
+        if matches!(self.scope, RestoreScope::Full) {
+            if let Some(seed) = seed {
+                ctx.cube_id = Some(seed.cube.uuid.clone());
+                ctx.cube_name = Some(seed.cube.name.clone());
+            }
+        }
+
         // Thread the JWT we captured during the OTP step into the
         // context so the downstream `CoincubeConnectStep` can skip
         // re-authentication. Without this, the user has to type their
@@ -862,6 +881,11 @@ impl Step for RecoveryKitRestoreStep {
         // user can re-do the restore cleanly.
         if matches!(self.scope, RestoreScope::Full) {
             ctx.recovered_signer = None;
+            // Drop the original Cube identity we stamped in `apply` (Full
+            // scope only, matching where we set it) so a subsequent forward
+            // pass doesn't re-mint the restored Cube from stale values.
+            ctx.cube_id = None;
+            ctx.cube_name = None;
         }
         // Always clear descriptor — if the user navigates back from a
         // later step through this one, keeping a stale descriptor would
