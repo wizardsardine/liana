@@ -29,6 +29,9 @@ pub fn editable_label<'a, M: 'a + Clone>(label: impl Display, msg: M) -> Element
         .into()
 }
 
+pub const LABEL_MAX_LENGTH: usize = 80;
+pub const LABEL_LENGTH_WARNING: &str = "Invalid label length, must be 80 bytes or less";
+
 pub fn edit_label_modal<'a, M: 'a + Clone, C>(
     title: impl Display,
     descr: impl Display,
@@ -44,7 +47,7 @@ where
     // An empty label is not an error (no warning shown), but it cannot be saved,
     // so the confirm button stays disabled until a label is entered.
     let confirm = (value.valid && !value.value.is_empty()).then_some(confirm);
-    let input = Form::new(descr, value, on_change);
+    let input = Form::new(descr, value, on_change).warning(LABEL_LENGTH_WARNING);
     let input = match &confirm {
         Some(c) => input.on_submit(c.clone()),
         None => input,

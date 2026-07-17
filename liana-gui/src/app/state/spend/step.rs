@@ -620,7 +620,7 @@ impl Step for DefineSpend {
             Message::View(view::Message::CreateSpend(msg)) => {
                 match msg {
                     view::CreateSpendMessage::BatchLabelEdited(label) => {
-                        self.batch_label.valid = label.len() <= 100;
+                        self.batch_label.valid = super::super::label::is_valid_label_value(&label);
                         self.batch_label.value = label;
                     }
                     view::CreateSpendMessage::Clear => {
@@ -1081,7 +1081,7 @@ impl Recipient {
                 }
             }
             view::CreateSpendMessage::RecipientEdited(_, "label", label) => {
-                self.label.valid = label.len() <= 100;
+                self.label.valid = super::super::label::is_valid_label_value(&label);
                 self.label.value = label;
             }
             _ => {}

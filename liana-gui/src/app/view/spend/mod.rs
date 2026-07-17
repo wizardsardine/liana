@@ -11,7 +11,7 @@ use liana::{
 };
 
 use liana_ui::{
-    component::{amount::*, button, form, panels::spend, text::new},
+    component::{amount::*, button, form, label::LABEL_LENGTH_WARNING, panels::spend, text::new},
     icon, theme,
     widget::*,
 };
@@ -155,7 +155,7 @@ pub fn create_spend_tx<'a>(
         form::Form::new("Batch label", batch_label, |s| {
             Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(s))
         })
-        .warning("Invalid label length, cannot be superior to 100")
+        .warning(LABEL_LENGTH_WARNING)
         .size(30)
         .padding(10),
     );

@@ -13,7 +13,9 @@ use crate::{
         amount::{self, amount_with_fiat, AmountSize, Currency, DisplayAmount, FiatAmount},
         button, card,
         checkbox::{labelled_checkbox, labelled_radio},
-        form, pill, scrollable, section,
+        form,
+        label::LABEL_LENGTH_WARNING,
+        pill, scrollable, section,
         text::{caption, new, P1_SIZE},
         tooltip,
     },
@@ -80,7 +82,7 @@ pub fn recipient_card<'a, M: Clone + 'static>(
 
     let description_form: Element<'a, M> = form::Form::new("Payment label", label, on_label_edit)
         .label("Description")
-        .warning("Label length is too long (> 100 char)")
+        .warning(LABEL_LENGTH_WARNING)
         .size(P1_SIZE)
         .padding(10)
         .into();

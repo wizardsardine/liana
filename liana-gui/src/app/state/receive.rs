@@ -629,7 +629,7 @@ impl NewAddressModal {
         if let Step::Label { label, .. } = &mut self.step {
             // Empty is valid (no warning); the Generate button is gated on non-empty
             // by the modal itself.
-            label.valid = value.len() <= 100;
+            label.valid = super::label::is_valid_label_value(&value);
             label.value = value;
         }
     }

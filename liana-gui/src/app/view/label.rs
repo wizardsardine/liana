@@ -2,7 +2,7 @@ use iced::{advanced::text::Shaping, widget::row, Alignment};
 
 use liana_ui::{
     color,
-    component::{button, form},
+    component::{button, form, label::LABEL_LENGTH_WARNING},
     icon,
     widget::*,
 };
@@ -51,7 +51,7 @@ pub fn label_editing(
     let e: Element<view::LabelMessage> = Container::new(
         row!(
             form::Form::new("Label", label, view::LabelMessage::Edited)
-                .warning("Invalid label length, cannot be superior to 100")
+                .warning(LABEL_LENGTH_WARNING)
                 .size(size)
                 .padding(10),
             if label.valid {
