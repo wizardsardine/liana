@@ -62,6 +62,7 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
 
     layout(
         (2, INSTALLER_STEPS),
+        state.network,
         None,
         &["Login".to_string()],
         content,

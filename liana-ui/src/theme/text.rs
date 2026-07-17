@@ -78,6 +78,12 @@ pub fn accent(theme: &Theme) -> Style {
     }
 }
 
+pub fn network_banner(theme: &Theme) -> Style {
+    Style {
+        color: theme.colors.banners.network.text,
+    }
+}
+
 pub fn card_secondary(theme: &Theme) -> Style {
     Style {
         color: Some(theme.colors.text.card_secondary),

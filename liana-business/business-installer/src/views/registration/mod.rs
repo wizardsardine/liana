@@ -70,6 +70,7 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
 
     layout_with_scrollable_list(
         (7, INSTALLER_STEPS),
+        state.network,
         Some(current_user_email),
         false,
         &breadcrumb,

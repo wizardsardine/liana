@@ -43,6 +43,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
 
     layout_with_scrollable_list(
         (1, INSTALLER_STEPS),
+        state.network,
         None,
         false,
         &["Login".to_string()],

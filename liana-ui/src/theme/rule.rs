@@ -1,5 +1,7 @@
 use iced::widget::rule::{Catalog, FillMode, Style, StyleFn};
 
+use crate::color;
+
 use super::Theme;
 
 impl Catalog for Theme {
@@ -37,6 +39,15 @@ pub fn accent(theme: &Theme) -> Style {
 pub fn separator(theme: &Theme) -> Style {
     Style {
         color: theme.colors.cards.section.background,
+        radius: 2.0.into(),
+        fill_mode: FillMode::Full,
+        snap: true,
+    }
+}
+
+pub fn transparent(_theme: &Theme) -> Style {
+    Style {
+        color: color::TRANSPARENT,
         radius: 2.0.into(),
         fill_mode: FillMode::Full,
         snap: true,

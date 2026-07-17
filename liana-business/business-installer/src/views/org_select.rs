@@ -190,6 +190,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
 
     select_list_view(SelectListView {
         progress: (3, INSTALLER_STEPS),
+        network: state.network,
         email: current_user_email,
         is_ws_admin,
         breadcrumb: vec!["Organizations".to_string()],

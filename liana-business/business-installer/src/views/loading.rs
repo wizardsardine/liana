@@ -4,12 +4,13 @@ use iced::{
     Alignment, Length,
 };
 use liana_ui::{component::text, theme, widget::*};
+use miniscript::bitcoin::Network;
 
 use super::layout;
 
 /// Loading view shown during wallet opening transition.
 /// When `has_error` is true, shows error msg with enabled Previous button.
-pub fn loading_view(has_error: bool) -> Element<'static, Msg> {
+pub fn loading_view(network: Network, has_error: bool) -> Element<'static, Msg> {
     let (status_text, status_detail, previous_msg): (&str, Option<[&str; 2]>, Option<Msg>) =
         if has_error {
             (
@@ -39,5 +40,5 @@ pub fn loading_view(has_error: bool) -> Element<'static, Msg> {
         .width(Length::Fill),
     );
 
-    layout((0, 0), None, &[], content, previous_msg)
+    layout((0, 0), network, None, &[], content, previous_msg)
 }

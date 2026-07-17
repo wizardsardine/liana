@@ -53,6 +53,7 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
         (!state.views.login.account_select.accounts.is_empty()).then_some(Msg::NavigateBack);
     layout(
         (1, INSTALLER_STEPS),
+        state.network,
         None,
         &["Login".to_string()],
         content,

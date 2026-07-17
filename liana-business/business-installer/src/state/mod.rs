@@ -171,7 +171,7 @@ impl State {
             View::Xpub => xpub_view(self),
             View::Keys => keys_view(self),
             View::Registration => registration_view(self),
-            View::Loading => loading_view(has_error),
+            View::Loading => loading_view(self.network, has_error),
         };
 
         // Wrap content with connection error banner if present
