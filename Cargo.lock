@@ -301,7 +301,7 @@ dependencies = [
  "hidapi",
  "ledger-apdu",
  "ledger-transport-hidapi",
- "ledger_bitcoin_client",
+ "ledger_bitcoin_client 0.5.0",
  "regex",
  "reqwest",
  "serde",
@@ -311,6 +311,34 @@ dependencies = [
  "tokio",
  "tokio-serial",
  "tracing",
+]
+
+[[package]]
+name = "async-hwi"
+version = "0.0.31"
+source = "git+https://github.com/romanz/async-hwi?branch=trezor-miniscript#8da18fc2cefdeff54f8387e8362165341d23589b"
+dependencies = [
+ "async-trait",
+ "bitbox-api",
+ "bitcoin",
+ "coldcard",
+ "crossbeam",
+ "futures",
+ "hex",
+ "hidapi",
+ "ledger-apdu",
+ "ledger-transport-hidapi",
+ "ledger_bitcoin_client 0.6.2",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_bytes",
+ "serde_cbor",
+ "serialport",
+ "tokio",
+ "tokio-serial",
+ "tracing",
+ "trezor-client",
 ]
 
 [[package]]
@@ -569,7 +597,7 @@ version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33415e24172c1b7d6066f6d999545375ab8e1d95421d6784bdfff9496f292387"
 dependencies = [
- "bitcoin_hashes 0.13.0",
+ "bitcoin_hashes 0.12.0",
  "serde",
  "unicode-normalization",
 ]
@@ -800,7 +828,7 @@ checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 name = "business-installer"
 version = "0.2.0"
 dependencies = [
- "async-hwi",
+ "async-hwi 0.0.31 (registry+https://github.com/rust-lang/crates.io-index)",
  "chrono",
  "crossbeam",
  "email_address",
@@ -3160,6 +3188,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ledger_bitcoin_client"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c8007335257021d1d294df3714fe4648e47fd2467bb43e43566e2d4d04ce61a"
+dependencies = [
+ "async-trait",
+ "bitcoin",
+ "miniscript",
+]
+
+[[package]]
 name = "liana"
 version = "14.0.0"
 dependencies = [
@@ -3176,7 +3215,7 @@ dependencies = [
 name = "liana-business"
 version = "0.2.0"
 dependencies = [
- "async-hwi",
+ "async-hwi 0.0.31 (registry+https://github.com/rust-lang/crates.io-index)",
  "backtrace",
  "business-installer",
  "iced",
@@ -3226,7 +3265,7 @@ name = "liana-gui"
 version = "14.0.0"
 dependencies = [
  "async-fd-lock",
- "async-hwi",
+ "async-hwi 0.0.31 (git+https://github.com/romanz/async-hwi?branch=trezor-miniscript)",
  "async-trait",
  "backtrace",
  "base64 0.21.7",
@@ -3367,6 +3406,18 @@ checksum = "3c8469b4a23b962c1396b9b451dda50ef5b283e8dd309d69033475fa9b334324"
 dependencies = [
  "libc",
  "pkg-config",
+]
+
+[[package]]
+name = "libusb1-sys"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da050ade7ac4ff1ba5379af847a10a10a8e284181e060105bf8d86960ce9ce0f"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]
@@ -4597,6 +4648,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "protobuf"
+version = "3.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d65a1d4ddae7d8b5de68153b48f6aa3bba8cb002b243dbdbc55a5afbc98f99f4"
+dependencies = [
+ "once_cell",
+ "protobuf-support",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "protobuf-support"
+version = "3.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e36c2f31e0a47f9280fb347ef5e461ffcd2c52dd520d8e216b52f93b0b0d7d6"
+dependencies = [
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "qoi"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5001,6 +5072,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
+name = "rusb"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab9f9ff05b63a786553a4c02943b74b34a988448671001e9a27e2f0565cc05a4"
+dependencies = [
+ "libc",
+ "libusb1-sys",
+]
+
+[[package]]
 name = "rusqlite"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5237,7 +5318,7 @@ version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9465315bc9d4566e1724f0fffcbcc446268cb522e60f9a27bcded6b19c108113"
 dependencies = [
- "bitcoin_hashes 0.14.0",
+ "bitcoin_hashes 0.12.0",
  "secp256k1-sys",
  "serde",
 ]
@@ -6165,6 +6246,21 @@ dependencies = [
  "thread_local",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "trezor-client"
+version = "0.1.5"
+source = "git+https://github.com/trezor/trezor-firmware?branch=romanz%2F2605%2Frust-miniscript#d47a1f09573ba3463b1d6512a7cfba6fd0f017b6"
+dependencies = [
+ "bitcoin",
+ "byteorder",
+ "hex",
+ "protobuf",
+ "rusb",
+ "thiserror 2.0.17",
+ "tracing",
+ "unicode-normalization",
 ]
 
 [[package]]
