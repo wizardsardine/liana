@@ -1403,23 +1403,38 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
             .into(),
         Some(devices) => {
             let mut col = Column::new().spacing(6);
+
             for d in devices {
                 let name = d.device_name.as_deref().unwrap_or("Unknown Device");
                 let suffix = if d.is_current { " (this device)" } else { "" };
-
                 let label = format!("{name}{suffix}");
+
                 let time_label = if let Some(ref last_used) = d.last_used_at {
                     format!("Last active: {}", format_datetime(last_used))
                 } else {
                     format!("Added: {}", format_datetime(&d.created_at))
                 };
-                col = col.push(
-                    Row::new()
-                        .push(text::p2_regular(label).style(theme::text::primary))
-                        .push(iced::widget::Space::new().width(Length::Fill))
-                        .push(text::p2_regular(time_label).color(color::GREY_3)),
-                );
+
+                let mut row = Row::new()
+                    .spacing(12)
+                    .align_y(iced::Alignment::Center)
+                    .push(text::p2_regular(label).style(theme::text::primary));
+
+                if !d.is_current {
+                    row = row.push(
+                        button::secondary(None, "Delete")
+                            .on_press(ConnectAccountMessage::DeleteVerifiedDevice(d.id))
+                            .width(Length::Shrink),
+                    );
+                }
+
+                row = row
+                    .push(iced::widget::Space::new().width(Length::Fill))
+                    .push(text::p2_regular(time_label).color(color::GREY_3));
+
+                col = col.push(row);
             }
+
             col.into()
         }
     };

@@ -16,7 +16,7 @@ use serde::Deserialize;
 use std::time::Duration;
 use zeroize::Zeroizing;
 
-use crate::services::http::ResponseExt;
+use crate::{services::http::ResponseExt, utils::device::device_headers};
 
 #[cfg(not(debug_assertions))]
 const _: () = {
@@ -93,6 +93,7 @@ impl CoincubeClient {
             client: reqwest::ClientBuilder::new()
                 .timeout(std::time::Duration::from_secs(20))
                 .https_only(https_only)
+                .default_headers(device_headers())
                 .build()
                 .unwrap(),
             base_url,
@@ -107,7 +108,7 @@ impl CoincubeClient {
         // allocation before the new value takes its place.
         self.token = Some(Zeroizing::new(token.to_string()));
 
-        let mut headers = reqwest::header::HeaderMap::new();
+        let mut headers = device_headers();
         headers.append(
             "Authorization",
             reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
@@ -139,6 +140,7 @@ impl CoincubeClient {
         self.client = reqwest::ClientBuilder::new()
             .timeout(std::time::Duration::from_secs(20))
             .https_only(https_only)
+            .default_headers(device_headers())
             .build()
             .unwrap();
     }
@@ -380,6 +382,13 @@ impl CoincubeClient {
         let res = self.client.get(&url).send().await?;
         let res = res.check_success().await?;
         Ok(res.json().await?)
+    }
+
+    pub async fn delete_verified_device(&self, device_id: u32) -> Result<(), CoincubeError> {
+        let url = format!("{}/api/v1/verified-device/{}", self.base_url, device_id);
+        let res = self.client.delete(&url).send().await?;
+        res.check_success().await?;
+        Ok(())
     }
 
     /// POST /api/v1/connect/cubes — register (or retrieve) a cube on the backend.
@@ -1663,6 +1672,7 @@ impl CoincubeClient {
         let res = self.client.post(&url).json(&req).send().await?;
         let res = res.check_success().await?;
         let resp: ApiResponse<super::DuressAlertContact> = res.json().await?;
+        print!("resp on create_duress_alert_contact: {:?}", resp);
         Ok(resp.data)
     }
 

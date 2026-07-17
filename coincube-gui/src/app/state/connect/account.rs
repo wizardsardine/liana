@@ -201,6 +201,12 @@ pub struct ContactsState {
     pub add_to_current_cube_pending: std::collections::HashSet<u64>,
 }
 
+// state for Verified Devices section of ConnectAccountPanel
+#[derive(Debug, Default)]
+pub struct VerifiedDevicesState {
+    pub deleting_ids: std::collections::HashSet<u32>,
+}
+
 /// State for the W14 "Add to Cube(s)…" multi-select dialog. Opened via
 /// `ContactsMessage::OpenAddToCubeDialog(contact_id)` from the contact
 /// detail view; closed via `CloseAddToCubeDialog` or on successful
@@ -556,6 +562,7 @@ pub struct ConnectAccountPanel {
     pub user: Option<User>,
     pub plan: Option<ConnectPlan>,
     pub verified_devices: Option<Vec<VerifiedDevice>>,
+    pub verified_devices_state: VerifiedDevicesState,
     pub login_activity: Option<Vec<LoginActivity>>,
     /// Account Overview summary counts, fetched on entering the Overview
     /// tab (kept separate from `contacts_state` so the count doesn't
@@ -627,6 +634,7 @@ impl ConnectAccountPanel {
             user: None,
             plan: None,
             verified_devices: None,
+            verified_devices_state: VerifiedDevicesState::default(),
             login_activity: None,
             overview_contact_count: None,
             overview_cube_count: None,
@@ -1362,6 +1370,38 @@ impl ConnectAccountPanel {
                 if gen == self.session_generation && matches!(self.step, ConnectFlowStep::Dashboard)
                 {
                     self.login_activity = Some(activity);
+                }
+            }
+
+            ConnectAccountMessage::DeleteVerifiedDevice(id) => {
+                self.verified_devices_state.deleting_ids.insert(id);
+
+                let gen = self.session_generation;
+                let client = self.client.clone();
+                let id_for_result = id.clone();
+
+                return iced::Task::perform(
+                    async move { client.delete_verified_device(id).await },
+                    move |res| match res {
+                        Ok(()) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::VerifiedDeviceDeleted(id_for_result, gen),
+                        )),
+                        Err(e) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Error(e.to_string()),
+                        )),
+                    },
+                );
+            }
+
+            ConnectAccountMessage::VerifiedDeviceDeleted(id, gen) => {
+                if gen != self.session_generation {
+                    return iced::Task::none();
+                }
+
+                self.verified_devices_state.deleting_ids.remove(&id);
+
+                if let Some(devices) = self.verified_devices.as_mut() {
+                    devices.retain(|d| d.id != id);
                 }
             }
 
