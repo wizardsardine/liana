@@ -6,7 +6,6 @@ use crate::{
         message::Message,
         view::{
             self, ConnectAccountMessage, ContactsMessage, DuressContactsMessage, DuressMessage,
-            RecoveryKitMessage::RemoveResult,
         },
     },
     services::coincube::{
