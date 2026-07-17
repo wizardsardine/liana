@@ -1378,7 +1378,7 @@ impl ConnectAccountPanel {
 
                 let gen = self.session_generation;
                 let client = self.client.clone();
-                let id_for_result = id.clone();
+                let id_for_result = id;
 
                 return iced::Task::perform(
                     async move { client.delete_verified_device(id).await },
