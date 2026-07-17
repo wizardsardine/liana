@@ -1,6 +1,7 @@
 #![allow(clippy::result_large_err)]
 
 use liana::miniscript::bitcoin;
+use liana_ui::component::label::LABEL_MAX_LENGTH;
 use std::str::FromStr;
 use std::{collections::HashMap, iter::IntoIterator, sync::Arc};
 
@@ -13,6 +14,10 @@ use crate::{
 };
 use iced::Task;
 use liana_ui::component::form;
+
+pub fn is_valid_label_value(value: &str) -> bool {
+    value.len() <= LABEL_MAX_LENGTH
+}
 
 #[derive(Default)]
 pub struct LabelsEdited(HashMap<String, form::Value<String>>);
@@ -42,7 +47,7 @@ impl LabelsEdited {
             // Edit (open the label editor) is handled by each panel before it reaches the
             // shared cache; it falls through to the catch-all below.
             Message::View(view::Message::Label(items, view::LabelMessage::Edited(value))) => {
-                let valid = value.len() <= 100;
+                let valid = is_valid_label_value(&value);
                 for item in items {
                     if let Some(label) = self.0.get_mut(&item) {
                         label.valid = valid;
