@@ -24,6 +24,7 @@ use crate::installer::{
 };
 
 pub fn custom_template_description(progress: (usize, usize)) -> Element<'static, Message> {
+    let row_next = row![Space::fill_width(), btn_next(Some(Message::Next))];
     layout(
         progress,
         None,
@@ -43,7 +44,7 @@ pub fn custom_template_description(progress: (usize, usize)) -> Element<'static,
                 .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::custom_template_description().width(Length::Fill))
-            .push(row![Space::fill_width(), btn_next(Some(Message::Next))])
+            .push(row_next)
             .push(Space::with_height(50.0))
             .spacing(20),
         true,

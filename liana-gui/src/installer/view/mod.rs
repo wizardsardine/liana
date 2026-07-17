@@ -1,8 +1,8 @@
 pub mod editor;
 
 use async_hwi::utils::extract_keys_and_template;
-use iced::widget::column;
 use iced::widget::{checkbox, radio, tooltip, Button, Space, TextInput};
+use iced::widget::{column, row};
 use iced::{
     alignment,
     widget::{progress_bar, tooltip as iced_tooltip},
@@ -84,6 +84,11 @@ pub fn import_wallet_or_descriptor<'a>(
         card::simple(col_wallets).into()
     };
 
+    let msg_next = (!invitation.value.is_empty()).then_some(Message::ImportRemoteWallet(
+        message::ImportRemoteWallet::FetchInvitation,
+    ));
+    let row_next = row![Space::fill_width(), btn_next(msg_next)];
+
     let col_invitation_token = collapse::Collapse::new(
         Column::new()
             .spacing(5)
@@ -145,19 +150,7 @@ pub fn import_wallet_or_descriptor<'a>(
                                 )
                                 .spacing(10),
                         )
-                        .push(
-                            Row::new().push(Space::with_width(Length::Fill)).push(
-                                button::secondary(None, "Next")
-                                    .width(Length::Fixed(200.0))
-                                    .on_press_maybe(if !invitation.value.is_empty() {
-                                        Some(Message::ImportRemoteWallet(
-                                            message::ImportRemoteWallet::FetchInvitation,
-                                        ))
-                                    } else {
-                                        None
-                                    }),
-                            ),
-                        )
+                        .push(row_next)
                         .spacing(20),
                 )
                 .padding(15),
@@ -165,6 +158,11 @@ pub fn import_wallet_or_descriptor<'a>(
         },
     )
     .padding(15);
+
+    let msg_next = (!imported_descriptor.value.is_empty() && imported_descriptor.valid).then_some(
+        Message::ImportRemoteWallet(message::ImportRemoteWallet::ConfirmDescriptor),
+    );
+    let row_next = row![Space::fill_width(), btn_next(msg_next)];
 
     let col_descriptor = collapse::Collapse::new(
         Column::new()
@@ -199,23 +197,7 @@ pub fn import_wallet_or_descriptor<'a>(
                         ))
                         .spacing(10),
                 )
-                .push(
-                    Row::new().push(Space::with_width(Length::Fill)).push(
-                        button::secondary(None, "Next")
-                            .width(Length::Fixed(200.0))
-                            .on_press_maybe(
-                                if imported_descriptor.value.is_empty()
-                                    || !imported_descriptor.valid
-                                {
-                                    None
-                                } else {
-                                    Some(Message::ImportRemoteWallet(
-                                        message::ImportRemoteWallet::ConfirmDescriptor,
-                                    ))
-                                },
-                            ),
-                    ),
-                )
+                .push(row_next)
                 .spacing(20),
         )
         .padding(15),
@@ -321,15 +303,7 @@ pub fn import_descriptor<'a>(
                 Settings > Node.",
                     )),
             )
-            .push(
-                if imported_descriptor.value.is_empty() || !imported_descriptor.valid {
-                    button::secondary(None, "Next").width(Length::Fixed(200.0))
-                } else {
-                    button::secondary(None, "Next")
-                        .width(Length::Fixed(200.0))
-                        .on_press(Message::Next)
-                },
-            )
+            .push(btn_next(valid.then_some(Message::Next)))
             .push_maybe(error.map(|e| card::error("Invalid descriptor", e.to_string())))
             .spacing(50),
         true,
@@ -732,13 +706,7 @@ pub fn backup_descriptor<'a>(
                     .label("I have backed up my descriptor")
                     .on_toggle(Message::UserActionDone),
             )
-            .push(if done {
-                button::primary(None, "Next")
-                    .on_press(Message::Next)
-                    .width(Length::Fixed(200.0))
-            } else {
-                button::secondary(None, "Next").width(Length::Fixed(200.0))
-            })
+            .push(btn_next(done.then_some(Message::Next)))
             .push(Space::with_height(20.0))
             .spacing(50),
         true,
@@ -925,6 +893,9 @@ pub fn define_bitcoin_node<'a>(
     can_try_ping: bool,
     waiting_for_ping_result: bool,
 ) -> Element<'a, Message> {
+    let msg_next = is_running.and_then(|r| r.is_ok().then_some(Message::Next));
+    let button_next = btn_next(msg_next);
+
     let col = Column::new()
         .push(
             available_node_types.fold(
@@ -993,13 +964,7 @@ pub fn define_bitcoin_node<'a>(
                         })
                         .width(BtnWidth::XL),
                 ))
-                .push(if is_running.map(|res| res.is_ok()).unwrap_or(false) {
-                    button::secondary(None, "Next")
-                        .on_press(Message::Next)
-                        .width(Length::Fixed(200.0))
-                } else {
-                    button::secondary(None, "Next").width(Length::Fixed(200.0))
-                }),
+                .push(button_next),
         )
         .spacing(50);
 
@@ -1604,6 +1569,10 @@ pub fn recover_mnemonic<'a>(
     recover: bool,
     error: Option<&'a String>,
 ) -> Element<'a, Message> {
+    let msg_next =
+        (!words.iter().any(|(_, valid)| !valid) && error.is_none()).then_some(Message::Next);
+    let button_next = btn_next(msg_next);
+
     layout(
         progress,
         email,
@@ -1689,15 +1658,7 @@ pub fn recover_mnemonic<'a>(
                             .on_press(Message::ImportMnemonic(false))
                             .width(Length::Fixed(200.0)),
                     )
-                    .push(
-                        if words.iter().any(|(_, valid)| !valid) || error.is_some() {
-                            button::secondary(None, "Next").width(Length::Fixed(200.0))
-                        } else {
-                            button::secondary(None, "Next")
-                                .on_press(Message::Next)
-                                .width(Length::Fixed(200.0))
-                        },
-                    )
+                    .push(button_next)
             })
             .spacing(50),
         true,

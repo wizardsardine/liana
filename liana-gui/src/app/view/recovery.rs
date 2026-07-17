@@ -74,11 +74,7 @@ pub fn recovery<'a>(
                 Some(
                     Row::new()
                         .push(Space::with_width(Length::Fill))
-                        .push(
-                            button::primary(None, "Next")
-                                .on_press_maybe(selected_path.map(|_| Message::Next))
-                                .width(Length::Fixed(200.0)),
-                        )
+                        .push(button::btn_next(selected_path.map(|_| Message::Next)))
                         .spacing(20)
                         .align_y(Alignment::Center),
                 )
