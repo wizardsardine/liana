@@ -1105,111 +1105,55 @@ pub fn define_electrum<'a>(
 }
 
 pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {
+    let existing_node_title = Container::new(text::new::b5_bold("I already have a node"))
+        .padding(20)
+        .width(Length::FillPortion(1));
+    let managed_node_title = Container::new(text::new::b5_bold(
+        "I want Liana to automatically install a Bitcoin node on my device",
+    ))
+    .padding(20)
+    .width(Length::FillPortion(1));
+    let titles = row![existing_node_title, managed_node_title].spacing(20);
+
+    let existing_node_description = Container::new(
+        text::new::caption(
+            "Select this option if you already have a Bitcoin node running locally or remotely. Liana will connect to it.",
+        )
+        .style(theme::text::secondary),
+    )
+    .padding(20)
+    .width(Length::FillPortion(1));
+    let managed_node_description = Container::new(
+        text::new::caption(
+            "Liana will install a pruned node on your computer. You won't need to do anything except have some disk space available (~30GB required on mainnet) and wait for the initial synchronization with the network (it can take some days depending on your internet connection speed).",
+        )
+        .style(theme::text::secondary),
+    )
+    .padding(20)
+    .width(Length::FillPortion(1));
+    let descriptions = row![existing_node_description, managed_node_description].spacing(20);
+
+    let existing_node_action =
+        Container::new(button::secondary(None, "Select").width(300).on_press(
+            Message::SelectBitcoindType(message::SelectBitcoindTypeMsg::UseExternal(true)),
+        ))
+        .padding(20)
+        .center_x(Length::FillPortion(1));
+    let managed_node_action =
+        Container::new(button::secondary(None, "Select").width(300).on_press(
+            Message::SelectBitcoindType(message::SelectBitcoindTypeMsg::UseExternal(false)),
+        ))
+        .padding(20)
+        .center_x(Length::FillPortion(1));
+    let actions = row![existing_node_action, managed_node_action].spacing(20);
+
+    let content = column![titles, descriptions, actions].max_width(800);
+
     layout(
         progress,
         None,
         "Bitcoin node management",
-        Column::new()
-            .push(
-                Row::new()
-                    .align_y(Alignment::Start)
-                    .spacing(20)
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(300.0))
-                                .push(text("I already have a node").bold()),
-                        )
-                        .padding(20),
-                    )
-                    .push(
-                        Container::new(
-                            Column::new().spacing(20).width(Length::Fixed(300.0)).push(
-                                text(
-                                    "I want Liana to automatically install \
-                                    a Bitcoin node on my device",
-                                )
-                                .bold(),
-                            ),
-                        )
-                        .padding(20),
-                    ),
-            )
-            .push(
-                Row::new()
-                    .align_y(Alignment::Start)
-                    .spacing(20)
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(300.0))
-                                .align_x(Alignment::Start)
-                                .push(text(
-                                    "Select this option if you already have \
-                                    a Bitcoin node running locally or remotely. \
-                                    Liana will connect to it.",
-                                )),
-                        )
-                        .padding(20),
-                    )
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(300.0))
-                                .align_x(Alignment::Start)
-                                .push(text(
-                                    "Liana will install a pruned node \
-                                    on your computer. You won't need to do anything \
-                                    except have some disk space available \
-                                    (~30GB required on mainnet) and \
-                                    wait for the initial synchronization with the \
-                                    network (it can take some days depending on \
-                                    your internet connection speed).",
-                                )),
-                        )
-                        .padding(20),
-                    ),
-            )
-            .push(
-                Row::new()
-                    .align_y(Alignment::End)
-                    .spacing(20)
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(300.0))
-                                .align_x(Alignment::Center)
-                                .push(
-                                    button::secondary(None, "Select")
-                                        .width(Length::Fixed(300.0))
-                                        .on_press(Message::SelectBitcoindType(
-                                            message::SelectBitcoindTypeMsg::UseExternal(true),
-                                        )),
-                                ),
-                        )
-                        .padding(20),
-                    )
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(300.0))
-                                .align_x(Alignment::Center)
-                                .push(
-                                    button::secondary(None, "Select")
-                                        .width(Length::Fixed(300.0))
-                                        .on_press(Message::SelectBitcoindType(
-                                            message::SelectBitcoindTypeMsg::UseExternal(false),
-                                        )),
-                                ),
-                        )
-                        .padding(20),
-                    ),
-            ),
+        content,
         true,
         Some(Message::Previous),
     )
