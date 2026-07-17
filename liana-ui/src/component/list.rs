@@ -12,7 +12,7 @@ use crate::{
     component::{
         badge::{self, Tile},
         button::{self, EntryWidth, ListEntryAccent},
-        form,
+        collapse, form,
         text::{self, new::caption},
         tooltip,
     },
@@ -23,6 +23,8 @@ use crate::{
 };
 
 use super::text::truncate;
+
+const COLLAPSIBLE_ENTRY_CONTENT_BOTTOM_PADDING: u16 = 10;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum EntryAccent {
@@ -220,6 +222,63 @@ pub fn entry_paste_xpub<'a, M: Clone + 'a>(
         Some(Button::new(icon::paste_icon()).on_press(on_paste).into()),
         EntryWidth::Standard,
     )
+}
+
+pub struct CollapsibleEntry<'a, M> {
+    pub accent: Option<EntryAccent>,
+    pub tile: Tile,
+    pub title: &'static str,
+    pub collapsed_subtitle: Option<&'static str>,
+    pub expanded_subtitle: Option<&'static str>,
+    pub content: Element<'a, M>,
+    pub expanded: bool,
+    pub on_toggle: M,
+}
+
+pub fn entry_collapsible<'a, M: Clone + 'static>(cfg: CollapsibleEntry<'a, M>) -> Element<'a, M> {
+    let accent = cfg.accent.map(entry_accent);
+    let entry = collapse::Collapse::new(
+        collapsible_entry_header(
+            cfg.tile,
+            cfg.title.to_string(),
+            cfg.collapsed_subtitle.map(str::to_string),
+        ),
+        collapsible_entry_header(
+            cfg.tile,
+            cfg.title.to_string(),
+            cfg.expanded_subtitle.map(str::to_string),
+        ),
+        Container::new(cfg.content).padding(iced::Padding {
+            left: button::LIST_ENTRY_PADDING[1].into(),
+            right: button::LIST_ENTRY_PADDING[1].into(),
+            bottom: COLLAPSIBLE_ENTRY_CONTENT_BOTTOM_PADDING.into(),
+            ..iced::Padding::ZERO
+        }),
+    )
+    .expanded(cfg.expanded)
+    .on_toggle(move || cfg.on_toggle.clone())
+    .style(move |theme, status| button::list_entry_style(theme, status, accent, true))
+    .style_bounds()
+    .padding(button::LIST_ENTRY_PADDING)
+    .width(Length::Fill);
+
+    button::list_entry_card(entry, accent, EntryWidth::Standard)
+}
+
+fn collapsible_entry_header<'a, M: Clone + 'a>(
+    tile: Tile,
+    title: String,
+    subtitle: Option<String>,
+) -> Element<'a, M> {
+    let content = row![
+        badge::tile_accent(tile),
+        Container::new(item_body(title, subtitle)).width(Length::Fill),
+    ]
+    .spacing(16)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+
+    Container::new(content).width(Length::Fill).into()
 }
 
 pub fn entry_organization<'a, M: Clone + 'a>(
@@ -494,6 +553,26 @@ pub fn entry_action<'a, M: Clone + 'a>(
     leaf_entry(tile, title, subtitle, trailing, None, width, msg)
 }
 
+pub fn entry_action_accent<'a, M: Clone + 'a>(
+    accent: Option<EntryAccent>,
+    tile: Tile,
+    title: impl Display,
+    subtitle: Option<impl Display>,
+    trailing: Option<Element<'a, M>>,
+    width: EntryWidth,
+    msg: Option<M>,
+) -> Element<'a, M> {
+    leaf_entry(
+        tile,
+        title,
+        subtitle,
+        trailing,
+        accent.map(entry_accent),
+        width,
+        msg,
+    )
+}
+
 pub fn entry_no_devices<'a, M: Clone + 'a>(
     title: impl Display,
     subtitle: Option<impl Display>,
@@ -543,8 +622,14 @@ fn leaf_entry<'a, M: Clone + 'a>(
     width: EntryWidth,
     msg: Option<M>,
 ) -> Element<'a, M> {
+    let tile = if accent.is_some() {
+        badge::tile_accent(tile)
+    } else {
+        badge::tile(tile)
+    };
+
     list_entry_row(
-        Some(badge::tile(tile).into()),
+        Some(tile.into()),
         item_body(title, subtitle),
         trailing,
         accent,

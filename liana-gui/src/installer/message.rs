@@ -117,6 +117,8 @@ pub enum SelectBackend {
 
 #[derive(Debug, Clone)]
 pub enum ImportRemoteWallet {
+    ToggleOptions(bool),
+    ToggleOption(ImportWalletOption),
     RemoteWallets(Result<Vec<liana_connect::wallets::api::Wallet>, Error>),
     ImportDescriptor(String),
     ConfirmDescriptor,
@@ -127,6 +129,12 @@ pub enum ImportRemoteWallet {
     InvitationAccepted(Result<liana_connect::wallets::api::Wallet, Error>),
     ImportDescriptorFromFile,
     ImportExport(ImportExportMessage),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportWalletOption {
+    Invitation,
+    PasteDescriptor,
 }
 
 #[derive(Debug, Clone)]

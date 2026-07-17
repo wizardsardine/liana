@@ -468,6 +468,8 @@ pub struct ImportRemoteWallet {
     network: Network,
     invitation_token: form::Value<String>,
     invitation: Option<api::WalletInvitation>,
+    options_expanded: bool,
+    active_option: Option<message::ImportWalletOption>,
     imported_descriptor: form::Value<String>,
     descriptor: Option<LianaDescriptor>,
     error: Option<String>,
@@ -485,6 +487,8 @@ impl ImportRemoteWallet {
             network,
             invitation_token: form::Value::default(),
             invitation: None,
+            options_expanded: false,
+            active_option: None,
             imported_descriptor: form::Value::default(),
             descriptor: None,
             error: None,
@@ -529,6 +533,12 @@ impl Step for ImportRemoteWallet {
     // Verification of the values is happening when the user click on Next button.
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match message {
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::ToggleOptions(expanded)) => {
+                self.options_expanded = expanded;
+            }
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::ToggleOption(option)) => {
+                self.active_option = (self.active_option != Some(option)).then_some(option);
+            }
             Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportDescriptorFromFile) => {
                 let modal = ExportModal::new(None, ImportExportType::FromBackup);
                 let launch = modal.launch(false);
@@ -769,6 +779,8 @@ impl Step for ImportRemoteWallet {
                 .map(|invit| invit.wallet_name.as_str()),
             &self.imported_descriptor,
             self.error.as_ref(),
+            self.options_expanded,
+            self.active_option,
             self.wallets
                 .iter()
                 .map(|w| (&w.name, w.metadata.wallet_alias.as_ref()))

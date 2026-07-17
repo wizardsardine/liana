@@ -29,7 +29,7 @@ const MENU_TEXT_COMPACT_SIZE: u32 = 18;
 const MENU_ICON_SIZE: u32 = ICON_SIZE_L as u32;
 const AUXILIARY_PADDING: [u16; 2] = [14 /* Top/Bottom */, 20 /* Left/Right */];
 const LIST_ENTRY_ACCENT_WIDTH: f32 = 4.0;
-const LIST_ENTRY_PADDING: [u16; 2] = [14 /* Top/Bottom */, 20 /* Left/Right */];
+pub const LIST_ENTRY_PADDING: [u16; 2] = [14 /* Top/Bottom */, 20 /* Left/Right */];
 
 const ICON_BTN_SIZE: f32 = 40.0;
 const ICON_BTN_PADDING: f32 = 10.0;
@@ -218,27 +218,43 @@ pub fn list_entry_with_state<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
             .padding(LIST_ENTRY_PADDING)
             .width(Length::Fill),
     )
-    .style(move |theme, status| {
-        let status = if !clickable && status == Status::Disabled {
-            Status::Active
-        } else {
-            status
-        };
-        let mut style = theme::button::list_entry(theme, status);
-        if let Some(color) = accent {
-            // The accent card behind carries the shadow; keep the inner card flat.
-            style.shadow = Default::default();
-            if status == Status::Hovered {
-                // Hover border matches the entry's accent stripe.
-                style.border.color = color(theme);
-            }
-        }
-        style
-    })
+    .style(move |theme, status| list_entry_style(theme, status, accent, clickable))
     .on_press_maybe(msg)
     .padding(0)
     .width(Length::Fill);
 
+    list_entry_card(button, accent, width)
+}
+
+pub fn list_entry_style(
+    theme: &Theme,
+    status: Status,
+    accent: Option<ListEntryAccent>,
+    clickable: bool,
+) -> Style {
+    let status = if !clickable && status == Status::Disabled {
+        Status::Active
+    } else {
+        status
+    };
+    let mut style = theme::button::list_entry(theme, status);
+    if let Some(color) = accent {
+        // The accent card behind carries the shadow; keep the inner card flat.
+        style.shadow = Default::default();
+        if status == Status::Hovered {
+            // Hover border matches the entry's accent stripe.
+            style.border.color = color(theme);
+        }
+    }
+    style
+}
+
+pub fn list_entry_card<'a, M: 'a>(
+    entry: impl Into<Element<'a, M>>,
+    accent: Option<ListEntryAccent>,
+    width: EntryWidth,
+) -> Element<'a, M> {
+    let entry = entry.into();
     let entry: Element<'a, M> = if let Some(color) = accent {
         let accent_card = Container::new(Space::with_height(Length::Fill))
             .width(Length::Fill)
@@ -270,14 +286,14 @@ pub fn list_entry_with_state<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
         // stripe that wraps the left rounded corners.
         Stack::new()
             .width(Length::Fill)
-            .push(Container::new(button).padding(Padding {
+            .push(Container::new(entry).padding(Padding {
                 left: LIST_ENTRY_ACCENT_WIDTH,
                 ..Padding::ZERO
             }))
             .push_under(accent_card)
             .into()
     } else {
-        button.into()
+        entry
     };
 
     container(entry).width(width).into()
@@ -997,5 +1013,5 @@ pub fn btn_backend_options_help<T: Clone + 'static>(msg: T) -> Button<'static, T
 }
 
 pub fn btn_accept<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Accept", BtnWidth::M, msg)
+    btn_primary(Some(icon::check_icon()), "Accept", BtnWidth::M, msg)
 }
