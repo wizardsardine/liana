@@ -1801,12 +1801,34 @@ async fn find_or_create_cube(
             // are its source of truth. The restore flow only overwrites
             // Cube-level credentials when we're actually minting a new
             // Cube for the restored wallet.
-            if let Some(existing_cube) = settings_data
+            if let Some(existing_idx) = settings_data
                 .cubes
                 .iter()
-                .find(|c| c.vault_wallet_id.as_ref() == Some(wallet_id))
+                .position(|c| c.vault_wallet_id.as_ref() == Some(wallet_id))
             {
-                return Ok(existing_cube.clone());
+                // On a Recovery-Kit restore we must reconcile identity *before*
+                // returning this match: if the wallet is attached to a cube with
+                // a **different** UUID than the one being restored, that's the
+                // old-bug duplicate (a prior buggy recovery minted a new Cube).
+                // Returning it here would leave the duplicate attached and the
+                // original still recoverable — the very bug this flow fixes. So
+                // detach it and fall through, letting the restore reconciliation
+                // below re-attach the wallet to the restored UUID (reused or
+                // minted). Identities agree (or no restore) → normal return.
+                match &restored_cube {
+                    Some(identity) if settings_data.cubes[existing_idx].id != identity.uuid => {
+                        info!(
+                            "Wallet {} was attached to duplicate cube '{}' ({}); detaching to \
+                             reconcile with restored UUID {}",
+                            wallet_id,
+                            settings_data.cubes[existing_idx].name,
+                            settings_data.cubes[existing_idx].id,
+                            identity.uuid,
+                        );
+                        settings_data.cubes[existing_idx].vault_wallet_id = None;
+                    }
+                    _ => return Ok(settings_data.cubes[existing_idx].clone()),
+                }
             }
 
             // Recovery-Kit restore: the restored Cube must carry the deleted
@@ -2395,5 +2417,66 @@ mod find_or_create_cube_tests {
         assert_ne!(cube.id, ORIG_UUID);
         assert_eq!(cube.name, "My Alias");
         assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
+    }
+
+    /// Upgrade path: a previous (buggy) recovery left the wallet attached to a
+    /// *duplicate* Cube with a different UUID, while the original Cube is still
+    /// recoverable. Re-running recovery must reconcile — move the wallet onto
+    /// the restored (original) UUID and detach the duplicate — rather than
+    /// returning the stale duplicate match and leaving the original recoverable.
+    #[tokio::test]
+    async fn restore_reconciles_wallet_off_a_duplicate_uuid() {
+        let nd = temp_network_dir("dup-uuid");
+        let wid = wallet_id();
+
+        // The exact state the old bug produced: a duplicate Cube (its own,
+        // different UUID) already holds the wallet.
+        let mut settings = app::settings::Settings::default();
+        let dup =
+            app::settings::CubeSettings::new("Duplicate".to_string(), bitcoin::Network::Bitcoin)
+                .with_vault(wid.clone());
+        let dup_id = dup.id.clone();
+        assert_ne!(
+            dup_id, ORIG_UUID,
+            "duplicate must not already carry the original UUID"
+        );
+        settings.cubes.push(dup);
+        update_settings_file(&nd, |_| Some(settings)).await.unwrap();
+
+        let cube = find_or_create_cube(
+            &nd,
+            &wid,
+            &None,
+            bitcoin::Network::Bitcoin,
+            None,
+            Some(RestoreCubeIdentity {
+                uuid: ORIG_UUID.to_string(),
+                name: "My Vault".to_string(),
+            }),
+            None,
+        )
+        .await
+        .expect("restore should succeed");
+
+        // The wallet now lives on the restored (original) UUID, not the duplicate.
+        assert_eq!(cube.id, ORIG_UUID, "wallet must move to the restored UUID");
+        assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
+
+        let reloaded = app::settings::Settings::from_file(&nd).unwrap();
+        let dup_after = reloaded
+            .cubes
+            .iter()
+            .find(|c| c.id == dup_id)
+            .expect("duplicate cube is kept, just detached");
+        assert_eq!(
+            dup_after.vault_wallet_id, None,
+            "the duplicate Cube must no longer be attached to the wallet"
+        );
+        let restored = reloaded
+            .cubes
+            .iter()
+            .find(|c| c.id == ORIG_UUID)
+            .expect("restored cube exists");
+        assert_eq!(restored.vault_wallet_id.as_ref(), Some(&wid));
     }
 }
