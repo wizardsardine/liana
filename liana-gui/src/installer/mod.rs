@@ -14,10 +14,7 @@ use liana::{
     descriptors::{LianaDescriptor, LianaPolicy},
     miniscript::bitcoin::{self, Network},
 };
-use liana_ui::{
-    component::network_banner,
-    widget::{Column, Element},
-};
+use liana_ui::widget::Element;
 use lianad::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config};
 use std::{collections::HashMap, fmt::Debug, ops::Deref};
 use tokio::runtime::Handle;
@@ -403,8 +400,7 @@ impl LianaInstaller {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let content = self
-            .steps
+        self.steps
             .get(self.current)
             .expect("There is always a step")
             .view(
@@ -412,13 +408,7 @@ impl LianaInstaller {
                 self.progress(),
                 self.network,
                 self.context.remote_backend.user_email(),
-            );
-
-        if self.network != Network::Bitcoin {
-            Column::with_children(vec![network_banner(self.network).into(), content]).into()
-        } else {
-            content
-        }
+            )
     }
 }
 

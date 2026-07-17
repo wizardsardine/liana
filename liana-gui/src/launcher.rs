@@ -10,7 +10,7 @@ use liana_ui::{
         button::{btn_add_wallet, btn_delete_wallet, btn_remove, btn_select, EntryWidth},
         card, installer as installer_layout,
         list::{self, EntryAccent},
-        network_banner, notification,
+        notification,
         text::new,
     },
     icon, image, theme,
@@ -268,12 +268,6 @@ impl Launcher {
             self.network,
             body,
         );
-
-        let content: Element<'_, Message> = if self.network != Network::Bitcoin {
-            column![network_banner(self.network), content].into()
-        } else {
-            content
-        };
 
         if let Some(modal) = &self.delete_wallet_modal {
             Modal::new(Container::new(content).height(Length::Fill), modal.view())

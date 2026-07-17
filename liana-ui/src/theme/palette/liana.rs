@@ -56,7 +56,7 @@ impl Palette {
                 warning: color::ORANGE,
                 success: color::GREEN,
                 error: color::RED,
-                accent: color::BLUE,
+                accent: color::GREEN,
                 card_secondary: color::CARD_TEXT_SECONDARY,
                 address: color::GREY_2,
                 address_dimmed: color::GREEN,
