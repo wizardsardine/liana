@@ -965,3 +965,14 @@ pub fn btn_optional_section<'a, T: Clone + 'a>(content: Row<'a, T>, msg: T) -> B
         .style(theme::button::optional_section)
         .on_press(msg)
 }
+
+pub fn btn_backup_descriptor<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Button<'a, T> {
+    let icon = Some(icon::backup_icon());
+    let label = "Back Up Descriptor";
+    let width = BtnWidth::XL;
+    if primary {
+        btn_primary(icon, label, width, msg)
+    } else {
+        btn_secondary(icon, label, width, msg)
+    }
+}

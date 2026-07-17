@@ -10,7 +10,7 @@ use iced::{
 };
 
 use liana::miniscript::bitcoin::bip32::ChildNumber;
-use liana_ui::component::button::{btn_next, BtnWidth};
+use liana_ui::component::button::{btn_backup_descriptor, btn_next, BtnWidth};
 use liana_ui::component::text::{self, p2_regular};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -633,82 +633,73 @@ pub fn backup_descriptor<'a>(
     keys: &'a HashMap<Fingerprint, settings::KeySetting>,
     error: Option<&Error>,
     done: bool,
+    help_open: bool,
 ) -> Element<'a, Message> {
-    let backup_button = if done {
-        button::secondary(Some(icon::backup_icon()), "Back Up Descriptor")
-            .on_press(Message::BackupDescriptor)
-    } else {
-        button::primary(Some(icon::backup_icon()), "Back Up Descriptor")
-            .on_press(Message::BackupDescriptor)
-    };
+    let descriptor_str = descriptor.to_string();
+
+    let backup_button = btn_backup_descriptor(Some(Message::BackupDescriptor), done);
+
+    let copy_button = button::btn_copy(Some(Message::Clipboard(descriptor_str.clone())));
+
+    let help_button = modal::optional_section(
+        help_open,
+        "Learn more".to_string(),
+        || Message::ShowBackupDescriptorHelp(false),
+        || Message::ShowBackupDescriptorHelp(true),
+    );
+    let help = help_open.then_some(text::new::caption(prompt::BACKUP_DESCRIPTOR_HELP));
+    let intro = column![
+        text::new::caption(prompt::BACKUP_DESCRIPTOR_MESSAGE),
+        help_button,
+        help,
+    ]
+    .max_width(1000);
+
+    let error_card = error.map(|e| card::error("Failed to export backup", e.to_string()));
+
+    let descriptor_scroll =
+        scrollable::horizontal_thin(column![text::new::caption(descriptor_str)])
+            .width(Length::Fill);
+    let descriptor_actions = row![Space::fill_width(), backup_button];
+    let descriptor_header = row![descriptor_scroll, copy_button]
+        .align_y(Alignment::Center)
+        .spacing(10);
+    let descriptor_card = card::simple(
+        column![
+            text::new::b5_bold("The descriptor:"),
+            descriptor_header,
+            descriptor_actions,
+        ]
+        .spacing(10),
+    )
+    .max_width(1500);
+
+    let policy_card = card::simple(display_policy(descriptor.policy(), keys))
+        .width(Length::Fill)
+        .max_width(1500);
+
+    let backup_checkbox = checkbox(done)
+        .label("I have backed up my descriptor")
+        .on_toggle(Message::UserActionDone);
+
+    let next_button = btn_next(done.then_some(Message::Next));
+
+    let content = column![
+        intro,
+        error_card,
+        descriptor_card,
+        policy_card,
+        backup_checkbox,
+        next_button,
+        Space::with_height(20),
+    ]
+    .spacing(50);
 
     layout(
         progress,
         email,
         "Back Up your wallet configuration (Descriptor)",
-        Column::new()
-            .push(
-                Column::new()
-                    .push(text(prompt::BACKUP_DESCRIPTOR_MESSAGE))
-                    .push(
-                        collapse::Collapse::new(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .spacing(10)
-                                .push(text("Learn more").small().bold())
-                                .push(icon::collapse_icon()),
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .spacing(10)
-                                .push(text("Learn more").small().bold())
-                                .push(icon::collapsed_icon()),
-                            help_backup(),
-                        )
-                        .style(theme::button::transparent),
-                    )
-                    .max_width(1000),
-            )
-            .push_maybe(error.map(|e| card::error("Failed to export backup", e.to_string())))
-            .push(
-                card::simple(
-                    Column::new()
-                        .push(text("The descriptor:").small().bold())
-                        .push(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .spacing(10)
-                                .push(
-                                    scrollable::horizontal_thin(
-                                        Column::new().push(text(descriptor.to_string()).small()),
-                                    )
-                                    .width(Length::Fill),
-                                )
-                                .push(button::btn_copy(Some(Message::Clipboard(
-                                    descriptor.to_string(),
-                                )))),
-                        )
-                        .push(
-                            Row::new()
-                                .push(Space::with_width(Length::Fill))
-                                .push(backup_button),
-                        )
-                        .spacing(10),
-                )
-                .max_width(1500),
-            )
-            .push(
-                card::simple(display_policy(descriptor.policy(), keys))
-                    .width(Length::Fill)
-                    .max_width(1500),
-            )
-            .push(
-                checkbox(done)
-                    .label("I have backed up my descriptor")
-                    .on_toggle(Message::UserActionDone),
-            )
-            .push(btn_next(done.then_some(Message::Next)))
-            .push(Space::with_height(20.0))
-            .spacing(50),
+        content,
         true,
         Some(Message::Previous),
     )
@@ -878,10 +869,6 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
             })
             .collect()
     }
-}
-
-pub fn help_backup<'a>() -> Element<'a, Message> {
-    text(prompt::BACKUP_DESCRIPTOR_HELP).small().into()
 }
 
 pub fn define_bitcoin_node<'a>(

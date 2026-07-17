@@ -420,6 +420,7 @@ pub struct BackupDescriptor {
     modal: Option<ExportModal>,
     error: Option<Error>,
     context: Option<Context>,
+    help_open: bool,
 }
 
 impl Step for BackupDescriptor {
@@ -479,6 +480,9 @@ impl Step for BackupDescriptor {
             Message::UserActionDone(done) => {
                 self.done = done;
             }
+            Message::ShowBackupDescriptorHelp(open) => {
+                self.help_open = open;
+            }
             _ => {}
         }
         Task::none()
@@ -508,6 +512,7 @@ impl Step for BackupDescriptor {
             &self.keys,
             self.error.as_ref(),
             self.done,
+            self.help_open,
         );
         if let Some(modal) = &self.modal {
             modal.view(content)
