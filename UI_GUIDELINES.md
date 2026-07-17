@@ -68,13 +68,15 @@ Use these; do not build equivalents.
 - **tab**: `tab_header(items, active, on_select)`; `Dot`.
 - **widget traits** (`widget/mod.rs`): `RowExt` / `ColumnExt::push_maybe` (dynamic building only), `SpaceExt`.
 
-## Per-app layout
+## Installer Layout
 
-Each app owns its page scaffolding on top of the components above. Read the real helpers, do not restate them:
+Installer page scaffolding is shared by `liana-ui::component::installer`. Each installer keeps a thin local
+wrapper that enforces its own width policy and navigation message behavior:
 
-- **liana-gui**: sidebar, dashboard, and menu scaffolding in `liana-gui/src/app/view/mod.rs`.
-- **liana-business**: `layout()`, `layout_with_scrollable_list()`, `menu_entry()`, and the breadcrumb +
-  step-dot header in `liana-business/business-installer/src/views/mod.rs`.
+- **liana-gui installer**: `layout()` in `liana-gui/src/installer/view/mod.rs`, with an 800px content width.
+- **liana-business installer**: `layout()` and `layout_with_scrollable_list()` in
+  `liana-business/business-installer/src/views/mod.rs`, with the standard list-entry width.
+- **liana-gui app**: sidebar, dashboard, and menu scaffolding in `liana-gui/src/app/view/mod.rs`.
 
 ## liana-business specifics
 

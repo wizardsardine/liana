@@ -16,6 +16,7 @@ use crate::{
 };
 
 use iced::Task;
+use liana::miniscript::bitcoin::Network;
 use liana_ui::widget::Element;
 
 #[derive(Clone)]
@@ -229,11 +230,13 @@ impl Step for DefineNode {
         &self,
         _hws: &HardwareWallets,
         progress: (usize, usize),
+        network: Network,
         _email: Option<&str>,
     ) -> Element<'_, Message> {
         // TODO: Make input fields read-only while waiting for a ping result.
         view::define_bitcoin_node(
             progress,
+            network,
             self.nodes.iter().map(|node| node.definition.node_type()),
             self.selected_node_type,
             self.selected().definition.view(),

@@ -138,8 +138,8 @@ fn identity_bar<'a, M: 'static + 'a + Clone>(
         Variant::LianaBusiness => 200,
     };
     let logo = match variant {
-        Variant::Liana => image::liana_wallet_logo(),
-        Variant::LianaBusiness => image::liana_business_logo(),
+        Variant::Liana => image::liana_wallet_logo().width(170),
+        Variant::LianaBusiness => image::liana_business_logo().width(200),
     }
     .width(logo_width)
     .height(IDENTITY_BAR_HEIGHT);

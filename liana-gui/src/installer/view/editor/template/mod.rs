@@ -6,6 +6,7 @@ use iced::{
     widget::{column, row, Space},
     Alignment, Length,
 };
+use liana::miniscript::bitcoin::Network;
 
 use liana_ui::{
     component::{
@@ -22,9 +23,6 @@ use crate::installer::{
     message::{self, Message},
     view::{editor::define_descriptor_advanced_settings, layout},
 };
-
-/// Max width of the editor templates' main content column.
-pub const MAX_WIDTH: f32 = 1000.0;
 
 /// Bottom padding below the footer of the editor templates.
 pub const BOTTOM_PADDING: f32 = 100.0;
@@ -68,7 +66,7 @@ pub fn template_footer<'a>(valid: bool, processing: bool, customize: bool) -> Ro
         .push(next)
 }
 
-pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, Message> {
+pub fn choose_descriptor_template(network: Network) -> Element<'static, Message> {
     let simple_inheritance = template_option(
         "Simple inheritance",
         "Two keys required, one for yourself to spend and another for your heir.",
@@ -85,16 +83,16 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
         context::DescriptorTemplate::Custom,
     );
     let content = column![simple_inheritance, expanding_multisig, custom,]
-        .max_width(800.0)
-        .align_x(Alignment::Start)
+        .align_x(Alignment::Center)
+        .width(Length::Fill)
         .spacing(20);
 
     layout(
-        progress,
+        (0, 0),
+        network,
         None,
         "Choose wallet type",
         content,
-        true,
         Some(Message::Previous),
     )
 }

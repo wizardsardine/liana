@@ -205,9 +205,11 @@ impl Step for ShareXpubs {
         &'a self,
         hws: &'a HardwareWallets,
         _progress: (usize, usize),
+        network: Network,
         email: Option<&'a str>,
     ) -> Element<'a, Message> {
         let content = view::share_xpubs(
+            network,
             email,
             hws.list
                 .iter()

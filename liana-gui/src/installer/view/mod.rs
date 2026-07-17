@@ -1,38 +1,41 @@
 pub mod editor;
 
 use async_hwi::utils::extract_keys_and_template;
-use iced::widget::{checkbox, radio, tooltip, Button, Space, TextInput};
-use iced::widget::{column, row};
 use iced::{
     alignment,
-    widget::{progress_bar, tooltip as iced_tooltip},
+    widget::{checkbox, column, progress_bar, radio, row, tooltip, Button, Space, TextInput},
     Alignment, Length,
 };
 
-use liana::miniscript::bitcoin::bip32::ChildNumber;
-use liana_ui::component::button::{
-    btn_backup_descriptor, btn_check_connection, btn_next, btn_select,
+use std::{
+    collections::{HashMap, HashSet},
+    net::{Ipv4Addr, Ipv6Addr},
+    path::PathBuf,
+    str::FromStr,
 };
-use liana_ui::component::text::{self, p2_regular};
-use std::collections::HashMap;
-use std::net::{Ipv4Addr, Ipv6Addr};
-use std::path::PathBuf;
-use std::{collections::HashSet, str::FromStr};
 
 use liana::{
     descriptors::{LianaDescriptor, LianaPolicy},
-    miniscript::bitcoin::{self, bip32::Fingerprint},
+    miniscript::bitcoin::{
+        self,
+        bip32::{ChildNumber, Fingerprint},
+        Network,
+    },
 };
+
 use liana_ui::{
     component::{
-        button::{self},
-        card, collapse, form,
+        button::{
+            self, btn_backup_descriptor, btn_check_connection, btn_next, btn_select, EntryWidth,
+        },
+        card, collapse, form, installer as installer_layout,
         list::DeviceStatus,
         modal, scrollable, separation,
-        text::{h2, h3, h4_bold, new, p1_bold, p1_regular, text, Text},
+        text::{self, h2, h3, h4_bold, new, p1_bold, p1_regular, text, Text as _},
     },
     icon, theme,
     widget::*,
+    Variant,
 };
 
 use crate::node::electrum::validate_domain_checkbox;
@@ -54,8 +57,10 @@ use crate::{
     },
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn import_wallet_or_descriptor<'a>(
     progress: (usize, usize),
+    network: Network,
     email: Option<&'a str>,
     invitation: &'a form::Value<String>,
     invitation_wallet: Option<&'a str>,
@@ -208,6 +213,7 @@ pub fn import_wallet_or_descriptor<'a>(
 
     layout(
         progress,
+        network,
         email,
         "Add wallet",
         Column::new()
@@ -217,13 +223,13 @@ pub fn import_wallet_or_descriptor<'a>(
             .push(card::simple(col_invitation_token).padding(0))
             .push(card::simple(col_descriptor).padding(0))
             .push(Space::with_height(10)),
-        true,
         Some(Message::Previous),
     )
 }
 
 pub fn import_descriptor<'a>(
     progress: (usize, usize),
+    network: Network,
     email: Option<&'a str>,
     imported_descriptor: &form::Value<String>,
     imported_backup: bool,
@@ -286,6 +292,7 @@ pub fn import_descriptor<'a>(
 
     layout(
         progress,
+        network,
         email,
         "Import the wallet",
         Column::new()
@@ -308,7 +315,6 @@ pub fn import_descriptor<'a>(
             .push(btn_next(valid.then_some(Message::Next)))
             .push_maybe(error.map(|e| card::error("Invalid descriptor", e.to_string())))
             .spacing(50),
-        true,
         Some(Message::Previous),
     )
 }
@@ -480,6 +486,7 @@ pub fn hardware_wallet_xpubs<'a>(
 }
 
 pub fn share_xpubs<'a>(
+    network: Network,
     email: Option<&'a str>,
     hws: Vec<Element<'a, Message>>,
     signer: Element<'a, Message>,
@@ -500,6 +507,7 @@ pub fn share_xpubs<'a>(
         .push(Space::with_width(Length::Fill));
     layout(
         (0, 0),
+        network,
         email,
         "Share your public keys (Xpubs)",
         column![
@@ -515,7 +523,6 @@ pub fn share_xpubs<'a>(
         ]
         .spacing(10)
         .width(Length::Fill),
-        true,
         Some(Message::Previous),
     )
 }
@@ -544,6 +551,7 @@ pub fn descriptor_view(descriptor_str: String) -> Element<'static, Message> {
 #[allow(clippy::too_many_arguments)]
 pub fn register_descriptor<'a>(
     progress: (usize, usize),
+    network: Network,
     email: Option<&'a str>,
     descriptor: &'a LianaDescriptor,
     hws: &'a [HardwareWallet],
@@ -562,21 +570,22 @@ pub fn register_descriptor<'a>(
             descriptor_view(descriptor_str)
         };
 
-    let warning = (!created_desc)
-        .then_some(text("This step is only necessary if you are using a signing device.").bold());
+    let warning = (!created_desc).then_some(new::b5_bold(
+        "This step is only necessary if you are using a signing device.",
+    ));
     let error_card = error.map(|e| card::error("Failed to register descriptor", e.to_string()));
 
     let devices_title = Container::new(if created_desc {
-        text("Select hardware wallet to register descriptor on:").bold()
+        new::b5_bold("Select hardware wallet to register descriptor on:")
     } else {
-        text("If necessary, please select the signing device to register descriptor on:").bold()
+        new::b5_bold("If necessary, please select the signing device to register descriptor on:")
     })
     .width(Length::Fill);
     let devices: Element<'a, Message> = if hws.is_empty() {
         modal::modal_no_devices_placeholder()
     } else {
         Column::with_children(hws.iter().enumerate().map(|(i, hw)| {
-            crate::view::hw::device_list_entry(
+            let entry = crate::view::hw::device_list_entry(
                 hw,
                 crate::view::hw::HwRowMode::Registration {
                     chosen: Some(i) == chosen_hw,
@@ -589,14 +598,17 @@ pub fn register_descriptor<'a>(
                     device_must_support_taproot: false,
                 },
                 move || Message::Select(i),
-            )
+            );
+            Container::new(entry).width(EntryWidth::Standard).into()
         }))
         .spacing(10)
         .into()
     };
     let signing_devices = column![devices_title, devices]
+        .align_x(Alignment::Center)
         .spacing(10)
-        .width(Length::Fill);
+        .width(EntryWidth::Standard);
+    let signing_devices = Container::new(signing_devices).center_x(Length::Fill);
 
     let registered_checkbox = created_desc.then_some(
         checkbox(done)
@@ -605,33 +617,38 @@ pub fn register_descriptor<'a>(
     );
 
     let next = (!created_desc || (done && !processing)).then_some(Message::Next);
-    let next_button = btn_next(next);
+    let next_button = row![Space::fill_width(), btn_next(next)];
 
-    let content = Column::new()
-        .push_maybe(warning)
-        .push(displayed_descriptor)
-        .push(text(prompt::REGISTER_DESCRIPTOR_HELP))
-        .push_maybe(error_card)
-        .push(signing_devices)
-        .push_maybe(registered_checkbox)
-        .push(next_button)
-        .push(Space::with_height(5))
-        .spacing(50);
+    let help = new::caption(prompt::REGISTER_DESCRIPTOR_HELP);
+
+    let content = column![
+        warning,
+        displayed_descriptor,
+        help,
+        error_card,
+        signing_devices,
+        registered_checkbox,
+        next_button,
+        Space::with_height(5),
+    ]
+    .spacing(20);
 
     let previous = (!processing).then_some(Message::Previous);
 
     layout(
         progress,
+        network,
         email,
         "Register descriptor",
         content,
-        true,
         previous,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn backup_descriptor<'a>(
     progress: (usize, usize),
+    network: Network,
     email: Option<&'a str>,
     descriptor: &'a LianaDescriptor,
     keys: &'a HashMap<Fingerprint, settings::KeySetting>,
@@ -694,15 +711,14 @@ pub fn backup_descriptor<'a>(
         row_next,
         Space::with_height(20),
     ]
-    .max_width(800)
     .spacing(50);
 
     layout(
         progress,
+        network,
         email,
         "Back Up your wallet configuration (Descriptor)",
         content,
-        true,
         Some(Message::Previous),
     )
 }
@@ -716,123 +732,128 @@ fn display_policy(
     let mut primary_keys: Vec<Fingerprint> = primary_keys.into_keys().collect();
     primary_keys.sort();
     let recovery_paths = policy.recovery_paths();
-    let mut col = Column::new().push(
-        Row::new()
-            .spacing(5)
-            .push(
-                text(format!(
-                    "{} signature{}",
-                    primary_threshold,
-                    if primary_threshold > 1 { "s" } else { "" }
-                ))
-                .bold(),
-            )
-            .push(if primary_keys.len() > 1 {
-                text(format!("out of {} by", primary_keys.len()))
-            } else {
-                text("by")
-            })
-            .push(
-                primary_keys
-                    .iter()
-                    .enumerate()
-                    .fold(Row::new().spacing(5), |row, (i, k)| {
-                        let content = if let Some(key) = keys.get(k) {
-                            Container::new(
-                                iced_tooltip::Tooltip::new(
-                                    text(key.name.clone()).bold(),
-                                    text(k.to_string()),
-                                    iced_tooltip::Position::Bottom,
-                                )
-                                .style(theme::card::simple),
-                            )
-                        } else {
-                            Container::new(text(format!("[{k}]")).bold())
-                        };
-                        if primary_keys.len() == 1 || i == primary_keys.len() - 1 {
-                            row.push(content)
-                        } else if i <= primary_keys.len() - 2 {
-                            row.push(content).push(text("and"))
-                        } else {
-                            row.push(content).push(text(","))
-                        }
-                    }),
-            )
-            .push(text("can always spend this wallet's funds (Primary path)")),
-    );
+
+    let primary_signature = new::b5_bold(format!(
+        "{} signature{}",
+        primary_threshold,
+        if primary_threshold > 1 { "s" } else { "" }
+    ));
+    let primary_key_count = if primary_keys.len() > 1 {
+        new::caption(format!("out of {} by", primary_keys.len()))
+    } else {
+        new::caption("by")
+    };
+    let primary_key_list =
+        primary_keys
+            .iter()
+            .enumerate()
+            .fold(Row::new().spacing(5), |row, (i, k)| {
+                let content = if let Some(key) = keys.get(k) {
+                    Container::new(
+                        tooltip::Tooltip::new(
+                            new::b5_bold(key.name.clone()),
+                            new::caption(k.to_string()),
+                            tooltip::Position::Bottom,
+                        )
+                        .style(theme::card::simple),
+                    )
+                } else {
+                    Container::new(new::b5_bold(format!("[{k}]")))
+                };
+                if primary_keys.len() == 1 || i == primary_keys.len() - 1 {
+                    row.push(content)
+                } else if i <= primary_keys.len() - 2 {
+                    row.push(content).push(new::caption("and"))
+                } else {
+                    row.push(content).push(new::caption(","))
+                }
+            });
+    let primary_row = row![
+        primary_signature,
+        primary_key_count,
+        primary_key_list,
+        new::caption("can always spend this wallet's funds (Primary path)"),
+    ]
+    .spacing(5);
+
+    let mut col = column![primary_row];
     for (i, (sequence, recovery_path)) in recovery_paths.iter().enumerate() {
         let (threshold, recovery_keys) = recovery_path.thresh_origins();
         // The iteration over an HashMap keys can have a different order at each refresh
         let mut recovery_keys: Vec<Fingerprint> = recovery_keys.into_keys().collect();
         recovery_keys.sort();
-        col = col.push(
-            Row::new()
-                .spacing(5)
-                .push(
-                    text(format!(
-                        "{} signature{}",
-                        threshold,
-                        if threshold > 1 { "s" } else { "" }
-                    ))
-                    .bold(),
-                )
-                .push(if recovery_keys.len() > 1 {
-                    text(format!("out of {} by", recovery_keys.len()))
-                } else {
-                    text("by")
-                })
-                .push(recovery_keys.iter().enumerate().fold(
-                    Row::new().spacing(5),
-                    |row, (i, k)| {
-                        let content = if let Some(key) = keys.get(k) {
-                            Container::new(
-                                iced_tooltip::Tooltip::new(
-                                    text(key.name.clone()).bold(),
-                                    text(k.to_string()),
-                                    iced_tooltip::Position::Bottom,
-                                )
-                                .style(theme::card::simple),
+
+        let recovery_signature = new::b5_bold(format!(
+            "{} signature{}",
+            threshold,
+            if threshold > 1 { "s" } else { "" }
+        ));
+        let recovery_key_count = if recovery_keys.len() > 1 {
+            new::caption(format!("out of {} by", recovery_keys.len()))
+        } else {
+            new::caption("by")
+        };
+        let recovery_key_list =
+            recovery_keys
+                .iter()
+                .enumerate()
+                .fold(Row::new().spacing(5), |row, (i, k)| {
+                    let content = if let Some(key) = keys.get(k) {
+                        Container::new(
+                            tooltip::Tooltip::new(
+                                new::b5_bold(key.name.clone()),
+                                new::caption(k.to_string()),
+                                tooltip::Position::Bottom,
                             )
-                        } else {
-                            Container::new(text(format!("[{k}]")).bold())
-                        };
-                        if recovery_keys.len() == 1 || i == recovery_keys.len() - 1 {
-                            row.push(content)
-                        } else if i <= recovery_keys.len() - 2 {
-                            row.push(content).push(text("and"))
-                        } else {
-                            row.push(content).push(text(","))
-                        }
-                    },
-                ))
-                .push(text("can spend coins inactive for"))
-                .push(
-                    text(format!(
-                        "{} blocks (~{})",
-                        sequence,
-                        expire_message_units(*sequence as u32).join(",")
-                    ))
-                    .bold(),
-                )
-                .push(text(
-                    // If max timelock and all keys are from provider, then it's a safety net path.
-                    if *sequence == u16::MAX
-                        && recovery_keys
-                            .iter()
-                            .all(|fg| keys.get(fg).is_some_and(|k| k.provider_key.is_some()))
-                    {
-                        "(Safety Net path)".to_string()
+                            .style(theme::card::simple),
+                        )
                     } else {
-                        format!("(Recovery path #{})", i + 1)
-                    },
-                )),
+                        Container::new(new::b5_bold(format!("[{k}]")))
+                    };
+                    if recovery_keys.len() == 1 || i == recovery_keys.len() - 1 {
+                        row.push(content)
+                    } else if i <= recovery_keys.len() - 2 {
+                        row.push(content).push(new::caption("and"))
+                    } else {
+                        row.push(content).push(new::caption(","))
+                    }
+                });
+        let recovery_duration = new::b5_bold(format!(
+            "{} blocks (~{})",
+            sequence,
+            expire_message_units(*sequence as u32).join(",")
+        ));
+        let recovery_kind = new::caption(
+            // If max timelock and all keys are from provider, then it's a safety net path.
+            if *sequence == u16::MAX
+                && recovery_keys
+                    .iter()
+                    .all(|fg| keys.get(fg).is_some_and(|k| k.provider_key.is_some()))
+            {
+                "(Safety Net path)".to_string()
+            } else {
+                format!("(Recovery path #{})", i + 1)
+            },
         );
+        let recovery_row = row![
+            recovery_signature,
+            recovery_key_count,
+            recovery_key_list,
+            new::caption("can spend coins inactive for"),
+            recovery_duration,
+            recovery_kind,
+        ]
+        .spacing(5);
+
+        col = col.push(recovery_row);
     }
-    Column::new()
-        .spacing(10)
-        .push(text("The wallet policy:").bold())
-        .push(scrollable::horizontal_thin(col))
-        .into()
+
+    column![
+        new::b5_bold("The wallet policy:"),
+        scrollable::horizontal_thin(col)
+    ]
+    .spacing(10)
+    .into()
 }
 
 /// returns y,m,d
@@ -875,8 +896,10 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
 
 const RADIO_TITLE_WIDTH: u32 = 160;
 
+#[allow(clippy::too_many_arguments)]
 pub fn define_bitcoin_node<'a>(
     progress: (usize, usize),
+    network: Network,
     available_node_types: impl Iterator<Item = NodeType>,
     selected_node_type: NodeType,
     node_view: Element<'a, Message>,
@@ -932,16 +955,14 @@ pub fn define_bitcoin_node<'a>(
     let button_next = btn_next(msg_next);
     let actions = row![Space::fill_width(), button_check_connection, button_next].spacing(10);
 
-    let content = column![node_type, node_view, actions]
-        .max_width(800)
-        .spacing(50);
+    let content = column![node_type, node_view, actions].spacing(50);
 
     layout(
         progress,
+        network,
         None,
         "Set up connection to the Bitcoin node",
         content,
-        true,
         Some(Message::Previous),
     )
 }
@@ -1027,7 +1048,7 @@ pub fn define_bitcoind<'a>(
     };
     let auth = column![auth_type, auth_fields].spacing(10);
 
-    column![address, auth].max_width(800).spacing(50).into()
+    column![address, auth].spacing(50).into()
 }
 
 pub fn define_electrum<'a>(
@@ -1060,10 +1081,13 @@ pub fn define_electrum<'a>(
     ]
     .spacing(10);
 
-    column![address].max_width(800).spacing(50).into()
+    column![address].spacing(50).into()
 }
 
-pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {
+pub fn select_bitcoind_type<'a>(
+    progress: (usize, usize),
+    network: Network,
+) -> Element<'a, Message> {
     let existing_node_title = Container::new(text::new::b5_bold("I already have a node"))
         .padding(20)
         .width(Length::FillPortion(1));
@@ -1104,20 +1128,21 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
     .center_x(Length::FillPortion(1));
     let actions = row![existing_node_action, managed_node_action].spacing(20);
 
-    let content = column![titles, descriptions, actions].max_width(800);
+    let content = column![titles, descriptions, actions];
 
     layout(
         progress,
+        network,
         None,
         "Bitcoin node management",
         content,
-        true,
         Some(Message::Previous),
     )
 }
 
 pub fn start_internal_bitcoind<'a>(
     progress: (usize, usize),
+    network: Network,
     exe_path: Option<&PathBuf>,
     started: Option<&Result<(), StartInternalBitcoindError>>,
     error: Option<&'a String>,
@@ -1132,6 +1157,7 @@ pub fn start_internal_bitcoind<'a>(
     };
     layout(
         progress,
+        network,
         None,
         "Start Bitcoin full node",
         Column::new()
@@ -1234,7 +1260,6 @@ pub fn start_internal_bitcoind<'a>(
             .spacing(50)
             .push(btn_next(msg_next))
             .push_maybe(error.map(|e| card::invalid(new::caption(e)))),
-        true,
         Some(message::Message::InternalBitcoind(
             message::InternalBitcoindMsg::Previous,
         )),
@@ -1243,6 +1268,7 @@ pub fn start_internal_bitcoind<'a>(
 
 pub fn install<'a>(
     progress: (usize, usize),
+    network: Network,
     email: Option<&'a str>,
     generating: bool,
     installed: bool,
@@ -1255,6 +1281,7 @@ pub fn install<'a>(
     };
     layout(
         progress,
+        network,
         email,
         "Finalize installation",
         Column::new()
@@ -1274,7 +1301,6 @@ pub fn install<'a>(
             })
             .spacing(10)
             .width(Length::Fill),
-        true,
         prev_msg,
     )
 }
@@ -1405,6 +1431,7 @@ pub fn defined_sequence<'a>(
 
 pub fn backup_mnemonic<'a>(
     progress: (usize, usize),
+    network: Network,
     email: Option<&'a str>,
     words: &'a [&'static str; 12],
     done: bool,
@@ -1412,6 +1439,7 @@ pub fn backup_mnemonic<'a>(
     let msg_next = done.then_some(Message::Next);
     layout(
         progress,
+        network,
         email,
         "Back Up your mnemonic",
         Column::new()
@@ -1440,13 +1468,14 @@ pub fn backup_mnemonic<'a>(
             .push(btn_next(msg_next))
             .push(Space::with_height(20.0))
             .spacing(50),
-        true,
         Some(Message::Previous),
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn recover_mnemonic<'a>(
     progress: (usize, usize),
+    network: Network,
     email: Option<&'a str>,
     words: &'a [(String, bool); 12],
     current: usize,
@@ -1460,6 +1489,7 @@ pub fn recover_mnemonic<'a>(
 
     layout(
         progress,
+        network,
         email,
         "Import Mnemonic",
         Column::new()
@@ -1546,14 +1576,14 @@ pub fn recover_mnemonic<'a>(
                     .push(button_next)
             })
             .spacing(50),
-        true,
         Some(Message::Previous),
     )
 }
 
-pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
+pub fn choose_backend(progress: (usize, usize), network: Network) -> Element<'static, Message> {
     layout(
         progress,
+        network,
         None,
         "Choose backend",
         Column::new()
@@ -1616,27 +1646,29 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
                 tooltip::Position::Bottom,
             ))
             .spacing(20),
-        true,
         Some(Message::Previous),
     )
 }
 
-pub fn login(progress: (usize, usize), connection_step: Element<Message>) -> Element<Message> {
+pub fn login(
+    progress: (usize, usize),
+    network: Network,
+    connection_step: Element<Message>,
+) -> Element<Message> {
     layout(
         progress,
+        network,
         None,
         "Login",
         Container::new(
             Column::new()
                 .spacing(50)
-                .max_width(700)
                 .align_x(Alignment::Center)
                 .width(Length::FillPortion(1))
                 .push(h2("Liana Connect"))
                 .push(connection_step),
         )
         .center_x(Length::Fill),
-        true,
         Some(Message::Previous),
     )
 }
@@ -1772,98 +1804,50 @@ pub const LOCAL_WALLET_DESC: &str = "Use your already existing Bitcoin node or a
 
 pub fn wallet_alias<'a>(
     progress: (usize, usize),
+    network: Network,
     email: Option<&'a str>,
     wallet_alias: &form::Value<String>,
 ) -> Element<'a, Message> {
     let msg_next = wallet_alias.valid.then_some(Message::Next);
+    let label = new::b5_bold("Wallet alias:");
+    let form = form::Form::new("Wallet alias", wallet_alias, Message::WalletAliasEdited)
+        .warning("Wallet alias is too long.");
+    let note = new::caption("You will be able to change it later in Settings > Wallet");
+    let form_section = column![label, form, note].spacing(20);
+    let next = row![Space::fill_width(), btn_next(msg_next)];
+    let content = column![form_section, next].spacing(50);
+
     layout(
         progress,
+        network,
         email,
         "Give your wallet an alias",
-        Column::new()
-            .push(
-                Column::new()
-                    .spacing(20)
-                    .push(p1_bold("Wallet alias:"))
-                    .push(
-                        form::Form::new("Wallet alias", wallet_alias, Message::WalletAliasEdited)
-                            .warning("Wallet alias is too long.")
-                            .size(text::P1_SIZE)
-                            .padding(10),
-                    )
-                    .push(p2_regular(
-                        "You will be able to change it later in Settings > Wallet",
-                    )),
-            )
-            .push(btn_next(msg_next))
-            .spacing(50),
-        true,
+        content,
         Some(Message::Previous),
     )
 }
 
 fn layout<'a>(
     progress: (usize, usize),
+    network: Network,
     email: Option<&'a str>,
     title: &'static str,
     content: impl Into<Element<'a, Message>>,
-    padding_left: bool,
     previous_message: Option<Message>,
 ) -> Element<'a, Message> {
-    let mut prev_button = button::transparent(Some(icon::previous_icon()), "Previous");
-    if let Some(msg) = previous_message {
-        prev_button = prev_button.on_press(msg);
-    }
-    Container::new(scrollable::vertical(
-        Column::new()
-            .width(Length::Fill)
-            .push(
-                Row::new()
-                    .push(Space::with_width(Length::Fill))
-                    .push_maybe(email.map(|e| {
-                        Container::new(p1_regular(e).style(theme::text::success)).padding(20)
-                    })),
-            )
-            .push(Space::with_height(Length::Fixed(100.0)))
-            .push(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .push(Container::new(prev_button).center_x(Length::FillPortion(2)))
-                    .push(Container::new(h3(title)).width(Length::FillPortion(8)))
-                    .push_maybe(if progress.1 > 0 {
-                        Some(
-                            Container::new(text(format!("{} | {}", progress.0, progress.1)))
-                                .center_x(Length::FillPortion(2)),
-                        )
-                    } else {
-                        None
-                    }),
-            )
-            .push(
-                Row::new()
-                    .push(Space::with_width(Length::FillPortion(2)))
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .push(Space::with_height(Length::Fixed(100.0)))
-                                .push(content),
-                        )
-                        .width(Length::FillPortion(if padding_left {
-                            8
-                        } else {
-                            10
-                        })),
-                    )
-                    .push_maybe(if padding_left {
-                        Some(Space::with_width(Length::FillPortion(2)))
-                    } else {
-                        None
-                    }),
-            ),
-    ))
-    .center_x(Length::Fill)
-    .height(Length::Fill)
-    .width(Length::Fill)
-    .style(theme::container::background)
-    .into()
+    installer_layout::layout(
+        installer_layout::LayoutConfig {
+            variant: Variant::Liana,
+            network,
+            email,
+            is_ws_admin: false,
+            nav_bar: installer_layout::NavBar::StepTitle {
+                progress,
+                title,
+                previous_message,
+            },
+            content_width: 800.0,
+        },
+        content,
+    )
 }

@@ -410,6 +410,7 @@ impl LianaInstaller {
             .view(
                 &self.hws,
                 self.progress(),
+                self.network,
                 self.context.remote_backend.user_email(),
             );
 

@@ -3,12 +3,13 @@ use iced::{
     widget::{row, Container, Space},
     Alignment, Length,
 };
+use liana::miniscript::bitcoin::Network;
 
 use liana_ui::{
     color,
     component::{
         button::{btn_add_recovery_option, btn_add_safety_net, btn_next},
-        text::{h3, p1_regular},
+        text::new,
     },
     image, theme,
     widget::*,
@@ -23,23 +24,26 @@ use crate::installer::{
     },
 };
 
-pub fn custom_template_description(progress: (usize, usize)) -> Element<'static, Message> {
+pub fn custom_template_description(
+    progress: (usize, usize),
+    network: Network,
+) -> Element<'static, Message> {
     let row_next = row![Space::fill_width(), btn_next(Some(Message::Next))];
     layout(
         progress,
+        network,
         None,
         "Introduction",
         Column::new()
             .align_x(Alignment::Start)
-            .push(h3("Build your own"))
-            .max_width(800.0)
+            .push(new::b1_bold("Build your own"))
             .push(Container::new(
-                p1_regular("For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.")
+                new::caption("For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.")
                 .style(theme::text::secondary)
                 .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(Container::new(
-                p1_regular("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.")
+                new::caption("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.")
                 .style(theme::text::secondary)
                 .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
@@ -47,7 +51,6 @@ pub fn custom_template_description(progress: (usize, usize)) -> Element<'static,
             .push(row_next)
             .push(Space::with_height(50.0))
             .spacing(20),
-        true,
         Some(Message::Previous),
     )
 }
@@ -55,6 +58,7 @@ pub fn custom_template_description(progress: (usize, usize)) -> Element<'static,
 #[allow(clippy::too_many_arguments)]
 pub fn custom_template<'a>(
     progress: (usize, usize),
+    network: Network,
     use_taproot: bool,
     primary_path: &'a Path,
     recovery_paths: &mut dyn Iterator<Item = (usize, &'a Path)>,
@@ -224,11 +228,11 @@ pub fn custom_template<'a>(
 
     layout(
         progress,
+        network,
         None,
         "Set keys",
         Column::new()
             .align_x(Alignment::Start)
-            .max_width(super::MAX_WIDTH)
             .push(advanced_settings)
             .push(primary)
             .push(recovery_paths)
@@ -238,7 +242,6 @@ pub fn custom_template<'a>(
             .push(last_btn_row)
             .push(Space::with_height(super::BOTTOM_PADDING))
             .spacing(20),
-        true,
         Some(Message::Previous),
     )
 }

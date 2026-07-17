@@ -7,13 +7,10 @@ use iced::{
 use liana::miniscript::bitcoin::Network;
 use liana_ui::{
     component::{
-        button::{
-            self, btn_add_wallet, btn_delete_wallet, btn_remove, btn_select, btn_share_xpubs,
-            EntryWidth,
-        },
-        card,
+        button::{btn_add_wallet, btn_delete_wallet, btn_remove, btn_select, EntryWidth},
+        card, installer as installer_layout,
         list::{self, EntryAccent},
-        network_banner, notification, pick_list, scrollable,
+        network_banner, notification,
         text::new,
     },
     icon, image, theme,
@@ -221,29 +218,12 @@ impl Launcher {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let logo = Container::new(image::liana_brand_grey().width(200)).width(Length::Fill);
-
-        let back_to_wallet_list = match &self.state {
-            State::Wallets { add_wallet, .. } if *add_wallet => Some(
-                button::secondary(Some(icon::previous_icon()), "Back to wallet list")
-                    .on_press(Message::View(ViewMessage::AddWalletToList(false))),
-            ),
+        let previous_message = match &self.state {
+            State::Wallets { add_wallet, .. } if *add_wallet => {
+                Some(Message::View(ViewMessage::AddWalletToList(false)))
+            }
             _ => None,
         };
-
-        let share_xpubs = btn_share_xpubs(Some(Message::View(ViewMessage::ShareXpubs)));
-
-        let network_picker = pick_list::pick_list(
-            self.displayed_networks.as_slice(),
-            Some(self.network),
-            |n| Message::View(ViewMessage::SelectNetwork(n)),
-        )
-        .padding(10);
-
-        let header = row![logo, back_to_wallet_list, share_xpubs, network_picker]
-            .spacing(20)
-            .align_y(Alignment::Center)
-            .padding(100);
 
         let title = if matches!(self.state, State::Wallets { .. }) {
             new::d0("Welcome back")
@@ -278,19 +258,21 @@ impl Launcher {
             State::NoWallet => column![add_wallet_menu().map(Message::View)].into(),
         };
 
-        let body = Container::new(
-            column![title, error, wallets]
-                .align_x(Alignment::Center)
-                .spacing(30),
-        )
-        .center_x(Length::Fill);
+        let body = column![title, error, wallets]
+            .align_x(Alignment::Center)
+            .spacing(30);
 
-        let content = scrollable::vertical(column![header, body, Space::with_height(100),]);
+        let content = launcher_layout(
+            previous_message,
+            self.displayed_networks.as_slice(),
+            self.network,
+            body,
+        );
 
         let content: Element<'_, Message> = if self.network != Network::Bitcoin {
             column![network_banner(self.network), content].into()
         } else {
-            content.into()
+            content
         };
 
         if let Some(modal) = &self.delete_wallet_modal {
@@ -303,6 +285,33 @@ impl Launcher {
             content
         }
     }
+}
+
+fn launcher_layout<'a>(
+    previous_message: Option<Message>,
+    networks: &'a [Network],
+    selected_network: Network,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let content = Container::new(content).center_x(Length::Fill);
+
+    installer_layout::layout(
+        installer_layout::LayoutConfig {
+            variant: liana_ui::Variant::Liana,
+            network: selected_network,
+            email: None,
+            is_ws_admin: false,
+            nav_bar: installer_layout::NavBar::Launcher {
+                previous_message,
+                share_xpubs_message: Some(Message::View(ViewMessage::ShareXpubs)),
+                networks,
+                selected_network,
+                on_network_selected: |network| Message::View(ViewMessage::SelectNetwork(network)),
+            },
+            content_width: 800.0,
+        },
+        content,
+    )
 }
 
 fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {

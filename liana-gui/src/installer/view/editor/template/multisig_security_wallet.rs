@@ -3,12 +3,13 @@ use iced::{
     widget::{row, Space},
     Alignment, Length,
 };
+use liana::miniscript::bitcoin::Network;
 
 use liana_ui::{
     color,
     component::{
         button::btn_next,
-        text::{h3, p1_regular, Text, H3_SIZE},
+        text::{new, H3_SIZE},
     },
     icon, image, theme,
     widget::*,
@@ -25,18 +26,19 @@ use crate::installer::{
 
 pub fn multisig_security_template_description(
     progress: (usize, usize),
+    network: Network,
 ) -> Element<'static, Message> {
     let row_next = row![Space::fill_width(), btn_next(Some(Message::Next))];
     layout(
         progress,
+        network,
         None,
         "Introduction",
         Column::new()
             .align_x(Alignment::Start)
-            .push(h3("Expanding multisig wallet"))
-            .max_width(800.0)
+            .push(new::b1_bold("Expanding multisig wallet"))
             .push(Container::new(
-                p1_regular("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key.")
+                new::caption("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key.")
                 .style(theme::text::secondary)
                 .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
@@ -47,22 +49,22 @@ pub fn multisig_security_template_description(
                     .align_y(Alignment::Center)
                     .spacing(10)
                     .push(icon::round_key_icon().size(H3_SIZE).style(theme::text::success))
-                    .push(p1_regular("Primary key #1").bold())
+                    .push(new::b5_bold("Primary key #1"))
                 ).push(
                     Row::new()
                     .align_y(Alignment::Center)
                     .spacing(10)
                     .push(icon::round_key_icon().size(H3_SIZE).style(theme::text::success))
-                    .push(p1_regular("Primary key #2").bold())
+                    .push(new::b5_bold("Primary key #2"))
                 ).push(
                     Row::new()
                         .align_y(Alignment::Center)
                         .spacing(10)
                         .push(icon::round_key_icon().size(H3_SIZE).style(theme::text::success))
-                        .push(p1_regular("Recovery key").bold())
+                        .push(new::b5_bold("Recovery key"))
             ))
             .push(Container::new(
-                p1_regular("The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):")
+                new::caption("The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):")
                 .style(theme::text::secondary)
                 .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
@@ -70,13 +72,13 @@ pub fn multisig_security_template_description(
             .push(row_next)
             .push(Space::with_height(50.0))
             .spacing(20),
-        true,
         Some(Message::Previous),
     )
 }
 
 pub fn multisig_security_template<'a>(
     progress: (usize, usize),
+    network: Network,
     use_taproot: bool,
     primary_path: &'a Path,
     recovery_path: &'a Path,
@@ -204,11 +206,11 @@ pub fn multisig_security_template<'a>(
 
     layout(
         progress,
+        network,
         None,
         "Set keys",
         Column::new()
             .align_x(Alignment::Start)
-            .max_width(super::MAX_WIDTH)
             .push(advanced_settings)
             .push(primary)
             .push(recovery)
@@ -216,7 +218,6 @@ pub fn multisig_security_template<'a>(
             .push(footer)
             .push(Space::with_height(super::BOTTOM_PADDING))
             .spacing(20),
-        true,
         Some(Message::Previous),
     )
 }

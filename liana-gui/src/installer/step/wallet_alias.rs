@@ -57,9 +57,10 @@ impl Step for WalletAlias {
         &'a self,
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
+        network: Network,
         email: Option<&'a str>,
     ) -> Element<'a, Message> {
-        view::wallet_alias(progress, email, &self.wallet_alias)
+        view::wallet_alias(progress, network, email, &self.wallet_alias)
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {

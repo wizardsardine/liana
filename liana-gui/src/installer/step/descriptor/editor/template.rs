@@ -1,4 +1,5 @@
 use iced::Task;
+use liana::miniscript::bitcoin::Network;
 
 use liana_ui::widget::Element;
 
@@ -40,10 +41,11 @@ impl Step for ChooseDescriptorTemplate {
     fn view<'a>(
         &'a self,
         _hws: &'a HardwareWallets,
-        progress: (usize, usize),
+        _progress: (usize, usize),
+        network: Network,
         _email: Option<&'a str>,
     ) -> Element<'a, Message> {
-        view::editor::template::choose_descriptor_template(progress)
+        view::editor::template::choose_descriptor_template(network)
     }
 }
 
@@ -67,17 +69,22 @@ impl Step for DescriptorTemplateDescription {
         &'a self,
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
+        network: Network,
         _email: Option<&'a str>,
     ) -> Element<'a, Message> {
         match self.template {
             DescriptorTemplate::SimpleInheritance => {
-                view::editor::template::inheritance::inheritance_template_description(progress)
+                view::editor::template::inheritance::inheritance_template_description(
+                    progress, network,
+                )
             }
             DescriptorTemplate::MultisigSecurity => {
-                view::editor::template::multisig_security_wallet::multisig_security_template_description(progress)
+                view::editor::template::multisig_security_wallet::multisig_security_template_description(
+                    progress, network,
+                )
             }
             DescriptorTemplate::Custom => {
-                view::editor::template::custom::custom_template_description(progress)
+                view::editor::template::custom::custom_template_description(progress, network)
             }
         }
     }
