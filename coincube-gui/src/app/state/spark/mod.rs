@@ -20,7 +20,6 @@ pub use send::{SparkSend, SparkSendPhase};
 pub use settings::SparkSettings;
 pub use transactions::SparkTransactions;
 
-use std::convert::TryInto;
 use std::sync::Arc;
 
 use coincube_spark_protocol::{PaymentSummary, StableBalanceSnapshot};
@@ -97,14 +96,12 @@ pub(crate) fn unified_spark_balance_sats(
 }
 
 /// The BTC/USD price used to value USD-pegged tokens (USDB / USDT / USDC) in
-/// sats. `btc_usd_price` is only set when the user's fiat preference is USD; for
-/// other fiats fall back to the user-fiat converter's per-BTC price so a holding
-/// still shows (with a small FX-spread approximation) rather than collapsing to
-/// zero. `None` when no price is known. Mirrors `global_home`'s balance handler.
+/// sats. The app always fetches a USD price for exactly this, regardless of the
+/// user's display fiat (see the `gui` loop's "Always fetch BTC/USD" path), so
+/// this just reads `cache.btc_usd_price`. `None` only in the brief window before
+/// that price lands (or if it fails); callers then show the token amount without
+/// a sats figure rather than valuing it at a non-USD rate — the user-fiat price
+/// (BTC/EUR, …) is *not* BTC/USD and would misprice a USD-pegged token.
 pub(crate) fn reference_btc_usd_price(cache: &Cache) -> Option<f64> {
-    cache.btc_usd_price.or_else(|| {
-        let converter: Option<crate::app::view::FiatAmountConverter> =
-            cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
-        converter.map(|c| c.price_per_btc())
-    })
+    cache.btc_usd_price
 }
