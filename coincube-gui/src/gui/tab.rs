@@ -1812,20 +1812,21 @@ async fn find_or_create_cube(
                 // old-bug duplicate (a prior buggy recovery minted a new Cube).
                 // Returning it here would leave the duplicate attached and the
                 // original still recoverable — the very bug this flow fixes. So
-                // detach it and fall through, letting the restore reconciliation
-                // below re-attach the wallet to the restored UUID (reused or
-                // minted). Identities agree (or no restore) → normal return.
+                // drop the spurious duplicate entirely and fall through, letting
+                // the restore reconciliation below re-attach the wallet to the
+                // restored UUID (reused or minted). Identities agree (or no
+                // restore) → normal return.
                 match &restored_cube {
                     Some(identity) if settings_data.cubes[existing_idx].id != identity.uuid => {
                         info!(
-                            "Wallet {} was attached to duplicate cube '{}' ({}); detaching to \
+                            "Wallet {} was attached to duplicate cube '{}' ({}); removing it to \
                              reconcile with restored UUID {}",
                             wallet_id,
                             settings_data.cubes[existing_idx].name,
                             settings_data.cubes[existing_idx].id,
                             identity.uuid,
                         );
-                        settings_data.cubes[existing_idx].vault_wallet_id = None;
+                        settings_data.cubes.remove(existing_idx);
                     }
                     _ => return Ok(settings_data.cubes[existing_idx].clone()),
                 }
@@ -2422,7 +2423,7 @@ mod find_or_create_cube_tests {
     /// Upgrade path: a previous (buggy) recovery left the wallet attached to a
     /// *duplicate* Cube with a different UUID, while the original Cube is still
     /// recoverable. Re-running recovery must reconcile — move the wallet onto
-    /// the restored (original) UUID and detach the duplicate — rather than
+    /// the restored (original) UUID and remove the duplicate — rather than
     /// returning the stale duplicate match and leaving the original recoverable.
     #[tokio::test]
     async fn restore_reconciles_wallet_off_a_duplicate_uuid() {
@@ -2463,14 +2464,14 @@ mod find_or_create_cube_tests {
         assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
 
         let reloaded = app::settings::Settings::from_file(&nd).unwrap();
-        let dup_after = reloaded
-            .cubes
-            .iter()
-            .find(|c| c.id == dup_id)
-            .expect("duplicate cube is kept, just detached");
+        assert!(
+            reloaded.cubes.iter().all(|c| c.id != dup_id),
+            "the spurious duplicate Cube must be removed outright"
+        );
         assert_eq!(
-            dup_after.vault_wallet_id, None,
-            "the duplicate Cube must no longer be attached to the wallet"
+            reloaded.cubes.len(),
+            1,
+            "only the restored Cube should remain"
         );
         let restored = reloaded
             .cubes
