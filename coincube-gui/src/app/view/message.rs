@@ -700,6 +700,11 @@ pub enum SparkSideshiftReceiveMessage {
     ShiftCreated(Result<ShiftResponse, String>),
     PollStatus,
     StatusUpdated(Result<ShiftStatus, String>),
+    /// The swap's bitcoin has landed in the Spark wallet and been claimed —
+    /// forwarded from the global "bitcoin received" event so the inline flow
+    /// can advance from "Bitcoin arriving" to an arrived confirmation. Carries
+    /// the actual claimed amount (post network fee), in sats.
+    Arrived { amount_sat: u64 },
     /// Copy the deposit address.
     Copy,
     Back,

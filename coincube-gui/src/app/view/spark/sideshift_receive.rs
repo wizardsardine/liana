@@ -39,6 +39,7 @@ pub fn spark_sideshift_receive_view(
             loading_body("Setting up your deposit address…")
         }
         SparkShiftPhase::Active => active_body(flow, bitcoin_unit),
+        SparkShiftPhase::Arrived => arrived_body(flow, bitcoin_unit),
         SparkShiftPhase::Failed => error_body(flow.error()),
     }
 }
@@ -217,14 +218,23 @@ fn active_body(
                     .style(theme::pill::simple),
             );
         // Once SideShift reports the settle output, show how much bitcoin is on
-        // the way — in whichever unit the user has chosen. Gated on `Settled`
-        // so it sits under the "Bitcoin arriving" badge, where the amount is
-        // finalised; earlier states can carry a moving estimate.
-        if matches!(status, ShiftStatusKind::Settled) {
+        // the way — in whichever unit the user has chosen. Shown from the moment
+        // a deposit is detected through settle; before settle it's SideShift's
+        // moving estimate, so it's labelled "≈", and it firms up as "arriving"
+        // under the "Bitcoin arriving" badge.
+        if matches!(
+            status,
+            ShiftStatusKind::Pending
+                | ShiftStatusKind::Processing
+                | ShiftStatusKind::Settling
+                | ShiftStatusKind::Settled
+        ) {
             if let Some(sats) = flow.settle_amount_sat() {
+                let settled = matches!(status, ShiftStatusKind::Settled);
                 col = col.push(
                     text(format!(
-                        "{} {}",
+                        "{}{} {}",
+                        if settled { "" } else { "≈ " },
                         Amount::from_sat(sats).to_formatted_string_with_unit(bitcoin_unit),
                         if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
                             "BTC"
@@ -259,6 +269,57 @@ fn active_body(
     )
     .padding(16)
     .width(Length::Fill)
+    .style(theme::card::simple)
+    .into()
+}
+
+// ── Arrived: the swap's bitcoin has landed and been claimed ──────────────────
+
+fn arrived_body(
+    flow: &SparkSideshiftReceiveFlow,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<'_, Msg> {
+    let mut col = Column::new()
+        .spacing(12)
+        .align_x(Alignment::Center)
+        .width(Length::Fill)
+        .push(
+            Container::new(text("Bitcoin arrived").size(P2_SIZE).color(color::GREEN))
+                .padding([4, 10])
+                .style(theme::pill::simple),
+        );
+
+    if let Some(sats) = flow.arrived_amount_sat() {
+        col = col.push(
+            text(format!(
+                "{} {}",
+                Amount::from_sat(sats).to_formatted_string_with_unit(bitcoin_unit),
+                if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                    "BTC"
+                } else {
+                    "SATS"
+                },
+            ))
+            .size(H4_SIZE)
+            .bold(),
+        );
+    }
+
+    Container::new(
+        col.push(
+            text("Your bitcoin has been added to your Spark wallet.")
+                .size(P2_SIZE)
+                .style(theme::text::secondary),
+        )
+        .push(
+            button::primary(None, "Done")
+                .on_press(Msg::Reset)
+                .width(Length::Fixed(160.0)),
+        ),
+    )
+    .padding(24)
+    .width(Length::Fill)
+    .center_x(Length::Fill)
     .style(theme::card::simple)
     .into()
 }

@@ -51,6 +51,12 @@ pub enum SparkShiftPhase {
     CreatingShift,
     /// Shift is live — deposit address on screen, polling status.
     Active,
+    /// The swap's bitcoin has landed in the Spark wallet and been claimed. A
+    /// terminal *success* state, distinct from `Active`+`Settled` ("Bitcoin
+    /// arriving"): SideShift's status can't report this — the arrival is an
+    /// on-chain claim on our side — so it's driven by the global "received"
+    /// event via [`Msg::Arrived`].
+    Arrived,
     /// Terminal failure before a shift existed.
     Failed,
 }
@@ -78,6 +84,9 @@ pub struct SparkSideshiftReceiveFlow {
     /// deposit is detected), not the create-time estimate. Shown next to the
     /// "Bitcoin arriving" status so the user sees how much is on the way.
     settle_amount_sat: Option<u64>,
+    /// The actual amount claimed into the wallet on arrival (post network fee),
+    /// in sats. Set when the flow reaches [`SparkShiftPhase::Arrived`].
+    arrived_amount_sat: Option<u64>,
     qr_data: Option<qr_code::Data>,
 
     loading: bool,
@@ -100,6 +109,7 @@ impl SparkSideshiftReceiveFlow {
             shift: None,
             shift_status: None,
             settle_amount_sat: None,
+            arrived_amount_sat: None,
             qr_data: None,
             loading: false,
             error: None,
@@ -140,6 +150,9 @@ impl SparkSideshiftReceiveFlow {
     pub fn settle_amount_sat(&self) -> Option<u64> {
         self.settle_amount_sat
     }
+    pub fn arrived_amount_sat(&self) -> Option<u64> {
+        self.arrived_amount_sat
+    }
     pub fn qr_data(&self) -> Option<&qr_code::Data> {
         self.qr_data.as_ref()
     }
@@ -161,6 +174,7 @@ impl SparkSideshiftReceiveFlow {
         self.shift = None;
         self.shift_status = None;
         self.settle_amount_sat = None;
+        self.arrived_amount_sat = None;
         self.qr_data = None;
         self.loading = false;
         self.error = None;
@@ -393,6 +407,31 @@ impl SparkSideshiftReceiveFlow {
                             ))),
                         ]);
                     }
+                }
+                Task::none()
+            }
+
+            Msg::Arrived { amount_sat } => {
+                // The global "bitcoin received" event fires for any Spark claim,
+                // so only take it as *this swap's* arrival once this shift has
+                // seen a deposit of its own (status past `Waiting`). That guards
+                // against an unrelated deposit — claimed while this flow is still
+                // waiting to be funded — hijacking the screen, while still
+                // catching the arrival if the user left the screen before the
+                // status poll reached `Settled` (the poll only ticks on-screen,
+                // so off-screen the status can lag behind the actual chain).
+                let deposit_seen = matches!(
+                    self.shift_status,
+                    Some(
+                        ShiftStatusKind::Pending
+                            | ShiftStatusKind::Processing
+                            | ShiftStatusKind::Settling
+                            | ShiftStatusKind::Settled
+                    )
+                );
+                if self.phase == SparkShiftPhase::Active && deposit_seen {
+                    self.arrived_amount_sat = Some(*amount_sat);
+                    self.phase = SparkShiftPhase::Arrived;
                 }
                 Task::none()
             }

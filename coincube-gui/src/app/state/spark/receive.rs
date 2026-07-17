@@ -295,7 +295,9 @@ impl State for SparkReceive {
             };
             // `Back`/`Reset` from the flow's *entry* screen means "leave the
             // bridge", so tear it down and fall back to the ordinary receive
-            // form. The flow resets itself for any other phase.
+            // form. The arrived screen's "Done" button lands here too — once the
+            // bitcoin is in the wallet the swap is finished, so treat it the same
+            // way. The flow resets itself for any other phase.
             let leaving = matches!(
                 msg,
                 crate::app::view::SparkSideshiftReceiveMessage::Back
@@ -303,6 +305,7 @@ impl State for SparkReceive {
             ) && matches!(
                 flow.phase(),
                 super::sideshift_receive::SparkShiftPhase::Setup
+                    | super::sideshift_receive::SparkShiftPhase::Arrived
             );
             if leaving {
                 self.sideshift_flow = None;
