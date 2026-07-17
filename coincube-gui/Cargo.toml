@@ -43,7 +43,7 @@ iced = { version = "0.14.0", default-features = false, features = [
 iced_anim = "0.3"
 image = { version = "*", default-features = false, features = ["png", "jpeg"] }
 iced_aw = { version = "0.13.0", features = ["context_menu"] }
-iced_runtime = "0.14.0"
+iced_runtime  = "0.14.0"
 
 # Used to verify RFC-compliance of an email
 email_address = "0.2.7"
@@ -148,6 +148,7 @@ pgp = "0.16"
 # gated to Unix.
 tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.0", default-features = false }
+hostname = "0.4.2"
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features = false, features = [
