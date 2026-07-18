@@ -419,28 +419,7 @@ impl SparkSideshiftReceiveFlow {
             }
 
             Msg::Arrived { amount_sat } => {
-                // The global "bitcoin received" event fires for any Spark claim,
-                // so only take it as *this swap's* arrival once this shift has
-                // seen a deposit of its own (status past `Waiting`). That guards
-                // against an unrelated deposit — claimed while this flow is still
-                // waiting to be funded — hijacking the screen, while still
-                // catching the arrival if the user left the screen before the
-                // status poll reached `Settled` (the poll only ticks on-screen,
-                // so off-screen the status can lag behind the actual chain).
-                let deposit_seen = matches!(
-                    self.shift_status,
-                    Some(
-                        ShiftStatusKind::Pending
-                            | ShiftStatusKind::Processing
-                            | ShiftStatusKind::Settling
-                            | ShiftStatusKind::Settled
-                            // A review hold only happens after the deposit is
-                            // received, so a released hold that then arrives is
-                            // this swap's — catch it too.
-                            | ShiftStatusKind::Review
-                    )
-                );
-                if self.phase == SparkShiftPhase::Active && deposit_seen {
+                if arrival_belongs_to_this_shift(&self.phase, self.shift_status.as_ref()) {
                     self.arrived_amount_sat = Some(*amount_sat);
                     self.phase = SparkShiftPhase::Arrived;
                 }
@@ -495,6 +474,33 @@ impl SparkSideshiftReceiveFlow {
 /// The detail is passed through verbatim: the underlying errors already name
 /// the service that failed (Coincube, the Spark bridge, or SideShift), and
 /// re-prefixing them here is how they end up misattributed.
+/// Whether an `Arrived` signal — fired globally for *any* Spark claim — should
+/// be taken as this shift's bitcoin landing and move it to the terminal
+/// `Arrived` state.
+///
+/// True only when the swap is still live (`Active`) and has seen a deposit of
+/// its own (status past `Waiting`). The deposit-seen guard stops an unrelated
+/// claim, landing while this flow is still waiting to be funded, from hijacking
+/// the screen. It stays permissive across every post-deposit status — including
+/// `Review` (a hold only happens after the deposit is received) — so the arrival
+/// is still caught even if the shift status lags behind the actual chain.
+fn arrival_belongs_to_this_shift(
+    phase: &SparkShiftPhase,
+    status: Option<&ShiftStatusKind>,
+) -> bool {
+    *phase == SparkShiftPhase::Active
+        && matches!(
+            status,
+            Some(
+                ShiftStatusKind::Pending
+                    | ShiftStatusKind::Processing
+                    | ShiftStatusKind::Settling
+                    | ShiftStatusKind::Settled
+                    | ShiftStatusKind::Review
+            )
+        )
+}
+
 fn nothing_sent_yet(detail: &str) -> String {
     format!(
         "{}. Nothing has been sent — try again.",
@@ -543,6 +549,43 @@ mod tests {
                 ShiftStatusKind::from(s).is_terminal(),
                 "{} must stop polling — the shift will not advance on its own",
                 s
+            );
+        }
+    }
+
+    #[test]
+    fn an_arrival_only_lands_on_a_live_shift_that_has_seen_its_deposit() {
+        use ShiftStatusKind::*;
+
+        // Accept: the swap is Active and its status is past `Waiting`, so the
+        // claim that just fired is this shift's bitcoin landing.
+        for status in [Pending, Processing, Settling, Settled, Review] {
+            assert!(
+                arrival_belongs_to_this_shift(&SparkShiftPhase::Active, Some(&status)),
+                "Active + {status:?} should accept the arrival"
+            );
+        }
+
+        // Ignore: still waiting to be funded (or no status yet), so a claim
+        // firing now belongs to some other deposit, not this one.
+        assert!(!arrival_belongs_to_this_shift(
+            &SparkShiftPhase::Active,
+            Some(&Waiting)
+        ));
+        assert!(!arrival_belongs_to_this_shift(
+            &SparkShiftPhase::Active,
+            None
+        ));
+
+        // Ignore: not a live shift — nothing to advance.
+        for phase in [
+            SparkShiftPhase::Setup,
+            SparkShiftPhase::Arrived,
+            SparkShiftPhase::Failed,
+        ] {
+            assert!(
+                !arrival_belongs_to_this_shift(&phase, Some(&Settled)),
+                "{phase:?} must ignore the arrival even at Settled"
             );
         }
     }

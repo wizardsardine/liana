@@ -3901,9 +3901,9 @@ impl App {
             // than to the current panel. This is what lets a swap arrival reach
             // the flow while the user is on another screen; on the Receive screen
             // itself `spark_receive` is the current panel anyway, so it's the
-            // same target. Its status poll only ticks while that panel is current
-            // (subscriptions follow the current panel), so nothing fires here
-            // off-screen.
+            // same target. The flow's status poll is kept alive off-screen too
+            // (`sideshift_poll_subscription`), so its `PollStatus`/`StatusUpdated`
+            // messages land here regardless of which panel is current.
             msg @ Message::View(view::Message::SparkSideshiftReceive(_)) => {
                 return self
                     .panels
