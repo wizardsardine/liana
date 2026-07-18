@@ -37,6 +37,7 @@ pub struct ImportDescriptor {
     imported_descriptor: form::Value<String>,
     imported_backup: Option<Backup>,
     imported_aliases: Option<HashMap<Fingerprint, KeySetting>>,
+    paste_descriptor_expanded: bool,
 }
 
 impl ImportDescriptor {
@@ -49,6 +50,7 @@ impl ImportDescriptor {
             modal: ImportDescriptorModal::None,
             imported_backup: None,
             imported_aliases: None,
+            paste_descriptor_expanded: false,
         }
     }
 
@@ -101,6 +103,12 @@ impl Step for ImportDescriptor {
                 }
                 self.imported_descriptor.value = desc;
                 self.check_descriptor(self.network);
+                None
+            }
+            Message::DefineDescriptor(message::DefineDescriptor::ShowImportDescriptor(
+                expanded,
+            )) => {
+                self.paste_descriptor_expanded = expanded;
                 None
             }
             Message::ImportBackup => {
@@ -237,6 +245,7 @@ impl Step for ImportDescriptor {
             self.imported_backup.is_some(),
             self.wrong_network,
             self.error.as_ref(),
+            self.paste_descriptor_expanded,
         );
         self.modal.view(content)
     }

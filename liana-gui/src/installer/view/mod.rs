@@ -238,6 +238,7 @@ pub fn import_wallet_or_descriptor<'a>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn import_descriptor<'a>(
     progress: (usize, usize),
     network: Network,
@@ -246,26 +247,23 @@ pub fn import_descriptor<'a>(
     imported_backup: bool,
     wrong_network: bool,
     error: Option<&String>,
+    paste_descriptor_expanded: bool,
 ) -> Element<'a, Message> {
     let valid = !imported_descriptor.value.is_empty() && imported_descriptor.valid;
-
-    let import_backup: Option<Element<'a, Message>> = (!valid && !imported_backup).then_some(
-        row![
-            button::primary(None, "Import backup").on_press(Message::ImportBackup),
-            Space::fill_width()
-        ]
-        .into(),
+    let accent = Some(match network {
+        Network::Bitcoin => EntryAccent::Bitcoin,
+        _ => EntryAccent::Testnet,
+    });
+    let import_backup = list::entry_action_accent(
+        accent,
+        Tile::Import,
+        "Import a backup",
+        None::<String>,
+        None,
+        button::EntryWidth::Standard,
+        Some(Message::ImportBackup),
     );
-    let backup_imported: Option<Element<'a, Message>> = imported_backup.then_some(
-        row![
-            new::b5_bold("Backup successfully imported!"),
-            Space::fill_width()
-        ]
-        .into(),
-    );
-    let or: Option<Element<'a, Message>> = (!valid && !imported_backup)
-        .then_some(row![new::b5_bold("or"), Space::fill_width()].into());
-    let descriptor = (!imported_backup).then_some(column![
+    let descriptor_form = column![
         new::b5_bold("Descriptor:"),
         Space::with_height(10),
         form::Form::new_trimmed("Descriptor", imported_descriptor, |msg| {
@@ -277,26 +275,59 @@ pub fn import_descriptor<'a>(
             "Failed to read the descriptor"
         })
         .padding(10),
-    ]);
-    let rescan = new::caption(
-        "If you are using a Bitcoin Core node, \
-                you will need to perform a rescan of \
-                the blockchain after creating the wallet \
-                in order to see your coins and past \
-                transactions. This can be done in \
-                Settings > Node.",
+    ];
+    let paste_descriptor = list::entry_collapsible(list::CollapsibleEntry {
+        accent,
+        tile: Tile::Paste,
+        title: "Paste a descriptor",
+        collapsed_subtitle: Some("Creates a new wallet from the pasted descriptor"),
+        expanded_subtitle: Some("Creates a new wallet from the pasted descriptor"),
+        content: descriptor_form.into(),
+        expanded: paste_descriptor_expanded,
+        on_toggle: Message::DefineDescriptor(message::DefineDescriptor::ShowImportDescriptor(
+            !paste_descriptor_expanded,
+        )),
+    });
+    let import = column![import_backup, paste_descriptor].spacing(20);
+    let backup_imported: Option<Element<'_, Message>> = imported_backup.then_some(
+        row![
+            new::b5_bold("Backup successfully imported!"),
+            Space::fill_width()
+        ]
+        .into(),
     );
+    let button_next = row![
+        Space::fill_width(),
+        btn_next(valid.then_some(Message::Next))
+    ];
 
-    let import = column![import_backup, backup_imported, or, descriptor, rescan].spacing(20);
-    let button_next = btn_next(valid.then_some(Message::Next));
     let error_card = error.map(|e| card::error("Invalid descriptor", e.to_string()));
+
+    let content = column![
+        import,
+        backup_imported,
+        new::caption(
+            "If you are using a Bitcoin Core node, \
+                    you will need to perform a rescan of \
+                    the blockchain after creating the wallet \
+                    in order to see your coins and past \
+                    transactions. This can be done in \
+                    Settings > Node.",
+        ),
+        button_next,
+        error_card
+    ]
+    .spacing(50)
+    .width(EntryWidth::Standard);
+
+    let content = Container::new(content).center_x(Length::Fill);
 
     layout(
         progress,
         network,
         email,
         "Import the wallet",
-        column![import, button_next, error_card].spacing(50),
+        content,
         Some(Message::Previous),
     )
 }

@@ -191,6 +191,7 @@ pub enum DefineDescriptor {
     AddSafetyNetPath,
     ThresholdSequenceModal(ThresholdSequenceModal),
     Reset,
+    ShowImportDescriptor(bool),
     AliasEdited(Fingerprint, String /* alias*/),
     Compiled(Result<Box<LianaDescriptor>, String>),
 }
