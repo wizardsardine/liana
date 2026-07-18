@@ -116,10 +116,16 @@ impl<'a> SparkSendView<'a> {
         })
         .padding(10);
 
-        let amount_placeholder = if self.receive_target.is_stablecoin() {
-            "Amount in sats — funded from your Bitcoin balance"
-        } else {
-            "Amount in sats (optional for invoices with amount)"
+        // The amount field follows the wallet's display unit, like the Vault
+        // send form: label, placeholder, and the parse in state all switch on
+        // it, so a BTC-configured wallet enters BTC and a sats one enters sats.
+        let is_btc = matches!(self.bitcoin_unit, BitcoinDisplayUnit::BTC);
+        let amount_label = if is_btc { "Amount (BTC)" } else { "Amount (sats)" };
+        let amount_placeholder = match (self.receive_target.is_stablecoin(), is_btc) {
+            (true, true) => "Amount in BTC — funded from your Bitcoin balance",
+            (true, false) => "Amount in sats — funded from your Bitcoin balance",
+            (false, true) => "Amount in BTC (optional for invoices with amount)",
+            (false, false) => "Amount in sats (optional for invoices with amount)",
         };
         let amount = text_input(amount_placeholder, self.amount_input)
             .on_input(|v| {
@@ -133,7 +139,7 @@ impl<'a> SparkSendView<'a> {
                 .push(h4_bold("Destination"))
                 .push(destination)
                 .push(Space::new().height(Length::Fixed(8.0)))
-                .push(h4_bold("Amount"))
+                .push(h4_bold(amount_label))
                 .push(amount),
         )
         .padding(16)

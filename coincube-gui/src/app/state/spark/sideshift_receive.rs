@@ -395,14 +395,17 @@ impl SparkSideshiftReceiveFlow {
                         //      the "bitcoin received" celebration when it lands.
                         // The amount is the swap's settle estimate, used only for
                         // the pending indicator; the celebration uses the actual
-                        // claimed amount.
+                        // claimed amount. Read the cached figure rather than this
+                        // poll's `settle_sat`: a settle response can omit
+                        // `settleAmount`, and the cache still holds the value an
+                        // earlier poll reported.
                         return Task::batch([
                             Task::done(Message::View(view::Message::SparkReceive(
                                 view::SparkReceiveMessage::DepositsChanged,
                             ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::SwapSettledAwaitingArrival {
-                                    amount_sat: settle_sat.unwrap_or(0),
+                                    amount_sat: self.settle_amount_sat.unwrap_or(0),
                                 },
                             ))),
                         ]);

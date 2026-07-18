@@ -30,7 +30,7 @@ use std::sync::Arc;
 use coincube_spark_protocol::{
     CrossChainAddress, CrossChainRoute, ParseInputKind, PrepareSendOk, SendPaymentOk,
 };
-use coincube_ui::component::amount::format_u64_as_string;
+use coincube_ui::component::amount::{format_u64_as_string, BitcoinDisplayUnit};
 use coincube_ui::widget::Element;
 use iced::Task;
 
@@ -370,7 +370,7 @@ impl SparkSend {
     /// Fetch (or re-fetch) a quote for the route the user selected. Shared by
     /// the first quote and the post-expiry re-quote — they differ only in what
     /// the user pressed, not in what has to happen.
-    fn quote_cross_chain(&mut self) -> Task<Message> {
+    fn quote_cross_chain(&mut self, bitcoin_unit: BitcoinDisplayUnit) -> Task<Message> {
         let Some(ctx) = &self.cross_chain else {
             return Task::none();
         };
@@ -389,14 +389,14 @@ impl SparkSend {
                 return Task::none();
             }
         };
-        let amount_sat = match self.amount_input.trim().parse::<u64>() {
+        let amount_sat = match parse_amount_to_sats(&self.amount_input, bitcoin_unit) {
             Ok(n) if n > 0 => n,
             _ => {
-                self.phase = SparkSendPhase::Error(
-                    "Enter the amount to send, in sats. Cross-chain sends are funded from your \
-                     Bitcoin balance and converted when they're paid."
-                        .to_string(),
-                );
+                self.phase = SparkSendPhase::Error(format!(
+                    "Enter the amount to send, in {}. Cross-chain sends are funded from your \
+                     Bitcoin balance and converted when they're paid.",
+                    amount_unit_word(bitcoin_unit),
+                ));
                 return Task::none();
             }
         };
@@ -609,12 +609,10 @@ impl State for SparkSend {
                 let amount_sat = if self.amount_input.trim().is_empty() {
                     None
                 } else {
-                    match self.amount_input.trim().parse::<u64>() {
+                    match parse_amount_to_sats(&self.amount_input, cache.bitcoin_unit) {
                         Ok(n) => Some(n),
-                        Err(_) => {
-                            self.phase = SparkSendPhase::Error(
-                                "Amount must be a whole number of sats.".to_string(),
-                            );
+                        Err(e) => {
+                            self.phase = SparkSendPhase::Error(e);
                             return Task::none();
                         }
                     }
@@ -736,7 +734,7 @@ impl State for SparkSend {
                 Task::none()
             }
             SparkSendMessage::CrossChainQuoteRequested | SparkSendMessage::ReQuoteRequested => {
-                self.quote_cross_chain()
+                self.quote_cross_chain(cache.bitcoin_unit)
             }
             SparkSendMessage::CrossChainRetryRequested => {
                 // A cross-chain retry re-sends the **same prepared quote**, not a
@@ -909,6 +907,33 @@ impl State for SparkSend {
     }
 }
 
+/// The word for the amount field's unit, for error messages.
+fn amount_unit_word(unit: BitcoinDisplayUnit) -> &'static str {
+    match unit {
+        BitcoinDisplayUnit::BTC => "BTC",
+        BitcoinDisplayUnit::Sats => "sats",
+    }
+}
+
+/// Parse the amount field — entered in the wallet's display unit — into sats.
+/// Mirrors the Vault send form: a sats wallet enters whole sats, a BTC wallet
+/// enters a decimal BTC value. The stored `amount_sat` the send path uses is
+/// always sats regardless.
+fn parse_amount_to_sats(input: &str, unit: BitcoinDisplayUnit) -> Result<u64, String> {
+    let trimmed = input.trim();
+    match unit {
+        BitcoinDisplayUnit::Sats => trimmed
+            .parse::<u64>()
+            .map_err(|_| "Amount must be a whole number of sats.".to_string()),
+        BitcoinDisplayUnit::BTC => coincube_core::miniscript::bitcoin::Amount::from_str_in(
+            trimmed,
+            coincube_core::miniscript::bitcoin::Denomination::Bitcoin,
+        )
+        .map(|a| a.to_sat())
+        .map_err(|_| "Amount must be a valid BTC value.".to_string()),
+    }
+}
+
 /// Phase 4e: classify the user-supplied destination via `parse_input`
 /// and dispatch to the right prepare RPC (`prepare_send` for
 /// BOLT11/on-chain/Other, `prepare_lnurl_pay` for LNURL/Lightning
@@ -1048,6 +1073,29 @@ fn fetch_balance_task(backend: Option<Arc<SparkBackend>>) -> Task<Message> {
 mod tests {
     use super::*;
     use crate::app::view::{Message as ViewMessage, SparkSendMessage};
+
+    #[test]
+    fn amount_parses_in_the_configured_unit() {
+        // Sats mode: whole integers only.
+        assert_eq!(
+            parse_amount_to_sats("30000", BitcoinDisplayUnit::Sats),
+            Ok(30_000)
+        );
+        assert!(parse_amount_to_sats("0.5", BitcoinDisplayUnit::Sats).is_err());
+
+        // BTC mode: decimals convert to sats.
+        assert_eq!(
+            parse_amount_to_sats("0.0003", BitcoinDisplayUnit::BTC),
+            Ok(30_000)
+        );
+        assert_eq!(
+            parse_amount_to_sats(" 1 ", BitcoinDisplayUnit::BTC),
+            Ok(100_000_000)
+        );
+        // More than 8 decimal places is sub-sat precision — rejected.
+        assert!(parse_amount_to_sats("0.000000001", BitcoinDisplayUnit::BTC).is_err());
+        assert!(parse_amount_to_sats("abc", BitcoinDisplayUnit::BTC).is_err());
+    }
 
     fn route() -> CrossChainRoute {
         CrossChainRoute {
