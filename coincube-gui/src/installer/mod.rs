@@ -137,7 +137,7 @@ use crate::{
     },
     daemon::{Daemon, DaemonError},
     delete,
-    dir::CoincubeDirectory,
+    dir::{CoincubeDirectory, NetworkDirectory},
     hw::{HardwareWalletConfig, HardwareWalletMessage, HardwareWallets},
     services::{
         self,
@@ -688,37 +688,12 @@ impl Installer {
                                 )
                             })?;
 
-                            if let Err(e) = recovered.store_encrypted_seed_only(
+                            persist_seed_only_install(
+                                recovered,
                                 &ctx.coincube_directory,
                                 ctx.bitcoin_config.network,
-                                Some(password.as_str()),
-                            ) {
-                                match e {
-                                    coincube_core::signer::SignerError::MnemonicStorage(
-                                        ref io_err,
-                                    ) if io_err.kind() == std::io::ErrorKind::AlreadyExists => {
-                                        if let Err(verify_err) = coincube_core::signer::MasterSigner::from_datadir_by_fingerprint(
-                                            ctx.coincube_directory.path(),
-                                            ctx.bitcoin_config.network,
-                                            recovered.fingerprint(),
-                                            Some(password.as_str()),
-                                        ) {
-                                            return Err(Error::Unexpected(format!(
-                                                "Existing seed file conflicted with new recovery PIN or was invalid: {}",
-                                                verify_err
-                                            )));
-                                        }
-                                        log::info!("Seed already exists on disk from a previous attempt and matches. Continuing.");
-                                    }
-                                    _ => {
-                                        return Err(Error::Unexpected(format!(
-                                            "Failed to store seed: {}",
-                                            e
-                                        )))
-                                    }
-                                }
-                            }
-                            Ok::<(), Error>(())
+                                password.as_str(),
+                            )
                         },
                         |res| match res {
                             Ok(_) => Message::Installed(None, Ok(None)),
@@ -938,22 +913,8 @@ pub async fn install_local_wallet(
     }
 
     // create coincube GUI configuration file
-    let gui_config_path = network_datadir
-        .path()
-        .join(gui_config::DEFAULT_FILE_NAME)
-        .to_path_buf();
-    if !gui_config_path.exists() {
-        create_and_write_file(
-            &gui_config_path,
-            toml::to_string(&gui_config::Config::new(
-                // Installer started a bitcoind, it is expected that gui will start it on startup
-                ctx.internal_bitcoind.is_some(),
-            ))
-            .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
-            .as_bytes(),
-        )?;
-        info!("Gui configuration file created");
-    }
+    // Installer started a bitcoind, it is expected that gui will start it on startup
+    ensure_gui_config(&network_datadir, ctx.internal_bitcoind.is_some())?;
 
     // create coincube GUI settings file
     update_settings_file(&network_datadir, |mut settings| {
@@ -1020,19 +981,7 @@ pub async fn create_remote_wallet(
     }
 
     // create coincube GUI configuration file
-    let gui_config_path = network_datadir
-        .path()
-        .join(gui_config::DEFAULT_FILE_NAME)
-        .to_path_buf();
-    if !gui_config_path.exists() {
-        create_and_write_file(
-            &gui_config_path,
-            toml::to_string(&gui_config::Config::new(false))
-                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
-                .as_bytes(),
-        )?;
-        info!("Gui configuration file created");
-    }
+    ensure_gui_config(&network_datadir, false)?;
 
     let pks: Vec<_> = ctx
         .keys
@@ -1188,19 +1137,7 @@ pub async fn import_remote_wallet(
     info!("Settings file created");
 
     // create coincube GUI configuration file
-    let gui_config_path = network_datadir
-        .path()
-        .join(gui_config::DEFAULT_FILE_NAME)
-        .to_path_buf();
-    if !gui_config_path.exists() {
-        create_and_write_file(
-            &gui_config_path,
-            toml::to_string(&gui_config::Config::new(false))
-                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
-                .as_bytes(),
-        )?;
-        info!("Gui configuration file created");
-    }
+    ensure_gui_config(&network_datadir, false)?;
 
     let backend = backend.inner_client();
     if let Err(e) = update_connect_cache(
@@ -1220,6 +1157,96 @@ pub async fn import_remote_wallet(
     }
 
     Ok(wallet_settings)
+}
+
+/// Persist a seed-only (Vault-less) install: store the recovered signer's
+/// mnemonic encrypted under the restore PIN, then make sure `gui.toml` exists
+/// so the `CubeSaved` finish line has a config to load.
+///
+/// On a retried restore the encrypted seed file may already be on disk
+/// (`AlreadyExists`). That's only acceptable when the existing file decrypts to
+/// the *same* master-signer fingerprint under the *same* PIN — verified via
+/// `from_datadir_by_fingerprint`. A mismatch means the on-disk seed conflicts
+/// with the new recovery credentials, so we surface an error rather than
+/// silently continuing against a seed the new PIN can't open.
+///
+/// Extracted from the inline installer closure so the seed-conflict arm is unit
+/// testable.
+fn persist_seed_only_install(
+    recovered: &Signer,
+    coincube_directory: &CoincubeDirectory,
+    network: Network,
+    password: &str,
+) -> Result<(), Error> {
+    if let Err(e) =
+        recovered.store_encrypted_seed_only(coincube_directory, network, Some(password))
+    {
+        match e {
+            coincube_core::signer::SignerError::MnemonicStorage(ref io_err)
+                if io_err.kind() == std::io::ErrorKind::AlreadyExists =>
+            {
+                if let Err(verify_err) =
+                    coincube_core::signer::MasterSigner::from_datadir_by_fingerprint(
+                        coincube_directory.path(),
+                        network,
+                        recovered.fingerprint(),
+                        Some(password),
+                    )
+                {
+                    return Err(Error::Unexpected(format!(
+                        "Existing seed file conflicted with new recovery PIN or was invalid: {}",
+                        verify_err
+                    )));
+                }
+                log::info!(
+                    "Seed already exists on disk from a previous attempt and matches. Continuing."
+                );
+            }
+            _ => {
+                return Err(Error::Unexpected(format!("Failed to store seed: {}", e)));
+            }
+        }
+    }
+
+    // Write `gui.toml` ourselves — the three wallet installers create it, but
+    // the seed-only path never did, so a fresh (non-post-wipe) datadir reached
+    // the `CubeSaved` finish line with no config and panicked. Seed-only cubes
+    // run no managed bitcoind, so `start_internal_bitcoind` is false.
+    let network_datadir = coincube_directory.network_directory(network);
+    network_datadir
+        .init()
+        .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
+    ensure_gui_config(&network_datadir, false)?;
+
+    Ok(())
+}
+
+/// Write the COINCUBE GUI configuration file (`gui.toml`) into the network
+/// datadir if it isn't already present. Shared by every install path — the
+/// three wallet installers and the seed-only restore — so a missing `gui.toml`
+/// can never abort the finish line (see the seed-only `CubeSaved` panic).
+///
+/// `start_internal_bitcoind` records whether the installer launched a managed
+/// bitcoind that the GUI is expected to start on boot; seed-only and remote
+/// installs pass `false`.
+pub fn ensure_gui_config(
+    network_datadir: &NetworkDirectory,
+    start_internal_bitcoind: bool,
+) -> Result<(), Error> {
+    let gui_config_path = network_datadir
+        .path()
+        .join(gui_config::DEFAULT_FILE_NAME)
+        .to_path_buf();
+    if !gui_config_path.exists() {
+        create_and_write_file(
+            &gui_config_path,
+            toml::to_string(&gui_config::Config::new(start_internal_bitcoind))
+                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
+                .as_bytes(),
+        )?;
+        info!("Gui configuration file created");
+    }
+    Ok(())
 }
 
 pub fn create_and_write_file(path: &Path, data: &[u8]) -> Result<(), Error> {
@@ -1350,6 +1377,111 @@ impl std::fmt::Display for Error {
             Self::Unexpected(e) => write!(f, "Unexpected: {}", e),
             Self::HardwareWallet(e) => write!(f, "Hardware Wallet: {}", e),
             Self::Backup(e) => write!(f, "Backup: {:?}", e),
+        }
+    }
+}
+
+#[cfg(test)]
+mod seed_only_install_tests {
+    //! Unit tests for the seed-only (Vault-less) restore persistence:
+    //! `gui.toml` is written on every path (the missing-config finish-line
+    //! panic), and a retried restore reconciles the on-disk seed against the
+    //! recovery PIN's fingerprint rather than clobbering or blindly trusting it.
+    use super::*;
+
+    fn temp_coincube_dir(tag: &str) -> CoincubeDirectory {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "coincube-seed-only-{}-{}-{}",
+            tag,
+            std::process::id(),
+            seq
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        CoincubeDirectory::new(path)
+    }
+
+    #[test]
+    fn ensure_gui_config_writes_and_is_idempotent() {
+        let dir = temp_coincube_dir("ensure-gui");
+        let nd = dir.network_directory(Network::Bitcoin);
+        nd.init().unwrap();
+
+        // Fresh network dir → file created, parses, and (seed-only) does not
+        // start an internal bitcoind.
+        ensure_gui_config(&nd, false).unwrap();
+        let cfg_path = nd.path().join(gui_config::DEFAULT_FILE_NAME);
+        assert!(cfg_path.exists(), "gui.toml is written");
+        let cfg = gui_config::Config::from_file(&cfg_path).expect("gui.toml parses");
+        assert!(!cfg.start_internal_bitcoind);
+
+        // Existing file → left untouched, even when called with a different
+        // flag (mirrors the `if !exists` guard).
+        ensure_gui_config(&nd, true).unwrap();
+        let cfg = gui_config::Config::from_file(&cfg_path).expect("gui.toml still parses");
+        assert!(
+            !cfg.start_internal_bitcoind,
+            "existing gui.toml must not be overwritten"
+        );
+    }
+
+    #[test]
+    fn persist_seed_only_install_stores_seed_and_writes_gui_config() {
+        let dir = temp_coincube_dir("persist");
+        let signer = Signer::generate(Network::Bitcoin).unwrap();
+
+        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810")
+            .expect("seed-only persistence should succeed on a fresh datadir");
+
+        let nd = dir.network_directory(Network::Bitcoin);
+        assert!(
+            nd.path().join(gui_config::DEFAULT_FILE_NAME).exists(),
+            "gui.toml is written on the seed-only path"
+        );
+        // The encrypted seed is on disk and decrypts under the restore PIN.
+        coincube_core::signer::MasterSigner::from_datadir_by_fingerprint(
+            dir.path(),
+            Network::Bitcoin,
+            signer.fingerprint(),
+            Some("246810"),
+        )
+        .expect("stored seed decrypts under the restore PIN");
+    }
+
+    #[test]
+    fn persist_seed_only_install_retry_with_matching_pin_continues() {
+        let dir = temp_coincube_dir("retry-match");
+        let signer = Signer::generate(Network::Bitcoin).unwrap();
+
+        // First attempt stores the seed; a retry (same signer + PIN, e.g. after
+        // a mid-flow kill) hits `AlreadyExists` and must succeed because the
+        // on-disk seed verifies against the recovery fingerprint.
+        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810").unwrap();
+        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810")
+            .expect("retry with the matching PIN continues past AlreadyExists");
+    }
+
+    #[test]
+    fn persist_seed_only_install_conflicting_pin_errors() {
+        let dir = temp_coincube_dir("conflict");
+        let signer = Signer::generate(Network::Bitcoin).unwrap();
+
+        // Seed stored under one PIN; retry under a *different* PIN hits
+        // `AlreadyExists`, the fingerprint verification fails to decrypt, and we
+        // surface an actionable conflict error rather than continuing.
+        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810").unwrap();
+        let err = persist_seed_only_install(&signer, &dir, Network::Bitcoin, "999999")
+            .expect_err("a conflicting recovery PIN must error");
+        match err {
+            Error::Unexpected(msg) => assert!(
+                msg.contains("Existing seed file conflicted"),
+                "unexpected error message: {}",
+                msg
+            ),
+            other => panic!("expected Error::Unexpected, got {:?}", other),
         }
     }
 }

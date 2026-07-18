@@ -838,13 +838,21 @@ impl Tab {
                             bitcoind.stop();
                         }
 
+                        // Seed-only restore: the installer now writes
+                        // `gui.toml` (see `ensure_gui_config`), but this is the
+                        // one load site that historically ran with no config on
+                        // disk and panicked. A missing-or-corrupt config here
+                        // must degrade to defaults, not abort a restore that
+                        // already persisted the seed. The wallet-path load sites
+                        // keep `.expect(...)` — their installers guarantee the
+                        // file.
                         let cfg = app::Config::from_file(
                             &i.datadir
                                 .network_directory(i.network)
                                 .path()
                                 .join(app::config::DEFAULT_FILE_NAME),
                         )
-                        .expect("A gui configuration file must be present");
+                        .unwrap_or_else(|_| app::Config::new(false));
 
                         let breez = restored_breez_client
                             .or_else(|| i.breez_client.clone())
@@ -2346,7 +2354,7 @@ mod find_or_create_cube_tests {
         let wid = wallet_id();
         let cube = find_or_create_cube(
             &nd,
-            &wid,
+            Some(&wid),
             &Some("Ignored Alias".to_string()),
             bitcoin::Network::Bitcoin,
             None, // originating_cube_id
@@ -2387,7 +2395,7 @@ mod find_or_create_cube_tests {
         let wid = wallet_id();
         let cube = find_or_create_cube(
             &nd,
-            &wid,
+            Some(&wid),
             &None,
             bitcoin::Network::Bitcoin,
             None,
@@ -2421,7 +2429,7 @@ mod find_or_create_cube_tests {
         let wid = wallet_id();
         let cube = find_or_create_cube(
             &nd,
-            &wid,
+            Some(&wid),
             &None,
             bitcoin::Network::Bitcoin,
             None,
@@ -2451,7 +2459,7 @@ mod find_or_create_cube_tests {
         let wid = wallet_id();
         let cube = find_or_create_cube(
             &nd,
-            &wid,
+            Some(&wid),
             &Some("My Alias".to_string()),
             bitcoin::Network::Bitcoin,
             None,
@@ -2492,7 +2500,7 @@ mod find_or_create_cube_tests {
 
         let cube = find_or_create_cube(
             &nd,
-            &wid,
+            Some(&wid),
             &None,
             bitcoin::Network::Bitcoin,
             None,
@@ -2525,5 +2533,102 @@ mod find_or_create_cube_tests {
             .find(|c| c.id == ORIG_UUID)
             .expect("restored cube exists");
         assert_eq!(restored.vault_wallet_id.as_ref(), Some(&wid));
+    }
+
+    /// Seed-only (Vault-less) Recovery-Kit restore: `wallet_id` is `None`
+    /// because a seed-only Cube has no Vault descriptor to attach. The restored
+    /// Cube must still reuse the deleted Cube's original UUID + name, leave
+    /// `vault_wallet_id` empty, and carry the restore credentials (PIN hash +
+    /// master-signer fingerprint) so PIN entry decrypts the just-persisted
+    /// mnemonic.
+    #[tokio::test]
+    async fn restore_seed_only_reuses_uuid_and_applies_credentials() {
+        let nd = temp_network_dir("seed-only");
+        let fp = bitcoin::bip32::Fingerprint::from([0xde, 0xad, 0xbe, 0xef]);
+        let seed = RestoreCubeSeed {
+            pin: zeroize::Zeroizing::new("246810".to_string()),
+            master_signer_fingerprint: fp,
+        };
+
+        let cube = find_or_create_cube(
+            &nd,
+            None, // seed-only: no Vault wallet to attach
+            &Some("Ignored Alias".to_string()),
+            bitcoin::Network::Bitcoin,
+            None, // originating_cube_id
+            Some(RestoreCubeIdentity {
+                uuid: ORIG_UUID.to_string(),
+                name: "My Seed Cube".to_string(),
+            }),
+            Some(&seed),
+        )
+        .await
+        .expect("seed-only restore should succeed");
+
+        assert_eq!(
+            cube.id, ORIG_UUID,
+            "restored seed-only Cube keeps the original UUID"
+        );
+        assert_eq!(cube.name, "My Seed Cube", "restored Cube keeps its name");
+        assert_eq!(
+            cube.vault_wallet_id, None,
+            "seed-only Cube has no Vault wallet"
+        );
+        assert_eq!(
+            cube.master_signer_fingerprint,
+            Some(fp),
+            "restore fingerprint applied"
+        );
+        assert!(
+            cube.verify_pin("246810"),
+            "restore PIN hash applied and verifies"
+        );
+    }
+
+    /// Non-restore install with `wallet_id: None` and no originating cube and no
+    /// restored identity: this must not error, and — critically — must not
+    /// steal an unrelated existing vault-less Cube's identity in a way that
+    /// clobbers its credentials. With `restore_seed = None`, `decorate_new` is a
+    /// no-op, so the reused empty Cube keeps whatever PIN hash / fingerprint it
+    /// already had.
+    #[tokio::test]
+    async fn seed_only_non_restore_does_not_clobber_existing_cube_credentials() {
+        let nd = temp_network_dir("seed-only-guard");
+
+        // An existing vault-less Cube that already carries its own credentials.
+        let mut settings = app::settings::Settings::default();
+        let existing = app::settings::CubeSettings::new("Existing".to_string(), bitcoin::Network::Bitcoin)
+            .with_master_signer(bitcoin::bip32::Fingerprint::from([1, 2, 3, 4]))
+            .with_pin("111111")
+            .expect("hash pin");
+        let existing_id = existing.id.clone();
+        settings.cubes.push(existing);
+        update_settings_file(&nd, |_| Some(settings)).await.unwrap();
+
+        let cube = find_or_create_cube(
+            &nd,
+            None, // no Vault wallet
+            &None,
+            bitcoin::Network::Bitcoin,
+            None, // no originating cube
+            None, // no restored identity
+            None, // no restore seed
+        )
+        .await
+        .expect("non-restore seed-only path should not error");
+
+        // The vault-less Cube is reused (empty-cube branch) but its credentials
+        // are left intact — no restore seed means no re-hash.
+        assert_eq!(cube.id, existing_id, "reuses the existing vault-less Cube");
+        assert_eq!(
+            cube.master_signer_fingerprint,
+            Some(bitcoin::bip32::Fingerprint::from([1, 2, 3, 4])),
+            "existing fingerprint is preserved, not clobbered"
+        );
+        assert!(
+            cube.verify_pin("111111"),
+            "existing PIN hash is preserved, not clobbered"
+        );
+        assert_eq!(cube.vault_wallet_id, None);
     }
 }
