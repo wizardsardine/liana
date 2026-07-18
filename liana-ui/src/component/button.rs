@@ -589,6 +589,14 @@ pub fn btn_ok<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "OK", BtnWidth::M, msg)
 }
 
+pub fn btn_overwrite<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Overwrite", BtnWidth::M, msg)
+}
+
+pub fn btn_ignore<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Ignore", BtnWidth::M, msg)
+}
+
 pub fn btn_email_wizardsardine<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "Email WS", BtnWidth::Auto, msg)
 }

@@ -5,6 +5,8 @@ use iced::{
 
 use super::Theme;
 
+const PROGRESS_BAR_RADIUS: f32 = 25.0;
+
 impl Catalog for Theme {
     type Class<'a> = StyleFn<'a, Self>;
 
@@ -23,7 +25,7 @@ pub fn primary(theme: &Theme) -> Style {
         bar: theme.colors.progress_bars.bar.into(),
         border: if let Some(color) = theme.colors.cards.simple.border {
             Border {
-                radius: 25.0.into(),
+                radius: PROGRESS_BAR_RADIUS.into(),
                 width: 1.0,
                 color,
                 ..Default::default()
@@ -32,6 +34,17 @@ pub fn primary(theme: &Theme) -> Style {
             Border {
                 ..Default::default()
             }
+        },
+    }
+}
+
+pub fn error(theme: &Theme) -> Style {
+    Style {
+        background: crate::color::TRANSPARENT.into(),
+        bar: theme.colors.text.error.into(),
+        border: Border {
+            radius: PROGRESS_BAR_RADIUS.into(),
+            ..Default::default()
         },
     }
 }
