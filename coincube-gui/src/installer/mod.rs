@@ -693,7 +693,18 @@ impl Installer {
                                     coincube_core::signer::SignerError::MnemonicStorage(ref io_err)
                                         if io_err.kind() == std::io::ErrorKind::AlreadyExists =>
                                     {
-                                        log::info!("Seed already exists on disk from a previous attempt. Continuing.");
+                                        if let Err(verify_err) = coincube_core::signer::MasterSigner::from_datadir_by_fingerprint(
+                                            ctx.coincube_directory.path(),
+                                            ctx.bitcoin_config.network,
+                                            recovered.fingerprint(),
+                                            Some(password.as_str()),
+                                        ) {
+                                            return Err(Error::Unexpected(format!(
+                                                "Existing seed file conflicted with new recovery PIN or was invalid: {}",
+                                                verify_err
+                                            )));
+                                        }
+                                        log::info!("Seed already exists on disk from a previous attempt and matches. Continuing.");
                                     }
                                     _ => {
                                         return Err(Error::Unexpected(format!(
