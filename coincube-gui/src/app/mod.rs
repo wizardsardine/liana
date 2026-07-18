@@ -2252,6 +2252,19 @@ impl App {
             }
         }
 
+        // Keep the cross-network shift-status poll alive off the Spark Receive
+        // panel too: a swap settling while the user is elsewhere must still be
+        // observed promptly, or GlobalHome can't register the arrival before the
+        // deposit is auto-claimed and the flow hangs on "Bitcoin arriving". The
+        // poll stops itself once the shift is terminal, so this is idle outside
+        // the pre-settle window.
+        if !matches!(
+            self.panels.current,
+            Menu::Spark(crate::app::menu::SparkSubMenu::Receive)
+        ) {
+            subscriptions.push(self.panels.spark_receive.sideshift_poll_subscription());
+        }
+
         // Stream the pending internal bitcoind's debug.log for UpdateTip lines.
         if let Some(pending_cfg) = self
             .daemon

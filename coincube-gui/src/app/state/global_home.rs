@@ -1771,11 +1771,35 @@ impl State for GlobalHome {
                             if !self.pending_spark_deposit_seen {
                                 return Task::none();
                             }
+                            // The deposit was claimed by someone other than our own
+                            // auto-claim below — the Spark SDK auto-claims static
+                            // deposits, and the user can claim from the Receive
+                            // panel — so `AutoClaimSparkResult` (which advances the
+                            // cross-network Receive flow off "Bitcoin arriving")
+                            // never ran. Nudge the flow to its arrived state here so
+                            // it doesn't hang. This is the *only* signal for an
+                            // SDK-silent claim; it's idempotent (the flow transitions
+                            // once and ignores it otherwise), so it can't double up
+                            // with a claim path that already fired. Non-swap
+                            // transfers (Vault/Liquid→Spark) don't touch it.
+                            let was_swap = self.pending_spark_incoming_is_swap;
+                            let amount_sat = self
+                                .pending_spark_incoming
+                                .as_ref()
+                                .map(|p| p.amount.to_sat())
+                                .unwrap_or(0);
                             self.pending_spark_incoming = None;
                             self.pending_spark_incoming_swap_id = None;
                             self.pending_spark_deposit_seen = false;
                             self.pending_spark_incoming_is_swap = false;
                             self.auto_claiming_spark_deposit = None;
+                            if was_swap {
+                                return Task::done(Message::View(
+                                    view::Message::SparkSideshiftReceive(
+                                        view::SparkSideshiftReceiveMessage::Arrived { amount_sat },
+                                    ),
+                                ));
+                            }
                             return Task::none();
                         }
                         // We've now observed at least one deposit in the list
