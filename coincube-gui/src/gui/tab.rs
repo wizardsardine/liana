@@ -2597,10 +2597,11 @@ mod find_or_create_cube_tests {
 
         // An existing vault-less Cube that already carries its own credentials.
         let mut settings = app::settings::Settings::default();
-        let existing = app::settings::CubeSettings::new("Existing".to_string(), bitcoin::Network::Bitcoin)
-            .with_master_signer(bitcoin::bip32::Fingerprint::from([1, 2, 3, 4]))
-            .with_pin("111111")
-            .expect("hash pin");
+        let existing =
+            app::settings::CubeSettings::new("Existing".to_string(), bitcoin::Network::Bitcoin)
+                .with_master_signer(bitcoin::bip32::Fingerprint::from([1, 2, 3, 4]))
+                .with_pin("111111")
+                .expect("hash pin");
         let existing_id = existing.id.clone();
         settings.cubes.push(existing);
         update_settings_file(&nd, |_| Some(settings)).await.unwrap();

@@ -1178,8 +1178,7 @@ fn persist_seed_only_install(
     network: Network,
     password: &str,
 ) -> Result<(), Error> {
-    if let Err(e) =
-        recovered.store_encrypted_seed_only(coincube_directory, network, Some(password))
+    if let Err(e) = recovered.store_encrypted_seed_only(coincube_directory, network, Some(password))
     {
         match e {
             coincube_core::signer::SignerError::MnemonicStorage(ref io_err)
