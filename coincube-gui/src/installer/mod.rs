@@ -677,25 +677,29 @@ impl Installer {
                             // We must persist the recovered signer so Breez Liquid/Spark
                             // can load it from the datadir on next startup.
                             // Even though there is no vault descriptor, the seed is needed.
-                            let password = ctx.restore_pin.as_ref().map(|p| p.as_str());
-                            if let Some(recovered) = &ctx.recovered_signer {
-                                if let Err(e) = recovered.store_encrypted_seed_only(
-                                    &ctx.coincube_directory,
-                                    ctx.bitcoin_config.network,
-                                    password,
-                                ) {
-                                    match e {
-                                        coincube_core::signer::SignerError::MnemonicStorage(ref io_err)
-                                            if io_err.kind() == std::io::ErrorKind::AlreadyExists =>
-                                        {
-                                            log::info!("Seed already exists on disk from a previous attempt. Continuing.");
-                                        }
-                                        _ => {
-                                            return Err(Error::Unexpected(format!(
-                                                "Failed to store seed: {}",
-                                                e
-                                            )))
-                                        }
+                            let recovered = ctx.recovered_signer.as_ref().ok_or_else(|| {
+                                Error::Unexpected("Seed-only install is missing the recovered signer".into())
+                            })?;
+                            let password = ctx.restore_pin.as_ref().ok_or_else(|| {
+                                Error::Unexpected("Seed-only install is missing the restore PIN".into())
+                            })?;
+
+                            if let Err(e) = recovered.store_encrypted_seed_only(
+                                &ctx.coincube_directory,
+                                ctx.bitcoin_config.network,
+                                Some(password.as_str()),
+                            ) {
+                                match e {
+                                    coincube_core::signer::SignerError::MnemonicStorage(ref io_err)
+                                        if io_err.kind() == std::io::ErrorKind::AlreadyExists =>
+                                    {
+                                        log::info!("Seed already exists on disk from a previous attempt. Continuing.");
+                                    }
+                                    _ => {
+                                        return Err(Error::Unexpected(format!(
+                                            "Failed to store seed: {}",
+                                            e
+                                        )))
                                     }
                                 }
                             }
