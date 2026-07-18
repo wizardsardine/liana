@@ -104,6 +104,8 @@ pub enum SelectBackend {
     // view messages
     RequestOTP,
     EditEmail,
+    ConnectWithAnotherEmail,
+    BackToConnectAccounts,
     EmailEdited(String),
     OTPEdited(String),
     ContinueWithLocalWallet(bool),

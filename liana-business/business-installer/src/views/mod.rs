@@ -11,6 +11,7 @@ pub mod xpub;
 
 pub use keys::keys_view;
 use liana_connect::ws_business::{self, UserRole};
+pub use liana_ui::component::installer::{intro_description, intro_prompt, screen_intro};
 use liana_ui::component::{installer as installer_layout, text::capitalize_first};
 pub use loading::loading_view;
 pub use login::login_view;
@@ -40,7 +41,6 @@ use liana_ui::{
     widget::*,
     Variant,
 };
-use std::fmt::Display;
 use uuid::Uuid;
 
 pub const INSTALLER_STEPS: usize = 7;
@@ -102,8 +102,6 @@ fn admin_name_from_email(mail: &str) -> Option<String> {
         .unwrap_or(mail);
     Some(format!("({})", capitalize_first(n)))
 }
-
-const SCREEN_INTRO_SUB_WIDTH: u32 = 620;
 
 fn layout_inner<'a>(
     progress: (usize, usize),
@@ -181,33 +179,6 @@ pub fn layout_with_scrollable_list<'a>(
         },
         previous_message,
     )
-}
-
-pub fn screen_intro<'a, M: 'a>(
-    title: impl Display + 'a,
-    sub: Option<Element<'a, M>>,
-    extra_spacing: bool,
-) -> Element<'a, M> {
-    let spacing = if extra_spacing { 60 } else { 15 };
-    column![text::new::d3(title), sub]
-        .align_x(Alignment::Center)
-        .spacing(spacing)
-        .into()
-}
-
-pub fn intro_description<'a, M: 'a>(text: &'a str) -> Element<'a, M> {
-    Container::new(text::new::caption(text).style(theme::text::secondary))
-        .width(Length::Shrink)
-        .max_width(SCREEN_INTRO_SUB_WIDTH)
-        .align_x(Alignment::Center)
-        .into()
-}
-
-pub fn intro_prompt<'a, M: 'a>(prompt: &'a str, accent: Option<&'a str>) -> Element<'a, M> {
-    let accent = accent.map(|accent| text::new::h3_semi(accent).style(theme::text::accent));
-    Container::new(row![text::new::h3_semi(prompt), accent].wrap())
-        .center_x(Length::Fill)
-        .into()
 }
 
 // NOTE: content MUST have width and height to Length::Fill

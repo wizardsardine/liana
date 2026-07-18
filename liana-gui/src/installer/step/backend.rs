@@ -92,6 +92,9 @@ impl Step for ChooseBackend {
 
 #[allow(clippy::large_enum_variant)]
 pub enum ConnectionStep {
+    SelectAccount {
+        selected_email: Option<String>,
+    },
     EnterEmail {
         email: form::Value<String>,
     },
@@ -146,6 +149,66 @@ impl Step for RemoteBackendLogin {
     }
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match &mut self.step {
+            ConnectionStep::SelectAccount { selected_email } => match message {
+                Message::SelectBackend(message::SelectBackend::ExistingConnectAccounts(
+                    accounts,
+                )) => {
+                    self.connect_accounts = accounts;
+                    if self.connect_accounts.is_empty() {
+                        self.step = ConnectionStep::EnterEmail {
+                            email: form::Value::default(),
+                        };
+                    }
+                }
+                Message::SelectBackend(message::SelectBackend::ConnectWithAnotherEmail) => {
+                    if !self.processing {
+                        self.step = ConnectionStep::EnterEmail {
+                            email: form::Value::default(),
+                        };
+                    }
+                }
+                Message::SelectBackend(message::SelectBackend::SelectConnectAccount(email)) => {
+                    *selected_email = Some(email.clone());
+                    self.processing = true;
+                    self.connection_error = None;
+                    self.auth_error = None;
+                    return Task::perform(
+                        connect_with_existing_account(
+                            email,
+                            self.network,
+                            self.network_dir.clone(),
+                        ),
+                        |msg| Message::SelectBackend(message::SelectBackend::Connected(msg)),
+                    );
+                }
+                Message::SelectBackend(message::SelectBackend::Connected(res)) => {
+                    self.processing = false;
+                    match res {
+                        Ok(remote_backend) => {
+                            self.step = ConnectionStep::Connected {
+                                email: remote_backend
+                                    .user_email()
+                                    .expect("Gui connected to Liana backend")
+                                    .to_string(),
+                                remote_backend,
+                            };
+                            return Task::perform(async move {}, |_| Message::Next);
+                        }
+                        Err(e) => {
+                            if let Error::Auth(AuthError { http_status, .. }) = e {
+                                if http_status == Some(403) {
+                                    self.auth_error = Some("Token has expired or is invalid")
+                                } else {
+                                    self.connection_error = Some(e);
+                                }
+                            } else {
+                                self.connection_error = Some(e);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
             ConnectionStep::EnterEmail { email } => match message {
                 Message::SelectBackend(message::SelectBackend::EmailEdited(value)) => {
                     email.valid = value.is_empty()
@@ -159,17 +222,19 @@ impl Step for RemoteBackendLogin {
                 Message::SelectBackend(message::SelectBackend::ExistingConnectAccounts(
                     accounts,
                 )) => {
+                    if !accounts.is_empty() && email.value.is_empty() {
+                        self.step = ConnectionStep::SelectAccount {
+                            selected_email: None,
+                        };
+                    }
                     self.connect_accounts = accounts;
                 }
-                Message::SelectBackend(message::SelectBackend::SelectConnectAccount(email)) => {
-                    return Task::perform(
-                        connect_with_existing_account(
-                            email,
-                            self.network,
-                            self.network_dir.clone(),
-                        ),
-                        |msg| Message::SelectBackend(message::SelectBackend::Connected(msg)),
-                    )
+                Message::SelectBackend(message::SelectBackend::BackToConnectAccounts) => {
+                    if !self.processing && !self.connect_accounts.is_empty() {
+                        self.step = ConnectionStep::SelectAccount {
+                            selected_email: None,
+                        };
+                    }
                 }
                 Message::SelectBackend(message::SelectBackend::RequestOTP) => {
                     if email.value.is_empty() {
@@ -260,13 +325,22 @@ impl Step for RemoteBackendLogin {
                 backend_api_url,
             } => match message {
                 Message::SelectBackend(message::SelectBackend::EditEmail) => {
-                    self.step = ConnectionStep::EnterEmail {
-                        email: form::Value {
-                            value: email.clone(),
-                            warning: None,
-                            valid: true,
-                        },
-                    };
+                    if !self.processing {
+                        self.step = ConnectionStep::EnterEmail {
+                            email: form::Value {
+                                value: email.clone(),
+                                warning: None,
+                                valid: true,
+                            },
+                        };
+                    }
+                }
+                Message::SelectBackend(message::SelectBackend::BackToConnectAccounts) => {
+                    if !self.processing && !self.connect_accounts.is_empty() {
+                        self.step = ConnectionStep::SelectAccount {
+                            selected_email: None,
+                        };
+                    }
                 }
                 Message::SelectBackend(message::SelectBackend::RequestOTP) => {
                     *otp = form::Value::default();
@@ -331,13 +405,23 @@ impl Step for RemoteBackendLogin {
                 }
                 _ => {}
             },
-            ConnectionStep::Connected { .. } => {
-                if let Message::SelectBackend(message::SelectBackend::EditEmail) = message {
-                    self.step = ConnectionStep::EnterEmail {
-                        email: form::Value::default(),
+            ConnectionStep::Connected { .. } => match message {
+                Message::SelectBackend(message::SelectBackend::EditEmail) => {
+                    if !self.processing {
+                        self.step = ConnectionStep::EnterEmail {
+                            email: form::Value::default(),
+                        }
                     }
                 }
-            }
+                Message::SelectBackend(message::SelectBackend::BackToConnectAccounts) => {
+                    if !self.processing && !self.connect_accounts.is_empty() {
+                        self.step = ConnectionStep::SelectAccount {
+                            selected_email: None,
+                        };
+                    }
+                }
+                _ => {}
+            },
         }
 
         Task::none()
@@ -387,32 +471,47 @@ impl Step for RemoteBackendLogin {
         network: Network,
         _email: Option<&'a str>,
     ) -> Element<'a, Message> {
-        view::login(
-            progress,
-            network,
-            match &self.step {
-                ConnectionStep::EnterEmail { email } => view::connection_step_enter_email(
-                    email,
-                    self.processing,
-                    self.connection_error.as_ref(),
+        match &self.step {
+            ConnectionStep::SelectAccount { selected_email } => {
+                view::connection_step_select_account(
+                    progress,
+                    network,
                     &self.connect_accounts,
-                    self.auth_error,
-                ),
-                ConnectionStep::EnterOtp { email, otp, .. } => view::connection_step_enter_otp(
-                    email,
-                    otp,
                     self.processing,
+                    selected_email.as_deref(),
                     self.connection_error.as_ref(),
                     self.auth_error,
-                ),
-                ConnectionStep::Connected { email, .. } => view::connection_step_connected(
-                    email,
-                    self.processing,
-                    self.connection_error.as_ref(),
-                    self.auth_error,
-                ),
-            },
-        )
+                )
+            }
+            ConnectionStep::EnterEmail { email } => view::connection_step_enter_email(
+                progress,
+                network,
+                email,
+                self.processing,
+                self.connection_error.as_ref(),
+                self.auth_error,
+                !self.connect_accounts.is_empty(),
+            ),
+            ConnectionStep::EnterOtp { email, otp, .. } => view::connection_step_enter_otp(
+                progress,
+                network,
+                email,
+                otp,
+                self.processing,
+                self.connection_error.as_ref(),
+                self.auth_error,
+                !self.connect_accounts.is_empty(),
+            ),
+            ConnectionStep::Connected { email, .. } => view::connection_step_connected(
+                progress,
+                network,
+                email,
+                self.processing,
+                self.connection_error.as_ref(),
+                self.auth_error,
+                !self.connect_accounts.is_empty(),
+            ),
+        }
     }
 }
 

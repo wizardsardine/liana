@@ -311,14 +311,7 @@ pub fn account_entry<'a, M: Clone + 'a>(
         (on_select, on_delete)
     };
 
-    let body: Element<'a, M> = if connecting {
-        text::new::b5_medium("Connecting...")
-            .width(Length::Fill)
-            .align_x(Horizontal::Center)
-            .into()
-    } else {
-        item_body(email, None::<String>)
-    };
+    let body = account_body(email, connecting);
 
     let entry = list_entry_row(
         Some(badge::tile(Tile::Account).into()),
@@ -330,6 +323,36 @@ pub fn account_entry<'a, M: Clone + 'a>(
     );
 
     with_delete_button(entry, on_delete)
+}
+
+pub fn account_select_entry<'a, M: Clone + 'a>(
+    email: impl Display,
+    connecting: bool,
+    on_select: Option<M>,
+) -> Element<'a, M> {
+    let on_select = if connecting { None } else { on_select };
+
+    let body = account_body(email, connecting);
+
+    list_entry_row(
+        Some(badge::tile(Tile::Account).into()),
+        body,
+        Some(right_chevron()),
+        None,
+        EntryWidth::Standard,
+        on_select,
+    )
+}
+
+fn account_body<'a, M: 'a>(email: impl Display, connecting: bool) -> Element<'a, M> {
+    if connecting {
+        text::new::b5_medium("Connecting...")
+            .width(Length::Fill)
+            .align_x(Horizontal::Center)
+            .into()
+    } else {
+        item_body(email, None::<String>)
+    }
 }
 
 /// Append a delete (cross) button after a [`EntryWidth::Deletable`] entry, in the reserved slot.
