@@ -562,7 +562,8 @@ mod tests {
         for status in [Pending, Processing, Settling, Settled, Review] {
             assert!(
                 arrival_belongs_to_this_shift(&SparkShiftPhase::Active, Some(&status)),
-                "Active + {status:?} should accept the arrival"
+                "Active + {:?} should accept the arrival",
+                status
             );
         }
 
@@ -585,7 +586,8 @@ mod tests {
         ] {
             assert!(
                 !arrival_belongs_to_this_shift(&phase, Some(&Settled)),
-                "{phase:?} must ignore the arrival even at Settled"
+                "{:?} must ignore the arrival even at Settled",
+                phase
             );
         }
     }
