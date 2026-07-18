@@ -32,7 +32,7 @@ use liana_ui::{
         card, form, installer as installer_layout,
         list::{self, DeviceStatus, EntryAccent},
         modal, scrollable, separation,
-        text::{self, h2, new, p1_regular, text, Text as _},
+        text::{self, new, text, Text as _},
     },
     icon, theme,
     widget::*,
@@ -1654,20 +1654,23 @@ pub fn login(
     network: Network,
     connection_step: Element<Message>,
 ) -> Element<Message> {
+    let content = Container::new(
+        column![
+            installer_layout::screen_intro("Liana Connect", None, true),
+            connection_step,
+        ]
+        .spacing(50)
+        .align_x(Alignment::Center)
+        .width(Length::FillPortion(1)),
+    )
+    .center_x(Length::Fill);
+
     layout(
         progress,
         network,
         None,
         "Login",
-        Container::new(
-            Column::new()
-                .spacing(50)
-                .align_x(Alignment::Center)
-                .width(Length::FillPortion(1))
-                .push(h2("Liana Connect"))
-                .push(connection_step),
-        )
-        .center_x(Length::Fill),
+        content,
         Some(Message::Previous),
     )
 }
@@ -1679,122 +1682,136 @@ pub fn connection_step_enter_email<'a>(
     accounts: &'a [String],
     auth_error: Option<&'a str>,
 ) -> Element<'a, Message> {
-    Column::new()
-        .spacing(20)
-        .push_maybe(if !accounts.is_empty() {
-            Some(text("Choose an account you are already using:"))
-        } else {
-            None
+    let accounts_row = accounts.iter().fold(row![].spacing(10), |row, account| {
+        row.push(
+            Button::new(Container::new(new::caption(account)).padding(5))
+                .style(theme::button::secondary)
+                .on_press(Message::SelectBackend(
+                    message::SelectBackend::SelectConnectAccount(account.clone()),
+                )),
+        )
+    });
+    let email_prompt: Element<'_, Message> = if accounts.is_empty() {
+        new::caption("Enter an email you want to associate with the wallet:").into()
+    } else {
+        new::caption("Or enter a new email you want to associate with the wallet:").into()
+    };
+    let send_token_msg = (!(processing || !email.valid || email.value.trim().is_empty()))
+        .then_some(Message::SelectBackend(message::SelectBackend::RequestOTP));
+    let accounts_prompt: Option<Element<'_, Message>> = (!accounts.is_empty())
+        .then_some(new::caption("Choose an account you are already using:").into());
+    column![
+        accounts_prompt,
+        accounts_row.wrap(),
+        connection_error.map(|error| -> Element<'_, Message> {
+            new::caption(error.to_string())
+                .style(theme::text::warning)
+                .into()
+        }),
+        auth_error.map(|error| -> Element<'_, Message> {
+            new::caption(error.to_string())
+                .style(theme::text::warning)
+                .into()
+        }),
+        email_prompt,
+        form::Form::new_trimmed("email", email, |msg| {
+            Message::SelectBackend(message::SelectBackend::EmailEdited(msg))
         })
-        .push(
-            accounts
-                .iter()
-                .fold(Row::new().spacing(10), |row, a| {
-                    row.push(
-                        Button::new(Container::new(p1_regular(a)).padding(5))
-                            .style(theme::button::secondary)
-                            .on_press(Message::SelectBackend(
-                                message::SelectBackend::SelectConnectAccount(a.clone()),
-                            )),
-                    )
-                })
-                .wrap(),
-        )
-        .push_maybe(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
-        .push_maybe(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
-        .push(if accounts.is_empty() {
-            text("Enter an email you want to associate with the wallet:")
-        } else {
-            text("Or enter a new email you want to associate with the wallet:")
-        })
-        .push(
-            form::Form::new_trimmed("email", email, |msg| {
-                Message::SelectBackend(message::SelectBackend::EmailEdited(msg))
-            })
-            .size(text::P1_SIZE)
-            .padding(10)
-            .warning("Email is not valid"),
-        )
-        .push(
-            Row::new().push(Space::with_width(Length::Fill)).push(
-                button::secondary(None, "Send token")
-                    .on_press_maybe(if processing || !email.valid {
-                        None
-                    } else {
-                        Some(Message::SelectBackend(message::SelectBackend::RequestOTP))
-                    })
-                    .width(Length::Fixed(200.0)),
-            ),
-        )
-        .into()
+        .padding(10)
+        .warning("Email is not valid"),
+        row![
+            Space::fill_width(),
+            button::secondary(None, "Send token")
+                .on_press_maybe(send_token_msg)
+                .width(200),
+        ],
+    ]
+    .spacing(20)
+    .into()
+}
+
+fn otp_intro<'a>(email: &'a str) -> Column<'a, Message> {
+    column![
+        new::caption(email).style(theme::text::success),
+        new::caption("An authentication token has been emailed to you"),
+    ]
+    .spacing(20)
+}
+
+fn otp_form<'a>(otp: &'a form::Value<String>) -> form::Form<'a, Message> {
+    form::Form::new_trimmed("Token", otp, |msg| {
+        Message::SelectBackend(message::SelectBackend::OTPEdited(msg))
+    })
+    .padding(10)
+    .warning("Token is not valid")
 }
 
 pub fn connection_step_enter_otp<'a>(
     email: &'a str,
-    otp: &form::Value<String>,
+    otp: &'a form::Value<String>,
     processing: bool,
-    connection_error: Option<&Error>,
-    auth_error: Option<&'static str>,
+    connection_error: Option<&'a Error>,
+    auth_error: Option<&'a str>,
 ) -> Element<'a, Message> {
-    Column::new()
-        .spacing(20)
-        .push(text(email).style(theme::text::success))
-        .push(text("An authentication token has been emailed to you"))
-        .push_maybe(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
-        .push_maybe(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
-        .push(
-            form::Form::new_trimmed("Token", otp, |msg| {
-                Message::SelectBackend(message::SelectBackend::OTPEdited(msg))
-            })
-            .size(text::P1_SIZE)
-            .padding(10)
-            .warning("Token is not valid"),
-        )
-        .push(
-            Row::new()
-                .spacing(10)
-                .push(
-                    button::secondary(Some(icon::previous_icon()), "Change Email")
-                        .on_press(Message::SelectBackend(message::SelectBackend::EditEmail)),
-                )
-                .push(
-                    button::secondary(None, "Resend token").on_press_maybe(if processing {
-                        None
-                    } else {
-                        Some(Message::SelectBackend(message::SelectBackend::RequestOTP))
-                    }),
-                ),
-        )
-        .into()
+    let resend_token =
+        (!processing).then_some(Message::SelectBackend(message::SelectBackend::RequestOTP));
+    column![
+        otp_intro(email),
+        connection_error.map(|error| -> Element<'_, Message> {
+            new::caption(error.to_string())
+                .style(theme::text::warning)
+                .into()
+        }),
+        auth_error.map(|error| -> Element<'_, Message> {
+            new::caption(error.to_string())
+                .style(theme::text::warning)
+                .into()
+        }),
+        otp_form(otp),
+        row![
+            button::secondary(Some(icon::previous_icon()), "Change Email")
+                .on_press(Message::SelectBackend(message::SelectBackend::EditEmail)),
+            button::secondary(None, "Resend token").on_press_maybe(resend_token),
+        ]
+        .spacing(10),
+    ]
+    .spacing(20)
+    .into()
 }
 
 pub fn connection_step_connected<'a>(
     email: &'a str,
     processing: bool,
-    connection_error: Option<&Error>,
-    auth_error: Option<&'static str>,
+    connection_error: Option<&'a Error>,
+    auth_error: Option<&'a str>,
 ) -> Element<'a, Message> {
-    Column::new()
-        .spacing(20)
-        .push(text(email).style(theme::text::success))
-        .push_maybe(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
-        .push_maybe(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
-        .push(Container::new(
-            Row::new()
-                .spacing(10)
-                .push(
-                    button::secondary(Some(icon::previous_icon()), "Change Email")
-                        .on_press(Message::SelectBackend(message::SelectBackend::EditEmail)),
-                )
-                .push(
-                    button::secondary(None, "Continue").on_press_maybe(if processing {
-                        None
-                    } else {
-                        Some(Message::Next)
-                    }),
+    let msg_next = (!processing).then_some(Message::Next);
+    column![
+        new::caption(email).style(theme::text::success),
+        connection_error.map(|error| -> Element<'_, Message> {
+            new::caption(error.to_string())
+                .style(theme::text::warning)
+                .into()
+        }),
+        auth_error.map(|error| -> Element<'_, Message> {
+            new::caption(error.to_string())
+                .style(theme::text::warning)
+                .into()
+        }),
+        Container::new(
+            row![
+                button::secondary(Some(icon::previous_icon()), "Change Email").on_press_maybe(
+                    (!processing)
+                        .then_some(Message::SelectBackend(message::SelectBackend::EditEmail))
                 ),
-        ))
-        .into()
+                Space::fill_width(),
+                button::secondary(None, "Continue").on_press_maybe(msg_next),
+            ]
+            .spacing(10),
+        ),
+    ]
+    .spacing(20)
+    .into()
 }
 
 pub const REMOTE_BACKEND_DESC: &str = "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead.";
