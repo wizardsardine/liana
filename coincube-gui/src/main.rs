@@ -70,7 +70,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     // can point at local services without rebuilding. Release builds started from
     // elsewhere won't find a .env and fall back to compile-time values.
     if let Err(e) = dotenvy::dotenv() {
-        println!("DOTENV LOAD ERROR: {}", e);
+        if !e.not_found() {
+            eprintln!("DOTENV LOAD ERROR: {}", e);
+        }
     }
 
     let args = parse_args(std::env::args().collect())?;

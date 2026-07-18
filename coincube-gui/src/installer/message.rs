@@ -57,7 +57,10 @@ pub enum Message {
     Close,
     Reload,
     Select(usize),
-    Installed(Option<settings::WalletId>, Result<Option<settings::WalletSettings>, Error>),
+    Installed(
+        Option<settings::WalletId>,
+        Result<Option<settings::WalletSettings>, Error>,
+    ),
     CreateTaprootDescriptor(bool),
     SelectDescriptorTemplate(context::DescriptorTemplate),
     SelectBackend(SelectBackend),

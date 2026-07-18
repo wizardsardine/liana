@@ -798,8 +798,11 @@ impl Tab {
                             ))
                         },
                     )
-                } else if let installer::Message::CubeSaved(result, settings_opt, internal_bitcoind) =
-                    msg
+                } else if let installer::Message::CubeSaved(
+                    result,
+                    settings_opt,
+                    internal_bitcoind,
+                ) = msg
                 {
                     // Handle cube save failure
                     let (cube, restored_breez_client, restored_spark_backend) = match result {
@@ -812,7 +815,9 @@ impl Tab {
                         }
                     };
 
-                    let remote_backend_auth = settings_opt.as_ref().and_then(|s| s.remote_backend_auth.clone());
+                    let remote_backend_auth = settings_opt
+                        .as_ref()
+                        .and_then(|s| s.remote_backend_auth.clone());
                     if remote_backend_auth.is_some() {
                         let settings = settings_opt.expect("Remote backend auth requires settings");
                         let (login, command) = login::CoincubeLiteLogin::new(

@@ -678,10 +678,14 @@ impl Installer {
                             // can load it from the datadir on next startup.
                             // Even though there is no vault descriptor, the seed is needed.
                             let recovered = ctx.recovered_signer.as_ref().ok_or_else(|| {
-                                Error::Unexpected("Seed-only install is missing the recovered signer".into())
+                                Error::Unexpected(
+                                    "Seed-only install is missing the recovered signer".into(),
+                                )
                             })?;
                             let password = ctx.restore_pin.as_ref().ok_or_else(|| {
-                                Error::Unexpected("Seed-only install is missing the restore PIN".into())
+                                Error::Unexpected(
+                                    "Seed-only install is missing the restore PIN".into(),
+                                )
                             })?;
 
                             if let Err(e) = recovered.store_encrypted_seed_only(
@@ -690,9 +694,9 @@ impl Installer {
                                 Some(password.as_str()),
                             ) {
                                 match e {
-                                    coincube_core::signer::SignerError::MnemonicStorage(ref io_err)
-                                        if io_err.kind() == std::io::ErrorKind::AlreadyExists =>
-                                    {
+                                    coincube_core::signer::SignerError::MnemonicStorage(
+                                        ref io_err,
+                                    ) if io_err.kind() == std::io::ErrorKind::AlreadyExists => {
                                         if let Err(verify_err) = coincube_core::signer::MasterSigner::from_datadir_by_fingerprint(
                                             ctx.coincube_directory.path(),
                                             ctx.bitcoin_config.network,
@@ -732,10 +736,9 @@ impl Installer {
                     // In case of failure during install, block the thread to
                     // deleted the data_dir/network directory in order to start clean again.
                     warn!("Installation failed. Cleaning up the network directory.");
-                    if let Err(e) = Handle::current().block_on(delete::delete_failed_install(
-                        &network_directory,
-                        wallet_id,
-                    )) {
+                    if let Err(e) = Handle::current()
+                        .block_on(delete::delete_failed_install(&network_directory, wallet_id))
+                    {
                         error!(
                             "Failed to completely clean the network directory (path: '{}'): {}",
                             network_directory.path().to_string_lossy(),

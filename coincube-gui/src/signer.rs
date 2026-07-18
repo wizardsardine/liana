@@ -122,13 +122,8 @@ impl Signer {
         network: Network,
         password: Option<&str>,
     ) -> Result<(), SignerError> {
-        self.key.store_encrypted(
-            datadir_root.path(),
-            network,
-            &self.curve,
-            None,
-            password,
-        )
+        self.key
+            .store_encrypted(datadir_root.path(), network, &self.curve, None, password)
     }
 }
 
