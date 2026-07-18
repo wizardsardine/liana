@@ -200,6 +200,19 @@ impl Step for OwnerKeychainRestoreStep {
         if let Some(s) = staged.signer {
             ctx.recovered_signer = Some(Arc::new(s));
         }
+        // Carry the original Cube identity (UUID + name) out of the decrypted
+        // envelope so the post-install `find_or_create_cube` re-mints the same
+        // Cube. Reusing the UUID makes the Connect `register_cube` call
+        // (idempotent on UUID) reactivate the original Cube instead of creating
+        // a duplicate — the same duplicate-Cube bug the owner CRK restore had.
+        // Full scope only (a real Cube); Vault-only restores into an existing
+        // Cube with its own identity.
+        if matches!(self.scope, RestoreScope::Full) {
+            if let Some(seed) = seed {
+                ctx.cube_id = Some(seed.cube.uuid.clone());
+                ctx.cube_name = Some(seed.cube.name.clone());
+            }
+        }
         // Thread the owner's Connect session into the context so the downstream
         // `CoincubeConnectStep` skips a redundant re-auth and `Final` re-registers
         // the recovered Cube under the owner's account — mirrors the owner CRK
@@ -214,6 +227,10 @@ impl Step for OwnerKeychainRestoreStep {
     fn revert(&self, ctx: &mut Context) {
         if matches!(self.scope, RestoreScope::Full) {
             ctx.recovered_signer = None;
+            // Drop the original Cube identity stamped in `apply` (Full scope
+            // only) so a later forward pass doesn't re-mint from stale values.
+            ctx.cube_id = None;
+            ctx.cube_name = None;
         }
         ctx.descriptor = None;
         ctx.connect_jwt = None;

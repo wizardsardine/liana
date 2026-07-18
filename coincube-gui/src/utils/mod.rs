@@ -97,6 +97,8 @@ pub fn truncate_middle(s: &str, prefix_len: usize, suffix_len: usize) -> String 
     format!("{}…{}", &s[..prefix_len], &s[s.len() - suffix_len..])
 }
 
+pub mod device;
+
 #[cfg(test)]
 mod tests {
     use super::*;
