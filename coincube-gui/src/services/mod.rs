@@ -40,7 +40,8 @@ pub fn coincube_api_base_url() -> String {
     } else {
         default_base_url()
     };
-    raw.trim_end_matches('/').to_string()
+    let final_url = raw.trim_end_matches('/').to_string();
+    final_url
 }
 
 fn default_base_url() -> String {

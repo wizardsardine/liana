@@ -112,6 +112,24 @@ impl Signer {
             Some(password),
         )
     }
+
+    /// Variant of [`Signer::store_encrypted`] for Seed-Only Cubes that
+    /// do not have a Vault Descriptor. The BreezClient still requires the
+    /// seed to be saved in the datadir so it can connect to the Liquid/Spark networks.
+    pub fn store_encrypted_seed_only(
+        &self,
+        datadir_root: &CoincubeDirectory,
+        network: Network,
+        password: Option<&str>,
+    ) -> Result<(), SignerError> {
+        self.key.store_encrypted(
+            datadir_root.path(),
+            network,
+            &self.curve,
+            None,
+            password,
+        )
+    }
 }
 
 pub fn delete_wallet_mnemonics(

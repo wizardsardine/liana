@@ -47,7 +47,7 @@ pub type CubeSaveResult = Result<
 #[derive(Debug, Clone)]
 pub enum Message {
     UserActionDone(bool),
-    Exit(Box<settings::WalletSettings>, Option<Bitcoind>),
+    Exit(Option<Box<settings::WalletSettings>>, Option<Bitcoind>),
     Clipboard(String),
     Next,
     Skip,
@@ -57,7 +57,7 @@ pub enum Message {
     Close,
     Reload,
     Select(usize),
-    Installed(settings::WalletId, Result<settings::WalletSettings, Error>),
+    Installed(Option<settings::WalletId>, Result<Option<settings::WalletSettings>, Error>),
     CreateTaprootDescriptor(bool),
     SelectDescriptorTemplate(context::DescriptorTemplate),
     SelectBackend(SelectBackend),
@@ -101,7 +101,7 @@ pub enum Message {
     /// built downstream (PIN entry, login) and these slots stay `None`.
     CubeSaved(
         CubeSaveResult,
-        Box<settings::WalletSettings>,
+        Option<Box<settings::WalletSettings>>,
         Option<Bitcoind>,
     ),
     CubeSaveFailed(String),

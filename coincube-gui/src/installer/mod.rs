@@ -642,61 +642,96 @@ impl Installer {
                     .get_mut(self.current)
                     .expect("There is always a step")
                     .update(&mut self.hws, message);
-                let wallet_id = WalletId::generate(
-                    self.context
-                        .descriptor
-                        .as_ref()
-                        .expect("Must be a descriptor at this point"),
-                );
-                let context = self.context.clone();
-                let signer = self.signer.clone();
-                match &self.context.remote_backend {
-                    RemoteBackend::WithoutWallet(backend) => Task::perform(
-                        with_wallet_id(
-                            wallet_id.clone(),
-                            create_remote_wallet(context, wallet_id, signer, backend.clone()),
+                if let Some(descriptor) = self.context.descriptor.as_ref() {
+                    let wallet_id = WalletId::generate(descriptor);
+                    let context = self.context.clone();
+                    let signer = self.signer.clone();
+                    match &self.context.remote_backend {
+                        RemoteBackend::WithoutWallet(backend) => Task::perform(
+                            with_wallet_id(
+                                wallet_id.clone(),
+                                create_remote_wallet(context, wallet_id, signer, backend.clone()),
+                            ),
+                            |(id, res)| Message::Installed(Some(id), res.map(Some)),
                         ),
-                        |(id, res)| Message::Installed(id, res),
-                    ),
-                    RemoteBackend::WithWallet(backend) => Task::perform(
-                        with_wallet_id(
-                            wallet_id.clone(),
-                            import_remote_wallet(context, wallet_id, backend.clone()),
+                        RemoteBackend::WithWallet(backend) => Task::perform(
+                            with_wallet_id(
+                                wallet_id.clone(),
+                                import_remote_wallet(context, wallet_id, backend.clone()),
+                            ),
+                            |(id, res)| Message::Installed(Some(id), res.map(Some)),
                         ),
-                        |(id, res)| Message::Installed(id, res),
-                    ),
-                    RemoteBackend::None => Task::perform(
-                        with_wallet_id(
-                            wallet_id.clone(),
-                            install_local_wallet(context, wallet_id, signer),
+                        RemoteBackend::None => Task::perform(
+                            with_wallet_id(
+                                wallet_id.clone(),
+                                install_local_wallet(context, wallet_id, signer),
+                            ),
+                            |(id, res)| Message::Installed(Some(id), res.map(Some)),
                         ),
-                        |(id, res)| Message::Installed(id, res),
-                    ),
-                    RemoteBackend::Undefined => unreachable!("Must be defined at this point"),
+                        RemoteBackend::Undefined => unreachable!("Must be defined at this point"),
+                    }
+                } else {
+                    let ctx = self.context.clone();
+                    Task::perform(
+                        async move {
+                            // We must persist the recovered signer so Breez Liquid/Spark
+                            // can load it from the datadir on next startup.
+                            // Even though there is no vault descriptor, the seed is needed.
+                            let password = ctx.restore_pin.as_ref().map(|p| p.as_str());
+                            if let Some(recovered) = &ctx.recovered_signer {
+                                if let Err(e) = recovered.store_encrypted_seed_only(
+                                    &ctx.coincube_directory,
+                                    ctx.bitcoin_config.network,
+                                    password,
+                                ) {
+                                    match e {
+                                        coincube_core::signer::SignerError::MnemonicStorage(ref io_err)
+                                            if io_err.kind() == std::io::ErrorKind::AlreadyExists =>
+                                        {
+                                            log::info!("Seed already exists on disk from a previous attempt. Continuing.");
+                                        }
+                                        _ => {
+                                            return Err(Error::Unexpected(format!(
+                                                "Failed to store seed: {}",
+                                                e
+                                            )))
+                                        }
+                                    }
+                                }
+                            }
+                            Ok::<(), Error>(())
+                        },
+                        |res| match res {
+                            Ok(_) => Message::Installed(None, Ok(None)),
+                            Err(e) => Message::Installed(None, Err(e)),
+                        },
+                    )
                 }
             }
             Message::Installed(wallet_id, Err(e)) => {
-                let network_directory = self
-                    .context
-                    .coincube_directory
-                    .network_directory(self.context.bitcoin_config.network);
-                // In case of failure during install, block the thread to
-                // deleted the data_dir/network directory in order to start clean again.
-                warn!("Installation failed. Cleaning up the network directory.");
-                if let Err(e) = Handle::current().block_on(delete::delete_failed_install(
-                    &network_directory,
-                    &wallet_id,
-                )) {
-                    error!(
-                        "Failed to completely clean the network directory (path: '{}'): {}",
-                        network_directory.path().to_string_lossy(),
-                        e
-                    );
-                } else {
-                    warn!(
-                        "Successfully cleaned network directory at '{}'.",
-                        network_directory.path().to_string_lossy()
-                    );
+                if let Some(wallet_id) = &wallet_id {
+                    let network_directory = self
+                        .context
+                        .coincube_directory
+                        .network_directory(self.context.bitcoin_config.network);
+                    // In case of failure during install, block the thread to
+                    // deleted the data_dir/network directory in order to start clean again.
+                    warn!("Installation failed. Cleaning up the network directory.");
+                    if let Err(e) = Handle::current().block_on(delete::delete_failed_install(
+                        &network_directory,
+                        wallet_id,
+                    )) {
+                        error!(
+                            "Failed to completely clean the network directory (path: '{}'): {}",
+                            network_directory.path().to_string_lossy(),
+                            e
+                        );
+                    } else {
+                        warn!(
+                            "Successfully cleaned network directory at '{}'.",
+                            network_directory.path().to_string_lossy()
+                        );
+                    }
                 }
                 self.steps
                     .get_mut(self.current)

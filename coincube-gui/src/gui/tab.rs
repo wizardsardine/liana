@@ -629,7 +629,7 @@ impl Tab {
                 _ => l.update(msg).map(Message::Login),
             },
             (State::Installer(i), Message::Install(msg)) => {
-                if let installer::Message::Exit(settings, internal_bitcoind) = msg {
+                if let installer::Message::Exit(settings_opt, internal_bitcoind) = msg {
                     // Associate wallet with cube, and — for the Recovery
                     // Kit restore flow specifically — build the
                     // BreezClient in the same async task so the loader
@@ -637,8 +637,8 @@ impl Tab {
                     // error path and hang on "Starting daemon…".
                     let network_dir = i.datadir.network_directory(i.network);
                     let datadir = i.datadir.clone();
-                    let wallet_id = settings.wallet_id();
-                    let wallet_alias = settings.alias.clone();
+                    let wallet_id = settings_opt.as_ref().map(|s| s.wallet_id());
+                    let wallet_alias = settings_opt.as_ref().and_then(|s| s.alias.clone());
                     let network = i.network;
                     let originating_cube_id = i.cube_settings.as_ref().map(|c| c.id.clone());
 
@@ -662,7 +662,7 @@ impl Tab {
                         async move {
                             let cube = find_or_create_cube(
                                 &network_dir,
-                                &wallet_id,
+                                wallet_id.as_ref(),
                                 &wallet_alias,
                                 network,
                                 originating_cube_id,
@@ -769,12 +769,12 @@ impl Tab {
                         move |result| {
                             Message::Install(installer::Message::CubeSaved(
                                 result,
-                                settings.clone(),
+                                settings_opt.clone(),
                                 internal_bitcoind.clone(),
                             ))
                         },
                     )
-                } else if let installer::Message::CubeSaved(result, settings, internal_bitcoind) =
+                } else if let installer::Message::CubeSaved(result, settings_opt, internal_bitcoind) =
                     msg
                 {
                     // Handle cube save failure
@@ -788,7 +788,9 @@ impl Tab {
                         }
                     };
 
-                    if settings.remote_backend_auth.is_some() {
+                    let remote_backend_auth = settings_opt.as_ref().and_then(|s| s.remote_backend_auth.clone());
+                    if remote_backend_auth.is_some() {
+                        let settings = settings_opt.expect("Remote backend auth requires settings");
                         let (login, command) = login::CoincubeLiteLogin::new(
                             i.datadir.clone(),
                             i.network,
@@ -801,6 +803,30 @@ impl Tab {
                         );
                         self.state = State::Login(login);
                         command.map(Message::Login)
+                    } else if settings_opt.is_none() {
+                        let cfg = app::Config::from_file(
+                            &i.datadir
+                                .network_directory(i.network)
+                                .path()
+                                .join(app::config::DEFAULT_FILE_NAME),
+                        )
+                        .expect("A gui configuration file must be present");
+
+                        let breez = restored_breez_client
+                            .or_else(|| i.breez_client.clone())
+                            .expect("BreezClient must exist for Seed-Only cube");
+                        let spark = restored_spark_backend.or_else(|| i.spark_backend.clone());
+
+                        let (app, command) = app::App::new_without_wallet(
+                            breez,
+                            spark,
+                            cfg,
+                            i.datadir.clone(),
+                            i.network,
+                            cube.clone(),
+                        );
+                        self.state = State::App(app);
+                        command.map(Message::Run)
                     } else {
                         let cfg = app::Config::from_file(
                             &i.datadir
@@ -816,7 +842,7 @@ impl Tab {
                             i.network,
                             internal_bitcoind,
                             i.context.backup.clone(),
-                            Some(*settings),
+                            settings_opt.map(|s| *s),
                             cube.clone(),
                             // Same preference chain as the Login arm —
                             // the restored BreezClient (built against
@@ -1710,7 +1736,7 @@ struct RestoreCubeSeed {
 
 async fn find_or_create_cube(
     network_dir: &NetworkDirectory,
-    wallet_id: &WalletId,
+    wallet_id: Option<&WalletId>,
     wallet_alias: &Option<String>,
     network: bitcoin::Network,
     originating_cube_id: Option<String>,
@@ -1738,12 +1764,14 @@ async fn find_or_create_cube(
             // are its source of truth. The restore flow only overwrites
             // Cube-level credentials when we're actually minting a new
             // Cube for the restored wallet.
-            if let Some(existing_cube) = settings_data
-                .cubes
-                .iter()
-                .find(|c| c.vault_wallet_id.as_ref() == Some(wallet_id))
-            {
-                return Ok(existing_cube.clone());
+            if let Some(w_id) = wallet_id {
+                if let Some(existing_cube) = settings_data
+                    .cubes
+                    .iter()
+                    .find(|c| c.vault_wallet_id.as_ref() == Some(w_id))
+                {
+                    return Ok(existing_cube.clone());
+                }
             }
 
             // Second, if we have an originating cube ID, validate and use it
@@ -1753,13 +1781,15 @@ async fn find_or_create_cube(
                     .iter_mut()
                     .find(|c| c.id == target_cube_id)
                 {
-                    if target_cube.vault_wallet_id.is_some() {
-                        return Err(format!(
-                            "Cube '{}' already has a vault. Remove the existing vault before creating a new one.",
-                            target_cube.name
-                        ));
+                    if let Some(w_id) = wallet_id {
+                        if target_cube.vault_wallet_id.is_some() {
+                            return Err(format!(
+                                "Cube '{}' already has a vault. Remove the existing vault before creating a new one.",
+                                target_cube.name
+                            ));
+                        }
+                        target_cube.vault_wallet_id = Some(w_id.clone());
                     }
-                    target_cube.vault_wallet_id = Some(wallet_id.clone());
                     // Apply restore-flow credentials (PIN hash + fingerprint) if
                     // restoring to this cube — same rationale as the empty-cube
                     // fallback: the hash must match the newly-encrypted mnemonic.
@@ -1768,7 +1798,7 @@ async fn find_or_create_cube(
                     let cube_name = target_cube.name.clone();
 
                     info!(
-                        "Associating wallet {} with originating cube '{}' on {} network",
+                        "Associating wallet {:?} with originating cube '{}' on {} network",
                         wallet_id, cube_name, network
                     );
 
@@ -1793,7 +1823,7 @@ async fn find_or_create_cube(
                 .position(|c| c.vault_wallet_id.is_none())
             {
                 let mut empty_cube = settings_data.cubes[empty_idx].clone();
-                empty_cube.vault_wallet_id = Some(wallet_id.clone());
+                empty_cube.vault_wallet_id = wallet_id.cloned();
                 // Reuse `decorate_new` so the fingerprint + PIN-hash
                 // path matches the brand-new-Cube branches below. If
                 // the Cube had its own `security_pin_hash`, `with_pin`
@@ -1807,7 +1837,7 @@ async fn find_or_create_cube(
                 let cube_name = empty_cube.name.clone();
 
                 info!(
-                    "Associating wallet {} with existing cube '{}' on {} network",
+                    "Associating wallet {:?} with existing cube '{}' on {} network",
                     wallet_id, cube_name, network
                 );
 
@@ -1815,19 +1845,18 @@ async fn find_or_create_cube(
             }
 
             // Third, create a new cube for this wallet
-            let cube = decorate_new(
-                app::settings::CubeSettings::new(
-                    wallet_alias
-                        .clone()
-                        .unwrap_or_else(|| format!("My {} Cube", network)),
-                    network,
-                )
-                .with_vault(wallet_id.clone()),
-            )?;
+            let mut base_cube = app::settings::CubeSettings::new(
+                wallet_alias
+                    .clone()
+                    .unwrap_or_else(|| format!("My {} Cube", network)),
+                network,
+            );
+            base_cube.vault_wallet_id = wallet_id.cloned();
+            let cube = decorate_new(base_cube)?;
             let cube_name = cube.name.clone();
 
             info!(
-                "Creating new cube '{}' for wallet {} on {} network",
+                "Creating new cube '{}' for wallet {:?} on {} network",
                 cube_name, wallet_id, network
             );
 
@@ -1836,19 +1865,18 @@ async fn find_or_create_cube(
         }
         Err(_) => {
             // No settings file yet, create first cube
-            let cube = decorate_new(
-                app::settings::CubeSettings::new(
-                    wallet_alias
-                        .clone()
-                        .unwrap_or_else(|| format!("My {} Cube", network)),
-                    network,
-                )
-                .with_vault(wallet_id.clone()),
-            )?;
+            let mut base_cube = app::settings::CubeSettings::new(
+                wallet_alias
+                    .clone()
+                    .unwrap_or_else(|| format!("My {} Cube", network)),
+                network,
+            );
+            base_cube.vault_wallet_id = wallet_id.cloned();
+            let cube = decorate_new(base_cube)?;
             let cube_name = cube.name.clone();
 
             info!(
-                "Creating first cube '{}' for wallet {} on {} network",
+                "Creating first cube '{}' for wallet {:?} on {} network",
                 cube_name, wallet_id, network
             );
 

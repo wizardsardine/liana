@@ -187,11 +187,11 @@ impl Step for Final {
                 }
                 // Now exit the installer whether or not any redemption errors occurred.
                 let internal_bitcoind = self.internal_bitcoind.clone();
-                let settings = self.wallet_settings.clone().expect("Install is done");
+                let settings = self.wallet_settings.clone();
                 return Task::perform(
                     async move { (settings, internal_bitcoind) },
                     |(settings, internal_bitcoind)| {
-                        Message::Exit(Box::new(settings), internal_bitcoind)
+                        Message::Exit(settings.map(Box::new), internal_bitcoind)
                     },
                 );
             }
@@ -201,7 +201,7 @@ impl Step for Final {
                     self.wallet_settings = None;
                     self.warning = Some(e.to_string());
                 }
-                Ok(wallet_settings) => {
+                Ok(Some(wallet_settings)) => {
                     self.wallet_settings = Some(wallet_settings);
                     // Kick off the backend vault-create orchestration
                     // before token redemption. If it isn't applicable
@@ -220,6 +220,11 @@ impl Step for Final {
                         ),
                         Message::ConnectVaultCreated,
                     );
+                }
+                Ok(None) => {
+                    self.generating = false;
+                    self.wallet_settings = None;
+                    return Task::perform(async move {}, |_| Message::RedeemNextKey);
                 }
             },
             Message::ConnectVaultCreated(result) => match result {
@@ -266,11 +271,13 @@ impl Step for Final {
             Message::RetryCubeSave => {
                 self.warning = None;
 
-                let Some(settings) = self.wallet_settings.clone() else {
+                if self.generating {
                     self.warning =
                         Some("Cannot retry cube save: installation not complete".to_string());
                     return Task::none();
-                };
+                }
+
+                let settings = self.wallet_settings.clone();
                 let internal_bitcoind = self.internal_bitcoind.clone();
 
                 self.generating = true;
@@ -278,7 +285,7 @@ impl Step for Final {
                 return Task::perform(
                     async move { (settings, internal_bitcoind) },
                     |(settings, internal_bitcoind)| {
-                        Message::Exit(Box::new(settings), internal_bitcoind)
+                        Message::Exit(settings.map(Box::new), internal_bitcoind)
                     },
                 );
             }
