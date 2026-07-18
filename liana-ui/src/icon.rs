@@ -53,10 +53,6 @@ pub fn arrow_down() -> Text<'static> {
     bootstrap_icon('\u{F128}')
 }
 
-pub fn arrow_back<'a>() -> Text<'a> {
-    bootstrap_icon('\u{F12E}')
-}
-
 pub fn arrow_right() -> Text<'static> {
     bootstrap_icon('\u{F138}')
 }

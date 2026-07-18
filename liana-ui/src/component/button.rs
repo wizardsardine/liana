@@ -1023,3 +1023,7 @@ pub fn btn_backend_options_help<T: Clone + 'static>(msg: T) -> Button<'static, T
 pub fn btn_accept<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(Some(icon::check_icon()), "Accept", BtnWidth::M, msg)
 }
+
+pub fn btn_modal_previous<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
+    transparent(Some(icon::previous_icon().size(25)), "").on_press(msg)
+}

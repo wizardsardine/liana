@@ -118,15 +118,9 @@ pub fn header<'a, M: 'a + Clone>(
     back_message: Option<M>,
     close_message: Option<M>,
 ) -> Element<'a, M> {
-    let back = back_message
-        .map(|m| button::transparent(Some(icon::arrow_back().size(25)), "").on_press(m));
+    let back = back_message.map(button::btn_modal_previous);
     let title = label.map(b1_bold);
-    let close = close_message.map(|m| {
-        Button::new(icon::cross_icon().size(40))
-            .padding(0)
-            .style(theme::button::transparent)
-            .on_press(m)
-    });
+    let close = close_message.map(|m| button::btn_modal_close(Some(m)));
     row![back, title, Space::with_width(Length::Fill), close]
         .align_y(Vertical::Center)
         .into()
