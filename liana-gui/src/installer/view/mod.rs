@@ -1485,6 +1485,85 @@ pub fn backup_mnemonic<'a>(
     )
 }
 
+fn mnemonic_suggestions<'a>(current: usize, suggestions: &'a [String]) -> Container<'a, Message> {
+    let suggestions = if !suggestions.is_empty() {
+        suggestions.iter().fold(Row::new().spacing(5), |row, sugg| {
+            row.push(
+                Button::new(text(sugg))
+                    .style(theme::button::secondary)
+                    .on_press(Message::MnemonicWord(current, sugg.to_string())),
+            )
+        })
+    } else {
+        Row::new()
+    };
+
+    Container::new(suggestions)
+        // Fixed height in order to not move words list
+        .height(Length::Fixed(50.0))
+}
+
+fn mnemonic_word_row<'a>(i: usize, word: &'a str, valid: bool) -> Row<'a, Message> {
+    let number = Container::new(text(format!("#{}", i + 1)).small()).width(Length::Fixed(50.0));
+    let input =
+        Container::new(TextInput::new("", word).on_input(move |msg| Message::MnemonicWord(i, msg)))
+            .width(Length::Fixed(100.0));
+    let valid_icon: Option<Element<'a, Message>> =
+        valid.then_some(icon::circle_check_icon().style(theme::text::success).into());
+
+    row![number, input, valid_icon]
+        .spacing(10)
+        .align_y(Alignment::Center)
+}
+
+fn mnemonic_words<'a>(words: &'a [(String, bool); 12]) -> Column<'a, Message> {
+    words
+        .iter()
+        .enumerate()
+        .fold(Column::new().spacing(5), |words, (i, (word, valid))| {
+            words.push(mnemonic_word_row(i, word, *valid))
+        })
+}
+
+fn mnemonic_recovery_form<'a>(
+    words: &'a [(String, bool); 12],
+    current: usize,
+    suggestions: &'a [String],
+    error: Option<&'a String>,
+) -> Column<'a, Message> {
+    let error = error.map(|e| card::invalid(new::caption(e).style(theme::text::error)));
+
+    column![
+        mnemonic_suggestions(current, suggestions),
+        mnemonic_words(words),
+        Space::with_height(Length::Fixed(50.0)),
+        error,
+    ]
+    .align_x(Alignment::Center)
+}
+
+fn mnemonic_start_actions<'a>() -> Row<'a, Message> {
+    row![
+        button::secondary(None, "Import mnemonic")
+            .on_press(Message::ImportMnemonic(true))
+            .width(Length::Fixed(200.0)),
+        button::secondary(None, "Skip")
+            .on_press(Message::Skip)
+            .width(Length::Fixed(200.0)),
+    ]
+    .spacing(10)
+}
+
+fn mnemonic_recovery_actions<'a>(button_next: Element<'a, Message>) -> Row<'a, Message> {
+    row![
+        button::secondary(None, "Cancel")
+            .on_press(Message::ImportMnemonic(false))
+            .width(Length::Fixed(200.0)),
+        button_next,
+    ]
+    .spacing(10)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn recover_mnemonic<'a>(
     progress: (usize, usize),
@@ -1499,96 +1578,19 @@ pub fn recover_mnemonic<'a>(
     let msg_next =
         (!words.iter().any(|(_, valid)| !valid) && error.is_none()).then_some(Message::Next);
     let button_next = btn_next(msg_next);
+    let form = recover.then_some(mnemonic_recovery_form(words, current, suggestions, error));
+    let actions = if recover {
+        mnemonic_recovery_actions(button_next.into())
+    } else {
+        mnemonic_start_actions()
+    };
 
     layout(
         progress,
         network,
         email,
         "Import Mnemonic",
-        Column::new()
-            .push(text(prompt::RECOVER_MNEMONIC_HELP))
-            .push_maybe(if recover {
-                Some(
-                    Column::new()
-                        .align_x(Alignment::Center)
-                        .push(
-                            Container::new(if !suggestions.is_empty() {
-                                suggestions.iter().fold(Row::new().spacing(5), |row, sugg| {
-                                    row.push(
-                                        Button::new(text(sugg))
-                                            .style(theme::button::secondary)
-                                            .on_press(Message::MnemonicWord(
-                                                current,
-                                                sugg.to_string(),
-                                            )),
-                                    )
-                                })
-                            } else {
-                                Row::new()
-                            })
-                            // Fixed height in order to not move words list
-                            .height(Length::Fixed(50.0)),
-                        )
-                        .push(words.iter().enumerate().fold(
-                            Column::new().spacing(5),
-                            |acc, (i, (word, valid))| {
-                                acc.push(
-                                    Row::new()
-                                        .spacing(10)
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            Container::new(text(format!("#{}", i + 1)).small())
-                                                .width(Length::Fixed(50.0)),
-                                        )
-                                        .push(
-                                            Container::new(TextInput::new("", word).on_input(
-                                                move |msg| Message::MnemonicWord(i, msg),
-                                            ))
-                                            .width(Length::Fixed(100.0)),
-                                        )
-                                        .push_maybe(if *valid {
-                                            Some(
-                                                icon::circle_check_icon()
-                                                    .style(theme::text::success),
-                                            )
-                                        } else {
-                                            None
-                                        }),
-                                )
-                            },
-                        ))
-                        .push(Space::with_height(Length::Fixed(50.0)))
-                        .push_maybe(
-                            error.map(|e| card::invalid(text(e).style(theme::text::error))),
-                        ),
-                )
-            } else {
-                None
-            })
-            .push(if !recover {
-                Row::new()
-                    .spacing(10)
-                    .push(
-                        button::secondary(None, "Import mnemonic")
-                            .on_press(Message::ImportMnemonic(true))
-                            .width(Length::Fixed(200.0)),
-                    )
-                    .push(
-                        button::secondary(None, "Skip")
-                            .on_press(Message::Skip)
-                            .width(Length::Fixed(200.0)),
-                    )
-            } else {
-                Row::new()
-                    .spacing(10)
-                    .push(
-                        button::secondary(None, "Cancel")
-                            .on_press(Message::ImportMnemonic(false))
-                            .width(Length::Fixed(200.0)),
-                    )
-                    .push(button_next)
-            })
-            .spacing(50),
+        column![text(prompt::RECOVER_MNEMONIC_HELP), form, actions].spacing(50),
         Some(Message::Previous),
     )
 }
