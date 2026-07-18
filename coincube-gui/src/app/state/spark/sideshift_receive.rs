@@ -373,12 +373,16 @@ impl SparkSideshiftReceiveFlow {
                     self.shift_status = Some(kind);
                     // SideShift reports the settle output (BTC, as a decimal
                     // string) once a deposit is detected. Keep the latest so the
-                    // view can show how much bitcoin is arriving.
-                    let settle_sat = status
-                        .settle_amount
-                        .as_deref()
-                        .and_then(|s| s.parse::<f64>().ok())
-                        .map(|btc| (btc * 100_000_000.0).round() as u64);
+                    // view can show how much bitcoin is arriving. Parse it exactly
+                    // (BTC → sats) rather than via f64, which rounds.
+                    let settle_sat = status.settle_amount.as_deref().and_then(|s| {
+                        coincube_core::miniscript::bitcoin::Amount::from_str_in(
+                            s.trim(),
+                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin,
+                        )
+                        .ok()
+                        .map(|a| a.to_sat())
+                    });
                     if settle_sat.is_some() {
                         self.settle_amount_sat = settle_sat;
                     }
@@ -430,6 +434,10 @@ impl SparkSideshiftReceiveFlow {
                             | ShiftStatusKind::Processing
                             | ShiftStatusKind::Settling
                             | ShiftStatusKind::Settled
+                            // A review hold only happens after the deposit is
+                            // received, so a released hold that then arrives is
+                            // this swap's — catch it too.
+                            | ShiftStatusKind::Review
                     )
                 );
                 if self.phase == SparkShiftPhase::Active && deposit_seen {

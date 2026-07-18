@@ -704,7 +704,9 @@ pub enum SparkSideshiftReceiveMessage {
     /// forwarded from the global "bitcoin received" event so the inline flow
     /// can advance from "Bitcoin arriving" to an arrived confirmation. Carries
     /// the actual claimed amount (post network fee), in sats.
-    Arrived { amount_sat: u64 },
+    Arrived {
+        amount_sat: u64,
+    },
     /// Copy the deposit address.
     Copy,
     Back,

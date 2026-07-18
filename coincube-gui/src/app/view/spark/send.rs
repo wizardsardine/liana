@@ -120,7 +120,11 @@ impl<'a> SparkSendView<'a> {
         // send form: label, placeholder, and the parse in state all switch on
         // it, so a BTC-configured wallet enters BTC and a sats one enters sats.
         let is_btc = matches!(self.bitcoin_unit, BitcoinDisplayUnit::BTC);
-        let amount_label = if is_btc { "Amount (BTC)" } else { "Amount (sats)" };
+        let amount_label = if is_btc {
+            "Amount (BTC)"
+        } else {
+            "Amount (sats)"
+        };
         let amount_placeholder = match (self.receive_target.is_stablecoin(), is_btc) {
             (true, true) => "Amount in BTC — funded from your Bitcoin balance",
             (true, false) => "Amount in sats — funded from your Bitcoin balance",
