@@ -27,8 +27,8 @@ use liana_ui::{
         badge::Tile,
         button::{
             self, btn_accept, btn_backend_options_help, btn_backup_descriptor, btn_change_email,
-            btn_check_connection, btn_connect_another_email, btn_next, btn_resend_token,
-            btn_select, btn_send_token, EntryWidth,
+            btn_check_connection, btn_connect_another_email, btn_mnemonic_word, btn_next,
+            btn_resend_token, btn_select, btn_send_token, btn_skip, EntryWidth,
         },
         card, form, installer as installer_layout,
         list::{self, DeviceStatus, EntryAccent},
@@ -1485,83 +1485,90 @@ pub fn backup_mnemonic<'a>(
     )
 }
 
-fn mnemonic_suggestions<'a>(current: usize, suggestions: &'a [String]) -> Container<'a, Message> {
-    let suggestions = if !suggestions.is_empty() {
+fn mnemonic_suggestions<'a>(current: usize, suggestions: &'a [String]) -> Element<'a, Message> {
+    let s = if !suggestions.is_empty() {
         suggestions.iter().fold(Row::new().spacing(5), |row, sugg| {
-            row.push(
-                Button::new(text(sugg))
-                    .style(theme::button::secondary)
-                    .on_press(Message::MnemonicWord(current, sugg.to_string())),
-            )
+            row.push(btn_mnemonic_word(
+                sugg,
+                Message::MnemonicWord(current, sugg.to_string()),
+            ))
         })
     } else {
         Row::new()
     };
-
-    Container::new(suggestions)
-        // Fixed height in order to not move words list
-        .height(Length::Fixed(50.0))
+    scrollable::horizontal_thin(s).into()
 }
 
 fn mnemonic_word_row<'a>(i: usize, word: &'a str, valid: bool) -> Row<'a, Message> {
-    let number = Container::new(text(format!("#{}", i + 1)).small()).width(Length::Fixed(50.0));
+    let number = Container::new(new::caption(format!("#{}", i + 1))).width(Length::Fixed(30.0));
     let input =
         Container::new(TextInput::new("", word).on_input(move |msg| Message::MnemonicWord(i, msg)))
             .width(Length::Fixed(100.0));
-    let valid_icon: Option<Element<'a, Message>> =
-        valid.then_some(icon::circle_check_icon().style(theme::text::success).into());
+    let valid_icon: Element<'a, Message> = if valid {
+        icon::circle_check_icon().style(theme::text::success).into()
+    } else {
+        Space::with_width(20).into()
+    };
 
     row![number, input, valid_icon]
-        .spacing(10)
+        .spacing(5)
         .align_y(Alignment::Center)
 }
 
-fn mnemonic_words<'a>(words: &'a [(String, bool); 12]) -> Column<'a, Message> {
-    words
-        .iter()
-        .enumerate()
-        .fold(Column::new().spacing(5), |words, (i, (word, valid))| {
-            words.push(mnemonic_word_row(i, word, *valid))
-        })
+fn mnemonic_words_column<'a>(
+    words: impl Iterator<Item = (usize, &'a (String, bool))>,
+) -> Column<'a, Message> {
+    words.fold(Column::new().spacing(5), |words, (i, (word, valid))| {
+        words.push(mnemonic_word_row(i, word, *valid))
+    })
 }
 
-fn mnemonic_recovery_form<'a>(
+fn mnemonic_words<'a>(words: &'a [(String, bool); 12]) -> Element<'a, Message> {
+    Container::new(
+        row![
+            mnemonic_words_column(words.iter().enumerate().take(6)),
+            mnemonic_words_column(words.iter().enumerate().skip(6)),
+        ]
+        .spacing(10),
+    )
+    .center_x(Length::Fill)
+    .into()
+}
+
+fn import_mnemonic_entry<'a>(
+    network: Network,
     words: &'a [(String, bool); 12],
     current: usize,
     suggestions: &'a [String],
+    recover: bool,
     error: Option<&'a String>,
-) -> Column<'a, Message> {
+    next: Option<Message>,
+) -> Element<'a, Message> {
     let error = error.map(|e| card::invalid(new::caption(e).style(theme::text::error)));
-
-    column![
-        mnemonic_suggestions(current, suggestions),
+    let next = row![Space::fill_width(), btn_next(next),].align_y(Alignment::Center);
+    let form = column![
         mnemonic_words(words),
-        Space::with_height(Length::Fixed(50.0)),
+        mnemonic_suggestions(current, suggestions),
         error,
     ]
-    .align_x(Alignment::Center)
-}
+    .spacing(5)
+    .align_x(Alignment::Center);
+    let content = column![form, next].spacing(20);
+    let accent = Some(match network {
+        Network::Bitcoin => EntryAccent::Bitcoin,
+        _ => EntryAccent::Testnet,
+    });
 
-fn mnemonic_start_actions<'a>() -> Row<'a, Message> {
-    row![
-        button::secondary(None, "Import mnemonic")
-            .on_press(Message::ImportMnemonic(true))
-            .width(Length::Fixed(200.0)),
-        button::secondary(None, "Skip")
-            .on_press(Message::Skip)
-            .width(Length::Fixed(200.0)),
-    ]
-    .spacing(10)
-}
-
-fn mnemonic_recovery_actions<'a>(button_next: Element<'a, Message>) -> Row<'a, Message> {
-    row![
-        button::secondary(None, "Cancel")
-            .on_press(Message::ImportMnemonic(false))
-            .width(Length::Fixed(200.0)),
-        button_next,
-    ]
-    .spacing(10)
+    list::entry_collapsible(list::CollapsibleEntry {
+        accent,
+        tile: Tile::Import,
+        title: "Import mnemonic",
+        collapsed_subtitle: None,
+        expanded_subtitle: None,
+        content: content.into(),
+        expanded: recover,
+        on_toggle: Message::ImportMnemonic(!recover),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1577,20 +1584,30 @@ pub fn recover_mnemonic<'a>(
 ) -> Element<'a, Message> {
     let msg_next =
         (!words.iter().any(|(_, valid)| !valid) && error.is_none()).then_some(Message::Next);
-    let button_next = btn_next(msg_next);
-    let form = recover.then_some(mnemonic_recovery_form(words, current, suggestions, error));
-    let actions = if recover {
-        mnemonic_recovery_actions(button_next.into())
-    } else {
-        mnemonic_start_actions()
-    };
+    let skip = row![Space::fill_width(), btn_skip(Some(Message::Skip))];
+    let content = column![
+        new::caption(prompt::RECOVER_MNEMONIC_HELP),
+        import_mnemonic_entry(
+            network,
+            words,
+            current,
+            suggestions,
+            recover,
+            error,
+            msg_next,
+        ),
+        skip,
+    ]
+    .spacing(50)
+    .width(EntryWidth::Standard);
+    let content = Container::new(content).center_x(Length::Fill);
 
     layout(
         progress,
         network,
         email,
         "Import Mnemonic",
-        column![text(prompt::RECOVER_MNEMONIC_HELP), form, actions].spacing(50),
+        content,
         Some(Message::Previous),
     )
 }

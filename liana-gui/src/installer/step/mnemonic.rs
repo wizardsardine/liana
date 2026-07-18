@@ -97,7 +97,7 @@ impl Step for RecoverMnemonic {
         match message {
             Message::MnemonicWord(index, value) => {
                 if let Some((word, valid)) = self.words.get_mut(index) {
-                    if value.len() >= 3 {
+                    if value.len() > 1 {
                         let suggestions = self.language.words_by_prefix(&value);
                         if suggestions.contains(&value.as_ref()) {
                             *valid = true;

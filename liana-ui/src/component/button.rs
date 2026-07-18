@@ -1027,3 +1027,7 @@ pub fn btn_accept<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 pub fn btn_modal_previous<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     transparent(Some(icon::previous_icon().size(25)), "").on_press(msg)
 }
+
+pub fn btn_mnemonic_word<'a, T: Clone + 'a>(word: &str, msg: T) -> Button<'a, T> {
+    button_compact(word, theme::button::tertiary, Some(msg)).width(BtnWidth::S)
+}
