@@ -176,6 +176,22 @@ impl SparkReceive {
     pub fn phase(&self) -> &SparkReceivePhase {
         &self.phase
     }
+
+    /// The cross-network shift-status poll on its own, exposed so the app can
+    /// keep it alive while the user is on another panel. A swap settles and its
+    /// bitcoin is auto-claimed on a ~30-minute timeline; if the settle isn't
+    /// observed until the user happens back on this screen, the deposit can
+    /// already be claimed by then and the flow hangs on "Bitcoin arriving"
+    /// (GlobalHome can only register the arrival while the deposit is still
+    /// pending). Polling stops on its own once the shift is terminal, so this
+    /// only stays live through the pre-settle window. Returns `none` when there
+    /// is no active flow.
+    pub fn sideshift_poll_subscription(&self) -> Subscription<Message> {
+        self.sideshift_flow
+            .as_ref()
+            .map(|flow| flow.subscription())
+            .unwrap_or_else(Subscription::none)
+    }
 }
 
 impl State for SparkReceive {
@@ -192,7 +208,7 @@ impl State for SparkReceive {
         let (sideshift_body, cross_network_selected) = match &self.sideshift_flow {
             Some(flow) => (
                 Some(
-                    crate::app::view::spark::spark_sideshift_receive_view(flow)
+                    crate::app::view::spark::spark_sideshift_receive_view(flow, cache.bitcoin_unit)
                         .map(crate::app::view::Message::SparkSideshiftReceive),
                 ),
                 Some(flow.selected()),
@@ -295,7 +311,9 @@ impl State for SparkReceive {
             };
             // `Back`/`Reset` from the flow's *entry* screen means "leave the
             // bridge", so tear it down and fall back to the ordinary receive
-            // form. The flow resets itself for any other phase.
+            // form. The arrived screen's "Done" button lands here too — once the
+            // bitcoin is in the wallet the swap is finished, so treat it the same
+            // way. The flow resets itself for any other phase.
             let leaving = matches!(
                 msg,
                 crate::app::view::SparkSideshiftReceiveMessage::Back
@@ -303,6 +321,7 @@ impl State for SparkReceive {
             ) && matches!(
                 flow.phase(),
                 super::sideshift_receive::SparkShiftPhase::Setup
+                    | super::sideshift_receive::SparkShiftPhase::Arrived
             );
             if leaving {
                 self.sideshift_flow = None;

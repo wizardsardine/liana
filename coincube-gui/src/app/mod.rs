@@ -2252,6 +2252,19 @@ impl App {
             }
         }
 
+        // Keep the cross-network shift-status poll alive off the Spark Receive
+        // panel too: a swap settling while the user is elsewhere must still be
+        // observed promptly, or GlobalHome can't register the arrival before the
+        // deposit is auto-claimed and the flow hangs on "Bitcoin arriving". The
+        // poll stops itself once the shift is terminal, so this is idle outside
+        // the pre-settle window.
+        if !matches!(
+            self.panels.current,
+            Menu::Spark(crate::app::menu::SparkSubMenu::Receive)
+        ) {
+            subscriptions.push(self.panels.spark_receive.sideshift_poll_subscription());
+        }
+
         // Stream the pending internal bitcoind's debug.log for UpdateTip lines.
         if let Some(pending_cfg) = self
             .daemon
@@ -3883,6 +3896,20 @@ impl App {
                     .global_home
                     .update(self.daemon.clone(), &self.cache, msg);
             }
+            // The cross-network Receive flow lives in the (always-resident)
+            // `spark_receive` panel, so route its messages there directly rather
+            // than to the current panel. This is what lets a swap arrival reach
+            // the flow while the user is on another screen; on the Receive screen
+            // itself `spark_receive` is the current panel anyway, so it's the
+            // same target. The flow's status poll is kept alive off-screen too
+            // (`sideshift_poll_subscription`), so its `PollStatus`/`StatusUpdated`
+            // messages land here regardless of which panel is current.
+            msg @ Message::View(view::Message::SparkSideshiftReceive(_)) => {
+                return self
+                    .panels
+                    .spark_receive
+                    .update(self.daemon.clone(), &self.cache, msg);
+            }
 
             Message::ShowReceivedCelebration {
                 context,
@@ -3900,8 +3927,22 @@ impl App {
                     coincube_ui::component::quote_display::random_quote(&context);
                 self.received_celebration_image =
                     coincube_ui::component::quote_display::image_handle_for_context(&context);
-                self.received_celebration_context = context;
+                self.received_celebration_context = context.clone();
                 self.show_received_celebration = true;
+                // A Spark swap's bitcoin just landed. Forward the arrival to the
+                // cross-network Receive flow so it advances from "Bitcoin
+                // arriving" to its arrived confirmation instead of sitting stale.
+                // Dispatched (not called inline) so it reaches the resident
+                // `spark_receive` panel even if the user is on another screen —
+                // arrival lands ~30 min after settle, by which point they've
+                // usually navigated away. The flow ignores it unless it's
+                // actually showing "Bitcoin arriving", so a plain (non-swap)
+                // Spark receive is unaffected.
+                if context == "spark-receive" {
+                    return Task::done(Message::View(view::Message::SparkSideshiftReceive(
+                        view::SparkSideshiftReceiveMessage::Arrived { amount_sat },
+                    )));
+                }
             }
 
             Message::SparkEvent(client_event) => {

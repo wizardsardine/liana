@@ -1292,9 +1292,13 @@ fn signing_key_row(row: &SigningKeyRow, color: iced::Color) -> Element<'static, 
         SigningKeyState::Disabled(reason) => p1_regular(reason.clone())
             .style(theme::text::secondary)
             .into(),
-        SigningKeyState::NeedsSignIn(reason) => Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
+        // Stack the button *under* the reason rather than beside it: the sibling
+        // `info` column is `Fill`, so a side-by-side Row starves this slot and the
+        // button's label wraps into a cramped oval. A Column gives it a full line
+        // at its natural width.
+        SigningKeyState::NeedsSignIn(reason) => Column::new()
+            .spacing(6)
+            .align_x(Alignment::End)
             .push(p1_regular(reason.clone()).style(theme::text::secondary))
             .push(
                 // Bubbles straight to the tab (which opens/focuses the Home

@@ -7,9 +7,14 @@
 //! **bitcoin arrives**, never "receive USDT". No standalone title / asset
 //! picker / Back button — navigation happens via the cards + THEY SEND modal.
 
+use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
-    component::{button, text::*},
+    component::{
+        amount::{BitcoinDisplayUnit, DisplayAmount},
+        button,
+        text::*,
+    },
     icon::clipboard_icon,
     theme,
     widget::Element,
@@ -24,13 +29,17 @@ use crate::app::state::spark::sideshift_receive::{SparkShiftPhase, SparkSideshif
 use crate::app::view::SparkSideshiftReceiveMessage as Msg;
 use crate::services::sideshift::{ShiftResponse, ShiftStatusKind};
 
-pub fn spark_sideshift_receive_view(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
+pub fn spark_sideshift_receive_view(
+    flow: &SparkSideshiftReceiveFlow,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<'_, Msg> {
     match flow.phase() {
         SparkShiftPhase::Setup => setup_body(flow),
         SparkShiftPhase::FetchingAffiliate | SparkShiftPhase::CreatingShift => {
             loading_body("Setting up your deposit address…")
         }
-        SparkShiftPhase::Active => active_body(flow),
+        SparkShiftPhase::Active => active_body(flow, bitcoin_unit),
+        SparkShiftPhase::Arrived => arrived_body(flow, bitcoin_unit),
         SparkShiftPhase::Failed => error_body(flow.error()),
     }
 }
@@ -112,7 +121,10 @@ fn setup_body(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
 
 // ── Active shift: deposit address + status ──────────────────────────────────
 
-fn active_body(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
+fn active_body(
+    flow: &SparkSideshiftReceiveFlow,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<'_, Msg> {
     let Some(shift) = flow.shift() else {
         return error_body(Some("Shift data missing."));
     };
@@ -196,7 +208,7 @@ fn active_body(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
 
     let status_section: Element<Msg> = if let Some(status) = status {
         let (label, style_color) = status_badge(status);
-        Column::new()
+        let mut col = Column::new()
             .spacing(8)
             .align_x(Alignment::Center)
             .width(Length::Fill)
@@ -204,13 +216,43 @@ fn active_body(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
                 Container::new(text(label).size(P2_SIZE).color(style_color))
                     .padding([4, 10])
                     .style(theme::pill::simple),
-            )
-            .push(
-                text(spark_shift_guidance(status))
-                    .size(P2_SIZE)
-                    .style(theme::text::secondary),
-            )
-            .into()
+            );
+        // Once SideShift reports the settle output, show how much bitcoin is on
+        // the way — in whichever unit the user has chosen. Shown from the moment
+        // a deposit is detected through settle; before settle it's SideShift's
+        // moving estimate, so it's labelled "≈", and it firms up as "arriving"
+        // under the "Bitcoin arriving" badge.
+        if matches!(
+            status,
+            ShiftStatusKind::Pending
+                | ShiftStatusKind::Processing
+                | ShiftStatusKind::Settling
+                | ShiftStatusKind::Settled
+        ) {
+            if let Some(sats) = flow.settle_amount_sat() {
+                let settled = matches!(status, ShiftStatusKind::Settled);
+                col = col.push(
+                    text(format!(
+                        "{}{} {}",
+                        if settled { "" } else { "≈ " },
+                        Amount::from_sat(sats).to_formatted_string_with_unit(bitcoin_unit),
+                        if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                            "BTC"
+                        } else {
+                            "SATS"
+                        },
+                    ))
+                    .size(P1_SIZE)
+                    .bold(),
+                );
+            }
+        }
+        col.push(
+            text(spark_shift_guidance(status))
+                .size(P2_SIZE)
+                .style(theme::text::secondary),
+        )
+        .into()
     } else {
         Space::new().height(Length::Fixed(0.0)).into()
     };
@@ -231,6 +273,57 @@ fn active_body(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
     .into()
 }
 
+// ── Arrived: the swap's bitcoin has landed and been claimed ──────────────────
+
+fn arrived_body(
+    flow: &SparkSideshiftReceiveFlow,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<'_, Msg> {
+    let mut col = Column::new()
+        .spacing(12)
+        .align_x(Alignment::Center)
+        .width(Length::Fill)
+        .push(
+            Container::new(text("Bitcoin arrived").size(P2_SIZE).color(color::GREEN))
+                .padding([4, 10])
+                .style(theme::pill::simple),
+        );
+
+    if let Some(sats) = flow.arrived_amount_sat() {
+        col = col.push(
+            text(format!(
+                "{} {}",
+                Amount::from_sat(sats).to_formatted_string_with_unit(bitcoin_unit),
+                if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                    "BTC"
+                } else {
+                    "SATS"
+                },
+            ))
+            .size(H4_SIZE)
+            .bold(),
+        );
+    }
+
+    Container::new(
+        col.push(
+            text("Your bitcoin has been added to your Spark wallet.")
+                .size(P2_SIZE)
+                .style(theme::text::secondary),
+        )
+        .push(
+            button::primary(None, "Done")
+                .on_press(Msg::Reset)
+                .width(Length::Fixed(160.0)),
+        ),
+    )
+    .padding(24)
+    .width(Length::Fill)
+    .center_x(Length::Fill)
+    .style(theme::card::simple)
+    .into()
+}
+
 /// Spark-specific status guidance. Diverges from the shared
 /// [`ShiftStatusKind::guidance`] at `Settled`: a Spark settle lands as on-chain
 /// BTC in the wallet's static deposit address, so it *hasn't* arrived in the
@@ -241,7 +334,7 @@ fn spark_shift_guidance(status: &ShiftStatusKind) -> &'static str {
     match status {
         ShiftStatusKind::Settled => {
             "Converting complete. Your bitcoin is arriving on-chain and will be added to your \
-             wallet automatically after about 3 confirmations — usually a few minutes."
+             wallet automatically after about 3 confirmations — ~30 minutes."
         }
         other => other.guidance(),
     }

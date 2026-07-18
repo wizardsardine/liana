@@ -51,6 +51,12 @@ pub enum SparkShiftPhase {
     CreatingShift,
     /// Shift is live — deposit address on screen, polling status.
     Active,
+    /// The swap's bitcoin has landed in the Spark wallet and been claimed. A
+    /// terminal *success* state, distinct from `Active`+`Settled` ("Bitcoin
+    /// arriving"): SideShift's status can't report this — the arrival is an
+    /// on-chain claim on our side — so it's driven by the global "received"
+    /// event via [`Msg::Arrived`].
+    Arrived,
     /// Terminal failure before a shift existed.
     Failed,
 }
@@ -73,6 +79,14 @@ pub struct SparkSideshiftReceiveFlow {
     affiliate_id: Option<String>,
     shift: Option<ShiftResponse>,
     shift_status: Option<ShiftStatusKind>,
+    /// The BTC amount SideShift last reported as the settle output, in sats.
+    /// Sourced from the poll status (which carries the real figure once a
+    /// deposit is detected), not the create-time estimate. Shown next to the
+    /// "Bitcoin arriving" status so the user sees how much is on the way.
+    settle_amount_sat: Option<u64>,
+    /// The actual amount claimed into the wallet on arrival (post network fee),
+    /// in sats. Set when the flow reaches [`SparkShiftPhase::Arrived`].
+    arrived_amount_sat: Option<u64>,
     qr_data: Option<qr_code::Data>,
 
     loading: bool,
@@ -94,6 +108,8 @@ impl SparkSideshiftReceiveFlow {
             affiliate_id: None,
             shift: None,
             shift_status: None,
+            settle_amount_sat: None,
+            arrived_amount_sat: None,
             qr_data: None,
             loading: false,
             error: None,
@@ -131,6 +147,12 @@ impl SparkSideshiftReceiveFlow {
     pub fn shift_status(&self) -> Option<&ShiftStatusKind> {
         self.shift_status.as_ref()
     }
+    pub fn settle_amount_sat(&self) -> Option<u64> {
+        self.settle_amount_sat
+    }
+    pub fn arrived_amount_sat(&self) -> Option<u64> {
+        self.arrived_amount_sat
+    }
     pub fn qr_data(&self) -> Option<&qr_code::Data> {
         self.qr_data.as_ref()
     }
@@ -151,6 +173,8 @@ impl SparkSideshiftReceiveFlow {
         self.affiliate_id = None;
         self.shift = None;
         self.shift_status = None;
+        self.settle_amount_sat = None;
+        self.arrived_amount_sat = None;
         self.qr_data = None;
         self.loading = false;
         self.error = None;
@@ -237,7 +261,7 @@ impl SparkSideshiftReceiveFlow {
     // ── View ────────────────────────────────────────────────────────────
 
     pub fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let body = view::spark::spark_sideshift_receive_view(self);
+        let body = view::spark::spark_sideshift_receive_view(self, cache.bitcoin_unit);
         view::dashboard(menu, cache, body.map(view::Message::SparkSideshiftReceive))
     }
 
@@ -347,6 +371,21 @@ impl SparkSideshiftReceiveFlow {
                     let settled = kind == ShiftStatusKind::Settled
                         && self.shift_status.as_ref() != Some(&ShiftStatusKind::Settled);
                     self.shift_status = Some(kind);
+                    // SideShift reports the settle output (BTC, as a decimal
+                    // string) once a deposit is detected. Keep the latest so the
+                    // view can show how much bitcoin is arriving. Parse it exactly
+                    // (BTC → sats) rather than via f64, which rounds.
+                    let settle_sat = status.settle_amount.as_deref().and_then(|s| {
+                        coincube_core::miniscript::bitcoin::Amount::from_str_in(
+                            s.trim(),
+                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin,
+                        )
+                        .ok()
+                        .map(|a| a.to_sat())
+                    });
+                    if settle_sat.is_some() {
+                        self.settle_amount_sat = settle_sat;
+                    }
                     if settled {
                         // The bitcoin has landed at Spark's on-chain deposit
                         // address, which means it shows up as an *unclaimed
@@ -360,24 +399,29 @@ impl SparkSideshiftReceiveFlow {
                         //      the "bitcoin received" celebration when it lands.
                         // The amount is the swap's settle estimate, used only for
                         // the pending indicator; the celebration uses the actual
-                        // claimed amount.
-                        let settle_sat = status
-                            .settle_amount
-                            .as_deref()
-                            .and_then(|s| s.parse::<f64>().ok())
-                            .map(|btc| (btc * 100_000_000.0).round() as u64)
-                            .unwrap_or(0);
+                        // claimed amount. Read the cached figure rather than this
+                        // poll's `settle_sat`: a settle response can omit
+                        // `settleAmount`, and the cache still holds the value an
+                        // earlier poll reported.
                         return Task::batch([
                             Task::done(Message::View(view::Message::SparkReceive(
                                 view::SparkReceiveMessage::DepositsChanged,
                             ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::SwapSettledAwaitingArrival {
-                                    amount_sat: settle_sat,
+                                    amount_sat: self.settle_amount_sat.unwrap_or(0),
                                 },
                             ))),
                         ]);
                     }
+                }
+                Task::none()
+            }
+
+            Msg::Arrived { amount_sat } => {
+                if arrival_belongs_to_this_shift(&self.phase, self.shift_status.as_ref()) {
+                    self.arrived_amount_sat = Some(*amount_sat);
+                    self.phase = SparkShiftPhase::Arrived;
                 }
                 Task::none()
             }
@@ -430,6 +474,33 @@ impl SparkSideshiftReceiveFlow {
 /// The detail is passed through verbatim: the underlying errors already name
 /// the service that failed (Coincube, the Spark bridge, or SideShift), and
 /// re-prefixing them here is how they end up misattributed.
+/// Whether an `Arrived` signal — fired globally for *any* Spark claim — should
+/// be taken as this shift's bitcoin landing and move it to the terminal
+/// `Arrived` state.
+///
+/// True only when the swap is still live (`Active`) and has seen a deposit of
+/// its own (status past `Waiting`). The deposit-seen guard stops an unrelated
+/// claim, landing while this flow is still waiting to be funded, from hijacking
+/// the screen. It stays permissive across every post-deposit status — including
+/// `Review` (a hold only happens after the deposit is received) — so the arrival
+/// is still caught even if the shift status lags behind the actual chain.
+fn arrival_belongs_to_this_shift(
+    phase: &SparkShiftPhase,
+    status: Option<&ShiftStatusKind>,
+) -> bool {
+    *phase == SparkShiftPhase::Active
+        && matches!(
+            status,
+            Some(
+                ShiftStatusKind::Pending
+                    | ShiftStatusKind::Processing
+                    | ShiftStatusKind::Settling
+                    | ShiftStatusKind::Settled
+                    | ShiftStatusKind::Review
+            )
+        )
+}
+
 fn nothing_sent_yet(detail: &str) -> String {
     format!(
         "{}. Nothing has been sent — try again.",
@@ -478,6 +549,45 @@ mod tests {
                 ShiftStatusKind::from(s).is_terminal(),
                 "{} must stop polling — the shift will not advance on its own",
                 s
+            );
+        }
+    }
+
+    #[test]
+    fn an_arrival_only_lands_on_a_live_shift_that_has_seen_its_deposit() {
+        use ShiftStatusKind::*;
+
+        // Accept: the swap is Active and its status is past `Waiting`, so the
+        // claim that just fired is this shift's bitcoin landing.
+        for status in [Pending, Processing, Settling, Settled, Review] {
+            assert!(
+                arrival_belongs_to_this_shift(&SparkShiftPhase::Active, Some(&status)),
+                "Active + {:?} should accept the arrival",
+                status
+            );
+        }
+
+        // Ignore: still waiting to be funded (or no status yet), so a claim
+        // firing now belongs to some other deposit, not this one.
+        assert!(!arrival_belongs_to_this_shift(
+            &SparkShiftPhase::Active,
+            Some(&Waiting)
+        ));
+        assert!(!arrival_belongs_to_this_shift(
+            &SparkShiftPhase::Active,
+            None
+        ));
+
+        // Ignore: not a live shift — nothing to advance.
+        for phase in [
+            SparkShiftPhase::Setup,
+            SparkShiftPhase::Arrived,
+            SparkShiftPhase::Failed,
+        ] {
+            assert!(
+                !arrival_belongs_to_this_shift(&phase, Some(&Settled)),
+                "{:?} must ignore the arrival even at Settled",
+                phase
             );
         }
     }
