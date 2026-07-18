@@ -828,6 +828,11 @@ impl Tab {
                         self.state = State::Login(login);
                         command.map(Message::Login)
                     } else if settings_opt.is_none() {
+                        if let Some(bitcoind) = internal_bitcoind {
+                            tracing::info!("Stopping internal bitcoind as it is not needed for Seed-Only cubes");
+                            bitcoind.stop();
+                        }
+
                         let cfg = app::Config::from_file(
                             &i.datadir
                                 .network_directory(i.network)
