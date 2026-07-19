@@ -83,7 +83,8 @@ pub(crate) fn delete_connect_secret(user_key: &str) {
 
 pub use account::{
     AddToCubeDialog, CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep,
-    ContactsState, ContactsStep, DuressContactsState, DuressContactsStep, DuressCube,
+    cube_backup_completeness, duress_gate_blocked, ContactsState, ContactsStep,
+    CubeBackupCompleteness, DuressContactsState, DuressContactsStep, DuressCube,
     DuressDisableState, DuressEnrollState, DuressEnrollStep, DuressGateStatus, EnrollTier,
     InviteCubeOption, PlanLifecycle, BACKUP_ACK_PHRASE,
 };
@@ -132,6 +133,7 @@ impl ConnectPanel {
         cube_uuid: String,
         cube_name: String,
         cube_network: String,
+        cube_has_vault: bool,
     ) -> Self {
         let mut account = ConnectAccountPanel::new();
         // W12 §2.7 tweak #1 / W14: propagate the active cube's network
@@ -140,7 +142,13 @@ impl ConnectPanel {
         account.set_active_network(Some(cube_network.clone()));
         ConnectPanel {
             account,
-            cube: ConnectCubePanel::new(spark_client, cube_uuid, cube_name, cube_network),
+            cube: ConnectCubePanel::new(
+                spark_client,
+                cube_uuid,
+                cube_name,
+                cube_network,
+                cube_has_vault,
+            ),
         }
     }
 
@@ -197,6 +205,16 @@ impl ConnectPanel {
         }
         self.sync_client();
         self.cube.register_cube()
+    }
+
+    /// Re-report the active Cube's Vault presence after a mid-session Vault
+    /// creation, so the server's `hasVault` flips for other-device duress
+    /// gating without waiting for a re-registration (PLAN-duress-vault-gate
+    /// PR 3). Delegates to the cube panel; no-ops when unregistered or
+    /// signed out.
+    pub fn report_vault_created(&mut self) -> iced::Task<Message> {
+        self.sync_client();
+        self.cube.report_vault_created()
     }
 
     /// Check if avatar should be loaded and return task if so.

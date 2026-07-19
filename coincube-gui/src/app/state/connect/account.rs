@@ -127,12 +127,147 @@ pub struct InviteCubeOption {
 }
 
 /// One mainnet cube shown in the Duress intro screen's "set up a Cube
-/// Recovery Kit for each Cube" checklist, with whether it currently has a
-/// recovery kit on the server. Lightweight — only what the row renders.
+/// Recovery Kit for each Cube" checklist. Carries the kit halves and the
+/// local vault/passkey shape so both the checklist badge and the
+/// enrollment gate can reason about backup completeness (the duress vault
+/// gate — PLAN-duress-vault-gate PR 1).
 #[derive(Debug, Clone)]
 pub struct DuressCube {
+    /// Server-side cube id (from `list_cubes`), used to fetch this cube's
+    /// per-cube recovery-kit status and to re-report `has_vault` (PR 3).
+    pub server_id: u64,
+    /// Server-side cube uuid; the join key against local `settings.json`
+    /// Cubes (whose `id` is this uuid). `None` only in unit fixtures.
+    pub uuid: Option<String>,
     pub name: String,
+    /// Cube-level `has_recovery_kit` from `list_cubes` — whether *any* kit
+    /// material exists. The per-half detail lives in `halves`.
     pub has_recovery_kit: bool,
+    /// `(has_encrypted_seed, has_encrypted_wallet_descriptor)` from the
+    /// per-cube recovery-kit status endpoint. `None` when the status fetch
+    /// failed (or hasn't landed yet) — completeness is then `Unknown`,
+    /// never coerced to `Complete` (master invariant I7).
+    pub halves: Option<(bool, bool)>,
+    /// Whether this Cube has a Vault wallet. `Some` from local
+    /// `settings.json` (`vault_wallet_id.is_some()`) when this device holds
+    /// the Cube; `None` for other-device Cubes until PR 3 lands the
+    /// server-reported flag. A `None` here fails the gate closed.
+    pub has_vault: Option<bool>,
+    /// Whether this Cube is passkey-derived (seed unextractable on-device,
+    /// so kits are descriptor-only). `Some` from local settings; `None` for
+    /// other-device Cubes.
+    pub is_passkey: Option<bool>,
+    /// Whether this Cube was matched to a local `settings.json` Cube on this
+    /// device (i.e. its vault/passkey shape is authoritative here).
+    pub local: bool,
+}
+
+/// Backup completeness of a single Cube, the single source of truth shared
+/// by the checklist badge and the enrollment gate
+/// (PLAN-duress-vault-gate). Derived by [`cube_backup_completeness`] from
+/// the Cube's shape (`has_vault`, `is_passkey`) and its kit halves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CubeBackupCompleteness {
+    /// Everything a duress wipe would destroy is backed up.
+    Complete,
+    /// Vault Cube whose seed is backed up but Wallet Descriptor is missing.
+    MissingDescriptor,
+    /// Seed half missing (mnemonic Cube with no seed backup).
+    MissingSeed,
+    /// No recovery kit material at all.
+    NoKit,
+    /// Vault presence or kit status is unknown — never coerced to
+    /// `Complete`; fails the gate closed (master invariant I7 / decision 4).
+    Unknown,
+}
+
+/// The completeness rule (PLAN-duress-vault-gate "single source of truth").
+/// Mirrors the shape semantics already encoded in `recovery_kit_card`
+/// (`app/view/settings/general.rs`): a seed-only kit is complete on a
+/// vaultless mnemonic Cube, passkey Cubes are descriptor-only, and a
+/// passkey Cube with no Vault has nothing to back up.
+///
+/// - `has_vault == None` → vault presence unknown → `Unknown`.
+/// - `halves == None`    → status unavailable    → `Unknown`.
+/// - `!has_vault, mnemonic`: `Complete` ⇔ `seed`.
+/// - `has_vault, mnemonic`:  `Complete` ⇔ `seed && descriptor`.
+/// - `has_vault, passkey`:   `Complete` ⇔ `descriptor` (no on-device seed).
+/// - `!has_vault, passkey`:  nothing to back up → `Complete`.
+pub fn cube_backup_completeness(
+    has_vault: Option<bool>,
+    is_passkey: bool,
+    halves: Option<(bool, bool)>,
+) -> CubeBackupCompleteness {
+    use CubeBackupCompleteness::*;
+    // Vault presence unknown (other-device, pre-PR 3) → can't judge.
+    let Some(has_vault) = has_vault else {
+        return Unknown;
+    };
+    // Passkey Cube with no Vault: no seed to extract, no descriptor to back
+    // up — nothing to back up, so it never blocks (mirrors the card's
+    // suppressed state).
+    if is_passkey && !has_vault {
+        return Complete;
+    }
+    // Status not (yet) available → Unknown (never coerced to Complete).
+    let Some((seed, descriptor)) = halves else {
+        return Unknown;
+    };
+    if is_passkey {
+        // Passkey + Vault: descriptor-only.
+        if descriptor {
+            Complete
+        } else {
+            NoKit
+        }
+    } else if !has_vault {
+        // Vaultless mnemonic: seed-only kit is complete.
+        if seed {
+            Complete
+        } else if descriptor {
+            MissingSeed
+        } else {
+            NoKit
+        }
+    } else {
+        // Vault mnemonic: needs both halves.
+        match (seed, descriptor) {
+            (true, true) => Complete,
+            (true, false) => MissingDescriptor,
+            (false, true) => MissingSeed,
+            (false, false) => NoKit,
+        }
+    }
+}
+
+impl DuressCube {
+    /// This Cube's backup completeness (shared by badge + gate).
+    pub fn completeness(&self) -> CubeBackupCompleteness {
+        cube_backup_completeness(
+            self.has_vault,
+            self.is_passkey.unwrap_or(false),
+            self.halves,
+        )
+    }
+
+    /// Whether this Cube blocks Tier-1 enrollment. Only Vault Cubes block:
+    /// vaultless Cubes never block (master I2), a Vault Cube with an
+    /// incomplete kit blocks, and a Cube whose vault presence itself is
+    /// unknown fails closed (master decision 4).
+    pub fn blocks_gate(&self) -> bool {
+        match self.has_vault {
+            Some(false) => false,
+            Some(true) => self.completeness() != CubeBackupCompleteness::Complete,
+            None => true,
+        }
+    }
+}
+
+/// Whether any Cube in the checklist blocks Tier-1 enrollment (the hard
+/// gate). Used by both the view (to disable the CTA) and the state (to
+/// re-check on `StartEnrollment` in case a stale view fires it).
+pub fn duress_gate_blocked(cubes: &[DuressCube]) -> bool {
+    cubes.iter().any(DuressCube::blocks_gate)
 }
 
 /// State for the Contacts section within ConnectAccountPanel.
@@ -657,6 +792,20 @@ impl ConnectAccountPanel {
             register_campaign_code: String::new(),
             pending_campaign_code: None,
         }
+    }
+
+    /// True when duress mode is enrolled — either armed on this device or
+    /// reported enrolled by the server (the account can be enrolled on
+    /// another device). Drives the post-Vault-creation Recovery-Kit nudge
+    /// (PLAN-duress-vault-gate PR 3 / master decision 6): a Vault created
+    /// after enrollment needs its Wallet Descriptor added to the kit.
+    pub fn is_duress_enrolled(&self) -> bool {
+        self.duress_locally_armed
+            || self
+                .duress_state
+                .as_ref()
+                .map(|s| s.enrolled)
+                .unwrap_or(false)
     }
 
     /// True when the account carries the Estate-only `duress_alerts`
@@ -2477,11 +2626,29 @@ impl ConnectAccountPanel {
                 // before a CRK exists. A user who explicitly has no recovery kit
                 // takes the Tier 2 path via StartEnrollmentWithoutCrk. Non-
                 // Connect users get the sovereign encouragement flow.
+                // The hard vault gate (PLAN-duress-vault-gate PR 2). The CTA is
+                // rendered disabled while blocked, but re-check here as a
+                // belt-and-suspenders backstop: a stale view (kit status that
+                // landed after the last paint) could still fire this. Only
+                // gates the Tier-1 (with-CRK) path — the Tier-2 bypass and the
+                // sovereign flow are deliberately never gated.
                 if entitled {
+                    if self
+                        .duress_cubes
+                        .as_deref()
+                        .is_some_and(duress_gate_blocked)
+                    {
+                        // No-op: the gate is blocked. A fresh reload keeps the
+                        // checklist (and any retry affordance) current.
+                        return self.reload_duress_cubes();
+                    }
                     self.open_enroll_wizard(EnrollTier::Tier1);
                 } else {
                     self.open_enroll_wizard(EnrollTier::Sovereign);
                 }
+            }
+            DuressMessage::ReloadCubes => {
+                return self.reload_duress_cubes();
             }
             DuressMessage::StartEnrollmentWithoutCrk => {
                 // Tier 2 — Connect, no recovery kit: same as Tier 1 minus the
@@ -3827,23 +3994,70 @@ pub fn load_duress_alert_contacts(client: &CoincubeClient, generation: u64) -> i
 /// loaded list rather than blanking it), and an absent list leaves the
 /// screen on its generic recovery-kit copy.
 fn load_duress_cubes(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
+    use crate::services::coincube::CoincubeError;
     let client = client.clone();
     iced::Task::perform(
         async move {
-            client
-                .list_cubes()
-                .await
-                .map(|cubes| {
-                    cubes
-                        .into_iter()
-                        .filter(|c| c.network == "mainnet")
-                        .map(|c| DuressCube {
-                            name: c.name,
-                            has_recovery_kit: c.has_recovery_kit,
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .ok()
+            // Whole-fetch failure (list_cubes) resolves to `None` so the
+            // handler keeps any previously-loaded list rather than blanking it.
+            let cubes = client.list_cubes().await.ok()?;
+            let mainnet: Vec<_> = cubes
+                .into_iter()
+                .filter(|c| c.network == "mainnet")
+                .collect();
+
+            // Local vault/passkey shape for Cubes this device holds. Read once
+            // (mainnet dir) and matched to server Cubes by uuid below.
+            let local = load_local_cube_shapes();
+            let local_ref = &local;
+
+            // Fan out per-cube recovery-kit *status* fetches concurrently — one
+            // round-trip of latency, not N. A failed probe leaves `halves =
+            // None` → completeness `Unknown` (never coerced to Complete). A
+            // Cube with no kit at all skips the probe and reports empty halves.
+            let client_ref = &client;
+            let rows = iced::futures::future::join_all(mainnet.into_iter().map(|c| async move {
+                let halves = if c.has_recovery_kit {
+                    match client_ref.get_recovery_kit_status(c.id).await {
+                        Ok(s) => Some((s.has_encrypted_seed, s.has_encrypted_wallet_descriptor)),
+                        // 404 = no kit yet — not an error for our logic.
+                        Err(CoincubeError::NotFound) => Some((false, false)),
+                        Err(e) => {
+                            log::warn!(
+                                "[DURESS] recovery-kit status probe failed for \"{}\": {}",
+                                c.name,
+                                e
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    // No kit material at all → both halves absent.
+                    Some((false, false))
+                };
+                // Merge vault presence, precedence local > server > None
+                // (PLAN-duress-vault-gate PR 3). Match to this device's Cubes
+                // by uuid (local `CubeSettings.id` == server `uuid`): the
+                // device holding the Cube is authoritative for its vault
+                // presence. For other-device Cubes (no local match) fall back
+                // to the server-reported `has_vault`; an older API that omits
+                // the field leaves it `None` → `Unknown`.
+                let local_match = local_ref.iter().find(|l| l.uuid == c.uuid);
+                let (has_vault, is_passkey, is_local) =
+                    merge_cube_vault_shape(local_match, c.has_vault);
+                DuressCube {
+                    server_id: c.id,
+                    uuid: Some(c.uuid),
+                    name: c.name,
+                    has_recovery_kit: c.has_recovery_kit,
+                    halves,
+                    has_vault,
+                    is_passkey,
+                    local: is_local,
+                }
+            }))
+            .await;
+            Some(rows)
         },
         move |cubes| {
             Message::View(view::Message::ConnectAccount(
@@ -3851,6 +4065,56 @@ fn load_duress_cubes(client: &CoincubeClient, generation: u64) -> iced::Task<Mes
             ))
         },
     )
+}
+
+/// This device's Cube vault/passkey shape, read from the mainnet
+/// `settings.json`. Used to merge local vault presence into the Duress
+/// checklist (PLAN-duress-vault-gate PR 1). Best-effort: a missing/unreadable
+/// settings file yields an empty list, so every server Cube is treated as
+/// other-device (`has_vault = None`) — which fails the gate closed rather than
+/// silently allowing enrollment.
+struct LocalCubeShape {
+    /// Local `CubeSettings.id`, which equals the server Cube `uuid`.
+    uuid: String,
+    has_vault: bool,
+    is_passkey: bool,
+}
+
+/// Merge a Cube's vault/passkey shape with precedence **local > server >
+/// None** (PLAN-duress-vault-gate PR 3). Returns `(has_vault, is_passkey,
+/// is_local)`. When this device holds the Cube (`local` is `Some`) its
+/// local knowledge is authoritative; otherwise fall back to the
+/// server-reported `has_vault` (`None` on an older API → `Unknown`), with
+/// `is_passkey` unknown for other-device Cubes.
+fn merge_cube_vault_shape(
+    local: Option<&LocalCubeShape>,
+    server_has_vault: Option<bool>,
+) -> (Option<bool>, Option<bool>, bool) {
+    match local {
+        Some(l) => (Some(l.has_vault), Some(l.is_passkey), true),
+        None => (server_has_vault, None, false),
+    }
+}
+
+fn load_local_cube_shapes() -> Vec<LocalCubeShape> {
+    use coincube_core::miniscript::bitcoin::Network;
+    let Ok(datadir) = crate::dir::CoincubeDirectory::active() else {
+        return Vec::new();
+    };
+    // Duress Cubes are mainnet-only, so only the mainnet settings matter.
+    let network_dir = datadir.network_directory(Network::Bitcoin);
+    let Ok(settings) = crate::app::settings::Settings::from_file(&network_dir) else {
+        return Vec::new();
+    };
+    settings
+        .cubes
+        .iter()
+        .map(|c| LocalCubeShape {
+            uuid: c.id.clone(),
+            has_vault: c.vault_wallet_id.is_some(),
+            is_passkey: c.is_passkey_cube(),
+        })
+        .collect()
 }
 
 /// Fetch server-side duress state (enrolled / active) for the Duress intro
@@ -4377,6 +4641,23 @@ mod duress_enroll_tests {
         );
     }
 
+    /// Terse `DuressCube` fixture for the backup-ack / gate tests. Defaults to
+    /// a vaultless, fully-backed-up local Cube; callers override the fields
+    /// they care about.
+    fn duress_cube(name: &str, has_recovery_kit: bool) -> DuressCube {
+        DuressCube {
+            server_id: 0,
+            uuid: Some(name.to_string()),
+            name: name.to_string(),
+            has_recovery_kit,
+            // Vaultless mnemonic: a seed backup makes it complete.
+            halves: Some((has_recovery_kit, false)),
+            has_vault: Some(false),
+            is_passkey: Some(false),
+            local: true,
+        }
+    }
+
     #[test]
     fn require_backup_ack_gating() {
         let mut panel = ConnectAccountPanel::new();
@@ -4390,30 +4671,173 @@ mod duress_enroll_tests {
         assert!(panel.compute_require_backup_ack(EnrollTier::Tier1));
 
         // Tier 1 with every cube backed up → skip the gate.
-        panel.duress_cubes = Some(vec![
-            DuressCube {
-                name: "A".into(),
-                has_recovery_kit: true,
-            },
-            DuressCube {
-                name: "B".into(),
-                has_recovery_kit: true,
-            },
-        ]);
+        panel.duress_cubes = Some(vec![duress_cube("A", true), duress_cube("B", true)]);
         assert!(!panel.compute_require_backup_ack(EnrollTier::Tier1));
 
         // Tier 1 with any cube lacking a recovery kit → gate.
-        panel.duress_cubes = Some(vec![
-            DuressCube {
-                name: "A".into(),
-                has_recovery_kit: true,
-            },
-            DuressCube {
-                name: "B".into(),
-                has_recovery_kit: false,
-            },
-        ]);
+        panel.duress_cubes = Some(vec![duress_cube("A", true), duress_cube("B", false)]);
         assert!(panel.compute_require_backup_ack(EnrollTier::Tier1));
+    }
+
+    #[test]
+    fn completeness_truth_table() {
+        use CubeBackupCompleteness::*;
+        // (has_vault, is_passkey, halves) → expected
+        // Vaultless mnemonic: complete ⇔ seed.
+        assert_eq!(
+            cube_backup_completeness(Some(false), false, Some((true, false))),
+            Complete
+        );
+        assert_eq!(
+            cube_backup_completeness(Some(false), false, Some((true, true))),
+            Complete
+        );
+        assert_eq!(
+            cube_backup_completeness(Some(false), false, Some((false, false))),
+            NoKit
+        );
+        // Descriptor-only kit on a vaultless mnemonic: seed still missing.
+        assert_eq!(
+            cube_backup_completeness(Some(false), false, Some((false, true))),
+            MissingSeed
+        );
+
+        // Vault mnemonic: needs both halves.
+        assert_eq!(
+            cube_backup_completeness(Some(true), false, Some((true, true))),
+            Complete
+        );
+        assert_eq!(
+            cube_backup_completeness(Some(true), false, Some((true, false))),
+            MissingDescriptor
+        );
+        assert_eq!(
+            cube_backup_completeness(Some(true), false, Some((false, true))),
+            MissingSeed
+        );
+        assert_eq!(
+            cube_backup_completeness(Some(true), false, Some((false, false))),
+            NoKit
+        );
+
+        // Passkey + Vault: descriptor-only.
+        assert_eq!(
+            cube_backup_completeness(Some(true), true, Some((false, true))),
+            Complete
+        );
+        assert_eq!(
+            cube_backup_completeness(Some(true), true, Some((false, false))),
+            NoKit
+        );
+        // Seed presence is irrelevant on a passkey Cube — descriptor decides.
+        assert_eq!(
+            cube_backup_completeness(Some(true), true, Some((true, false))),
+            NoKit
+        );
+
+        // Passkey + no Vault: nothing to back up → Complete regardless of halves.
+        assert_eq!(
+            cube_backup_completeness(Some(false), true, Some((false, false))),
+            Complete
+        );
+        assert_eq!(cube_backup_completeness(Some(false), true, None), Complete);
+
+        // Status unavailable → Unknown (never coerced to Complete), for every
+        // shape where there's actually something to back up.
+        assert_eq!(cube_backup_completeness(Some(false), false, None), Unknown);
+        assert_eq!(cube_backup_completeness(Some(true), false, None), Unknown);
+        assert_eq!(cube_backup_completeness(Some(true), true, None), Unknown);
+
+        // Vault presence unknown → Unknown regardless of halves.
+        assert_eq!(
+            cube_backup_completeness(None, false, Some((true, true))),
+            Unknown
+        );
+        assert_eq!(cube_backup_completeness(None, false, None), Unknown);
+    }
+
+    #[test]
+    fn merge_vault_shape_precedence_local_over_server() {
+        let local_vault = LocalCubeShape {
+            uuid: "u".into(),
+            has_vault: true,
+            is_passkey: false,
+        };
+        let local_vaultless = LocalCubeShape {
+            uuid: "u".into(),
+            has_vault: false,
+            is_passkey: true,
+        };
+
+        // Local present → local wins, even when the server disagrees.
+        assert_eq!(
+            merge_cube_vault_shape(Some(&local_vault), Some(false)),
+            (Some(true), Some(false), true)
+        );
+        assert_eq!(
+            merge_cube_vault_shape(Some(&local_vaultless), Some(true)),
+            (Some(false), Some(true), true)
+        );
+
+        // No local match → fall back to the server value (other-device Cube).
+        assert_eq!(
+            merge_cube_vault_shape(None, Some(true)),
+            (Some(true), None, false)
+        );
+        // No local, no server field (older API) → Unknown vault presence.
+        assert_eq!(merge_cube_vault_shape(None, None), (None, None, false));
+    }
+
+    #[test]
+    fn gate_blocks_only_incomplete_vault_cubes() {
+        use CubeBackupCompleteness::*;
+
+        // Vaultless Cube never blocks, even with no kit.
+        let vaultless_nokit = DuressCube {
+            has_vault: Some(false),
+            halves: Some((false, false)),
+            ..duress_cube("vaultless", false)
+        };
+        assert_eq!(vaultless_nokit.completeness(), NoKit);
+        assert!(!vaultless_nokit.blocks_gate());
+
+        // Vault Cube, complete → no block.
+        let vault_complete = DuressCube {
+            has_vault: Some(true),
+            halves: Some((true, true)),
+            ..duress_cube("vault-ok", true)
+        };
+        assert!(!vault_complete.blocks_gate());
+
+        // Vault Cube, incomplete → block.
+        let vault_incomplete = DuressCube {
+            has_vault: Some(true),
+            halves: Some((true, false)),
+            ..duress_cube("vault-bad", true)
+        };
+        assert!(vault_incomplete.blocks_gate());
+
+        // Vault Cube, status unknown → block (fails closed).
+        let vault_unknown_status = DuressCube {
+            has_vault: Some(true),
+            halves: None,
+            ..duress_cube("vault-unknown", true)
+        };
+        assert!(vault_unknown_status.blocks_gate());
+
+        // Vault presence unknown (other-device) → block (fails closed).
+        let other_device = DuressCube {
+            has_vault: None,
+            is_passkey: None,
+            local: false,
+            halves: Some((true, true)),
+            ..duress_cube("other", true)
+        };
+        assert!(other_device.blocks_gate());
+
+        // Slice-level gate: any blocker blocks.
+        assert!(!duress_gate_blocked(&[vaultless_nokit, vault_complete.clone()]));
+        assert!(duress_gate_blocked(&[vault_complete, vault_incomplete]));
     }
 
     #[test]

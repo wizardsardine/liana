@@ -243,6 +243,8 @@ impl Panels {
                 cube_id.clone(),
                 cube_name,
                 cube_network,
+                // `new_without_vault`: this Cube has no Vault wallet yet.
+                false,
             ),
             p2p: match breez_client
                 .liquid_signer()
@@ -400,6 +402,8 @@ impl Panels {
                 cube_id.clone(),
                 cube_name,
                 cube_network,
+                // `new` (vault constructor): this Cube has a Vault wallet.
+                true,
             ),
             buy_sell: Some(crate::app::view::buysell::BuySellPanel::new(
                 cache.network,
@@ -3003,6 +3007,10 @@ impl App {
                     let datadir = datadir.clone();
                     let net_str = settings::network_to_api_string(network);
                     let cube_name = self.cube_settings.name.clone();
+                    // Report this Cube's Vault presence so other devices can
+                    // evaluate the duress vault gate (PLAN-duress-vault-gate
+                    // PR 3). Captured before the async move.
+                    let cube_has_vault = self.cube_settings.vault_wallet_id.is_some();
                     let cube_uuid = cube_uuid.clone();
                     let registration_email = expected_email.clone();
                     Task::perform(
@@ -3030,6 +3038,7 @@ impl App {
                                     uuid,
                                     name: cube_name,
                                     network: net_str,
+                                    has_vault: cube_has_vault,
                                 })
                                 .await
                                 .map_err(|e| e.to_string())
@@ -3447,6 +3456,11 @@ impl App {
                 }
                 return Task::none();
             }
+            Message::CubeVaultReported => {
+                // Fire-and-forget: the re-report task logs its own outcome; the
+                // terminal message just closes the task. Nothing to do.
+                return Task::none();
+            }
             Message::CacheUpdated => {
                 // Cube (Home) Settings lives on every cube, vault or not,
                 // so its cache update must fire independently of the
@@ -3669,8 +3683,34 @@ impl App {
                         } else {
                             None
                         };
-                    // Forward to the current panel; batch the nudge in
-                    // only when we actually constructed one.
+
+                    // Duress vault gate (PLAN-duress-vault-gate PR 3): the Cube
+                    // just gained a Vault. Re-report `has_vault` to the server so
+                    // other devices' duress gate sees it without waiting for a
+                    // re-registration, and — if duress is already enrolled —
+                    // surface the extra Recovery-Kit nudge line (master decision
+                    // 6): the freshly-created Vault's Wallet Descriptor isn't in
+                    // the kit yet, so a duress wipe of it would be irreversible.
+                    let report_task = self.panels.connect.report_vault_created();
+                    let duress_nudge_task: Option<Task<Message>> =
+                        if self.panels.connect.account.is_duress_enrolled() {
+                            Some(Task::done(Message::View(view::Message::ShowToast(
+                                log::Level::Info,
+                                "Duress Mode is on — add this Vault's Wallet Descriptor to your \
+                                 Recovery Kit so a duress wipe stays recoverable."
+                                    .to_string(),
+                            ))))
+                        } else {
+                            None
+                        };
+                    // Fold the re-report and the optional duress nudge into a
+                    // single extra task so the return arms below stay simple.
+                    let report_task = match duress_nudge_task {
+                        Some(nudge) => Task::batch([report_task, nudge]),
+                        None => report_task,
+                    };
+                    // Forward to the current panel; batch the nudge and the
+                    // has_vault re-report in when present.
                     if let (Some(daemon), Some(panel)) =
                         (self.daemon.clone(), self.panels.current_mut())
                     {
@@ -3680,11 +3720,14 @@ impl App {
                             Message::WalletUpdated(Ok(wallet)),
                         );
                         return match nudge_task {
-                            Some(nudge) => Task::batch([panel_task, nudge]),
-                            None => panel_task,
+                            Some(nudge) => Task::batch([panel_task, nudge, report_task]),
+                            None => Task::batch([panel_task, report_task]),
                         };
                     }
-                    return nudge_task.unwrap_or_else(Task::none);
+                    return match nudge_task {
+                        Some(nudge) => Task::batch([nudge, report_task]),
+                        None => report_task,
+                    };
                 }
 
                 // Forward the message to the current panel

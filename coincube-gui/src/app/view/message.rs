@@ -1542,6 +1542,11 @@ pub enum DuressMessage {
     /// previously-loaded list. Carries `session_generation` for stale-response
     /// guarding.
     CubesLoaded(Option<Vec<crate::app::state::connect::DuressCube>>, u64),
+    /// Re-fetch the checklist cube list + recovery-kit status. Fired by the
+    /// "Couldn't verify — retry" affordance on an `Unknown` checklist row
+    /// (PLAN-duress-vault-gate PR 2), so a transient status-probe failure can
+    /// be retried without leaving the tab.
+    ReloadCubes,
     /// Server-side duress state (enrolled / active), loaded on entering the
     /// Duress tab so the screen can show the enabled state instead of the
     /// setup flow. `None` when the fetch failed. Carries `session_generation`.
@@ -1621,6 +1626,7 @@ impl std::fmt::Debug for DuressMessage {
                     .map_or_else(|| "<none>".to_string(), |c| format!("{} cubes", c.len())),
                 gen
             ),
+            ReloadCubes => write!(f, "ReloadCubes"),
             StateLoaded(s, gen) => write!(f, "StateLoaded({:?}, {})", s, gen),
             EnrollmentPersisted => write!(f, "EnrollmentPersisted"),
             DisableStart => write!(f, "DisableStart"),

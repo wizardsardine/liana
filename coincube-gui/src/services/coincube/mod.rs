@@ -533,6 +533,14 @@ pub struct RegisterCubeRequest {
     pub uuid: String,
     pub name: String,
     pub network: String,
+    /// Whether this Cube has a Vault wallet on this device
+    /// (`vault_wallet_id.is_some()`). Reported so other devices — which
+    /// can't see this device's local `settings.json` — can tell whether a
+    /// duress wipe of this Cube would be irreversible (the duress vault
+    /// gate; PLAN-duress-vault-gate PR 3). The server persists it and echoes
+    /// it back on `list_cubes` as `hasVault`.
+    #[serde(rename = "hasVault")]
+    pub has_vault: bool,
 }
 
 /// Request body for PUT /api/v1/connect/cubes/{id}
@@ -542,6 +550,12 @@ pub struct UpdateCubeRequest {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// Re-report Vault presence without a full re-registration — set when a
+    /// Vault is created on an already-registered Cube so the server's
+    /// `hasVault` flips immediately (PLAN-duress-vault-gate PR 3). `None`
+    /// leaves the server value untouched (e.g. a name-only rename).
+    #[serde(rename = "hasVault", skip_serializing_if = "Option::is_none")]
+    pub has_vault: Option<bool>,
 }
 
 /// Response from POST/GET /api/v1/connect/cubes/{id}
@@ -560,6 +574,14 @@ pub struct CubeResponse {
     /// payloads parsing (treated as no kit).
     #[serde(default)]
     pub has_recovery_kit: bool,
+    /// Server-reported Vault presence for this Cube (the duress vault gate;
+    /// PLAN-duress-vault-gate PR 3). Sent by `list_cubes` once devices report
+    /// it via register/update. `Option` with `#[serde(default)]` so an older
+    /// API that omits the field parses as `None` → `Unknown` vault state for
+    /// *other-device* Cubes only (this device always knows its own Cubes from
+    /// local `settings.json`, which wins over this value).
+    #[serde(default)]
+    pub has_vault: Option<bool>,
     /// Populated by `GET /connect/cubes/{id}` (not by `list_cubes`). Defaults
     /// to empty so existing list-based code paths keep working.
     #[serde(default)]
@@ -2640,5 +2662,75 @@ mod recovery_kit_response_tests {
         let kit: RecoveryKit = serde_json::from_value(v).unwrap();
         assert!(kit.encrypted_cube_seed.is_empty());
         assert!(kit.encrypted_wallet_descriptor.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod cube_has_vault_tests {
+    //! The duress vault gate (PLAN-duress-vault-gate PR 3) reports and
+    //! consumes a Cube's Vault presence over the wire as `hasVault`.
+    use super::{CubeResponse, RegisterCubeRequest, UpdateCubeRequest};
+    use serde_json::json;
+
+    #[test]
+    fn register_request_serialises_has_vault() {
+        let req = RegisterCubeRequest {
+            uuid: "u1".to_string(),
+            name: "Cube".to_string(),
+            network: "mainnet".to_string(),
+            has_vault: true,
+        };
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["hasVault"], json!(true));
+        // Existing fields unchanged.
+        assert_eq!(v["uuid"], json!("u1"));
+        assert_eq!(v["network"], json!("mainnet"));
+    }
+
+    #[test]
+    fn update_request_omits_has_vault_when_none() {
+        // Name-only rename must not touch server Vault presence.
+        let rename = UpdateCubeRequest {
+            name: Some("New".to_string()),
+            status: None,
+            has_vault: None,
+        };
+        let v = serde_json::to_value(&rename).unwrap();
+        assert!(v.get("hasVault").is_none());
+
+        // A vault-creation re-report carries the flag as `hasVault`.
+        let report = UpdateCubeRequest {
+            name: None,
+            status: None,
+            has_vault: Some(true),
+        };
+        let v = serde_json::to_value(&report).unwrap();
+        assert_eq!(v["hasVault"], json!(true));
+    }
+
+    #[test]
+    fn response_has_vault_defaults_to_none_when_absent() {
+        // Older API without the field → None → Unknown for other-device Cubes.
+        let v = json!({
+            "id": 1,
+            "uuid": "u1",
+            "name": "Cube",
+            "network": "mainnet",
+            "status": "active"
+        });
+        let resp: CubeResponse = serde_json::from_value(v).unwrap();
+        assert_eq!(resp.has_vault, None);
+
+        // Present field parses through.
+        let v = json!({
+            "id": 1,
+            "uuid": "u1",
+            "name": "Cube",
+            "network": "mainnet",
+            "status": "active",
+            "hasVault": true
+        });
+        let resp: CubeResponse = serde_json::from_value(v).unwrap();
+        assert_eq!(resp.has_vault, Some(true));
     }
 }

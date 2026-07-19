@@ -42,6 +42,11 @@ pub enum Message {
     /// or affect sync, so its result is discarded here. Carries the result
     /// only so transient failures can be logged.
     RecoveryHeartbeatSent(Result<(), String>),
+    /// Terminal no-op for the fire-and-forget re-report of a Cube's Vault
+    /// presence after a mid-session Vault creation (the duress vault gate;
+    /// PLAN-duress-vault-gate PR 3). The result is logged inside the task and
+    /// discarded here — it must never block or affect the UI.
+    CubeVaultReported,
     Fiat(FiatMessage),
     UpdatePanelCache(/* is current panel */ bool),
     View(view::Message),

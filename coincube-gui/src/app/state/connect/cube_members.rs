@@ -358,6 +358,7 @@ mod tests {
             lightning_address: None,
             status: "active".to_string(),
             has_recovery_kit: false,
+            has_vault: None,
             members,
             pending_invites,
             vault: None,

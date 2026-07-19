@@ -599,6 +599,10 @@ impl Home {
                                 uuid: cube.id.clone(),
                                 name: cube.name.clone(),
                                 network: cube.api_network_string(),
+                                // A freshly-created Cube has no Vault yet; the
+                                // flag flips later via the vault-creation
+                                // re-report (PLAN-duress-vault-gate PR 3).
+                                has_vault: cube.vault_wallet_id.is_some(),
                             };
                             let register_task = Task::perform(
                                 async move {
@@ -948,6 +952,9 @@ impl Home {
                             let update_req = UpdateCubeRequest {
                                 name: Some(pending.new_name),
                                 status: None,
+                                // Name-only rename: leave server Vault presence
+                                // untouched.
+                                has_vault: None,
                             };
                             let cube_uuid = pending.cube_id.clone();
                             let cube_id = pending.cube_id;
@@ -1794,11 +1801,21 @@ impl Home {
                                             server_cubes.iter().find(|sc| sc.uuid == cube.id);
                                         let ok = match server_match {
                                             Some(sc) => {
-                                                // Already registered — update if name differs
-                                                if sc.name != cube.name {
+                                                // Already registered — re-sync if the name or the
+                                                // Vault-presence flag drifted from what the server
+                                                // holds (PLAN-duress-vault-gate PR 3: catch-up sync
+                                                // carries `has_vault` so a Vault created while
+                                                // offline is reported on the next launch).
+                                                let local_has_vault =
+                                                    cube.vault_wallet_id.is_some();
+                                                let vault_drift =
+                                                    sc.has_vault != Some(local_has_vault);
+                                                if sc.name != cube.name || vault_drift {
                                                     let req = UpdateCubeRequest {
-                                                        name: Some(cube.name.clone()),
+                                                        name: (sc.name != cube.name)
+                                                            .then(|| cube.name.clone()),
                                                         status: None,
+                                                        has_vault: Some(local_has_vault),
                                                     };
                                                     client
                                                         .update_cube(&sc.id.to_string(), req)
@@ -1814,6 +1831,7 @@ impl Home {
                                                     uuid: cube.id.clone(),
                                                     name: cube.name.clone(),
                                                     network: cube.api_network_string(),
+                                                    has_vault: cube.vault_wallet_id.is_some(),
                                                 };
                                                 client.register_cube(req).await.is_ok()
                                             }
