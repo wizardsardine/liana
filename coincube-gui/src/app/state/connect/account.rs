@@ -775,6 +775,14 @@ pub struct ConnectAccountPanel {
     /// entering the Duress tab. Only mainnet cubes are tracked — testnet
     /// cubes hold no value, so their backup state doesn't matter here.
     pub duress_cubes: Option<Vec<DuressCube>>,
+    /// Monotonic token identifying the latest `load_duress_cubes` fetch.
+    /// `session_generation` only changes on login/logout, so two concurrent
+    /// checklist fetches in one session share it — an older in-flight fetch
+    /// could land after a newer one and overwrite fresh data (e.g. a
+    /// pre-Vault-creation fetch clobbering the post-creation reload, reopening
+    /// the Tier-1 gate). Each `reload`/`invalidate` bumps this; `CubesLoaded`
+    /// applies only when it still matches, so only the newest fetch wins.
+    duress_cubes_seq: u64,
     /// Server-side duress state (enrolled / active), loaded on entering the
     /// Duress tab so the screen reflects the enabled state instead of the
     /// setup flow once duress is enrolled. `None` until the first fetch.
@@ -825,6 +833,7 @@ impl ConnectAccountPanel {
             duress_disable: None,
             duress_contacts: DuressContactsState::default(),
             duress_cubes: None,
+            duress_cubes_seq: 0,
             duress_state: None,
             duress_locally_armed: false,
             renewal_banner_dismissed: false,
@@ -895,7 +904,10 @@ impl ConnectAccountPanel {
         if !entitled {
             return iced::Task::none();
         }
-        load_duress_cubes(&self.client, self.session_generation)
+        // Bump the load token so any older in-flight fetch is discarded when it
+        // lands (its seq will no longer match) — only this newest fetch wins.
+        self.duress_cubes_seq += 1;
+        load_duress_cubes(&self.client, self.session_generation, self.duress_cubes_seq)
     }
 
     /// Invalidate the cached duress checklist so the vault gate fails closed
@@ -905,8 +917,14 @@ impl ConnectAccountPanel {
     /// cache — dropping it to `None` makes `duress_tier1_gate_blocked` block
     /// (master I7) until `reload_duress_cubes` repopulates with the Cube's
     /// now-present Vault (whose descriptor isn't backed up yet → blocks).
+    ///
+    /// Also bumps the load token so any fetch already in flight (which read
+    /// the *pre-invalidation* state — e.g. a pre-Vault-creation checklist) is
+    /// discarded when it lands, instead of racing back over the invalidation
+    /// and reopening the gate.
     pub fn invalidate_duress_cubes(&mut self) {
         self.duress_cubes = None;
+        self.duress_cubes_seq += 1;
     }
 
     /// Reload server-side duress state (enrolled / active) for the Duress
@@ -2970,10 +2988,15 @@ impl ConnectAccountPanel {
                     }
                 }
             }
-            DuressMessage::CubesLoaded(cubes, gen) => {
-                // Only overwrite on a successful fetch (`Some`), so a transient
+            DuressMessage::CubesLoaded(cubes, gen, seq) => {
+                // Apply only the newest fetch: `gen` guards against a prior
+                // session, `seq` against an older in-flight fetch in this
+                // session landing after a newer one (which could restore a
+                // stale, e.g. pre-Vault-creation, checklist and reopen the
+                // gate). Only overwrite on success (`Some`) so a transient
                 // failure doesn't blank a previously-loaded checklist.
-                if gen == self.session_generation && cubes.is_some() {
+                if gen == self.session_generation && seq == self.duress_cubes_seq && cubes.is_some()
+                {
                     self.duress_cubes = cubes;
                 }
             }
@@ -4046,7 +4069,7 @@ pub fn load_duress_alert_contacts(client: &CoincubeClient, generation: u64) -> i
 /// any error resolves to `None` (the handler then keeps any previously
 /// loaded list rather than blanking it), and an absent list leaves the
 /// screen on its generic recovery-kit copy.
-fn load_duress_cubes(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
+fn load_duress_cubes(client: &CoincubeClient, generation: u64, seq: u64) -> iced::Task<Message> {
     use crate::services::coincube::CoincubeError;
     let client = client.clone();
     iced::Task::perform(
@@ -4114,7 +4137,7 @@ fn load_duress_cubes(client: &CoincubeClient, generation: u64) -> iced::Task<Mes
         },
         move |cubes| {
             Message::View(view::Message::ConnectAccount(
-                ConnectAccountMessage::Duress(DuressMessage::CubesLoaded(cubes, generation)),
+                ConnectAccountMessage::Duress(DuressMessage::CubesLoaded(cubes, generation, seq)),
             ))
         },
     )
@@ -5001,6 +5024,45 @@ mod duress_enroll_tests {
         panel.invalidate_duress_cubes();
         assert!(panel.duress_cubes.is_none());
         assert!(duress_tier1_gate_blocked(panel.duress_cubes.as_deref()));
+    }
+
+    #[test]
+    fn stale_cubes_fetch_cannot_overwrite_a_newer_one() {
+        // Two checklist fetches in flight in one session share
+        // `session_generation`; the per-fetch `duress_cubes_seq` is what stops
+        // an older one landing last and restoring stale (e.g. pre-Vault) data.
+        let mut panel = ConnectAccountPanel::new();
+
+        // Simulate: fetch A was issued (seq 1), then a newer fetch B (seq 2)
+        // was issued and has already applied a fresh, gate-blocking checklist.
+        panel.duress_cubes_seq = 2;
+        let fresh = vec![DuressCube {
+            has_vault: Some(true),
+            halves: Some((true, false)), // Vault, descriptor missing → blocks
+            ..duress_cube("vault", true)
+        }];
+        panel.duress_cubes = Some(fresh);
+
+        // The older fetch A now lands (seq 1) carrying stale vaultless data.
+        let stale = vec![DuressCube {
+            has_vault: Some(false),
+            halves: Some((true, false)),
+            ..duress_cube("vault", true)
+        }];
+        let gen = panel.session_generation;
+        let _ = panel.update_duress(DuressMessage::CubesLoaded(Some(stale), gen, 1));
+
+        // Dropped — the gate stays blocked, not reopened by the stale fetch.
+        assert!(duress_tier1_gate_blocked(panel.duress_cubes.as_deref()));
+
+        // A fetch matching the current seq still applies.
+        let newer = vec![DuressCube {
+            has_vault: Some(true),
+            halves: Some((true, true)), // complete → unblocks
+            ..duress_cube("vault", true)
+        }];
+        let _ = panel.update_duress(DuressMessage::CubesLoaded(Some(newer), gen, 2));
+        assert!(!duress_tier1_gate_blocked(panel.duress_cubes.as_deref()));
     }
 
     #[test]
