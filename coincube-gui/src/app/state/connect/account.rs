@@ -276,6 +276,14 @@ impl DuressCube {
     /// unknown fails closed (master decision 4).
     pub fn blocks_gate(&self) -> bool {
         match self.has_vault {
+            // Vaultless → never blocks (I2). For an other-device Cube this is
+            // the server-reported `false`, which — under monotonic reporting
+            // (I8) — can't be distinguished from a Vault whose holder hasn't
+            // reported `true` yet. Trusting it as vaultless is a *deliberate*
+            // accepted limitation (master §9): treating it as unknown would
+            // dead-end every seed-only other-device Cube, the exact I2 failure.
+            // This-device Cubes carry authoritative local `has_vault`, so they
+            // are unaffected; other-device coverage converges as holders sync.
             Some(false) => false,
             Some(true) => self.completeness() != CubeBackupCompleteness::Complete,
             None => true,
