@@ -207,14 +207,26 @@ impl ConnectPanel {
         self.cube.register_cube()
     }
 
-    /// Re-report the active Cube's Vault presence after a mid-session Vault
-    /// creation, so the server's `hasVault` flips for other-device duress
-    /// gating without waiting for a re-registration (PLAN-duress-vault-gate
-    /// PR 3). Delegates to the cube panel; no-ops when unregistered or
-    /// signed out.
+    /// React to a mid-session Vault creation (PLAN-duress-vault-gate PR 3):
+    ///
+    /// 1. Re-report the Cube's Vault presence so the server's `hasVault` flips
+    ///    for other-device duress gating without waiting for a re-registration.
+    /// 2. **Invalidate + refresh the duress checklist.** The cached
+    ///    `duress_cubes` may still show this Cube as vaultless/complete, and
+    ///    the Tier-1 gate reads that cache — so drop it (gate fails closed)
+    ///    and re-fetch, otherwise enrollment could proceed on stale data
+    ///    before the new Vault's Wallet Descriptor is backed up. Local settings
+    ///    already carry the Vault, so the reload gates this Cube even before
+    ///    the server round-trip.
+    ///
+    /// No-ops appropriately when unregistered / signed out / not entitled.
     pub fn report_vault_created(&mut self) -> iced::Task<Message> {
         self.sync_client();
-        self.cube.report_vault_created()
+        self.account.invalidate_duress_cubes();
+        iced::Task::batch([
+            self.cube.report_vault_created(),
+            self.account.reload_duress_cubes(),
+        ])
     }
 
     /// Check if avatar should be loaded and return task if so.

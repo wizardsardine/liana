@@ -890,6 +890,17 @@ impl ConnectAccountPanel {
         load_duress_cubes(&self.client, self.session_generation)
     }
 
+    /// Invalidate the cached duress checklist so the vault gate fails closed
+    /// until a fresh fetch lands. Called when a Vault is created mid-session
+    /// (PLAN-duress-vault-gate PR 3): the cached `duress_cubes` may still
+    /// show this Cube as vaultless/complete, and the Tier-1 gate reads that
+    /// cache — dropping it to `None` makes `duress_tier1_gate_blocked` block
+    /// (master I7) until `reload_duress_cubes` repopulates with the Cube's
+    /// now-present Vault (whose descriptor isn't backed up yet → blocks).
+    pub fn invalidate_duress_cubes(&mut self) {
+        self.duress_cubes = None;
+    }
+
     /// Reload server-side duress state (enrolled / active) for the Duress
     /// intro screen, so it can show the enabled state instead of the setup
     /// flow. No-op for accounts without the duress entitlement. Best-effort:
@@ -4957,6 +4968,29 @@ mod duress_enroll_tests {
             ..duress_cube("bad", true)
         };
         assert!(duress_tier1_gate_blocked(Some(&[complete, incomplete])));
+    }
+
+    #[test]
+    fn invalidating_checklist_fails_the_gate_closed() {
+        // Simulates a mid-session Vault creation: the cached checklist still
+        // shows this Cube as vaultless (and therefore never-blocking), which
+        // would open the Tier-1 gate on stale data. Invalidating the cache
+        // must drop it to `None` so the gate fails closed until a fresh fetch
+        // reflects the new Vault (PLAN-duress-vault-gate PR 3).
+        let mut panel = ConnectAccountPanel::new();
+
+        // Stale cache: a vaultless-complete Cube — gate would be OPEN.
+        panel.duress_cubes = Some(vec![DuressCube {
+            has_vault: Some(false),
+            halves: Some((true, false)),
+            ..duress_cube("stale", true)
+        }]);
+        assert!(!duress_tier1_gate_blocked(panel.duress_cubes.as_deref()));
+
+        // After a Vault is created, the cache is invalidated → gate blocks.
+        panel.invalidate_duress_cubes();
+        assert!(panel.duress_cubes.is_none());
+        assert!(duress_tier1_gate_blocked(panel.duress_cubes.as_deref()));
     }
 
     #[test]
