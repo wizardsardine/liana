@@ -1866,6 +1866,29 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
                     .push(iced::widget::Space::new().height(Length::Fixed(14.0)))
                     .push(list);
             }
+            // Transparency footnote for the has_vault gate's accepted
+            // limitation (PLAN-duress-vault-gate master §9): other-device
+            // Cubes are shown as *reported to Connect*, and a Vault created on
+            // another device that hasn't synced yet can still read as
+            // vaultless here. Only surfaced when the checklist actually
+            // includes a Cube this device doesn't hold, so single-device users
+            // aren't shown an irrelevant caveat.
+            let has_other_device_cube = state
+                .duress_cubes
+                .as_deref()
+                .is_some_and(|cubes| cubes.iter().any(|c| !c.local));
+            if has_other_device_cube {
+                card_col = card_col
+                    .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+                    .push(
+                        text::caption(
+                            "Cubes on your other devices are shown as reported to Connect. A \
+                             Vault created on another device that hasn't synced yet may not \
+                             appear here — open that device to confirm its Recovery Kit.",
+                        )
+                        .color(color::GREY_3),
+                    );
+            }
             container(card_col.padding(20).spacing(2))
                 .style(card_style)
                 .width(Length::Fill)
