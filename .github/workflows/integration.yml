@@ -125,12 +125,19 @@ jobs:
             chmod 754 electrs
             export ELECTRS_PATH=$PWD/electrs
           fi
-          curl -LO https://github.com/coincubetech/coincube/releases/download/v1.0.0/coincube-1.0.0-x86_64-unknown-linux-gnu.tar.gz
-          echo "9979f50c65991d2417b0c6c57701f00ebf91cdcd10b9583de0bcc9d898f0dc38 coincube-1.0.0-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c
-          tar -xzf coincube-1.0.0-x86_64-unknown-linux-gnu.tar.gz
-          # Find the binary
-          OLD_PATH=$(find $PWD -type f -name coincubed | head -n 1)
-          export OLD_COINCUBED_PATH="$OLD_PATH"
+          # The migration test (tests/test_misc.py::test_migration) needs a
+          # genuinely-old coincubed binary to build a legacy datadir. Upstream
+          # Liana shipped `lianad` in its release archive and pointed
+          # OLD_LIANAD_PATH straight at it; Coincube's releases ship only the
+          # `coincube` GUI (the v1.0.0 linux tarball contains coincube/LICENCE/
+          # README.md — no coincubed). The old `find $PWD -name coincubed`
+          # therefore matched nothing from a release and silently fell through
+          # to the freshly-built target/release/coincubed, turning the migration
+          # test into a meaningless new-vs-new comparison that passes only
+          # because the current daemon's version (0.9.0) happens to be in the
+          # accepted set. Leave OLD_COINCUBED_PATH unset so test_migration skips
+          # honestly. To restore real coverage, publish a coincubed binary as a
+          # release asset and point OLD_COINCUBED_PATH at it explicitly here.
           # Run the functional tests
           if [ "$USE_KNOTS" = "TRUE" ]; then
             # This leg exists to validate standard transaction relay under the
