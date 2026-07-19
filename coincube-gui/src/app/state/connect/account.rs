@@ -2714,6 +2714,13 @@ impl ConnectAccountPanel {
                         return self.reload_duress_cubes();
                     }
                     self.open_enroll_wizard(EnrollTier::Tier1);
+                    // Kick a fresh checklist fetch as the user commits to
+                    // enrolling. The cached list the gate just read could be
+                    // briefly stale (a routine reload keeps the prior list in
+                    // place while its refetch is in flight); firing one now
+                    // guarantees the `SubmitEnrollment` re-check runs against
+                    // current completeness by the time the wizard is finished.
+                    return self.reload_duress_cubes();
                 } else {
                     self.open_enroll_wizard(EnrollTier::Sovereign);
                 }
