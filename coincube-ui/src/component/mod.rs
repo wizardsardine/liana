@@ -87,9 +87,7 @@ pub fn received_celebration_page<'a, M: Clone + 'a>(
     // windows, where it can't be scrolled into reach — leaving the user
     // stuck on the splash. Make the whole page a dismiss target so a click
     // anywhere (including on the image) closes it, not just the button.
-    iced::widget::mouse_area(page)
-        .on_press(on_dismiss)
-        .into()
+    iced::widget::mouse_area(page).on_press(on_dismiss).into()
 }
 
 pub fn sent_celebration_page<'a, M: Clone + 'a>(
@@ -155,9 +153,7 @@ pub fn sent_celebration_page<'a, M: Clone + 'a>(
 
     // Like the received page, the tall artwork can push "Back" out of reach on
     // short windows, so make a click anywhere on the splash dismiss it too.
-    iced::widget::mouse_area(page)
-        .on_press(on_dismiss)
-        .into()
+    iced::widget::mouse_area(page).on_press(on_dismiss).into()
 }
 
 /// Empty-state placeholder card — centered icon + title + subtitle on a
