@@ -242,12 +242,32 @@ pub fn cube_backup_completeness(
 
 impl DuressCube {
     /// This Cube's backup completeness (shared by badge + gate).
+    ///
+    /// When the passkey shape is known (this-device Cubes, from local
+    /// settings) it feeds straight into [`cube_backup_completeness`]. When
+    /// it's unknown (other-device Cubes, `is_passkey == None`) we must not
+    /// assume "mnemonic": a passkey Vault Cube's kit is descriptor-only, so
+    /// treating it as a mnemonic would misread a complete descriptor-only kit
+    /// as "Master Seed Phrase missing" — wrong copy, and a wrong-criterion
+    /// block. Instead, evaluate both interpretations: commit to the verdict
+    /// only when they agree, else fail closed to `Unknown` (blocks without
+    /// claiming which half is missing). This still passes the unambiguous
+    /// cases (e.g. both halves present ⇒ Complete under either shape), so
+    /// other-device coverage isn't lost — only the genuinely shape-dependent
+    /// rows fall back to "couldn't verify".
     pub fn completeness(&self) -> CubeBackupCompleteness {
-        cube_backup_completeness(
-            self.has_vault,
-            self.is_passkey.unwrap_or(false),
-            self.halves,
-        )
+        match self.is_passkey {
+            Some(is_passkey) => cube_backup_completeness(self.has_vault, is_passkey, self.halves),
+            None => {
+                let as_mnemonic = cube_backup_completeness(self.has_vault, false, self.halves);
+                let as_passkey = cube_backup_completeness(self.has_vault, true, self.halves);
+                if as_mnemonic == as_passkey {
+                    as_mnemonic
+                } else {
+                    CubeBackupCompleteness::Unknown
+                }
+            }
+        }
     }
 
     /// Whether this Cube blocks Tier-1 enrollment. Only Vault Cubes block:
@@ -4800,6 +4820,59 @@ mod duress_enroll_tests {
         );
         // No local, no server field (older API) → Unknown vault presence.
         assert_eq!(merge_cube_vault_shape(None, None), (None, None, false));
+    }
+
+    #[test]
+    fn completeness_with_unknown_passkey_shape() {
+        use CubeBackupCompleteness::*;
+
+        // Helper: an other-device Vault Cube (is_passkey unknown) with the
+        // given kit halves.
+        let other_device_vault = |halves: Option<(bool, bool)>| DuressCube {
+            has_vault: Some(true),
+            is_passkey: None,
+            local: false,
+            halves,
+            ..duress_cube("other", true)
+        };
+
+        // Both halves present → Complete under either shape → committed.
+        assert_eq!(
+            other_device_vault(Some((true, true))).completeness(),
+            Complete
+        );
+        // No kit at all → NoKit under either shape → committed.
+        assert_eq!(
+            other_device_vault(Some((false, false))).completeness(),
+            NoKit
+        );
+
+        // Descriptor-only kit: mnemonic reads MissingSeed (block), passkey
+        // reads Complete (allow). Shape-dependent → must NOT claim MissingSeed;
+        // fail closed to Unknown instead. This is the misclassification the
+        // review flagged.
+        assert_eq!(
+            other_device_vault(Some((false, true))).completeness(),
+            Unknown
+        );
+        // Seed-only kit: mnemonic MissingDescriptor vs passkey NoKit — both
+        // block but differ, so Unknown (honest "couldn't verify").
+        assert_eq!(
+            other_device_vault(Some((true, false))).completeness(),
+            Unknown
+        );
+        // Status not fetched → Unknown regardless of shape.
+        assert_eq!(other_device_vault(None).completeness(), Unknown);
+
+        // A known-passkey (this-device) Cube is unaffected: descriptor-only is
+        // Complete, not MissingSeed.
+        let local_passkey_vault = DuressCube {
+            has_vault: Some(true),
+            is_passkey: Some(true),
+            halves: Some((false, true)),
+            ..duress_cube("local-passkey", true)
+        };
+        assert_eq!(local_passkey_vault.completeness(), Complete);
     }
 
     #[test]
