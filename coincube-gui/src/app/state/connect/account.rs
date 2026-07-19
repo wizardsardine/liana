@@ -270,6 +270,18 @@ pub fn duress_gate_blocked(cubes: &[DuressCube]) -> bool {
     cubes.iter().any(DuressCube::blocks_gate)
 }
 
+/// Whether Tier-1 enrollment should be blocked given the (possibly
+/// not-yet-loaded) checklist. **Fails closed on `None`**: until the cube
+/// list + kit statuses have loaded we can't confirm every Vault Cube is
+/// safe, so an unverified fleet blocks (master I7 / Resolved decision 4) —
+/// a failed fetch also leaves `None` and stays blocked, with the Tier-2
+/// bypass as the offline escape hatch. A loaded-but-empty fleet (`Some([])`)
+/// does not block. Single source of truth for both the view (disable the
+/// CTA) and the state (belt-and-suspenders re-check).
+pub fn duress_tier1_gate_blocked(cubes: Option<&[DuressCube]>) -> bool {
+    cubes.map_or(true, duress_gate_blocked)
+}
+
 /// State for the Contacts section within ConnectAccountPanel.
 pub struct ContactsState {
     pub step: ContactsStep,
@@ -2632,14 +2644,16 @@ impl ConnectAccountPanel {
                 // landed after the last paint) could still fire this. Only
                 // gates the Tier-1 (with-CRK) path — the Tier-2 bypass and the
                 // sovereign flow are deliberately never gated.
+                //
+                // Fail closed when the checklist hasn't loaded (`None`): an
+                // unverified fleet must not open Tier-1 enrollment (master I7 /
+                // Resolved decision 4), matching the view's `map_or(true, …)`
+                // guard. Reload so the checklist (and any retry affordance)
+                // becomes current instead of silently proceeding.
                 if entitled {
-                    if self
-                        .duress_cubes
-                        .as_deref()
-                        .is_some_and(duress_gate_blocked)
-                    {
-                        // No-op: the gate is blocked. A fresh reload keeps the
-                        // checklist (and any retry affordance) current.
+                    if duress_tier1_gate_blocked(self.duress_cubes.as_deref()) {
+                        // No-op: gate blocked (or fleet not yet verified). A
+                        // fresh reload keeps the checklist current.
                         return self.reload_duress_cubes();
                     }
                     self.open_enroll_wizard(EnrollTier::Tier1);
@@ -4837,10 +4851,39 @@ mod duress_enroll_tests {
 
         // Slice-level gate: any blocker blocks.
         assert!(!duress_gate_blocked(&[
-            vaultless_nokit,
+            vaultless_nokit.clone(),
             vault_complete.clone()
         ]));
-        assert!(duress_gate_blocked(&[vault_complete, vault_incomplete]));
+        assert!(duress_gate_blocked(&[
+            vault_complete.clone(),
+            vault_incomplete
+        ]));
+    }
+
+    #[test]
+    fn tier1_gate_fails_closed_until_checklist_loads() {
+        // Not loaded (or a failed fetch left `None`) → blocked. No fail-open
+        // window before the fleet is verified (master I7 / decision 4).
+        assert!(duress_tier1_gate_blocked(None));
+
+        // Loaded but empty → nothing to block on → allowed.
+        assert!(!duress_tier1_gate_blocked(Some(&[])));
+
+        // Loaded, all complete → allowed.
+        let complete = DuressCube {
+            has_vault: Some(true),
+            halves: Some((true, true)),
+            ..duress_cube("ok", true)
+        };
+        assert!(!duress_tier1_gate_blocked(Some(&[complete.clone()])));
+
+        // Loaded, an incomplete Vault Cube → blocked.
+        let incomplete = DuressCube {
+            has_vault: Some(true),
+            halves: Some((true, false)),
+            ..duress_cube("bad", true)
+        };
+        assert!(duress_tier1_gate_blocked(Some(&[complete, incomplete])));
     }
 
     #[test]

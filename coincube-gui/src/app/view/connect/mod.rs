@@ -21,9 +21,10 @@ use crate::{
     app::{
         menu::ConnectSubMenu,
         state::connect::{
-            duress_gate_blocked, AvatarFlowStep, CheckoutPhase, ConnectAccountPanel,
-            ConnectCubePanel, ConnectFlowStep, ConnectPanel, CubeBackupCompleteness,
-            DuressContactsStep, DuressCube, DuressGateStatus, PlanLifecycle,
+            duress_gate_blocked, duress_tier1_gate_blocked, AvatarFlowStep, CheckoutPhase,
+            ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep, ConnectPanel,
+            CubeBackupCompleteness, DuressContactsStep, DuressCube, DuressGateStatus,
+            PlanLifecycle,
         },
         view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage, DuressMessage},
     },
@@ -1874,24 +1875,32 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
         // The hard vault gate (PLAN-duress-vault-gate PR 2): Tier-1 enrollment
         // is blocked while any Vault Cube in the checklist has an incomplete
         // (or unverifiable) Recovery Kit — a duress wipe of such a Cube would
-        // be irreversible. Only evaluated once the checklist has loaded; the
-        // Tier-2 bypass below is deliberately never gated.
-        let gate_blocked = state
-            .duress_cubes
-            .as_deref()
-            .is_some_and(duress_gate_blocked);
+        // be irreversible. The Tier-2 bypass below is deliberately never gated.
+        //
+        // Fail closed on an unloaded checklist (`None`): until the cube list +
+        // kit statuses land we can't confirm every Vault Cube is safe, so the
+        // CTA stays disabled rather than opening a fail-open window before the
+        // fetch completes (master I7 / Resolved decision 4). A failed fetch
+        // also leaves `None`, so it stays blocked with the bypass as the
+        // offline escape hatch. An empty (loaded) list is `Some([])` → not
+        // blocked.
+        let cubes_loaded = state.duress_cubes.is_some();
+        let gate_blocked = duress_tier1_gate_blocked(state.duress_cubes.as_deref());
         if gate_blocked {
             // Disabled CTA — `button::primary` with no `.on_press` renders
             // inert. The state handler re-checks the gate too, so a stale view
             // that somehow fires `StartEnrollment` no-ops (belt-and-suspenders).
             col = col.push(button::primary(None, "Set up Duress Mode").width(Length::Fixed(240.0)));
             col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
-            col = col.push(
-                text::p2_regular(
-                    "Finish the Recovery Kit for your Vault Cubes above to enable Duress Mode.",
-                )
-                .color(color::GREY_3),
-            );
+            // Distinguish "still verifying" from "known incomplete": the former
+            // shouldn't accuse the user of an unfinished kit before we've even
+            // checked.
+            let gate_copy = if cubes_loaded {
+                "Finish the Recovery Kit for your Vault Cubes above to enable Duress Mode."
+            } else {
+                "Checking your Cubes' Recovery Kits…"
+            };
+            col = col.push(text::p2_regular(gate_copy).color(color::GREY_3));
         } else {
             col = col.push(
                 button::primary(None, "Set up Duress Mode")
