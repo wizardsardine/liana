@@ -2798,6 +2798,32 @@ impl ConnectAccountPanel {
                 }
             }
             DuressMessage::SubmitEnrollment => {
+                // Vault gate backstop (PLAN-duress-vault-gate). The gate is
+                // enforced at StartEnrollment, but Cube state can change while
+                // the wizard is open — a mid-session Vault creation calls
+                // `invalidate_duress_cubes` and expects the gate to stay closed
+                // until the new Vault's kit is complete. Re-check at the actual
+                // commit for Tier-1 (Tier-2 bypass and Sovereign are never
+                // gated), mirroring the PIN-collision pre-flight below: surface
+                // the block on the wizard and refresh the checklist, without
+                // firing the enroll. Fails closed on an invalidated/unloaded
+                // checklist (`None`), which is exactly the mid-wizard-Vault case.
+                let tier = self.duress_enroll.as_ref().map(|e| e.tier);
+                if tier == Some(EnrollTier::Tier1)
+                    && duress_tier1_gate_blocked(self.duress_cubes.as_deref())
+                {
+                    if let Some(e) = &mut self.duress_enroll {
+                        e.error = Some(
+                            "A Vault Cube still needs its Recovery Kit finished — its Master \
+                             Seed Phrase and Vault Wallet Descriptor — before you can enable \
+                             Duress Mode. Finish it, then try again."
+                                .to_string(),
+                        );
+                    }
+                    // Refresh so the intro checklist is current if the user
+                    // cancels back to it.
+                    return self.reload_duress_cubes();
+                }
                 let Some(e) = &mut self.duress_enroll else {
                     return iced::Task::none();
                 };
@@ -5024,6 +5050,39 @@ mod duress_enroll_tests {
         panel.invalidate_duress_cubes();
         assert!(panel.duress_cubes.is_none());
         assert!(duress_tier1_gate_blocked(panel.duress_cubes.as_deref()));
+    }
+
+    #[test]
+    fn submit_enrollment_rechecks_the_vault_gate_for_tier1() {
+        // The gate is enforced at StartEnrollment, but state can change while
+        // the wizard is open (a mid-wizard Vault creation invalidates the
+        // checklist). SubmitEnrollment must re-check for Tier-1 and refuse.
+        let mut panel = ConnectAccountPanel::new();
+        panel.duress_enroll = Some(state(EnrollTier::Tier1, DuressEnrollStep::Confirm));
+
+        // A Vault Cube with an incomplete kit is now in the checklist.
+        panel.duress_cubes = Some(vec![DuressCube {
+            has_vault: Some(true),
+            halves: Some((true, false)), // descriptor missing → blocks
+            ..duress_cube("vault", true)
+        }]);
+
+        let _ = panel.update_duress(DuressMessage::SubmitEnrollment);
+
+        // Enrollment did not proceed: wizard still open, not submitting, and
+        // the block is surfaced on the wizard.
+        let e = panel.duress_enroll.as_ref().expect("wizard stays open");
+        assert!(!e.submitting);
+        assert!(e.error.is_some());
+
+        // Fail-closed on an invalidated (None) checklist too — the exact
+        // mid-wizard-Vault-creation case.
+        panel.duress_enroll = Some(state(EnrollTier::Tier1, DuressEnrollStep::Confirm));
+        panel.invalidate_duress_cubes();
+        let _ = panel.update_duress(DuressMessage::SubmitEnrollment);
+        let e = panel.duress_enroll.as_ref().expect("wizard stays open");
+        assert!(!e.submitting);
+        assert!(e.error.is_some());
     }
 
     #[test]
