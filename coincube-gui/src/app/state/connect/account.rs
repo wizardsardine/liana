@@ -307,7 +307,7 @@ pub fn duress_gate_blocked(cubes: &[DuressCube]) -> bool {
 /// does not block. Single source of truth for both the view (disable the
 /// CTA) and the state (belt-and-suspenders re-check).
 pub fn duress_tier1_gate_blocked(cubes: Option<&[DuressCube]>) -> bool {
-    cubes.map_or(true, duress_gate_blocked)
+    cubes.is_none_or(duress_gate_blocked)
 }
 
 /// State for the Contacts section within ConnectAccountPanel.
@@ -2686,9 +2686,9 @@ impl ConnectAccountPanel {
                 //
                 // Fail closed when the checklist hasn't loaded (`None`): an
                 // unverified fleet must not open Tier-1 enrollment (master I7 /
-                // Resolved decision 4), matching the view's `map_or(true, …)`
-                // guard. Reload so the checklist (and any retry affordance)
-                // becomes current instead of silently proceeding.
+                // Resolved decision 4) — `duress_tier1_gate_blocked` returns
+                // true for `None`. Reload so the checklist (and any retry
+                // affordance) becomes current instead of silently proceeding.
                 if entitled {
                     if duress_tier1_gate_blocked(self.duress_cubes.as_deref()) {
                         // No-op: gate blocked (or fleet not yet verified). A
@@ -4967,7 +4967,9 @@ mod duress_enroll_tests {
             halves: Some((true, true)),
             ..duress_cube("ok", true)
         };
-        assert!(!duress_tier1_gate_blocked(Some(&[complete.clone()])));
+        assert!(!duress_tier1_gate_blocked(Some(std::slice::from_ref(
+            &complete
+        ))));
 
         // Loaded, an incomplete Vault Cube → blocked.
         let incomplete = DuressCube {
