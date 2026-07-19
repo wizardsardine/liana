@@ -3009,8 +3009,12 @@ impl App {
                     let cube_name = self.cube_settings.name.clone();
                     // Report this Cube's Vault presence so other devices can
                     // evaluate the duress vault gate (PLAN-duress-vault-gate
-                    // PR 3). Captured before the async move.
-                    let cube_has_vault = self.cube_settings.vault_wallet_id.is_some();
+                    // PR 3). Monotonic upgrade-only: report `true` only when
+                    // this device holds the Vault, else omit (never clobber a
+                    // `true` reported by another device). Captured before the
+                    // async move.
+                    let cube_has_vault =
+                        self.cube_settings.vault_wallet_id.is_some().then_some(true);
                     let cube_uuid = cube_uuid.clone();
                     let registration_email = expected_email.clone();
                     Task::perform(
@@ -3039,7 +3043,7 @@ impl App {
                                     name: cube_name,
                                     network: net_str,
                                     has_vault: cube_has_vault,
-                                })
+                                }) // upgrade-only Option<bool>
                                 .await
                                 .map_err(|e| e.to_string())
                         },

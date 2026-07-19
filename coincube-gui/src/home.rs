@@ -18,8 +18,8 @@ use crate::pin_input;
 use crate::recover_own_cube::{self, RecoverOwnCubeMessage, RecoverOwnCubePanel};
 use crate::recover_vault::{self, RecoverVaultMessage, RecoverVaultPanel};
 use crate::services::coincube::{
-    CoincubeClient, CoincubeError, CubeLimitsResponse, CubeResponse, RegisterCubeRequest,
-    UpdateCubeRequest,
+    vault_presence_report, CoincubeClient, CoincubeError, CubeLimitsResponse, CubeResponse,
+    RegisterCubeRequest, UpdateCubeRequest,
 };
 #[cfg(not(target_os = "macos"))]
 use crate::services::passkey::CeremonyMode;
@@ -599,10 +599,12 @@ impl Home {
                                 uuid: cube.id.clone(),
                                 name: cube.name.clone(),
                                 network: cube.api_network_string(),
-                                // A freshly-created Cube has no Vault yet; the
-                                // flag flips later via the vault-creation
-                                // re-report (PLAN-duress-vault-gate PR 3).
-                                has_vault: cube.vault_wallet_id.is_some(),
+                                // Monotonic upgrade-only report: a freshly-
+                                // created Cube has no Vault yet, so omit the
+                                // flag (server default `false`). It flips later
+                                // via the vault-creation re-report
+                                // (PLAN-duress-vault-gate PR 3).
+                                has_vault: cube.vault_wallet_id.is_some().then_some(true),
                             };
                             let register_task = Task::perform(
                                 async move {
@@ -1801,21 +1803,28 @@ impl Home {
                                             server_cubes.iter().find(|sc| sc.uuid == cube.id);
                                         let ok = match server_match {
                                             Some(sc) => {
-                                                // Already registered — re-sync if the name or the
-                                                // Vault-presence flag drifted from what the server
-                                                // holds (PLAN-duress-vault-gate PR 3: catch-up sync
-                                                // carries `has_vault` so a Vault created while
-                                                // offline is reported on the next launch).
-                                                let local_has_vault =
-                                                    cube.vault_wallet_id.is_some();
-                                                let vault_drift =
-                                                    sc.has_vault != Some(local_has_vault);
-                                                if sc.name != cube.name || vault_drift {
+                                                // Already registered — re-sync if the name differs
+                                                // or this device can *upgrade* the Vault flag
+                                                // (PLAN-duress-vault-gate PR 3: a Vault created
+                                                // while offline is reported on the next launch).
+                                                //
+                                                // Upgrade-only: report `hasVault=true` solely when
+                                                // this device holds the Vault and the server doesn't
+                                                // already show it. Never send `false` — this device
+                                                // can't tell a vaultless Cube from one whose Vault
+                                                // lives on another device, and a spurious `false`
+                                                // would clobber a `true` that device reported and
+                                                // silently unblock its duress gate.
+                                                let vault_report = vault_presence_report(
+                                                    cube.vault_wallet_id.is_some(),
+                                                    sc.has_vault,
+                                                );
+                                                let name_drift = sc.name != cube.name;
+                                                if name_drift || vault_report.is_some() {
                                                     let req = UpdateCubeRequest {
-                                                        name: (sc.name != cube.name)
-                                                            .then(|| cube.name.clone()),
+                                                        name: name_drift.then(|| cube.name.clone()),
                                                         status: None,
-                                                        has_vault: Some(local_has_vault),
+                                                        has_vault: vault_report,
                                                     };
                                                     client
                                                         .update_cube(&sc.id.to_string(), req)
@@ -1826,12 +1835,16 @@ impl Home {
                                                 }
                                             }
                                             None => {
-                                                // Not registered — create
+                                                // Not registered — create. Monotonic upgrade-only:
+                                                // report the Vault only when present.
                                                 let req = RegisterCubeRequest {
                                                     uuid: cube.id.clone(),
                                                     name: cube.name.clone(),
                                                     network: cube.api_network_string(),
-                                                    has_vault: cube.vault_wallet_id.is_some(),
+                                                    has_vault: cube
+                                                        .vault_wallet_id
+                                                        .is_some()
+                                                        .then_some(true),
                                                 };
                                                 client.register_cube(req).await.is_ok()
                                             }

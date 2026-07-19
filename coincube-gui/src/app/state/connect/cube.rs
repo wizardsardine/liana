@@ -433,7 +433,10 @@ impl ConnectCubePanel {
             uuid: self.cube_uuid.clone(),
             name: self.cube_name.clone(),
             network: self.cube_network.clone(),
-            has_vault: self.cube_has_vault,
+            // Monotonic upgrade-only: assert the Vault only when this device
+            // holds it, else omit so a re-register never clobbers a `true`
+            // reported elsewhere (PLAN-duress-vault-gate PR 3).
+            has_vault: self.cube_has_vault.then_some(true),
         };
         iced::Task::perform(async move { client.register_cube(req).await }, |res| {
             Message::View(view::Message::ConnectCube(

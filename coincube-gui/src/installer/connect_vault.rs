@@ -107,8 +107,8 @@ pub async fn create_connect_vault(
             network,
             // This flow always accompanies a Vault (a Connect vault shell is
             // about to be created for this Cube), so report Vault presence
-            // (PLAN-duress-vault-gate PR 3).
-            has_vault: true,
+            // (PLAN-duress-vault-gate PR 3). Upgrade-only `Some(true)`.
+            has_vault: Some(true),
         })
         .await
         .map_err(|e| ConnectVaultError::Other(format!("Failed to register cube: {}", e)))?;

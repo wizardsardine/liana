@@ -4836,7 +4836,10 @@ mod duress_enroll_tests {
         assert!(other_device.blocks_gate());
 
         // Slice-level gate: any blocker blocks.
-        assert!(!duress_gate_blocked(&[vaultless_nokit, vault_complete.clone()]));
+        assert!(!duress_gate_blocked(&[
+            vaultless_nokit,
+            vault_complete.clone()
+        ]));
         assert!(duress_gate_blocked(&[vault_complete, vault_incomplete]));
     }
 
