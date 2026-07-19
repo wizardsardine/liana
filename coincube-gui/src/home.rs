@@ -371,9 +371,7 @@ impl Home {
                 // Open the picker for a cube that offers both methods. Snapshot
                 // the row so the modal stays valid even if the list reloads.
                 if let Some(cube) = self.remote_cubes.iter().find(|r| r.uuid == cube_uuid) {
-                    self.recovery_method_modal = Some(RecoveryMethodModal {
-                        cube: cube.clone(),
-                    });
+                    self.recovery_method_modal = Some(RecoveryMethodModal { cube: cube.clone() });
                 }
                 Task::none()
             }
@@ -1882,33 +1880,34 @@ impl Home {
                                 let client_ref = &rc_client;
                                 let remote_only: Vec<RemoteCube> = iced::futures::future::join_all(
                                     remote_source.into_iter().map(|sc| async move {
-                                        let (has_encrypted_seed, phone_recoverable, phone_full_cube) =
-                                            match client_ref.get_recovery_kit_status(sc.id).await {
-                                                Ok(status) => {
-                                                    let (phone_recoverable, phone_full_cube) =
-                                                        derive_phone_recovery(
-                                                            status.owner_self.as_ref(),
-                                                        );
-                                                    (
-                                                        status.has_encrypted_seed,
-                                                        phone_recoverable,
-                                                        phone_full_cube,
-                                                    )
-                                                }
-                                                // No kit/status yet → nothing recoverable.
-                                                Err(CoincubeError::NotFound) => {
-                                                    (false, false, false)
-                                                }
-                                                Err(e) => {
-                                                    log::warn!(
-                                                        "[LAUNCHER] Recovery Kit status probe \
-                                                         failed for \"{}\": {}",
-                                                        sc.name,
-                                                        e
+                                        let (
+                                            has_encrypted_seed,
+                                            phone_recoverable,
+                                            phone_full_cube,
+                                        ) = match client_ref.get_recovery_kit_status(sc.id).await {
+                                            Ok(status) => {
+                                                let (phone_recoverable, phone_full_cube) =
+                                                    derive_phone_recovery(
+                                                        status.owner_self.as_ref(),
                                                     );
-                                                    (false, false, false)
-                                                }
-                                            };
+                                                (
+                                                    status.has_encrypted_seed,
+                                                    phone_recoverable,
+                                                    phone_full_cube,
+                                                )
+                                            }
+                                            // No kit/status yet → nothing recoverable.
+                                            Err(CoincubeError::NotFound) => (false, false, false),
+                                            Err(e) => {
+                                                log::warn!(
+                                                    "[LAUNCHER] Recovery Kit status probe \
+                                                         failed for \"{}\": {}",
+                                                    sc.name,
+                                                    e
+                                                );
+                                                (false, false, false)
+                                            }
+                                        };
                                         RemoteCube {
                                             id: sc.id,
                                             uuid: sc.uuid,
@@ -3209,7 +3208,10 @@ pub enum ViewMessage {
     /// restore mode for a specific remote cube. `cube_id` is the numeric
     /// Connect id; `full_cube` picks Full-Cube vs Vault-only scope. Home
     /// forwards this to `UserFlow::RecoverOwnCubeWithPhone`.
-    RestoreWithPhone { cube_id: u64, full_cube: bool },
+    RestoreWithPhone {
+        cube_id: u64,
+        full_cube: bool,
+    },
     /// Open the recovery-method picker for a remote cube (payload is its
     /// `uuid`). Shown only when a cube has *both* a password Recovery Kit
     /// and a phone envelope; the user chooses which to use.
@@ -3767,11 +3769,7 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
 mod tests {
     use super::*;
 
-    fn owner_self(
-        has_recipient: bool,
-        tier: &str,
-        kinds: &[&str],
-    ) -> OwnerSelfRecoverySummary {
+    fn owner_self(has_recipient: bool, tier: &str, kinds: &[&str]) -> OwnerSelfRecoverySummary {
         OwnerSelfRecoverySummary {
             has_recipient,
             tier: tier.to_string(),
