@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import shutil
 
 from bip380.descriptors import Descriptor
@@ -128,6 +129,30 @@ class Coincubed(TailableProc):
                 "JSONRPC server started.",
             ]
         )
+        self._sync_rpc_socket_path()
+
+    def _sync_rpc_socket_path(self):
+        """Point the RPC client at the control socket the daemon actually bound.
+
+        Since coincubed 29f100ca the socket is no longer at
+        ``{data_directory}/coincubed_rpc``: to stay under the 104-byte
+        ``sun_path`` limit (notably on macOS) the daemon hashes the data
+        directory and binds at ``{tmpdir}/cc<hash>.sock`` (see
+        ``coincubed_rpc_socket_path`` in ``coincubed/src/datadir.rs``). Rather
+        than replicate Rust's hashing in Python, read the real path straight
+        from the daemon's own startup log — it logs ``Binding socket at
+        <path>`` (debug) immediately before the ``JSONRPC server started.``
+        line we just waited on, so the entry is already captured. Older daemons
+        that bound at the legacy path don't emit this line, so keep the
+        ``{data_directory}/coincubed_rpc`` path set in ``__init__`` as a
+        fallback.
+        """
+        pattern = r"Binding socket at (.+)"
+        line = self.is_in_log(pattern)
+        if line is None:
+            return
+        socket_path = re.search(pattern, line).group(1).strip()
+        self.rpc = UnixDomainSocketRpc(socket_path)
 
     def stop(self, timeout=5):
         try:
