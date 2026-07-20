@@ -1062,12 +1062,48 @@ pub struct RegenerationData {
 // Contacts System Types
 // =============================================================================
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A contact's role as reported by the API (lowercase on the wire).
+///
+/// Deserialization is deliberately **lenient**: an unrecognised value maps
+/// to [`ContactRole::Unknown`] instead of erroring. Serde aborts the entire
+/// response on an unknown variant, so a single new server-side role would
+/// otherwise blank the whole contact list — and everything that awaits it.
+/// That is not hypothetical: the backend added `"owner"` and it took out the
+/// keychain key picker, which fails on `get_contacts()` before it can build
+/// the (contact-independent) "My Keychain Keys" list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ContactRole {
     Keyholder,
     Beneficiary,
     Observer,
+    /// Reciprocal role the API writes on the *invitee's* side of the contact
+    /// pair when an invite is accepted — "this contact is the person who
+    /// invited me" (`coincube-api/.../invite/handlers/invite.go`, `contact2`).
+    /// Only ever received, never sent: the invite form offers Keyholder alone,
+    /// and the server rejects it on `POST /connect/invites` (`invite.go:87`).
+    Owner,
+    /// A role this build does not know about. Only produced by
+    /// deserialization; treated as "no capability" everywhere it is matched.
+    Unknown,
+}
+
+impl<'de> Deserialize<'de> for ContactRole {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Matched case-insensitively so a backend that ever switches to
+        // "Keyholder" doesn't silently degrade every row to Unknown.
+        let raw = String::deserialize(deserializer)?;
+        Ok(match raw.to_ascii_lowercase().as_str() {
+            "keyholder" => ContactRole::Keyholder,
+            "beneficiary" => ContactRole::Beneficiary,
+            "observer" => ContactRole::Observer,
+            "owner" => ContactRole::Owner,
+            _ => ContactRole::Unknown,
+        })
+    }
 }
 
 impl std::fmt::Display for ContactRole {
@@ -1076,6 +1112,8 @@ impl std::fmt::Display for ContactRole {
             ContactRole::Keyholder => write!(f, "Keyholder"),
             ContactRole::Beneficiary => write!(f, "Beneficiary"),
             ContactRole::Observer => write!(f, "Observer"),
+            ContactRole::Owner => write!(f, "Owner"),
+            ContactRole::Unknown => write!(f, "Unknown"),
         }
     }
 }
@@ -2788,5 +2826,79 @@ mod cube_has_vault_tests {
         });
         let resp: CubeResponse = serde_json::from_value(v).unwrap();
         assert_eq!(resp.has_vault, Some(true));
+    }
+}
+
+#[cfg(test)]
+mod contact_role_tests {
+    //! `ContactRole` is a wire type the backend can extend unilaterally, so
+    //! its deserializer is lenient. Regression cover for the `"owner"` role,
+    //! which the API writes on the invitee's side of every accepted invite
+    //! and which used to abort the whole `GET /connect/contacts` response.
+    use super::{Contact, ContactRole};
+    use serde_json::json;
+
+    fn contact_with_role(role: &str) -> serde_json::Value {
+        json!({
+            "id": 1,
+            "role": role,
+            "contactUser": { "id": 42, "email": "heir@example.com" },
+            "createdAt": "2026-07-19T00:00:00Z",
+        })
+    }
+
+    #[test]
+    fn known_roles_round_trip() {
+        for (wire, expected) in [
+            ("keyholder", ContactRole::Keyholder),
+            ("beneficiary", ContactRole::Beneficiary),
+            ("observer", ContactRole::Observer),
+            ("owner", ContactRole::Owner),
+        ] {
+            let got: ContactRole = serde_json::from_value(json!(wire)).unwrap();
+            assert_eq!(got, expected, "wire value {wire:?}");
+        }
+    }
+
+    #[test]
+    fn owner_role_deserializes_on_a_contact_row() {
+        // The exact shape that broke the keychain key picker: the reciprocal
+        // contact the API creates for the person who invited us.
+        let contact: Contact = serde_json::from_value(contact_with_role("owner")).unwrap();
+        assert_eq!(contact.role, ContactRole::Owner);
+        assert_eq!(contact.effective_contact_user_id(), Some(42));
+    }
+
+    #[test]
+    fn unknown_role_does_not_abort_the_response() {
+        // The regression that matters: one unrecognised role must degrade a
+        // single row, not blank the entire contact list. Serde aborts the
+        // whole array on a hard variant error, which is how a role addition
+        // took out surfaces that never even read the role.
+        let list: Vec<Contact> = serde_json::from_value(json!([
+            contact_with_role("keyholder"),
+            contact_with_role("executor"), // hypothetical future backend role
+            contact_with_role("owner"),
+        ]))
+        .expect("an unknown role must not fail the whole list");
+
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].role, ContactRole::Keyholder);
+        assert_eq!(list[1].role, ContactRole::Unknown);
+        assert_eq!(list[2].role, ContactRole::Owner);
+    }
+
+    #[test]
+    fn role_matching_is_case_insensitive() {
+        let got: ContactRole = serde_json::from_value(json!("Keyholder")).unwrap();
+        assert_eq!(got, ContactRole::Keyholder);
+    }
+
+    #[test]
+    fn keyholder_still_serializes_lowercase_for_the_invite_form() {
+        // Send path is unchanged: the server validates this value
+        // (invite.go:87) and only accepts the three invitable roles.
+        let json = serde_json::to_string(&ContactRole::Keyholder).unwrap();
+        assert_eq!(json, "\"keyholder\"");
     }
 }
