@@ -1017,12 +1017,7 @@ def test_start_rescan(coincubed, bitcoind):
     # First, get some coins
     for _ in range(10):
         addr = coincubed.rpc.getnewaddress()["address"]
-        # Floor the deposit so that spending a single one of these coins can't
-        # produce a sub-dust (< DUST_OUTPUT_SATS) output in spend_coins, which
-        # subtracts a flat fee and has no dust guard. Without a floor the
-        # unseeded randomness occasionally picks a ~600-sat coin and createspend
-        # rejects the resulting output ("Invalid output value").
-        amount = random.randint(10_000, COIN * 10) / COIN
+        amount = random.randint(1, COIN * 10) / COIN
         txid = bitcoind.rpc.sendtoaddress(addr, amount)
         bitcoind.generate_block(random.randint(1, 10), wait_for_mempool=txid)
     wait_for(lambda: len(list_coins()) == 10)
@@ -1032,14 +1027,12 @@ def test_start_rescan(coincubed, bitcoind):
     # without change, single or multiple inputs, sending externally or to self).
     for _ in range(5):
         addr = coincubed.rpc.getnewaddress()["address"]
-        # Floor the deposit so that spending a single one of these coins can't
-        # produce a sub-dust (< DUST_OUTPUT_SATS) output in spend_coins, which
-        # subtracts a flat fee and has no dust guard. Without a floor the
-        # unseeded randomness occasionally picks a ~600-sat coin and createspend
-        # rejects the resulting output ("Invalid output value").
-        amount = random.randint(10_000, COIN * 10) / COIN
+        amount = random.randint(1, COIN * 10) / COIN
         txid = bitcoind.rpc.sendtoaddress(addr, amount)
-        avail = list(unspent_coins())
+        # Only spend coins comfortably above spend_coins' flat per-input fee so
+        # the output can't fall below the dust limit — this also skips the small
+        # change coins that multi-input spends leave behind (matches upstream).
+        avail = list(c for c in unspent_coins() if c["amount"] > 1_000)
         to_spend = random.sample(avail, random.randint(1, len(avail)))
         spend_coins(coincubed, bitcoind, to_spend)
         bitcoind.generate_block(random.randint(1, 5), wait_for_mempool=2)
