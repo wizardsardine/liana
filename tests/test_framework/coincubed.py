@@ -42,8 +42,10 @@ class Coincubed(TailableProc):
         self.conf_file = os.path.join(datadir, "config.toml")
         self.cmd_line = [COINCUBED_PATH, "--conf", f"{self.conf_file}"]
         data_directory = os.path.join(datadir, "regtest")
-        socket_path = os.path.join(data_directory, "coincubed_rpc")
-        self.rpc = UnixDomainSocketRpc(socket_path)
+        # Legacy control-socket location, used by older daemons that don't log
+        # their bound path and as the reset target in _sync_rpc_socket_path.
+        self.legacy_socket_path = os.path.join(data_directory, "coincubed_rpc")
+        self.rpc = UnixDomainSocketRpc(self.legacy_socket_path)
         self.bitcoin_backend = bitcoin_backend
 
         with open(self.conf_file, "w") as f:
@@ -122,6 +124,12 @@ class Coincubed(TailableProc):
         )
 
     def start(self):
+        # Mark the current end of the captured log before the daemon starts.
+        # `self.logs` is never cleared, so after `restart_fresh` the history
+        # still holds earlier daemons' "Binding socket at" lines; the socket
+        # scan below must consider only the line *this* start produces, or it
+        # could latch onto a previous daemon's stale temp socket.
+        log_offset = len(self.logs)
         TailableProc.start(self)
         self.wait_for_logs(
             [
@@ -129,9 +137,9 @@ class Coincubed(TailableProc):
                 "JSONRPC server started.",
             ]
         )
-        self._sync_rpc_socket_path()
+        self._sync_rpc_socket_path(log_offset)
 
-    def _sync_rpc_socket_path(self):
+    def _sync_rpc_socket_path(self, search_from=0):
         """Point the RPC client at the control socket the daemon actually bound.
 
         Since coincubed 29f100ca the socket is no longer at
@@ -142,10 +150,16 @@ class Coincubed(TailableProc):
         than replicate Rust's hashing in Python, read the real path straight
         from the daemon's own startup log — it logs ``Binding socket at
         <path>`` (debug) immediately before the ``JSONRPC server started.``
-        line we just waited on, so the entry is already captured. Older daemons
-        that bound at the legacy path don't emit this line, so keep the
-        ``{data_directory}/coincubed_rpc`` path set in ``__init__`` as a
-        fallback.
+        line we just waited on, so the entry is already captured.
+
+        ``search_from`` is the log length captured just before this start (see
+        ``start``); the scan is restricted to lines from *this* daemon. This
+        matters across ``restart_fresh``: ``self.logs`` is never cleared, so an
+        earlier daemon's "Binding socket at" line lingers in the history and a
+        from-zero scan could bind a stale temp socket. When this start logged no
+        such line — an older daemon that binds the legacy
+        ``{data_directory}/coincubed_rpc`` path — reset to that legacy path
+        rather than keeping whatever a prior start pointed us at.
 
         NB: ``TailableProc.tail`` stores each log line as ``str(bytes)`` — the
         *repr* of the raw stdout bytes, e.g. ``b'... Binding socket at
@@ -157,8 +171,12 @@ class Coincubed(TailableProc):
         line is repr-wrapped or a plain decoded string.
         """
         pattern = r"Binding socket at (.+\.sock)"
-        line = self.is_in_log(pattern)
+        line = self.is_in_log(pattern, start=search_from)
         if line is None:
+            # This start logged no socket line — an older daemon binding the
+            # legacy path. Reset to it (a prior start on this object may have
+            # pointed us at a temp .sock).
+            self.rpc = UnixDomainSocketRpc(self.legacy_socket_path)
             return
         socket_path = re.search(pattern, line).group(1)
         self.rpc = UnixDomainSocketRpc(socket_path)
