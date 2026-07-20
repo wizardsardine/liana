@@ -146,12 +146,16 @@ jobs:
             pytest tests/test_knots.py -vvv
           elif [ "$BITCOIN_BACKEND_TYPE" = "electrs" ]; then
             # Deep reorg indexing is I/O-heavy and can starve when eight
-            # bitcoind/electrs pairs run together. Keep the broad suite
-            # parallel, then exercise this reorg deterministically on its own.
+            # bitcoind/electrs pairs run together (the daemon stops answering
+            # RPC mid-rescan and the call times out). Keep the broad suite
+            # parallel, then exercise the reorg-heavy tests deterministically on
+            # their own with a higher timeout.
             pytest tests/ -vvv -n 8 \
-              --deselect tests/test_chain.py::test_reorg_exclusion
+              --deselect tests/test_chain.py::test_reorg_exclusion \
+              --deselect tests/test_chain.py::test_rescan_edge_cases
             TIMEOUT=240 pytest \
-              tests/test_chain.py::test_reorg_exclusion -vvv
+              tests/test_chain.py::test_reorg_exclusion \
+              tests/test_chain.py::test_rescan_edge_cases -vvv
           else
             pytest tests/ -vvv -n 8
           fi
