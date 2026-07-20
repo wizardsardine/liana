@@ -3799,6 +3799,9 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    use crate::{app::state::connect::ConnectFlowStep, services::coincube::User};
 
     fn owner_self(has_recipient: bool, tier: &str, kinds: &[&str]) -> OwnerSelfRecoverySummary {
         OwnerSelfRecoverySummary {
@@ -3806,6 +3809,316 @@ mod tests {
             tier: tier.to_string(),
             envelope_kinds: kinds.iter().map(|k| k.to_string()).collect(),
         }
+    }
+
+    fn test_datadir() -> CoincubeDirectory {
+        CoincubeDirectory::new(PathBuf::new())
+    }
+
+    fn home() -> Home {
+        Home::new(test_datadir(), Some(Network::Bitcoin)).0
+    }
+
+    fn signed_in_home() -> Home {
+        let mut home = home();
+        home.connect_account.step = ConnectFlowStep::Dashboard;
+        home.connect_account.user = Some(User {
+            id: 7,
+            email: "founder@example.com".to_string(),
+            email_verified: Some(true),
+        });
+        home
+    }
+
+    fn cube(id: &str, name: &str, network: Network) -> CubeSettings {
+        CubeSettings::new_with_raw_id(id.to_string(), name.to_string(), network)
+    }
+
+    fn remote_cube(uuid: &str, name: &str, network: Network) -> RemoteCube {
+        RemoteCube {
+            id: 42,
+            uuid: uuid.to_string(),
+            name: name.to_string(),
+            network: settings::network_to_api_string(network),
+            has_recovery_kit: true,
+            has_encrypted_seed: true,
+            phone_recoverable: false,
+            phone_full_cube: false,
+        }
+    }
+
+    #[test]
+    fn bip39_suggestions_are_lowercase_limited_and_prefix_checked() {
+        assert!(bip39_suggestions("", 5).is_empty());
+        assert!(bip39_suggestions("ab", 0).is_empty());
+
+        let suggestions = bip39_suggestions("AB", 3);
+        assert_eq!(suggestions.len(), 3);
+        assert!(suggestions.iter().all(|word| word.starts_with("ab")));
+    }
+
+    #[test]
+    fn cube_limit_prefers_server_limit_and_counts_remote_cubes_on_current_network() {
+        let mut home = home();
+        home.account_tier = AccountTier::Free;
+        assert_eq!(home.cube_limit(), 2);
+
+        home.server_cube_limit = Some(5);
+        assert_eq!(home.cube_limit(), 5);
+
+        home.state = State::Cubes {
+            cubes: vec![
+                cube("local-a", "Local A", Network::Bitcoin),
+                cube("local-b", "Local B", Network::Bitcoin),
+            ],
+            create_cube: false,
+        };
+        home.remote_cubes = vec![
+            remote_cube("remote-mainnet", "Remote Mainnet", Network::Bitcoin),
+            remote_cube("remote-signet", "Remote Signet", Network::Signet),
+        ];
+
+        assert_eq!(home.total_cube_count(), 3);
+    }
+
+    #[test]
+    fn create_cube_form_toggles_and_resets_transient_inputs() {
+        let mut home = home();
+        home.state = State::Cubes {
+            cubes: Vec::new(),
+            create_cube: false,
+        };
+
+        let _ = home.update(Message::View(ViewMessage::ShowCreateCube(true)));
+        assert!(matches!(
+            home.state,
+            State::Cubes {
+                create_cube: true,
+                ..
+            }
+        ));
+
+        let _ = home.update(Message::View(ViewMessage::CubeNameEdited("  ".to_string())));
+        assert!(!home.create_cube_name.valid);
+        assert!(home.error.is_none());
+
+        home.create_cube_name.value = "Temporary".to_string();
+        home.create_cube_pin.digits = [
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+        ];
+        home.create_cube_pin_confirm.digits = [
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+        ];
+        home.recovery_words[0] = "abandon".to_string();
+        home.recovery_active_index = Some(0);
+        home.passkey_mode = true;
+
+        let _ = home.update(Message::View(ViewMessage::ShowCreateCube(false)));
+
+        assert!(matches!(
+            home.state,
+            State::Cubes {
+                create_cube: false,
+                ..
+            }
+        ));
+        assert!(home.create_cube_name.value.is_empty());
+        assert_eq!(home.create_cube_pin.value(), "");
+        assert_eq!(home.create_cube_pin_confirm.value(), "");
+        assert!(home.recovery_words.iter().all(String::is_empty));
+        assert!(home.recovery_active_index.is_none());
+        assert_eq!(home.passkey_mode, feature_flags::PASSKEY_ENABLED);
+    }
+
+    #[test]
+    fn create_cube_validation_reports_pin_and_limit_errors_before_side_effects() {
+        let mut home = home();
+        home.state = State::Cubes {
+            cubes: Vec::new(),
+            create_cube: true,
+        };
+        home.create_cube_name.value = "My Cube".to_string();
+
+        let _ = home.update(Message::View(ViewMessage::CreateCube));
+        assert_eq!(home.error.as_deref(), Some("Please enter all 4 PIN digits"));
+
+        home.create_cube_pin.digits = [
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+        ];
+        let _ = home.update(Message::View(ViewMessage::CreateCube));
+        assert_eq!(
+            home.error.as_deref(),
+            Some("Please confirm all 4 PIN digits")
+        );
+
+        home.create_cube_pin_confirm.digits = [
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "5".to_string(),
+        ];
+        let _ = home.update(Message::View(ViewMessage::CreateCube));
+        assert_eq!(home.error.as_deref(), Some("PIN codes do not match"));
+
+        home.state = State::Cubes {
+            cubes: vec![
+                cube("local-a", "Local A", Network::Bitcoin),
+                cube("local-b", "Local B", Network::Bitcoin),
+            ],
+            create_cube: true,
+        };
+        home.create_cube_pin_confirm.digits = [
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+        ];
+        home.account_tier = AccountTier::Free;
+        home.server_cube_limit = None;
+
+        let _ = home.update(Message::View(ViewMessage::CreateCube));
+        assert!(home
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("Cube limit reached (2/2)")));
+        assert!(!home.creating_cube);
+    }
+
+    #[test]
+    fn recovery_word_input_normalizes_to_valid_bip39_prefixes() {
+        let mut home = home();
+        home.error = Some("old".to_string());
+
+        let _ = home.update(Message::View(ViewMessage::RecoveryWordInput {
+            index: 0,
+            word: "ABANDON123!".to_string(),
+        }));
+
+        assert_eq!(home.recovery_words[0], "abandon");
+        assert_eq!(home.recovery_active_index, Some(0));
+        assert!(home.error.is_none());
+
+        let _ = home.update(Message::View(ViewMessage::SelectRecoverySuggestion {
+            index: 0,
+            word: "ability".to_string(),
+        }));
+        assert_eq!(home.recovery_words[0], "ability");
+        assert!(home.recovery_active_index.is_none());
+
+        let _ = home.update(Message::View(ViewMessage::RecoveryWordInput {
+            index: 20,
+            word: "zoo".to_string(),
+        }));
+        assert_eq!(home.recovery_words[0], "ability");
+    }
+
+    #[test]
+    fn invalid_recovery_submit_clears_words_and_sets_parse_error() {
+        let mut home = home();
+        home.recovery_words[0] = "abandon".to_string();
+        home.recovery_active_index = Some(0);
+
+        let _ = home.update(Message::View(ViewMessage::SubmitRecovery));
+
+        assert!(home.recovery_words.iter().all(String::is_empty));
+        assert!(home.recovery_active_index.is_none());
+        assert!(home.error.is_some());
+    }
+
+    #[test]
+    fn remote_cube_and_recovery_method_modals_follow_selected_cube() {
+        let mut home = home();
+        home.remote_cubes = vec![remote_cube("remote-a", "Remote A", Network::Bitcoin)];
+
+        let _ = home.update(Message::View(ViewMessage::ShowRecoveryMethodPicker(
+            "remote-a".to_string(),
+        )));
+        assert!(matches!(
+            &home.recovery_method_modal,
+            Some(modal) if modal.cube.uuid == "remote-a"
+        ));
+
+        let _ = home.update(Message::View(ViewMessage::CloseRecoveryMethodPicker));
+        assert!(home.recovery_method_modal.is_none());
+
+        let _ = home.update(Message::View(ViewMessage::DeleteCube(
+            DeleteCubeMessage::ShowRemoteModal("remote-a".to_string()),
+        )));
+        assert!(matches!(
+            &home.delete_remote_cube_modal,
+            Some(modal) if modal.cube.uuid == "remote-a" && !modal.deleting
+        ));
+
+        let _ = home.update(Message::View(ViewMessage::DeleteCube(
+            DeleteCubeMessage::ConfirmRemoteDelete("remote-a".to_string()),
+        )));
+        assert!(matches!(
+            &home.delete_remote_cube_modal,
+            Some(modal)
+                if !modal.deleting
+                    && modal.error.as_deref() == Some("Not authenticated with Connect")
+        ));
+
+        let _ = home.update(Message::View(ViewMessage::DeleteCube(
+            DeleteCubeMessage::CloseRemoteModal,
+        )));
+        assert!(home.delete_remote_cube_modal.is_none());
+    }
+
+    #[test]
+    fn loaded_remote_cubes_limits_and_checked_state_update_home_cache() {
+        let mut home = home();
+
+        let _ = home.update(Message::CubeLimitsLoaded(Ok(CubeLimitsResponse {
+            network: "mainnet".to_string(),
+            current_count: 1,
+            max_allowed: 4,
+        })));
+        assert_eq!(home.server_cube_limit, Some(4));
+
+        let remote = remote_cube("local-a", "Remote A", Network::Bitcoin);
+        let _ = home.update(Message::RemoteCubesLoaded(Ok(vec![remote.clone()])));
+        assert_eq!(home.remote_cubes.len(), 1);
+
+        let _ = home.update(Message::RemoteCubesLoaded(Err("offline".to_string())));
+        assert_eq!(home.remote_cubes.len(), 1);
+
+        let _ = home.update(Message::Checked(Ok(State::Cubes {
+            cubes: vec![cube("local-a", "Local A", Network::Bitcoin)],
+            create_cube: false,
+        })));
+
+        assert!(home.remote_cubes.is_empty());
+        assert!(matches!(home.state, State::Cubes { .. }));
+    }
+
+    #[test]
+    fn rename_modal_edits_and_cancels_without_touching_disk() {
+        let mut home = home();
+        home.state = State::Cubes {
+            cubes: vec![cube("local-a", "Local A", Network::Bitcoin)],
+            create_cube: false,
+        };
+
+        let _ = home.update(Message::View(ViewMessage::RenameCube(0)));
+        assert_eq!(home.rename_cube_modal, Some((0, "Local A".to_string())));
+
+        let _ = home.update(Message::View(ViewMessage::RenameCubeNameEdited(
+            "Renamed".to_string(),
+        )));
+        assert_eq!(home.rename_cube_modal, Some((0, "Renamed".to_string())));
+
+        let _ = home.update(Message::View(ViewMessage::RenameCubeCancel));
+        assert!(home.rename_cube_modal.is_none());
     }
 
     #[test]
@@ -3841,5 +4154,160 @@ mod tests {
         // Descriptor sealed but no seed → recoverable, but Vault-only scope.
         let s = owner_self(true, "vault_only", &["descriptor"]);
         assert_eq!(derive_phone_recovery(Some(&s)), (true, false));
+    }
+
+    #[test]
+    fn view_builds_home_sections_and_create_recovery_states() {
+        let mut home = home();
+        home.view();
+
+        home.state = State::NoCube;
+        home.error = Some("create error".to_string());
+        home.view();
+
+        home.state = State::RecoveryInput;
+        home.recovery_words[0] = "ab".to_string();
+        home.recovery_active_index = Some(0);
+        home.view();
+
+        home.state = State::Cubes {
+            cubes: vec![cube("local-a", "Local A", Network::Bitcoin)],
+            create_cube: true,
+        };
+        home.create_cube_name.value = "New Cube".to_string();
+        home.create_cube_name.valid = true;
+        home.create_cube_pin.digits = [
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+        ];
+        home.create_cube_pin_confirm.digits = [
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+        ];
+        home.view();
+
+        let mut signed_in = signed_in_home();
+        signed_in.connect_expanded = true;
+        signed_in.state = State::Cubes {
+            cubes: vec![cube("local-a", "Local A", Network::Bitcoin)],
+            create_cube: false,
+        };
+        signed_in.remote_cubes = vec![remote_cube("remote-a", "Remote A", Network::Bitcoin)];
+        signed_in.view();
+
+        signed_in.active_section = HomeSection::Connect(app::menu::ConnectSubMenu::Security);
+        signed_in.view();
+
+        signed_in.active_section = HomeSection::RecoverVault;
+        signed_in.view();
+    }
+
+    #[test]
+    fn pure_home_view_helpers_build_for_local_remote_and_form_variants() {
+        let mut local = cube("local-a", "Local A", Network::Bitcoin);
+        let _ = cubes_list_item(&local, 0, false);
+
+        local.remote_synced = true;
+        let _ = cubes_list_item(&local, 1, true);
+
+        local.recovery_kit_last_backed_up_descriptor_fingerprint = Some("hash".to_string());
+        let _ = cubes_list_item(&local, 2, true);
+
+        let mut remote = remote_cube("remote-a", "Remote A", Network::Bitcoin);
+        let _ = remote_cube_list_item(&remote);
+        remote.has_encrypted_seed = false;
+        let _ = remote_cube_list_item(&remote);
+
+        let valid_name = coincube_ui::component::form::Value {
+            value: "New Cube".to_string(),
+            valid: true,
+            warning: None,
+        };
+        let invalid_name = coincube_ui::component::form::Value {
+            value: String::new(),
+            valid: false,
+            warning: None,
+        };
+        let mut pin = pin_input::PinInput::new();
+        pin.digits = [
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+        ];
+        let _ = create_cube_form(&valid_name, &pin, &pin, &None, false, false, true);
+        let _ = create_cube_form(
+            &invalid_name,
+            &pin_input::PinInput::new(),
+            &pin_input::PinInput::new(),
+            &Some("form error".to_string()),
+            true,
+            true,
+            false,
+        );
+
+        let mut words: [String; 12] = Default::default();
+        words[0] = "ab".to_string();
+        let _ = recovery_input_view(&words, Some(0));
+        words.fill("abandon".to_string());
+        let _ = recovery_input_view(&words, None);
+    }
+
+    #[test]
+    fn modal_views_and_non_destructive_modal_updates_build() {
+        let cube = cube("local-a", "Local A", Network::Bitcoin);
+        let network_dir = test_datadir().network_directory(Network::Bitcoin);
+        let mut delete_modal =
+            DeleteCubeModal::new(cube.clone(), network_dir, None, Some(true), true);
+
+        let _ = delete_modal.view();
+        let _ = delete_modal.update(Message::View(ViewMessage::DeleteCube(
+            DeleteCubeMessage::DeleteConnectBackup(true),
+        )));
+        assert!(delete_modal.delete_connect_backup);
+
+        let _ = delete_modal.update(Message::View(ViewMessage::DeleteCube(
+            DeleteCubeMessage::DeleteLianaConnect(true),
+        )));
+        assert!(delete_modal.delete_liana_connect);
+
+        let remote = remote_cube("remote-a", "Remote A", Network::Bitcoin);
+        let _ = DeleteRemoteCubeModal {
+            cube: remote.clone(),
+            deleting: false,
+            error: Some("server refused".to_string()),
+        }
+        .view();
+        let _ = DeleteRemoteCubeModal {
+            cube: remote.clone(),
+            deleting: true,
+            error: None,
+        }
+        .view();
+        let _ = RecoveryMethodModal { cube: remote }.view();
+
+        let mut home = signed_in_home();
+        home.state = State::Cubes {
+            cubes: vec![cube],
+            create_cube: false,
+        };
+        home.rename_cube_modal = Some((0, "Renamed Cube".to_string()));
+        home.view();
+        home.rename_cube_modal = None;
+        home.delete_remote_cube_modal = Some(DeleteRemoteCubeModal {
+            cube: remote_cube("remote-b", "Remote B", Network::Bitcoin),
+            deleting: false,
+            error: None,
+        });
+        home.view();
+        home.delete_remote_cube_modal = None;
+        home.recovery_method_modal = Some(RecoveryMethodModal {
+            cube: remote_cube("remote-c", "Remote C", Network::Bitcoin),
+        });
+        home.view();
     }
 }

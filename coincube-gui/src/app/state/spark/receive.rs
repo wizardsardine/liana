@@ -836,3 +836,462 @@ fn fetch_deposits_task(backend: Option<Arc<SparkBackend>>) -> Task<Message> {
         },
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::message::Message as AppMessage;
+    use crate::app::state::State;
+    use crate::app::view::{Message as ViewMessage, SparkReceiveMessage};
+
+    fn receive_ok(payment_request: &str) -> ReceivePaymentOk {
+        ReceivePaymentOk {
+            payment_request: payment_request.to_string(),
+            fee_sat: 7,
+        }
+    }
+
+    fn deposit(txid: &str, vout: u32, is_mature: bool) -> DepositInfo {
+        DepositInfo {
+            txid: txid.to_string(),
+            vout,
+            amount_sat: 12_345,
+            is_mature,
+            claim_error: None,
+        }
+    }
+
+    fn update(panel: &mut SparkReceive, msg: SparkReceiveMessage) {
+        let _task = State::update(
+            panel,
+            None,
+            &Cache::default(),
+            AppMessage::View(ViewMessage::SparkReceive(msg)),
+        );
+    }
+
+    #[test]
+    fn receive_method_labels_are_stable() {
+        assert_eq!(SparkReceiveMethod::Bolt11.label(), "Lightning (BOLT11)");
+        assert_eq!(
+            SparkReceiveMethod::OnchainBitcoin.label(),
+            "On-chain Bitcoin"
+        );
+        assert_eq!(SparkReceiveMethod::Spark.label(), "Spark");
+    }
+
+    #[test]
+    fn new_panel_starts_in_bolt11_idle_state() {
+        let panel = SparkReceive::new(None);
+
+        assert!(panel.backend.is_none());
+        assert_eq!(panel.balance_sats, 0);
+        assert_eq!(panel.method, SparkReceiveMethod::Bolt11);
+        assert!(!panel.sender_picker_open);
+        assert!(matches!(panel.phase(), SparkReceivePhase::Idle));
+        assert!(panel.qr_data.is_none());
+        assert!(panel.displayed_invoice.is_none());
+        assert!(panel.pending_deposits.is_empty());
+        assert!(panel.recent_transactions.is_empty());
+    }
+
+    #[test]
+    fn generate_without_backend_surfaces_actionable_error() {
+        let mut panel = SparkReceive::new(None);
+
+        update(&mut panel, SparkReceiveMessage::GenerateRequested);
+
+        assert!(matches!(
+            panel.phase(),
+            SparkReceivePhase::Error(msg) if msg == "Spark backend is not available."
+        ));
+    }
+
+    #[test]
+    fn input_edits_reset_generated_payment_state() {
+        let mut panel = SparkReceive::new(None);
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::GenerateSucceeded(receive_ok("lnbc1invoice")),
+        );
+        assert!(matches!(panel.phase(), SparkReceivePhase::Generated(_)));
+        assert!(panel.qr_data.is_some());
+        assert_eq!(panel.displayed_invoice.as_deref(), Some("lnbc1invoice"));
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::AmountInputChanged("2500".to_string()),
+        );
+
+        assert_eq!(panel.amount_input, "2500");
+        assert!(matches!(panel.phase(), SparkReceivePhase::Idle));
+        assert!(panel.qr_data.is_none());
+        assert!(panel.displayed_invoice.is_none());
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::GenerateSucceeded(receive_ok("lnbc1invoice2")),
+        );
+        update(
+            &mut panel,
+            SparkReceiveMessage::DescriptionInputChanged("for coffee".to_string()),
+        );
+
+        assert_eq!(panel.description_input, "for coffee");
+        assert!(matches!(panel.phase(), SparkReceivePhase::Idle));
+        assert!(panel.qr_data.is_none());
+        assert!(panel.displayed_invoice.is_none());
+    }
+
+    #[test]
+    fn generated_bolt11_payment_captures_invoice_for_correlation() {
+        let mut panel = SparkReceive::new(None);
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::GenerateSucceeded(receive_ok("lnbc1invoice")),
+        );
+
+        assert!(matches!(panel.phase(), SparkReceivePhase::Generated(_)));
+        assert_eq!(panel.displayed_invoice.as_deref(), Some("lnbc1invoice"));
+        assert!(panel.qr_data.is_some());
+    }
+
+    #[test]
+    fn generated_onchain_payment_does_not_capture_invoice() {
+        let mut panel = SparkReceive::new(None);
+        panel.method = SparkReceiveMethod::OnchainBitcoin;
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::GenerateSucceeded(receive_ok("bc1qaddress")),
+        );
+
+        assert!(matches!(panel.phase(), SparkReceivePhase::Generated(_)));
+        assert!(panel.displayed_invoice.is_none());
+        assert!(panel.qr_data.is_some());
+    }
+
+    #[test]
+    fn failed_generation_clears_qr_and_invoice_state() {
+        let mut panel = SparkReceive::new(None);
+        update(
+            &mut panel,
+            SparkReceiveMessage::GenerateSucceeded(receive_ok("lnbc1invoice")),
+        );
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::GenerateFailed("bridge down".to_string()),
+        );
+
+        assert!(matches!(
+            panel.phase(),
+            SparkReceivePhase::Error(msg) if msg == "bridge down"
+        ));
+        assert!(panel.qr_data.is_none());
+        assert!(panel.displayed_invoice.is_none());
+    }
+
+    #[test]
+    fn payment_received_ignores_idle_outgoing_and_unrelated_events() {
+        let mut panel = SparkReceive::new(None);
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::PaymentReceived {
+                amount_sat: 100,
+                bolt11: None,
+            },
+        );
+        assert!(matches!(panel.phase(), SparkReceivePhase::Idle));
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::GenerateSucceeded(receive_ok("lnbc1invoice")),
+        );
+        update(
+            &mut panel,
+            SparkReceiveMessage::PaymentReceived {
+                amount_sat: -100,
+                bolt11: Some("lnbc1invoice".to_string()),
+            },
+        );
+        assert!(matches!(panel.phase(), SparkReceivePhase::Generated(_)));
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::PaymentReceived {
+                amount_sat: 100,
+                bolt11: Some("lnbc1other".to_string()),
+            },
+        );
+        assert!(matches!(panel.phase(), SparkReceivePhase::Generated(_)));
+    }
+
+    #[test]
+    fn payment_received_matches_bolt11_case_insensitively() {
+        let mut panel = SparkReceive::new(None);
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::GenerateSucceeded(receive_ok("LNBC1Invoice")),
+        );
+        update(
+            &mut panel,
+            SparkReceiveMessage::PaymentReceived {
+                amount_sat: 321,
+                bolt11: Some("lnbc1invoice".to_string()),
+            },
+        );
+
+        assert!(matches!(
+            panel.phase(),
+            SparkReceivePhase::Received {
+                amount_sat: 321,
+                count: 1
+            }
+        ));
+        assert_eq!(panel.received_amount_display, "+321 sats");
+        assert_eq!(panel.received_celebration_context, "lightning-receive");
+        assert!(panel.qr_data.is_none());
+        assert!(panel.displayed_invoice.is_none());
+    }
+
+    #[test]
+    fn onchain_receive_events_accumulate_while_celebrating() {
+        let mut panel = SparkReceive::new(None);
+        panel.method = SparkReceiveMethod::OnchainBitcoin;
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::GenerateSucceeded(receive_ok("bc1qaddress")),
+        );
+        update(
+            &mut panel,
+            SparkReceiveMessage::PaymentReceived {
+                amount_sat: 100,
+                bolt11: None,
+            },
+        );
+        update(
+            &mut panel,
+            SparkReceiveMessage::PaymentReceived {
+                amount_sat: 50,
+                bolt11: None,
+            },
+        );
+
+        assert!(matches!(
+            panel.phase(),
+            SparkReceivePhase::Received {
+                amount_sat: 150,
+                count: 2
+            }
+        ));
+        assert_eq!(panel.received_amount_display, "+150 sats (2 deposits)");
+        assert_eq!(panel.received_celebration_context, "spark-receive");
+    }
+
+    #[test]
+    fn reset_returns_to_idle_and_clears_generated_artifacts() {
+        let mut panel = SparkReceive::new(None);
+        update(
+            &mut panel,
+            SparkReceiveMessage::GenerateSucceeded(receive_ok("lnbc1invoice")),
+        );
+
+        update(&mut panel, SparkReceiveMessage::Reset);
+
+        assert!(matches!(panel.phase(), SparkReceivePhase::Idle));
+        assert!(panel.qr_data.is_none());
+        assert!(panel.displayed_invoice.is_none());
+    }
+
+    #[test]
+    fn sender_picker_opens_closes_and_rail_selection_resets_receive_state() {
+        let mut panel = SparkReceive::new(None);
+        update(
+            &mut panel,
+            SparkReceiveMessage::GenerateSucceeded(receive_ok("lnbc1invoice")),
+        );
+
+        update(&mut panel, SparkReceiveMessage::OpenSenderPicker);
+        assert!(panel.sender_picker_open);
+
+        update(&mut panel, SparkReceiveMessage::CloseSenderPicker);
+        assert!(!panel.sender_picker_open);
+
+        update(&mut panel, SparkReceiveMessage::OpenSenderPicker);
+        update(
+            &mut panel,
+            SparkReceiveMessage::SelectSenderRail(SparkReceiveMethod::Spark),
+        );
+
+        assert!(!panel.sender_picker_open);
+        assert_eq!(panel.method, SparkReceiveMethod::Spark);
+        assert!(panel.sideshift_flow.is_none());
+        assert!(matches!(panel.phase(), SparkReceivePhase::Idle));
+        assert!(panel.qr_data.is_none());
+        assert!(panel.displayed_invoice.is_none());
+    }
+
+    #[test]
+    fn pending_deposits_reload_prunes_stale_confirmations_and_clears_error() {
+        let mut panel = SparkReceive::new(None);
+        panel.claim_error = Some("old claim error".to_string());
+        panel
+            .pending_deposit_confirmations
+            .insert(("kept".to_string(), 0), 2);
+        panel
+            .pending_deposit_confirmations
+            .insert(("stale".to_string(), 1), 6);
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::PendingDepositsLoaded(vec![deposit("kept", 0, false)]),
+        );
+
+        assert_eq!(panel.pending_deposits.len(), 1);
+        assert_eq!(panel.pending_deposits[0].txid, "kept");
+        assert!(panel.claim_error.is_none());
+        assert_eq!(
+            panel
+                .pending_deposit_confirmations
+                .get(&("kept".to_string(), 0)),
+            Some(&2)
+        );
+        assert!(!panel
+            .pending_deposit_confirmations
+            .contains_key(&("stale".to_string(), 1)));
+    }
+
+    #[test]
+    fn pending_deposit_failures_clear_list_and_confirmation_cache() {
+        let mut panel = SparkReceive::new(None);
+        panel.pending_deposits = vec![deposit("tx", 0, false)];
+        panel
+            .pending_deposit_confirmations
+            .insert(("tx".to_string(), 0), 1);
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::PendingDepositsFailed("timeout".to_string()),
+        );
+
+        assert!(panel.pending_deposits.is_empty());
+        assert!(panel.pending_deposit_confirmations.is_empty());
+    }
+
+    #[test]
+    fn confirmation_updates_merge_and_can_move_backward() {
+        let mut panel = SparkReceive::new(None);
+        panel
+            .pending_deposit_confirmations
+            .insert(("a".to_string(), 0), 6);
+        panel
+            .pending_deposit_confirmations
+            .insert(("b".to_string(), 1), 1);
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::DepositConfirmationsUpdated(HashMap::from([
+                (("a".to_string(), 0), 3),
+                (("c".to_string(), 2), 0),
+            ])),
+        );
+
+        assert_eq!(
+            panel
+                .pending_deposit_confirmations
+                .get(&("a".to_string(), 0)),
+            Some(&3)
+        );
+        assert_eq!(
+            panel
+                .pending_deposit_confirmations
+                .get(&("b".to_string(), 1)),
+            Some(&1)
+        );
+        assert_eq!(
+            panel
+                .pending_deposit_confirmations
+                .get(&("c".to_string(), 2)),
+            Some(&0)
+        );
+    }
+
+    #[test]
+    fn claim_result_messages_update_claim_error_state() {
+        let mut panel = SparkReceive::new(None);
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::ClaimDepositRequested {
+                txid: "tx".to_string(),
+                vout: 0,
+            },
+        );
+        assert!(panel.claiming.is_none());
+
+        panel.claiming = Some(("tx".to_string(), 0));
+        update(
+            &mut panel,
+            SparkReceiveMessage::ClaimDepositFailed("claim failed".to_string()),
+        );
+        assert!(panel.claiming.is_none());
+        assert_eq!(panel.claim_error.as_deref(), Some("claim failed"));
+
+        panel.claiming = Some(("tx".to_string(), 0));
+        panel.claim_error = Some("old".to_string());
+        update(
+            &mut panel,
+            SparkReceiveMessage::ClaimDepositSucceeded(coincube_spark_protocol::ClaimDepositOk {
+                payment_id: "payment".to_string(),
+                amount_sat: 5_000,
+            }),
+        );
+        assert!(panel.claiming.is_none());
+        assert!(panel.claim_error.is_none());
+    }
+
+    #[test]
+    fn balance_loaded_updates_only_when_value_is_present() {
+        let mut panel = SparkReceive::new(None);
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::BalanceLoaded(Some((123, None))),
+        );
+        assert_eq!(panel.balance_sats, 123);
+
+        update(&mut panel, SparkReceiveMessage::BalanceLoaded(None));
+        assert_eq!(panel.balance_sats, 123);
+    }
+
+    #[test]
+    fn payments_failed_clears_recent_transactions() {
+        let mut panel = SparkReceive::new(None);
+        panel.recent_transactions.push(SparkRecentTransaction {
+            id: "id".to_string(),
+            description: "test payment".to_string(),
+            time_ago: "just now".to_string(),
+            timestamp: 1,
+            amount: coincube_core::miniscript::bitcoin::Amount::from_sat(1),
+            fees_sat: coincube_core::miniscript::bitcoin::Amount::from_sat(0),
+            fiat_amount: None,
+            is_incoming: true,
+            status: crate::app::wallets::DomainPaymentStatus::Complete,
+            method: crate::app::view::spark::SparkPaymentMethod::Spark,
+            token_display: None,
+        });
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::PaymentsFailed("bridge down".to_string()),
+        );
+
+        assert!(panel.recent_transactions.is_empty());
+    }
+}

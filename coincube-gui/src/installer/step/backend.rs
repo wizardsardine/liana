@@ -765,3 +765,368 @@ impl From<ImportRemoteWallet> for Box<dyn Step> {
         Box::new(s)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dir::CoincubeDirectory;
+    use crate::installer::step::Step;
+    use std::path::PathBuf;
+
+    fn directory() -> CoincubeDirectory {
+        CoincubeDirectory::new(PathBuf::new())
+    }
+
+    fn network_dir(network: Network) -> NetworkDirectory {
+        directory().network_directory(network)
+    }
+
+    fn context_with(remote_backend: RemoteBackend, network: Network) -> Context {
+        Context::new(network, directory(), remote_backend, None, None)
+    }
+
+    fn hardware_wallets(network: Network) -> HardwareWallets {
+        HardwareWallets::new(directory(), network)
+    }
+
+    fn auth_client(email: &str) -> AuthClient {
+        AuthClient::new(
+            "https://auth.example.test".to_string(),
+            "public-key".to_string(),
+            email.to_string(),
+        )
+    }
+
+    #[test]
+    fn choose_backend_skips_only_on_unsupported_networks() {
+        let bitcoin = ChooseBackend::new(Network::Bitcoin);
+        let signet = ChooseBackend::new(Network::Signet);
+        let regtest = ChooseBackend::new(Network::Regtest);
+        let ctx = context_with(RemoteBackend::Undefined, Network::Bitcoin);
+
+        assert!(!bitcoin.skip(&ctx));
+        assert!(!signet.skip(&ctx));
+        assert!(regtest.skip(&ctx));
+    }
+
+    #[test]
+    fn choose_backend_local_selection_applies_none_and_revert_restores_undefined() {
+        let mut step = ChooseBackend::new(Network::Bitcoin);
+        let mut ctx = context_with(RemoteBackend::Undefined, Network::Bitcoin);
+
+        let _task = step.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::SelectBackend(message::SelectBackend::ContinueWithLocalWallet(true)),
+        );
+        assert!(step.apply(&mut ctx));
+        assert!(matches!(ctx.remote_backend, RemoteBackend::None));
+
+        step.revert(&mut ctx);
+        assert!(matches!(ctx.remote_backend, RemoteBackend::Undefined));
+    }
+
+    #[test]
+    fn choose_backend_remote_selection_leaves_backend_for_login_step() {
+        let mut step = ChooseBackend::new(Network::Bitcoin);
+        let mut ctx = context_with(RemoteBackend::Undefined, Network::Bitcoin);
+
+        let _task = step.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::SelectBackend(message::SelectBackend::ContinueWithLocalWallet(false)),
+        );
+
+        assert!(step.apply(&mut ctx));
+        assert!(matches!(ctx.remote_backend, RemoteBackend::Undefined));
+    }
+
+    #[test]
+    fn remote_backend_login_initial_state_and_skip_rules_are_stable() {
+        let login = RemoteBackendLogin::new(Network::Bitcoin, network_dir(Network::Bitcoin));
+        let regtest_login =
+            RemoteBackendLogin::new(Network::Regtest, network_dir(Network::Regtest));
+        let undefined = context_with(RemoteBackend::Undefined, Network::Bitcoin);
+        let none = context_with(RemoteBackend::None, Network::Bitcoin);
+        let regtest = context_with(RemoteBackend::Undefined, Network::Regtest);
+
+        assert!(!login.processing);
+        assert!(login.connect_accounts.is_empty());
+        assert!(matches!(
+            login.step,
+            ConnectionStep::EnterEmail { ref email }
+                if email.value.is_empty() && email.valid
+        ));
+        assert!(!login.skip(&undefined));
+        assert!(login.skip(&none));
+        assert!(regtest_login.skip(&regtest));
+    }
+
+    #[test]
+    fn remote_backend_login_validates_email_and_rejects_empty_otp_requests() {
+        let mut login = RemoteBackendLogin::new(Network::Bitcoin, network_dir(Network::Bitcoin));
+
+        let _task = login.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::SelectBackend(message::SelectBackend::EmailEdited(
+                "not-an-email".to_string(),
+            )),
+        );
+        assert!(matches!(
+            login.step,
+            ConnectionStep::EnterEmail { ref email }
+                if email.value == "not-an-email" && !email.valid
+        ));
+
+        let _task = login.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::SelectBackend(message::SelectBackend::EmailEdited(
+                "user@example.com".to_string(),
+            )),
+        );
+        assert!(matches!(
+            login.step,
+            ConnectionStep::EnterEmail { ref email }
+                if email.value == "user@example.com" && email.valid
+        ));
+
+        let mut empty = RemoteBackendLogin::new(Network::Bitcoin, network_dir(Network::Bitcoin));
+        let _task = empty.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::SelectBackend(message::SelectBackend::RequestOTP),
+        );
+        assert!(matches!(
+            empty.step,
+            ConnectionStep::EnterEmail { ref email }
+                if email.value.is_empty() && !email.valid
+        ));
+        assert!(!empty.processing);
+    }
+
+    #[test]
+    fn remote_backend_login_tracks_cached_accounts_and_otp_result() {
+        let mut login = RemoteBackendLogin::new(Network::Bitcoin, network_dir(Network::Bitcoin));
+
+        let _task = login.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::SelectBackend(message::SelectBackend::ExistingConnectAccounts(vec![
+                "a@example.com".to_string(),
+                "b@example.com".to_string(),
+            ])),
+        );
+        assert_eq!(
+            login.connect_accounts,
+            vec!["a@example.com".to_string(), "b@example.com".to_string()]
+        );
+
+        let _task = login.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::SelectBackend(message::SelectBackend::EmailEdited(
+                "user@example.com".to_string(),
+            )),
+        );
+        let _task = login.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::SelectBackend(message::SelectBackend::OTPRequested(Ok((
+                auth_client("user@example.com"),
+                "https://backend.example.test".to_string(),
+            )))),
+        );
+
+        assert!(!login.processing);
+        assert!(matches!(
+            login.step,
+            ConnectionStep::EnterOtp {
+                ref email,
+                ref backend_api_url,
+                ref otp,
+                ..
+            } if email == "user@example.com"
+                && backend_api_url == "https://backend.example.test"
+                && otp.value.is_empty()
+        ));
+    }
+
+    #[test]
+    fn remote_backend_login_enter_otp_handles_edits_resend_errors_and_auth_failures() {
+        let mut login = RemoteBackendLogin::new(Network::Bitcoin, network_dir(Network::Bitcoin));
+        login.step = ConnectionStep::EnterOtp {
+            client: auth_client("user@example.com"),
+            backend_api_url: "https://backend.example.test".to_string(),
+            email: "user@example.com".to_string(),
+            otp: form::Value::default(),
+        };
+
+        let _task = login.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::SelectBackend(message::SelectBackend::OTPEdited(" 123 ".to_string())),
+        );
+        assert!(matches!(
+            login.step,
+            ConnectionStep::EnterOtp { ref otp, .. } if otp.value == "123"
+        ));
+        assert!(!login.processing);
+
+        let _task = login.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::SelectBackend(message::SelectBackend::OTPResent(Err(Error::Unexpected(
+                "mail failed".to_string(),
+            )))),
+        );
+        assert!(!login.processing);
+        assert!(matches!(
+            login.connection_error,
+            Some(Error::Unexpected(ref msg)) if msg == "mail failed"
+        ));
+
+        let _task = login.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::SelectBackend(message::SelectBackend::Connected(Err(Error::Auth(
+                AuthError {
+                    http_status: Some(403),
+                    error: "forbidden".to_string(),
+                },
+            )))),
+        );
+        assert_eq!(login.auth_error, Some("Token has expired or is invalid"));
+
+        let _task = login.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::SelectBackend(message::SelectBackend::EditEmail),
+        );
+        assert!(matches!(
+            login.step,
+            ConnectionStep::EnterEmail { ref email }
+                if email.value == "user@example.com" && email.valid
+        ));
+    }
+
+    #[test]
+    fn remote_backend_login_apply_without_connection_clears_remote_backend() {
+        let mut login = RemoteBackendLogin::new(Network::Bitcoin, network_dir(Network::Bitcoin));
+        let mut ctx = context_with(RemoteBackend::Undefined, Network::Bitcoin);
+
+        assert!(login.apply(&mut ctx));
+
+        assert!(matches!(ctx.remote_backend, RemoteBackend::None));
+    }
+
+    #[test]
+    fn import_remote_wallet_initial_state_and_skip_rules_are_stable() {
+        let mut step = ImportRemoteWallet::new(Network::Bitcoin);
+        let undefined = context_with(RemoteBackend::Undefined, Network::Bitcoin);
+        let none = context_with(RemoteBackend::None, Network::Bitcoin);
+
+        assert!(step.skip(&undefined));
+        assert!(step.skip(&none));
+
+        step.load_context(&undefined);
+        assert!(matches!(step.backend, RemoteBackend::Undefined));
+        assert!(step.invitation_token.value.is_empty());
+        assert!(step.imported_descriptor.value.is_empty());
+        assert!(step.invitation.is_none());
+        assert!(step.wallets.is_empty());
+        assert!(step.descriptor.is_none());
+        assert!(step.error.is_none());
+    }
+
+    #[test]
+    fn import_remote_wallet_tracks_invitation_token_and_fetch_result() {
+        let mut step = ImportRemoteWallet::new(Network::Bitcoin);
+
+        let _task = step.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportInvitationToken(
+                "invite-123".to_string(),
+            )),
+        );
+        assert_eq!(step.invitation_token.value, "invite-123");
+
+        let _task = step.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::InvitationFetched(Err(
+                Error::Unexpected("missing".to_string()),
+            ))),
+        );
+        assert!(!step.invitation_token.valid);
+
+        let invitation = api::WalletInvitation {
+            id: "invitation-id".to_string(),
+            wallet_name: "Family Vault".to_string(),
+            wallet_id: "wallet-id".to_string(),
+            status: api::WalletInvitationStatus::Pending,
+        };
+        let _task = step.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::InvitationFetched(Ok(
+                invitation.clone(),
+            ))),
+        );
+
+        assert_eq!(
+            step.invitation.as_ref().map(|i| i.wallet_name.as_str()),
+            Some("Family Vault")
+        );
+    }
+
+    #[test]
+    fn import_remote_wallet_records_remote_wallet_and_accept_errors() {
+        let mut step = ImportRemoteWallet::new(Network::Bitcoin);
+
+        let _task = step.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::RemoteWallets(Ok(Vec::new()))),
+        );
+        assert!(step.wallets.is_empty());
+
+        let _task = step.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::RemoteWallets(Err(
+                Error::Unexpected("list failed".to_string()),
+            ))),
+        );
+        assert_eq!(step.error.as_deref(), Some("Unexpected: list failed"));
+
+        let _task = step.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::InvitationAccepted(Err(
+                Error::Unexpected("accept failed".to_string()),
+            ))),
+        );
+        assert_eq!(step.error.as_deref(), Some("Unexpected: accept failed"));
+    }
+
+    #[test]
+    fn import_remote_wallet_rejects_invalid_descriptor_text() {
+        let mut step = ImportRemoteWallet::new(Network::Bitcoin);
+
+        let _task = step.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportDescriptor(
+                "not a descriptor".to_string(),
+            )),
+        );
+
+        assert_eq!(step.imported_descriptor.value, "not a descriptor");
+        assert!(!step.imported_descriptor.valid);
+
+        let _task = step.update(
+            &mut hardware_wallets(Network::Bitcoin),
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::ConfirmDescriptor),
+        );
+        assert!(step.descriptor.is_none());
+        assert!(!step.imported_descriptor.valid);
+    }
+
+    #[test]
+    fn import_remote_wallet_apply_copies_state_to_context() {
+        let mut step = ImportRemoteWallet::new(Network::Bitcoin);
+        let mut ctx = context_with(RemoteBackend::Undefined, Network::Bitcoin);
+        step.wallet_alias = Some("Family Vault".to_string());
+        step.backend = RemoteBackend::None;
+
+        assert!(step.apply(&mut ctx));
+
+        assert!(ctx.hw_is_used);
+        assert!(matches!(ctx.remote_backend, RemoteBackend::None));
+        assert_eq!(ctx.wallet_alias, "Family Vault");
+    }
+}

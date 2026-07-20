@@ -765,3 +765,471 @@ impl State for BuySellPanel {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coincube_core::{descriptors::CoincubeDescriptor, miniscript::bitcoin::Network};
+    use std::{str::FromStr, sync::Arc};
+
+    const DESC: &str = "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp";
+
+    fn wallet() -> Arc<crate::app::wallet::Wallet> {
+        Arc::new(crate::app::wallet::Wallet::new(
+            CoincubeDescriptor::from_str(DESC).unwrap(),
+        ))
+    }
+
+    fn panel() -> BuySellPanel {
+        BuySellPanel::new(
+            Network::Bitcoin,
+            wallet(),
+            Arc::new(crate::app::breez_liquid::BreezClient::disconnected(
+                Network::Bitcoin,
+            )),
+        )
+    }
+
+    fn country(code: &str) -> &'static Country {
+        crate::services::coincube::get_countries()
+            .iter()
+            .find(|country| country.code == code)
+            .unwrap()
+    }
+
+    fn login() -> LoginResponse {
+        LoginResponse {
+            requires_2fa: false,
+            token: "token".to_string(),
+            refresh_token: "refresh-token".to_string(),
+            user: User {
+                id: 7,
+                email: "user@example.com".to_string(),
+                email_verified: Some(true),
+            },
+        }
+    }
+
+    fn buysell_msg(msg: view::BuySellMessage) -> Message {
+        Message::View(view::Message::BuySell(msg))
+    }
+
+    #[test]
+    fn reset_widget_without_country_prompts_manual_location() {
+        let mut panel = panel();
+        panel.step = BuySellFlowState::ModeSelect { buy_or_sell: None };
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::ResetWidget),
+        );
+
+        assert!(matches!(
+            panel.step,
+            BuySellFlowState::DetectingLocation(true)
+        ));
+    }
+
+    #[test]
+    fn reset_widget_with_login_and_country_returns_to_mode_select() {
+        let mut panel = panel();
+        panel.detected_country = Some(country("US"));
+        panel.login = Some(login());
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::ResetWidget),
+        );
+
+        assert!(matches!(
+            panel.step,
+            BuySellFlowState::ModeSelect { buy_or_sell: None }
+        ));
+    }
+
+    #[test]
+    fn mode_select_toggles_buy_and_sell_choices() {
+        let mut panel = panel();
+        panel.step = BuySellFlowState::ModeSelect { buy_or_sell: None };
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::SelectBuyOrSell(BuyOrSell::Sell)),
+        );
+        assert!(matches!(
+            panel.step,
+            BuySellFlowState::ModeSelect {
+                buy_or_sell: Some(BuyOrSell::Sell)
+            }
+        ));
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::SelectBuyOrSell(BuyOrSell::Sell)),
+        );
+        assert!(matches!(
+            panel.step,
+            BuySellFlowState::ModeSelect { buy_or_sell: None }
+        ));
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::SelectBuyOrSell(BuyOrSell::Buy)),
+        );
+        assert!(matches!(
+            panel.step,
+            BuySellFlowState::ModeSelect {
+                buy_or_sell: Some(BuyOrSell::Buy)
+            }
+        ));
+    }
+
+    #[test]
+    fn country_detection_success_and_failure_update_location_state() {
+        let mut panel = panel();
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::CountryDetected(Ok(country("ZA")))),
+        );
+        assert_eq!(
+            panel.detected_country.map(|country| country.code),
+            Some("ZA")
+        );
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::CountryDetected(Err(
+                "geo lookup failed".to_string(),
+            ))),
+        );
+        assert!(panel.detected_country.is_none());
+        assert!(matches!(
+            panel.step,
+            BuySellFlowState::DetectingLocation(true)
+        ));
+    }
+
+    #[test]
+    fn login_and_registration_forms_advance_to_otp_verification() {
+        let mut panel = panel();
+        panel.step = BuySellFlowState::Login {
+            email: String::new(),
+            loading: false,
+        };
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::EmailChanged(
+                "login@example.com".to_string(),
+            )),
+        );
+        assert!(matches!(
+            &panel.step,
+            BuySellFlowState::Login { email, loading: false } if email == "login@example.com"
+        ));
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::SubmitLogin),
+        );
+        assert!(matches!(
+            panel.step,
+            BuySellFlowState::Login { loading: true, .. }
+        ));
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::SendOtp),
+        );
+        assert!(matches!(
+            &panel.step,
+            BuySellFlowState::OtpVerification {
+                email,
+                otp,
+                sending: false,
+                is_signup: false,
+                cooldown: 30
+            } if email == "login@example.com" && otp.is_empty()
+        ));
+
+        panel.step = BuySellFlowState::Login {
+            email: "old@example.com".to_string(),
+            loading: false,
+        };
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::CreateNewAccount),
+        );
+        assert!(matches!(
+            panel.step,
+            BuySellFlowState::Register { loading: false, .. }
+        ));
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::EmailChanged(
+                "signup@example.com".to_string(),
+            )),
+        );
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::SubmitRegistration),
+        );
+        assert!(matches!(
+            panel.step,
+            BuySellFlowState::Register { loading: true, .. }
+        ));
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::RegistrationSuccess),
+        );
+        assert!(matches!(
+            &panel.step,
+            BuySellFlowState::OtpVerification {
+                email,
+                is_signup: true,
+                cooldown: 30,
+                ..
+            } if email == "signup@example.com"
+        ));
+    }
+
+    #[test]
+    fn otp_state_edits_cooldown_and_verify_in_flight() {
+        let mut panel = panel();
+        panel.step = BuySellFlowState::OtpVerification {
+            email: "user@example.com".to_string(),
+            otp: String::new(),
+            sending: false,
+            is_signup: false,
+            cooldown: 1,
+        };
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::OtpCooldownTick),
+        );
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::OtpCooldownTick),
+        );
+        assert!(matches!(
+            panel.step,
+            BuySellFlowState::OtpVerification { cooldown: 0, .. }
+        ));
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::OtpChanged("123456".to_string())),
+        );
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::VerifyOtp),
+        );
+        assert!(matches!(
+            &panel.step,
+            BuySellFlowState::OtpVerification {
+                otp,
+                sending: true,
+                ..
+            } if otp == "123456"
+        ));
+    }
+
+    #[test]
+    fn start_session_initializes_mavapay_sell_for_supported_country() {
+        let mut panel = panel();
+        panel.detected_country = Some(country("KE"));
+        panel.step = BuySellFlowState::ModeSelect {
+            buy_or_sell: Some(BuyOrSell::Sell),
+        };
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::StartSession),
+        );
+
+        let BuySellFlowState::Mavapay(state) = &panel.step else {
+            panic!("expected Mavapay state");
+        };
+        assert_eq!(state.buy_or_sell, BuyOrSell::Sell);
+        assert_eq!(state.country.code, "KE");
+        assert!(matches!(
+            state.steps.last(),
+            Some(MavapayFlowStep::SellInputForm {
+                beneficiary: Beneficiary::KES(KenyanBeneficiary::PayToPhone {
+                    phone_number,
+                    ..
+                }),
+                sending_quote: false,
+                liquid_balance: None,
+                ..
+            }) if phone_number == "+254700000000"
+        ));
+    }
+
+    #[test]
+    fn start_session_initializes_mavapay_buy_for_supported_country() {
+        let mut panel = panel();
+        panel.detected_country = Some(country("NG"));
+        panel.step = BuySellFlowState::ModeSelect {
+            buy_or_sell: Some(BuyOrSell::Buy),
+        };
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::StartSession),
+        );
+
+        let BuySellFlowState::Mavapay(state) = &panel.step else {
+            panic!("expected Mavapay state");
+        };
+        assert_eq!(state.buy_or_sell, BuyOrSell::Buy);
+        assert!(matches!(
+            state.steps.last(),
+            Some(MavapayFlowStep::BuyInputFrom {
+                getting_invoice: false,
+                sending_quote: false,
+                ln_invoice: None
+            })
+        ));
+    }
+
+    #[test]
+    fn view_history_uses_mavapay_history_for_supported_country() {
+        let mut panel = panel();
+        panel.detected_country = Some(country("ZA"));
+        panel.step = BuySellFlowState::ModeSelect { buy_or_sell: None };
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::ViewHistory),
+        );
+
+        assert!(matches!(
+            &panel.step,
+            BuySellFlowState::Mavapay(state)
+                if matches!(
+                    state.steps.last(),
+                    Some(MavapayFlowStep::History {
+                        loading: true,
+                        transactions: None
+                    })
+                )
+        ));
+    }
+
+    #[test]
+    fn session_error_unblocks_loading_flags() {
+        let mut panel = panel();
+        panel.step = BuySellFlowState::Login {
+            email: "user@example.com".to_string(),
+            loading: true,
+        };
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::SessionError(
+                "failed",
+                "network".to_string(),
+            )),
+        );
+        assert!(matches!(
+            panel.step,
+            BuySellFlowState::Login { loading: false, .. }
+        ));
+
+        panel.step = BuySellFlowState::Register {
+            email: "user@example.com".to_string(),
+            loading: true,
+        };
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::SessionError(
+                "failed",
+                "network".to_string(),
+            )),
+        );
+        assert!(matches!(
+            panel.step,
+            BuySellFlowState::Register { loading: false, .. }
+        ));
+
+        panel.step = BuySellFlowState::OtpVerification {
+            email: "user@example.com".to_string(),
+            otp: "123456".to_string(),
+            sending: true,
+            is_signup: false,
+            cooldown: 0,
+        };
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::SessionError(
+                "failed",
+                "network".to_string(),
+            )),
+        );
+        assert!(matches!(
+            panel.step,
+            BuySellFlowState::OtpVerification { sending: false, .. }
+        ));
+
+        panel.step = BuySellFlowState::Mavapay(MavapayState::new(
+            BuyOrSell::Buy,
+            MavapayFlowStep::BuyInputFrom {
+                ln_invoice: None,
+                getting_invoice: true,
+                sending_quote: true,
+            },
+            country("NG"),
+            Arc::new(crate::app::breez_liquid::BreezClient::disconnected(
+                Network::Bitcoin,
+            )),
+        ));
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::SessionError(
+                "failed",
+                "network".to_string(),
+            )),
+        );
+        assert!(matches!(
+            &panel.step,
+            BuySellFlowState::Mavapay(state)
+                if matches!(
+                    state.steps.last(),
+                    Some(MavapayFlowStep::BuyInputFrom {
+                        getting_invoice: false,
+                        sending_quote: false,
+                        ..
+                    })
+                )
+        ));
+    }
+}

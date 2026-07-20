@@ -267,3 +267,272 @@ impl From<LiquidRefundableSwap> for DomainRefundableSwap {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use breez_sdk_liquid::model::{
+        AssetInfo as LiquidAssetInfo, PaymentDetails as LiquidPaymentDetails,
+        PaymentState as LiquidPaymentState, PaymentType as LiquidPaymentType,
+    };
+    use breez_sdk_liquid::prelude::{
+        Payment as LiquidPayment, RefundableSwap as LiquidRefundableSwap,
+    };
+
+    fn liquid_payment_with(details: LiquidPaymentDetails) -> LiquidPayment {
+        LiquidPayment {
+            destination: Some("destination".to_string()),
+            tx_id: Some("txid".to_string()),
+            unblinding_data: Some("unblind".to_string()),
+            timestamp: 1_722_000_000,
+            amount_sat: 25_000,
+            fees_sat: 125,
+            swapper_fees_sat: Some(50),
+            payment_type: LiquidPaymentType::Receive,
+            status: LiquidPaymentState::Pending,
+            details,
+        }
+    }
+
+    #[test]
+    fn wallet_kind_defaults_to_spark_and_serializes_as_snake_case() {
+        assert_eq!(WalletKind::default(), WalletKind::Spark);
+        assert_eq!(
+            serde_json::to_string(&WalletKind::Spark).unwrap(),
+            "\"spark\""
+        );
+        assert_eq!(
+            serde_json::to_string(&WalletKind::Liquid).unwrap(),
+            "\"liquid\""
+        );
+
+        let decoded: WalletKind = serde_json::from_str("\"liquid\"").unwrap();
+        assert_eq!(decoded, WalletKind::Liquid);
+    }
+
+    #[test]
+    fn payment_status_predicates_match_ui_state_groups() {
+        for status in [
+            DomainPaymentStatus::Failed,
+            DomainPaymentStatus::TimedOut,
+            DomainPaymentStatus::Refundable,
+        ] {
+            assert!(status.is_destructive());
+        }
+
+        for status in [
+            DomainPaymentStatus::Created,
+            DomainPaymentStatus::Pending,
+            DomainPaymentStatus::RefundPending,
+            DomainPaymentStatus::WaitingFeeAcceptance,
+        ] {
+            assert!(status.is_in_flight());
+        }
+
+        assert!(!DomainPaymentStatus::Complete.is_destructive());
+        assert!(!DomainPaymentStatus::Complete.is_in_flight());
+    }
+
+    #[test]
+    fn liquid_payment_states_map_to_domain_statuses() {
+        let cases = [
+            (LiquidPaymentState::Created, DomainPaymentStatus::Created),
+            (LiquidPaymentState::Pending, DomainPaymentStatus::Pending),
+            (LiquidPaymentState::Complete, DomainPaymentStatus::Complete),
+            (LiquidPaymentState::Failed, DomainPaymentStatus::Failed),
+            (LiquidPaymentState::TimedOut, DomainPaymentStatus::TimedOut),
+            (
+                LiquidPaymentState::Refundable,
+                DomainPaymentStatus::Refundable,
+            ),
+            (
+                LiquidPaymentState::RefundPending,
+                DomainPaymentStatus::RefundPending,
+            ),
+            (
+                LiquidPaymentState::WaitingFeeAcceptance,
+                DomainPaymentStatus::WaitingFeeAcceptance,
+            ),
+        ];
+
+        for (sdk_status, expected) in cases {
+            assert_eq!(DomainPaymentStatus::from(sdk_status), expected);
+        }
+    }
+
+    #[test]
+    fn payment_details_description_prefers_non_empty_payer_note() {
+        let lightning = DomainPaymentDetails::Lightning {
+            description: "invoice description".to_string(),
+            payer_note: Some("payer note".to_string()),
+        };
+        assert_eq!(lightning.description(), "payer note");
+
+        let liquid = DomainPaymentDetails::LiquidAsset {
+            asset_id: "asset".to_string(),
+            asset_info: None,
+            description: "asset description".to_string(),
+            payer_note: Some(String::new()),
+        };
+        assert_eq!(liquid.description(), "asset description");
+
+        let bitcoin = DomainPaymentDetails::OnChainBitcoin {
+            swap_id: None,
+            bitcoin_address: None,
+            description: "bitcoin description".to_string(),
+            auto_accepted_fees: false,
+            liquid_expiration_blockheight: 0,
+            bitcoin_expiration_blockheight: 0,
+            lockup_tx_id: None,
+            claim_tx_id: None,
+            refund_tx_id: None,
+            refund_tx_amount_sat: None,
+        };
+        assert_eq!(bitcoin.description(), "bitcoin description");
+    }
+
+    #[test]
+    fn domain_payment_is_incoming_only_for_receives() {
+        let mut payment = DomainPayment {
+            tx_id: None,
+            destination: None,
+            timestamp: 0,
+            amount_sat: 0,
+            fees_sat: 0,
+            direction: DomainPaymentDirection::Receive,
+            status: DomainPaymentStatus::Complete,
+            details: DomainPaymentDetails::Lightning {
+                description: String::new(),
+                payer_note: None,
+            },
+        };
+
+        assert!(payment.is_incoming());
+        payment.direction = DomainPaymentDirection::Send;
+        assert!(!payment.is_incoming());
+    }
+
+    #[test]
+    fn liquid_lightning_payment_maps_to_domain_payment() {
+        let sdk_payment = liquid_payment_with(LiquidPaymentDetails::Lightning {
+            swap_id: "swap".to_string(),
+            description: "invoice".to_string(),
+            liquid_expiration_blockheight: 100,
+            preimage: Some("preimage".to_string()),
+            invoice: Some("lnbc".to_string()),
+            bolt12_offer: None,
+            payment_hash: Some("hash".to_string()),
+            destination_pubkey: None,
+            lnurl_info: None,
+            bip353_address: None,
+            payer_note: Some("thanks".to_string()),
+            claim_tx_id: None,
+            refund_tx_id: Some("refund".to_string()),
+            refund_tx_amount_sat: Some(10),
+            settled_at: None,
+        });
+
+        let domain = DomainPayment::from(sdk_payment);
+
+        assert_eq!(domain.tx_id.as_deref(), Some("txid"));
+        assert_eq!(domain.destination.as_deref(), Some("destination"));
+        assert_eq!(domain.timestamp, 1_722_000_000);
+        assert_eq!(domain.amount_sat, 25_000);
+        assert_eq!(domain.fees_sat, 125);
+        assert_eq!(domain.direction, DomainPaymentDirection::Receive);
+        assert_eq!(domain.status, DomainPaymentStatus::Pending);
+        assert_eq!(
+            domain.details,
+            DomainPaymentDetails::Lightning {
+                description: "invoice".to_string(),
+                payer_note: Some("thanks".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn liquid_asset_payment_maps_asset_amount_to_minor_units() {
+        let sdk_payment = liquid_payment_with(LiquidPaymentDetails::Liquid {
+            destination: "liquid-address".to_string(),
+            description: "asset transfer".to_string(),
+            asset_id: "usdt-asset".to_string(),
+            asset_info: Some(LiquidAssetInfo {
+                name: "Tether USD".to_string(),
+                ticker: "USDt".to_string(),
+                amount: 1.23456789,
+                fees: Some(0.00000001),
+            }),
+            lnurl_info: None,
+            bip353_address: None,
+            payer_note: Some("asset note".to_string()),
+        });
+
+        let domain = DomainPayment::from(sdk_payment);
+
+        assert_eq!(
+            domain.details,
+            DomainPaymentDetails::LiquidAsset {
+                asset_id: "usdt-asset".to_string(),
+                asset_info: Some(DomainLiquidAssetInfo {
+                    amount_minor: 123_456_789,
+                    precision: USDT_PRECISION,
+                }),
+                description: "asset transfer".to_string(),
+                payer_note: Some("asset note".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn liquid_bitcoin_payment_maps_swap_fields_to_domain_details() {
+        let sdk_payment = liquid_payment_with(LiquidPaymentDetails::Bitcoin {
+            swap_id: "swap-id".to_string(),
+            bitcoin_address: "bc1qaddress".to_string(),
+            description: "chain swap".to_string(),
+            auto_accepted_fees: true,
+            liquid_expiration_blockheight: 123,
+            bitcoin_expiration_blockheight: 456,
+            lockup_tx_id: Some("lockup".to_string()),
+            claim_tx_id: Some("claim".to_string()),
+            refund_tx_id: Some("refund".to_string()),
+            refund_tx_amount_sat: Some(900),
+        });
+
+        let domain = DomainPayment::from(sdk_payment);
+
+        assert_eq!(
+            domain.details,
+            DomainPaymentDetails::OnChainBitcoin {
+                swap_id: Some("swap-id".to_string()),
+                bitcoin_address: Some("bc1qaddress".to_string()),
+                description: "chain swap".to_string(),
+                auto_accepted_fees: true,
+                liquid_expiration_blockheight: 123,
+                bitcoin_expiration_blockheight: 456,
+                lockup_tx_id: Some("lockup".to_string()),
+                claim_tx_id: Some("claim".to_string()),
+                refund_tx_id: Some("refund".to_string()),
+                refund_tx_amount_sat: Some(900),
+            }
+        );
+    }
+
+    #[test]
+    fn refundable_swap_maps_only_ui_fields() {
+        let domain = DomainRefundableSwap::from(LiquidRefundableSwap {
+            swap_address: "swap-address".to_string(),
+            timestamp: 1_722_000_001,
+            amount_sat: 42_000,
+            last_refund_tx_id: Some("ignored".to_string()),
+        });
+
+        assert_eq!(
+            domain,
+            DomainRefundableSwap {
+                swap_address: "swap-address".to_string(),
+                timestamp: 1_722_000_001,
+                amount_sat: 42_000,
+            }
+        );
+    }
+}

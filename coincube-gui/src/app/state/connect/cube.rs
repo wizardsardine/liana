@@ -1452,3 +1452,510 @@ fn validate_ln_username(username: &str) -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use coincube_spark_protocol::LightningAddressInfo;
+
+    use crate::{
+        app::view::AvatarMessage,
+        services::coincube::{
+            AvatarAccentMotif, AvatarAgeFeel, AvatarArmorStyle, AvatarDemeanor,
+            AvatarDerivedTraits, AvatarGender, AvatarGenerateData, AvatarIdentity,
+            AvatarResolvedDirectives, AvatarSelectData, AvatarVariant, CubeResponse, GetAvatarData,
+            RegenerationData,
+        },
+    };
+
+    fn panel() -> ConnectCubePanel {
+        ConnectCubePanel::new(
+            None,
+            "cube-uuid".to_string(),
+            "Family Vault".to_string(),
+            "bitcoin".to_string(),
+            false,
+        )
+    }
+
+    fn lightning(address: &str) -> LightningAddress {
+        LightningAddress {
+            lightning_address: Some(address.to_string()),
+        }
+    }
+
+    fn lightning_info(address: &str) -> LightningAddressInfo {
+        let username = address.split('@').next().unwrap_or(address).to_string();
+        LightningAddressInfo {
+            lightning_address: address.to_string(),
+            username: username.clone(),
+            description: Some("Coincube".to_string()),
+            lnurl_url: format!("https://example.com/.well-known/lnurlp/{username}"),
+            lnurl_bech32: "lnurl1test".to_string(),
+        }
+    }
+
+    fn cube_response(lightning_address: Option<&str>) -> CubeResponse {
+        CubeResponse {
+            id: 42,
+            uuid: "cube-uuid".to_string(),
+            name: "Family Vault".to_string(),
+            network: "bitcoin".to_string(),
+            lightning_address: lightning_address.map(str::to_string),
+            status: "active".to_string(),
+            has_recovery_kit: false,
+            has_vault: Some(true),
+            members: Vec::new(),
+            pending_invites: Vec::new(),
+            vault: None,
+        }
+    }
+
+    fn avatar_variant(id: u64) -> AvatarVariant {
+        AvatarVariant {
+            id,
+            index: id as u32,
+            image_url: format!("https://cdn.example/avatar/{id}.png"),
+        }
+    }
+
+    fn avatar_data(has_avatar: bool, active_id: Option<u64>) -> GetAvatarData {
+        GetAvatarData {
+            has_avatar,
+            active_avatar_url: active_id.map(|id| format!("https://cdn.example/avatar/{id}.png")),
+            identity: None,
+            variants: vec![avatar_variant(7), avatar_variant(8)],
+            regenerations_remaining: 3,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    fn identity() -> AvatarIdentity {
+        AvatarIdentity {
+            version: 1,
+            seed_version: 1,
+            seed_hash: "seed-hash".to_string(),
+            lightning_address: "founder@example.com".to_string(),
+            archetype: "ronin".to_string(),
+            user_traits: AvatarUserTraits {
+                gender: AvatarGender::Woman,
+                archetype: crate::services::coincube::AvatarArchetype::Shogun,
+                age_feel: AvatarAgeFeel::Elder,
+                demeanor: AvatarDemeanor::Fierce,
+                armor_style: AvatarArmorStyle::Heavy,
+                accent_motif: AvatarAccentMotif::OrangeSun,
+                laser_eyes: true,
+            },
+            derived_traits: AvatarDerivedTraits {
+                pose: "front".to_string(),
+                crop_style: "portrait".to_string(),
+                hat_style: "none".to_string(),
+                face_visibility: "visible".to_string(),
+                eye_visibility: "visible".to_string(),
+                weapon_mode: "none".to_string(),
+                shoulder_profile: "square".to_string(),
+                cloak_presence: "none".to_string(),
+                armor_wear: "clean".to_string(),
+                enso_style: "brush".to_string(),
+                ink_density: "medium".to_string(),
+                brush_texture: "dry".to_string(),
+                splash_intensity: "low".to_string(),
+                orange_placement: "accent".to_string(),
+                ornament_level: "simple".to_string(),
+            },
+            resolved_directives: AvatarResolvedDirectives {
+                composition: "composition".to_string(),
+                silhouette: "silhouette".to_string(),
+                face_treatment: "face".to_string(),
+                armor_treatment: "armor".to_string(),
+                mood: "mood".to_string(),
+                orange_treatment: "orange".to_string(),
+                ink_treatment: "ink".to_string(),
+                eyes_treatment: "eyes".to_string(),
+                background: "background".to_string(),
+                archetype_flavor: "flavor".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn lightning_username_validation_covers_client_side_rules() {
+        assert_eq!(
+            validate_ln_username("").as_deref(),
+            Some("Username is required")
+        );
+        assert_eq!(
+            validate_ln_username("ab").as_deref(),
+            Some("Username must be at least 3 characters")
+        );
+        assert_eq!(
+            validate_ln_username(&"a".repeat(65)).as_deref(),
+            Some("Username must be at most 64 characters")
+        );
+        assert_eq!(
+            validate_ln_username("-abc").as_deref(),
+            Some("Must start with a letter or number")
+        );
+        assert_eq!(
+            validate_ln_username("abc_").as_deref(),
+            Some("Must end with a letter or number")
+        );
+        assert_eq!(
+            validate_ln_username("ab$c").as_deref(),
+            Some("Invalid character: '$'")
+        );
+        assert_eq!(
+            validate_ln_username("ab..c").as_deref(),
+            Some("No consecutive special characters allowed")
+        );
+        assert!(validate_ln_username("abc-123_def.xyz").is_none());
+    }
+
+    #[test]
+    fn registration_client_and_avatar_helpers_reset_session_state() {
+        let mut panel = panel();
+        assert!(panel.api_cube_id().is_none());
+        assert!(panel.load_avatar_if_needed().is_none());
+        let (_, handle) = panel.register_cube().abortable();
+        handle.abort();
+
+        panel.set_client(CoincubeClient::new());
+        panel.server_cube_id = Some(42);
+        assert_eq!(panel.api_cube_id().as_deref(), Some("42"));
+        assert!(panel.load_avatar_if_needed().is_some());
+        let (_, handle) = panel.register_cube().abortable();
+        handle.abort();
+        let _ = panel.report_vault_created();
+        assert!(panel.cube_has_vault);
+
+        panel.avatar_data = Some(avatar_data(true, Some(7)));
+        panel.avatar_image_cache.insert(
+            7,
+            (
+                vec![137, 80, 78, 71],
+                iced::widget::image::Handle::from_bytes(vec![137, 80, 78, 71]),
+            ),
+        );
+        assert!(panel.get_active_avatar_handle().is_some());
+        if let Some(data) = panel.avatar_data.as_mut() {
+            data.active_avatar_url = Some("https://cdn.example/avatar/70.png".to_string());
+        }
+        assert!(panel.get_active_avatar_handle().is_none());
+
+        panel.ln_username_input = "founder".to_string();
+        panel.ln_username_available = Some(true);
+        panel.ln_username_error = Some("old".to_string());
+        panel.ln_claim_error = Some("old".to_string());
+        panel.lightning_address = Some(lightning("founder@example.com"));
+        panel.ln_reconcile_needs_reregister = Some("retry".to_string());
+        panel.avatar_error = Some("old".to_string());
+        panel.clear_client();
+
+        assert!(panel.client.is_none());
+        assert!(panel.server_cube_id.is_none());
+        assert!(panel.lightning_address.is_none());
+        assert!(panel.ln_username_input.is_empty());
+        assert!(panel.ln_username_available.is_none());
+        assert!(panel.ln_username_error.is_none());
+        assert!(panel.ln_claim_error.is_none());
+        assert!(panel.ln_reconcile_needs_reregister.is_none());
+        assert!(panel.avatar_data.is_none());
+        assert!(panel.avatar_image_cache.is_empty());
+    }
+
+    #[test]
+    fn lightning_address_state_machine_handles_non_network_branches() {
+        let mut panel = panel();
+
+        let _ = panel.update_message(ConnectCubeMessage::CubeRegistered(Ok(cube_response(Some(
+            "founder@example.com",
+        )))));
+        assert_eq!(panel.server_cube_id, Some(42));
+        assert_eq!(
+            panel
+                .lightning_address
+                .as_ref()
+                .and_then(|a| a.lightning_address.as_deref()),
+            Some("founder@example.com")
+        );
+
+        let _ = panel.update_message(ConnectCubeMessage::CubeRegistered(Err(
+            "register failed".to_string()
+        )));
+        assert_eq!(panel.registration_error.as_deref(), Some("register failed"));
+
+        let _ = panel.update_message(ConnectCubeMessage::LnUsernameChanged("Bad$".to_string()));
+        assert_eq!(panel.ln_username_input, "bad$");
+        assert!(panel.ln_username_error.is_some());
+        assert!(!panel.ln_checking);
+
+        let _ = panel.update_message(ConnectCubeMessage::LnUsernameChanged(
+            "Fresh_Name".to_string(),
+        ));
+        assert_eq!(panel.ln_username_input, "fresh_name");
+        assert!(panel.ln_username_error.is_none());
+        assert!(!panel.ln_checking);
+
+        let stale_version = panel.ln_check_version + 1;
+        let _ = panel.update_message(ConnectCubeMessage::LnUsernameChecked {
+            available: false,
+            error_message: Some("taken".to_string()),
+            version: stale_version,
+        });
+        assert!(panel.ln_username_available.is_none());
+
+        let _ = panel.update_message(ConnectCubeMessage::LnUsernameChecked {
+            available: false,
+            error_message: None,
+            version: panel.ln_check_version,
+        });
+        assert_eq!(panel.ln_username_available, Some(false));
+        assert_eq!(
+            panel.ln_username_error.as_deref(),
+            Some("Username is taken")
+        );
+
+        let _ = panel.update_message(ConnectCubeMessage::ClaimLightningAddress);
+        assert!(!panel.ln_claiming);
+
+        panel.set_client(CoincubeClient::new());
+        let _ = panel.update_message(ConnectCubeMessage::ClaimLightningAddress);
+        assert_eq!(
+            panel.ln_claim_error.as_deref(),
+            Some("Spark wallet is not available on this cube")
+        );
+
+        let _ = panel.update_message(ConnectCubeMessage::BeginEditLightningAddress);
+        assert!(panel.ln_editing);
+        panel.ln_username_input = "newname".to_string();
+        panel.ln_username_available = Some(true);
+        panel.ln_username_error = None;
+        let _ = panel.update_message(ConnectCubeMessage::RequestChangeLightningAddress);
+        assert_eq!(panel.ln_change_confirm_pending.as_deref(), Some("newname"));
+        let _ = panel.update_message(ConnectCubeMessage::DismissChangeConfirmation);
+        assert!(panel.ln_change_confirm_pending.is_none());
+        let _ = panel.update_message(ConnectCubeMessage::CancelEditLightningAddress);
+        assert!(!panel.ln_editing);
+        assert!(panel.ln_username_input.is_empty());
+
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressUpdated(
+            LightningAddressChangeOutcome::ServerError("conflict".to_string()),
+        ));
+        assert_eq!(panel.ln_claim_error.as_deref(), Some("conflict"));
+
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressUpdated(
+            LightningAddressChangeOutcome::SdkSyncFailed {
+                addr: lightning("new@example.com"),
+                message: "sdk failed".to_string(),
+            },
+        ));
+        assert_eq!(
+            panel.ln_reconcile_needs_reregister.as_deref(),
+            Some("sdk failed")
+        );
+
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressUpdated(
+            LightningAddressChangeOutcome::Ok(lightning("ok@example.com")),
+        ));
+        assert!(panel.ln_reconcile_needs_reregister.is_none());
+        assert!(!panel.ln_editing);
+    }
+
+    #[test]
+    fn reconciliation_messages_update_prompt_state_without_spark() {
+        let mut panel = panel();
+        panel.lightning_address = Some(lightning("founder@example.com"));
+
+        let _ = panel.update_message(ConnectCubeMessage::SparkLightningAddressChanged(Some(
+            lightning_info("founder@example.com"),
+        )));
+        assert!(panel.ln_reconcile_needs_reregister.is_none());
+
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled(
+            ReconcileOutcome::AlreadyBound(lightning_info("founder@example.com")),
+        ));
+        assert!(panel.ln_reconcile_needs_reregister.is_none());
+
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled(
+            ReconcileOutcome::ReRegistered(lightning_info("founder@example.com")),
+        ));
+        assert!(panel.ln_reconcile_needs_reregister.is_none());
+
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled(
+            ReconcileOutcome::QueryFailed("offline".to_string()),
+        ));
+        assert!(panel.ln_reconcile_needs_reregister.is_none());
+
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled(
+            ReconcileOutcome::NeedsReRegistration("needs retry".to_string()),
+        ));
+        assert_eq!(
+            panel.ln_reconcile_needs_reregister.as_deref(),
+            Some("needs retry")
+        );
+
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered(Ok(
+            lightning_info("founder@example.com"),
+        )));
+        assert!(panel.ln_reconcile_needs_reregister.is_none());
+
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered(Ok(
+            lightning_info("wrong@example.com"),
+        )));
+        assert!(panel.ln_reconcile_needs_reregister.is_some());
+
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered(Err(
+            "still down".to_string(),
+        )));
+        assert_eq!(
+            panel.ln_reconcile_needs_reregister.as_deref(),
+            Some("still down")
+        );
+    }
+
+    #[test]
+    fn avatar_state_machine_handles_local_transitions_and_results() {
+        let mut panel = panel();
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Enter));
+        assert_eq!(panel.avatar_error.as_deref(), Some("Not signed in"));
+
+        panel.set_client(CoincubeClient::new());
+        panel.registration_error = Some("registration pending".to_string());
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Enter));
+        assert_eq!(panel.avatar_error.as_deref(), Some("registration pending"));
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Loaded(Ok(
+            avatar_data(false, None),
+        ))));
+        assert!(matches!(panel.avatar_step, AvatarFlowStep::Questionnaire));
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Loaded(Ok(
+            avatar_data(true, Some(7)),
+        ))));
+        assert!(matches!(panel.avatar_step, AvatarFlowStep::Settings));
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Loaded(Err(
+            "load failed".to_string(),
+        ))));
+        assert_eq!(panel.avatar_error.as_deref(), Some("load failed"));
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::SetStep(
+            AvatarFlowStep::Reveal,
+        )));
+        assert!(matches!(panel.avatar_step, AvatarFlowStep::Reveal));
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::GenderChanged(
+            AvatarGender::Woman,
+        )));
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::AgeFeelChanged(
+            AvatarAgeFeel::Young,
+        )));
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::DemeanorChanged(
+            AvatarDemeanor::Calm,
+        )));
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(
+            AvatarMessage::ArmorStyleChanged(AvatarArmorStyle::Standard),
+        ));
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(
+            AvatarMessage::AccentMotifChanged(AvatarAccentMotif::Seal),
+        ));
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::LaserEyesToggled(
+            true,
+        )));
+        assert_eq!(panel.avatar_draft.gender, AvatarGender::Woman);
+        assert_eq!(panel.avatar_draft.age_feel, AvatarAgeFeel::Young);
+        assert!(panel.avatar_draft.laser_eyes);
+
+        panel.avatar_generating = true;
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Generate));
+        assert!(panel.avatar_generating);
+
+        panel.avatar_generating = false;
+        panel.client = None;
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Generate));
+        assert_eq!(panel.avatar_error.as_deref(), Some("Not signed in"));
+
+        panel.set_client(CoincubeClient::new());
+        panel.server_cube_id = None;
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Generate));
+        assert_eq!(panel.avatar_error.as_deref(), Some("registration pending"));
+
+        let generated = AvatarGenerateData {
+            identity: identity(),
+            variant: avatar_variant(9),
+        };
+        panel.avatar_data = Some(avatar_data(true, Some(7)));
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::GenerateComplete(
+            Ok(generated),
+        )));
+        assert!(matches!(panel.avatar_step, AvatarFlowStep::Reveal));
+        assert_eq!(panel.avatar_draft.gender, AvatarGender::Woman);
+        assert_eq!(
+            panel.avatar_data.as_ref().unwrap().regenerations_remaining,
+            2
+        );
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::GenerateComplete(
+            Err("generation failed".to_string()),
+        )));
+        assert_eq!(panel.avatar_error.as_deref(), Some("generation failed"));
+        assert!(matches!(panel.avatar_step, AvatarFlowStep::Questionnaire));
+
+        panel.client = None;
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::SelectVariant(8)));
+        assert_eq!(panel.avatar_error.as_deref(), Some("Not signed in"));
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::VariantSelected(
+            Ok(AvatarSelectData {
+                active_avatar_url: "https://cdn.example/avatar/8.png".to_string(),
+                variant_id: 8,
+            }),
+        )));
+        assert_eq!(
+            panel
+                .avatar_data
+                .as_ref()
+                .unwrap()
+                .active_avatar_url
+                .as_deref(),
+            Some("https://cdn.example/avatar/8.png")
+        );
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::VariantSelected(
+            Err("select failed".to_string()),
+        )));
+        assert_eq!(panel.avatar_error.as_deref(), Some("select failed"));
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(
+            AvatarMessage::RegenerationsLoaded(Ok(RegenerationData {
+                total_allowed: 5,
+                used: 4,
+                remaining: 1,
+            })),
+        ));
+        assert_eq!(
+            panel.avatar_data.as_ref().unwrap().regenerations_remaining,
+            1
+        );
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::ImageLoaded {
+            variant_id: 8,
+            result: Ok(vec![137, 80, 78, 71]),
+        }));
+        assert!(panel.avatar_image_cache.contains_key(&8));
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::SaveError(
+            "disk full".to_string(),
+        )));
+        assert_eq!(panel.avatar_error.as_deref(), Some("disk full"));
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Retry));
+        assert!(panel.avatar_error.is_none());
+        assert!(matches!(panel.avatar_step, AvatarFlowStep::Questionnaire));
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Noop));
+    }
+}

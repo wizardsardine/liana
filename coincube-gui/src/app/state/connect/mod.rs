@@ -331,3 +331,65 @@ impl State for ConnectPanel {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ConnectPanel;
+
+    #[test]
+    fn new_propagates_active_cube_context_to_both_panels() {
+        let panel = ConnectPanel::new(
+            None,
+            "cube-uuid".to_string(),
+            "Family Vault".to_string(),
+            "bitcoin".to_string(),
+            true,
+        );
+
+        assert_eq!(panel.cube.cube_uuid, "cube-uuid");
+        assert_eq!(panel.cube.cube_name, "Family Vault");
+        assert_eq!(panel.cube.cube_network, "bitcoin");
+        assert!(panel.cube.cube_has_vault);
+        assert_eq!(
+            panel.account.contacts_state.active_network.as_deref(),
+            Some("bitcoin")
+        );
+    }
+
+    #[test]
+    fn sync_active_cube_server_id_mirrors_registration_id() {
+        let mut panel = ConnectPanel::new(
+            None,
+            "cube-uuid".to_string(),
+            "Family Vault".to_string(),
+            "regtest".to_string(),
+            false,
+        );
+
+        assert_eq!(panel.account.contacts_state.active_cube_server_id, None);
+        panel.cube.server_cube_id = Some(42);
+        panel.sync_active_cube_server_id();
+        assert_eq!(panel.account.contacts_state.active_cube_server_id, Some(42));
+
+        panel.cube.server_cube_id = None;
+        panel.sync_active_cube_server_id();
+        assert_eq!(panel.account.contacts_state.active_cube_server_id, None);
+    }
+
+    #[test]
+    fn report_vault_created_sets_local_flag_and_invalidates_duress_cache() {
+        let mut panel = ConnectPanel::new(
+            None,
+            "cube-uuid".to_string(),
+            "Family Vault".to_string(),
+            "bitcoin".to_string(),
+            false,
+        );
+        panel.account.duress_cubes = Some(Vec::new());
+
+        let _ = panel.report_vault_created();
+
+        assert!(panel.cube.cube_has_vault);
+        assert!(panel.account.duress_cubes.is_none());
+    }
+}

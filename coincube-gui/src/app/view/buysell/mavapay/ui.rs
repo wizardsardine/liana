@@ -1373,3 +1373,452 @@ fn success_icon_badge() -> widget::Container<'static, BuySellMessage, theme::The
             ..Default::default()
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::breez_liquid::BreezClient;
+    use coincube_core::miniscript::bitcoin;
+    use std::sync::Arc;
+
+    fn country(code: &str) -> &'static Country {
+        crate::services::coincube::get_countries()
+            .iter()
+            .find(|country| country.code == code)
+            .expect("fixture country should exist")
+    }
+
+    fn state(buy_or_sell: BuyOrSell, step: MavapayFlowStep, country_code: &str) -> MavapayState {
+        let mut state = MavapayState::new(
+            buy_or_sell,
+            step,
+            country(country_code),
+            Arc::new(BreezClient::disconnected(bitcoin::Network::Signet)),
+        );
+        state.sat_amount = 123_456;
+        state.btc_price = Some(5_000_000_000.0);
+        state
+    }
+
+    fn quote(
+        id: &str,
+        source_currency: MavapayUnitCurrency,
+        target_currency: MavapayUnitCurrency,
+        payment_method: MavapayPaymentMethod,
+    ) -> GetQuoteResponse {
+        GetQuoteResponse {
+            id: id.to_string(),
+            order_id: Some(format!("order-{id}")),
+            exchange_rate: 1.0,
+            usd_to_target_currency_rate: 1.0,
+            source_currency,
+            target_currency,
+            transaction_fees_in_source_currency: 100,
+            transaction_fees_in_target_currency: 10,
+            amount_in_source_currency: 12_000,
+            amount_in_target_currency: 6_000,
+            payment_method,
+            expiry: "2026-01-01T00:00:00Z".to_string(),
+            is_valid: true,
+            invoice: "lnbc1pfixtureinvoicewithmorethanfortyfivecharactersforui".to_string(),
+            hash: "hash".to_string(),
+            total_amount_in_source_currency: 12_500,
+            total_amount_in_target_currency: Some(6_000),
+            customer_internal_fee: 0,
+            created_at: Some("2026-01-01T00:00:00Z".to_string()),
+            updated_at: Some("2026-01-01T00:00:00Z".to_string()),
+            estimated_routing_fee: Some(4),
+            bank_name: Some("Fixture Bank".to_string()),
+            ngn_bank_account_number: Some("1234567890".to_string()),
+            ngn_account_name: Some("Mavapay Fixture".to_string()),
+            ngn_bank_code: Some("999".to_string()),
+        }
+    }
+
+    fn transaction(
+        status: TransactionStatus,
+        transaction_type: TransactionType,
+        payment_method: Option<MavapayPaymentMethod>,
+    ) -> OrderTransaction {
+        OrderTransaction {
+            order_id: "order-1".to_string(),
+            transaction_id: "tx-1".to_string(),
+            amount: 12_345,
+            fees: 250,
+            currency: MavapayCurrency::NigerianNaira,
+            transaction_type,
+            status,
+            payment_method,
+            created_at: "2026-01-01T12:00:00Z".to_string(),
+        }
+    }
+
+    fn order(status: TransactionStatus, quotes: Vec<OrderQuote>) -> GetOrderResponse {
+        GetOrderResponse {
+            id: 1,
+            order_id: "order-1".to_string(),
+            quote_id: Some("quote-1".to_string()),
+            amount: 12_345,
+            status,
+            currency: MavapayCurrency::NigerianNaira,
+            payment_method: MavapayPaymentMethod::BankTransfer,
+            is_valid: Some(true),
+            payment_btc_detail: Some("btc-address".to_string()),
+            created_at: "2026-01-01T12:00:00Z".to_string(),
+            updated_at: "2026-01-01T12:05:00Z".to_string(),
+            order_data: Some(OrderDataWrapper {
+                status: "ok".to_string(),
+                data: OrderDataInner { quotes },
+            }),
+        }
+    }
+
+    fn order_quote(
+        source_currency: MavapayUnitCurrency,
+        target_currency: MavapayUnitCurrency,
+    ) -> OrderQuote {
+        OrderQuote {
+            transaction_fees_in_source_currency: 111,
+            transaction_fees_in_target_currency: 22,
+            transaction_fees_in_usd_cent: 33,
+            payment_btc_detail: "bc1qfixtureaddress".to_string(),
+            total_amount: 12_345,
+            equivalent_amount: 6_789,
+            source_currency,
+            target_currency,
+        }
+    }
+
+    #[test]
+    fn formatting_and_status_helpers_cover_display_cases() {
+        assert_eq!(format_fiat_cents(0), "0.00");
+        assert_eq!(format_fiat_cents(5), "0.05");
+        assert_eq!(format_fiat_cents(1_234_567), "12,345.67");
+
+        assert_eq!(
+            format_currency_amount(12_345, &MavapayUnitCurrency::KenyanShillingCent),
+            "123.45 KES"
+        );
+        assert_eq!(
+            format_currency_amount(12_345, &MavapayUnitCurrency::SouthAfricanRandCent),
+            "123.45 ZAR"
+        );
+        assert_eq!(
+            format_currency_amount(12_345, &MavapayUnitCurrency::NigerianNairaKobo),
+            "123.45 NGN"
+        );
+        assert_eq!(
+            format_currency_amount(123_456_789, &MavapayUnitCurrency::BitcoinSatoshi),
+            "1.23456789 BTC"
+        );
+
+        assert_eq!(
+            format_amount(123_456_789, &MavapayCurrency::Bitcoin),
+            "1.23456789 BTC"
+        );
+        assert_eq!(
+            format_amount(12_345, &MavapayCurrency::KenyanShilling),
+            "123.45 KSh"
+        );
+        assert_eq!(
+            format_amount(12_345, &MavapayCurrency::SouthAfricanRand),
+            "123.45 ZAR"
+        );
+        assert_eq!(
+            format_amount(12_345, &MavapayCurrency::NigerianNaira),
+            "123.45 NGN"
+        );
+        assert_eq!(
+            format_fees(12_345, &MavapayCurrency::Bitcoin),
+            "12,345 sats"
+        );
+        assert_eq!(
+            format_fees(12_345, &MavapayCurrency::NigerianNaira),
+            "123.45 NGN"
+        );
+
+        assert_eq!(order_status_text(&TransactionStatus::Success), "Complete");
+        assert_eq!(order_status_text(&TransactionStatus::Paid), "Complete");
+        assert_eq!(order_status_text(&TransactionStatus::Pending), "Processing");
+        assert_eq!(order_status_text(&TransactionStatus::Expired), "Expired");
+        assert_eq!(order_status_text(&TransactionStatus::Failed), "Failed");
+
+        assert_eq!(
+            transaction_status_info(&transaction(
+                TransactionStatus::Pending,
+                TransactionType::Deposit,
+                None,
+            ))
+            .0,
+            "Processing"
+        );
+        assert_eq!(
+            transaction_status_info(&transaction(
+                TransactionStatus::Success,
+                TransactionType::Deposit,
+                Some(MavapayPaymentMethod::BankTransfer),
+            ))
+            .0,
+            "Processing"
+        );
+        assert_eq!(
+            transaction_status_info(&transaction(
+                TransactionStatus::Success,
+                TransactionType::Withdrawal,
+                Some(MavapayPaymentMethod::Lightning),
+            ))
+            .0,
+            "Complete"
+        );
+        assert_eq!(
+            transaction_status_info(&transaction(
+                TransactionStatus::Expired,
+                TransactionType::Withdrawal,
+                None,
+            ))
+            .0,
+            "Expired"
+        );
+        assert_eq!(
+            transaction_status_info(&transaction(
+                TransactionStatus::Failed,
+                TransactionType::Withdrawal,
+                None,
+            ))
+            .0,
+            "Failed"
+        );
+
+        assert_eq!(
+            order_type_from_payment(Some(&MavapayPaymentMethod::BankTransfer)).0,
+            "BUY"
+        );
+        assert_eq!(
+            order_type_from_payment(Some(&MavapayPaymentMethod::USDT)).0,
+            "BUY"
+        );
+        assert_eq!(
+            order_type_from_payment(Some(&MavapayPaymentMethod::Lightning)).0,
+            "SELL"
+        );
+        assert_eq!(
+            order_type_from_payment(Some(&MavapayPaymentMethod::Onchain)).0,
+            "SELL"
+        );
+        assert_eq!(order_type_from_payment(None).0, "N/A");
+
+        assert_ne!(pretty_timestamp("2026-01-01T12:00:00Z"), "unknown");
+        assert_eq!(pretty_timestamp("not a timestamp"), "unknown");
+    }
+
+    #[test]
+    fn input_forms_build_for_supported_buy_and_sell_countries() {
+        let buy = state(
+            BuyOrSell::Buy,
+            MavapayFlowStep::BuyInputFrom {
+                ln_invoice: None,
+                getting_invoice: false,
+                sending_quote: false,
+            },
+            "NG",
+        );
+        let _ = form(&buy);
+
+        let mut buy_without_price = state(
+            BuyOrSell::Buy,
+            MavapayFlowStep::BuyInputFrom {
+                ln_invoice: Some("invoice".to_string()),
+                getting_invoice: true,
+                sending_quote: false,
+            },
+            "NG",
+        );
+        buy_without_price.btc_price = None;
+        let _ = form(&buy_without_price);
+
+        let ngn = state(
+            BuyOrSell::Sell,
+            MavapayFlowStep::SellInputForm {
+                liquid_balance: Some(50_000),
+                banks: Some(MavapayBanks::Nigerian(vec![NigerianBank {
+                    bank_name: "Fixture Bank".to_string(),
+                    nip_bank_code: "999".to_string(),
+                }])),
+                beneficiary: Beneficiary::NGN {
+                    bank_account_name: Some("Recipient".to_string()),
+                    bank_account_number: "1234567890".to_string(),
+                    bank_code: "999".to_string(),
+                    bank_name: "Fixture Bank".to_string(),
+                },
+                sending_quote: false,
+            },
+            "NG",
+        );
+        let _ = form(&ngn);
+
+        let zar = state(
+            BuyOrSell::Sell,
+            MavapayFlowStep::SellInputForm {
+                liquid_balance: Some(50_000),
+                banks: Some(MavapayBanks::SouthAfrican(vec![
+                    "Capitec".to_string(),
+                    "Standard Bank".to_string(),
+                ])),
+                beneficiary: Beneficiary::ZAR {
+                    name: "Recipient".to_string(),
+                    bank_name: "Capitec".to_string(),
+                    bank_account_number: "1234567890".to_string(),
+                },
+                sending_quote: true,
+            },
+            "ZA",
+        );
+        let _ = form(&zar);
+
+        let kes = state(
+            BuyOrSell::Sell,
+            MavapayFlowStep::SellInputForm {
+                liquid_balance: Some(50_000),
+                banks: None,
+                beneficiary: Beneficiary::KES(KenyanBeneficiary::PayToPhone {
+                    account_name: "Recipient".to_string(),
+                    phone_number: "+254700000000".to_string(),
+                }),
+                sending_quote: false,
+            },
+            "KE",
+        );
+        let _ = form(&kes);
+
+        let invalid_ngn = state(
+            BuyOrSell::Sell,
+            MavapayFlowStep::SellInputForm {
+                liquid_balance: None,
+                banks: None,
+                beneficiary: Beneficiary::NGN {
+                    bank_account_name: None,
+                    bank_account_number: "not-a-number".to_string(),
+                    bank_code: String::new(),
+                    bank_name: String::new(),
+                },
+                sending_quote: false,
+            },
+            "NG",
+        );
+        let _ = form(&invalid_ngn);
+    }
+
+    #[test]
+    fn checkout_and_history_forms_build_for_result_shapes() {
+        let checkout = state(
+            BuyOrSell::Buy,
+            MavapayFlowStep::Checkout {
+                quote: quote(
+                    "quote-1",
+                    MavapayUnitCurrency::NigerianNairaKobo,
+                    MavapayUnitCurrency::BitcoinSatoshi,
+                    MavapayPaymentMethod::BankTransfer,
+                ),
+                fulfilled_order: None,
+                invoice_qr_code_data: None,
+                liquid_balance: None,
+                fulfilling_ln_invoice: false,
+                stream_order_id: Some("order-quote-1".to_string()),
+            },
+            "NG",
+        );
+        let _ = form(&checkout);
+
+        let fulfilled = state(
+            BuyOrSell::Buy,
+            MavapayFlowStep::Checkout {
+                quote: quote(
+                    "quote-2",
+                    MavapayUnitCurrency::NigerianNairaKobo,
+                    MavapayUnitCurrency::BitcoinSatoshi,
+                    MavapayPaymentMethod::BankTransfer,
+                ),
+                fulfilled_order: Some(order(TransactionStatus::Success, Vec::new())),
+                invoice_qr_code_data: None,
+                liquid_balance: None,
+                fulfilling_ln_invoice: false,
+                stream_order_id: None,
+            },
+            "NG",
+        );
+        let _ = form(&fulfilled);
+
+        for step in [
+            MavapayFlowStep::History {
+                transactions: None,
+                loading: true,
+            },
+            MavapayFlowStep::History {
+                transactions: Some(Vec::new()),
+                loading: false,
+            },
+            MavapayFlowStep::History {
+                transactions: Some(vec![transaction(
+                    TransactionStatus::Success,
+                    TransactionType::Withdrawal,
+                    Some(MavapayPaymentMethod::Lightning),
+                )]),
+                loading: false,
+            },
+            MavapayFlowStep::History {
+                transactions: None,
+                loading: false,
+            },
+        ] {
+            let history = state(BuyOrSell::Buy, step, "NG");
+            let _ = form(&history);
+        }
+    }
+
+    #[test]
+    fn order_detail_forms_build_for_loading_success_empty_and_failed_states() {
+        let base_transaction = transaction(
+            TransactionStatus::Paid,
+            TransactionType::Withdrawal,
+            Some(MavapayPaymentMethod::BankTransfer),
+        );
+
+        for step in [
+            MavapayFlowStep::OrderDetail {
+                transaction: base_transaction.clone(),
+                order: None,
+                loading: true,
+            },
+            MavapayFlowStep::OrderDetail {
+                transaction: base_transaction.clone(),
+                order: None,
+                loading: false,
+            },
+            MavapayFlowStep::OrderDetail {
+                transaction: base_transaction.clone(),
+                order: Some(order(TransactionStatus::Pending, Vec::new())),
+                loading: false,
+            },
+            MavapayFlowStep::OrderDetail {
+                transaction: base_transaction.clone(),
+                order: Some(order(
+                    TransactionStatus::Success,
+                    vec![
+                        order_quote(
+                            MavapayUnitCurrency::NigerianNairaKobo,
+                            MavapayUnitCurrency::BitcoinSatoshi,
+                        ),
+                        order_quote(
+                            MavapayUnitCurrency::BitcoinSatoshi,
+                            MavapayUnitCurrency::NigerianNairaKobo,
+                        ),
+                    ],
+                )),
+                loading: false,
+            },
+        ] {
+            let detail = state(BuyOrSell::Buy, step, "NG");
+            let _ = form(&detail);
+        }
+    }
+}

@@ -165,3 +165,160 @@ impl PriceSource {
         Ok(ListCurrenciesResult { currencies })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PriceSource, ALL_PRICE_SOURCES};
+    use crate::services::fiat::{api::PriceApiError, currency::Currency};
+    use serde_json::json;
+    use std::str::FromStr;
+
+    #[test]
+    fn all_price_sources_round_trip_through_display_and_parse() {
+        assert_eq!(
+            ALL_PRICE_SOURCES,
+            [
+                PriceSource::Coincube,
+                PriceSource::MempoolSpace,
+                PriceSource::CoinGecko,
+            ]
+        );
+
+        for source in ALL_PRICE_SOURCES {
+            let rendered = source.to_string();
+            assert_eq!(PriceSource::from_str(&rendered), Ok(source));
+            assert_eq!(PriceSource::from_str(&rendered.to_uppercase()), Ok(source));
+        }
+
+        assert_eq!(
+            PriceSource::from_str("unknown-source"),
+            Err("Invalid price source".to_string())
+        );
+    }
+
+    #[test]
+    fn attribution_and_user_agent_match_upstream_requirements() {
+        assert_eq!(
+            PriceSource::Coincube.attribution(),
+            Some("Powered by Coincube".to_string())
+        );
+        assert_eq!(
+            PriceSource::CoinGecko.attribution(),
+            Some("Powered by CoinGecko".to_string())
+        );
+        assert_eq!(PriceSource::MempoolSpace.attribution(), None);
+
+        assert_eq!(PriceSource::Coincube.user_agent(), None);
+        assert_eq!(PriceSource::MempoolSpace.user_agent(), None);
+        assert_eq!(
+            PriceSource::CoinGecko.user_agent(),
+            Some(format!("coincube-gui/{}", env!("CARGO_PKG_VERSION")))
+        );
+    }
+
+    #[test]
+    fn urls_use_the_expected_provider_endpoints() {
+        assert!(PriceSource::Coincube
+            .get_price_url(Currency::MXN)
+            .ends_with("/api/v1/exchange-rates/price/MXN"));
+        assert!(PriceSource::Coincube
+            .list_currencies_url()
+            .ends_with("/api/v1/exchange-rates/currencies"));
+        assert_eq!(
+            PriceSource::CoinGecko.get_price_url(Currency::USD),
+            "https://api.coingecko.com/api/v3/exchange_rates"
+        );
+        assert_eq!(
+            PriceSource::CoinGecko.list_currencies_url(),
+            "https://api.coingecko.com/api/v3/exchange_rates"
+        );
+        assert_eq!(
+            PriceSource::MempoolSpace.get_price_url(Currency::USD),
+            "https://mempool.space/api/v1/prices"
+        );
+        assert_eq!(
+            PriceSource::MempoolSpace.list_currencies_url(),
+            "https://mempool.space/api/v1/prices"
+        );
+    }
+
+    #[test]
+    fn parses_prices_for_each_provider_shape() {
+        let coincube = PriceSource::Coincube
+            .parse_price_data(Currency::USD, &json!({"value": 102_000.25}))
+            .unwrap();
+        assert_eq!(coincube.value, 102_000.25);
+        assert_eq!(coincube.updated_at, None);
+
+        let coingecko = PriceSource::CoinGecko
+            .parse_price_data(
+                Currency::EUR,
+                &json!({"rates": {"eur": {"value": 91_000.5}}}),
+            )
+            .unwrap();
+        assert_eq!(coingecko.value, 91_000.5);
+        assert_eq!(coingecko.updated_at, None);
+
+        let mempool = PriceSource::MempoolSpace
+            .parse_price_data(Currency::MXN, &json!({"MXN": 1_800_000, "time": 12345}))
+            .unwrap();
+        assert_eq!(mempool.value, 1_800_000.0);
+        assert_eq!(mempool.updated_at, Some(12345));
+    }
+
+    #[test]
+    fn price_parse_errors_name_the_missing_field() {
+        for source in ALL_PRICE_SOURCES {
+            let err = source
+                .parse_price_data(Currency::USD, &json!({}))
+                .expect_err("empty payload should not contain a price");
+            assert!(matches!(err, PriceApiError::CannotParseData(field) if field == "price"));
+        }
+    }
+
+    #[test]
+    fn parses_currency_lists_and_filters_unknown_codes() {
+        let coincube = PriceSource::Coincube
+            .parse_currencies_data(&json!({"currencies": ["USD", "MXN", "NOPE"]}))
+            .unwrap();
+        assert_eq!(coincube.currencies, vec![Currency::USD, Currency::MXN]);
+
+        let coingecko = PriceSource::CoinGecko
+            .parse_currencies_data(&json!({"rates": {"usd": {}, "mxn": {}, "btc": {}}}))
+            .unwrap();
+        assert!(coingecko.currencies.contains(&Currency::USD));
+        assert!(coingecko.currencies.contains(&Currency::MXN));
+        assert_eq!(coingecko.currencies.len(), 2);
+
+        let mempool = PriceSource::MempoolSpace
+            .parse_currencies_data(&json!({"USD": 100000, "MXN": 1800000, "time": 12345}))
+            .unwrap();
+        assert!(mempool.currencies.contains(&Currency::USD));
+        assert!(mempool.currencies.contains(&Currency::MXN));
+        assert_eq!(mempool.currencies.len(), 2);
+    }
+
+    #[test]
+    fn currency_parse_errors_describe_the_bad_container() {
+        let coincube = PriceSource::Coincube
+            .parse_currencies_data(&json!({"currencies": "USD"}))
+            .expect_err("Coincube currencies must be an array");
+        assert!(
+            matches!(coincube, PriceApiError::CannotParseData(msg) if msg == "data is not array")
+        );
+
+        let coingecko = PriceSource::CoinGecko
+            .parse_currencies_data(&json!({"rates": []}))
+            .expect_err("CoinGecko rates must be an object");
+        assert!(
+            matches!(coingecko, PriceApiError::CannotParseData(msg) if msg == "data is not object")
+        );
+
+        let mempool = PriceSource::MempoolSpace
+            .parse_currencies_data(&json!(["USD"]))
+            .expect_err("mempool.space payload must be an object");
+        assert!(
+            matches!(mempool, PriceApiError::CannotParseData(msg) if msg == "data is not object")
+        );
+    }
+}

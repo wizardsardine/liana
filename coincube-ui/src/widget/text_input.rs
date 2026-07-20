@@ -1507,3 +1507,326 @@ fn alignment_offset(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Clone)]
+    struct TestParagraph {
+        content: String,
+        font: iced::Font,
+        size: Pixels,
+        line_height: text::LineHeight,
+        align_x: text::Alignment,
+        align_y: alignment::Vertical,
+        wrapping: text::Wrapping,
+        shaping: text::Shaping,
+        bounds: Size,
+    }
+
+    impl Default for TestParagraph {
+        fn default() -> Self {
+            Self {
+                content: String::new(),
+                font: iced::Font::default(),
+                size: Pixels(16.0),
+                line_height: text::LineHeight::default(),
+                align_x: text::Alignment::Left,
+                align_y: alignment::Vertical::Top,
+                wrapping: text::Wrapping::default(),
+                shaping: text::Shaping::default(),
+                bounds: Size::new(200.0, 20.0),
+            }
+        }
+    }
+
+    impl text::Paragraph for TestParagraph {
+        type Font = iced::Font;
+
+        fn with_text(text: Text<&str, Self::Font>) -> Self {
+            Self {
+                content: text.content.to_string(),
+                font: text.font,
+                size: text.size,
+                line_height: text.line_height,
+                align_x: text.align_x,
+                align_y: text.align_y,
+                wrapping: text.wrapping,
+                shaping: text.shaping,
+                bounds: text.bounds,
+            }
+        }
+
+        fn with_spans<Link>(_text: Text<&[text::Span<'_, Link, Self::Font>], Self::Font>) -> Self {
+            Self::default()
+        }
+
+        fn resize(&mut self, new_bounds: Size) {
+            self.bounds = new_bounds;
+        }
+
+        fn compare(&self, text: Text<(), Self::Font>) -> text::Difference {
+            if self.bounds != text.bounds {
+                text::Difference::Bounds
+            } else {
+                text::Difference::None
+            }
+        }
+
+        fn size(&self) -> Pixels {
+            self.size
+        }
+
+        fn font(&self) -> Self::Font {
+            self.font
+        }
+
+        fn line_height(&self) -> text::LineHeight {
+            self.line_height
+        }
+
+        fn align_x(&self) -> text::Alignment {
+            self.align_x
+        }
+
+        fn align_y(&self) -> alignment::Vertical {
+            self.align_y
+        }
+
+        fn wrapping(&self) -> text::Wrapping {
+            self.wrapping
+        }
+
+        fn shaping(&self) -> text::Shaping {
+            self.shaping
+        }
+
+        fn bounds(&self) -> Size {
+            self.bounds
+        }
+
+        fn min_bounds(&self) -> Size {
+            Size::new(self.content.chars().count() as f32 * 10.0, self.size.0)
+        }
+
+        fn hit_test(&self, point: Point) -> Option<text::Hit> {
+            (point.x >= 0.0).then(|| {
+                let index = ((point.x / 10.0).floor() as usize).min(self.content.len());
+                text::Hit::CharOffset(index)
+            })
+        }
+
+        fn hit_span(&self, _point: Point) -> Option<usize> {
+            None
+        }
+
+        fn span_bounds(&self, _index: usize) -> Vec<Rectangle> {
+            Vec::new()
+        }
+
+        fn grapheme_position(&self, _line: usize, index: usize) -> Option<Point> {
+            Some(Point::new(index as f32 * 10.0, 0.0))
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum Msg {
+        Input(String),
+        Paste(String),
+        Submit,
+    }
+
+    fn input_msg(value: String) -> Msg {
+        Msg::Input(value)
+    }
+
+    fn paste_msg(value: String) -> Msg {
+        Msg::Paste(value)
+    }
+
+    fn plain(content: &str) -> paragraph::Plain<TestParagraph> {
+        paragraph::Plain::new(Text {
+            content: content.to_string(),
+            font: iced::Font::default(),
+            line_height: text::LineHeight::default(),
+            bounds: Size::new(200.0, 20.0),
+            size: Pixels(16.0),
+            align_x: text::Alignment::Left,
+            align_y: alignment::Vertical::Top,
+            shaping: text::Shaping::default(),
+            wrapping: text::Wrapping::default(),
+        })
+    }
+
+    #[test]
+    fn builder_methods_store_handlers_and_visual_options() {
+        let input = TextInput::<Msg>::new("hint", "value")
+            .id("field")
+            .secure(true)
+            .on_input(Msg::Input)
+            .on_paste(Msg::Paste)
+            .on_submit(Msg::Submit)
+            .font(iced::Font::MONOSPACE)
+            .icon(Icon {
+                font: iced::Font::MONOSPACE,
+                code_point: '*',
+                size: Some(Pixels(12.0)),
+                spacing: 6.0,
+                side: Side::Right,
+            })
+            .width(Length::Fixed(120.0))
+            .padding(8)
+            .size(18)
+            .line_height(1.1)
+            .align_x(alignment::Horizontal::Right);
+
+        assert!(input.id.is_some());
+        assert_eq!(input.placeholder, "hint");
+        assert_eq!(input.value.to_string(), "value");
+        assert!(input.is_secure);
+        assert_eq!(input.font, Some(iced::Font::MONOSPACE));
+        assert!(matches!(input.width, Length::Fixed(120.0)));
+        assert_eq!(input.padding, Padding::from(8));
+        assert_eq!(input.size, Some(Pixels(18.0)));
+        assert_eq!(input.line_height, text::LineHeight::Relative(1.1));
+        assert_eq!(input.alignment, alignment::Horizontal::Right);
+
+        let icon = input.icon.as_ref().expect("icon should be stored");
+        assert_eq!(icon.code_point, '*');
+        assert!(matches!(icon.side, Side::Right));
+        assert_eq!(icon.spacing, 6.0);
+
+        assert_eq!(
+            (input.on_input.as_ref().unwrap())("typed".to_string()),
+            Msg::Input("typed".to_string())
+        );
+        assert_eq!(
+            (input.on_paste.as_ref().unwrap())("pasted".to_string()),
+            Msg::Paste("pasted".to_string())
+        );
+        assert_eq!(input.on_submit, Some(Msg::Submit));
+    }
+
+    #[test]
+    fn maybe_builders_accept_some_and_none() {
+        let enabled = TextInput::<Msg>::new("", "")
+            .on_input_maybe(Some(input_msg as fn(String) -> Msg))
+            .on_paste_maybe(Some(paste_msg as fn(String) -> Msg))
+            .on_submit_maybe(Some(Msg::Submit));
+
+        assert_eq!(
+            (enabled.on_input.as_ref().unwrap())("a".to_string()),
+            Msg::Input("a".to_string())
+        );
+        assert_eq!(
+            (enabled.on_paste.as_ref().unwrap())("b".to_string()),
+            Msg::Paste("b".to_string())
+        );
+        assert_eq!(enabled.on_submit, Some(Msg::Submit));
+
+        let disabled = TextInput::<Msg>::new("", "")
+            .on_input_maybe(None::<fn(String) -> Msg>)
+            .on_paste_maybe(None::<fn(String) -> Msg>)
+            .on_submit_maybe(None);
+
+        assert!(disabled.on_input.is_none());
+        assert!(disabled.on_paste.is_none());
+        assert!(disabled.on_submit.is_none());
+    }
+
+    #[test]
+    fn id_and_task_constructors_are_available_for_widget_operations() {
+        assert_eq!(Id::new("field"), Id::from("field"));
+        assert_eq!(Id::new("field"), Id::from("field".to_string()));
+        assert_ne!(Id::unique(), Id::unique());
+
+        let _: Task<Msg> = focus("field");
+        let _: Task<Msg> = move_cursor_to_end("field");
+        let _: Task<Msg> = move_cursor_to_front("field");
+        let _: Task<Msg> = move_cursor_to("field", 3);
+        let _: Task<Msg> = select_all("field");
+    }
+
+    #[test]
+    fn state_focus_cursor_and_operation_text_are_consistent() {
+        let value = Value::new("hello");
+        let mut state = State::<TestParagraph>::new();
+
+        assert!(!state.is_focused());
+        assert_eq!(state.cursor().state(&value), cursor::State::Index(0));
+
+        state.focus();
+        assert!(state.is_focused());
+        assert_eq!(state.cursor().state(&value), cursor::State::Index(5));
+
+        state.move_cursor_to_front();
+        assert_eq!(state.cursor().state(&value), cursor::State::Index(0));
+
+        state.move_cursor_to(2);
+        assert_eq!(state.cursor().state(&value), cursor::State::Index(2));
+
+        state.select_all();
+        assert_eq!(state.cursor().selection(&value), Some((0, 5)));
+
+        state.value = plain("typed");
+        state.placeholder = plain("placeholder");
+        assert_eq!(operation::TextInput::text(&state), "typed");
+
+        state.value = plain("");
+        assert_eq!(operation::TextInput::text(&state), "placeholder");
+
+        operation::TextInput::select_range(&mut state, 1, 4);
+        assert_eq!(state.cursor().selection(&value), Some((1, 4)));
+
+        operation::Focusable::unfocus(&mut state);
+        assert!(!state.is_focused());
+        operation::Focusable::focus(&mut state);
+        assert!(state.is_focused());
+    }
+
+    #[test]
+    fn offset_and_alignment_helpers_cover_scroll_and_alignment_edges() {
+        let value = Value::new("abcdefghij");
+        let mut state = State::<TestParagraph>::new();
+        state.value = plain("abcdefghij");
+
+        let bounds = Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 30.0,
+            height: 20.0,
+        };
+
+        assert_eq!(offset(bounds, &value, &state), 0.0);
+
+        state.focus();
+        state.move_cursor_to_end();
+        assert_eq!(offset(bounds, &value, &state), 75.0);
+
+        state.move_cursor_to(3);
+        assert_eq!(offset(bounds, &value, &state), 5.0);
+
+        state.select_all();
+        assert_eq!(offset(bounds, &value, &state), 75.0);
+
+        assert_eq!(find_cursor_position(bounds, &value, &state, 15.0), Some(9));
+
+        assert_eq!(
+            alignment_offset(100.0, 40.0, alignment::Horizontal::Left),
+            0.0
+        );
+        assert_eq!(
+            alignment_offset(100.0, 40.0, alignment::Horizontal::Center),
+            30.0
+        );
+        assert_eq!(
+            alignment_offset(100.0, 40.0, alignment::Horizontal::Right),
+            60.0
+        );
+        assert_eq!(
+            alignment_offset(40.0, 100.0, alignment::Horizontal::Right),
+            0.0
+        );
+    }
+}

@@ -111,6 +111,519 @@ async fn update_price_setting(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::fiat::{
+        api::{ListCurrenciesResult, PriceApiError},
+        PriceSource,
+    };
+    use coincube_ui::component::amount::BitcoinDisplayUnit;
+
+    fn state() -> GeneralSettingsState {
+        GeneralSettingsState::new(
+            "cube-1".to_string(),
+            SettingsSection::General,
+            PriceSetting::default(),
+            UnitSetting::default(),
+            &CoincubeDirectory::new(std::path::PathBuf::new()),
+        )
+    }
+
+    fn backup_msg(msg: view::BackupWalletMessage) -> Message {
+        Message::View(view::Message::Settings(
+            view::SettingsMessage::BackupMasterSeed(msg),
+        ))
+    }
+
+    fn words() -> Vec<String> {
+        [
+            "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
+            "juliet", "kilo", "lima",
+        ]
+        .iter()
+        .map(|word| (*word).to_string())
+        .collect()
+    }
+
+    #[test]
+    fn random_word_indices_require_three_unique_in_range_values() {
+        assert!(generate_random_word_indices(2).is_none());
+
+        let indices = generate_random_word_indices(12).unwrap();
+        assert!(indices.iter().all(|index| (1..=12).contains(index)));
+        assert_ne!(indices[0], indices[1]);
+        assert_ne!(indices[0], indices[2]);
+        assert_ne!(indices[1], indices[2]);
+    }
+
+    #[test]
+    fn backup_start_prompts_for_pin_when_cube_is_not_passkey() {
+        let mut state = state();
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::Start),
+        );
+
+        assert!(matches!(
+            state.backup_state,
+            BackupSeedState::PinEntry { error: None }
+        ));
+        assert!(state.backup_mnemonic.is_none());
+    }
+
+    #[test]
+    fn verify_pin_requires_pin_entry_and_all_digits() {
+        let mut state = state();
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::VerifyPin),
+        );
+        assert_eq!(state.backup_state, BackupSeedState::None);
+
+        state.backup_state = BackupSeedState::PinEntry { error: None };
+        state.backup_pin.digits = [
+            "1".to_string(),
+            "2".to_string(),
+            String::new(),
+            "4".to_string(),
+        ];
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::VerifyPin),
+        );
+
+        assert!(matches!(
+            &state.backup_state,
+            BackupSeedState::PinEntry { error: Some(error) }
+                if error == "Please enter all 4 PIN digits"
+        ));
+    }
+
+    #[test]
+    fn pin_verified_success_stores_words_and_clears_pin() {
+        let mut state = state();
+        state.backup_state = BackupSeedState::PinEntry { error: None };
+        state.backup_pin.digits = [
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+        ];
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::PinVerified(Ok(words()))),
+        );
+
+        assert_eq!(state.backup_pin.value(), "");
+        assert!(matches!(state.backup_state, BackupSeedState::Intro(false)));
+        assert_eq!(
+            state.backup_mnemonic.as_ref().map(|words| words.len()),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn pin_verified_error_returns_to_pin_entry_and_clears_pin() {
+        let mut state = state();
+        state.backup_state = BackupSeedState::PinEntry { error: None };
+        state.backup_pin.digits = [
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+        ];
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::PinVerified(Err(
+                "Incorrect PIN".to_string()
+            ))),
+        );
+
+        assert_eq!(state.backup_pin.value(), "");
+        assert!(matches!(
+            &state.backup_state,
+            BackupSeedState::PinEntry { error: Some(error) } if error == "Incorrect PIN"
+        ));
+    }
+
+    #[test]
+    fn intro_and_previous_step_transitions_clear_sensitive_state() {
+        let mut state = state();
+        state.backup_mnemonic = Some(Zeroizing::new(words()));
+        state.backup_state = BackupSeedState::Intro(false);
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::ToggleBackupIntroCheck),
+        );
+        assert_eq!(state.backup_state, BackupSeedState::Intro(true));
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::NextStep),
+        );
+        assert_eq!(state.backup_state, BackupSeedState::RecoveryPhrase);
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::PreviousStep),
+        );
+        assert_eq!(state.backup_state, BackupSeedState::Intro(false));
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::PreviousStep),
+        );
+        assert_eq!(state.backup_state, BackupSeedState::None);
+        assert!(state.backup_mnemonic.is_none());
+    }
+
+    #[test]
+    fn recovery_phrase_advances_to_verification_only_with_loaded_words() {
+        let mut state = state();
+        state.backup_state = BackupSeedState::RecoveryPhrase;
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::NextStep),
+        );
+        assert_eq!(state.backup_state, BackupSeedState::RecoveryPhrase);
+
+        state.backup_mnemonic = Some(Zeroizing::new(words()));
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::NextStep),
+        );
+
+        assert!(matches!(
+            &state.backup_state,
+            BackupSeedState::Verification {
+                word_indices,
+                word_inputs,
+                error: None,
+                saving: false
+            } if word_indices.iter().all(|index| (1..=12).contains(index))
+                && word_inputs.iter().all(String::is_empty)
+        ));
+    }
+
+    #[test]
+    fn word_input_updates_matching_prompt_and_ignores_edits_while_saving() {
+        let mut state = state();
+        state.backup_state = BackupSeedState::Verification {
+            word_indices: [1, 3, 5],
+            word_inputs: [String::new(), String::new(), String::new()],
+            error: Some("old error".to_string()),
+            saving: false,
+        };
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::WordInput {
+                index: 3,
+                input: "charlie".to_string(),
+            }),
+        );
+
+        assert!(matches!(
+            &state.backup_state,
+            BackupSeedState::Verification {
+                word_inputs,
+                error: Some(error),
+                saving: false,
+                ..
+            } if word_inputs[1] == "charlie" && error == "old error"
+        ));
+
+        state.backup_state = BackupSeedState::Verification {
+            word_indices: [1, 3, 5],
+            word_inputs: [
+                "alpha".to_string(),
+                "charlie".to_string(),
+                "echo".to_string(),
+            ],
+            error: None,
+            saving: true,
+        };
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::WordInput {
+                index: 1,
+                input: "changed".to_string(),
+            }),
+        );
+        assert!(matches!(
+            &state.backup_state,
+            BackupSeedState::Verification {
+                word_inputs,
+                saving: true,
+                ..
+            } if word_inputs[0] == "alpha"
+        ));
+    }
+
+    #[test]
+    fn verify_phrase_sets_inline_error_for_mismatched_words() {
+        let mut state = state();
+        state.backup_mnemonic = Some(Zeroizing::new(words()));
+        state.backup_state = BackupSeedState::Verification {
+            word_indices: [1, 2, 3],
+            word_inputs: [
+                "alpha".to_string(),
+                "wrong".to_string(),
+                "charlie".to_string(),
+            ],
+            error: None,
+            saving: false,
+        };
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::VerifyPhrase),
+        );
+
+        assert!(matches!(
+            &state.backup_state,
+            BackupSeedState::Verification {
+                error: Some(error),
+                saving: false,
+                ..
+            } if error == "The words you entered don't match. Please try again."
+        ));
+    }
+
+    #[test]
+    fn verify_phrase_marks_saving_for_correct_words() {
+        let mut state = state();
+        state.backup_mnemonic = Some(Zeroizing::new(words()));
+        state.backup_state = BackupSeedState::Verification {
+            word_indices: [1, 2, 3],
+            word_inputs: [
+                "alpha".to_string(),
+                "bravo".to_string(),
+                "charlie".to_string(),
+            ],
+            error: Some("old error".to_string()),
+            saving: false,
+        };
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::VerifyPhrase),
+        );
+
+        assert!(matches!(
+            &state.backup_state,
+            BackupSeedState::Verification {
+                error: None,
+                saving: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn backup_save_failure_restores_verification_error() {
+        let mut state = state();
+        state.backup_state = BackupSeedState::Verification {
+            word_indices: [1, 2, 3],
+            word_inputs: [
+                "alpha".to_string(),
+                "bravo".to_string(),
+                "charlie".to_string(),
+            ],
+            error: None,
+            saving: true,
+        };
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::BackupSaveResult(Err(
+                "disk full".to_string(),
+            ))),
+        );
+
+        assert!(matches!(
+            &state.backup_state,
+            BackupSeedState::Verification {
+                error: Some(error),
+                saving: false,
+                ..
+            } if error == "Failed to save backup status: disk full"
+        ));
+    }
+
+    #[test]
+    fn backup_completed_message_clears_pin_and_mnemonic() {
+        let mut state = state();
+        state.backup_pin.digits = [
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+        ];
+        state.backup_mnemonic = Some(Zeroizing::new(words()));
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::BackupMasterSeedUpdated,
+            )),
+        );
+
+        assert_eq!(state.backup_state, BackupSeedState::Completed);
+        assert_eq!(state.backup_pin.value(), "");
+        assert!(state.backup_mnemonic.is_none());
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            backup_msg(view::BackupWalletMessage::Complete),
+        );
+        assert_eq!(state.backup_state, BackupSeedState::None);
+    }
+
+    #[test]
+    fn fiat_currency_results_ignore_stale_source_and_store_matching_result() {
+        let mut state = state();
+        state.new_price_setting.source = PriceSource::Coincube;
+        state.error = Some(Error::Unexpected("old".to_string()));
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            Message::Fiat(FiatMessage::ListCurrenciesResult(
+                PriceSource::CoinGecko,
+                Ok(ListCurrenciesResult {
+                    currencies: vec![Currency::EUR],
+                }),
+            )),
+        );
+        assert!(state.currencies.is_empty());
+        assert!(state.error.is_some());
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            Message::Fiat(FiatMessage::ListCurrenciesResult(
+                PriceSource::Coincube,
+                Ok(ListCurrenciesResult {
+                    currencies: vec![Currency::USD, Currency::EUR],
+                }),
+            )),
+        );
+        assert_eq!(state.currencies, vec![Currency::USD, Currency::EUR]);
+        assert!(state.error.is_none());
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            Message::Fiat(FiatMessage::ListCurrenciesResult(
+                PriceSource::Coincube,
+                Err(PriceApiError::RequestFailed("timeout".to_string())),
+            )),
+        );
+        assert!(state.error.is_some());
+    }
+
+    #[test]
+    fn fiat_validation_falls_back_or_errors_when_currency_unavailable() {
+        let mut state = state();
+        state.new_price_setting.currency = Currency::EUR;
+        state.currencies = vec![Currency::USD, Currency::GBP];
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            Message::Fiat(FiatMessage::ValidateCurrencySetting),
+        );
+        assert_eq!(state.new_price_setting.currency, Currency::USD);
+
+        state.new_price_setting.currency = Currency::EUR;
+        state.currencies.clear();
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            Message::Fiat(FiatMessage::ValidateCurrencySetting),
+        );
+        assert!(matches!(state.error, Some(Error::Unexpected(_))));
+    }
+
+    #[test]
+    fn fiat_and_display_preference_messages_update_draft_state() {
+        let mut state = state();
+        state.new_price_setting.is_enabled = false;
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            Message::View(view::Message::Settings(view::SettingsMessage::Fiat(
+                view::FiatMessage::Enable(true),
+            ))),
+        );
+        assert!(state.new_price_setting.is_enabled);
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            Message::View(view::Message::Settings(view::SettingsMessage::Fiat(
+                view::FiatMessage::SourceEdited(PriceSource::CoinGecko),
+            ))),
+        );
+        assert_eq!(state.new_price_setting.source, PriceSource::CoinGecko);
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            Message::View(view::Message::Settings(view::SettingsMessage::Fiat(
+                view::FiatMessage::CurrencyEdited(Currency::GBP),
+            ))),
+        );
+        assert_eq!(state.new_price_setting.currency, Currency::GBP);
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::DisplayUnitChanged(BitcoinDisplayUnit::BTC),
+            )),
+        );
+        assert_eq!(state.new_unit_setting.display_unit, BitcoinDisplayUnit::BTC);
+
+        let _ = state.update(
+            None,
+            &Cache::default(),
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::ToggleDirectionBadges(false),
+            )),
+        );
+        assert!(!state.show_direction_badges);
+    }
+}
+
 async fn update_unit_setting(
     data_dir: CoincubeDirectory,
     network: Network,

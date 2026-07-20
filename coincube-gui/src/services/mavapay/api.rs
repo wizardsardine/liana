@@ -571,3 +571,441 @@ pub struct SimulatePayInRequest {
     pub amount: Option<u64>,
     pub currency: MavapayCurrency,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::{coincube::CoincubeError, http::NotSuccessResponseInfo};
+    use serde_json::{json, Value};
+    use std::str::FromStr;
+
+    #[test]
+    fn api_result_deserializes_success_alias_and_errors() {
+        let ok: MavapayApiResult<u64> =
+            serde_json::from_value(json!({ "status": "ok", "data": 42 })).unwrap();
+        match ok {
+            MavapayApiResult::Success { data } => assert_eq!(data, 42),
+            MavapayApiResult::Error { .. } => panic!("expected success variant"),
+        }
+
+        let err: MavapayApiResult<u64> =
+            serde_json::from_value(json!({ "status": "error", "message": "no quote" })).unwrap();
+        match err {
+            MavapayApiResult::Error { message } => assert_eq!(message, "no quote"),
+            MavapayApiResult::Success { .. } => panic!("expected error variant"),
+        }
+    }
+
+    #[test]
+    fn mavapay_response_deserializes_success_alias() {
+        let response: MavapayResponse<String> =
+            serde_json::from_value(json!({ "status": "ok", "data": "paid" })).unwrap();
+
+        match response {
+            MavapayResponse::Success { data } => assert_eq!(data, "paid"),
+            MavapayResponse::Error { .. } => panic!("expected success variant"),
+        }
+    }
+
+    #[test]
+    fn coincube_errors_convert_to_mavapay_error_envelopes() {
+        let api: MavapayApiResult<()> = CoincubeError::Api("bad currency".to_string()).into();
+        match api {
+            MavapayApiResult::Error { message } => assert_eq!(message, "bad currency"),
+            MavapayApiResult::Success { .. } => panic!("expected error variant"),
+        }
+
+        let unsuccessful: MavapayApiResult<()> =
+            CoincubeError::Unsuccessful(NotSuccessResponseInfo {
+                status_code: 400,
+                text: r#"{"success":false,"error":{"code":"bad","message":"Invalid account"}}"#
+                    .to_string(),
+            })
+            .into();
+        match unsuccessful {
+            MavapayApiResult::Error { message } => assert_eq!(message, "Invalid account"),
+            MavapayApiResult::Success { .. } => panic!("expected error variant"),
+        }
+    }
+
+    #[test]
+    fn mavapay_error_display_strings_are_actionable() {
+        let cases = [
+            (
+                MavapayError::Http(Some(502), "upstream".to_string()),
+                "[502]: upstream",
+            ),
+            (MavapayError::Http(None, "offline".to_string()), "offline"),
+            (
+                MavapayError::InvalidResponse("missing data".to_string()),
+                "Invalid response: missing data",
+            ),
+            (
+                MavapayError::ApiError("declined".to_string()),
+                "Mavapay Error: declined",
+            ),
+            (MavapayError::QuoteExpired, "Quote has expired"),
+            (MavapayError::InsufficientFunds, "Insufficient funds"),
+            (
+                MavapayError::InvalidCurrency,
+                "Invalid or unsupported currency",
+            ),
+            (MavapayError::InvalidAmount, "Invalid amount"),
+            (
+                MavapayError::BankAccountValidationFailed,
+                "Bank account validation failed",
+            ),
+            (MavapayError::PaymentFailed, "Payment failed"),
+            (MavapayError::PaymentTimeout, "Payment timeout"),
+        ];
+
+        for (err, expected) in cases {
+            assert_eq!(err.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn unsuccessful_response_converts_to_http_error() {
+        let err = MavapayError::from(NotSuccessResponseInfo {
+            status_code: 409,
+            text: "duplicate order".to_string(),
+        });
+
+        assert_eq!(err.to_string(), "[409]: duplicate order");
+    }
+
+    #[test]
+    fn currencies_parse_display_and_serialize_as_iso_codes() {
+        let cases = [
+            (
+                "NGN",
+                MavapayCurrency::NigerianNaira,
+                "Nigerian Naira (NGN)",
+            ),
+            (
+                "KES",
+                MavapayCurrency::KenyanShilling,
+                "Kenyan Shilling (KES)",
+            ),
+            (
+                "ZAR",
+                MavapayCurrency::SouthAfricanRand,
+                "South African Rand (ZAR)",
+            ),
+            ("BTC", MavapayCurrency::Bitcoin, "Bitcoin (BTC)"),
+        ];
+
+        assert_eq!(
+            MavapayCurrency::all(),
+            &[
+                MavapayCurrency::NigerianNaira,
+                MavapayCurrency::KenyanShilling,
+                MavapayCurrency::SouthAfricanRand,
+                MavapayCurrency::Bitcoin,
+            ]
+        );
+
+        for (code, currency, display) in cases {
+            assert_eq!(MavapayCurrency::from_str(code).unwrap(), currency);
+            assert_eq!(currency.to_string(), display);
+            assert_eq!(
+                serde_json::to_string(&currency).unwrap(),
+                format!("\"{code}\"")
+            );
+        }
+
+        assert!(MavapayCurrency::from_str("USD").is_err());
+    }
+
+    #[test]
+    fn unit_currencies_report_fiat_status_and_parent_currency() {
+        let cases = [
+            (
+                MavapayUnitCurrency::KenyanShillingCent,
+                true,
+                "Kenyan Cent",
+                "Kenyan Cents",
+                MavapayCurrency::KenyanShilling,
+                "KESCENT",
+            ),
+            (
+                MavapayUnitCurrency::SouthAfricanRandCent,
+                true,
+                "South African Cent",
+                "South African Cents",
+                MavapayCurrency::SouthAfricanRand,
+                "ZARCENT",
+            ),
+            (
+                MavapayUnitCurrency::NigerianNairaKobo,
+                true,
+                "Nigerian Kobo",
+                "Nigerian Kobos",
+                MavapayCurrency::NigerianNaira,
+                "NGNKOBO",
+            ),
+            (
+                MavapayUnitCurrency::BitcoinSatoshi,
+                false,
+                "Satoshi",
+                "Bitcoin (Sats)",
+                MavapayCurrency::Bitcoin,
+                "BTCSAT",
+            ),
+        ];
+
+        for (unit, is_fiat, as_str, display, parent, code) in cases {
+            assert_eq!(unit.is_fiat(), is_fiat);
+            assert_eq!(unit.as_str(), as_str);
+            assert_eq!(unit.to_string(), display);
+            assert_eq!(MavapayCurrency::from(&unit), parent);
+            assert_eq!(serde_json::to_string(&unit).unwrap(), format!("\"{code}\""));
+        }
+    }
+
+    #[test]
+    fn payment_methods_keep_wire_values_and_user_labels() {
+        let cases = [
+            (
+                MavapayPaymentMethod::Lightning,
+                "Bitcoin Lightning",
+                "LIGHTNING",
+            ),
+            (
+                MavapayPaymentMethod::BankTransfer,
+                "Bank Transfer",
+                "BANKTRANSFER",
+            ),
+            (
+                MavapayPaymentMethod::Onchain,
+                "Bitcoin Mainnet Transaction",
+                "ONCHAIN",
+            ),
+            (MavapayPaymentMethod::USDT, "USDT Transaction", "USDT"),
+        ];
+
+        assert_eq!(
+            MavapayPaymentMethod::all(),
+            &[
+                MavapayPaymentMethod::Lightning,
+                MavapayPaymentMethod::BankTransfer,
+                MavapayPaymentMethod::Onchain,
+                MavapayPaymentMethod::USDT,
+            ]
+        );
+
+        for (method, label, wire) in cases {
+            assert_eq!(method.as_str(), label);
+            assert_eq!(
+                serde_json::to_string(&method).unwrap(),
+                format!("\"{wire}\"")
+            );
+        }
+    }
+
+    #[test]
+    fn beneficiary_format_matches_serialized_payload_shape() {
+        let lightning = Beneficiary::Lightning {
+            ln_invoice: "lnbc1".to_string(),
+        };
+        assert_eq!(lightning.format(), "lnInvoice");
+        assert_eq!(
+            serde_json::to_value(&lightning).unwrap(),
+            json!({ "lnInvoice": "lnbc1" })
+        );
+
+        let lightning_address = Beneficiary::LightningAddress {
+            ln_address: "pay@example.com".to_string(),
+        };
+        assert_eq!(lightning_address.format(), "lnAddress");
+        assert_eq!(
+            serde_json::to_value(&lightning_address).unwrap(),
+            json!({ "lnAddress": "pay@example.com" })
+        );
+
+        let onchain = Beneficiary::Onchain {
+            on_chain_address: "bc1qaddress".to_string(),
+        };
+        assert_eq!(onchain.format(), "onChainAddress");
+        assert_eq!(
+            serde_json::to_value(&onchain).unwrap(),
+            json!({ "onChainAddress": "bc1qaddress" })
+        );
+
+        assert_eq!(
+            Beneficiary::KES(KenyanBeneficiary::PayToPhone {
+                account_name: "Amina".to_string(),
+                phone_number: "254700000000".to_string(),
+            })
+            .format(),
+            "kesPayToPhone"
+        );
+        assert_eq!(
+            Beneficiary::KES(KenyanBeneficiary::PayToBill {
+                account_name: "Amina".to_string(),
+                account_number: "123".to_string(),
+                paybill_number: "456".to_string(),
+            })
+            .format(),
+            "kesPayToBill"
+        );
+    }
+
+    #[test]
+    fn get_quote_request_serializes_optional_fields_and_beneficiary() {
+        let beneficiary = Beneficiary::Lightning {
+            ln_invoice: "lnbc1".to_string(),
+        };
+        let request = GetQuoteRequest {
+            amount: 10_000,
+            source_currency: MavapayUnitCurrency::BitcoinSatoshi,
+            target_currency: MavapayUnitCurrency::NigerianNairaKobo,
+            payment_method: MavapayPaymentMethod::Lightning,
+            payment_currency: MavapayUnitCurrency::BitcoinSatoshi,
+            speed: OnchainTransferSpeed::Fast,
+            autopayout: true,
+            customer_internal_fee: None,
+            beneficiary_format: beneficiary.format(),
+            beneficiary,
+        };
+
+        let value = serde_json::to_value(&request).unwrap();
+
+        assert_eq!(value["amount"], 10_000);
+        assert_eq!(value["sourceCurrency"], "BTCSAT");
+        assert_eq!(value["targetCurrency"], "NGNKOBO");
+        assert_eq!(value["paymentMethod"], "LIGHTNING");
+        assert_eq!(value["paymentCurrency"], "BTCSAT");
+        assert_eq!(value["speed"], "fast");
+        assert_eq!(value["autopayout"], true);
+        assert_eq!(value["beneficiaryFormat"], "lnInvoice");
+        assert_eq!(value["beneficiary"], json!({ "lnInvoice": "lnbc1" }));
+        assert!(value.get("customerInternalFee").is_none());
+    }
+
+    #[test]
+    fn banks_deserialize_nigerian_or_south_african_lists() {
+        let nigerian: MavapayBanks = serde_json::from_value(json!([
+            { "bankName": "Access Bank", "nipBankCode": "044" }
+        ]))
+        .unwrap();
+        match nigerian {
+            MavapayBanks::Nigerian(banks) => {
+                assert_eq!(banks[0].to_string(), "Access Bank: 044");
+            }
+            MavapayBanks::SouthAfrican(_) => panic!("expected Nigerian banks"),
+        }
+
+        let south_african: MavapayBanks =
+            serde_json::from_value(json!(["ABSA", "Capitec"])).unwrap();
+        match south_african {
+            MavapayBanks::SouthAfrican(banks) => assert_eq!(banks, vec!["ABSA", "Capitec"]),
+            MavapayBanks::Nigerian(_) => panic!("expected South African banks"),
+        }
+    }
+
+    fn order_response(order_data: Option<OrderDataWrapper>) -> GetOrderResponse {
+        GetOrderResponse {
+            id: 1,
+            order_id: "order".to_string(),
+            quote_id: Some("quote".to_string()),
+            amount: 100,
+            status: TransactionStatus::Pending,
+            currency: MavapayCurrency::Bitcoin,
+            payment_method: MavapayPaymentMethod::Lightning,
+            is_valid: Some(true),
+            payment_btc_detail: Some("lnbc".to_string()),
+            created_at: "2026-07-20T00:00:00Z".to_string(),
+            updated_at: "2026-07-20T00:00:00Z".to_string(),
+            order_data,
+        }
+    }
+
+    fn quote(total_amount: u64) -> OrderQuote {
+        OrderQuote {
+            transaction_fees_in_source_currency: 1,
+            transaction_fees_in_target_currency: 2,
+            transaction_fees_in_usd_cent: 3,
+            payment_btc_detail: "lnbc".to_string(),
+            total_amount,
+            equivalent_amount: 5,
+            source_currency: MavapayUnitCurrency::BitcoinSatoshi,
+            target_currency: MavapayUnitCurrency::NigerianNairaKobo,
+        }
+    }
+
+    #[test]
+    fn order_response_quotes_returns_nested_quotes_or_empty_slice() {
+        assert!(order_response(None).quotes().is_empty());
+
+        let response = order_response(Some(OrderDataWrapper {
+            status: "ok".to_string(),
+            data: OrderDataInner {
+                quotes: vec![quote(99)],
+            },
+        }));
+
+        assert_eq!(response.quotes().len(), 1);
+        assert_eq!(response.quotes()[0].total_amount, 99);
+    }
+
+    fn order_transaction_json(payment_method: Value) -> Value {
+        json!({
+            "orderId": "order",
+            "transactionId": "tx",
+            "amount": 2500,
+            "fees": 25,
+            "currency": "BTC",
+            "transactionType": "WITHDRAWAL",
+            "status": "PAID",
+            "paymentMethod": payment_method,
+            "createdAt": "2026-07-20T00:00:00Z"
+        })
+    }
+
+    #[test]
+    fn order_transaction_treats_empty_payment_method_as_none() {
+        let transaction: OrderTransaction =
+            serde_json::from_value(order_transaction_json(json!(""))).unwrap();
+
+        assert_eq!(transaction.payment_method, None);
+    }
+
+    #[test]
+    fn order_transaction_deserializes_present_payment_method() {
+        let transaction: OrderTransaction =
+            serde_json::from_value(order_transaction_json(json!("LIGHTNING"))).unwrap();
+
+        assert_eq!(
+            transaction.payment_method,
+            Some(MavapayPaymentMethod::Lightning)
+        );
+    }
+
+    #[test]
+    fn transaction_status_and_onchain_speed_expose_display_and_wire_values() {
+        assert_eq!(TransactionStatus::Pending.to_string(), "PENDING");
+        assert_eq!(TransactionStatus::Success.to_string(), "SUCCESS");
+        assert_eq!(TransactionStatus::Expired.to_string(), "EXPIRED");
+        assert_eq!(TransactionStatus::Failed.to_string(), "FAILED");
+        assert_eq!(TransactionStatus::Paid.to_string(), "PAID");
+
+        assert_eq!(
+            OnchainTransferSpeed::all(),
+            &[
+                OnchainTransferSpeed::Slow,
+                OnchainTransferSpeed::Medium,
+                OnchainTransferSpeed::Fast,
+            ]
+        );
+        assert_eq!(OnchainTransferSpeed::Slow.to_string(), "Slow");
+        assert_eq!(
+            serde_json::to_string(&OnchainTransferSpeed::Medium).unwrap(),
+            "\"medium\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TransactionType::Withdrawal).unwrap(),
+            "\"WITHDRAWAL\""
+        );
+    }
+}

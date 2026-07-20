@@ -2474,6 +2474,194 @@ mod find_or_create_cube_tests {
         assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
     }
 
+    #[tokio::test]
+    async fn existing_wallet_match_returns_its_cube_without_rewriting_settings() {
+        let nd = temp_network_dir("existing-wallet");
+        let wid = wallet_id();
+        let mut settings = app::settings::Settings::default();
+        let existing =
+            app::settings::CubeSettings::new("Existing".to_string(), bitcoin::Network::Bitcoin)
+                .with_vault(wid.clone());
+        let existing_id = existing.id.clone();
+        settings.cubes.push(existing);
+        update_settings_file(&nd, |_| Some(settings)).await.unwrap();
+
+        let cube = find_or_create_cube(
+            &nd,
+            Some(&wid),
+            &Some("Ignored Alias".to_string()),
+            bitcoin::Network::Bitcoin,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("existing wallet should be found");
+
+        assert_eq!(cube.id, existing_id);
+        assert_eq!(cube.name, "Existing");
+        let reloaded = app::settings::Settings::from_file(&nd).unwrap();
+        assert_eq!(reloaded.cubes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn restore_fails_when_original_cube_already_has_a_vault() {
+        let nd = temp_network_dir("restore-conflict");
+        let wid = wallet_id();
+        let mut settings = app::settings::Settings::default();
+        let mut restored = app::settings::CubeSettings::new(
+            "Already Restored".to_string(),
+            bitcoin::Network::Bitcoin,
+        )
+        .with_vault(WalletId::new("otherwallet".to_string(), Some(9)));
+        restored.id = ORIG_UUID.to_string();
+        settings.cubes.push(restored);
+        update_settings_file(&nd, |_| Some(settings)).await.unwrap();
+
+        let err = find_or_create_cube(
+            &nd,
+            Some(&wid),
+            &None,
+            bitcoin::Network::Bitcoin,
+            None,
+            Some(RestoreCubeIdentity {
+                uuid: ORIG_UUID.to_string(),
+                name: "My Vault".to_string(),
+            }),
+            None,
+        )
+        .await
+        .expect_err("restore should reject an already recovered cube");
+
+        assert!(err.contains("already been recovered"));
+    }
+
+    #[tokio::test]
+    async fn originating_cube_attaches_wallet_and_restore_credentials() {
+        let nd = temp_network_dir("originating");
+        let wid = wallet_id();
+        let fp = bitcoin::bip32::Fingerprint::from([0xaa, 0xbb, 0xcc, 0xdd]);
+        let seed = RestoreCubeSeed {
+            pin: zeroize::Zeroizing::new("135790".to_string()),
+            master_signer_fingerprint: fp,
+        };
+        let mut settings = app::settings::Settings::default();
+        let shell =
+            app::settings::CubeSettings::new("Shell".to_string(), bitcoin::Network::Bitcoin);
+        let shell_id = shell.id.clone();
+        settings.cubes.push(shell);
+        update_settings_file(&nd, |_| Some(settings)).await.unwrap();
+
+        let cube = find_or_create_cube(
+            &nd,
+            Some(&wid),
+            &None,
+            bitcoin::Network::Bitcoin,
+            Some(shell_id.clone()),
+            None,
+            Some(&seed),
+        )
+        .await
+        .expect("originating cube should be updated");
+
+        assert_eq!(cube.id, shell_id);
+        assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
+        assert_eq!(cube.master_signer_fingerprint, Some(fp));
+        assert!(cube.verify_pin("135790"));
+    }
+
+    #[tokio::test]
+    async fn originating_cube_errors_when_missing_or_already_vaulted() {
+        let nd = temp_network_dir("originating-errors");
+        let wid = wallet_id();
+        let mut settings = app::settings::Settings::default();
+        let occupied =
+            app::settings::CubeSettings::new("Occupied".to_string(), bitcoin::Network::Bitcoin)
+                .with_vault(WalletId::new("otherwallet".to_string(), Some(2)));
+        let occupied_id = occupied.id.clone();
+        settings.cubes.push(occupied);
+        update_settings_file(&nd, |_| Some(settings)).await.unwrap();
+
+        let occupied_err = find_or_create_cube(
+            &nd,
+            Some(&wid),
+            &None,
+            bitcoin::Network::Bitcoin,
+            Some(occupied_id),
+            None,
+            None,
+        )
+        .await
+        .expect_err("originating cube with an existing vault should fail");
+        assert!(occupied_err.contains("already has a vault"));
+
+        let missing_err = find_or_create_cube(
+            &nd,
+            Some(&wid),
+            &None,
+            bitcoin::Network::Bitcoin,
+            Some("missing-cube".to_string()),
+            None,
+            None,
+        )
+        .await
+        .expect_err("missing originating cube should fail");
+        assert!(missing_err.contains("Cannot find originating cube"));
+    }
+
+    #[tokio::test]
+    async fn empty_cube_fallback_attaches_wallet_before_minting_new_cube() {
+        let nd = temp_network_dir("empty-cube");
+        let wid = wallet_id();
+        let mut settings = app::settings::Settings::default();
+        let empty =
+            app::settings::CubeSettings::new("Empty".to_string(), bitcoin::Network::Bitcoin);
+        let empty_id = empty.id.clone();
+        settings.cubes.push(empty);
+        update_settings_file(&nd, |_| Some(settings)).await.unwrap();
+
+        let cube = find_or_create_cube(
+            &nd,
+            Some(&wid),
+            &Some("Should Not Mint".to_string()),
+            bitcoin::Network::Bitcoin,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("empty cube should be reused");
+
+        assert_eq!(cube.id, empty_id);
+        assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
+        let reloaded = app::settings::Settings::from_file(&nd).unwrap();
+        assert_eq!(reloaded.cubes.len(), 1, "must reuse instead of minting");
+    }
+
+    #[tokio::test]
+    async fn first_non_restore_cube_uses_default_alias_when_none_is_given() {
+        let nd = temp_network_dir("first-default");
+        let wid = wallet_id();
+
+        let cube = find_or_create_cube(
+            &nd,
+            Some(&wid),
+            &None,
+            bitcoin::Network::Signet,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("first cube should be created");
+
+        assert_eq!(cube.name, "My signet Cube");
+        assert_eq!(cube.network, bitcoin::Network::Signet);
+        assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
+        let reloaded = app::settings::Settings::from_file(&nd).unwrap();
+        assert_eq!(reloaded.cubes.len(), 1);
+    }
+
     /// Upgrade path: a previous (buggy) recovery left the wallet attached to a
     /// *duplicate* Cube with a different UUID, while the original Cube is still
     /// recoverable. Re-running recovery must reconcile — move the wallet onto

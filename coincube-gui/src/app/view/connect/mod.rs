@@ -2620,7 +2620,16 @@ mod renewal_banner_tests {
     //! `Option<Element>` and its `style`/`on_press` closures are deferred,
     //! so we can construct it headless and assert only Some/None.
     use super::*;
-    use crate::services::coincube::{ConnectPlan, PlanEntitlements, PlanProvenance, PlanStatus};
+    use crate::{
+        app::state::connect::{
+            account::SUPPORTED_PRICING_SCHEMA_VERSION, CheckoutState, DuressDisableState,
+        },
+        services::coincube::{
+            AvatarVariant, BillingHistoryEntry, ChargeStatus, CheckoutResponse, ConnectPlan,
+            FeaturesResponse, GetAvatarData, LightningAddress, LoginActivity, PlanEntitlements,
+            PlanFeatureInfo, PlanPrice, PlanProvenance, PlanStatus, User, VerifiedDevice,
+        },
+    };
 
     fn plan(tier: PlanTier, status: PlanStatus, renewal_at: Option<&str>) -> ConnectPlan {
         ConnectPlan {
@@ -2686,6 +2695,101 @@ mod renewal_banner_tests {
             buy_sell_enabled: None,
             p2p_enabled: None,
         }
+    }
+
+    fn user() -> User {
+        User {
+            id: 7,
+            email: "founder@example.com".to_string(),
+            email_verified: Some(true),
+        }
+    }
+
+    fn priced_features(
+        schema_version: Option<u32>,
+        purchasing_enabled: Option<bool>,
+    ) -> FeaturesResponse {
+        FeaturesResponse {
+            plans: vec![
+                PlanFeatureInfo {
+                    name: "free".to_string(),
+                    price: None,
+                    features: vec!["One Cube".to_string()],
+                    included_linked_participants: None,
+                },
+                PlanFeatureInfo {
+                    name: "pro".to_string(),
+                    price: Some(PlanPrice {
+                        monthly: 12,
+                        annual: 120,
+                    }),
+                    features: vec!["More Cubes".to_string(), "Duress mode".to_string()],
+                    included_linked_participants: None,
+                },
+                PlanFeatureInfo {
+                    name: "estate".to_string(),
+                    price: Some(PlanPrice {
+                        monthly: 24,
+                        annual: 240,
+                    }),
+                    features: vec!["Recovery alerts".to_string()],
+                    included_linked_participants: None,
+                },
+            ],
+            pricing_schema_version: schema_version,
+            purchasing_enabled,
+            marketplace_enabled: Some(true),
+            liquid_enabled: Some(true),
+            buy_sell_enabled: Some(true),
+            p2p_enabled: Some(false),
+        }
+    }
+
+    fn checkout_response() -> CheckoutResponse {
+        CheckoutResponse {
+            charge_id: "charge-1".to_string(),
+            lightning_invoice: "lnbc1abcdefghijklmnopqrstuvwxyz0123456789extra".to_string(),
+            on_chain_address: "bc1qtestaddress000000000000000000000000000000".to_string(),
+            amount_sats: 50_000,
+            amount_fiat: 25.0,
+            fiat_currency: "USD".to_string(),
+            plan: PlanTier::Pro,
+            billing_cycle: BillingCycle::Annual,
+            checkout_url: "https://checkout.example/charge-1".to_string(),
+            expires_at: "2026-08-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn billing_entry(status: ChargeStatus) -> BillingHistoryEntry {
+        BillingHistoryEntry {
+            charge_id: format!("charge-{status:?}"),
+            plan: PlanTier::Pro,
+            billing_cycle: BillingCycle::Monthly,
+            amount_sats: 42_000,
+            amount_fiat: 21.0,
+            fiat_currency: "USD".to_string(),
+            status,
+            created_at: "2026-07-01T12:00:00Z".to_string(),
+            paid_at: Some("2026-07-02T12:00:00Z".to_string()),
+        }
+    }
+
+    fn dashboard_panel() -> ConnectAccountPanel {
+        let mut panel = ConnectAccountPanel::new();
+        panel.step = ConnectFlowStep::Dashboard;
+        panel.user = Some(user());
+        panel.plan = Some(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2027-01-01T00:00:00Z"),
+        ));
+        panel.features = Some(priced_features(
+            Some(SUPPORTED_PRICING_SCHEMA_VERSION),
+            Some(true),
+        ));
+        panel.overview_contact_count = Some(3);
+        panel.overview_cube_count = Some(2);
+        panel
     }
 
     /// The provenance card renders only when the API sends `plan_provenance`
@@ -2765,5 +2869,328 @@ mod renewal_banner_tests {
         let _ = plan_billing_ux(&paid);
 
         let _ = register_ux("founder@example.com", "FOUNDER", false);
+    }
+
+    #[test]
+    fn formatting_and_color_helpers_are_stable() {
+        assert_eq!(format_date("2026-04-20T14:31:00Z"), "Apr 20, 2026");
+        assert_eq!(format_date("not-a-date"), "not-a-date");
+        assert_eq!(format_datetime("not-a-date"), "not-a-date");
+
+        assert_ne!(
+            plan_tier_color(&PlanTier::Free),
+            plan_tier_color(&PlanTier::Pro)
+        );
+        assert_ne!(
+            plan_tier_color(&PlanTier::Pro),
+            plan_tier_color(&PlanTier::Estate)
+        );
+    }
+
+    #[test]
+    fn auth_gate_and_error_views_build_for_each_step() {
+        let mut account = ConnectAccountPanel::new();
+        account.error = Some("temporary outage".to_string());
+
+        let unlock_at = chrono::DateTime::parse_from_rfc3339("2026-07-20T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+
+        for step in [
+            ConnectFlowStep::CheckingSession,
+            ConnectFlowStep::Login {
+                email: "bad".to_string(),
+                loading: false,
+            },
+            ConnectFlowStep::Login {
+                email: "founder@example.com".to_string(),
+                loading: true,
+            },
+            ConnectFlowStep::Register {
+                email: "new@example.com".to_string(),
+                loading: false,
+            },
+            ConnectFlowStep::OtpVerification {
+                email: "founder@example.com".to_string(),
+                otp: "123456".to_string(),
+                sending: false,
+                is_signup: false,
+                cooldown: 5,
+            },
+            ConnectFlowStep::CheckingDuress {
+                status: DuressGateStatus::Checking,
+            },
+            ConnectFlowStep::CheckingDuress {
+                status: DuressGateStatus::Unreachable,
+            },
+            ConnectFlowStep::CheckingDuress {
+                status: DuressGateStatus::Incompatible,
+            },
+            ConnectFlowStep::DuressRecovery {
+                unlock_at: Some(unlock_at),
+                passphrase: "all-clear".to_string(),
+                submitting: false,
+                cleared: false,
+            },
+            ConnectFlowStep::DuressRecovery {
+                unlock_at: None,
+                passphrase: String::new(),
+                submitting: true,
+                cleared: true,
+            },
+        ] {
+            account.step = step;
+            let _ = connect_account_panel(&account);
+        }
+    }
+
+    #[test]
+    fn dashboard_account_tabs_build_loaded_empty_and_processing_states() {
+        let mut account = dashboard_panel();
+
+        for sub in [
+            ConnectSubMenu::Overview,
+            ConnectSubMenu::PlanBilling,
+            ConnectSubMenu::Security,
+            ConnectSubMenu::Contacts,
+            ConnectSubMenu::Duress,
+        ] {
+            account.active_sub = sub;
+            let _ = connect_account_panel(&account);
+        }
+
+        account.active_sub = ConnectSubMenu::Security;
+        account.verified_devices = Some(vec![
+            VerifiedDevice {
+                id: 1,
+                device_name: Some("Laptop".to_string()),
+                created_at: "2026-07-01T00:00:00Z".to_string(),
+                last_used_at: Some("2026-07-02T00:00:00Z".to_string()),
+                is_current: true,
+            },
+            VerifiedDevice {
+                id: 2,
+                device_name: None,
+                created_at: "2026-06-01T00:00:00Z".to_string(),
+                last_used_at: None,
+                is_current: false,
+            },
+        ]);
+        account.verified_devices_state.deleting_ids.insert(2);
+        account.login_activity = Some(vec![
+            LoginActivity {
+                id: 1,
+                ip_address: Some("127.0.0.1".to_string()),
+                user_agent: Some(
+                    "Browser with a very long user agent string that should truncate in the view"
+                        .to_string(),
+                ),
+                created_at: "2026-07-03T00:00:00Z".to_string(),
+                success: Some(true),
+            },
+            LoginActivity {
+                id: 2,
+                ip_address: None,
+                user_agent: None,
+                created_at: "2026-07-04T00:00:00Z".to_string(),
+                success: Some(false),
+            },
+        ]);
+        let _ = connect_account_panel(&account);
+
+        account.verified_devices = Some(Vec::new());
+        account.login_activity = Some(Vec::new());
+        let _ = connect_account_panel(&account);
+    }
+
+    #[test]
+    fn plan_billing_checkout_and_history_views_build_for_branch_states() {
+        let mut account = dashboard_panel();
+        account.active_sub = ConnectSubMenu::PlanBilling;
+
+        account.features = None;
+        account.plan = Some(granted_estate(Some("2027-07-04T00:00:00Z"), Some("Grant")));
+        account.campaign_redeem.code = "FOUNDERS".to_string();
+        account.campaign_redeem.result = Some(Ok("Code applied.".to_string()));
+        let _ = plan_billing_ux(&account);
+
+        account.features = Some(priced_features(
+            Some(SUPPORTED_PRICING_SCHEMA_VERSION + 1),
+            Some(false),
+        ));
+        account.selected_billing_cycle = BillingCycle::Annual;
+        account.campaign_redeem.submitting = true;
+        let _ = plan_billing_ux(&account);
+
+        account.show_billing_history = true;
+        account.billing_history = None;
+        let _ = plan_billing_ux(&account);
+        account.billing_history = Some(Vec::new());
+        let _ = plan_billing_ux(&account);
+        account.billing_history = Some(vec![
+            billing_entry(ChargeStatus::Unpaid),
+            billing_entry(ChargeStatus::Processing),
+            billing_entry(ChargeStatus::Paid),
+            billing_entry(ChargeStatus::Expired),
+        ]);
+        let _ = plan_billing_ux(&account);
+
+        account.show_billing_history = false;
+        for phase in [
+            CheckoutPhase::Creating,
+            CheckoutPhase::AwaitingPayment,
+            CheckoutPhase::Processing,
+            CheckoutPhase::Paid,
+            CheckoutPhase::Expired,
+            CheckoutPhase::Failed("invoice failed".to_string()),
+        ] {
+            account.checkout = Some(CheckoutState {
+                phase,
+                checkout: Some(checkout_response()),
+                lightning_qr: None,
+                poll_errors: 0,
+            });
+            let _ = plan_billing_ux(&account);
+        }
+    }
+
+    #[test]
+    fn duress_views_build_locked_setup_enabled_and_disable_states() {
+        let mut account = dashboard_panel();
+        account.active_sub = ConnectSubMenu::Duress;
+
+        account.plan = Some(plan(PlanTier::Free, PlanStatus::Active, None));
+        let _ = duress_ux(&account);
+
+        let mut entitled = plan(PlanTier::Pro, PlanStatus::Active, None);
+        entitled.entitlements.duress = true;
+        account.plan = Some(entitled);
+        account.duress_cubes = Some(vec![DuressCube {
+            server_id: 1,
+            uuid: Some("cube-uuid".to_string()),
+            name: "Family Vault".to_string(),
+            has_recovery_kit: true,
+            halves: Some((true, false)),
+            has_vault: Some(true),
+            is_passkey: Some(false),
+            local: true,
+        }]);
+        let _ = duress_ux(&account);
+
+        account.duress_locally_armed = true;
+        account.duress_state = Some(crate::services::coincube::DuressState {
+            active: false,
+            unlock_at: None,
+            enrolled: true,
+            this_device_registered: true,
+        });
+        let _ = duress_ux(&account);
+
+        account.duress_locally_armed = false;
+        account.duress_state = Some(crate::services::coincube::DuressState {
+            active: true,
+            unlock_at: None,
+            enrolled: true,
+            this_device_registered: false,
+        });
+        let _ = duress_ux(&account);
+
+        account.duress_disable = Some(DuressDisableState {
+            pin: "1234".to_string(),
+            submitting: false,
+            error: Some("bad pin".to_string()),
+        });
+        let _ = duress_ux(&account);
+    }
+
+    #[test]
+    fn connect_panel_and_avatar_views_build_active_paths() {
+        let mut panel = ConnectPanel::new(
+            None,
+            "cube-uuid".to_string(),
+            "Family Vault".to_string(),
+            "bitcoin".to_string(),
+            true,
+        );
+        panel.account.error = Some("connectivity".to_string());
+        for step in [
+            ConnectFlowStep::CheckingSession,
+            ConnectFlowStep::Login {
+                email: String::new(),
+                loading: false,
+            },
+            ConnectFlowStep::Register {
+                email: "new@example.com".to_string(),
+                loading: true,
+            },
+            ConnectFlowStep::Dashboard,
+        ] {
+            panel.account.step = step;
+            let _ = connect_panel(&panel);
+        }
+
+        let mut cube = ConnectCubePanel::new(
+            None,
+            "cube-uuid".to_string(),
+            "Family Vault".to_string(),
+            "bitcoin".to_string(),
+            true,
+        );
+        let _ = avatar_ux(&cube);
+
+        cube.lightning_address = Some(LightningAddress {
+            lightning_address: Some("founder@getcoincube.com".to_string()),
+        });
+        cube.avatar_step = AvatarFlowStep::Questionnaire;
+        cube.avatar_draft.gender = AvatarGender::Woman;
+        cube.avatar_draft.archetype = AvatarArchetype::Shogun;
+        cube.avatar_draft.age_feel = AvatarAgeFeel::Elder;
+        cube.avatar_draft.demeanor = AvatarDemeanor::Fierce;
+        cube.avatar_draft.armor_style = AvatarArmorStyle::Heavy;
+        cube.avatar_draft.accent_motif = AvatarAccentMotif::OrangeSun;
+        cube.avatar_draft.laser_eyes = true;
+        let _ = avatar_ux(&cube);
+
+        cube.avatar_step = AvatarFlowStep::Generating;
+        let _ = avatar_ux(&cube);
+
+        cube.avatar_error = Some("avatar unavailable".to_string());
+        let _ = avatar_ux(&cube);
+        cube.registration_error = Some("not registered".to_string());
+        let _ = avatar_ux(&cube);
+        cube.avatar_error = None;
+        cube.registration_error = None;
+
+        cube.avatar_step = AvatarFlowStep::Settings;
+        let _ = avatar_ux(&cube);
+        cube.avatar_data = Some(GetAvatarData {
+            has_avatar: true,
+            active_avatar_url: Some("https://cdn.example/avatar/7".to_string()),
+            identity: None,
+            variants: vec![
+                AvatarVariant {
+                    id: 7,
+                    index: 0,
+                    image_url: "https://cdn.example/avatar/7".to_string(),
+                },
+                AvatarVariant {
+                    id: 8,
+                    index: 1,
+                    image_url: "https://cdn.example/avatar/8".to_string(),
+                },
+            ],
+            regenerations_remaining: -1,
+            created_at: None,
+            updated_at: None,
+        });
+        let _ = avatar_ux(&cube);
+
+        cube.avatar_step = AvatarFlowStep::Reveal;
+        if let Some(data) = cube.avatar_data.as_mut() {
+            data.active_avatar_url = Some("https://cdn.example/avatar/none".to_string());
+            data.regenerations_remaining = 0;
+            data.variants.truncate(1);
+        }
+        let _ = avatar_ux(&cube);
     }
 }
