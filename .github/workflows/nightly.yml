@@ -76,6 +76,19 @@ jobs:
         with:
           persist-credentials: false
 
+      # The minimal-profile GUI build enables LTO (see env above), which spills
+      # large LLVM intermediates to disk; together with the restored target/
+      # cache this exhausts ubuntu-latest's ~14 GB of free space
+      # ("No space left on device"). Reclaim the big preinstalled toolchains we
+      # don't use, before the cache restore and build. Linux only — the macOS
+      # and Windows runners have more headroom and lack these paths.
+      - name: Free disk space (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          echo "Before:"; df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          echo "After:"; df -h /
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
