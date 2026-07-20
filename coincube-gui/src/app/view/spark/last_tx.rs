@@ -2,6 +2,7 @@
 //! panels. Produces the same row layout as the Spark Overview / Spark
 //! Transactions pages so users see a consistent list across the wallet.
 
+use coincube_ui::component::text::Text;
 use coincube_ui::{
     color,
     component::{

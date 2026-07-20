@@ -12,6 +12,7 @@
 use coincube_core::miniscript::bitcoin::Amount;
 
 use crate::app::wallets::DomainPaymentStatus;
+use coincube_ui::component::text::Text;
 use coincube_ui::{
     color,
     component::{

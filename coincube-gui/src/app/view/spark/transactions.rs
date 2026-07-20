@@ -23,6 +23,7 @@ use iced::widget::image;
 use crate::app::wallets::DomainPaymentStatus;
 use crate::export::ImportExportMessage;
 use crate::utils::{format_timestamp, truncate_middle};
+use coincube_ui::component::text::Text;
 use coincube_ui::{
     component::{
         amount::{amount_with_size_and_unit, BitcoinDisplayUnit, DisplayAmount},

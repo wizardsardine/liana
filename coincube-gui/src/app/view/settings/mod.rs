@@ -5,6 +5,7 @@ pub mod install_stats;
 pub mod local_signing;
 pub mod recovery_kit;
 
+use coincube_ui::component::text::Text;
 use coincube_ui::{component::text::*, widget::*};
 
 use crate::app::view::message::*;
