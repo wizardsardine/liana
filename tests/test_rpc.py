@@ -1797,14 +1797,14 @@ def test_rbfpsbt_insufficient_funds(coincubed, bitcoind):
     wait_for(lambda: len(coincubed.rpc.listcoins(["confirmed"])["coins"]) == 0)
     # Get another coin.
     deposit_txid_2 = bitcoind.rpc.sendtoaddress(
-        coincubed.rpc.getnewaddress()["address"], 5_200 / COIN
+        coincubed.rpc.getnewaddress()["address"], 700 / COIN
     )
     bitcoind.generate_block(1, wait_for_mempool=deposit_txid_2)
     wait_for(lambda: len(coincubed.rpc.listcoins(["confirmed"])["coins"]) == 1)
 
     # Create a spend that we will then attempt to cancel.
     destinations_2 = {
-        bitcoind.rpc.getnewaddress(): 5_000,
+        bitcoind.rpc.getnewaddress(): 500,
     }
     spend_res_2 = coincubed.rpc.createspend(destinations_2, [], 1)
     spend_psbt_2 = PSBT.from_base64(spend_res_2["psbt"])
