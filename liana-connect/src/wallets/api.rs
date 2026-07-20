@@ -118,6 +118,7 @@ pub struct RecoveryPath {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Wallet {
     pub id: String,
+    pub org_id: String,
     pub name: String,
     #[serde(deserialize_with = "deser_fromstr")]
     pub descriptor: LianaDescriptor,
@@ -127,10 +128,27 @@ pub struct Wallet {
     pub biggest_remaining_sequence: Option<u32>,
     pub smallest_remaining_sequence: Option<u32>,
     pub metadata: WalletMetadata,
+    pub participants: HashMap<String, UserRole>,
     pub created_at: i64,
     pub balance: WalletBalance,
     pub status: WalletStatus,
     pub tip_height: Option<i32>,
+}
+
+impl Wallet {
+    /// The user_id of the wallet's owner participant, if any.
+    pub fn owner_id(&self) -> Option<&String> {
+        self.participants
+            .iter()
+            .find(|(_, role)| matches!(role, UserRole::Owner))
+            .map(|(user_id, _)| user_id)
+    }
+
+    /// Whether the wallet belongs to its owner's personal organization,
+    /// i.e. the org_id matches the owner's user_id.
+    pub fn is_personal(&self) -> bool {
+        self.owner_id() == Some(&self.org_id)
+    }
 }
 
 #[derive(Deserialize)]
@@ -138,7 +156,7 @@ pub struct ListWallets {
     pub wallets: Vec<Wallet>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum UserRole {
     Owner,
