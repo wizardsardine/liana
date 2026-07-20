@@ -1,6 +1,7 @@
 use breez_sdk_liquid::{bitcoin::Denomination, model::PreparePayOnchainResponse};
 use std::time::Duration;
 
+use coincube_ui::component::text::Text;
 use coincube_ui::{
     color,
     component::{amount::*, button, form, spinner, text::*},

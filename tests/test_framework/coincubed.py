@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import shutil
 
 from bip380.descriptors import Descriptor
@@ -41,8 +42,10 @@ class Coincubed(TailableProc):
         self.conf_file = os.path.join(datadir, "config.toml")
         self.cmd_line = [COINCUBED_PATH, "--conf", f"{self.conf_file}"]
         data_directory = os.path.join(datadir, "regtest")
-        socket_path = os.path.join(data_directory, "coincubed_rpc")
-        self.rpc = UnixDomainSocketRpc(socket_path)
+        # Legacy control-socket location, used by older daemons that don't log
+        # their bound path and as the reset target in _sync_rpc_socket_path.
+        self.legacy_socket_path = os.path.join(data_directory, "coincubed_rpc")
+        self.rpc = UnixDomainSocketRpc(self.legacy_socket_path)
         self.bitcoin_backend = bitcoin_backend
 
         with open(self.conf_file, "w") as f:
@@ -121,6 +124,12 @@ class Coincubed(TailableProc):
         )
 
     def start(self):
+        # Mark the current end of the captured log before the daemon starts.
+        # `self.logs` is never cleared, so after `restart_fresh` the history
+        # still holds earlier daemons' "Binding socket at" lines; the socket
+        # scan below must consider only the line *this* start produces, or it
+        # could latch onto a previous daemon's stale temp socket.
+        log_offset = len(self.logs)
         TailableProc.start(self)
         self.wait_for_logs(
             [
@@ -128,6 +137,51 @@ class Coincubed(TailableProc):
                 "JSONRPC server started.",
             ]
         )
+        self._sync_rpc_socket_path(log_offset)
+
+    def _sync_rpc_socket_path(self, search_from=0):
+        """Point the RPC client at the control socket the daemon actually bound.
+
+        Since coincubed 29f100ca the socket is no longer at
+        ``{data_directory}/coincubed_rpc``: to stay under the 104-byte
+        ``sun_path`` limit (notably on macOS) the daemon hashes the data
+        directory and binds at ``{tmpdir}/cc<hash>.sock`` (see
+        ``coincubed_rpc_socket_path`` in ``coincubed/src/datadir.rs``). Rather
+        than replicate Rust's hashing in Python, read the real path straight
+        from the daemon's own startup log — it logs ``Binding socket at
+        <path>`` at info (same level as, and immediately before, the ``JSONRPC
+        server started.`` line we just waited on), so the entry is present
+        whenever the server is reachable — not only under debug logging — and is
+        already captured by the time this runs.
+
+        ``search_from`` is the log length captured just before this start (see
+        ``start``); the scan is restricted to lines from *this* daemon. This
+        matters across ``restart_fresh``: ``self.logs`` is never cleared, so an
+        earlier daemon's "Binding socket at" line lingers in the history and a
+        from-zero scan could bind a stale temp socket. When this start logged no
+        such line — an older daemon that binds the legacy
+        ``{data_directory}/coincubed_rpc`` path — reset to that legacy path
+        rather than keeping whatever a prior start pointed us at.
+
+        NB: ``TailableProc.tail`` stores each log line as ``str(bytes)`` — the
+        *repr* of the raw stdout bytes, e.g. ``b'... Binding socket at
+        /tmp/cc<hash>.sock'`` — so a bare ``(.+)`` capture would swallow the
+        trailing repr quote and connect to a bogus path. Anchor the capture on
+        the ``.sock`` suffix the daemon always uses (see
+        ``coincubed_rpc_socket_path`` in ``coincubed/src/datadir.rs``); this
+        ends the match before any trailing quote and works whether the stored
+        line is repr-wrapped or a plain decoded string.
+        """
+        pattern = r"Binding socket at (.+\.sock)"
+        line = self.is_in_log(pattern, start=search_from)
+        if line is None:
+            # This start logged no socket line — an older daemon binding the
+            # legacy path. Reset to it (a prior start on this object may have
+            # pointed us at a temp .sock).
+            self.rpc = UnixDomainSocketRpc(self.legacy_socket_path)
+            return
+        socket_path = re.search(pattern, line).group(1)
+        self.rpc = UnixDomainSocketRpc(socket_path)
 
     def stop(self, timeout=5):
         try:

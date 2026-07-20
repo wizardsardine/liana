@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
+use coincube_ui::component::text::Text;
 use coincube_ui::{
     component::{button, card, form, text::*},
     icon, theme,
@@ -1528,7 +1529,7 @@ impl P2PPanel {
                 slider(slider_min..=slider_max, premium_val, |v: f32| {
                     view::Message::P2P(P2PMessage::PremiumEdited((v as i64).to_string()))
                 })
-                .step(1.0),
+                .step(1.0_f32),
             ]
             .spacing(8);
             if !self.create_premium.value.is_empty() {

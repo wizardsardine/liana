@@ -125,12 +125,19 @@ jobs:
             chmod 754 electrs
             export ELECTRS_PATH=$PWD/electrs
           fi
-          curl -LO https://github.com/coincubetech/coincube/releases/download/v1.0.0/coincube-1.0.0-x86_64-unknown-linux-gnu.tar.gz
-          echo "9979f50c65991d2417b0c6c57701f00ebf91cdcd10b9583de0bcc9d898f0dc38 coincube-1.0.0-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c
-          tar -xzf coincube-1.0.0-x86_64-unknown-linux-gnu.tar.gz
-          # Find the binary
-          OLD_PATH=$(find $PWD -type f -name coincubed | head -n 1)
-          export OLD_COINCUBED_PATH="$OLD_PATH"
+          # The migration test (tests/test_misc.py::test_migration) needs a
+          # genuinely-old coincubed binary to build a legacy datadir. Upstream
+          # Liana shipped `lianad` in its release archive and pointed
+          # OLD_LIANAD_PATH straight at it; Coincube's releases ship only the
+          # `coincube` GUI (the v1.0.0 linux tarball contains coincube/LICENCE/
+          # README.md — no coincubed). The old `find $PWD -name coincubed`
+          # therefore matched nothing from a release and silently fell through
+          # to the freshly-built target/release/coincubed, turning the migration
+          # test into a meaningless new-vs-new comparison that passes only
+          # because the current daemon's version (0.9.0) happens to be in the
+          # accepted set. Leave OLD_COINCUBED_PATH unset so test_migration skips
+          # honestly. To restore real coverage, publish a coincubed binary as a
+          # release asset and point OLD_COINCUBED_PATH at it explicitly here.
           # Run the functional tests
           if [ "$USE_KNOTS" = "TRUE" ]; then
             # This leg exists to validate standard transaction relay under the
@@ -139,12 +146,16 @@ jobs:
             pytest tests/test_knots.py -vvv
           elif [ "$BITCOIN_BACKEND_TYPE" = "electrs" ]; then
             # Deep reorg indexing is I/O-heavy and can starve when eight
-            # bitcoind/electrs pairs run together. Keep the broad suite
-            # parallel, then exercise this reorg deterministically on its own.
+            # bitcoind/electrs pairs run together (the daemon stops answering
+            # RPC mid-rescan and the call times out). Keep the broad suite
+            # parallel, then exercise the reorg-heavy tests deterministically on
+            # their own with a higher timeout.
             pytest tests/ -vvv -n 8 \
-              --deselect tests/test_chain.py::test_reorg_exclusion
+              --deselect tests/test_chain.py::test_reorg_exclusion \
+              --deselect tests/test_chain.py::test_rescan_edge_cases
             TIMEOUT=240 pytest \
-              tests/test_chain.py::test_reorg_exclusion -vvv
+              tests/test_chain.py::test_reorg_exclusion \
+              tests/test_chain.py::test_rescan_edge_cases -vvv
           else
             pytest tests/ -vvv -n 8
           fi

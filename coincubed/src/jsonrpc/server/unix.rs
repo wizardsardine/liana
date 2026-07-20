@@ -195,7 +195,12 @@ fn bind(socket_path: &path::Path) -> Result<net::UnixListener, io::Error> {
 
 /// Bind to the UDS at `socket_path`
 pub fn rpcserver_setup(socket_path: &path::Path) -> Result<net::UnixListener, io::Error> {
-    log::debug!("Binding socket at {}", socket_path.display());
+    // info, not debug: the control-socket path (hashed into the temp dir since
+    // it must fit sun_path) is how clients — including the functional test
+    // harness — discover where to connect. Keep it at the same level as the
+    // "JSONRPC server started." line below so it's present whenever the server
+    // is reachable, not only under debug logging.
+    log::info!("Binding socket at {}", socket_path.display());
     // Create the socket with RW permissions only for the user
     let listener = bind(socket_path)?;
 

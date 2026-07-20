@@ -1090,8 +1090,14 @@ mod tests {
         let tmp = TempDir::new();
         let internal_datadir = tmp.path().join("bitcoind/datadir");
         let cookie = internal_datadir.join(".cookie");
+        // Embed the path with a TOML *literal* string (single quotes): on
+        // Windows `cookie.display()` yields backslashes, which a basic
+        // (double-quoted) string treats as escape sequences (e.g. `\U`),
+        // making the config unparseable. Literal strings pass backslashes
+        // through verbatim — the same round-trip `toml::to_string_pretty`
+        // gives real configs.
         let backend = format!(
-            "[bitcoind_config]\ncookie_path = \"{}\"\naddr = \"127.0.0.1:8332\"",
+            "[bitcoind_config]\ncookie_path = '{}'\naddr = \"127.0.0.1:8332\"",
             cookie.display()
         );
         let config_path = write_daemon_toml(tmp.path(), &backend);

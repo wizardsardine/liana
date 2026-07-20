@@ -131,17 +131,17 @@ def test_coin_marked_spent(coincubed, bitcoind):
         if deposit_b in c["outpoint"]
     )
     destinations = {
-        bitcoind.rpc.getnewaddress(): int(0.02 * COIN) - 1_000,
+        bitcoind.rpc.getnewaddress(): int(0.02 * COIN) - 500,
     }
     res = coincubed.rpc.createspend(destinations, [outpoint], 1)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
-    change_amount = 858 if USE_TAPROOT else 839
+    change_amount = 358 if USE_TAPROOT else 339
     assert len(psbt.o) == 1
     assert len(res["warnings"]) == 1
     assert (
         res["warnings"][0]
-        == "Dust UTXO. The minimal change output allowed by Coincube is 5000 sats. "
+        == "Dust UTXO. The minimal change output allowed by Coincube is 500 sats. "
         f"Instead of creating a change of {change_amount} sats, it was added to the "
         "transaction fee. Select a larger input to avoid this from happening."
     )
@@ -149,18 +149,18 @@ def test_coin_marked_spent(coincubed, bitcoind):
     # Spend the third coin to an address of ours, no change
     coins_c = [c for c in coincubed.rpc.listcoins()["coins"] if deposit_c in c["outpoint"]]
     destinations = {
-        coincubed.rpc.getnewaddress()["address"]: int(0.03 * COIN) - 1_000,
+        coincubed.rpc.getnewaddress()["address"]: int(0.03 * COIN) - 500,
     }
-    outpoint_3 = [c["outpoint"] for c in coins_c if c["amount"] == 0.03 * COIN][0]
+    outpoint_3 = next(c["outpoint"] for c in coins_c if c["amount"] == 0.03 * COIN)
     res = coincubed.rpc.createspend(destinations, [outpoint_3], 1)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
-    change_amount = 846 if USE_TAPROOT else 827
+    change_amount = 346 if USE_TAPROOT else 327
     assert len(psbt.o) == 1
     assert len(res["warnings"]) == 1
     assert (
         res["warnings"][0]
-        == "Dust UTXO. The minimal change output allowed by Coincube is 5000 sats. "
+        == "Dust UTXO. The minimal change output allowed by Coincube is 500 sats. "
         f"Instead of creating a change of {change_amount} sats, it was added to the "
         "transaction fee. Select a larger input to avoid this from happening."
     )
@@ -289,7 +289,7 @@ def test_send_to_self(coincubed, bitcoind):
     # Create a new spend to the receive address with index 3.
     recv_addr = coincubed.rpc.listaddresses(3, 1)["addresses"][0]["receive"]
     res = coincubed.rpc.createspend(
-        {recv_addr: 11_965_000 if USE_TAPROOT else 11_955_000}, [], 2
+        {recv_addr: 11_967_600 if USE_TAPROOT else 11_959_200}, [], 2
     )
     assert "psbt" in res
     # Max(receive_index, change_index) is 3, so we return addresses 0, 1, 2, 3:

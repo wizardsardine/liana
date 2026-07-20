@@ -217,7 +217,7 @@ pub fn order_filter_sidebar<'a>(state: OrderFilterState<'a>) -> Container<'a, vi
                 slider(0.0..=5.0_f32, state.min_rating, |v: f32| {
                     view::Message::P2P(P2PMessage::FilterMinRatingChanged(v))
                 })
-                .step(0.5),
+                .step(0.5_f32),
             ]
             .spacing(4),
             column![
@@ -230,7 +230,7 @@ pub fn order_filter_sidebar<'a>(state: OrderFilterState<'a>) -> Container<'a, vi
                 slider(0.0..=365.0_f32, state.min_days_active as f32, |v: f32| {
                     view::Message::P2P(P2PMessage::FilterMinDaysActiveChanged(v as u32))
                 })
-                .step(1.0),
+                .step(1.0_f32),
             ]
             .spacing(4),
             caption(description).style(theme::text::secondary),
