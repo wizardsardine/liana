@@ -831,5 +831,9 @@ fn role_color(role: &ContactRole) -> iced::Color {
         ContactRole::Keyholder => color::BLUE,
         ContactRole::Beneficiary => color::GREEN,
         ContactRole::Observer => color::GREY_3,
+        // Owner (the person who invited us) and any role this build doesn't
+        // recognise carry no capability here — render them muted rather than
+        // implying one of the known roles.
+        ContactRole::Owner | ContactRole::Unknown => color::GREY_3,
     }
 }
