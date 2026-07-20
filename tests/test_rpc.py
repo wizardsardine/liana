@@ -1032,7 +1032,7 @@ def test_start_rescan(coincubed, bitcoind):
         # Only spend coins comfortably above spend_coins' flat per-input fee so
         # the output can't fall below the dust limit — this also skips the small
         # change coins that multi-input spends leave behind (matches upstream).
-        avail = list(c for c in unspent_coins() if c["amount"] > 1_000)
+        avail = [c for c in unspent_coins() if c["amount"] > 1_000]
         to_spend = random.sample(avail, random.randint(1, len(avail)))
         spend_coins(coincubed, bitcoind, to_spend)
         bitcoind.generate_block(random.randint(1, 5), wait_for_mempool=2)
