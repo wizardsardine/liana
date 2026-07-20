@@ -146,12 +146,21 @@ class Coincubed(TailableProc):
         that bound at the legacy path don't emit this line, so keep the
         ``{data_directory}/coincubed_rpc`` path set in ``__init__`` as a
         fallback.
+
+        NB: ``TailableProc.tail`` stores each log line as ``str(bytes)`` — the
+        *repr* of the raw stdout bytes, e.g. ``b'... Binding socket at
+        /tmp/cc<hash>.sock'`` — so a bare ``(.+)`` capture would swallow the
+        trailing repr quote and connect to a bogus path. Anchor the capture on
+        the ``.sock`` suffix the daemon always uses (see
+        ``coincubed_rpc_socket_path`` in ``coincubed/src/datadir.rs``); this
+        ends the match before any trailing quote and works whether the stored
+        line is repr-wrapped or a plain decoded string.
         """
-        pattern = r"Binding socket at (.+)"
+        pattern = r"Binding socket at (.+\.sock)"
         line = self.is_in_log(pattern)
         if line is None:
             return
-        socket_path = re.search(pattern, line).group(1).strip()
+        socket_path = re.search(pattern, line).group(1)
         self.rpc = UnixDomainSocketRpc(socket_path)
 
     def stop(self, timeout=5):
