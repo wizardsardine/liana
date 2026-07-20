@@ -1463,7 +1463,7 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                 let status_color = if ok { color::ORANGE } else { color::RED };
 
                 let ip = a.ip_address.as_deref();
-                let ua = a.user_agent.as_deref();
+                let ua = a.device_name.as_deref();
                 let ip_and_ua = match (ip, ua) {
                     (Some(i), Some(u)) => {
                         let short_u = if u.chars().count() > 60 {

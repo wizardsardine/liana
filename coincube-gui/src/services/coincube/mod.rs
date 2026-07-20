@@ -794,7 +794,7 @@ pub struct VerifiedDevice {
 pub struct LoginActivity {
     pub id: u32,
     pub ip_address: Option<String>,
-    pub user_agent: Option<String>,
+    pub device_name: Option<String>,
     pub created_at: String,
     pub success: Option<bool>,
 }
