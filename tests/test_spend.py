@@ -151,7 +151,7 @@ def test_coin_marked_spent(coincubed, bitcoind):
     destinations = {
         coincubed.rpc.getnewaddress()["address"]: int(0.03 * COIN) - 500,
     }
-    outpoint_3 = [c["outpoint"] for c in coins_c if c["amount"] == 0.03 * COIN][0]
+    outpoint_3 = next(c["outpoint"] for c in coins_c if c["amount"] == 0.03 * COIN)
     res = coincubed.rpc.createspend(destinations, [outpoint_3], 1)
     psbt = PSBT.from_base64(res["psbt"])
     sign_and_broadcast(psbt)
