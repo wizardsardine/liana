@@ -15,11 +15,10 @@ use tokio::runtime::Handle;
 
 use crate::feature_flags;
 use crate::pin_input;
-use crate::recover_own_cube::{self, RecoverOwnCubeMessage, RecoverOwnCubePanel};
 use crate::recover_vault::{self, RecoverVaultMessage, RecoverVaultPanel};
 use crate::services::coincube::{
     vault_presence_report, CoincubeClient, CoincubeError, CubeLimitsResponse, CubeResponse,
-    RegisterCubeRequest, UpdateCubeRequest,
+    OwnerSelfRecoverySummary, RegisterCubeRequest, UpdateCubeRequest,
 };
 #[cfg(not(target_os = "macos"))]
 use crate::services::passkey::CeremonyMode;
@@ -80,15 +79,25 @@ fn bip39_suggestions(prefix: &str, limit: usize) -> Vec<String> {
 /// A cube that exists on the Connect server but has no local data on this machine.
 #[derive(Debug, Clone)]
 pub struct RemoteCube {
+    /// Numeric Connect cube id — needed to launch the phone (owner-keychain)
+    /// restore flow, which keys off the id rather than the uuid.
+    pub id: u64,
     pub uuid: String,
     pub name: String,
     pub network: String, // API string: "mainnet", "testnet", etc.
     /// Whether the server holds a Cube Recovery Kit for this cube.
     pub has_recovery_kit: bool,
     /// Whether that kit carries the encrypted seed half — the piece a
-    /// full restore needs. Only `true` implies the row is restorable
-    /// from this screen (kit present *and* the seed inside it).
+    /// full restore needs. Password recovery is offered only when this is
+    /// `true` (kit present *and* the seed inside it).
     pub has_encrypted_seed: bool,
+    /// Whether an owner-keychain ("phone") envelope set has been sealed and
+    /// uploaded for this cube — the signal that passwordless phone recovery
+    /// is available. Derived from `/recovery-kit/status`'s `ownerSelf` block.
+    pub phone_recoverable: bool,
+    /// Whether the phone envelope set includes the seed (Full Cube) vs only
+    /// the descriptor (Vault-only). Drives the restore scope + label.
+    pub phone_full_cube: bool,
 }
 
 /// Which section is shown in the home's main content area.
@@ -101,10 +110,6 @@ pub enum HomeSection {
     /// Heir "Recover a Vault" discovery surface (COIN-377 / PR 1). Global —
     /// reachable even when the heir owns no Vault of their own.
     RecoverVault,
-    /// Owner "Recover a Cube I own" discovery surface
-    /// (PLAN-owner-keychain-recovery PR 3). Global; lists the owner's own Cubes
-    /// set up for phone recovery.
-    RecoverOwnCube,
 }
 
 /// Context stashed for firing a remote cube update after local rename succeeds.
@@ -137,9 +142,6 @@ pub struct Home {
     pub connect_account: ConnectAccountPanel,
     /// Heir "Recover a Vault" discovery surface state (COIN-377 / PR 1).
     pub recover_vault: RecoverVaultPanel,
-    /// Owner "Recover a Cube I own" discovery surface state
-    /// (PLAN-owner-keychain-recovery PR 3).
-    pub recover_own_cube: RecoverOwnCubePanel,
     /// Whether the Connect sidebar section is expanded
     pub connect_expanded: bool,
     /// Which section is currently displayed in the main content area
@@ -168,6 +170,9 @@ pub struct Home {
     remote_cubes: Vec<RemoteCube>,
     /// Modal for deleting a remote-only cube from the Connect server.
     delete_remote_cube_modal: Option<DeleteRemoteCubeModal>,
+    /// Recovery-method picker, shown when a remote cube can be recovered by
+    /// *both* a password Recovery Kit and a phone envelope.
+    recovery_method_modal: Option<RecoveryMethodModal>,
     #[allow(dead_code)]
     welcome_quote: coincube_ui::component::quote_display::Quote,
     #[allow(dead_code)]
@@ -212,7 +217,6 @@ impl Home {
                 )),
                 connect_account: ConnectAccountPanel::new(),
                 recover_vault: RecoverVaultPanel::new(),
-                recover_own_cube: RecoverOwnCubePanel::new(),
                 connect_expanded: false,
                 active_section: HomeSection::Cubes,
                 theme_mode: GlobalSettings::load_theme_mode(&GlobalSettings::path(&datadir_path)),
@@ -229,6 +233,7 @@ impl Home {
                 pending_remote_rename: None,
                 remote_cubes: Vec::new(),
                 delete_remote_cube_modal: None,
+                recovery_method_modal: None,
                 welcome_quote: coincube_ui::component::quote_display::random_quote("first-launch"),
                 welcome_image_handle:
                     coincube_ui::component::quote_display::image_handle_for_context("first-launch"),
@@ -326,6 +331,9 @@ impl Home {
                 })
             }
             Message::View(ViewMessage::RestoreFromRecoveryKit(cube_uuid)) => {
+                // Selecting a method closes the picker (a no-op when the
+                // launch came straight from a single-method row).
+                self.recovery_method_modal = None;
                 // W13 — same launch shape as CreateWallet; the
                 // installer picks the Recovery-Kit step sequence off
                 // the UserFlow. The clicked cube's `uuid` is threaded
@@ -358,6 +366,18 @@ impl Home {
                         )
                     },
                 )
+            }
+            Message::View(ViewMessage::ShowRecoveryMethodPicker(cube_uuid)) => {
+                // Open the picker for a cube that offers both methods. Snapshot
+                // the row so the modal stays valid even if the list reloads.
+                if let Some(cube) = self.remote_cubes.iter().find(|r| r.uuid == cube_uuid) {
+                    self.recovery_method_modal = Some(RecoveryMethodModal { cube: cube.clone() });
+                }
+                Task::none()
+            }
+            Message::View(ViewMessage::CloseRecoveryMethodPicker) => {
+                self.recovery_method_modal = None;
+                Task::none()
             }
             Message::View(ViewMessage::ShowCreateCube(show)) => {
                 if let State::Cubes { create_cube, .. } = &mut self.state {
@@ -1471,19 +1491,6 @@ impl Home {
                         .update(RecoverVaultMessage::Load, client, gen)
                         .map(|m| Message::View(ViewMessage::RecoverVault(m)));
                 }
-                // Load the owner's phone-recoverable Cubes when opening the
-                // owner discovery surface (once per session).
-                if matches!(self.active_section, HomeSection::RecoverOwnCube)
-                    && !self.recover_own_cube.is_loaded()
-                {
-                    let client = self.connect_account.authenticated_client();
-                    let gen = self.connect_account.session_generation();
-                    let network = crate::app::settings::network_to_api_string(self.network);
-                    return self
-                        .recover_own_cube
-                        .update(RecoverOwnCubeMessage::Load(network), client, gen)
-                        .map(|m| Message::View(ViewMessage::RecoverOwnCube(m)));
-                }
                 Task::none()
             }
 
@@ -1524,15 +1531,15 @@ impl Home {
                     .map(|m| Message::View(ViewMessage::RecoverVault(m)))
             }
 
-            // Owner clicked "Recover" on a phone-recoverable Cube: launch the
-            // installer's owner-keychain flow (PLAN-owner-keychain-recovery PR 3).
-            // Intercepted here (not forwarded) because launching the installer is
-            // a home-level action — the owner's authenticated Connect client is
-            // threaded into the installer Context for the decrypt step.
-            Message::View(ViewMessage::RecoverOwnCube(RecoverOwnCubeMessage::Launch {
-                cube_id,
-                full_cube,
-            })) => {
+            // Owner chose passwordless phone recovery for a Cube: launch the
+            // installer's owner-keychain flow (PLAN-owner-keychain-recovery).
+            // Launching the installer is a home-level action — the owner's
+            // authenticated Connect client is threaded into the installer
+            // Context for the decrypt step.
+            Message::View(ViewMessage::RestoreWithPhone { cube_id, full_cube }) => {
+                // Selecting a method closes the picker (a no-op when the launch
+                // came straight from a single-method row).
+                self.recovery_method_modal = None;
                 let datadir_path = self.datadir_path.clone();
                 let network = self.network;
                 let client = self.connect_account.authenticated_client();
@@ -1547,13 +1554,6 @@ impl Home {
                         )
                     },
                 )
-            }
-            Message::View(ViewMessage::RecoverOwnCube(msg)) => {
-                let client = self.connect_account.authenticated_client();
-                let gen = self.connect_account.session_generation();
-                self.recover_own_cube
-                    .update(msg, client, gen)
-                    .map(|m| Message::View(ViewMessage::RecoverOwnCube(m)))
             }
 
             Message::View(ViewMessage::RenameCube(index)) => {
@@ -1705,8 +1705,9 @@ impl Home {
                         // (and `is_loaded()` re-fetch guard) would persist and a
                         // later account would see the prior account's vault rows.
                         self.recover_vault = RecoverVaultPanel::new();
-                        // Same reset for the owner discovery surface.
-                        self.recover_own_cube = RecoverOwnCubePanel::new();
+                        // Drop any open recovery-method picker so it can't
+                        // reference a prior account's remote cube.
+                        self.recovery_method_modal = None;
                     }
                 }
                 // Auto-expand Connect submenu and navigate to Cubes after login
@@ -1888,40 +1889,65 @@ impl Home {
                                     .collect();
 
                                 // Determine restorability per cube. `has_recovery_kit`
-                                // comes free from `list_cubes()`; the seed half (what a
-                                // full restore needs) lives on a separate endpoint, so
-                                // probe it only when a kit actually exists. Probes run
-                                // concurrently (`join_all`) so latency is one round-trip,
-                                // not N. A flaky probe must not blank the whole list — on
-                                // a non-NotFound error we log and treat the seed half as
-                                // absent (the row still shows, just without the restore
-                                // icon). `join_all` preserves input order.
+                                // comes free from `list_cubes()`, but both the seed half
+                                // (what a password restore needs) and the owner-keychain
+                                // "phone" envelope summary live on `/recovery-kit/status`,
+                                // so probe it for *every* remote cube — a phone-only cube
+                                // has `has_recovery_kit == false` yet is still recoverable
+                                // via its envelope, so gating the probe on the password
+                                // kit would hide it. Probes run concurrently (`join_all`)
+                                // so latency is one round-trip, not N. A flaky probe must
+                                // not blank the whole list — on any error we log and treat
+                                // every method as absent (the row still shows, just
+                                // without a restore icon). `join_all` preserves input
+                                // order.
+                                //
+                                // Duress note: phone availability is read from the
+                                // `ownerSelf` *status* summary (presence/tier, no
+                                // ciphertext); the duress gate fires later, at the actual
+                                // recovery attempt (`OwnerKeychainRestoreStep` →
+                                // `fetch_owner_recovery_envelope`), which returns neutral
+                                // "unavailable, try later" copy on a 423 (invariant I3).
                                 let client_ref = &rc_client;
                                 let remote_only: Vec<RemoteCube> = iced::futures::future::join_all(
                                     remote_source.into_iter().map(|sc| async move {
-                                        let has_encrypted_seed = if sc.has_recovery_kit {
-                                            match client_ref.get_recovery_kit_status(sc.id).await {
-                                                Ok(status) => status.has_encrypted_seed,
-                                                Err(CoincubeError::NotFound) => false,
-                                                Err(e) => {
-                                                    log::warn!(
-                                                        "[LAUNCHER] Recovery Kit status probe \
-                                                         failed for \"{}\": {}",
-                                                        sc.name,
-                                                        e
+                                        let (
+                                            has_encrypted_seed,
+                                            phone_recoverable,
+                                            phone_full_cube,
+                                        ) = match client_ref.get_recovery_kit_status(sc.id).await {
+                                            Ok(status) => {
+                                                let (phone_recoverable, phone_full_cube) =
+                                                    derive_phone_recovery(
+                                                        status.owner_self.as_ref(),
                                                     );
-                                                    false
-                                                }
+                                                (
+                                                    status.has_encrypted_seed,
+                                                    phone_recoverable,
+                                                    phone_full_cube,
+                                                )
                                             }
-                                        } else {
-                                            false
+                                            // No kit/status yet → nothing recoverable.
+                                            Err(CoincubeError::NotFound) => (false, false, false),
+                                            Err(e) => {
+                                                log::warn!(
+                                                    "[LAUNCHER] Recovery Kit status probe \
+                                                         failed for \"{}\": {}",
+                                                    sc.name,
+                                                    e
+                                                );
+                                                (false, false, false)
+                                            }
                                         };
                                         RemoteCube {
+                                            id: sc.id,
                                             uuid: sc.uuid,
                                             name: sc.name,
                                             network: sc.network,
                                             has_recovery_kit: sc.has_recovery_kit,
                                             has_encrypted_seed,
+                                            phone_recoverable,
+                                            phone_full_cube,
                                         }
                                     }),
                                 )
@@ -2182,11 +2208,6 @@ impl Home {
             // Heir "Recover a Vault" discovery surface (COIN-377 / PR 1).
             recover_vault::view(&self.recover_vault)
                 .map(|msg| Message::View(ViewMessage::RecoverVault(msg)))
-        } else if matches!(self.active_section, HomeSection::RecoverOwnCube) {
-            // Owner "Recover a Cube I own" discovery surface
-            // (PLAN-owner-keychain-recovery PR 3).
-            recover_own_cube::view(&self.recover_own_cube)
-                .map(|msg| Message::View(ViewMessage::RecoverOwnCube(msg)))
         } else {
             content
         };
@@ -2308,6 +2329,10 @@ impl Home {
                         DeleteCubeMessage::CloseRemoteModal,
                     )))
                 })
+                .into()
+        } else if let Some(modal) = &self.recovery_method_modal {
+            Modal::new(Container::new(layout).height(Length::Fill), modal.view())
+                .on_blur(Some(Message::View(ViewMessage::CloseRecoveryMethodPicker)))
                 .into()
         } else if let Some((_, ref name_input)) = self.rename_cube_modal {
             use coincube_ui::widget::TextInput;
@@ -2468,31 +2493,6 @@ fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
                 .width(Length::Fill)
         };
         col = col.push(recover_button);
-    }
-
-    // Owner "Recover a Cube I own" — global phone-recovery surface
-    // (PLAN-owner-keychain-recovery PR 3). Gated behind the Beta flag (dark until
-    // the API `recovery-kit/*` endpoints + keychain-app mint ship) and only shown
-    // to a signed-in account.
-    if is_authenticated && feature_flags::OWNER_KEYCHAIN_RECOVERY_ENABLED {
-        let is_active = matches!(home.active_section, HomeSection::RecoverOwnCube);
-        let recover_own_button = if is_active {
-            Row::new()
-                .push(
-                    btn::menu_active(Some(ic::cube_icon()), "Recover a Cube I own")
-                        .width(Length::Fill),
-                )
-                .width(Length::Fill)
-        } else {
-            Row::new()
-                .push(
-                    btn::menu(Some(ic::cube_icon()), "Recover a Cube I own")
-                        .on_press(msg(ViewMessage::GoToSection(HomeSection::RecoverOwnCube)))
-                        .width(Length::Fill),
-                )
-                .width(Length::Fill)
-        };
-        col = col.push(recover_own_button);
     }
 
     // Bottom-pinned section: Sign In / email + theme toggle
@@ -2824,32 +2824,57 @@ fn cubes_list_item<'a>(
     .into()
 }
 
+/// Derive phone (owner-keychain) recovery availability from the `ownerSelf`
+/// block of a `/recovery-kit/status` response. Returns
+/// `(phone_recoverable, phone_full_cube)`:
+///   * `phone_recoverable` — a recipient is registered *and* an envelope set
+///     has actually been sealed to it. A bare recipient with nothing uploaded
+///     is **not** recoverable (the phone can register the key before the
+///     desktop seals + uploads), so the "Recover" action wouldn't dead-end.
+///   * `phone_full_cube` — the sealed set includes the seed artifact (Full
+///     Cube) rather than the descriptor alone (Vault-only). Drives the restore
+///     scope + label.
+fn derive_phone_recovery(owner_self: Option<&OwnerSelfRecoverySummary>) -> (bool, bool) {
+    match owner_self {
+        Some(o) => (
+            o.has_recipient && o.has_envelope(),
+            o.envelope_kinds.iter().any(|k| k == "seed"),
+        ),
+        None => (false, false),
+    }
+}
+
 fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
-    // A remote cube is only restorable from this screen when the server
-    // holds a Recovery Kit *and* that kit carries the encrypted seed a
-    // full restore needs. Kit-less cubes (merely registered in Connect)
-    // and descriptor-only kits can't be rebuilt here, so they show no
-    // restore affordance — only the honest status and a delete button.
-    let restorable = cube.has_recovery_kit && cube.has_encrypted_seed;
+    // A remote cube can be recovered from this screen two ways, and both
+    // rebuild the *same* wallet — they differ only in which key unlocks the
+    // backup:
+    //   * Password Recovery Kit — available when the server holds a kit that
+    //     carries the encrypted seed half (a full restore needs the seed).
+    //   * Phone (owner-keychain) envelope — available when an envelope set was
+    //     sealed to the owner's phone key. Gated by the kill-switch flag so it
+    //     stays dark until the keychain-app + API endpoints ship.
+    // When both exist the cloud button opens a picker; when one exists it
+    // launches that flow directly; when neither exists the row shows only its
+    // honest status and a delete button.
+    let password_recoverable = cube.has_recovery_kit && cube.has_encrypted_seed;
+    let phone_recoverable =
+        cube.phone_recoverable && feature_flags::OWNER_KEYCHAIN_RECOVERY_ENABLED;
 
     // Render the cube-name area as a plain card, NOT a Button. Using a
     // Button without `.on_press` makes Iced render it in
     // `Status::Disabled` (alpha 0.2 on the text), which made the whole
     // row read as "disabled" to users and obscured the fact that the
     // cloud-download icon on the right is an active restore trigger.
-    // Three distinct states, so the copy tells the user *why* a row is
-    // (not) restorable rather than lumping "descriptor-only kit" in with
-    // "nothing backed up":
-    //   * kit + seed  → restorable here
-    //   * kit, no seed → a descriptor-only kit exists, but a full
-    //     restore needs the seed half, which lives on the original device
-    //   * no kit       → merely registered in Connect, nothing to restore
-    let status_line = if restorable {
-        "Recovery Kit available — click the download icon to restore"
-    } else if cube.has_recovery_kit {
-        "Recovery Kit has no Master Seed — restore from the device where it was backed up"
-    } else {
-        "Registered in Connect (no Recovery Kit backed up)"
+    // The copy tells the user *what* they can restore with (and, when a
+    // descriptor-only kit exists, *why* a full restore isn't possible here):
+    let status_line = match (password_recoverable, phone_recoverable) {
+        (true, true) => "Recovery Kit + Phone recovery available — click to restore",
+        (true, false) => "Recovery Kit available — click the download icon to restore",
+        (false, true) => "Phone recovery available — click the download icon to restore",
+        (false, false) if cube.has_recovery_kit => {
+            "Recovery Kit has no Master Seed — restore from the device where it was backed up"
+        }
+        (false, false) => "Registered in Connect (no Recovery Kit backed up)",
     };
     // Mute the whole remote row (title included) relative to local
     // cubes: these cubes have no data on this machine, so rendering
@@ -2866,21 +2891,41 @@ fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
     .width(Length::Fixed(500.0))
     .style(theme::card::simple);
 
-    // W13 entry point on the home: clicking cloud-arrow-down on a
-    // restorable remote cube kicks off the Cube-Recovery-Kit restore
-    // flow, threading this row's `uuid` through
-    // `ViewMessage::RestoreFromRecoveryKit` →
-    // `UserFlow::RestoreFromRecoveryKit { cube_uuid }` → the step, which
-    // preselects it and skips the cube picker entirely. The icon is only
-    // shown when the cube is actually restorable, so the click always
-    // has a valid target.
-    let restore_button = restorable.then(|| {
+    // Entry point on the home: clicking cloud-arrow-down starts recovery.
+    // The action depends on which methods are available:
+    //   * both     → open the picker so the owner chooses password vs phone
+    //   * password → `RestoreFromRecoveryKit { cube_uuid }` (the step preselects
+    //                 the cube and skips the picker)
+    //   * phone    → `RestoreWithPhone { cube_id, full_cube }` → the
+    //                 owner-keychain restore flow (no password)
+    // The icon shows only when at least one method is available, so the click
+    // always has a valid target.
+    let restore_action: Option<(ViewMessage, &str)> =
+        match (password_recoverable, phone_recoverable) {
+            (true, true) => Some((
+                ViewMessage::ShowRecoveryMethodPicker(cube.uuid.clone()),
+                "Recover this Cube — choose password or phone",
+            )),
+            (true, false) => Some((
+                ViewMessage::RestoreFromRecoveryKit(cube.uuid.clone()),
+                "Restore this Cube from its Recovery Kit",
+            )),
+            (false, true) => Some((
+                ViewMessage::RestoreWithPhone {
+                    cube_id: cube.id,
+                    full_cube: cube.phone_full_cube,
+                },
+                "Recover this Cube with your phone",
+            )),
+            (false, false) => None,
+        };
+    let restore_button = restore_action.map(|(on_press, tip)| {
         iced_tooltip::Tooltip::new(
             Button::new(icon::cloud_arrow_down_icon())
                 .style(theme::button::secondary)
                 .padding(10)
-                .on_press(ViewMessage::RestoreFromRecoveryKit(cube.uuid.clone())),
-            Container::new(p1_regular("Restore this Cube from its Recovery Kit"))
+                .on_press(on_press),
+            Container::new(p1_regular(tip))
                 .padding(8)
                 .style(theme::card::simple),
             iced_tooltip::Position::Bottom,
@@ -3187,8 +3232,23 @@ pub enum ViewMessage {
     CreateWallet,
     /// W13 — launch the installer in "restore from Cube Recovery Kit"
     /// mode for a specific remote cube (payload is its `uuid`). The
-    /// installer preselects the cube and skips the picker.
+    /// installer preselects the cube and skips the picker. This is the
+    /// password-based recovery path.
     RestoreFromRecoveryKit(String),
+    /// Launch the installer in passwordless owner-keychain ("phone")
+    /// restore mode for a specific remote cube. `cube_id` is the numeric
+    /// Connect id; `full_cube` picks Full-Cube vs Vault-only scope. Home
+    /// forwards this to `UserFlow::RecoverOwnCubeWithPhone`.
+    RestoreWithPhone {
+        cube_id: u64,
+        full_cube: bool,
+    },
+    /// Open the recovery-method picker for a remote cube (payload is its
+    /// `uuid`). Shown only when a cube has *both* a password Recovery Kit
+    /// and a phone envelope; the user chooses which to use.
+    ShowRecoveryMethodPicker(String),
+    /// Dismiss the recovery-method picker without choosing.
+    CloseRecoveryMethodPicker,
     ShowCreateCube(bool),
     CubeNameEdited(String),
     CreateCube,
@@ -3227,7 +3287,6 @@ pub enum ViewMessage {
     ConnectAccount(ConnectAccountMessage),
     /// Heir "Recover a Vault" discovery-surface messages (COIN-377 / PR 1).
     RecoverVault(RecoverVaultMessage),
-    RecoverOwnCube(RecoverOwnCubeMessage),
     /// Toggle light/dark theme
     ToggleTheme,
     /// Toggle passkey mode for Cube creation (no PIN when enabled).
@@ -3334,6 +3393,52 @@ impl DeleteRemoteCubeModal {
 
         Into::<Element<ViewMessage>>::into(card::simple(col).width(Length::Fixed(700.0)))
             .map(Message::View)
+    }
+}
+
+/// Recovery-method picker for a remote cube that can be recovered by *both* a
+/// password Recovery Kit and a phone (owner-keychain) envelope. Both restore
+/// the same seed/descriptor content — the choice is purely which key unlocks
+/// it. Shown only when both methods are available; a cube with a single method
+/// launches that flow directly without this step.
+struct RecoveryMethodModal {
+    cube: RemoteCube,
+}
+
+impl RecoveryMethodModal {
+    fn view(&self) -> Element<Message> {
+        let col = Column::new()
+            .spacing(15)
+            .padding(20)
+            .width(Length::Fixed(460.0))
+            .push(h4_bold(format!("Recover \"{}\"", self.cube.name)).width(Length::Fill))
+            .push(
+                p1_regular(
+                    "This Cube has two backups. Choose how to recover it — \
+                     both restore the same wallet.",
+                )
+                .style(theme::text::secondary),
+            )
+            .push(
+                button::secondary(Some(icon::key_icon()), "Recover with password")
+                    .width(Length::Fill)
+                    .on_press(ViewMessage::RestoreFromRecoveryKit(self.cube.uuid.clone())),
+            )
+            .push(
+                button::secondary(Some(icon::phone_icon()), "Recover with phone")
+                    .width(Length::Fill)
+                    .on_press(ViewMessage::RestoreWithPhone {
+                        cube_id: self.cube.id,
+                        full_cube: self.cube.phone_full_cube,
+                    }),
+            )
+            .push(
+                button::secondary(Some(icon::cross_icon()), "Cancel")
+                    .width(Length::Fill)
+                    .on_press(ViewMessage::CloseRecoveryMethodPicker),
+            );
+
+        Into::<Element<ViewMessage>>::into(card::simple(col)).map(Message::View)
     }
 }
 
@@ -3688,5 +3793,53 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
         }
         Err(settings::SettingsError::NotFound) => Ok(State::NoCube),
         Err(e) => Err(format!("Failed to read settings: {}", e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn owner_self(has_recipient: bool, tier: &str, kinds: &[&str]) -> OwnerSelfRecoverySummary {
+        OwnerSelfRecoverySummary {
+            has_recipient,
+            tier: tier.to_string(),
+            envelope_kinds: kinds.iter().map(|k| k.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn no_owner_self_block_is_not_phone_recoverable() {
+        assert_eq!(derive_phone_recovery(None), (false, false));
+    }
+
+    #[test]
+    fn registered_recipient_without_envelope_is_not_recoverable() {
+        // The phone can register the `owner-self` key before the desktop seals
+        // + uploads anything. A bare recipient must not offer recovery, or the
+        // launch would dead-end on an empty-envelope fetch.
+        let s = owner_self(true, "full_cube", &[]);
+        assert_eq!(derive_phone_recovery(Some(&s)), (false, false));
+    }
+
+    #[test]
+    fn recipient_absent_but_kinds_present_is_not_recoverable() {
+        // has_recipient gates recoverability even if kinds somehow arrive.
+        let s = owner_self(false, "full_cube", &["seed", "descriptor"]);
+        let (recoverable, _) = derive_phone_recovery(Some(&s));
+        assert!(!recoverable);
+    }
+
+    #[test]
+    fn sealed_seed_envelope_is_full_cube_recoverable() {
+        let s = owner_self(true, "full_cube", &["descriptor", "seed"]);
+        assert_eq!(derive_phone_recovery(Some(&s)), (true, true));
+    }
+
+    #[test]
+    fn sealed_descriptor_only_envelope_is_vault_only_recoverable() {
+        // Descriptor sealed but no seed → recoverable, but Vault-only scope.
+        let s = owner_self(true, "vault_only", &["descriptor"]);
+        assert_eq!(derive_phone_recovery(Some(&s)), (true, false));
     }
 }

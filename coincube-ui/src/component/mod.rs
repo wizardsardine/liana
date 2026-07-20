@@ -45,7 +45,7 @@ pub fn received_celebration_page<'a, M: Clone + 'a>(
 ) -> Element<'a, M> {
     use quote_display::{self as qd, QuoteDisplayProps};
 
-    Column::new()
+    let page = Column::new()
         .spacing(20)
         .width(Length::Fill)
         .align_x(iced::Alignment::Center)
@@ -75,14 +75,19 @@ pub fn received_celebration_page<'a, M: Clone + 'a>(
         .push(
             button::primary(None, "Back")
                 .width(Length::Fixed(150.0))
-                .on_press(on_dismiss),
+                .on_press(on_dismiss.clone()),
         )
         // Bottom breathing room below the Back button. Matches the
         // 30px internal padding `sent_celebration_page` gets from its
         // card wrapper — without it the button sits flush against the
         // scrollable area's bottom edge.
-        .push(iced::widget::Space::new().height(Length::Fixed(30.0)))
-        .into()
+        .push(iced::widget::Space::new().height(Length::Fixed(30.0)));
+
+    // The 480px artwork pushes the "Back" button off the bottom on short
+    // windows, where it can't be scrolled into reach — leaving the user
+    // stuck on the splash. Make the whole page a dismiss target so a click
+    // anywhere (including on the image) closes it, not just the button.
+    iced::widget::mouse_area(page).on_press(on_dismiss).into()
 }
 
 pub fn sent_celebration_page<'a, M: Clone + 'a>(
@@ -125,7 +130,7 @@ pub fn sent_celebration_page<'a, M: Clone + 'a>(
         .push(
             button::primary(None, "Back")
                 .width(Length::Fixed(150.0))
-                .on_press(on_dismiss),
+                .on_press(on_dismiss.clone()),
         );
 
     // The modal widget dims the underlying content with a translucent backdrop
@@ -142,10 +147,13 @@ pub fn sent_celebration_page<'a, M: Clone + 'a>(
     // dashboard's content column (visible bug on Liquid Send / Spark Send /
     // Vault PSBT full-page celebrations). The Modal widget centers its child
     // on its own, so this extra wrapper is a no-op in the modal use case.
-    Container::new(card)
+    let page = Container::new(card)
         .width(Length::Fill)
-        .align_x(iced::alignment::Horizontal::Center)
-        .into()
+        .align_x(iced::alignment::Horizontal::Center);
+
+    // Like the received page, the tall artwork can push "Back" out of reach on
+    // short windows, so make a click anywhere on the splash dismiss it too.
+    iced::widget::mouse_area(page).on_press(on_dismiss).into()
 }
 
 /// Empty-state placeholder card — centered icon + title + subtitle on a
