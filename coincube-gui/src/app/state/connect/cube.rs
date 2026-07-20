@@ -12,7 +12,7 @@ use crate::{
     },
     services::coincube::{
         AvatarGenerateRequest, AvatarSelectRequest, AvatarUserTraits, CoincubeClient,
-        LightningAddress, RegisterCubeRequest,
+        LightningAddress, RegisterCubeRequest, UpdateCubeRequest,
     },
 };
 
@@ -123,6 +123,12 @@ pub struct ConnectCubePanel {
     pub cube_name: String,
     /// The Cube's network ("mainnet" or "testnet")
     pub cube_network: String,
+    /// Whether this Cube currently has a Vault wallet
+    /// (`vault_wallet_id.is_some()`). Reported to the server on
+    /// registration so other devices can evaluate the duress vault gate
+    /// (PLAN-duress-vault-gate PR 3). Flipped to `true` in-session when a
+    /// Vault is created (see `App::WalletUpdated`).
+    pub cube_has_vault: bool,
     /// The server-side numeric ID — set after registering with the backend.
     /// Used in API paths: /connect/cubes/{server_cube_id}/...
     pub server_cube_id: Option<u64>,
@@ -187,11 +193,13 @@ impl ConnectCubePanel {
         cube_uuid: String,
         cube_name: String,
         cube_network: String,
+        cube_has_vault: bool,
     ) -> Self {
         ConnectCubePanel {
             cube_uuid,
             cube_name,
             cube_network,
+            cube_has_vault,
             server_cube_id: None,
             registration_error: None,
             lightning_address: None,
@@ -425,12 +433,43 @@ impl ConnectCubePanel {
             uuid: self.cube_uuid.clone(),
             name: self.cube_name.clone(),
             network: self.cube_network.clone(),
+            // Monotonic upgrade-only: assert the Vault only when this device
+            // holds it, else omit so a re-register never clobbers a `true`
+            // reported elsewhere (PLAN-duress-vault-gate PR 3).
+            has_vault: self.cube_has_vault.then_some(true),
         };
         iced::Task::perform(async move { client.register_cube(req).await }, |res| {
             Message::View(view::Message::ConnectCube(
                 ConnectCubeMessage::CubeRegistered(res.map_err(|e| e.to_string())),
             ))
         })
+    }
+
+    /// Re-report this Cube's Vault presence to the server when a Vault is
+    /// created mid-session on an already-registered Cube, so its `hasVault`
+    /// flips without waiting for a fresh registration (the duress vault gate;
+    /// PLAN-duress-vault-gate PR 3). Sets the local flag, then fires an
+    /// idempotent update against the known `server_cube_id`. No-op when the
+    /// Cube isn't registered yet (the next `register_cube` carries the flag)
+    /// or the panel has no live client.
+    pub fn report_vault_created(&mut self) -> iced::Task<Message> {
+        self.cube_has_vault = true;
+        let (Some(client), Some(server_id)) = (self.client.clone(), self.server_cube_id) else {
+            return iced::Task::none();
+        };
+        let req = UpdateCubeRequest {
+            name: None,
+            status: None,
+            has_vault: Some(true),
+        };
+        iced::Task::perform(
+            async move {
+                if let Err(e) = client.update_cube(&server_id.to_string(), req).await {
+                    log::warn!("[CONNECT-CUBE] re-report has_vault after Vault creation: {e}");
+                }
+            },
+            |()| Message::CubeVaultReported,
+        )
     }
 
     pub fn update_message(&mut self, msg: ConnectCubeMessage) -> iced::Task<Message> {

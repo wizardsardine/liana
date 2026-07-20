@@ -21,8 +21,10 @@ use crate::{
     app::{
         menu::ConnectSubMenu,
         state::connect::{
-            AvatarFlowStep, CheckoutPhase, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep,
-            ConnectPanel, DuressContactsStep, DuressGateStatus, PlanLifecycle,
+            duress_gate_blocked, duress_tier1_gate_blocked, AvatarFlowStep, CheckoutPhase,
+            ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep, ConnectPanel,
+            CubeBackupCompleteness, DuressContactsStep, DuressCube, DuressGateStatus,
+            PlanLifecycle,
         },
         view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage, DuressMessage},
     },
@@ -1715,6 +1717,16 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
             .width(Length::Fill),
         );
 
+        // Enrolled-state Recovery-Kit warning (master decision 6): if a Vault
+        // Cube's kit is incomplete — e.g. a Vault created *after* enrollment,
+        // whose Wallet Descriptor was never added to the kit — surface the
+        // same shape-aware checklist as a warning. Duress stays on; this is a
+        // nudge, not a gate (no disable pressure).
+        if let Some(warning) = duress_enrolled_kit_warning(state) {
+            col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+            col = col.push(warning);
+        }
+
         // Disable control — shown only when enrolled & inactive (this whole
         // branch is unreachable during active duress, which routes to the
         // recovery/cryptic screen, but guard anyway). Styled as a
@@ -1841,10 +1853,11 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
                 .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
                 .push(
                     text::p2_regular(
-                        "Without a Cube Recovery Kit, a duress wipe is irreversible from Connect \
-                         — you would need that Cube's seed-phrase backup and the Vault wallet \
-                         descriptor backup to restore it. Set up a Recovery Kit for each of your \
-                         Cubes before enabling duress mode.",
+                        "Without a Cube Recovery Kit, a duress wipe is irreversible from Connect. \
+                         Seed-only Cubes need their Master Seed Phrase backed up; Cubes with a \
+                         Vault need both the Master Seed Phrase and the Vault Wallet Descriptor. \
+                         Finish the Recovery Kit for each of your Vault Cubes before enabling \
+                         duress mode.",
                     )
                     .color(color::GREY_3),
                 );
@@ -1853,22 +1866,77 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
                     .push(iced::widget::Space::new().height(Length::Fixed(14.0)))
                     .push(list);
             }
+            // Transparency footnote for the has_vault gate's accepted
+            // limitation (PLAN-duress-vault-gate master §9): other-device
+            // Cubes are shown as *reported to Connect*, and a Vault created on
+            // another device that hasn't synced yet can still read as
+            // vaultless here. Only surfaced when the checklist actually
+            // includes a Cube this device doesn't hold, so single-device users
+            // aren't shown an irrelevant caveat.
+            let has_other_device_cube = state
+                .duress_cubes
+                .as_deref()
+                .is_some_and(|cubes| cubes.iter().any(|c| !c.local));
+            if has_other_device_cube {
+                card_col = card_col
+                    .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+                    .push(
+                        text::caption(
+                            "Cubes on your other devices are shown as reported to Connect. A \
+                             Vault created on another device that hasn't synced yet may not \
+                             appear here — open that device to confirm its Recovery Kit.",
+                        )
+                        .color(color::GREY_3),
+                    );
+            }
             container(card_col.padding(20).spacing(2))
                 .style(card_style)
                 .width(Length::Fill)
         });
 
         col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
-        col = col.push(
-            button::primary(None, "Set up Duress Mode")
-                .width(Length::Fixed(240.0))
-                .on_press(ConnectAccountMessage::Duress(
-                    DuressMessage::StartEnrollment,
-                )),
-        );
+        // The hard vault gate (PLAN-duress-vault-gate PR 2): Tier-1 enrollment
+        // is blocked while any Vault Cube in the checklist has an incomplete
+        // (or unverifiable) Recovery Kit — a duress wipe of such a Cube would
+        // be irreversible. The Tier-2 bypass below is deliberately never gated.
+        //
+        // Fail closed on an unloaded checklist (`None`): until the cube list +
+        // kit statuses land we can't confirm every Vault Cube is safe, so the
+        // CTA stays disabled rather than opening a fail-open window before the
+        // fetch completes (master I7 / Resolved decision 4). A failed fetch
+        // also leaves `None`, so it stays blocked with the bypass as the
+        // offline escape hatch. An empty (loaded) list is `Some([])` → not
+        // blocked.
+        let cubes_loaded = state.duress_cubes.is_some();
+        let gate_blocked = duress_tier1_gate_blocked(state.duress_cubes.as_deref());
+        if gate_blocked {
+            // Disabled CTA — `button::primary` with no `.on_press` renders
+            // inert. The state handler re-checks the gate too, so a stale view
+            // that somehow fires `StartEnrollment` no-ops (belt-and-suspenders).
+            col = col.push(button::primary(None, "Set up Duress Mode").width(Length::Fixed(240.0)));
+            col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+            // Distinguish "still verifying" from "known incomplete": the former
+            // shouldn't accuse the user of an unfinished kit before we've even
+            // checked.
+            let gate_copy = if cubes_loaded {
+                "Finish the Recovery Kit for your Vault Cubes above to enable Duress Mode."
+            } else {
+                "Checking your Cubes' Recovery Kits…"
+            };
+            col = col.push(text::p2_regular(gate_copy).color(color::GREY_3));
+        } else {
+            col = col.push(
+                button::primary(None, "Set up Duress Mode")
+                    .width(Length::Fixed(240.0))
+                    .on_press(ConnectAccountMessage::Duress(
+                        DuressMessage::StartEnrollment,
+                    )),
+            );
+        }
         // Tier 2 (Connect, no recovery kit) — the plan's Task 2.1 secondary
         // path. The panel can't see per-Cube CRK state, so the user picks:
-        // this skips the duress recovery-kit password step.
+        // this skips the duress recovery-kit password step. Deliberately
+        // reachable in every blocked state — the vault gate never hides it.
         col = col.push(
             button::transparent(None, "Continue without a recovery kit (advanced)").on_press(
                 ConnectAccountMessage::Duress(DuressMessage::StartEnrollmentWithoutCrk),
@@ -1886,12 +1954,57 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
     col.width(Length::Fill).into()
 }
 
+/// Badge label, colour, and (for incomplete Cubes) a one-line "where to
+/// fix it" pointer, derived from a Cube's [`CubeBackupCompleteness`]
+/// (PLAN-duress-vault-gate PR 2). The checklist is no longer purely
+/// informational — a red/amber row tells the user exactly which half is
+/// missing and where to add it.
+fn checklist_badge(cube: &DuressCube) -> (&'static str, iced::Color, Option<String>) {
+    use CubeBackupCompleteness::*;
+    let fix = |cta: &str| {
+        Some(format!(
+            "Open {} → Settings → Recovery Kit → {}.",
+            cube.name, cta
+        ))
+    };
+    match cube.completeness() {
+        Complete => ("Backed up", color::GREEN, None),
+        MissingDescriptor => (
+            "Kit incomplete — Vault Wallet Descriptor missing",
+            color::RED,
+            fix("Add Wallet Descriptor"),
+        ),
+        MissingSeed => (
+            "Kit incomplete — Master Seed Phrase missing",
+            color::RED,
+            fix("Add Master Seed Phrase"),
+        ),
+        NoKit => ("No recovery kit", color::RED, fix("Create Recovery Kit")),
+        // Amber, with a retry affordance rendered by the caller. Vault
+        // presence unknown (other-device) reads the same to the user: we
+        // couldn't confirm this Cube is safe to wipe.
+        Unknown => (
+            "Couldn't verify — retry",
+            color::WARN_ORANGE,
+            Some(if cube.local {
+                "We couldn't reach Connect to check this Cube's Recovery Kit.".to_string()
+            } else {
+                "This Cube is on another device — we couldn't confirm its Recovery Kit here."
+                    .to_string()
+            }),
+        ),
+    }
+}
+
 /// The per-Cube recovery-kit checklist rendered inside the duress intro's
 /// "Set up a Cube Recovery Kit for each Cube" card. `None` until the
 /// mainnet cube list has loaded, and when there are no mainnet Cubes — in
 /// either case the card shows only its guidance copy. Each row names the
-/// Cube and shows whether it currently has a Recovery Kit (backed up) or
-/// not. Informational for now (not clickable).
+/// Cube, shows a shape-aware backup badge (driven by the completeness
+/// function shared with the enrollment gate), and — for incomplete Cubes —
+/// a one-line pointer to where the missing half is added. `Unknown` rows
+/// carry a retry affordance so a transient status-probe failure can be
+/// re-fetched without leaving the tab.
 fn duress_recovery_kit_list<'a>(
     state: &'a ConnectAccountPanel,
 ) -> Option<Element<'a, ConnectAccountMessage>> {
@@ -1900,13 +2013,9 @@ fn duress_recovery_kit_list<'a>(
         return None;
     }
 
-    let mut col = Column::new().spacing(8);
+    let mut col = Column::new().spacing(10);
     for cube in cubes {
-        let (label, badge_color) = if cube.has_recovery_kit {
-            ("Backed up", color::GREEN)
-        } else {
-            ("No recovery kit", color::RED)
-        };
+        let (label, badge_color, fix_copy) = checklist_badge(cube);
         let badge = container(text::caption(label).color(badge_color))
             .padding(iced::Padding {
                 top: 2.0,
@@ -1922,7 +2031,8 @@ fn duress_recovery_kit_list<'a>(
                 },
                 ..Default::default()
             });
-        col = col.push(
+
+        let mut row_col = Column::new().spacing(4).push(
             Row::new()
                 .spacing(10)
                 .align_y(Alignment::Center)
@@ -1930,8 +2040,60 @@ fn duress_recovery_kit_list<'a>(
                 .push(iced::widget::Space::new().width(Length::Fill))
                 .push(badge),
         );
+
+        // Where-to-fix copy (and a retry link for the amber Unknown state).
+        if let Some(copy) = fix_copy {
+            let is_unknown = cube.completeness() == CubeBackupCompleteness::Unknown;
+            row_col = row_col.push(text::caption(copy).color(color::GREY_3));
+            if is_unknown {
+                row_col = row_col.push(
+                    button::transparent(None, "Retry")
+                        .on_press(ConnectAccountMessage::Duress(DuressMessage::ReloadCubes)),
+                );
+            }
+        }
+
+        col = col.push(row_col);
     }
     Some(col.into())
+}
+
+/// The enrolled-state Recovery-Kit warning card (master decision 6). When
+/// any Vault Cube's kit is incomplete (or unverifiable) while duress is
+/// already enabled, this surfaces the shape-aware checklist as a warning —
+/// covering the Vault-created-after-enrollment case. `None` when every Cube
+/// is complete (nothing to warn about) or the list hasn't loaded. Warning
+/// only: it applies no disable pressure, and duress stays on.
+fn duress_enrolled_kit_warning<'a>(
+    state: &'a ConnectAccountPanel,
+) -> Option<Element<'a, ConnectAccountMessage>> {
+    let cubes = state.duress_cubes.as_deref()?;
+    if !duress_gate_blocked(cubes) {
+        return None;
+    }
+    let list = duress_recovery_kit_list(state)?;
+    Some(
+        container(
+            Column::new()
+                .push(text::p1_bold("Finish your Recovery Kits").style(theme::text::warning))
+                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                .push(
+                    text::p2_regular(
+                        "Duress is on, but one of your Vault Cubes isn't fully backed up — a \
+                         duress wipe of it would be irreversible from Connect. Add the missing \
+                         Recovery-Kit material below. Duress stays enabled.",
+                    )
+                    .color(color::GREY_3),
+                )
+                .push(iced::widget::Space::new().height(Length::Fixed(14.0)))
+                .push(list)
+                .padding(20)
+                .spacing(2),
+        )
+        .style(card_style)
+        .width(Length::Fill)
+        .into(),
+    )
 }
 
 /// A thin full-width horizontal rule used to separate panel sections.

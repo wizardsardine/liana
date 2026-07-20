@@ -82,8 +82,9 @@ pub(crate) fn delete_connect_secret(user_key: &str) {
 }
 
 pub use account::{
-    AddToCubeDialog, CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep,
-    ContactsState, ContactsStep, DuressContactsState, DuressContactsStep, DuressCube,
+    cube_backup_completeness, duress_gate_blocked, duress_tier1_gate_blocked, AddToCubeDialog,
+    CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep, ContactsState,
+    ContactsStep, CubeBackupCompleteness, DuressContactsState, DuressContactsStep, DuressCube,
     DuressDisableState, DuressEnrollState, DuressEnrollStep, DuressGateStatus, EnrollTier,
     InviteCubeOption, PlanLifecycle, BACKUP_ACK_PHRASE,
 };
@@ -132,6 +133,7 @@ impl ConnectPanel {
         cube_uuid: String,
         cube_name: String,
         cube_network: String,
+        cube_has_vault: bool,
     ) -> Self {
         let mut account = ConnectAccountPanel::new();
         // W12 §2.7 tweak #1 / W14: propagate the active cube's network
@@ -140,7 +142,13 @@ impl ConnectPanel {
         account.set_active_network(Some(cube_network.clone()));
         ConnectPanel {
             account,
-            cube: ConnectCubePanel::new(spark_client, cube_uuid, cube_name, cube_network),
+            cube: ConnectCubePanel::new(
+                spark_client,
+                cube_uuid,
+                cube_name,
+                cube_network,
+                cube_has_vault,
+            ),
         }
     }
 
@@ -197,6 +205,28 @@ impl ConnectPanel {
         }
         self.sync_client();
         self.cube.register_cube()
+    }
+
+    /// React to a mid-session Vault creation (PLAN-duress-vault-gate PR 3):
+    ///
+    /// 1. Re-report the Cube's Vault presence so the server's `hasVault` flips
+    ///    for other-device duress gating without waiting for a re-registration.
+    /// 2. **Invalidate + refresh the duress checklist.** The cached
+    ///    `duress_cubes` may still show this Cube as vaultless/complete, and
+    ///    the Tier-1 gate reads that cache — so drop it (gate fails closed)
+    ///    and re-fetch, otherwise enrollment could proceed on stale data
+    ///    before the new Vault's Wallet Descriptor is backed up. Local settings
+    ///    already carry the Vault, so the reload gates this Cube even before
+    ///    the server round-trip.
+    ///
+    /// No-ops appropriately when unregistered / signed out / not entitled.
+    pub fn report_vault_created(&mut self) -> iced::Task<Message> {
+        self.sync_client();
+        self.account.invalidate_duress_cubes();
+        iced::Task::batch([
+            self.cube.report_vault_created(),
+            self.account.reload_duress_cubes(),
+        ])
     }
 
     /// Check if avatar should be loaded and return task if so.

@@ -1539,9 +1539,19 @@ pub enum DuressMessage {
     /// Mainnet cubes + per-cube recovery-kit status, loaded for the duress
     /// intro screen's "set up a Recovery Kit for each Cube" checklist.
     /// `None` when the fetch failed, so a transient error doesn't blank a
-    /// previously-loaded list. Carries `session_generation` for stale-response
-    /// guarding.
-    CubesLoaded(Option<Vec<crate::app::state::connect::DuressCube>>, u64),
+    /// previously-loaded list. Carries `session_generation` (session guard)
+    /// and a per-fetch load token (`duress_cubes_seq`, in-flight ordering
+    /// guard) so only the newest fetch is applied.
+    CubesLoaded(
+        Option<Vec<crate::app::state::connect::DuressCube>>,
+        u64,
+        u64,
+    ),
+    /// Re-fetch the checklist cube list + recovery-kit status. Fired by the
+    /// "Couldn't verify — retry" affordance on an `Unknown` checklist row
+    /// (PLAN-duress-vault-gate PR 2), so a transient status-probe failure can
+    /// be retried without leaving the tab.
+    ReloadCubes,
     /// Server-side duress state (enrolled / active), loaded on entering the
     /// Duress tab so the screen can show the enabled state instead of the
     /// setup flow. `None` when the fetch failed. Carries `session_generation`.
@@ -1613,14 +1623,16 @@ impl std::fmt::Debug for DuressMessage {
             MemorizedToggled(b) => write!(f, "MemorizedToggled({})", b),
             SubmitEnrollment => write!(f, "SubmitEnrollment"),
             EnrollResult(res, gen) => write!(f, "EnrollResult({:?}, {})", res, gen),
-            CubesLoaded(cubes, gen) => write!(
+            CubesLoaded(cubes, gen, seq) => write!(
                 f,
-                "CubesLoaded({}, {})",
+                "CubesLoaded({}, {}, {})",
                 cubes
                     .as_ref()
                     .map_or_else(|| "<none>".to_string(), |c| format!("{} cubes", c.len())),
-                gen
+                gen,
+                seq
             ),
+            ReloadCubes => write!(f, "ReloadCubes"),
             StateLoaded(s, gen) => write!(f, "StateLoaded({:?}, {})", s, gen),
             EnrollmentPersisted => write!(f, "EnrollmentPersisted"),
             DisableStart => write!(f, "DisableStart"),
