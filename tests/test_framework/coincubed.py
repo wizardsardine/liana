@@ -149,8 +149,10 @@ class Coincubed(TailableProc):
         ``coincubed_rpc_socket_path`` in ``coincubed/src/datadir.rs``). Rather
         than replicate Rust's hashing in Python, read the real path straight
         from the daemon's own startup log — it logs ``Binding socket at
-        <path>`` (debug) immediately before the ``JSONRPC server started.``
-        line we just waited on, so the entry is already captured.
+        <path>`` at info (same level as, and immediately before, the ``JSONRPC
+        server started.`` line we just waited on), so the entry is present
+        whenever the server is reachable — not only under debug logging — and is
+        already captured by the time this runs.
 
         ``search_from`` is the log length captured just before this start (see
         ``start``); the scan is restricted to lines from *this* daemon. This
