@@ -2345,6 +2345,21 @@ mod find_or_create_cube_tests {
         WalletId::new("abcd1234".to_string(), Some(1_700_000_000))
     }
 
+    /// Reload settings written earlier in the test, tolerating the transient
+    /// misses Windows raises when a virus scanner or search indexer briefly
+    /// holds a just-written settings.json (surfacing as NotFound or a
+    /// permission error). The file has always been written by this point, so a
+    /// miss is transient — retry briefly before giving up.
+    fn reload(nd: &NetworkDirectory) -> app::settings::Settings {
+        for _ in 0..20 {
+            if let Ok(settings) = app::settings::Settings::from_file(nd) {
+                return settings;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        app::settings::Settings::from_file(nd).expect("reload settings after retries")
+    }
+
     /// The reported scenario: recovery on a wiped install (no settings
     /// file). The restored Cube must carry the original UUID + name, not a
     /// freshly generated one.
@@ -2410,7 +2425,7 @@ mod find_or_create_cube_tests {
 
         assert_eq!(cube.id, ORIG_UUID);
         assert_ne!(cube.id, other_id, "must not reuse the unrelated Cube");
-        let reloaded = app::settings::Settings::from_file(&nd).unwrap();
+        let reloaded = reload(&nd);
         assert_eq!(reloaded.cubes.len(), 2, "unrelated Cube is preserved");
     }
 
@@ -2444,7 +2459,7 @@ mod find_or_create_cube_tests {
 
         assert_eq!(cube.id, ORIG_UUID);
         assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
-        let reloaded = app::settings::Settings::from_file(&nd).unwrap();
+        let reloaded = reload(&nd);
         assert_eq!(
             reloaded.cubes.len(),
             1,
@@ -2500,7 +2515,7 @@ mod find_or_create_cube_tests {
 
         assert_eq!(cube.id, existing_id);
         assert_eq!(cube.name, "Existing");
-        let reloaded = app::settings::Settings::from_file(&nd).unwrap();
+        let reloaded = reload(&nd);
         assert_eq!(reloaded.cubes.len(), 1);
     }
 
@@ -2634,7 +2649,7 @@ mod find_or_create_cube_tests {
 
         assert_eq!(cube.id, empty_id);
         assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
-        let reloaded = app::settings::Settings::from_file(&nd).unwrap();
+        let reloaded = reload(&nd);
         assert_eq!(reloaded.cubes.len(), 1, "must reuse instead of minting");
     }
 
@@ -2658,7 +2673,7 @@ mod find_or_create_cube_tests {
         assert_eq!(cube.name, "My signet Cube");
         assert_eq!(cube.network, bitcoin::Network::Signet);
         assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
-        let reloaded = app::settings::Settings::from_file(&nd).unwrap();
+        let reloaded = reload(&nd);
         assert_eq!(reloaded.cubes.len(), 1);
     }
 
@@ -2705,7 +2720,7 @@ mod find_or_create_cube_tests {
         assert_eq!(cube.id, ORIG_UUID, "wallet must move to the restored UUID");
         assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
 
-        let reloaded = app::settings::Settings::from_file(&nd).unwrap();
+        let reloaded = reload(&nd);
         assert!(
             reloaded.cubes.iter().all(|c| c.id != dup_id),
             "the spurious duplicate Cube must be removed outright"
