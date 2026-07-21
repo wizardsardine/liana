@@ -1956,31 +1956,12 @@ fn event_type_from_i32(v: i32) -> crate::services::connect::grpc::connect_v1::Ev
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::state::vault::test_support::{empty_psbt, tokens};
     use std::str::FromStr;
 
     // Primary signer `f5acc2fd`; recovery signer `8a64f2a9` behind a CSV.
     // Same fixture used by the `signers` classification tests.
     const RECOVERY_DESC: &str = "wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr";
-
-    fn empty_psbt() -> Psbt {
-        use coincube_core::miniscript::bitcoin::{absolute, transaction, Transaction};
-
-        Psbt::from_unsigned_tx(Transaction {
-            version: transaction::Version::TWO,
-            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
-            input: vec![],
-            output: vec![],
-        })
-        .expect("empty unsigned tx is psbt-compatible")
-    }
-
-    fn tokens() -> Arc<RwLock<AccessTokenResponse>> {
-        Arc::new(RwLock::new(AccessTokenResponse {
-            access_token: "access".to_string(),
-            refresh_token: "refresh".to_string(),
-            expires_at: i64::MAX,
-        }))
-    }
 
     fn modal() -> KeychainSignModal {
         let wallet = Arc::new(Wallet::new(

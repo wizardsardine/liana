@@ -1704,7 +1704,7 @@ async fn sign_psbt(
 mod tests {
     use super::*;
     use crate::{
-        app::{cache::Cache, state::PsbtsPanel},
+        app::{cache::Cache, state::PsbtsPanel, state::vault::test_support::{empty_psbt, tokens}},
         daemon::client::{Coincubed, Request},
         utils::{mock::Daemon, sandbox::Sandbox},
     };
@@ -1723,29 +1723,6 @@ mod tests {
 
     fn wallet() -> Wallet {
         Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap())
-    }
-
-    fn empty_psbt() -> Psbt {
-        use coincube_core::miniscript::bitcoin::{absolute, transaction, Transaction};
-
-        Psbt::from_unsigned_tx(Transaction {
-            version: transaction::Version::TWO,
-            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
-            input: vec![],
-            output: vec![],
-        })
-        .expect("empty unsigned tx is psbt-compatible")
-    }
-
-    fn tokens(
-    ) -> Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>> {
-        Arc::new(tokio::sync::RwLock::new(
-            crate::services::connect::client::auth::AccessTokenResponse {
-                access_token: "access".to_string(),
-                refresh_token: "refresh".to_string(),
-                expires_at: i64::MAX,
-            },
-        ))
     }
 
     fn enter_phrase_words(state: &mut BorderWalletReconstructionState, phrase: &str) {

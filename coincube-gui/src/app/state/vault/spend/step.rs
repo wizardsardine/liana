@@ -1789,7 +1789,7 @@ mod tests {
         );
         assert_eq!(recipient.amount.value, "0.12345678");
         assert_eq!(
-            recipient.amount.warning.as_deref(),
+            recipient.amount.warning,
             Some("Amount has been truncated to 8 decimal places")
         );
 
