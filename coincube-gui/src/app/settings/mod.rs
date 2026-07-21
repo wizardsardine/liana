@@ -68,6 +68,19 @@ where
     F: FnOnce(Settings) -> Option<Settings>,
 {
     let path = network_dir.path().join(SETTINGS_FILE_NAME);
+    // Ensure the network directory exists before opening with create(true).
+    // OpenOptions creates the file but never its parent directories, so a
+    // missing network dir surfaces as ERROR_PATH_NOT_FOUND ("os error 3" on
+    // Windows) instead of writing the settings file. Doing the create_dir_all
+    // in this async context, immediately before the open, also settles a
+    // Windows filesystem race where a just-created temp dir isn't yet visible
+    // to the following tokio::fs open. create_dir_all is idempotent, so this is
+    // a no-op when the dir already exists.
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| SettingsError::WritingFile(format!("Creating settings dir: {}", e)))?;
+    }
     let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
 
     let mut file = OpenOptions::new()
