@@ -47,16 +47,33 @@ impl Settings {
         let mut path = network_dir.path().to_path_buf();
         path.push(SETTINGS_FILE_NAME);
 
-        std::fs::read(path)
-            .map_err(|e| match e.kind() {
-                std::io::ErrorKind::NotFound => SettingsError::NotFound,
-                _ => SettingsError::ReadingFile(format!("Reading settings file: {}", e)),
-            })
-            .and_then(|file_content| {
-                serde_json::from_slice::<Settings>(&file_content).map_err(|e| {
-                    SettingsError::ReadingFile(format!("Parsing settings file: {}", e))
-                })
-            })
+        // Retry the transient sharing/permission failure Windows raises when a
+        // virus scanner or search indexer briefly holds settings.json (or a
+        // just-written file's lock hasn't been released yet): ERROR_ACCESS_DENIED
+        // ("os error 5"). A genuinely absent file is ErrorKind::NotFound, which
+        // is never retried and maps to SettingsError::NotFound as before.
+        let mut attempt = 0u32;
+        let file_content = loop {
+            match std::fs::read(&path) {
+                Ok(bytes) => break bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(SettingsError::NotFound)
+                }
+                Err(e) if attempt < 5 && e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(20 * u64::from(attempt)));
+                }
+                Err(e) => {
+                    return Err(SettingsError::ReadingFile(format!(
+                        "Reading settings file: {}",
+                        e
+                    )))
+                }
+            }
+        };
+
+        serde_json::from_slice::<Settings>(&file_content)
+            .map_err(|e| SettingsError::ReadingFile(format!("Parsing settings file: {}", e)))
     }
 }
 
