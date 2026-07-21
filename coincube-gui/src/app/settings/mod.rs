@@ -68,49 +68,73 @@ where
     F: FnOnce(Settings) -> Option<Settings>,
 {
     let path = network_dir.path().join(SETTINGS_FILE_NAME);
-    // Ensure the network directory exists before opening with create(true).
-    // OpenOptions creates the file but never its parent directories, so a
-    // missing network dir surfaces as ERROR_PATH_NOT_FOUND ("os error 3" on
-    // Windows) instead of writing the settings file. Doing the create_dir_all
-    // in this async context, immediately before the open, also settles a
-    // Windows filesystem race where a just-created temp dir isn't yet visible
-    // to the following tokio::fs open. create_dir_all is idempotent, so this is
-    // a no-op when the dir already exists.
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| SettingsError::WritingFile(format!("Creating settings dir: {}", e)))?;
-    }
-    let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
 
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)
-        .await
-        .map_err(|e| SettingsError::ReadingFile(format!("Opening file: {}", e)))?
+    // Open the settings file, retrying briefly on the transient failures
+    // Windows surfaces for freshly-created files. OpenOptions creates the file
+    // but never its parent directories, so we (re)create the network dir each
+    // attempt; and on Windows a virus scanner or search indexer momentarily
+    // holds a new file (or its just-created parent), so create(true) can return
+    // ERROR_PATH_NOT_FOUND ("os error 3") or a sharing/permission error even
+    // though the path is valid. Both map to NotFound / PermissionDenied — retry
+    // those with a short backoff; surface anything else immediately. This also
+    // hardens the real app, where AV software locks settings.json in the same way.
+    let raw_file = {
+        let mut attempt = 0u32;
+        loop {
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    SettingsError::WritingFile(format!("Creating settings dir: {}", e))
+                })?;
+            }
+            match OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)
+                .await
+            {
+                Ok(f) => break f,
+                Err(e)
+                    if attempt < 5
+                        && matches!(
+                            e.kind(),
+                            std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+                        ) =>
+                {
+                    attempt += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(20 * u64::from(attempt)))
+                        .await;
+                }
+                Err(e) => return Err(SettingsError::ReadingFile(format!("Opening file: {}", e))),
+            }
+        }
+    };
+
+    let mut file = raw_file
         .lock_write()
         .await
         .map_err(|e| SettingsError::ReadingFile(format!("Locking file: {:?}", e)))?;
 
-    let settings = if file_exists {
-        let mut file_content = Vec::new();
-        file.read_to_end(&mut file_content)
-            .await
-            .map_err(|e| SettingsError::ReadingFile(format!("Reading file content: {}", e)))?;
-
+    // Read the current contents. A file we just created is empty, and an empty
+    // file is treated as "no prior settings" rather than a parse error.
+    let mut file_content = Vec::new();
+    file.read_to_end(&mut file_content)
+        .await
+        .map_err(|e| SettingsError::ReadingFile(format!("Reading file content: {}", e)))?;
+    let settings = if file_content.is_empty() {
+        Settings::default()
+    } else {
         serde_json::from_slice::<Settings>(&file_content)
             .map_err(|e| SettingsError::ReadingFile(e.to_string()))?
-    } else {
-        Settings::default()
     };
 
     let settings = updater(settings);
 
-    // If updater returns None, delete the file
+    // If updater returns None, delete the file. Drop the locked handle first so
+    // the file isn't held open when we unlink it (required on Windows).
     let Some(settings) = settings else {
+        drop(file);
         tokio::fs::remove_file(&path)
             .await
             .map_err(|e| SettingsError::DeletingFile(e.to_string()))?;
@@ -133,6 +157,20 @@ where
         .set_len(content.len() as u64)
         .await
         .map_err(|e| SettingsError::WritingFile(format!("Failed to truncate file: {}", e)))?;
+
+    // Flush and fsync so the bytes are durably on disk, then drop the handle to
+    // release the lock — all before returning. Without this a subsequent reader
+    // (Settings::from_file takes no lock) can observe stale/empty content on
+    // Windows, where dropping an async handle does not guarantee the write has
+    // landed yet.
+    file.flush()
+        .await
+        .map_err(|e| SettingsError::WritingFile(format!("Failed to flush settings: {}", e)))?;
+    file.inner_mut()
+        .sync_all()
+        .await
+        .map_err(|e| SettingsError::WritingFile(format!("Failed to sync settings: {}", e)))?;
+    drop(file);
 
     Ok(())
 }
