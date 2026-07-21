@@ -1463,7 +1463,7 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                 let status_color = if ok { color::ORANGE } else { color::RED };
 
                 let ip = a.ip_address.as_deref();
-                let ua = a.user_agent.as_deref();
+                let ua = a.device_name.as_deref();
                 let ip_and_ua = match (ip, ua) {
                     (Some(i), Some(u)) => {
                         let short_u = if u.chars().count() > 60 {
@@ -2981,7 +2981,7 @@ mod renewal_banner_tests {
             LoginActivity {
                 id: 1,
                 ip_address: Some("127.0.0.1".to_string()),
-                user_agent: Some(
+                device_name: Some(
                     "Browser with a very long user agent string that should truncate in the view"
                         .to_string(),
                 ),
@@ -2991,7 +2991,7 @@ mod renewal_banner_tests {
             LoginActivity {
                 id: 2,
                 ip_address: None,
-                user_agent: None,
+                device_name: None,
                 created_at: "2026-07-04T00:00:00Z".to_string(),
                 success: Some(false),
             },
