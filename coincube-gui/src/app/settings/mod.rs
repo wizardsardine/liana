@@ -69,6 +69,13 @@ where
 {
     let path = network_dir.path().join(SETTINGS_FILE_NAME);
 
+    // Whether settings.json already existed before we touch anything. Only a
+    // brand-new file is safe to treat as "no prior settings"; a pre-existing
+    // file that reads back empty is corrupt/truncated and must NOT be silently
+    // replaced with defaults (that would drop the stored cube configuration),
+    // so it falls through to a parse error below. Checked before the create.
+    let file_existed = tokio::fs::try_exists(&path).await.unwrap_or(false);
+
     // Open the settings file, retrying briefly on the transient failures
     // Windows surfaces for freshly-created files. OpenOptions creates the file
     // but never its parent directories, so we (re)create the network dir each
@@ -116,17 +123,19 @@ where
         .await
         .map_err(|e| SettingsError::ReadingFile(format!("Locking file: {:?}", e)))?;
 
-    // Read the current contents. A file we just created is empty, and an empty
-    // file is treated as "no prior settings" rather than a parse error.
-    let mut file_content = Vec::new();
-    file.read_to_end(&mut file_content)
-        .await
-        .map_err(|e| SettingsError::ReadingFile(format!("Reading file content: {}", e)))?;
-    let settings = if file_content.is_empty() {
-        Settings::default()
-    } else {
+    // A file we created in this call starts empty and means "no prior
+    // settings". A file that already existed is parsed — including when it reads
+    // back empty, which surfaces as a parse error rather than silently
+    // discarding the previous contents.
+    let settings = if file_existed {
+        let mut file_content = Vec::new();
+        file.read_to_end(&mut file_content)
+            .await
+            .map_err(|e| SettingsError::ReadingFile(format!("Reading file content: {}", e)))?;
         serde_json::from_slice::<Settings>(&file_content)
             .map_err(|e| SettingsError::ReadingFile(e.to_string()))?
+    } else {
+        Settings::default()
     };
 
     let settings = updater(settings);
