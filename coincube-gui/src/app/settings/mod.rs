@@ -486,9 +486,16 @@ impl CubeSettings {
         // Generate a random salt
         let salt = SaltString::generate(&mut OsRng);
 
-        // Configure Argon2id with reasonable parameters
-        // m_cost: 19456 KiB (19 MiB), t_cost: 2 iterations, p_cost: 1 thread
+        // Configure Argon2id. Production uses ~19 MiB of memory (m_cost 19456
+        // KiB, t_cost 2, p_cost 1) to make a PIN hash costly to brute-force.
+        // Test builds drop to the argon2 minimum: the suite hashes/verifies PINs
+        // hundreds of times, and paying 19 MiB per op starves CI enough to make
+        // PIN-verify tests flake under parallel load. Verification reads m/t/p
+        // from the stored PHC string, so a hash made at either cost round-trips.
+        #[cfg(not(test))]
         let params = Params::new(19456, 2, 1, None)?;
+        #[cfg(test)]
+        let params = Params::new(8, 1, 1, None)?;
         let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
 
         // Hash the PIN
