@@ -1704,7 +1704,11 @@ async fn sign_psbt(
 mod tests {
     use super::*;
     use crate::{
-        app::{cache::Cache, state::PsbtsPanel, state::vault::test_support::{empty_psbt, tokens}},
+        app::{
+            cache::Cache,
+            state::vault::test_support::{empty_psbt, tokens},
+            state::PsbtsPanel,
+        },
         daemon::client::{Coincubed, Request},
         utils::{mock::Daemon, sandbox::Sandbox},
     };
