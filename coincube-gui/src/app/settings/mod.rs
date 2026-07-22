@@ -64,8 +64,7 @@ impl Settings {
                     if attempt < 5
                         && matches!(
                             e.kind(),
-                            std::io::ErrorKind::NotFound
-                                | std::io::ErrorKind::PermissionDenied
+                            std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
                         ) =>
                 {
                     attempt += 1;
