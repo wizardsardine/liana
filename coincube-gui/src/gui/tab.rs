@@ -2271,7 +2271,24 @@ mod duress_wipe_target_tests {
                 .join("onion_v3_private_key"),
         );
 
-        let targets = duress_wipe_targets(&root);
+        // On Windows CI a virus scanner can briefly hide a just-created dir from
+        // read_dir/exists, so duress_wipe_targets may momentarily miss freshly
+        // written cube material. Everything was written above, so retry until the
+        // expected paths appear before asserting.
+        let expected_wiped = [
+            net.join("data"),
+            net.join("mnemonics"),
+            net.join("settings.json"),
+            root.join("testnet").join("mnemonics"),
+        ];
+        let mut targets = duress_wipe_targets(&root);
+        for _ in 0..20 {
+            if expected_wiped.iter().all(|p| targets.contains(p)) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            targets = duress_wipe_targets(&root);
+        }
 
         assert!(targets.contains(&net.join("data")), "data/ must be wiped");
         assert!(
