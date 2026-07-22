@@ -47,29 +47,22 @@ pub fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, Conn
         .lightning_address
         .as_ref()
         .and_then(|la| la.lightning_address.clone())
-        .map(|mut a| {
-            if !a.contains('@') {
-                a.push_str(LN_ADDRESS_DOMAIN);
-            }
-            a
-        });
+        .map(|a| normalize_lightning_address(&a));
     let has_address = current_address.is_some();
-    let current_username = current_address
-        .as_deref()
-        .and_then(|a| a.split('@').next())
-        .map(|u| u.to_string());
+    let current_username = current_address.as_deref().and_then(lightning_username);
 
     let card_content: Element<ConnectCubeMessage> = if has_address && state.ln_editing {
         // Edit mode: in-place rename form on the claimed-address card.
         let address = current_address.clone().unwrap_or_default();
         let username = &state.ln_username_input;
-        let format_ok = state.ln_username_error.is_none() && !username.is_empty();
-        let available = state.ln_username_available == Some(true);
-        let differs = current_username
-            .as_deref()
-            .map(|u| u != username.as_str())
-            .unwrap_or(true);
-        let can_change = format_ok && available && differs && !state.ln_changing;
+        let differs = lightning_username_differs(current_username.as_deref(), username);
+        let can_change = can_change_lightning_address(
+            username,
+            state.ln_username_error.as_deref(),
+            state.ln_username_available,
+            current_username.as_deref(),
+            state.ln_changing,
+        );
 
         let status: Element<ConnectCubeMessage> = if state.ln_checking {
             text::p2_regular("Checking…").color(color::GREY_3).into()
@@ -247,9 +240,12 @@ pub fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, Conn
     } else {
         // Claim form
         let username = &state.ln_username_input;
-        let is_valid = state.ln_username_error.is_none() && !username.is_empty();
-        let is_available = state.ln_username_available == Some(true);
-        let can_claim = is_valid && is_available && !state.ln_claiming;
+        let can_claim = can_claim_lightning_address(
+            username,
+            state.ln_username_error.as_deref(),
+            state.ln_username_available,
+            state.ln_claiming,
+        );
 
         // Status indicator
         let status: Element<ConnectCubeMessage> = if state.ln_checking {
@@ -396,5 +392,126 @@ pub fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, Conn
             .into()
     } else {
         body
+    }
+}
+
+fn normalize_lightning_address(address: &str) -> String {
+    if address.contains('@') {
+        address.to_string()
+    } else {
+        format!("{address}{LN_ADDRESS_DOMAIN}")
+    }
+}
+
+fn lightning_username(address: &str) -> Option<String> {
+    address.split('@').next().map(str::to_string)
+}
+
+fn lightning_username_differs(current_username: Option<&str>, proposed: &str) -> bool {
+    current_username
+        .map(|current| current != proposed)
+        .unwrap_or(true)
+}
+
+fn can_claim_lightning_address(
+    username: &str,
+    username_error: Option<&str>,
+    username_available: Option<bool>,
+    claiming: bool,
+) -> bool {
+    !username.is_empty()
+        && username_error.is_none()
+        && username_available == Some(true)
+        && !claiming
+}
+
+fn can_change_lightning_address(
+    username: &str,
+    username_error: Option<&str>,
+    username_available: Option<bool>,
+    current_username: Option<&str>,
+    changing: bool,
+) -> bool {
+    can_claim_lightning_address(username, username_error, username_available, changing)
+        && lightning_username_differs(current_username, username)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_lightning_address_adds_domain_only_for_bare_usernames() {
+        assert_eq!(
+            normalize_lightning_address("founder"),
+            "founder@coincube.io"
+        );
+        assert_eq!(
+            normalize_lightning_address("founder@example.com"),
+            "founder@example.com"
+        );
+    }
+
+    #[test]
+    fn lightning_username_extracts_the_local_part() {
+        assert_eq!(
+            lightning_username("founder@coincube.io").as_deref(),
+            Some("founder")
+        );
+        assert_eq!(lightning_username("founder").as_deref(), Some("founder"));
+    }
+
+    #[test]
+    fn claim_eligibility_requires_valid_available_idle_username() {
+        assert!(can_claim_lightning_address(
+            "founder",
+            None,
+            Some(true),
+            false
+        ));
+        assert!(!can_claim_lightning_address("", None, Some(true), false));
+        assert!(!can_claim_lightning_address(
+            "founder",
+            Some("bad username"),
+            Some(true),
+            false
+        ));
+        assert!(!can_claim_lightning_address(
+            "founder",
+            None,
+            Some(false),
+            false
+        ));
+        assert!(!can_claim_lightning_address(
+            "founder",
+            None,
+            Some(true),
+            true
+        ));
+    }
+
+    #[test]
+    fn change_eligibility_also_requires_a_different_username() {
+        assert!(can_change_lightning_address(
+            "newname",
+            None,
+            Some(true),
+            Some("oldname"),
+            false
+        ));
+        assert!(!can_change_lightning_address(
+            "oldname",
+            None,
+            Some(true),
+            Some("oldname"),
+            false
+        ));
+        assert!(!can_change_lightning_address(
+            "newname",
+            None,
+            Some(true),
+            Some("oldname"),
+            true
+        ));
     }
 }

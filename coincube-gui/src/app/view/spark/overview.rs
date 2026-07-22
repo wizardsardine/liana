@@ -190,24 +190,7 @@ fn connected_view<'a>(
     // the small "pending" indicators underneath the total. Skip
     // token-display rows so a USDB conversion entry doesn't get
     // counted as pending sats.
-    let pending_outgoing_sats: u64 = recent
-        .iter()
-        .filter(|t| {
-            !t.is_incoming
-                && t.token_display.is_none()
-                && matches!(t.status, DomainPaymentStatus::Pending)
-        })
-        .map(|t| (t.amount + t.fees_sat).to_sat())
-        .sum();
-    let pending_incoming_sats: u64 = recent
-        .iter()
-        .filter(|t| {
-            t.is_incoming
-                && t.token_display.is_none()
-                && matches!(t.status, DomainPaymentStatus::Pending)
-        })
-        .map(|t| t.amount.to_sat())
-        .sum();
+    let (pending_outgoing_sats, pending_incoming_sats) = pending_btc_sats(recent);
 
     // ── Unified portfolio card ─────────────────────────────────────────
     let total_col = Column::new()
@@ -314,11 +297,7 @@ fn connected_view<'a>(
                 }
             };
 
-            let display_amount = if tx.is_incoming {
-                tx.amount
-            } else {
-                tx.amount + tx.fees_sat
-            };
+            let display_amount = row_display_amount(tx);
 
             let mut item = TransactionListItem::new(direction, &display_amount, bitcoin_unit)
                 .with_custom_icon(tx_icon)
@@ -435,6 +414,37 @@ fn connected_view<'a>(
     content.into()
 }
 
+fn pending_btc_sats(recent: &[SparkRecentTransaction]) -> (u64, u64) {
+    let pending_outgoing_sats = recent
+        .iter()
+        .filter(|t| {
+            !t.is_incoming
+                && t.token_display.is_none()
+                && matches!(t.status, DomainPaymentStatus::Pending)
+        })
+        .map(|t| row_display_amount(t).to_sat())
+        .sum();
+    let pending_incoming_sats = recent
+        .iter()
+        .filter(|t| {
+            t.is_incoming
+                && t.token_display.is_none()
+                && matches!(t.status, DomainPaymentStatus::Pending)
+        })
+        .map(|t| row_display_amount(t).to_sat())
+        .sum();
+
+    (pending_outgoing_sats, pending_incoming_sats)
+}
+
+fn row_display_amount(tx: &SparkRecentTransaction) -> Amount {
+    if tx.is_incoming {
+        tx.amount
+    } else {
+        tx.amount + tx.fees_sat
+    }
+}
+
 fn stable_badge<'a>() -> Element<'a, SparkOverviewMessage> {
     Container::new(
         text("Stable")
@@ -486,4 +496,120 @@ fn placeholder<'a, T: Into<Element<'a, SparkOverviewMessage>>>(
             ..Default::default()
         })
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tx(
+        id: &str,
+        is_incoming: bool,
+        status: DomainPaymentStatus,
+        amount_sat: u64,
+        fees_sat: u64,
+        token_display: Option<&str>,
+    ) -> SparkRecentTransaction {
+        SparkRecentTransaction {
+            id: id.to_string(),
+            description: id.to_string(),
+            time_ago: "just now".to_string(),
+            timestamp: 1_700_000_000,
+            amount: Amount::from_sat(amount_sat),
+            fees_sat: Amount::from_sat(fees_sat),
+            fiat_amount: None,
+            is_incoming,
+            status,
+            method: if token_display.is_some() {
+                SparkPaymentMethod::StableBalance
+            } else {
+                SparkPaymentMethod::Spark
+            },
+            token_display: token_display.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn pending_btc_sats_counts_pending_incoming_and_outgoing_totals() {
+        let rows = vec![
+            tx(
+                "incoming",
+                true,
+                DomainPaymentStatus::Pending,
+                1_000,
+                12,
+                None,
+            ),
+            tx(
+                "outgoing",
+                false,
+                DomainPaymentStatus::Pending,
+                2_000,
+                34,
+                None,
+            ),
+        ];
+
+        assert_eq!(pending_btc_sats(&rows), (2_034, 1_000));
+    }
+
+    #[test]
+    fn pending_btc_sats_skips_completed_failed_and_token_rows() {
+        let rows = vec![
+            tx(
+                "complete",
+                true,
+                DomainPaymentStatus::Complete,
+                1_000,
+                0,
+                None,
+            ),
+            tx(
+                "failed",
+                false,
+                DomainPaymentStatus::Failed,
+                2_000,
+                40,
+                None,
+            ),
+            tx(
+                "token",
+                true,
+                DomainPaymentStatus::Pending,
+                999_999,
+                0,
+                Some("1.23 USDB"),
+            ),
+        ];
+
+        assert_eq!(pending_btc_sats(&rows), (0, 0));
+    }
+
+    #[test]
+    fn row_display_amount_adds_fees_only_for_outgoing_rows() {
+        assert_eq!(
+            row_display_amount(&tx(
+                "incoming",
+                true,
+                DomainPaymentStatus::Pending,
+                100,
+                9,
+                None
+            ))
+            .to_sat(),
+            100
+        );
+        assert_eq!(
+            row_display_amount(&tx(
+                "outgoing",
+                false,
+                DomainPaymentStatus::Pending,
+                100,
+                9,
+                None
+            ))
+            .to_sat(),
+            109
+        );
+    }
 }

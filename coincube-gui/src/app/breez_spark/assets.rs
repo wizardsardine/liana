@@ -108,3 +108,66 @@ pub fn stable_token_as_sats(amount: u64, decimals: u32, btc_usd_price: Option<f6
     let usd_value = amount as f64 / 10_f64.powi(decimals as i32);
     (usd_value / price * 100_000_000.0) as u64
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spark_assets_have_stable_order_and_labels() {
+        assert_eq!(
+            list_assets(),
+            vec![SparkAsset::Bitcoin, SparkAsset::Lightning]
+        );
+        assert_eq!(SparkAsset::Bitcoin.label(), "BTC");
+        assert_eq!(SparkAsset::Lightning.label(), "Lightning");
+    }
+
+    #[test]
+    fn format_token_display_handles_precision_edges() {
+        assert_eq!(format_token_display(42, 0), "42");
+        assert_eq!(format_token_display(12, 1), "1.20");
+        assert_eq!(format_token_display(105, 2), "1.05");
+        assert_eq!(format_token_display(1_234_567, 6), "1.23");
+        assert_eq!(format_token_display(1_999_999, 6), "2.00");
+        assert_eq!(format_token_display(1_234_567_890_000, 6), "1,234,567.89");
+    }
+
+    #[test]
+    fn format_token_display_clamps_extreme_decimals() {
+        assert_eq!(
+            format_token_display(u64::MAX, MAX_TOKEN_DECIMALS_U64 + 1),
+            "1.84"
+        );
+    }
+
+    #[test]
+    fn format_token_display_rounds_half_up_and_carries_to_whole_units() {
+        assert_eq!(format_token_display(1_234_999, 6), "1.23");
+        assert_eq!(format_token_display(1_235_000, 6), "1.24");
+        assert_eq!(format_token_display(999_995, 6), "1.00");
+        assert_eq!(format_token_display(9_999_950, 6), "10.00");
+    }
+
+    #[test]
+    fn stable_token_as_sats_converts_usd_pegged_balance() {
+        assert_eq!(stable_token_as_sats(50_000_000, 6, Some(50_000.0)), 100_000);
+        assert_eq!(stable_token_as_sats(123, 0, Some(41_000.0)), 300_000);
+    }
+
+    #[test]
+    fn stable_token_as_sats_requires_positive_price() {
+        assert_eq!(stable_token_as_sats(50_000_000, 6, None), 0);
+        assert_eq!(stable_token_as_sats(50_000_000, 6, Some(0.0)), 0);
+        assert_eq!(stable_token_as_sats(50_000_000, 6, Some(-1.0)), 0);
+    }
+
+    #[test]
+    fn stable_token_as_sats_clamps_extreme_decimals_and_truncates_subsat_values() {
+        assert_eq!(
+            stable_token_as_sats(u64::MAX, MAX_TOKEN_DECIMALS_U64 + 1, Some(1.0)),
+            184_467_440
+        );
+        assert_eq!(stable_token_as_sats(1, 6, Some(100_000.0)), 0);
+    }
+}

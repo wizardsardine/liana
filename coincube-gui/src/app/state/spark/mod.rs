@@ -105,3 +105,65 @@ pub(crate) fn unified_spark_balance_sats(
 pub(crate) fn reference_btc_usd_price(cache: &Cache) -> Option<f64> {
     cache.btc_usd_price
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coincube_spark_protocol::StableBalanceSnapshot;
+
+    fn stable_balance(balance: u64, decimals: u32) -> StableBalanceSnapshot {
+        StableBalanceSnapshot {
+            balance,
+            decimals,
+            ticker: "USDB".to_string(),
+        }
+    }
+
+    #[test]
+    fn reference_btc_usd_price_reads_cache_usd_price() {
+        let mut cache = Cache::default();
+        assert_eq!(reference_btc_usd_price(&cache), None);
+
+        cache.btc_usd_price = Some(63_000.0);
+        assert_eq!(reference_btc_usd_price(&cache), Some(63_000.0));
+    }
+
+    #[test]
+    fn unified_spark_balance_uses_btc_balance_without_reference_price() {
+        let cache = Cache::default();
+        let stable = stable_balance(2_500_000, 6);
+
+        assert_eq!(
+            unified_spark_balance_sats(42_000, Some(&stable), &cache),
+            42_000
+        );
+    }
+
+    #[test]
+    fn unified_spark_balance_folds_stable_balance_using_usd_reference_price() {
+        let cache = Cache {
+            btc_usd_price: Some(50_000.0),
+            ..Cache::default()
+        };
+        let stable = stable_balance(2_500_000, 6);
+
+        assert_eq!(
+            unified_spark_balance_sats(123, Some(&stable), &cache),
+            5_123
+        );
+    }
+
+    #[test]
+    fn unified_spark_balance_saturates_when_stable_value_overflows() {
+        let cache = Cache {
+            btc_usd_price: Some(100_000.0),
+            ..Cache::default()
+        };
+        let stable = stable_balance(1_000_000, 6);
+
+        assert_eq!(
+            unified_spark_balance_sats(u64::MAX - 2, Some(&stable), &cache),
+            u64::MAX
+        );
+    }
+}

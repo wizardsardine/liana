@@ -230,20 +230,10 @@ fn active_body(
                 | ShiftStatusKind::Settled
         ) {
             if let Some(sats) = flow.settle_amount_sat() {
-                let settled = matches!(status, ShiftStatusKind::Settled);
                 col = col.push(
-                    text(format!(
-                        "{}{} {}",
-                        if settled { "" } else { "≈ " },
-                        Amount::from_sat(sats).to_formatted_string_with_unit(bitcoin_unit),
-                        if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
-                            "BTC"
-                        } else {
-                            "SATS"
-                        },
-                    ))
-                    .size(P1_SIZE)
-                    .bold(),
+                    text(settle_amount_display(sats, status, bitcoin_unit))
+                        .size(P1_SIZE)
+                        .bold(),
                 );
             }
         }
@@ -291,17 +281,9 @@ fn arrived_body(
 
     if let Some(sats) = flow.arrived_amount_sat() {
         col = col.push(
-            text(format!(
-                "{} {}",
-                Amount::from_sat(sats).to_formatted_string_with_unit(bitcoin_unit),
-                if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
-                    "BTC"
-                } else {
-                    "SATS"
-                },
-            ))
-            .size(H4_SIZE)
-            .bold(),
+            text(arrived_amount_display(sats, bitcoin_unit))
+                .size(H4_SIZE)
+                .bold(),
         );
     }
 
@@ -337,6 +319,36 @@ fn spark_shift_guidance(status: &ShiftStatusKind) -> &'static str {
              wallet automatically after about 3 confirmations — ~30 minutes."
         }
         other => other.guidance(),
+    }
+}
+
+fn settle_amount_display(
+    sats: u64,
+    status: &ShiftStatusKind,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> String {
+    let settled = matches!(status, ShiftStatusKind::Settled);
+    format!(
+        "{}{} {}",
+        if settled { "" } else { "≈ " },
+        Amount::from_sat(sats).to_formatted_string_with_unit(bitcoin_unit),
+        bitcoin_unit_label(bitcoin_unit),
+    )
+}
+
+fn arrived_amount_display(sats: u64, bitcoin_unit: BitcoinDisplayUnit) -> String {
+    format!(
+        "{} {}",
+        Amount::from_sat(sats).to_formatted_string_with_unit(bitcoin_unit),
+        bitcoin_unit_label(bitcoin_unit),
+    )
+}
+
+fn bitcoin_unit_label(bitcoin_unit: BitcoinDisplayUnit) -> &'static str {
+    if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+        "BTC"
+    } else {
+        "SATS"
     }
 }
 
@@ -426,4 +438,128 @@ fn error_body(error: Option<&str>) -> Element<'_, Msg> {
                 .width(Length::Fixed(160.0)),
         )
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settled_guidance_uses_spark_confirming_copy() {
+        let spark_copy = spark_shift_guidance(&ShiftStatusKind::Settled);
+        let shared_copy = ShiftStatusKind::Settled.guidance();
+
+        assert_ne!(spark_copy, shared_copy);
+        assert!(spark_copy.contains("arriving on-chain"));
+        assert!(spark_copy.contains("automatically"));
+        assert!(spark_copy.contains("3 confirmations"));
+        assert!(!spark_copy.contains("has arrived"));
+    }
+
+    #[test]
+    fn non_settled_guidance_delegates_to_shared_status_copy() {
+        for status in [
+            ShiftStatusKind::Waiting,
+            ShiftStatusKind::Pending,
+            ShiftStatusKind::Processing,
+            ShiftStatusKind::Settling,
+            ShiftStatusKind::Expired,
+            ShiftStatusKind::Review,
+            ShiftStatusKind::Refunding,
+            ShiftStatusKind::Refunded,
+            ShiftStatusKind::Error,
+        ] {
+            assert_eq!(spark_shift_guidance(&status), status.guidance());
+        }
+    }
+
+    #[test]
+    fn status_badges_distinguish_arriving_review_and_done_states() {
+        let (settled_label, settled_color) = status_badge(&ShiftStatusKind::Settled);
+        assert_eq!(settled_label, "Bitcoin arriving");
+        assert_eq!(settled_color, color::ORANGE);
+
+        let (review_label, review_color) = status_badge(&ShiftStatusKind::Review);
+        assert_eq!(review_label, "On hold for review");
+        assert_eq!(review_color, color::RED);
+
+        let (refunded_label, refunded_color) = status_badge(&ShiftStatusKind::Refunded);
+        assert_eq!(refunded_label, "Refunded");
+        assert_eq!(refunded_color, color::GREY_3);
+
+        let (unknown_label, unknown_color) =
+            status_badge(&ShiftStatusKind::Unknown("future".to_string()));
+        assert_eq!(unknown_label, "Checking…");
+        assert_eq!(unknown_color, color::GREY_3);
+    }
+
+    #[test]
+    fn status_badges_cover_waiting_in_flight_and_failed_states() {
+        for status in [ShiftStatusKind::Pending, ShiftStatusKind::Processing] {
+            let (label, color) = status_badge(&status);
+            assert_eq!(label, "Deposit detected");
+            assert_eq!(color, color::ORANGE);
+        }
+
+        assert_eq!(
+            status_badge(&ShiftStatusKind::Waiting),
+            ("Waiting for deposit", color::GREY_3)
+        );
+        assert_eq!(
+            status_badge(&ShiftStatusKind::Settling),
+            ("Settling…", color::ORANGE)
+        );
+        assert_eq!(
+            status_badge(&ShiftStatusKind::Expired),
+            ("Expired", color::RED)
+        );
+        assert_eq!(
+            status_badge(&ShiftStatusKind::Refunding),
+            ("Refunding…", color::ORANGE)
+        );
+        assert_eq!(
+            status_badge(&ShiftStatusKind::Error),
+            ("Failed", color::RED)
+        );
+    }
+
+    #[test]
+    fn settle_amount_display_is_approx_until_settled_and_uses_selected_unit() {
+        assert_eq!(
+            settle_amount_display(
+                123_456_789,
+                &ShiftStatusKind::Processing,
+                BitcoinDisplayUnit::BTC
+            ),
+            "≈ 1.23 456 789 BTC"
+        );
+        assert_eq!(
+            settle_amount_display(
+                123_456_789,
+                &ShiftStatusKind::Settled,
+                BitcoinDisplayUnit::BTC
+            ),
+            "1.23 456 789 BTC"
+        );
+        assert_eq!(
+            settle_amount_display(
+                123_456_789,
+                &ShiftStatusKind::Pending,
+                BitcoinDisplayUnit::Sats
+            ),
+            "≈ 123,456,789 SATS"
+        );
+    }
+
+    #[test]
+    fn arrived_amount_display_is_never_approximate() {
+        assert_eq!(
+            arrived_amount_display(42_000, BitcoinDisplayUnit::Sats),
+            "42,000 SATS"
+        );
+        assert_eq!(
+            arrived_amount_display(42_000, BitcoinDisplayUnit::BTC),
+            "0.00 042 000 BTC"
+        );
+    }
 }

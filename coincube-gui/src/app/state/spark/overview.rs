@@ -435,4 +435,85 @@ mod tests {
         assert_eq!(row.token_display.as_deref(), Some("1.58 USDB"));
         assert!(row.fiat_amount.is_some());
     }
+
+    #[test]
+    fn explicit_payment_description_is_preserved() {
+        let mut summary = payment("Receive", "Completed", "deposit", 21_000);
+        summary.description = Some("Savings refill".to_string());
+
+        let row = payment_summary_to_recent_tx(&summary, None);
+
+        assert_eq!(row.description, "Savings refill");
+        assert_eq!(row.method, SparkPaymentMethod::OnChainBitcoin);
+    }
+
+    #[test]
+    fn data_loaded_sets_snapshot_and_keeps_only_five_recent_rows() {
+        let mut panel = SparkOverview::new(None);
+        panel.loading = true;
+        panel.error = Some("old error".to_string());
+
+        let payments: Vec<_> = (0..7)
+            .map(|i| {
+                let mut p = payment("Receive", "Completed", "spark", 1_000 + i);
+                p.id = format!("payment-{i}");
+                p
+            })
+            .collect();
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            Message::View(view::Message::SparkOverview(
+                view::SparkOverviewMessage::DataLoaded {
+                    balance: Amount::from_sat(123_456),
+                    stable_balance: Some(coincube_spark_protocol::StableBalanceSnapshot {
+                        balance: 2_500_000,
+                        decimals: 6,
+                        ticker: "USDB".to_string(),
+                    }),
+                    recent_payments: payments,
+                },
+            )),
+        );
+
+        assert!(!panel.loading);
+        assert_eq!(panel.error, None);
+        let snapshot = panel.snapshot.as_ref().expect("snapshot loaded");
+        assert_eq!(snapshot.balance_sats, 123_456);
+        assert_eq!(
+            snapshot.stable_balance.as_ref().map(|s| s.balance),
+            Some(2_500_000)
+        );
+        assert_eq!(panel.recent_transactions.len(), 5);
+        assert_eq!(panel.recent_transactions[0].id, "payment-0");
+        assert_eq!(panel.recent_transactions[4].id, "payment-4");
+    }
+
+    #[test]
+    fn error_and_stable_balance_messages_update_local_state() {
+        let mut panel = SparkOverview::new(None);
+        panel.loading = true;
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            Message::View(view::Message::SparkOverview(
+                view::SparkOverviewMessage::Error("bridge offline".to_string()),
+            )),
+        );
+
+        assert!(!panel.loading);
+        assert_eq!(panel.error.as_deref(), Some("bridge offline"));
+
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            Message::View(view::Message::SparkOverview(
+                view::SparkOverviewMessage::StableBalanceLoaded(true),
+            )),
+        );
+
+        assert_eq!(panel.stable_balance_active, Some(true));
+    }
 }

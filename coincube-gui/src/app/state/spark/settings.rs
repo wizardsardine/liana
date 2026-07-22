@@ -189,3 +189,125 @@ impl State for SparkSettings {
         Task::none()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::state::State;
+    use crate::app::view::{Message as ViewMessage, SparkSettingsMessage};
+
+    fn settings(stable_balance_active: bool, private_mode_enabled: bool) -> GetUserSettingsOk {
+        GetUserSettingsOk {
+            stable_balance_active,
+            private_mode_enabled,
+        }
+    }
+
+    fn update(panel: &mut SparkSettings, msg: SparkSettingsMessage) {
+        let _ = State::update(
+            panel,
+            None,
+            &Cache::default(),
+            Message::View(ViewMessage::SparkSettings(msg)),
+        );
+    }
+
+    #[test]
+    fn new_panel_without_backend_is_unavailable() {
+        let panel = SparkSettings::new(None);
+
+        assert!(panel.backend.is_none());
+        assert!(matches!(panel.status, SparkSettingsStatus::Unavailable));
+        assert_eq!(panel.stable_balance_active, None);
+        assert!(!panel.stable_balance_saving);
+    }
+
+    #[test]
+    fn reload_without_backend_marks_unavailable() {
+        let mut panel = SparkSettings::new(None);
+        panel.status = SparkSettingsStatus::Connected;
+
+        let _ = State::reload(&mut panel, None, None);
+
+        assert!(matches!(panel.status, SparkSettingsStatus::Unavailable));
+    }
+
+    #[test]
+    fn bridge_status_messages_update_status_card_state() {
+        let mut panel = SparkSettings::new(None);
+
+        update(&mut panel, SparkSettingsMessage::BridgeReachable);
+        assert!(matches!(panel.status, SparkSettingsStatus::Connected));
+
+        update(
+            &mut panel,
+            SparkSettingsMessage::BridgeError("bridge exited".to_string()),
+        );
+        assert!(matches!(
+            panel.status,
+            SparkSettingsStatus::Error(ref err) if err == "bridge exited"
+        ));
+    }
+
+    #[test]
+    fn user_settings_loaded_updates_stable_balance_flag() {
+        let mut panel = SparkSettings::new(None);
+
+        update(
+            &mut panel,
+            SparkSettingsMessage::UserSettingsLoaded(settings(true, true)),
+        );
+        assert_eq!(panel.stable_balance_active, Some(true));
+
+        update(
+            &mut panel,
+            SparkSettingsMessage::UserSettingsLoaded(settings(false, false)),
+        );
+        assert_eq!(panel.stable_balance_active, Some(false));
+    }
+
+    #[test]
+    fn stable_balance_toggle_without_backend_is_ignored() {
+        let mut panel = SparkSettings::new(None);
+        panel.stable_balance_active = Some(false);
+
+        update(&mut panel, SparkSettingsMessage::StableBalanceToggled(true));
+
+        assert_eq!(panel.stable_balance_active, Some(false));
+        assert!(!panel.stable_balance_saving);
+    }
+
+    #[test]
+    fn stable_balance_save_success_commits_state_and_clears_saving() {
+        let mut panel = SparkSettings::new(None);
+        panel.stable_balance_active = Some(false);
+        panel.stable_balance_saving = true;
+
+        update(
+            &mut panel,
+            SparkSettingsMessage::StableBalanceSaved(Ok(true)),
+        );
+
+        assert_eq!(panel.stable_balance_active, Some(true));
+        assert!(!panel.stable_balance_saving);
+    }
+
+    #[test]
+    fn stable_balance_save_error_rolls_back_optimistic_state() {
+        let mut panel = SparkSettings::new(None);
+        panel.stable_balance_active = Some(true);
+        panel.stable_balance_saving = true;
+
+        update(
+            &mut panel,
+            SparkSettingsMessage::StableBalanceSaved(Err("sdk rejected toggle".to_string())),
+        );
+
+        assert_eq!(panel.stable_balance_active, Some(false));
+        assert!(!panel.stable_balance_saving);
+        assert!(matches!(
+            panel.status,
+            SparkSettingsStatus::Error(ref err) if err == "sdk rejected toggle"
+        ));
+    }
+}
