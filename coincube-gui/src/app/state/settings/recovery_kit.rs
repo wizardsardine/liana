@@ -1523,9 +1523,18 @@ async fn remove_backups(
             // F5 forbids *assuming* a restorable path is gone. Re-fetch status
             // and only succeed if the phone envelopes are confirmed absent; a
             // survivor (or a state we can't confirm) fails loudly so we never
-            // clear the drift slots over a live phone copy.
+            // clear the drift slots over a live phone copy. A survivor here has
+            // no recipient key left to target, so it can't be removed from this
+            // device — the user must contact support.
             Err(OwnerSelfError::NoRecipient) => {
-                verify_phone_copy_gone(&client, cube_id).await?;
+                verify_phone_copy_gone(
+                    &client,
+                    cube_id,
+                    "The copy sealed to your phone (Keychain) is still restorable but its \
+                     recovery key is no longer registered, so it couldn't be removed from this \
+                     device. Contact support to clear it.",
+                )
+                .await?;
             }
             Err(e) => {
                 return Err(format!(
@@ -1535,21 +1544,48 @@ async fn remove_backups(
                 ))
             }
         }
+    } else {
+        // The cached overview showed no phone copy, so we skipped the keychain
+        // teardown — but that view can be stale (a phone copy sealed elsewhere,
+        // or a status race). F5 forbids *assuming* a restorable path is gone,
+        // and the caller is about to clear the keychain drift slot on the
+        // strength of this removal. Confirm no phone envelopes survive before
+        // returning success; a survivor fails loudly so we never wipe the local
+        // fingerprint over a live copy. Unlike the orphaned case above, a
+        // recipient may well still exist — a fresh Remove (with up-to-date
+        // status) would target it — so the message says to retry.
+        verify_phone_copy_gone(
+            &client,
+            cube_id,
+            "The copy sealed to your phone (Keychain) is still restorable. Reopen Settings and \
+             try Remove again to clear it.",
+        )
+        .await?;
     }
     Ok(())
 }
 
-/// Confirm the owner-keychain (phone) copy is actually gone before treating a
-/// missing recipient as a successful removal (F5). Reached only from the
-/// `NoRecipient` branch of [`remove_backups`], where the cached status said
-/// envelopes existed but no owner-self recipient remains to delete. Re-fetches
-/// `/recovery-kit/status`:
-///   * envelopes still present → hard error (the phone copy survives and can't
-///     be removed from here — its recovery key is unregistered);
+/// Confirm the owner-keychain (phone) copy is actually gone before a removal
+/// reports success and the caller clears the keychain drift slot (F5). Reached
+/// from two branches of [`remove_backups`]:
+///   * the `NoRecipient` branch, where the cached status said envelopes existed
+///     but no owner-self recipient remains to delete; and
+///   * the `delete_keychain == false` branch, where the cached overview showed
+///     no phone copy at all and the teardown was skipped — that view can be
+///     stale, so we verify rather than assume.
+///
+/// Re-fetches `/recovery-kit/status`:
+///   * envelopes still present → hard error with the caller-supplied
+///     `present_msg` (the advice differs: orphaned recipient → contact support;
+///     stale overview → retry Remove);
 ///   * no envelopes / no kit at all → the copy is confirmed gone → `Ok`;
 ///   * the check itself fails → uncertain → hard error, so we never claim a
 ///     removal we couldn't confirm.
-async fn verify_phone_copy_gone(client: &CoincubeClient, cube_id: u64) -> Result<(), String> {
+async fn verify_phone_copy_gone(
+    client: &CoincubeClient,
+    cube_id: u64,
+    present_msg: &str,
+) -> Result<(), String> {
     match client.get_recovery_kit_status(cube_id).await {
         Ok(status) => {
             let phone_present = status
@@ -1558,12 +1594,7 @@ async fn verify_phone_copy_gone(client: &CoincubeClient, cube_id: u64) -> Result
                 .map(|o| o.has_envelope())
                 .unwrap_or(false);
             if phone_present {
-                Err(
-                    "The copy sealed to your phone (Keychain) is still restorable but its \
-                     recovery key is no longer registered, so it couldn't be removed from this \
-                     device. Contact support to clear it."
-                        .to_string(),
-                )
+                Err(present_msg.to_string())
             } else {
                 Ok(())
             }
@@ -2677,11 +2708,29 @@ mod tests {
                 .header("content-type", "application/json")
                 .json_body(json!({ "success": true, "data": { "status": "deleted" } }));
         });
-        // No keychain half → the recipients endpoint must never be touched.
+        // No keychain half → the recipients endpoint must never be touched. We
+        // still verify no phone copy survives before reporting success (F5), so
+        // `/status` is fetched and confirms nothing is sealed to the phone.
         let list = server.mock(|when, then| {
             when.method(MockMethod::GET)
                 .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
             then.status(200).json_body(owner_self_recipients_body());
+        });
+        let status = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "hasRecoveryKit": false,
+                        "hasEncryptedSeed": false,
+                        "hasEncryptedWalletDescriptor": false,
+                        "encryptionScheme": "",
+                        "ownerSelf": null
+                    }
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -2689,7 +2738,70 @@ mod tests {
             .await
             .expect("password-only remove should succeed");
         kit.assert();
+        status.assert();
         assert_eq!(list.hits(), 0, "recipient path must not be resolved");
+    }
+
+    #[tokio::test]
+    async fn remove_backups_password_only_surviving_phone_copy_fails_loudly() {
+        // `delete_keychain == false` because the cached overview showed no phone
+        // copy — but the status re-fetch reveals owner-self envelopes still
+        // present (a stale/racy overview hid a live copy). F5: this must fail
+        // loudly rather than report success and let the caller clear the
+        // keychain drift slot over a restorable copy. The recipients endpoint is
+        // never touched (we skipped the teardown), and the message tells the
+        // user to retry — a fresh Remove would target the now-visible copy.
+        let server = MockServer::start();
+        let kit = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({ "success": true, "data": { "status": "deleted" } }));
+        });
+        let list = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
+            then.status(200).json_body(owner_self_recipients_body());
+        });
+        let status = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "hasRecoveryKit": false,
+                        "hasEncryptedSeed": false,
+                        "hasEncryptedWalletDescriptor": false,
+                        "encryptionScheme": "",
+                        "ownerSelf": {
+                            "hasRecipient": true,
+                            "tier": "",
+                            "envelopeKinds": ["descriptor"]
+                        }
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = remove_backups(client, 42, false)
+            .await
+            .expect_err("a stale-overview-hidden phone copy must fail loudly (F5)");
+        kit.assert();
+        status.assert();
+        assert_eq!(list.hits(), 0, "recipient path must not be resolved");
+        assert!(
+            err.contains("phone") || err.contains("Keychain"),
+            "error must name the surviving phone path: {}",
+            err
+        );
+        assert!(
+            err.contains("try Remove again"),
+            "stale-overview survivor must advise a retry, not contact support: {}",
+            err
+        );
     }
 
     #[tokio::test]
