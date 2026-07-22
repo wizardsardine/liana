@@ -257,7 +257,7 @@ pub fn fee_rate_row<'a, M: Clone + 'static, F: Fn(Amount) -> FiatAmount>(
     let label = new::b3("Feerate:");
 
     let input: Element<'a, M> = Container::new(
-        form::Form::new_trimmed("e.g. 5 (in sats/vbyte)", feerate, on_edit)
+        form::Form::new_trimmed("e.g. 5 (in sats/vb)", feerate, on_edit)
             .compact()
             .fee(),
     )

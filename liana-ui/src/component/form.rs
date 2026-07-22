@@ -49,8 +49,8 @@ impl FormSize {
         Padding {
             top: v,
             bottom: v,
-            left: 16.0,
-            right: 16.0,
+            left: 10.0,
+            right: 10.0,
         }
     }
 }
