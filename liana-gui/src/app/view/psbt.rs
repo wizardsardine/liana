@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{
-    widget::{row, tooltip, Space},
+    widget::{column, row, tooltip, Space},
     Alignment, Length,
 };
 
@@ -955,16 +955,12 @@ pub fn sign_action<'a>(
         .spacing(10)
         .width(Length::Fill);
 
-    let width = ModalWidth::M;
+    let width = ModalWidth::L;
     let content = modal_view(Some(title), None, None, width, modal_content);
 
     let width = width as u32 + 50;
-    Column::new()
-        .push_maybe(warning.map(|w| warn(Some(w))))
-        .push(content)
-        .spacing(10)
-        .width(width)
-        .into()
+    let warning = warning.map(|w| warn(Some(w)));
+    column![warning, content].spacing(10).width(width).into()
 }
 
 pub fn sign_action_toasts<'a>(
