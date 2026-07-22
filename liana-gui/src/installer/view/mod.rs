@@ -10,7 +10,7 @@ use iced::{
 };
 
 use liana::miniscript::bitcoin::bip32::ChildNumber;
-use liana_ui::component::button::{btn_backup_descriptor, btn_next, BtnWidth};
+use liana_ui::component::button::{btn_backup_descriptor, btn_next, btn_select, BtnWidth};
 use liana_ui::component::text::{self, p2_regular};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -1133,18 +1133,16 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
     .width(Length::FillPortion(1));
     let descriptions = row![existing_node_description, managed_node_description].spacing(20);
 
-    let existing_node_action =
-        Container::new(button::secondary(None, "Select").width(300).on_press(
-            Message::SelectBitcoindType(message::SelectBitcoindTypeMsg::UseExternal(true)),
-        ))
-        .padding(20)
-        .center_x(Length::FillPortion(1));
-    let managed_node_action =
-        Container::new(button::secondary(None, "Select").width(300).on_press(
-            Message::SelectBitcoindType(message::SelectBitcoindTypeMsg::UseExternal(false)),
-        ))
-        .padding(20)
-        .center_x(Length::FillPortion(1));
+    let existing_node_action = Container::new(btn_select(Some(Message::SelectBitcoindType(
+        message::SelectBitcoindTypeMsg::UseExternal(true),
+    ))))
+    .padding(20)
+    .center_x(Length::FillPortion(1));
+    let managed_node_action = Container::new(btn_select(Some(Message::SelectBitcoindType(
+        message::SelectBitcoindTypeMsg::UseExternal(false),
+    ))))
+    .padding(20)
+    .center_x(Length::FillPortion(1));
     let actions = row![existing_node_action, managed_node_action].spacing(20);
 
     let content = column![titles, descriptions, actions].max_width(800);
