@@ -47,21 +47,32 @@ impl Settings {
         let mut path = network_dir.path().to_path_buf();
         path.push(SETTINGS_FILE_NAME);
 
-        // Retry the transient sharing/permission failure Windows raises when a
-        // virus scanner or search indexer briefly holds settings.json (or a
-        // just-written file's lock hasn't been released yet): ERROR_ACCESS_DENIED
-        // ("os error 5"). A genuinely absent file is ErrorKind::NotFound, which
-        // is never retried and maps to SettingsError::NotFound as before.
+        // Retry the transient sharing/visibility failures Windows raises when a
+        // virus scanner or search indexer briefly holds a just-written
+        // settings.json (or its directory): std::fs::read can momentarily return
+        // ACCESS_DENIED ("os error 5") or PATH/FILE_NOT_FOUND ("os error 2/3")
+        // for a file that does exist. Retry both with a short backoff. A
+        // NotFound that survives the whole budget is treated as genuine absence
+        // (SettingsError::NotFound), exactly as before — retrying only adds a
+        // little latency to the rare "no settings file yet" path, never changes
+        // its result.
         let mut attempt = 0u32;
         let file_content = loop {
             match std::fs::read(&path) {
                 Ok(bytes) => break bytes,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    return Err(SettingsError::NotFound)
-                }
-                Err(e) if attempt < 5 && e.kind() == std::io::ErrorKind::PermissionDenied => {
+                Err(e)
+                    if attempt < 5
+                        && matches!(
+                            e.kind(),
+                            std::io::ErrorKind::NotFound
+                                | std::io::ErrorKind::PermissionDenied
+                        ) =>
+                {
                     attempt += 1;
                     std::thread::sleep(std::time::Duration::from_millis(20 * u64::from(attempt)));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(SettingsError::NotFound)
                 }
                 Err(e) => {
                     return Err(SettingsError::ReadingFile(format!(

@@ -66,9 +66,15 @@ jobs:
           Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
       - name: Test on Rust ${{ matrix.toolchain }} (Windows)
         if: matrix.os == 'windows-latest'
+        # Cap test parallelism: the filesystem-heavy tests create files under
+        # %TEMP% and immediately read them back, and running many at once
+        # multiplies the odds that Defender is mid-scan on one of them. Test
+        # execution is only seconds of this build-dominated job, so the lower
+        # concurrency costs little and, with the in-code retries, removes the
+        # remaining Windows flakiness.
         run: |
           choco install protoc --yes --no-progress
-          cargo test --no-default-features
+          cargo test --no-default-features -- --test-threads=2
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'macOS-latest'
         env:
