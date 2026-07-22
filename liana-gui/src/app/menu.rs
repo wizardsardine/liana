@@ -118,7 +118,7 @@ impl Menu {
         match self {
             Menu::Home => icon::home_icon(),
             Menu::Receive => icon::receive_icon(),
-            Menu::PSBTs => icon::edit_icon(),
+            Menu::PSBTs => icon::edit_icon_padding(),
             Menu::Transactions => icon::collection_icon(),
             Menu::Settings => icon::settings_icon(),
             Menu::Coins => icon::coins_icon(),

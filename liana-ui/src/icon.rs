@@ -241,6 +241,10 @@ pub fn clock_fill_icon() -> Text<'static> {
     bootstrap_icon('\u{F291}')
 }
 
+pub fn edit_icon_padding<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F4CA}')
+}
+
 pub fn edit_icon<'a>() -> Text<'a> {
     bootstrap_icon_no_padding('\u{F4CA}')
 }
