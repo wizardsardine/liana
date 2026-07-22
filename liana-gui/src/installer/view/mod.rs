@@ -1449,38 +1449,32 @@ pub fn backup_mnemonic<'a>(
     words: &'a [&'static str; 12],
     done: bool,
 ) -> Element<'a, Message> {
-    let msg_next = done.then_some(Message::Next);
+    let words = words
+        .iter()
+        .enumerate()
+        .fold(column![].spacing(5), |words, (i, word)| {
+            let number = Container::new(new::caption(format!("#{}", i + 1))).width(50);
+            words.push(row![number, new::b5_bold(*word)].align_y(Alignment::End))
+        });
+    let backed_up = checkbox(done)
+        .label("I have backed up my mnemonic")
+        .on_toggle(Message::UserActionDone);
+    let button_next = row![Space::fill_width(), btn_next(done.then_some(Message::Next))];
+    let content = column![
+        new::caption(prompt::MNEMONIC_HELP),
+        words,
+        backed_up,
+        button_next,
+        Space::with_height(20),
+    ]
+    .spacing(50);
+
     layout(
         progress,
         network,
         email,
         "Back Up your mnemonic",
-        Column::new()
-            .push(text(prompt::MNEMONIC_HELP))
-            .push(
-                words
-                    .iter()
-                    .enumerate()
-                    .fold(Column::new().spacing(5), |acc, (i, w)| {
-                        acc.push(
-                            Row::new()
-                                .align_y(Alignment::End)
-                                .push(
-                                    Container::new(text(format!("#{}", i + 1)).small())
-                                        .width(Length::Fixed(50.0)),
-                                )
-                                .push(text(*w).bold()),
-                        )
-                    }),
-            )
-            .push(
-                checkbox(done)
-                    .label("I have backed up my mnemonic")
-                    .on_toggle(Message::UserActionDone),
-            )
-            .push(btn_next(msg_next))
-            .push(Space::with_height(20.0))
-            .spacing(50),
+        content,
         Some(Message::Previous),
     )
 }
