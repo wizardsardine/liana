@@ -2976,3 +2976,260 @@ pub fn recovery_kit_restore<'a>(
         Some(Message::Previous),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::{
+        installer::step::{
+            recovery_kit_restore::{RestoreCubeCandidate, RestorePhase},
+            RestoreScope,
+        },
+        node::bitcoind::NodeFlavor,
+        services::coincube::{RecoveryKitStatus, RECOVERY_KIT_SCHEME_AES_256_GCM},
+    };
+
+    fn value(text: &str, valid: bool) -> form::Value<String> {
+        form::Value {
+            value: text.to_string(),
+            warning: None,
+            valid,
+        }
+    }
+
+    fn recovery_status(
+        has_recovery_kit: bool,
+        has_encrypted_seed: bool,
+        has_encrypted_wallet_descriptor: bool,
+    ) -> RecoveryKitStatus {
+        RecoveryKitStatus {
+            has_recovery_kit,
+            has_encrypted_seed,
+            has_encrypted_wallet_descriptor,
+            encryption_scheme: RECOVERY_KIT_SCHEME_AES_256_GCM.to_string(),
+            created_at: None,
+            updated_at: None,
+            owner_self: None,
+        }
+    }
+
+    fn candidate(
+        id: u64,
+        name: &str,
+        has_recovery_kit: bool,
+        has_encrypted_seed: bool,
+        has_encrypted_wallet_descriptor: bool,
+    ) -> RestoreCubeCandidate {
+        RestoreCubeCandidate {
+            id,
+            uuid: format!("cube-{id}"),
+            name: name.to_string(),
+            network: "bitcoin".to_string(),
+            status: recovery_status(
+                has_recovery_kit,
+                has_encrypted_seed,
+                has_encrypted_wallet_descriptor,
+            ),
+        }
+    }
+
+    #[test]
+    fn expire_message_units_formats_minutes_hours_days_months_and_years() {
+        assert!(expire_message_units(0).is_empty());
+        assert_eq!(expire_message_units(1), vec!["10m".to_string()]);
+        assert_eq!(expire_message_units(6), vec!["1h".to_string()]);
+        assert_eq!(
+            expire_message_units(144),
+            vec!["1d".to_string()],
+            "144 ten-minute blocks is roughly one day"
+        );
+        assert_eq!(expire_message_units(4383), vec!["1m".to_string()]);
+        assert_eq!(expire_message_units(52596), vec!["1y".to_string()]);
+        assert_eq!(
+            expire_message_units(52596 + 4383 + 144),
+            vec!["1y".to_string(), "1m".to_string(), "1d".to_string()]
+        );
+    }
+
+    #[test]
+    fn node_and_login_views_construct_for_main_branches() {
+        let valid = value("127.0.0.1:8332", true);
+        let remote = value("192.168.1.10:8332", true);
+        let invalid = value("not an address", false);
+        let auth = RpcAuthValues {
+            cookie_path: value("/tmp/.cookie", true),
+            user: value("rpcuser", true),
+            password: value("rpcpass", true),
+        };
+
+        let _ = define_bitcoind(&valid, &auth, &RpcAuthType::CookieFile);
+        let _ = define_bitcoind(&remote, &auth, &RpcAuthType::UserPass);
+        let _ = define_electrum(&valid, true);
+        let _ = define_esplora(&invalid, "https://example.test/api");
+
+        let _ = choose_backend((1, 3));
+        let _ = connection_step_enter_email(
+            &value("user@example.com", true),
+            false,
+            None,
+            &["user@example.com".to_string()],
+            None,
+        );
+        let otp = value("123456", true);
+        let _ = connection_step_enter_otp("user@example.com", &otp, false, None, None);
+        let _ = connection_step_connected("user@example.com", false, None, None);
+        let _ = login(
+            (2, 3),
+            connection_step_connected("user@example.com", true, None, None),
+        );
+    }
+
+    #[test]
+    fn connect_and_bitcoind_choice_views_construct_for_authenticated_and_local_paths() {
+        let email = value("user@example.com", true);
+        let otp = value("123456", true);
+        let prune = value("15000", true);
+        let max_mempool = value("", true);
+
+        let _ = define_coincube_connect((1, 4), &email, &otp, false, true, false, None);
+        let _ = define_coincube_connect((1, 4), &email, &otp, true, false, true, Some("try again"));
+
+        let _ = select_bitcoind_type(
+            (2, 4),
+            bitcoin::Network::Regtest,
+            false,
+            false,
+            15_000,
+            true,
+            NodeFlavor::Core,
+        );
+        let _ = select_bitcoind_type(
+            (2, 4),
+            bitcoin::Network::Bitcoin,
+            true,
+            true,
+            15_000,
+            true,
+            NodeFlavor::Knots,
+        );
+        let _ = select_bitcoind_type(
+            (2, 4),
+            bitcoin::Network::Bitcoin,
+            false,
+            false,
+            15_000,
+            false,
+            NodeFlavor::Core,
+        );
+
+        let _ = start_internal_bitcoind(
+            (3, 4),
+            NodeFlavor::Knots,
+            Some(NodeFlavor::Core),
+            false,
+            true,
+            &prune,
+            &max_mempool,
+            None,
+            None,
+            None,
+            Some(&DownloadState::Idle),
+            None,
+        );
+        let _ = start_internal_bitcoind(
+            (3, 4),
+            NodeFlavor::Core,
+            None,
+            true,
+            false,
+            &prune,
+            &max_mempool,
+            Some(&PathBuf::from("/tmp/bitcoind")),
+            Some(&Ok(())),
+            None,
+            Some(&DownloadState::Finished(vec![])),
+            Some(&InstallState::Finished),
+        );
+    }
+
+    #[test]
+    fn simple_installer_views_construct_for_ready_and_blocked_states() {
+        let alias = value("My vault", true);
+        let invalid_alias = value("This alias is too long", false);
+        let warn = "Seed backup still recommended".to_string();
+
+        let _ = install((4, 4), Some("user@example.com"), true, false, None, None);
+        let _ = install(
+            (4, 4),
+            None,
+            false,
+            true,
+            Some(&warn),
+            Some("Connect backup enabled".to_string()),
+        );
+        let _ = wallet_alias((1, 2), None, &alias);
+        let _ = wallet_alias((1, 2), Some("user@example.com"), &invalid_alias);
+    }
+
+    #[test]
+    fn recovery_kit_restore_views_construct_for_each_phase() {
+        let email = value("user@example.com", true);
+        let otp = value("123456", true);
+        let available = candidate(1, "Available", true, true, true);
+        let no_kit = candidate(2, "No Kit", false, false, false);
+        let descriptor_only = candidate(3, "Descriptor Only", true, false, true);
+
+        let phases = vec![
+            RestorePhase::Email,
+            RestorePhase::OtpEntry,
+            RestorePhase::LoadingCubes,
+            RestorePhase::CubePicker {
+                cubes: vec![available.clone(), no_kit, descriptor_only.clone()],
+                selected: None,
+            },
+            RestorePhase::PasswordEntry {
+                selected: available.clone(),
+                attempts: 1,
+            },
+            RestorePhase::Decrypting {
+                selected: available.clone(),
+            },
+            RestorePhase::Ready {
+                selected: descriptor_only,
+                seed: None,
+                descriptor: None,
+            },
+            RestorePhase::Error {
+                message: "could not decrypt".to_string(),
+            },
+        ];
+
+        for phase in &phases {
+            let _ = recovery_kit_restore(
+                (1, 5),
+                RestoreScope::DescriptorOnly,
+                phase,
+                &email,
+                &otp,
+                "correct horse battery staple",
+                false,
+                Some("inline error"),
+            );
+        }
+
+        let _ = recovery_kit_restore(
+            (1, 5),
+            RestoreScope::Full,
+            &RestorePhase::CubePicker {
+                cubes: vec![candidate(4, "Seed Only", true, true, false)],
+                selected: None,
+            },
+            &email,
+            &otp,
+            "",
+            true,
+            None,
+        );
+    }
+}

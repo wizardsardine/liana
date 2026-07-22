@@ -1158,4 +1158,114 @@ mod tests {
         fs::write(&garbage, "not valid toml : : :").unwrap();
         assert!(!backend_is_internal_bitcoind(&garbage, &internal_datadir));
     }
+
+    fn cube_settings() -> CubeSettings {
+        CubeSettings::new_with_raw_id(
+            "cube-uuid".to_string(),
+            "Family Vault".to_string(),
+            bitcoin::Network::Bitcoin,
+        )
+    }
+
+    fn loader_without_wallet(start_internal_bitcoind: bool) -> Loader {
+        Loader::new(
+            CoincubeDirectory::new(PathBuf::new()),
+            GUIConfig::new(start_internal_bitcoind),
+            bitcoin::Network::Bitcoin,
+            None,
+            None,
+            None,
+            cube_settings(),
+            None,
+            None,
+        )
+        .0
+    }
+
+    #[test]
+    fn loader_without_wallet_uses_config_for_bitcoind_and_none_subscriptions() {
+        let mut loader = loader_without_wallet(true);
+        assert!(loader.start_bitcoind());
+        assert!(!loader.vault_uses_internal_bitcoind());
+        let _ = loader.subscription();
+        let _ = loader.view();
+
+        loader.step = Step::StartingDaemon { progress: 0.895 };
+        let _ = loader.update(Message::LoadingTick);
+        assert!(matches!(
+            loader.step,
+            Step::StartingDaemon { progress } if (progress - 0.9).abs() < f32::EPSILON
+        ));
+        let _ = loader.subscription();
+
+        loader.step = Step::FullScan { progress: 0.899 };
+        let _ = loader.update(Message::LoadingTick);
+        assert!(matches!(
+            loader.step,
+            Step::FullScan { progress } if (progress - 0.9).abs() < f32::EPSILON
+        ));
+
+        let _ = loader.update(Message::Synced(Err(Error::Unexpected("boom".to_string()))));
+        assert!(matches!(loader.step, Step::Error(_)));
+        let _ = loader.update(Message::Failure(DaemonError::NoAnswer));
+        assert!(!loader.daemon_started);
+        let _ = loader.update(Message::None);
+    }
+
+    #[test]
+    fn loader_standalone_views_cover_steps_and_error_copy() {
+        let mut quote_provider = QuoteProvider::new();
+        let quote = quote_provider.select("loading");
+        let image_handle = quote_display::image_handle_for_context("loading");
+
+        let _ = view(&Step::Connecting, &quote, &image_handle);
+        let _ = view(
+            &Step::StartingDaemon { progress: 0.5 },
+            &quote,
+            &image_handle,
+        );
+        let _ = view(&Step::FullScan { progress: 0.5 }, &quote, &image_handle);
+        let _ = view(
+            &Step::Error(Box::new(Error::Config(ConfigError::FileNotFound))),
+            &quote,
+            &image_handle,
+        );
+        let _ = view(
+            &Step::Error(Box::new(Error::Daemon(DaemonError::NoAnswer))),
+            &quote,
+            &image_handle,
+        );
+        let _ = cover::<ViewMessage, _>(
+            Some(("warn", &Error::Unexpected("details".to_string()))),
+            text("body"),
+        );
+        let _ = cover::<ViewMessage, _>(None, text("body"));
+    }
+
+    #[test]
+    fn loader_error_display_and_from_impls_are_stable() {
+        assert_eq!(
+            Error::Config(ConfigError::FileNotFound).to_string(),
+            "Config error: Could not locate the configuration file."
+        );
+        assert!(Error::Daemon(DaemonError::NoAnswer)
+            .to_string()
+            .contains("Tenshu daemon error"));
+        assert!(Error::BitcoindLogs(std::io::Error::other("log"))
+            .to_string()
+            .contains("Bitcoind logs error"));
+        assert_eq!(
+            Error::Unexpected("odd".to_string()).to_string(),
+            "Unexpected error: odd"
+        );
+
+        assert!(matches!(
+            Error::from(ConfigError::FileNotFound),
+            Error::Config(ConfigError::FileNotFound)
+        ));
+        assert!(matches!(
+            Error::from(DaemonError::NoAnswer),
+            Error::Daemon(DaemonError::NoAnswer)
+        ));
+    }
 }

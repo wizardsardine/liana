@@ -4890,3 +4890,273 @@ fn restart_daemon_blocking(
     }
     DaemonRestart::Started(daemon)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::{
+        fs,
+        io::ErrorKind,
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use coincube_core::miniscript::bitcoin::Network;
+
+    use crate::{
+        app::settings::{CubeSettings, Settings, SETTINGS_FILE_NAME},
+        services::duress::DuressLocalState,
+    };
+
+    struct TempRoot(PathBuf);
+
+    impl TempRoot {
+        fn new(label: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be after unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "coincube-app-{label}-{}-{unique}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).expect("create test root");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write_settings_dir(root: &Path, name: &str, settings: Settings) -> PathBuf {
+        let dir = root.join(name);
+        fs::create_dir_all(&dir).expect("create network dir");
+        let bytes = serde_json::to_vec_pretty(&settings).expect("serialize settings");
+        fs::write(dir.join(SETTINGS_FILE_NAME), bytes).expect("write settings");
+        dir
+    }
+
+    fn cube(id: &str, name: &str, network: Network) -> CubeSettings {
+        CubeSettings::new_with_raw_id(id.to_string(), name.to_string(), network)
+    }
+
+    #[test]
+    fn connection_status_visibility_and_tooltips_are_stable() {
+        assert!(!ConnectionStatus::Inactive.is_visible());
+        assert_eq!(ConnectionStatus::Inactive.tooltip(), "Connect inactive");
+
+        assert!(ConnectionStatus::Connecting.is_visible());
+        assert!(ConnectionStatus::Connecting
+            .tooltip()
+            .starts_with("Connecting to Coincube Connect"));
+
+        assert!(ConnectionStatus::Connected.is_visible());
+        assert_eq!(ConnectionStatus::Connected.tooltip(), "Connected");
+
+        let err = ConnectionStatus::Error("socket closed".to_string());
+        assert!(err.is_visible());
+        assert_eq!(err.tooltip(), "Connection error: socket closed");
+    }
+
+    #[test]
+    fn daemon_unreachable_detection_is_limited_to_transport_failures() {
+        assert!(is_daemon_unreachable(&Error::Daemon(
+            DaemonError::DaemonStopped
+        )));
+        assert!(is_daemon_unreachable(&Error::Daemon(DaemonError::NoAnswer)));
+        assert!(is_daemon_unreachable(&Error::Daemon(
+            DaemonError::RpcSocket(Some(ErrorKind::ConnectionRefused), "refused".to_string())
+        )));
+
+        assert!(!is_daemon_unreachable(&Error::Daemon(DaemonError::Rpc(
+            -1,
+            "application error".to_string()
+        ))));
+        assert!(!is_daemon_unreachable(&Error::Daemon(DaemonError::Http(
+            Some(500),
+            "server error".to_string()
+        ))));
+        assert!(!is_daemon_unreachable(&Error::Unexpected(
+            "not a daemon error".to_string()
+        )));
+    }
+
+    #[test]
+    fn duress_enroll_network_dirs_only_includes_settings_directories() {
+        let root = TempRoot::new("duress-dirs");
+        write_settings_dir(root.path(), "bitcoin", Settings::default());
+        write_settings_dir(root.path(), "regtest", Settings::default());
+
+        fs::create_dir_all(root.path().join("testnet")).expect("create ignored network dir");
+        fs::write(root.path().join("settings.json"), "{}").expect("write root-level file");
+        fs::write(root.path().join("loose-file"), "").expect("write ignored file");
+
+        let mut names = duress_enroll_network_dirs(root.path())
+            .into_iter()
+            .map(|dir| {
+                dir.path()
+                    .file_name()
+                    .expect("network dir has name")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
+        names.sort();
+
+        assert_eq!(names, vec!["bitcoin".to_string(), "regtest".to_string()]);
+    }
+
+    #[test]
+    fn duress_pin_collision_check_rejects_empty_and_real_cube_pin() {
+        let root = TempRoot::new("duress-collision");
+        assert_eq!(
+            duress_pin_collision_check(root.path(), "1234").unwrap_err(),
+            DURESS_NO_CUBES_MSG
+        );
+
+        let protected_cube = cube("cube-a", "Primary", Network::Bitcoin)
+            .with_pin("1234")
+            .expect("pin hash");
+        let secondary_cube = cube("cube-b", "Secondary", Network::Regtest)
+            .with_pin("9999")
+            .expect("pin hash");
+
+        write_settings_dir(
+            root.path(),
+            "bitcoin",
+            Settings {
+                cubes: vec![protected_cube],
+                ..Settings::default()
+            },
+        );
+        write_settings_dir(
+            root.path(),
+            "regtest",
+            Settings {
+                cubes: vec![secondary_cube],
+                ..Settings::default()
+            },
+        );
+
+        assert_eq!(
+            duress_pin_collision_check(root.path(), "1234").unwrap_err(),
+            DURESS_PIN_COLLIDES_MSG
+        );
+        assert!(duress_pin_collision_check(root.path(), "5555").is_ok());
+    }
+
+    #[test]
+    fn verify_regular_cube_pin_accepts_real_pin_and_rejects_duress_pin() {
+        let root = TempRoot::new("regular-pin");
+        let cube = cube("cube-a", "Primary", Network::Bitcoin)
+            .with_pin("1234")
+            .expect("pin hash")
+            .with_duress_pin("8765")
+            .expect("duress hash");
+
+        write_settings_dir(
+            root.path(),
+            "bitcoin",
+            Settings {
+                cubes: vec![cube],
+                ..Settings::default()
+            },
+        );
+
+        assert_eq!(
+            verify_regular_cube_pin(root.path(), "").unwrap_err(),
+            "Enter your Cube unlock PIN to continue."
+        );
+        assert!(verify_regular_cube_pin(root.path(), "1234").is_ok());
+        assert_eq!(
+            verify_regular_cube_pin(root.path(), "8765").unwrap_err(),
+            DURESS_STEP_UP_BAD_PIN_MSG
+        );
+    }
+
+    #[test]
+    fn verify_regular_cube_pin_allows_when_cubes_have_no_regular_pin() {
+        let root = TempRoot::new("regular-pinless");
+        write_settings_dir(
+            root.path(),
+            "bitcoin",
+            Settings {
+                cubes: vec![cube("cube-a", "Pinless", Network::Bitcoin)],
+                ..Settings::default()
+            },
+        );
+
+        assert!(verify_regular_cube_pin(root.path(), "any pin").is_ok());
+    }
+
+    #[test]
+    fn any_cube_duress_armed_scans_all_network_settings() {
+        let root = TempRoot::new("duress-armed");
+        write_settings_dir(
+            root.path(),
+            "bitcoin",
+            Settings {
+                cubes: vec![cube("cube-a", "Plain", Network::Bitcoin)],
+                ..Settings::default()
+            },
+        );
+        assert!(!any_cube_duress_armed(root.path()).expect("scan plain cube"));
+
+        let mut armed_cube = cube("cube-b", "Armed", Network::Regtest);
+        armed_cube.duress_pin_hash = Some("stored-duress-hash".to_string());
+        write_settings_dir(
+            root.path(),
+            "regtest",
+            Settings {
+                cubes: vec![armed_cube],
+                ..Settings::default()
+            },
+        );
+
+        assert!(any_cube_duress_armed(root.path()).expect("scan armed cube"));
+    }
+
+    #[tokio::test]
+    async fn clear_duress_enrollment_clears_cube_hashes_and_local_state() {
+        let root = TempRoot::new("duress-clear");
+        let mut armed_cube = cube("cube-a", "Armed", Network::Bitcoin);
+        armed_cube.duress_pin_hash = Some("stored-duress-hash".to_string());
+        let network_dir = write_settings_dir(
+            root.path(),
+            "bitcoin",
+            Settings {
+                cubes: vec![armed_cube],
+                ..Settings::default()
+            },
+        );
+        DuressLocalState {
+            enrolled: true,
+            active: true,
+            account_id: Some("acct-1".to_string()),
+            duress_code: Some("ciphertext".to_string()),
+            ..DuressLocalState::default()
+        }
+        .save(root.path())
+        .expect("save local state");
+
+        clear_duress_enrollment(CoincubeDirectory::new(root.path().to_path_buf()))
+            .await
+            .expect("clear duress");
+
+        let settings =
+            Settings::from_file(&crate::dir::NetworkDirectory::new(network_dir)).unwrap();
+        assert!(settings.cubes.iter().all(|cube| !cube.has_duress_pin()));
+        assert_eq!(
+            DuressLocalState::load(root.path()).expect("load cleared state"),
+            DuressLocalState::default()
+        );
+    }
+}

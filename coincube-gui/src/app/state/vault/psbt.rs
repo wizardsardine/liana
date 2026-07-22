@@ -1704,32 +1704,319 @@ async fn sign_psbt(
 mod tests {
     use super::*;
     use crate::{
-        app::{cache::Cache, state::PsbtsPanel},
+        app::{
+            cache::Cache,
+            state::vault::test_support::{empty_psbt, tokens},
+            state::PsbtsPanel,
+        },
         daemon::client::{Coincubed, Request},
         utils::{mock::Daemon, sandbox::Sandbox},
     };
 
     use coincube_core::descriptors::CoincubeDescriptor;
     use serde_json::json;
-    use std::str::FromStr;
+    use std::{path::PathBuf, str::FromStr};
 
     const DESC: &str = "wsh(or_d(multi(2,[f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<0;1>/*,[2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<0;1>/*),and_v(v:thresh(1,pkh([f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<2;3>/*),a:pkh([2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<2;3>/*)),older(65535))))#9s8ekrce";
+    const GRID_PHRASE: &str =
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+    fn fingerprint(hex: &str) -> Fingerprint {
+        Fingerprint::from_str(hex).expect("fingerprint")
+    }
+
+    fn wallet() -> Wallet {
+        Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap())
+    }
+
+    fn enter_phrase_words(state: &mut BorderWalletReconstructionState, phrase: &str) {
+        for (i, word) in phrase.split_whitespace().enumerate() {
+            state.update(BorderWalletReconMessage::PhraseWordEdited(
+                i,
+                word.to_string(),
+            ));
+        }
+    }
 
     #[test]
     fn persisted_connect_identity_counts_as_available_session() {
         let cache = Cache {
             connect_email: Some("alice@example.com".to_string()),
-            connect_tokens: Some(Arc::new(tokio::sync::RwLock::new(
-                crate::services::connect::client::auth::AccessTokenResponse {
-                    access_token: "access".to_string(),
-                    refresh_token: "refresh".to_string(),
-                    expires_at: i64::MAX,
-                },
-            ))),
+            connect_tokens: Some(tokens()),
             ..Cache::default()
         };
 
         assert!(connect_session_available(&cache));
+    }
+
+    #[test]
+    fn connect_session_available_accepts_live_or_persisted_session_markers() {
+        assert!(!connect_session_available(&Cache::default()));
+
+        assert!(connect_session_available(&Cache {
+            connect_authenticated: true,
+            ..Cache::default()
+        }));
+        assert!(connect_session_available(&Cache {
+            has_connect_session: true,
+            ..Cache::default()
+        }));
+        assert!(connect_session_available(&Cache {
+            connect_email: Some("alice@example.com".to_string()),
+            connect_tokens: Some(tokens()),
+            ..Cache::default()
+        }));
+
+        assert!(!connect_session_available(&Cache {
+            connect_email: Some("alice@example.com".to_string()),
+            ..Cache::default()
+        }));
+        assert!(!connect_session_available(&Cache {
+            connect_tokens: Some(tokens()),
+            ..Cache::default()
+        }));
+    }
+
+    #[test]
+    fn keychain_connect_missing_reports_each_required_field() {
+        assert_eq!(
+            keychain_connect_missing(&Cache::default()),
+            vec![
+                "connect_grpc_url",
+                "connect_tokens",
+                "connect_device_id",
+                "current_cube_server_id",
+            ]
+        );
+
+        let ready = Cache {
+            connect_grpc_url: Some("https://grpc.example.test".to_string()),
+            connect_tokens: Some(tokens()),
+            connect_device_id: Some("device-1".to_string()),
+            current_cube_server_id: Some(42),
+            ..Cache::default()
+        };
+        assert!(keychain_connect_missing(&ready).is_empty());
+    }
+
+    #[test]
+    fn build_keychain_if_ready_requires_connect_fields() {
+        let wallet = Arc::new(wallet());
+        let psbt = empty_psbt();
+
+        let (modal, _task) = build_keychain_if_ready(&Cache::default(), &wallet, &psbt);
+        assert!(modal.is_none());
+
+        let ready = Cache {
+            connect_grpc_url: Some("https://grpc.example.test".to_string()),
+            connect_tokens: Some(tokens()),
+            connect_device_id: Some("device-1".to_string()),
+            current_cube_server_id: Some(42),
+            cube_id: "cube-local".to_string(),
+            ..Cache::default()
+        };
+        let (modal, _task) = build_keychain_if_ready(&ready, &wallet, &psbt);
+        assert!(modal.is_some());
+    }
+
+    #[tokio::test]
+    async fn master_signer_reports_error_when_not_loaded() {
+        let (fingerprint, result) =
+            sign_psbt_with_master_signer(Arc::new(wallet()), empty_psbt()).await;
+
+        assert_eq!(fingerprint, Fingerprint::default());
+        assert!(matches!(
+            result,
+            Err(Error::Wallet(WalletError::MasterSigner(_)))
+        ));
+    }
+
+    #[test]
+    fn border_wallet_reconstruction_rejects_bad_phrase_and_moves_to_grid_on_valid_phrase() {
+        let mut state =
+            BorderWalletReconstructionState::new(fingerprint("f714c228"), Network::Bitcoin);
+
+        enter_phrase_words(
+            &mut state,
+            "not a valid mnemonic with twelve words total surely now extra words",
+        );
+        assert!(state.phrase_valid);
+        assert!(state.update(BorderWalletReconMessage::Next).is_none());
+        assert_eq!(state.step, ReconStep::RecoveryPhrase);
+        assert!(state
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("Invalid recovery phrase")));
+
+        let mut state =
+            BorderWalletReconstructionState::new(fingerprint("f714c228"), Network::Bitcoin);
+        enter_phrase_words(&mut state, GRID_PHRASE);
+        assert!(state.phrase_valid);
+        assert!(state.update(BorderWalletReconMessage::Next).is_none());
+        assert_eq!(state.step, ReconStep::Grid);
+        assert!(state.grid.is_some());
+        assert!(state.pattern.is_empty());
+        assert!(state.error.is_none());
+    }
+
+    #[test]
+    fn border_wallet_pattern_messages_update_checksum_and_errors() {
+        let mut state =
+            BorderWalletReconstructionState::new(fingerprint("f714c228"), Network::Bitcoin);
+        enter_phrase_words(&mut state, GRID_PHRASE);
+        state.update(BorderWalletReconMessage::Next);
+
+        state.update(BorderWalletReconMessage::Next);
+        assert!(state
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("Please select exactly")));
+
+        state.update(BorderWalletReconMessage::ToggleCell(0, 0));
+        assert_eq!(state.pattern.len(), 1);
+        assert!(state.error.is_none());
+        assert!(state.checksum_word.is_none());
+
+        state.update(BorderWalletReconMessage::ToggleCell(0, 0));
+        assert!(state.pattern.is_empty());
+        assert!(state.checksum_word.is_none());
+
+        for row in 0..PATTERN_LENGTH as u16 {
+            state.update(BorderWalletReconMessage::ToggleCell(row, 0));
+        }
+        assert!(state.pattern.is_complete());
+        assert!(state.checksum_word.is_some());
+
+        state.update(BorderWalletReconMessage::UndoLastCell);
+        assert_eq!(state.pattern.len(), PATTERN_LENGTH - 1);
+        assert!(state.checksum_word.is_none());
+
+        state.update(BorderWalletReconMessage::ClearPattern);
+        assert!(state.pattern.is_empty());
+
+        state.update(BorderWalletReconMessage::Previous);
+        assert_eq!(state.step, ReconStep::RecoveryPhrase);
+    }
+
+    #[test]
+    fn signing_paths_classify_active_signed_border_and_inactive_keys() {
+        use view::vault::psbt::{SigningKeyAction, SigningKeyKind, SigningKeyState};
+
+        let primary_fp = fingerprint("f714c228");
+        let border_fp = fingerprint("2522f23c");
+        let mut wallet = wallet();
+        wallet
+            .keys_aliases
+            .insert(primary_fp, "Primary alias".to_string());
+        wallet.border_wallet_fingerprints.insert(border_fp);
+
+        let modal = SignModal::new(
+            HashSet::from([primary_fp]),
+            Arc::new(wallet),
+            CoincubeDirectory::new(PathBuf::new()),
+            Network::Signet,
+            false,
+            None,
+            None,
+            true,
+        );
+
+        let paths = modal.signing_paths();
+        assert_eq!(paths.len(), 2);
+
+        let primary = paths.iter().find(|p| p.is_primary).unwrap();
+        assert!(primary.active);
+        assert!(primary.expanded);
+        assert_eq!(primary.threshold, 2);
+        assert_eq!(primary.total, 2);
+        assert_eq!(primary.collected, 1);
+
+        let primary_row = primary
+            .keys
+            .iter()
+            .find(|row| row.fingerprint == primary_fp)
+            .unwrap();
+        assert_eq!(primary_row.label, "Primary alias");
+        assert!(matches!(&primary_row.state, SigningKeyState::Signed));
+
+        let border_row = primary
+            .keys
+            .iter()
+            .find(|row| row.fingerprint == border_fp)
+            .unwrap();
+        assert!(matches!(&border_row.kind, SigningKeyKind::BorderWallet));
+        assert!(matches!(
+            &border_row.state,
+            SigningKeyState::Available(SigningKeyAction::BorderWallet)
+        ));
+
+        let recovery = paths.iter().find(|p| !p.is_primary).unwrap();
+        assert!(!recovery.active);
+        assert!(!recovery.expanded);
+        assert_eq!(recovery.sequence, Some(65535));
+        let signed_recovery_row = recovery
+            .keys
+            .iter()
+            .find(|row| row.fingerprint == primary_fp)
+            .unwrap();
+        assert!(matches!(
+            &signed_recovery_row.state,
+            SigningKeyState::Signed
+        ));
+        let unsigned_recovery_row = recovery
+            .keys
+            .iter()
+            .find(|row| row.fingerprint == border_fp)
+            .unwrap();
+        assert!(matches!(
+            &unsigned_recovery_row.state,
+            SigningKeyState::Disabled(reason) if reason.contains("isn't available")
+        ));
+    }
+
+    #[test]
+    fn signing_paths_prompt_unknown_keys_to_sign_in_only_when_keychain_is_enabled() {
+        use view::vault::psbt::SigningKeyState;
+
+        let keychain_enabled = SignModal::new(
+            HashSet::new(),
+            Arc::new(wallet()),
+            CoincubeDirectory::new(PathBuf::new()),
+            Network::Signet,
+            false,
+            None,
+            None,
+            true,
+        );
+        let primary = keychain_enabled
+            .signing_paths()
+            .into_iter()
+            .find(|p| p.is_primary)
+            .unwrap();
+        assert!(primary.keys.iter().all(|row| matches!(
+            &row.state,
+            SigningKeyState::NeedsSignIn(reason) if reason.contains("Connect a device")
+        )));
+
+        let local_only = SignModal::new(
+            HashSet::new(),
+            Arc::new(wallet()),
+            CoincubeDirectory::new(PathBuf::new()),
+            Network::Signet,
+            false,
+            None,
+            None,
+            false,
+        );
+        let primary = local_only
+            .signing_paths()
+            .into_iter()
+            .find(|p| p.is_primary)
+            .unwrap();
+        assert!(primary.keys.iter().all(|row| matches!(
+            &row.state,
+            SigningKeyState::Disabled(reason) if reason.contains("Connect this signing device")
+        )));
     }
 
     #[tokio::test]

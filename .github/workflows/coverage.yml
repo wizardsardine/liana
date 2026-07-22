@@ -6,7 +6,9 @@ on:
       - "**/*.rs"
       - "**/Cargo.toml"
       - "Cargo.lock"
+      - "coincube-spark-bridge/Cargo.lock"
       - "contrib/coverage.sh"
+      - "contrib/coverage-bridge.sh"
       - ".github/workflows/coverage.yml"
   workflow_dispatch:
 
@@ -18,6 +20,10 @@ jobs:
       BREEZ_API_KEY: DUMMY_BREEZ_API_KEY
       CARGO_TOOLCHAIN: nightly-2026-06-17
       COVERAGE_DOCTESTS: 1
+      # Current full-workspace baseline is ~26.8%. Keep the gate non-breaking
+      # while focused tests ratchet this toward COVERAGE_TARGET_LINES.
+      COVERAGE_TARGET_LINES: 50
+      FAIL_UNDER_LINES: 26
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -48,3 +54,43 @@ jobs:
           path: |
             target/coverage/lcov.info
             target/coverage/summary.json
+
+  spark-bridge-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TOOLCHAIN: nightly-2026-06-17
+      # Current bridge baseline is ~10.9%. The bridge is covered separately
+      # because it is intentionally not part of the root Cargo workspace.
+      COVERAGE_TARGET_LINES: 50
+      FAIL_UNDER_LINES: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+        with:
+          toolchain: nightly-2026-06-17
+          components: llvm-tools-preview
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config protobuf-compiler
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@528e28158500e8adf409c61ac0eaa6bdd47f49ca # cargo-llvm-cov
+
+      - name: Generate Spark bridge coverage
+        run: ./contrib/coverage-bridge.sh
+
+      - name: Upload Spark bridge coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: spark-bridge-coverage
+          path: |
+            target/coverage/bridge-lcov.info
+            target/coverage/bridge-summary.json

@@ -593,3 +593,239 @@ pub async fn connect_with_credentials(
         Ok(BackendState::NoWallet(client))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::settings::AuthConfig;
+    use std::path::PathBuf;
+
+    fn auth_client(email: &str) -> AuthClient {
+        AuthClient::new(
+            "https://auth.example.test".to_string(),
+            "public-key".to_string(),
+            email.to_string(),
+        )
+    }
+
+    fn wallet_settings(email: &str, wallet_id: &str) -> WalletSettings {
+        WalletSettings {
+            name: "Test Wallet".to_string(),
+            alias: None,
+            descriptor_checksum: "checksum".to_string(),
+            pinned_at: None,
+            keys: Vec::new(),
+            hardware_wallets: Vec::new(),
+            remote_backend_auth: Some(AuthConfig::new(email.to_string(), wallet_id.to_string())),
+            start_internal_bitcoind: None,
+        }
+    }
+
+    fn login_with_step(step: ConnectionStep) -> CoincubeLiteLogin {
+        CoincubeLiteLogin {
+            datadir: CoincubeDirectory::new(PathBuf::new()),
+            network: Network::Bitcoin,
+            settings: wallet_settings("user@example.com", "wallet-id"),
+            breez_client: None,
+            spark_backend: None,
+            wallet_id: "wallet-id".to_string(),
+            email: "user@example.com".to_string(),
+            processing: false,
+            step,
+            connection_error: None,
+            auth_error: None,
+        }
+    }
+
+    #[test]
+    fn error_display_strings_include_context() {
+        assert_eq!(Error::CredentialsMissing.to_string(), "credentials missing");
+        assert_eq!(
+            Error::Unexpected("boom".to_string()).to_string(),
+            "Unexpected error: boom"
+        );
+        assert_eq!(
+            Error::Auth(AuthError {
+                http_status: Some(403),
+                error: "forbidden".to_string(),
+            })
+            .to_string(),
+            "Authentication error: 403: forbidden"
+        );
+    }
+
+    #[test]
+    fn checking_auth_file_moves_to_email_step_without_showing_missing_credentials() {
+        let mut login = login_with_step(ConnectionStep::CheckingAuthFile);
+
+        let _task = login.update(Message::Connected(Err(Error::CredentialsMissing)));
+
+        assert!(!login.processing);
+        assert!(matches!(login.step, ConnectionStep::CheckEmail));
+        assert!(login.connection_error.is_none());
+    }
+
+    #[test]
+    fn checking_auth_file_surfaces_unexpected_errors() {
+        let mut login = login_with_step(ConnectionStep::CheckingAuthFile);
+
+        let _task = login.update(Message::Connected(Err(Error::Unexpected(
+            "cache corrupt".to_string(),
+        ))));
+
+        assert!(!login.processing);
+        assert!(matches!(login.step, ConnectionStep::CheckEmail));
+        assert!(matches!(
+            login.connection_error,
+            Some(Error::Unexpected(ref msg)) if msg == "cache corrupt"
+        ));
+    }
+
+    #[test]
+    fn check_email_request_and_otp_result_transition_to_enter_otp() {
+        let mut login = login_with_step(ConnectionStep::CheckEmail);
+
+        let _task = login.update(Message::View(ViewMessage::RequestOTP));
+        assert!(login.processing);
+        assert!(login.connection_error.is_none());
+        assert!(login.auth_error.is_none());
+
+        let _task = login.update(Message::OTPRequested(Ok((
+            auth_client("user@example.com"),
+            "https://backend.example.test".to_string(),
+            Some("https://grpc.example.test".to_string()),
+        ))));
+
+        assert!(!login.processing);
+        assert!(matches!(
+            login.step,
+            ConnectionStep::EnterOtp {
+                ref backend_api_url,
+                ref grpc_url,
+                ref otp,
+                ..
+            } if backend_api_url == "https://backend.example.test"
+                && grpc_url.as_deref() == Some("https://grpc.example.test")
+                && otp.value.is_empty()
+        ));
+    }
+
+    #[test]
+    fn check_email_otp_request_failure_is_stored() {
+        let mut login = login_with_step(ConnectionStep::CheckEmail);
+
+        let _task = login.update(Message::OTPRequested(Err(Error::Unexpected(
+            "mail failed".to_string(),
+        ))));
+
+        assert!(!login.processing);
+        assert!(matches!(
+            login.connection_error,
+            Some(Error::Unexpected(ref msg)) if msg == "mail failed"
+        ));
+    }
+
+    #[test]
+    fn enter_otp_resend_resets_input_and_records_resend_errors() {
+        let mut login = login_with_step(ConnectionStep::EnterOtp {
+            client: auth_client("user@example.com"),
+            backend_api_url: "https://backend.example.test".to_string(),
+            grpc_url: None,
+            otp: form::Value {
+                value: "123456".to_string(),
+                warning: Some("old"),
+                valid: false,
+            },
+        });
+
+        let _task = login.update(Message::View(ViewMessage::RequestOTP));
+        assert!(login.processing);
+        assert!(matches!(
+            login.step,
+            ConnectionStep::EnterOtp { ref otp, .. }
+                if otp.value.is_empty() && otp.warning.is_none() && otp.valid
+        ));
+
+        let _task = login.update(Message::OTPResent(Err(Error::Unexpected(
+            "resend failed".to_string(),
+        ))));
+        assert!(!login.processing);
+        assert!(matches!(
+            login.connection_error,
+            Some(Error::Unexpected(ref msg)) if msg == "resend failed"
+        ));
+    }
+
+    #[test]
+    fn enter_otp_trims_input_and_submits_at_six_digits() {
+        let mut login = login_with_step(ConnectionStep::EnterOtp {
+            client: auth_client("user@example.com"),
+            backend_api_url: "https://backend.example.test".to_string(),
+            grpc_url: None,
+            otp: form::Value::default(),
+        });
+
+        let _task = login.update(Message::View(ViewMessage::OTPEdited(" 123 ".to_string())));
+        assert!(!login.processing);
+        assert!(matches!(
+            login.step,
+            ConnectionStep::EnterOtp { ref otp, .. } if otp.value == "123" && otp.valid
+        ));
+
+        let _task = login.update(Message::View(ViewMessage::OTPEdited(
+            " 123456 ".to_string(),
+        )));
+        assert!(login.processing);
+        assert!(login.connection_error.is_none());
+        assert!(login.auth_error.is_none());
+        assert!(matches!(
+            login.step,
+            ConnectionStep::EnterOtp { ref otp, .. } if otp.value == "123456" && otp.valid
+        ));
+    }
+
+    #[test]
+    fn enter_otp_connected_errors_split_auth_from_generic_failures() {
+        let mut login = login_with_step(ConnectionStep::EnterOtp {
+            client: auth_client("user@example.com"),
+            backend_api_url: "https://backend.example.test".to_string(),
+            grpc_url: None,
+            otp: form::Value::default(),
+        });
+
+        let _task = login.update(Message::Connected(Err(Error::Auth(AuthError {
+            http_status: Some(403),
+            error: "forbidden".to_string(),
+        }))));
+
+        assert!(!login.processing);
+        assert_eq!(login.auth_error, Some("Token is expired or is invalid"));
+        assert!(login.connection_error.is_none());
+
+        let _task = login.update(Message::Connected(Err(Error::Auth(AuthError {
+            http_status: Some(500),
+            error: "server".to_string(),
+        }))));
+
+        assert!(matches!(login.connection_error, Some(Error::Auth(_))));
+    }
+
+    #[test]
+    fn enter_otp_run_error_is_stored() {
+        let mut login = login_with_step(ConnectionStep::EnterOtp {
+            client: auth_client("user@example.com"),
+            backend_api_url: "https://backend.example.test".to_string(),
+            grpc_url: None,
+            otp: form::Value::default(),
+        });
+
+        let _task = login.update(Message::Run(Err(Error::Unexpected(
+            "coin cache failed".to_string(),
+        ))));
+
+        assert!(matches!(
+            login.connection_error,
+            Some(Error::Unexpected(ref msg)) if msg == "coin cache failed"
+        ));
+    }
+}

@@ -1805,3 +1805,408 @@ pub fn update_spend_success_view<'a>() -> Element<'a, Message> {
         .align_x(Alignment::Center)
         .into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coincube_core::{
+        border_wallet::OrderedPattern,
+        descriptors::CoincubeDescriptor,
+        miniscript::bitcoin::{absolute, bip32::ChildNumber, transaction, Amount, Sequence, TxIn},
+    };
+    use coincubed::commands::LCSpendInfo;
+    use std::str::FromStr;
+
+    const DESC: &str = "wsh(or_d(multi(2,[f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<0;1>/*,[2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<0;1>/*),and_v(v:thresh(1,pkh([f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<2;3>/*),a:pkh([2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<2;3>/*)),older(65535))))#9s8ekrce";
+    const MAINNET_ADDR: &str = "bc1qvrl2849aggm6qry9ea7xqp2kk39j8vaa8r3cwg";
+    const GRID_PHRASE: &str =
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+    fn fingerprint(hex: &str) -> Fingerprint {
+        Fingerprint::from_str(hex).unwrap()
+    }
+
+    fn address() -> Address {
+        Address::from_str(MAINNET_ADDR).unwrap().assume_checked()
+    }
+
+    fn outpoint(n: u32) -> OutPoint {
+        OutPoint::new(Txid::from_str(&format!("{n:064x}")).unwrap(), n)
+    }
+
+    fn coin(n: u32, sats: u64, spent: bool) -> Coin {
+        Coin {
+            amount: Amount::from_sat(sats),
+            outpoint: outpoint(n),
+            address: address(),
+            block_height: Some(840_000),
+            derivation_index: ChildNumber::from(n),
+            spend_info: spent.then(|| LCSpendInfo {
+                txid: Txid::from_str(&format!("{:064x}", n + 100)).unwrap(),
+                height: None,
+            }),
+            is_immature: false,
+            is_change: false,
+            is_from_self: false,
+        }
+    }
+
+    fn tx_with_outputs() -> Transaction {
+        Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
+            input: vec![
+                TxIn {
+                    previous_output: outpoint(1),
+                    sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    ..TxIn::default()
+                },
+                TxIn {
+                    previous_output: outpoint(2),
+                    sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    ..TxIn::default()
+                },
+            ],
+            output: vec![
+                TxOut {
+                    value: Amount::from_sat(40_000),
+                    script_pubkey: address().script_pubkey(),
+                },
+                TxOut {
+                    value: Amount::from_sat(10_000),
+                    script_pubkey: address().script_pubkey(),
+                },
+            ],
+        }
+    }
+
+    fn form_value(value: &str, valid: bool) -> form::Value<String> {
+        form::Value {
+            value: value.to_string(),
+            valid,
+            warning: None,
+        }
+    }
+
+    fn quote() -> coincube_ui::component::quote_display::Quote {
+        coincube_ui::component::quote_display::Quote {
+            id: "test".to_string(),
+            text: "Steady hands.".to_string(),
+            author: "Coincube".to_string(),
+            source: "tests".to_string(),
+            category: "bitcoin-send".to_string(),
+            length: "short".to_string(),
+            contexts: vec!["bitcoin-send".to_string()],
+        }
+    }
+
+    fn image_handle() -> iced::widget::image::Handle {
+        iced::widget::image::Handle::from_rgba(1, 1, vec![255, 255, 255, 255])
+    }
+
+    fn signing_row(
+        fingerprint: Fingerprint,
+        label: &str,
+        kind: SigningKeyKind,
+        state: SigningKeyState,
+    ) -> SigningKeyRow {
+        SigningKeyRow {
+            fingerprint,
+            label: label.to_string(),
+            kind,
+            state,
+        }
+    }
+
+    #[test]
+    fn action_modals_build_for_success_pending_and_error_states() {
+        let mut conflicts = HashSet::new();
+        conflicts.insert(Txid::from_str(&format!("{:064x}", 1)).unwrap());
+        conflicts.insert(Txid::from_str(&format!("{:064x}", 2)).unwrap());
+        let quote = quote();
+        let image = image_handle();
+
+        let _ = save_action(false);
+        let _ = save_action(true);
+        let _ = delete_action(false);
+        let _ = delete_action(true);
+        let _ = keychain_unavailable_action(false);
+        let _ = keychain_unavailable_action(true);
+        let _ = broadcast_action(
+            &HashSet::new(),
+            false,
+            false,
+            None,
+            "40,000 sats",
+            &quote,
+            &image,
+            false,
+        );
+        let _ = broadcast_action(
+            &conflicts,
+            false,
+            true,
+            Some("mempool rejected".to_string()),
+            "40,000 sats",
+            &quote,
+            &image,
+            false,
+        );
+        let _ = broadcast_action(
+            &HashSet::new(),
+            true,
+            false,
+            None,
+            "40,000 sats",
+            &quote,
+            &image,
+            true,
+        );
+    }
+
+    #[test]
+    fn inputs_and_outputs_views_build_with_labels_missing_coins_change_and_external_rows() {
+        let tx = tx_with_outputs();
+        let mut coins = HashMap::new();
+        coins.insert(outpoint(1), coin(1, 60_000, false));
+        let mut labels = HashMap::new();
+        labels.insert(outpoint(1).to_string(), "input coin".to_string());
+        labels.insert(address().to_string(), "destination".to_string());
+        labels.insert(
+            OutPoint::new(tx.compute_txid(), 0).to_string(),
+            "payment output".to_string(),
+        );
+        let mut labels_editing = HashMap::new();
+        labels_editing.insert(outpoint(1).to_string(), form_value("editing", true));
+
+        let _ = inputs_view(
+            &coins,
+            &tx,
+            &labels,
+            &labels_editing,
+            BitcoinDisplayUnit::Sats,
+        );
+        let _ = outputs_view(
+            &tx,
+            Network::Bitcoin,
+            &[1],
+            &labels,
+            &labels_editing,
+            BitcoinDisplayUnit::Sats,
+            true,
+            false,
+        );
+        let _ = outputs_view(
+            &tx,
+            Network::Bitcoin,
+            &[0, 1],
+            &labels,
+            &labels_editing,
+            BitcoinDisplayUnit::BTC,
+            false,
+            false,
+        );
+        let _ = outputs_view(
+            &tx,
+            Network::Bitcoin,
+            &[1],
+            &labels,
+            &labels_editing,
+            BitcoinDisplayUnit::Sats,
+            false,
+            true,
+        );
+    }
+
+    #[test]
+    fn signing_picker_builds_all_key_states_and_path_shapes() {
+        let fg1 = fingerprint("f714c228");
+        let fg2 = fingerprint("2522f23c");
+        let fg3 = fingerprint("8a64f2a9");
+
+        assert_eq!(humanize_timelock(0), "");
+        assert_eq!(humanize_timelock(6), "1h");
+        assert_eq!(humanize_timelock(144), "1d");
+        assert_eq!(
+            signing_key_kind_caption(&SigningKeyKind::Master),
+            Some("This computer")
+        );
+        assert_eq!(signing_key_kind_caption(&SigningKeyKind::Unknown), None);
+
+        let active = SigningPath {
+            title: "Primary path".to_string(),
+            is_primary: true,
+            sequence: None,
+            active: true,
+            threshold: 2,
+            total: 9,
+            collected: 3,
+            can_request_all: true,
+            expanded: true,
+            keys: vec![
+                signing_row(
+                    fg1,
+                    "Already signed",
+                    SigningKeyKind::Master,
+                    SigningKeyState::Signed,
+                ),
+                signing_row(
+                    fg2,
+                    "Hardware signing",
+                    SigningKeyKind::Hardware,
+                    SigningKeyState::InProgress("Waiting for device".to_string()),
+                ),
+                signing_row(
+                    fg3,
+                    "Cannot sign",
+                    SigningKeyKind::Unknown,
+                    SigningKeyState::Disabled("Unavailable".to_string()),
+                ),
+                signing_row(
+                    fg1,
+                    "Connect prompt",
+                    SigningKeyKind::Keychain,
+                    SigningKeyState::NeedsSignIn("Sign in to resolve".to_string()),
+                ),
+                signing_row(
+                    fg2,
+                    "Retry keychain",
+                    SigningKeyKind::Keychain,
+                    SigningKeyState::Retry(0),
+                ),
+                signing_row(
+                    fg3,
+                    "Master signer",
+                    SigningKeyKind::Master,
+                    SigningKeyState::Available(SigningKeyAction::Master),
+                ),
+                signing_row(
+                    fg1,
+                    "Hardware signer",
+                    SigningKeyKind::Hardware,
+                    SigningKeyState::Available(SigningKeyAction::Hardware(0)),
+                ),
+                signing_row(
+                    fg2,
+                    "Border signer",
+                    SigningKeyKind::BorderWallet,
+                    SigningKeyState::Available(SigningKeyAction::BorderWallet),
+                ),
+                signing_row(
+                    fg3,
+                    "Keychain signer",
+                    SigningKeyKind::Keychain,
+                    SigningKeyState::Available(SigningKeyAction::Keychain),
+                ),
+            ],
+        };
+
+        let inactive_collapsed = SigningPath {
+            title: "Recovery path".to_string(),
+            is_primary: false,
+            sequence: Some(144),
+            active: false,
+            threshold: 1,
+            total: 1,
+            collected: 0,
+            can_request_all: false,
+            expanded: false,
+            keys: Vec::new(),
+        };
+
+        let inactive_expanded = SigningPath {
+            title: "Expanded recovery path".to_string(),
+            is_primary: false,
+            sequence: Some(65535),
+            active: false,
+            threshold: 1,
+            total: 1,
+            collected: 0,
+            can_request_all: false,
+            expanded: true,
+            keys: vec![signing_row(
+                fg1,
+                "Unavailable key",
+                SigningKeyKind::Unknown,
+                SigningKeyState::Disabled("Inactive path".to_string()),
+            )],
+        };
+
+        let _ = sign_action(
+            vec![active, inactive_collapsed, inactive_expanded],
+            vec!["Connect is not ready yet.".to_string()],
+        );
+    }
+
+    #[test]
+    fn path_and_border_wallet_reconstruction_views_build_each_step() {
+        let policy = CoincubeDescriptor::from_str(DESC).unwrap().policy();
+        let mut signed_pubkeys = HashMap::new();
+        signed_pubkeys.insert(fingerprint("f714c228"), 1);
+        let sigs = PathSpendInfo {
+            threshold: 2,
+            sigs_count: 1,
+            signed_pubkeys,
+        };
+        let aliases = HashMap::from([(fingerprint("f714c228"), "Laptop key".to_string())]);
+        let _ = path_view(policy.primary_path(), &sigs, &aliases);
+
+        let mut phrase_words = vec![form_value("", false); 12];
+        phrase_words[0].value = "abandon".to_string();
+        let phrase_recon = BorderWalletReconstructionState {
+            target_fingerprint: fingerprint("f714c228"),
+            network: Network::Bitcoin,
+            step: ReconStep::RecoveryPhrase,
+            phrase_words,
+            phrase_valid: false,
+            grid: None,
+            pattern: OrderedPattern::new(),
+            checksum_word: None,
+            error: Some("Check the phrase".to_string()),
+        };
+        let _ = border_wallet_recon_view(&phrase_recon);
+
+        let mut pattern = OrderedPattern::new();
+        pattern.add(CellRef::new(0, 0)).unwrap();
+        let grid_recon = BorderWalletReconstructionState {
+            target_fingerprint: fingerprint("2522f23c"),
+            network: Network::Bitcoin,
+            step: ReconStep::Grid,
+            phrase_words: vec![form_value("abandon", true); 12],
+            phrase_valid: true,
+            grid: Some(WordGrid::from_recovery_phrase(GRID_PHRASE).unwrap()),
+            pattern,
+            checksum_word: Some("about".to_string()),
+            error: Some("Pick eleven cells".to_string()),
+        };
+        let _ = border_wallet_recon_view(&grid_recon);
+
+        let mut complete_pattern = OrderedPattern::new();
+        for col in 0..PATTERN_LENGTH as u8 {
+            complete_pattern.add(CellRef::new(0, col)).unwrap();
+        }
+        let complete_grid_recon = BorderWalletReconstructionState {
+            target_fingerprint: fingerprint("8a64f2a9"),
+            network: Network::Bitcoin,
+            step: ReconStep::Grid,
+            phrase_words: vec![form_value("abandon", true); 12],
+            phrase_valid: true,
+            grid: Some(WordGrid::from_recovery_phrase(GRID_PHRASE).unwrap()),
+            pattern: complete_pattern,
+            checksum_word: None,
+            error: None,
+        };
+        let _ = border_wallet_recon_view(&complete_grid_recon);
+    }
+
+    #[test]
+    fn update_spend_views_build_valid_invalid_processing_and_success_states() {
+        let valid = form_value("cHNidP8=", true);
+        let invalid = form_value("not psbt", false);
+
+        let _ = update_spend_view("original-psbt".to_string(), &valid, false);
+        let _ = update_spend_view("original-psbt".to_string(), &valid, true);
+        let _ = update_spend_view("original-psbt".to_string(), &invalid, false);
+        let _ = update_spend_success_view();
+    }
+}

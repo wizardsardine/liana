@@ -47,3 +47,36 @@ pub trait PriceApi {
 
     async fn list_currencies(&self) -> Result<ListCurrenciesResult, PriceApiError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PriceApiError;
+    use crate::services::http::NotSuccessResponseInfo;
+
+    #[test]
+    fn display_renders_actionable_error_messages() {
+        assert_eq!(
+            PriceApiError::RequestFailed("timeout".to_string()).to_string(),
+            "Request failed: timeout"
+        );
+        assert_eq!(
+            PriceApiError::CannotParseResponse("bad json".to_string()).to_string(),
+            "Cannot parse response: bad json"
+        );
+        assert_eq!(
+            PriceApiError::CannotParseData("price".to_string()).to_string(),
+            "Cannot parse data: price"
+        );
+    }
+
+    #[test]
+    fn display_unwraps_coincube_error_envelope() {
+        let err = PriceApiError::NotSuccessResponse(NotSuccessResponseInfo {
+            status_code: 429,
+            text: r#"{"success":false,"error":{"code":"rate_limited","message":"slow down"}}"#
+                .to_string(),
+        });
+
+        assert_eq!(err.to_string(), "Not success response (429): slow down");
+    }
+}

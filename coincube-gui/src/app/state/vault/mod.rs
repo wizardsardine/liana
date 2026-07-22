@@ -9,4 +9,6 @@ pub mod receive;
 pub mod settings;
 pub mod signers;
 pub mod spend;
+#[cfg(test)]
+pub mod test_support;
 pub mod transactions;

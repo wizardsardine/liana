@@ -2140,3 +2140,284 @@ pub fn register_wallet_modal<'a>(
     .width(Length::Fixed(500.0))
     .into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        app::{
+            cache::NodeNetStats,
+            menu::{SettingsOption, VaultSubMenu},
+        },
+        node::bitcoind::NodeResources,
+    };
+    use std::{net::SocketAddr, path::PathBuf};
+
+    fn value(text: &str, valid: bool) -> form::Value<String> {
+        form::Value {
+            value: text.to_string(),
+            valid,
+            warning: None,
+        }
+    }
+
+    fn menu() -> Menu {
+        Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::Node)))
+    }
+
+    fn bitcoind_config(rpc_auth: BitcoindRpcAuth) -> coincubed::config::BitcoindConfig {
+        coincubed::config::BitcoindConfig {
+            rpc_auth,
+            addr: "127.0.0.1:8332".parse::<SocketAddr>().unwrap(),
+        }
+    }
+
+    fn electrum_config() -> coincubed::config::ElectrumConfig {
+        coincubed::config::ElectrumConfig {
+            addr: "ssl://electrum.example:50002".to_string(),
+            validate_domain: true,
+        }
+    }
+
+    fn cookie_auth_values(valid: bool) -> RpcAuthValues {
+        RpcAuthValues {
+            cookie_path: value("/tmp/bitcoin/.cookie", valid),
+            user: value("", true),
+            password: value("", true),
+        }
+    }
+
+    fn userpass_auth_values(valid: bool) -> RpcAuthValues {
+        RpcAuthValues {
+            cookie_path: value("", true),
+            user: value("rpcuser", valid),
+            password: value("rpcpassword", valid),
+        }
+    }
+
+    #[test]
+    fn pure_formatting_helpers_cover_thresholds_and_predicates() {
+        assert_eq!(human_bytes(42), "42 B");
+        assert_eq!(human_bytes(2 * 1024), "2 KB");
+        assert_eq!(human_bytes(45 * 1024 * 1024), "45 MB");
+        assert_eq!(human_bytes(1024 * 1024 * 1024), "1.0 GB");
+
+        assert_eq!(expire_message_units(0), Vec::<String>::new());
+        assert_eq!(expire_message_units(6), vec!["1h"]);
+        assert_eq!(expire_message_units(144), vec!["1d"]);
+        assert_eq!(expire_message_units(52_596), vec!["1y"]);
+
+        assert!(is_ok_and(&Ok::<_, ()>(7), |v| *v > 3));
+        assert!(!is_ok_and(&Ok::<_, ()>(2), |v| *v > 3));
+        assert!(!is_ok_and(&Err::<u32, _>("nope"), |v| *v > 3));
+    }
+
+    #[test]
+    fn dashboard_wrapped_settings_sections_build() {
+        let menu = menu();
+        let cache = Cache::default();
+        let valid_email = value("friend@example.com", true);
+        let invalid_email = value("not an email", false);
+
+        let _ = link("https://example.com/docs", "Docs");
+        let _ = list(&menu, &cache, false);
+        let _ = bitcoind_settings(&menu, &cache, vec![text("child").into()]);
+        let _ = import_export(&menu, &cache);
+        let _ = remote_backend_section(&menu, &cache, &valid_email, false, true);
+        let _ = remote_backend_section(&menu, &cache, &invalid_email, true, false);
+    }
+
+    #[test]
+    fn bitcoind_and_electrum_cards_build_for_configured_and_editing_states() {
+        let cookie = BitcoindRpcAuth::CookieFile(PathBuf::from("/tmp/bitcoin/.cookie"));
+        let userpass = BitcoindRpcAuth::UserPass("rpcuser".to_string(), "secret".to_string());
+        let socket = value("127.0.0.1:8332", true);
+        let invalid_socket = value("bad socket", false);
+        let cookie_values = cookie_auth_values(true);
+        let invalid_userpass_values = userpass_auth_values(false);
+
+        let _ = bitcoind(
+            true,
+            Network::Bitcoin,
+            &bitcoind_config(cookie),
+            840_000,
+            Some(true),
+            true,
+            Some(NodeFlavor::Knots),
+        );
+        let _ = bitcoind(
+            true,
+            Network::Testnet,
+            &bitcoind_config(userpass),
+            0,
+            Some(false),
+            false,
+            None,
+        );
+        let _ = bitcoind_edit(
+            true,
+            Network::Bitcoin,
+            840_000,
+            &socket,
+            &cookie_values,
+            &RpcAuthType::CookieFile,
+            false,
+        );
+        let _ = bitcoind_edit(
+            false,
+            Network::Signet,
+            0,
+            &invalid_socket,
+            &invalid_userpass_values,
+            &RpcAuthType::UserPass,
+            true,
+        );
+
+        let electrum_cfg = electrum_config();
+        let electrum_addr = value("ssl://electrum.example:50002", true);
+        let invalid_electrum_addr = value("", false);
+        let _ = electrum_edit(true, Network::Bitcoin, 840_000, &electrum_addr, false, true);
+        let _ = electrum_edit(
+            false,
+            Network::Regtest,
+            0,
+            &invalid_electrum_addr,
+            true,
+            false,
+        );
+        let _ = electrum(
+            true,
+            Network::Bitcoin,
+            &electrum_cfg,
+            840_000,
+            Some(true),
+            true,
+        );
+        let _ = electrum(false, Network::Bitcoin, &electrum_cfg, 0, None, false);
+        let _ = is_running_label::<SettingsEditMessage>(Some(true));
+        let _ = is_running_label::<SettingsEditMessage>(Some(false));
+        let _ = is_running_label::<SettingsEditMessage>(None);
+    }
+
+    #[test]
+    fn rescan_view_builds_progress_validation_and_processing_states() {
+        let good_year = value("2024", true);
+        let good_month = value("7", true);
+        let good_day = value("20", true);
+        let bad_year = value("abcd", false);
+
+        let _ = rescan(
+            &good_year,
+            &good_month,
+            &good_day,
+            Some(0.42),
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+        );
+        let _ = rescan(
+            &good_year,
+            &good_month,
+            &good_day,
+            None,
+            true,
+            false,
+            true,
+            false,
+            false,
+            false,
+        );
+        let _ = rescan(
+            &bad_year,
+            &good_month,
+            &good_day,
+            None,
+            false,
+            true,
+            false,
+            true,
+            true,
+            true,
+        );
+    }
+
+    #[test]
+    fn node_backend_status_builds_switch_sync_warning_and_setup_states() {
+        let stats = NodeNetStats {
+            connections_in: 2,
+            connections_out: 8,
+            upload_used: 45 * 1024 * 1024,
+            upload_target: 1024 * 1024 * 1024,
+            onion_address: Some("abc123.onion".to_string()),
+        };
+
+        let _ = node_backend_status(
+            "COINCUBE | Connect",
+            icon::network_icon(),
+            Some(0.91),
+            Some(true),
+            Some("UpdateTip: headers progress"),
+            true,
+            true,
+            true,
+            false,
+            false,
+            Some("Heads up".to_string()),
+        );
+        let _ = node_backend_status(
+            "Local node",
+            icon::bitcoin_icon(),
+            Some(0.995),
+            Some(false),
+            None,
+            false,
+            true,
+            false,
+            false,
+            true,
+            None,
+        );
+        let _ = inbound_tor_section(false, true, true, false, false, false, None);
+        let _ = inbound_tor_section(true, true, true, true, true, true, Some(&stats));
+        let _ = inbound_tor_section(true, false, false, true, false, true, Some(&stats));
+    }
+
+    #[test]
+    fn node_setup_and_resource_panels_build_for_all_stages() {
+        let addr = value("127.0.0.1:8332", true);
+        let invalid_addr = value("bad", false);
+        let cookie_values = cookie_auth_values(false);
+        let userpass_values = userpass_auth_values(false);
+        let prune = value("15000", true);
+        let max_mempool = value("", true);
+
+        let _ = pending_node_setup_panel(&addr, &cookie_values, &RpcAuthType::CookieFile, false);
+        let _ = pending_node_setup_panel(
+            &invalid_addr,
+            &userpass_values,
+            &RpcAuthType::UserPass,
+            true,
+        );
+        let _ = node_setup_mode_picker_panel();
+        let _ = internal_node_setup_panel(NodeFlavor::Knots, true, false, false, None, 72.0);
+        let _ = internal_node_setup_panel(NodeFlavor::Core, false, true, false, None, 0.0);
+        let _ = internal_node_setup_panel(NodeFlavor::Knots, false, false, true, None, 100.0);
+        let _ = internal_node_setup_panel(
+            NodeFlavor::Core,
+            false,
+            false,
+            false,
+            Some("download failed"),
+            0.0,
+        );
+        let _ = flavor_switch_confirm(NodeFlavor::Knots);
+        let _ = node_resources_section(&prune, &max_mempool, false);
+        let _ = node_resources_section(&prune, &max_mempool, true);
+
+        assert_eq!(NodeResources::small_computer().max_mempool_mb, Some(100));
+        assert_eq!(NodeResources::regular_computer().max_mempool_mb, None);
+    }
+}

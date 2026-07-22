@@ -61,3 +61,29 @@ impl ResponseExt for Response {
         Ok(self)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::NotSuccessResponseInfo;
+
+    #[test]
+    fn message_unwraps_standard_api_error_envelope() {
+        let info = NotSuccessResponseInfo {
+            status_code: 400,
+            text: r#"{"success":false,"error":{"code":"bad_request","message":"Invalid cube"}}"#
+                .to_string(),
+        };
+
+        assert_eq!(info.message(), "Invalid cube");
+    }
+
+    #[test]
+    fn message_falls_back_to_raw_body_for_non_envelope_errors() {
+        let info = NotSuccessResponseInfo {
+            status_code: 500,
+            text: "plain upstream failure".to_string(),
+        };
+
+        assert_eq!(info.message(), "plain upstream failure");
+    }
+}

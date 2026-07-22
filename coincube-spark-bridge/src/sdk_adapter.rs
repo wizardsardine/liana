@@ -34,6 +34,12 @@ pub const STABLE_BALANCE_LABEL: &str = "USDB";
 /// staging builds at an alternate allowlisted domain.
 const DEFAULT_LNURL_DOMAIN: &str = "coincube.io";
 
+fn configured_lnurl_domain(raw: Option<String>) -> String {
+    raw.map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_LNURL_DOMAIN.to_string())
+}
+
 /// Cloneable SDK handle. The inner [`BreezSdk`] is `Send + Sync`, so the
 /// bridge can freely share it across async tasks serving different
 /// JSON-RPC requests concurrently.
@@ -67,12 +73,7 @@ pub fn mainnet_config(api_key: String) -> breez_sdk_spark::Config {
     // configured" and fall back to the default. An empty string
     // would otherwise be handed to the SDK as a valid domain and
     // produce nonsense Lightning Addresses like `user@`.
-    let lnurl_domain = std::env::var("COINCUBE_LNURL_DOMAIN")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| DEFAULT_LNURL_DOMAIN.to_string());
-    config.lnurl_domain = Some(lnurl_domain);
+    config.lnurl_domain = Some(configured_lnurl_domain(std::env::var("COINCUBE_LNURL_DOMAIN").ok()));
     // Cross-chain stablecoin send (USDT/USDC to EVM/Solana/Tron). Opt-in: the
     // providers (Orchestra, Boltz) run background work such as websockets, so
     // the SDK leaves them off unless this is set. Mainnet-only, which is all
@@ -128,4 +129,65 @@ pub async fn connect_mainnet(
         .build()
         .await?;
     Ok(SdkHandle { sdk: Arc::new(sdk) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn configured_lnurl_domain_falls_back_for_missing_or_blank_values() {
+        assert_eq!(configured_lnurl_domain(None), DEFAULT_LNURL_DOMAIN);
+        assert_eq!(
+            configured_lnurl_domain(Some(String::new())),
+            DEFAULT_LNURL_DOMAIN
+        );
+        assert_eq!(
+            configured_lnurl_domain(Some(" \t\n ".to_string())),
+            DEFAULT_LNURL_DOMAIN
+        );
+    }
+
+    #[test]
+    fn configured_lnurl_domain_trims_custom_domain() {
+        assert_eq!(
+            configured_lnurl_domain(Some(" staging.coincube.io ".to_string())),
+            "staging.coincube.io"
+        );
+    }
+
+    #[test]
+    fn mainnet_config_wires_stable_balance_and_claim_fee_defaults() {
+        let config = mainnet_config("api-key".to_string());
+
+        assert_eq!(config.api_key.as_deref(), Some("api-key"));
+
+        let stable_balance = config
+            .stable_balance_config
+            .as_ref()
+            .expect("stable balance config should be enabled");
+        assert_eq!(stable_balance.tokens.len(), 1);
+        assert_eq!(stable_balance.tokens[0].label, STABLE_BALANCE_LABEL);
+        assert_eq!(
+            stable_balance.tokens[0].token_identifier,
+            USDB_MAINNET_TOKEN_IDENTIFIER
+        );
+        assert!(stable_balance.default_active_label.is_none());
+        assert!(stable_balance.threshold_sats.is_none());
+        assert!(stable_balance.max_slippage_bps.is_none());
+
+        let cross_chain = config
+            .cross_chain_config
+            .as_ref()
+            .expect("cross-chain config should be enabled");
+        assert!(cross_chain.default_slippage_bps.is_none());
+        assert!(cross_chain.default_target_overpay_bps.is_none());
+
+        assert!(matches!(
+            config.max_deposit_claim_fee,
+            Some(MaxFee::NetworkRecommended {
+                leeway_sat_per_vbyte: 5
+            })
+        ));
+    }
 }

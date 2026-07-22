@@ -1,29 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Rust coverage for the main workspace. This intentionally excludes fuzz
-# targets: libFuzzer binaries do not behave like normal test binaries under
-# `-- --list` or coverage collection.
+# Rust coverage for the standalone Spark bridge workspace. The bridge is
+# intentionally excluded from the root workspace so its Breez Spark dependency
+# graph can stay isolated from the GUI's Breez Liquid dependency graph.
 #
 # Common local usage:
-#   ./contrib/coverage.sh
-#   HTML=1 ./contrib/coverage.sh
-#   FAIL_UNDER_LINES=45 ./contrib/coverage.sh
-#   COVERAGE_TARGET_LINES=50 FAIL_UNDER_LINES=45 ./contrib/coverage.sh
-#   CARGO_TOOLCHAIN=nightly COVERAGE_DOCTESTS=1 ./contrib/coverage.sh
+#   ./contrib/coverage-bridge.sh
+#   HTML=1 ./contrib/coverage-bridge.sh
+#   FAIL_UNDER_LINES=10 ./contrib/coverage-bridge.sh
 
+BRIDGE_MANIFEST="${BRIDGE_MANIFEST:-coincube-spark-bridge/Cargo.toml}"
 OUTPUT_DIR="${OUTPUT_DIR:-target/coverage}"
-LCOV_PATH="${LCOV_PATH:-${OUTPUT_DIR}/lcov.info}"
-SUMMARY_PATH="${SUMMARY_PATH:-${OUTPUT_DIR}/summary.json}"
+LCOV_PATH="${LCOV_PATH:-${OUTPUT_DIR}/bridge-lcov.info}"
+SUMMARY_PATH="${SUMMARY_PATH:-${OUTPUT_DIR}/bridge-summary.json}"
 HTML="${HTML:-0}"
 COVERAGE_CLEAN="${COVERAGE_CLEAN:-1}"
 CARGO_TOOLCHAIN="${CARGO_TOOLCHAIN:-}"
-COVERAGE_DOCTESTS="${COVERAGE_DOCTESTS:-0}"
 COVERAGE_TARGET_LINES="${COVERAGE_TARGET_LINES:-}"
-
-# The GUI embeds this value at compile time. Unit and integration tests do not
-# contact Breez unless explicitly configured, so mirror CI's harmless default.
-export BREEZ_API_KEY="${BREEZ_API_KEY:-DUMMY_BREEZ_API_KEY}"
 
 if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
   cat >&2 <<'EOF'
@@ -44,25 +38,14 @@ fi
 cargo_llvm_cov+=(llvm-cov)
 
 test_args=(
+  --manifest-path "${BRIDGE_MANIFEST}"
   --workspace
-  --exclude coincube-fuzz
-  --lib
-  --bins
-  --tests
   --no-report
 )
 
 report_args=(
-  --ignore-filename-regex '/(target|fuzz)/'
-)
-
-if [[ "${COVERAGE_DOCTESTS}" == "1" ]]; then
-  report_args+=(--doctests)
-fi
-
-test_command=(
-  "${cargo_llvm_cov[@]}"
-  "${test_args[@]}"
+  --manifest-path "${BRIDGE_MANIFEST}"
+  --ignore-filename-regex '/target/'
 )
 
 if [[ -n "${FAIL_UNDER_LINES:-}" ]]; then
@@ -76,22 +59,12 @@ if [[ -n "${FAIL_UNDER_REGIONS:-}" ]]; then
 fi
 
 if [[ "${COVERAGE_CLEAN}" == "1" ]]; then
-  "${cargo_llvm_cov[@]}" clean --workspace
+  "${cargo_llvm_cov[@]}" clean --manifest-path "${BRIDGE_MANIFEST}" --workspace
 fi
 
 set +e
-"${test_command[@]}" "$@"
+"${cargo_llvm_cov[@]}" "${test_args[@]}" "$@"
 run_status=$?
-
-doctest_status=0
-if [[ "${COVERAGE_DOCTESTS}" == "1" ]]; then
-  "${cargo_llvm_cov[@]}" \
-    --workspace \
-    --exclude coincube-fuzz \
-    --doc \
-    --no-report
-  doctest_status=$?
-fi
 
 "${cargo_llvm_cov[@]}" report \
   "${report_args[@]}" \
@@ -111,13 +84,13 @@ if [[ "${HTML}" == "1" ]]; then
   "${cargo_llvm_cov[@]}" report \
     "${report_args[@]}" \
     --html \
-    --output-dir "${OUTPUT_DIR}/html"
+    --output-dir "${OUTPUT_DIR}/bridge-html"
   html_status=$?
 fi
 set -e
 
 cat <<EOF
-Coverage artifacts written:
+Bridge coverage artifacts written:
   LCOV:    ${LCOV_PATH}
   Summary: ${SUMMARY_PATH}
 EOF
@@ -127,26 +100,22 @@ if [[ -n "${COVERAGE_TARGET_LINES}" ]]; then
 fi
 
 if [[ "${HTML}" == "1" ]]; then
-  echo "  HTML:    ${OUTPUT_DIR}/html/index.html"
+  echo "  HTML:    ${OUTPUT_DIR}/bridge-html/index.html"
 fi
 
 if [[ "${run_status}" -ne 0 ]]; then
-  echo "Coverage test run failed with exit status ${run_status}." >&2
+  echo "Bridge coverage test run failed with exit status ${run_status}." >&2
   exit "${run_status}"
 fi
-if [[ "${doctest_status}" -ne 0 ]]; then
-  echo "Coverage doctest run failed with exit status ${doctest_status}." >&2
-  exit "${doctest_status}"
-fi
 if [[ "${lcov_status}" -ne 0 ]]; then
-  echo "LCOV generation failed with exit status ${lcov_status}." >&2
+  echo "Bridge LCOV generation failed with exit status ${lcov_status}." >&2
   exit "${lcov_status}"
 fi
 if [[ "${summary_status}" -ne 0 ]]; then
-  echo "Coverage summary generation failed with exit status ${summary_status}." >&2
+  echo "Bridge coverage summary generation failed with exit status ${summary_status}." >&2
   exit "${summary_status}"
 fi
 if [[ "${html_status}" -ne 0 ]]; then
-  echo "Coverage HTML generation failed with exit status ${html_status}." >&2
+  echo "Bridge coverage HTML generation failed with exit status ${html_status}." >&2
   exit "${html_status}"
 fi

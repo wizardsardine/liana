@@ -1647,11 +1647,179 @@ pub async fn app_backup_export(
 
 #[cfg(test)]
 mod tests {
-    use std::env;
+    use std::{
+        collections::hash_map::DefaultHasher,
+        env,
+        hash::{Hash, Hasher},
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use encrypted_backup::Version;
 
     use super::*;
+
+    fn unique_temp_path(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after unix epoch")
+            .as_nanos();
+        env::temp_dir()
+            .join(format!(
+                "coincube-export-test-{}-{unique}",
+                std::process::id()
+            ))
+            .join(label)
+    }
+
+    #[test]
+    fn import_export_type_messages_status_and_hashing_are_stable() {
+        assert_eq!(
+            ImportExportType::Transactions.end_message(),
+            "Export successful!"
+        );
+        assert_eq!(
+            ImportExportType::LiquidPayments.end_message(),
+            "Export successful!"
+        );
+        assert_eq!(
+            ImportExportType::ExportPsbt("psbt".to_string()).end_message(),
+            "Export successful!"
+        );
+        assert_eq!(
+            ImportExportType::ExportXpub("xpub".to_string()).end_message(),
+            "Export successful!"
+        );
+        assert_eq!(
+            ImportExportType::ExportLabels.end_message(),
+            "Export successful!"
+        );
+        assert_eq!(
+            ImportExportType::ImportPsbt(None).end_message(),
+            "Import successful"
+        );
+        assert_eq!(
+            ImportExportType::ImportXpub(Network::Bitcoin).end_message(),
+            "Import successful"
+        );
+        assert_eq!(
+            ImportExportType::FromBackup.end_message(),
+            "Import successful"
+        );
+        assert_eq!(
+            ImportExportType::ImportDescriptor.end_message(),
+            "Import successful"
+        );
+
+        let mut export = Export::new(
+            None,
+            None,
+            Box::new(PathBuf::from("out.txt")),
+            ImportExportType::ExportPsbt("psbt".to_string()),
+        );
+        assert!(matches!(export.state(), Status::Init));
+        export.sender = None;
+        assert!(matches!(export.state(), Status::Stopped));
+
+        let data = ExportSubscriptionData {
+            daemon: None,
+            breez_client: None,
+            path: PathBuf::from("out.txt"),
+            export_type: ImportExportType::ExportPsbt("psbt-a".to_string()),
+        };
+        let mut hasher = DefaultHasher::new();
+        data.hash(&mut hasher);
+        assert_ne!(hasher.finish(), 0);
+
+        let _: view::Message = ImportExportMessage::Close.into();
+    }
+
+    #[test]
+    fn import_export_error_display_covers_user_facing_variants() {
+        for error in [
+            Error::Io("disk".to_string()),
+            Error::HandleLost,
+            Error::UnexpectedEnd,
+            Error::JoinError("join".to_string()),
+            Error::ChannelLost,
+            Error::NoParentDir,
+            Error::Daemon("offline".to_string()),
+            Error::TxTimeMissing,
+            Error::DaemonMissing,
+            Error::ParsePsbt,
+            Error::ParseDescriptor,
+            Error::Bip329Export("labels".to_string()),
+            Error::BackupImport("backup".to_string()),
+            Error::ParseXpub,
+            Error::XpubNetwork,
+            Error::TxidNotMatch,
+            Error::InsanePsbt,
+            Error::OutpointNotOwned,
+            Error::UnknownFormat,
+            Error::EncryptionFailed,
+        ] {
+            assert!(!error.to_string().is_empty());
+        }
+
+        for error in [
+            RestoreBackupError::Network,
+            RestoreBackupError::InvalidDescriptor,
+            RestoreBackupError::WrongDescriptor,
+            RestoreBackupError::NoAccount,
+            RestoreBackupError::SeveralAccounts,
+            RestoreBackupError::LianaConnectNotSupported,
+            RestoreBackupError::GetLabels,
+            RestoreBackupError::LabelsNotEmpty,
+            RestoreBackupError::InvalidPsbt,
+            RestoreBackupError::Daemon(DaemonError::NoAnswer),
+        ] {
+            assert!(!error.to_string().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn export_string_creates_parent_directory_and_reports_progress() {
+        let path = unique_temp_path("nested/out.txt");
+        let root = path
+            .parent()
+            .and_then(Path::parent)
+            .expect("test path has parent")
+            .to_path_buf();
+        let (sender, mut receiver) = unbounded_channel();
+
+        export_string(&sender, path.clone(), "hello export".to_string())
+            .await
+            .expect("export string");
+
+        assert_eq!(
+            fs::read_to_string(&path).expect("read exported file"),
+            "hello export"
+        );
+        assert!(matches!(receiver.try_recv(), Ok(Progress::Progress(100.0))));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn import_xpub_and_parser_failures_are_reported_without_side_effects() {
+        let path = unique_temp_path("bad-xpub.txt");
+        fs::create_dir_all(path.parent().expect("test path has parent")).unwrap();
+        fs::write(&path, "not an xpub").unwrap();
+        let (sender, _receiver) = unbounded_channel();
+
+        let err = import_xpub(&sender, path.clone(), Network::Bitcoin)
+            .await
+            .expect_err("invalid xpub should fail");
+        assert!(matches!(err, Error::ParseXpub));
+        assert!(parse_raw_xpub("not an xpub").is_none());
+        assert!(parse_coldcard_xpub_json("{bad json").is_none());
+        assert!(parse_coldcard_xpub_ccxp("{bad json").is_none());
+
+        let root = path
+            .parent()
+            .and_then(Path::parent)
+            .expect("test path has parent")
+            .to_path_buf();
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[tokio::test]
     async fn test_import_descriptor_from_file() {

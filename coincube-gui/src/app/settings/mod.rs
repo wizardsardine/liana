@@ -47,16 +47,33 @@ impl Settings {
         let mut path = network_dir.path().to_path_buf();
         path.push(SETTINGS_FILE_NAME);
 
-        std::fs::read(path)
-            .map_err(|e| match e.kind() {
-                std::io::ErrorKind::NotFound => SettingsError::NotFound,
-                _ => SettingsError::ReadingFile(format!("Reading settings file: {}", e)),
-            })
-            .and_then(|file_content| {
-                serde_json::from_slice::<Settings>(&file_content).map_err(|e| {
-                    SettingsError::ReadingFile(format!("Parsing settings file: {}", e))
-                })
-            })
+        // Retry the transient sharing/permission failure Windows raises when a
+        // virus scanner or search indexer briefly holds settings.json (or a
+        // just-written file's lock hasn't been released yet): ERROR_ACCESS_DENIED
+        // ("os error 5"). A genuinely absent file is ErrorKind::NotFound, which
+        // is never retried and maps to SettingsError::NotFound as before.
+        let mut attempt = 0u32;
+        let file_content = loop {
+            match std::fs::read(&path) {
+                Ok(bytes) => break bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(SettingsError::NotFound)
+                }
+                Err(e) if attempt < 5 && e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(20 * u64::from(attempt)));
+                }
+                Err(e) => {
+                    return Err(SettingsError::ReadingFile(format!(
+                        "Reading settings file: {}",
+                        e
+                    )))
+                }
+            }
+        };
+
+        serde_json::from_slice::<Settings>(&file_content)
+            .map_err(|e| SettingsError::ReadingFile(format!("Parsing settings file: {}", e)))
     }
 }
 
@@ -68,26 +85,70 @@ where
     F: FnOnce(Settings) -> Option<Settings>,
 {
     let path = network_dir.path().join(SETTINGS_FILE_NAME);
-    let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
 
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)
-        .await
-        .map_err(|e| SettingsError::ReadingFile(format!("Opening file: {}", e)))?
+    // Whether settings.json already existed before we touch anything. Only a
+    // brand-new file is safe to treat as "no prior settings"; a pre-existing
+    // file that reads back empty is corrupt/truncated and must NOT be silently
+    // replaced with defaults (that would drop the stored cube configuration),
+    // so it falls through to a parse error below. Checked before the create.
+    let file_existed = tokio::fs::try_exists(&path).await.unwrap_or(false);
+
+    // Open the settings file, retrying briefly on the transient failures
+    // Windows surfaces for freshly-created files. OpenOptions creates the file
+    // but never its parent directories, so we (re)create the network dir each
+    // attempt; and on Windows a virus scanner or search indexer momentarily
+    // holds a new file (or its just-created parent), so create(true) can return
+    // ERROR_PATH_NOT_FOUND ("os error 3") or a sharing/permission error even
+    // though the path is valid. Both map to NotFound / PermissionDenied — retry
+    // those with a short backoff; surface anything else immediately. This also
+    // hardens the real app, where AV software locks settings.json in the same way.
+    let raw_file = {
+        let mut attempt = 0u32;
+        loop {
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    SettingsError::WritingFile(format!("Creating settings dir: {}", e))
+                })?;
+            }
+            match OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)
+                .await
+            {
+                Ok(f) => break f,
+                Err(e)
+                    if attempt < 5
+                        && matches!(
+                            e.kind(),
+                            std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+                        ) =>
+                {
+                    attempt += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(20 * u64::from(attempt)))
+                        .await;
+                }
+                Err(e) => return Err(SettingsError::ReadingFile(format!("Opening file: {}", e))),
+            }
+        }
+    };
+
+    let mut file = raw_file
         .lock_write()
         .await
         .map_err(|e| SettingsError::ReadingFile(format!("Locking file: {:?}", e)))?;
 
-    let settings = if file_exists {
+    // A file we created in this call starts empty and means "no prior
+    // settings". A file that already existed is parsed — including when it reads
+    // back empty, which surfaces as a parse error rather than silently
+    // discarding the previous contents.
+    let settings = if file_existed {
         let mut file_content = Vec::new();
         file.read_to_end(&mut file_content)
             .await
             .map_err(|e| SettingsError::ReadingFile(format!("Reading file content: {}", e)))?;
-
         serde_json::from_slice::<Settings>(&file_content)
             .map_err(|e| SettingsError::ReadingFile(e.to_string()))?
     } else {
@@ -96,8 +157,10 @@ where
 
     let settings = updater(settings);
 
-    // If updater returns None, delete the file
+    // If updater returns None, delete the file. Drop the locked handle first so
+    // the file isn't held open when we unlink it (required on Windows).
     let Some(settings) = settings else {
+        drop(file);
         tokio::fs::remove_file(&path)
             .await
             .map_err(|e| SettingsError::DeletingFile(e.to_string()))?;
@@ -120,6 +183,20 @@ where
         .set_len(content.len() as u64)
         .await
         .map_err(|e| SettingsError::WritingFile(format!("Failed to truncate file: {}", e)))?;
+
+    // Flush and fsync so the bytes are durably on disk, then drop the handle to
+    // release the lock — all before returning. Without this a subsequent reader
+    // (Settings::from_file takes no lock) can observe stale/empty content on
+    // Windows, where dropping an async handle does not guarantee the write has
+    // landed yet.
+    file.flush()
+        .await
+        .map_err(|e| SettingsError::WritingFile(format!("Failed to flush settings: {}", e)))?;
+    file.inner_mut()
+        .sync_all()
+        .await
+        .map_err(|e| SettingsError::WritingFile(format!("Failed to sync settings: {}", e)))?;
+    drop(file);
 
     Ok(())
 }
@@ -486,9 +563,16 @@ impl CubeSettings {
         // Generate a random salt
         let salt = SaltString::generate(&mut OsRng);
 
-        // Configure Argon2id with reasonable parameters
-        // m_cost: 19456 KiB (19 MiB), t_cost: 2 iterations, p_cost: 1 thread
+        // Configure Argon2id. Production uses ~19 MiB of memory (m_cost 19456
+        // KiB, t_cost 2, p_cost 1) to make a PIN hash costly to brute-force.
+        // Test builds drop to the argon2 minimum: the suite hashes/verifies PINs
+        // hundreds of times, and paying 19 MiB per op starves CI enough to make
+        // PIN-verify tests flake under parallel load. Verification reads m/t/p
+        // from the stored PHC string, so a hash made at either cost round-trips.
+        #[cfg(not(test))]
         let params = Params::new(19456, 2, 1, None)?;
+        #[cfg(test)]
+        let params = Params::new(8, 1, 1, None)?;
         let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
 
         // Hash the PIN

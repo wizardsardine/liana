@@ -2976,6 +2976,127 @@ impl GlobalHome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use coincube_core::miniscript::bitcoin::{OutPoint, Txid};
+    use std::str::FromStr;
+
+    const MAINNET_ADDR: &str = "bc1qvrl2849aggm6qry9ea7xqp2kk39j8vaa8r3cwg";
+
+    fn address() -> Address {
+        Address::from_str(MAINNET_ADDR).unwrap().assume_checked()
+    }
+
+    fn outpoint(n: u32) -> OutPoint {
+        OutPoint::new(Txid::from_str(&format!("{n:064x}")).unwrap(), n)
+    }
+
+    fn coin(
+        n: u32,
+        sats: u64,
+        block_height: Option<i32>,
+        is_from_self: bool,
+        spent: bool,
+    ) -> crate::daemon::model::Coin {
+        crate::daemon::model::Coin {
+            amount: Amount::from_sat(sats),
+            outpoint: outpoint(n),
+            address: address(),
+            block_height,
+            derivation_index: ChildNumber::from(n),
+            spend_info: spent.then(|| coincubed::commands::LCSpendInfo {
+                txid: Txid::from_str(&format!("{:064x}", n + 100)).unwrap(),
+                height: None,
+            }),
+            is_immature: false,
+            is_change: false,
+            is_from_self,
+        }
+    }
+
+    fn liquid_bitcoin_payment(payment_type: PaymentType) -> breez_sdk_liquid::prelude::Payment {
+        breez_sdk_liquid::prelude::Payment {
+            destination: Some("destination".to_string()),
+            tx_id: Some("txid".to_string()),
+            unblinding_data: Some("unblind".to_string()),
+            timestamp: 1_722_000_000,
+            amount_sat: 25_000,
+            fees_sat: 125,
+            swapper_fees_sat: Some(50),
+            payment_type,
+            status: breez_sdk_liquid::model::PaymentState::Pending,
+            details: PaymentDetails::Bitcoin {
+                swap_id: "swap-id".to_string(),
+                bitcoin_address: MAINNET_ADDR.to_string(),
+                description: "chain swap".to_string(),
+                auto_accepted_fees: true,
+                liquid_expiration_blockheight: 123,
+                bitcoin_expiration_blockheight: 456,
+                lockup_tx_id: Some("lockup".to_string()),
+                claim_tx_id: Some("claim".to_string()),
+                refund_tx_id: Some("refund".to_string()),
+                refund_tx_amount_sat: Some(900),
+            },
+        }
+    }
+
+    #[test]
+    fn default_transfer_feerate_is_valid_and_unwarned() {
+        let feerate = default_transfer_feerate();
+
+        assert_eq!(feerate.value, DEFAULT_TRANSFER_FEERATE_SATS_VB);
+        assert!(feerate.valid);
+        assert_eq!(feerate.warning, None);
+    }
+
+    #[test]
+    fn cache_vault_pending_receive_counts_only_external_unconfirmed_unspent_coins() {
+        let mut cache = Cache::default();
+        cache.daemon_cache.coins = vec![
+            coin(1, 5_000, None, false, false),
+            coin(2, 7_000, None, false, false),
+            coin(3, 11_000, Some(100), false, false),
+            coin(4, 13_000, None, true, false),
+            coin(5, 17_000, None, false, true),
+        ];
+
+        assert_eq!(cache_vault_pending_receive_sats(&cache), 12_000);
+    }
+
+    #[test]
+    fn receive_address_info_exposes_address_label_target_and_mutable_labels() {
+        let mut info = ReceiveAddressInfo {
+            address: address(),
+            index: ChildNumber::from(7),
+            labels: HashMap::new(),
+        };
+        let address_key = info.address.to_string();
+
+        assert_eq!(
+            info.labelled(),
+            vec![LabelItem::Address(info.address.clone())]
+        );
+
+        info.labels()
+            .insert(address_key.clone(), "deposit address".to_string());
+
+        assert_eq!(
+            info.labels.get(&address_key).map(String::as_str),
+            Some("deposit address")
+        );
+    }
+
+    #[test]
+    fn bitcoin_send_swap_id_only_returns_ids_for_sent_bitcoin_payments() {
+        let send = liquid_bitcoin_payment(PaymentType::Send);
+        let receive = liquid_bitcoin_payment(PaymentType::Receive);
+
+        assert_eq!(bitcoin_send_swap_id(&send).as_deref(), Some("swap-id"));
+        assert_eq!(bitcoin_send_swap_id(&receive), None);
+    }
+
+    #[test]
+    fn modal_default_debug_is_stable() {
+        assert_eq!(format!("{:?}", Modal::default()), "None");
+    }
 
     /// Breez-involving legs compose `MIN_TRANSFER_SATS` with the SDK's own
     /// minimum. Whichever is larger wins.

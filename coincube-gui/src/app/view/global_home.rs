@@ -2141,6 +2141,145 @@ fn transfer_available(has_liquid: bool, has_vault: bool, has_spark: bool) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        app::{
+            cache::FiatPriceRequest,
+            settings::{display::DisplayMode, unit::BitcoinDisplayUnit},
+            view::shared::feerate_picker::FeeratePreset,
+        },
+        services::fiat::{Currency, PriceSource},
+    };
+    use coincube_core::miniscript::bitcoin::{bip32::ChildNumber, Address};
+    use std::{collections::HashMap, str::FromStr};
+
+    const MAINNET_ADDR: &str = "bc1qvrl2849aggm6qry9ea7xqp2kk39j8vaa8r3cwg";
+
+    struct ViewFixture {
+        entered_amount: form::Value<String>,
+        invalid_amount: form::Value<String>,
+        transfer_feerate: form::Value<String>,
+        invalid_feerate: form::Value<String>,
+        receive_address: Address,
+        receive_index: ChildNumber,
+        labels: HashMap<String, String>,
+        labels_editing: HashMap<String, form::Value<String>>,
+        fiat_converter: FiatAmountConverter,
+    }
+
+    impl ViewFixture {
+        fn new() -> Self {
+            let receive_address = Address::from_str(MAINNET_ADDR).unwrap().assume_checked();
+            let mut labels = HashMap::new();
+            labels.insert(receive_address.to_string(), "Vault receive".to_string());
+
+            Self {
+                entered_amount: form::Value {
+                    value: "50000".to_string(),
+                    valid: true,
+                    warning: None,
+                },
+                invalid_amount: form::Value {
+                    value: "not sats".to_string(),
+                    valid: false,
+                    warning: Some("Invalid amount format"),
+                },
+                transfer_feerate: form::Value {
+                    value: "3".to_string(),
+                    valid: true,
+                    warning: None,
+                },
+                invalid_feerate: form::Value {
+                    value: "0".to_string(),
+                    valid: false,
+                    warning: Some("Feerate must be positive"),
+                },
+                receive_address,
+                receive_index: ChildNumber::from(0),
+                labels,
+                labels_editing: HashMap::new(),
+                fiat_converter: FiatAmountConverter::new(
+                    50_000.0,
+                    Some(1_722_000_000),
+                    FiatPriceRequest::new(PriceSource::Coincube, Currency::USD),
+                )
+                .unwrap(),
+            }
+        }
+
+        fn config(
+            &self,
+            step: usize,
+            direction: Option<TransferDirection>,
+            wallet_picker: Option<PickerSide>,
+        ) -> GlobalViewConfig<'_> {
+            GlobalViewConfig {
+                liquid_balance: Amount::from_sat(125_000),
+                spark_balance: Amount::from_sat(250_000),
+                usdt_balance: 100_000_000,
+                usdt_balance_error: false,
+                pending_liquid_send_sats: 1_000,
+                pending_usdt_send_sats: 2_000,
+                pending_liquid_receive_sats: 3_000,
+                pending_usdt_receive_sats: 4_000,
+                vault_pending_send_sats: 5_000,
+                vault_pending_receive_sats: 6_000,
+                vault_balance: Amount::from_sat(375_000),
+                fiat_converter: Some(self.fiat_converter),
+                balance_masked: false,
+                total_balance_loading: false,
+                spark_balance_loaded: true,
+                liquid_balance_loaded: true,
+                usdt_balance_loaded: true,
+                vault_loaded: true,
+                display_mode: DisplayMode::FiatNative,
+                has_vault: true,
+                has_spark: true,
+                has_liquid: true,
+                current_view: HomeView { step },
+                transfer_direction: direction,
+                transfer_from: direction.map(|d| d.from_kind()),
+                transfer_to: direction.map(|d| d.to_kind()),
+                wallet_picker,
+                entered_amount: &self.entered_amount,
+                receive_address: Some(&self.receive_address),
+                receive_index: Some(&self.receive_index),
+                labels: &self.labels,
+                labels_editing: &self.labels_editing,
+                address_expanded: false,
+                bitcoin_unit: BitcoinDisplayUnit::Sats,
+                onchain_send_limit: Some((25_000, 5_000_000)),
+                onchain_receive_limit: Some((25_000, 5_000_000)),
+                is_sending: false,
+                is_tx_signed: false,
+                prepare_onchain_send_response: None,
+                spend_tx_fees: None,
+                transfer_feerate: &self.transfer_feerate,
+                transfer_feerate_loading: None,
+                spark_send_fee_sat: None,
+                pending_spark_incoming: Some(PendingTransfer {
+                    amount: Amount::from_sat(31_000),
+                    stage: TransferStage::PendingDeposit,
+                }),
+                pending_vault_incoming: Some(PendingTransfer {
+                    amount: Amount::from_sat(41_000),
+                    stage: TransferStage::PendingDeposit,
+                }),
+                btc_usd_price: Some(50_000.0),
+            }
+        }
+    }
+
+    fn directions() -> [TransferDirection; 6] {
+        use TransferDirection::*;
+        [
+            LiquidToVault,
+            VaultToLiquid,
+            LiquidToSpark,
+            SparkToLiquid,
+            VaultToSpark,
+            SparkToVault,
+        ]
+    }
 
     /// Every directed pair of distinct wallets must map to exactly one
     /// `TransferDirection`, and same-wallet pairs must map to `None`.
@@ -2211,6 +2350,145 @@ mod tests {
         assert_eq!(WalletKind::Liquid.badge(), "LIQUID");
         assert_eq!(WalletKind::Spark.badge(), "SPARK");
         assert_eq!(WalletKind::Vault.badge(), "VAULT");
+    }
+
+    #[test]
+    fn wallet_kind_labels_and_direction_display_are_stable() {
+        assert_eq!(WalletKind::Liquid.label(), "Liquid");
+        assert_eq!(WalletKind::Spark.label(), "Spark");
+        assert_eq!(WalletKind::Vault.label(), "Vault");
+
+        for direction in directions() {
+            assert_eq!(direction.from_wallet(), direction.from_kind().label());
+            assert_eq!(direction.to_wallet(), direction.to_kind().label());
+            assert_eq!(
+                direction.display(),
+                format!("{} → {}", direction.from_wallet(), direction.to_wallet())
+            );
+        }
+    }
+
+    #[test]
+    fn home_view_step_state_moves_forward_back_and_resets() {
+        let mut view = HomeView::default();
+
+        view.previous();
+        assert_eq!(view.step, 0);
+
+        view.next();
+        view.next();
+        assert_eq!(view.step, 2);
+
+        view.previous();
+        assert_eq!(view.step, 1);
+
+        view.reset();
+        assert_eq!(view.step, 0);
+    }
+
+    #[test]
+    fn global_home_overview_builds_loaded_masked_loading_and_absent_wallet_states() {
+        let fixture = ViewFixture::new();
+
+        let _ = global_home_view(fixture.config(0, None, None));
+
+        let mut masked = fixture.config(0, None, None);
+        masked.balance_masked = true;
+        masked.display_mode = DisplayMode::BitcoinNative;
+        let _ = global_home_view(masked);
+
+        let mut loading = fixture.config(0, None, None);
+        loading.total_balance_loading = true;
+        loading.spark_balance_loaded = false;
+        loading.liquid_balance_loaded = false;
+        loading.usdt_balance_loaded = false;
+        loading.vault_loaded = false;
+        loading.usdt_balance_error = true;
+        let _ = global_home_view(loading);
+
+        let mut spark_only = fixture.config(0, None, None);
+        spark_only.has_liquid = false;
+        spark_only.has_vault = false;
+        spark_only.has_spark = true;
+        spark_only.pending_spark_incoming = Some(PendingTransfer {
+            amount: Amount::from_sat(11_000),
+            stage: TransferStage::Completed,
+        });
+        let _ = global_home_view(spark_only);
+    }
+
+    #[test]
+    fn global_home_amount_step_builds_every_direction_and_wallet_picker() {
+        let fixture = ViewFixture::new();
+
+        for direction in directions() {
+            let _ = global_home_view(fixture.config(1, Some(direction), None));
+        }
+
+        let _ = global_home_view(fixture.config(
+            1,
+            Some(TransferDirection::LiquidToVault),
+            Some(PickerSide::From),
+        ));
+
+        let mut picker_without_liquid = fixture.config(
+            1,
+            Some(TransferDirection::VaultToSpark),
+            Some(PickerSide::To),
+        );
+        picker_without_liquid.has_liquid = false;
+        picker_without_liquid.transfer_from = Some(WalletKind::Vault);
+        picker_without_liquid.transfer_to = Some(WalletKind::Spark);
+        let _ = global_home_view(picker_without_liquid);
+    }
+
+    #[test]
+    fn global_home_confirm_step_builds_address_fee_and_sending_variants() {
+        let fixture = ViewFixture::new();
+
+        let mut liquid_to_vault = fixture.config(2, Some(TransferDirection::LiquidToVault), None);
+        let liquid_prepare = PreparePayOnchainResponse {
+            receiver_amount_sat: 49_000,
+            claim_fees_sat: 100,
+            total_fees_sat: 1_000,
+        };
+        liquid_to_vault.prepare_onchain_send_response = Some(&liquid_prepare);
+        let _ = global_home_view(liquid_to_vault);
+
+        let mut vault_to_spark = fixture.config(2, Some(TransferDirection::VaultToSpark), None);
+        vault_to_spark.address_expanded = true;
+        vault_to_spark.spend_tx_fees = Some(Amount::from_sat(750));
+        vault_to_spark.transfer_feerate_loading = Some(FeeratePreset::Fast);
+        let _ = global_home_view(vault_to_spark);
+
+        let mut vault_to_liquid_signed =
+            fixture.config(2, Some(TransferDirection::VaultToLiquid), None);
+        vault_to_liquid_signed.is_tx_signed = true;
+        vault_to_liquid_signed.is_sending = true;
+        vault_to_liquid_signed.spend_tx_fees = Some(Amount::from_sat(900));
+        let _ = global_home_view(vault_to_liquid_signed);
+
+        let mut spark_to_liquid = fixture.config(2, Some(TransferDirection::SparkToLiquid), None);
+        spark_to_liquid.spark_send_fee_sat = Some(222);
+        spark_to_liquid.receive_address = None;
+        let _ = global_home_view(spark_to_liquid);
+
+        let mut invalid_vault_send =
+            fixture.config(2, Some(TransferDirection::VaultToLiquid), None);
+        invalid_vault_send.entered_amount = &fixture.invalid_amount;
+        invalid_vault_send.transfer_feerate = &fixture.invalid_feerate;
+        let _ = global_home_view(invalid_vault_send);
+    }
+
+    #[test]
+    fn global_home_success_and_fallback_steps_build() {
+        let fixture = ViewFixture::new();
+
+        for direction in directions() {
+            let _ = global_home_view(fixture.config(3, Some(direction), None));
+        }
+
+        let _ = global_home_view(fixture.config(99, Some(TransferDirection::LiquidToVault), None));
     }
 
     /// Transfer needs two wallets to move funds between: any one wallet alone

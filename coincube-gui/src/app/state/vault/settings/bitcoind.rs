@@ -1744,7 +1744,585 @@ const SIGNET_GENESIS_BLOCK_TIMESTAMP: i64 = 1598918400;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon::{DaemonBackend, DaemonError};
     use crate::node::bitcoind::RpcAuth;
+    use coincube_core::{
+        descriptors::CoincubeDescriptor,
+        miniscript::bitcoin::{address, bip32::ChildNumber, psbt::Psbt, Address, OutPoint, Txid},
+    };
+    use coincubed::{
+        bip329::Labels,
+        commands::{CoinStatus, LabelItem, UpdateDerivIndexesResult},
+        datadir::DataDirectory,
+    };
+    use std::collections::{HashMap, HashSet};
+
+    const DESC: &str = "wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr";
+
+    #[derive(Debug)]
+    struct TestDaemon {
+        config: Option<Config>,
+    }
+
+    #[async_trait::async_trait]
+    impl Daemon for TestDaemon {
+        fn backend(&self) -> DaemonBackend {
+            DaemonBackend::EmbeddedCoincubed(Some(NodeType::Bitcoind))
+        }
+
+        fn config(&self) -> Option<&Config> {
+            self.config.as_ref()
+        }
+
+        async fn is_alive(
+            &self,
+            _datadir: &CoincubeDirectory,
+            _network: Network,
+        ) -> Result<(), DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn stop(&self) -> Result<(), DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn get_info(&self) -> Result<crate::daemon::model::GetInfoResult, DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn request_sync(&self) -> Result<(), DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn get_new_address(
+            &self,
+        ) -> Result<crate::daemon::model::GetAddressResult, DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn list_revealed_addresses(
+            &self,
+            _is_change: bool,
+            _exclude_used: bool,
+            _limit: usize,
+            _start_index: Option<ChildNumber>,
+        ) -> Result<crate::daemon::model::ListRevealedAddressesResult, DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn update_deriv_indexes(
+            &self,
+            _receive: Option<u32>,
+            _change: Option<u32>,
+        ) -> Result<UpdateDerivIndexesResult, DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn list_coins(
+            &self,
+            _statuses: &[CoinStatus],
+            _outpoints: &[OutPoint],
+        ) -> Result<crate::daemon::model::ListCoinsResult, DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn list_spend_txs(
+            &self,
+        ) -> Result<crate::daemon::model::ListSpendResult, DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn create_spend_tx(
+            &self,
+            _coins_outpoints: &[OutPoint],
+            _destinations: &HashMap<Address<address::NetworkUnchecked>, u64>,
+            _feerate_vb: u64,
+            _change_address: Option<Address<address::NetworkUnchecked>>,
+        ) -> Result<crate::daemon::model::CreateSpendResult, DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn rbf_psbt(
+            &self,
+            _txid: &Txid,
+            _is_cancel: bool,
+            _feerate_vb: Option<u64>,
+        ) -> Result<crate::daemon::model::CreateSpendResult, DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn update_spend_tx(&self, _psbt: &Psbt) -> Result<(), DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn delete_spend_tx(&self, _txid: &Txid) -> Result<(), DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn broadcast_spend_tx(&self, _txid: &Txid) -> Result<(), DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn start_rescan(&self, _t: u32) -> Result<(), DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn list_confirmed_txs(
+            &self,
+            _start: u32,
+            _end: u32,
+            _limit: u64,
+        ) -> Result<crate::daemon::model::ListTransactionsResult, DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn create_recovery(
+            &self,
+            _address: Address<address::NetworkUnchecked>,
+            _coins_outpoints: &[OutPoint],
+            _feerate_vb: u64,
+            _sequence: Option<u16>,
+        ) -> Result<Psbt, DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn list_txs(
+            &self,
+            _txid: &[Txid],
+        ) -> Result<crate::daemon::model::ListTransactionsResult, DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn get_labels(
+            &self,
+            _labels: &HashSet<LabelItem>,
+        ) -> Result<HashMap<String, String>, DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn update_labels(
+            &self,
+            _labels: &HashMap<LabelItem, Option<String>>,
+        ) -> Result<(), DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+
+        async fn get_labels_bip329(
+            &self,
+            _offset: u32,
+            _limit: u32,
+        ) -> Result<Labels, DaemonError> {
+            unreachable!("test daemon should not be queried")
+        }
+    }
+
+    fn daemon(config: Option<Config>) -> Arc<dyn Daemon + Sync + Send> {
+        Arc::new(TestDaemon { config })
+    }
+
+    fn bitcoin_config(network: Network) -> BitcoinConfig {
+        BitcoinConfig {
+            network,
+            poll_interval_secs: std::time::Duration::from_secs(
+                coincubed::config::LOCAL_BACKEND_POLL_INTERVAL_SECS,
+            ),
+        }
+    }
+
+    fn bitcoind_config(rpc_auth: BitcoindRpcAuth) -> BitcoindConfig {
+        BitcoindConfig {
+            rpc_auth,
+            addr: "127.0.0.1:8332".parse().unwrap(),
+        }
+    }
+
+    fn electrum_config() -> ElectrumConfig {
+        ElectrumConfig {
+            addr: "ssl://electrum.example:50002".to_string(),
+            validate_domain: true,
+        }
+    }
+
+    fn esplora_config() -> coincubed::config::EsploraConfig {
+        coincubed::config::EsploraConfig {
+            addr: "https://example.com/api".to_string(),
+            token: None,
+            fallback_addr: None,
+            fallback_token: None,
+            secondary_fallback_addr: None,
+            secondary_fallback_token: None,
+        }
+    }
+
+    fn config_with_backend(backend: Option<BitcoinBackend>) -> Config {
+        Config::new(
+            bitcoin_config(Network::Bitcoin),
+            backend,
+            log::LevelFilter::Info,
+            CoincubeDescriptor::from_str(DESC).unwrap(),
+            DataDirectory::new(std::env::temp_dir().join("coincube-settings-state-test")),
+        )
+    }
+
+    fn edit_message(message: view::SettingsEditMessage) -> Message {
+        Message::View(view::Message::Settings(
+            view::SettingsMessage::BitcoindSettings(message),
+        ))
+    }
+
+    fn node_message(message: view::NodeSettingsMessage) -> Message {
+        Message::View(view::Message::Settings(
+            view::SettingsMessage::NodeSettings(message),
+        ))
+    }
+
+    #[test]
+    fn bitcoind_settings_new_hydrates_cookie_and_userpass_forms() {
+        let cookie = BitcoindSettings::new(
+            Some(NodeType::Bitcoind),
+            bitcoin_config(Network::Bitcoin),
+            bitcoind_config(BitcoindRpcAuth::CookieFile(PathBuf::from(
+                "/tmp/bitcoin/.cookie",
+            ))),
+            false,
+            false,
+        );
+
+        assert_eq!(cookie.selected_auth_type, RpcAuthType::CookieFile);
+        assert_eq!(cookie.addr.value, "127.0.0.1:8332");
+        assert_eq!(
+            cookie.rpc_auth_vals.cookie_path.value,
+            "/tmp/bitcoin/.cookie"
+        );
+        assert!(cookie.rpc_auth_vals.cookie_path.valid);
+        assert!(!cookie.edit);
+        assert!(!cookie.processing);
+
+        let userpass = BitcoindSettings::new(
+            Some(NodeType::Electrum),
+            bitcoin_config(Network::Testnet),
+            bitcoind_config(BitcoindRpcAuth::UserPass(
+                "rpcuser".to_string(),
+                "secret".to_string(),
+            )),
+            true,
+            false,
+        );
+
+        assert_eq!(userpass.selected_auth_type, RpcAuthType::UserPass);
+        assert_eq!(userpass.addr.value, "");
+        assert_eq!(userpass.rpc_auth_vals.user.value, "rpcuser");
+        assert_eq!(userpass.rpc_auth_vals.password.value, "secret");
+        assert!(userpass.daemon_is_external);
+    }
+
+    #[test]
+    fn edit_substates_toggle_editing_and_keep_processing_changes_guarded() {
+        let cache = Cache::default();
+        let daemon = daemon(None);
+        let mut bitcoind = BitcoindSettings::new(
+            Some(NodeType::Bitcoind),
+            bitcoin_config(Network::Bitcoin),
+            bitcoind_config(BitcoindRpcAuth::CookieFile(PathBuf::from(
+                "/tmp/bitcoin/.cookie",
+            ))),
+            false,
+            false,
+        );
+
+        let _ = bitcoind.update(daemon.clone(), &cache, view::SettingsEditMessage::Select);
+        assert!(bitcoind.edit);
+        let _ = bitcoind.update(
+            daemon.clone(),
+            &cache,
+            view::SettingsEditMessage::FieldEdited("socket_address", "bad".to_string()),
+        );
+        let _ = bitcoind.update(daemon.clone(), &cache, view::SettingsEditMessage::Confirm);
+        assert!(!bitcoind.addr.valid);
+        assert!(!bitcoind.processing);
+        let _ = bitcoind.update(daemon.clone(), &cache, view::SettingsEditMessage::Cancel);
+        assert!(!bitcoind.edit);
+
+        bitcoind.processing = true;
+        let previous = bitcoind.addr.value.clone();
+        let _ = bitcoind.update(
+            daemon.clone(),
+            &cache,
+            view::SettingsEditMessage::FieldEdited("socket_address", "127.0.0.1:9999".to_string()),
+        );
+        assert_eq!(bitcoind.addr.value, previous);
+
+        bitcoind.edited(false);
+        assert!(!bitcoind.processing);
+        bitcoind.edit = true;
+        bitcoind.processing = true;
+        bitcoind.edited(true);
+        assert!(!bitcoind.edit);
+        assert!(!bitcoind.processing);
+
+        let mut electrum = ElectrumSettings::new(
+            Some(NodeType::Electrum),
+            bitcoin_config(Network::Bitcoin),
+            electrum_config(),
+            false,
+        );
+        let _ = electrum.update(daemon.clone(), &cache, view::SettingsEditMessage::Select);
+        assert!(electrum.edit);
+        let _ = electrum.update(
+            daemon.clone(),
+            &cache,
+            view::SettingsEditMessage::ValidateDomainEdited(false),
+        );
+        assert!(!electrum.electrum_config.validate_domain);
+        let _ = electrum.update(
+            daemon,
+            &cache,
+            view::SettingsEditMessage::FieldEdited("address", "".to_string()),
+        );
+        assert!(!electrum.addr.valid);
+        electrum.edited(true);
+        assert!(!electrum.edit);
+        assert!(!electrum.processing);
+    }
+
+    #[test]
+    fn rescan_setting_validates_inputs_without_starting_daemon_on_bad_dates() {
+        let cache = Cache::default();
+        let daemon = daemon(None);
+        let mut rescan = RescanSetting::new(Some(0.5));
+        assert!(rescan.processing);
+
+        rescan.edited(false);
+        assert!(!rescan.processing);
+        assert!(!rescan.success);
+
+        let _ = rescan.update(
+            daemon.clone(),
+            &cache,
+            view::SettingsEditMessage::FieldEdited("rescan_year", "2024".to_string()),
+        );
+        let _ = rescan.update(
+            daemon.clone(),
+            &cache,
+            view::SettingsEditMessage::FieldEdited("rescan_month", "2".to_string()),
+        );
+        let _ = rescan.update(
+            daemon.clone(),
+            &cache,
+            view::SettingsEditMessage::FieldEdited("rescan_day", "31".to_string()),
+        );
+        let _ = rescan.update(
+            daemon.clone(),
+            &cache,
+            view::SettingsEditMessage::FieldEdited("rescan_year", "abcd".to_string()),
+        );
+        assert_eq!(rescan.year.value, "2024");
+
+        let _ = rescan.update(daemon.clone(), &cache, view::SettingsEditMessage::Confirm);
+        assert!(rescan.invalid_date);
+        assert!(!rescan.processing);
+
+        let _ = rescan.update(
+            daemon.clone(),
+            &cache,
+            view::SettingsEditMessage::FieldEdited("rescan_year", "2999".to_string()),
+        );
+        let _ = rescan.update(
+            daemon.clone(),
+            &cache,
+            view::SettingsEditMessage::FieldEdited("rescan_month", "1".to_string()),
+        );
+        let _ = rescan.update(
+            daemon.clone(),
+            &cache,
+            view::SettingsEditMessage::FieldEdited("rescan_day", "1".to_string()),
+        );
+        let _ = rescan.update(daemon, &cache, view::SettingsEditMessage::Confirm);
+        assert!(rescan.future_date);
+        assert!(!rescan.processing);
+    }
+
+    #[test]
+    fn state_new_selects_backend_substates_and_resource_defaults() {
+        let cache = Cache::default();
+        let bitcoind_state = BitcoindSettingsState::new(
+            Some(config_with_backend(Some(BitcoinBackend::Bitcoind(
+                bitcoind_config(BitcoindRpcAuth::CookieFile(PathBuf::from(
+                    "/tmp/bitcoin/.cookie",
+                ))),
+            )))),
+            &cache,
+            false,
+            false,
+        );
+        assert!(bitcoind_state.bitcoind_settings.is_some());
+        assert!(bitcoind_state.electrum_settings.is_none());
+        assert_eq!(
+            bitcoind_state.node_prune_mb.value,
+            PRUNE_DEFAULT.to_string()
+        );
+        assert_eq!(bitcoind_state.node_max_mempool_mb.value, "");
+
+        let electrum_state = BitcoindSettingsState::new(
+            Some(config_with_backend(Some(BitcoinBackend::Electrum(
+                electrum_config(),
+            )))),
+            &cache,
+            true,
+            false,
+        );
+        assert!(electrum_state.bitcoind_settings.is_none());
+        assert!(electrum_state.electrum_settings.is_some());
+
+        let empty_state = BitcoindSettingsState::new(None, &cache, false, false);
+        assert!(empty_state.bitcoind_settings.is_none());
+        assert!(empty_state.electrum_settings.is_none());
+    }
+
+    #[test]
+    fn state_update_tracks_setup_forms_flavor_confirmation_and_resource_presets() {
+        let cache = Cache::default();
+        let daemon = daemon(Some(config_with_backend(Some(BitcoinBackend::Esplora(
+            esplora_config(),
+        )))));
+        let mut state = BitcoindSettingsState::new(
+            Some(config_with_backend(Some(BitcoinBackend::Esplora(
+                esplora_config(),
+            )))),
+            &cache,
+            false,
+            false,
+        );
+
+        let _ = state.update(
+            Some(daemon.clone()),
+            &cache,
+            node_message(view::NodeSettingsMessage::SetupLocalNode),
+        );
+        assert!(matches!(
+            state.pending_node_setup.as_ref().map(|s| s.mode),
+            Some(None)
+        ));
+
+        let _ = state.update(
+            Some(daemon.clone()),
+            &cache,
+            node_message(view::NodeSettingsMessage::SetupLocalNodeModeSelected(false)),
+        );
+        let _ = state.update(
+            Some(daemon.clone()),
+            &cache,
+            node_message(view::NodeSettingsMessage::SetupLocalNodeAddrChanged(
+                "bad".to_string(),
+            )),
+        );
+        let _ = state.update(
+            Some(daemon.clone()),
+            &cache,
+            node_message(view::NodeSettingsMessage::SetupLocalNodeConfirm),
+        );
+        assert_eq!(state.pending_node_setup.as_ref().unwrap().mode, Some(false));
+        assert!(!state.pending_node_setup.as_ref().unwrap().addr.valid);
+
+        let _ = state.update(
+            Some(daemon.clone()),
+            &cache,
+            node_message(view::NodeSettingsMessage::SetupLocalNodeAuthTypeSelected(
+                RpcAuthType::UserPass,
+            )),
+        );
+        let _ = state.update(
+            Some(daemon.clone()),
+            &cache,
+            node_message(view::NodeSettingsMessage::SetupLocalNodeAddrChanged(
+                "127.0.0.1:8332".to_string(),
+            )),
+        );
+        let _ = state.update(
+            Some(daemon.clone()),
+            &cache,
+            node_message(view::NodeSettingsMessage::SetupLocalNodeFieldEdited(
+                "password",
+                "secret".to_string(),
+            )),
+        );
+        let _ = state.update(
+            Some(daemon.clone()),
+            &cache,
+            node_message(view::NodeSettingsMessage::SetupLocalNodeConfirm),
+        );
+        assert!(
+            !state
+                .pending_node_setup
+                .as_ref()
+                .unwrap()
+                .rpc_auth_vals
+                .user
+                .valid
+        );
+
+        let _ = state.update(
+            Some(daemon.clone()),
+            &cache,
+            node_message(view::NodeSettingsMessage::SetupLocalNodeCancel),
+        );
+        assert!(state.pending_node_setup.is_none());
+
+        state.bitcoind_settings = Some(BitcoindSettings::new(
+            Some(NodeType::Bitcoind),
+            bitcoin_config(Network::Bitcoin),
+            bitcoind_config(BitcoindRpcAuth::CookieFile(PathBuf::from(
+                "/tmp/bitcoin/.cookie",
+            ))),
+            false,
+            false,
+        ));
+        state.bitcoind_settings.as_mut().unwrap().managed_flavor = Some(NodeFlavor::Core);
+
+        let _ = state.update(
+            Some(daemon.clone()),
+            &cache,
+            edit_message(view::SettingsEditMessage::SwitchManagedFlavor(
+                NodeFlavor::Knots,
+            )),
+        );
+        assert_eq!(state.pending_flavor_switch, Some(NodeFlavor::Knots));
+        let _ = state.update(
+            Some(daemon.clone()),
+            &cache,
+            node_message(view::NodeSettingsMessage::CancelFlavorSwitch),
+        );
+        assert_eq!(state.pending_flavor_switch, None);
+
+        let _ = state.update(
+            Some(daemon.clone()),
+            &cache,
+            node_message(view::NodeSettingsMessage::NodeResourceSmallComputer),
+        );
+        assert_eq!(
+            state.node_prune_mb.value,
+            NodeResources::small_computer().prune_mb.to_string()
+        );
+        assert_eq!(state.node_max_mempool_mb.value, "100");
+        let _ = state.update(
+            Some(daemon.clone()),
+            &cache,
+            node_message(view::NodeSettingsMessage::NodeResourceRegularComputer),
+        );
+        assert_eq!(
+            state.node_prune_mb.value,
+            NodeResources::regular_computer().prune_mb.to_string()
+        );
+        assert_eq!(state.node_max_mempool_mb.value, "");
+        let _ = state.update(
+            Some(daemon),
+            &cache,
+            node_message(view::NodeSettingsMessage::NodeResourcePruneEdited(
+                "100".to_string(),
+            )),
+        );
+        assert!(!state.node_prune_mb.valid);
+    }
 
     // A node-resources apply on a pre-existing datadir must overwrite prune and
     // the mempool cap while preserving the network section's ports and rpc_auth

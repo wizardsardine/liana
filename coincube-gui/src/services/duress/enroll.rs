@@ -28,9 +28,21 @@ pub const RECOMMENDED_ALL_CLEAR_LEN: usize = 24;
 
 /// Argon2id parameters, matching the regular-PIN and recovery-kit KDFs
 /// (19 MiB, 2 iterations, 1 lane) so duress secrets are no weaker than the
-/// rest of the app.
+/// rest of the app. Test builds drop to the argon2 minimum: the suite hashes
+/// secrets many times over and the 19 MiB cost starves CI under parallel load.
+/// Verification reads the parameters from the stored PHC string, so a hash
+/// made at either cost still round-trips.
+#[cfg(not(test))]
 const ARGON_M_COST: u32 = 19456;
+#[cfg(not(test))]
 const ARGON_T_COST: u32 = 2;
+#[cfg(not(test))]
+const ARGON_P_COST: u32 = 1;
+#[cfg(test)]
+const ARGON_M_COST: u32 = 8;
+#[cfg(test)]
+const ARGON_T_COST: u32 = 1;
+#[cfg(test)]
 const ARGON_P_COST: u32 = 1;
 
 /// Bits of entropy in this desktop's generated duress code.

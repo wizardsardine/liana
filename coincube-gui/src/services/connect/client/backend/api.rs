@@ -518,3 +518,263 @@ pub mod payload {
         pub alias: String,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coincube_core::miniscript::bitcoin::{
+        absolute, consensus::encode::serialize_hex, transaction::Version as TxVersion, Address,
+        ScriptBuf, Sequence, Transaction as BitcoinTransaction, TxIn, TxOut, Witness,
+    };
+    use serde_json::json;
+
+    const MAINNET_ADDRESS: &str = "bc1qnsexk3gnuyayu92fc3tczvc7k62u22a22ua2kv";
+    const ZERO_TXID: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+    const ONE_TXID: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
+    #[derive(Deserialize)]
+    struct AddressProbe {
+        #[serde(deserialize_with = "deser_addr_assume_checked")]
+        address: bitcoin::Address,
+    }
+
+    #[derive(Deserialize)]
+    struct AmountProbe {
+        #[serde(deserialize_with = "deser_amount_from_sats")]
+        amount: Amount,
+    }
+
+    #[derive(Deserialize)]
+    struct TransactionProbe {
+        #[serde(deserialize_with = "deser_hex")]
+        tx: BitcoinTransaction,
+    }
+
+    fn dummy_transaction() -> BitcoinTransaction {
+        BitcoinTransaction {
+            version: TxVersion::TWO,
+            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
+            input: vec![TxIn {
+                previous_output: OutPoint::from_str(&format!("{ZERO_TXID}:0")).unwrap(),
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(1_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        }
+    }
+
+    #[test]
+    fn custom_deserializers_parse_checked_address_amount_and_raw_tx_hex() {
+        let address: AddressProbe = serde_json::from_value(json!({
+            "address": MAINNET_ADDRESS
+        }))
+        .unwrap();
+        assert_eq!(address.address.to_string(), MAINNET_ADDRESS);
+
+        let amount: AmountProbe = serde_json::from_value(json!({ "amount": 12_345 })).unwrap();
+        assert_eq!(amount.amount, Amount::from_sat(12_345));
+
+        let tx = dummy_transaction();
+        let parsed: TransactionProbe = serde_json::from_value(json!({
+            "tx": serialize_hex(&tx)
+        }))
+        .unwrap();
+        assert_eq!(parsed.tx, tx);
+    }
+
+    #[test]
+    fn custom_deserializers_reject_invalid_wire_values() {
+        assert!(serde_json::from_value::<AddressProbe>(json!({
+            "address": "not an address"
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<AmountProbe>(json!({
+            "amount": -1
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<TransactionProbe>(json!({
+            "tx": "not hex"
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn enum_wire_values_are_lowercase() {
+        let status: WalletStatus = serde_json::from_str("\"recovering\"").unwrap();
+        assert!(matches!(status, WalletStatus::Recovering));
+
+        let role: UserRole = serde_json::from_str("\"owner\"").unwrap();
+        assert!(matches!(role, UserRole::Owner));
+
+        let invitation_status: WalletInvitationStatus =
+            serde_json::from_str("\"accepted\"").unwrap();
+        assert!(matches!(
+            invitation_status,
+            WalletInvitationStatus::Accepted
+        ));
+
+        let payment_kind: PaymentKind = serde_json::from_str("\"incoming\"").unwrap();
+        assert!(matches!(payment_kind, PaymentKind::Incoming));
+
+        let utxo_kind: UTXOKind = serde_json::from_str("\"change\"").unwrap();
+        assert!(matches!(utxo_kind, UTXOKind::Change));
+    }
+
+    #[test]
+    fn coin_deserialization_maps_backend_fields_to_typed_values() {
+        let coin: Coin = serde_json::from_value(json!({
+            "address": MAINNET_ADDRESS,
+            "amount": 50_000,
+            "derivation_index": 7,
+            "outpoint": format!("{ZERO_TXID}:1"),
+            "block_height": 800_000,
+            "spend_info": {
+                "txid": ONE_TXID,
+                "height": 800_100
+            },
+            "is_immature": false,
+            "is_change_address": true,
+            "is_from_self": true
+        }))
+        .unwrap();
+
+        assert_eq!(coin.address.to_string(), MAINNET_ADDRESS);
+        assert_eq!(coin.amount, Amount::from_sat(50_000));
+        assert_eq!(coin.derivation_index, bip32::ChildNumber::from(7));
+        assert_eq!(coin.outpoint.to_string(), format!("{ZERO_TXID}:1"));
+        assert_eq!(coin.block_height, Some(800_000));
+        assert_eq!(coin.spend_info.as_ref().unwrap().txid.to_string(), ONE_TXID);
+        assert_eq!(coin.spend_info.as_ref().unwrap().height, Some(800_100));
+        assert!(coin.is_change_address);
+        assert!(coin.is_from_self);
+        assert!(!coin.is_immature);
+    }
+
+    #[test]
+    fn revealed_addresses_deserialize_checked_addresses_and_continue_cursor() {
+        let list: ListRevealedAddresses = serde_json::from_value(json!({
+            "addresses": [{
+                "address": MAINNET_ADDRESS,
+                "derivation_index": 5,
+                "label": "savings",
+                "used_count": 2
+            }],
+            "continue_from": 4
+        }))
+        .unwrap();
+
+        assert_eq!(list.addresses.len(), 1);
+        assert_eq!(list.addresses[0].address.to_string(), MAINNET_ADDRESS);
+        assert_eq!(
+            list.addresses[0].derivation_index,
+            bip32::ChildNumber::from(5)
+        );
+        assert_eq!(list.addresses[0].label.as_deref(), Some("savings"));
+        assert_eq!(list.addresses[0].used_count, 2);
+        assert_eq!(list.continue_from, Some(bip32::ChildNumber::from(4)));
+    }
+
+    #[test]
+    fn transaction_deserialization_decodes_raw_hex_and_nested_io() {
+        let tx = dummy_transaction();
+        let transaction: Transaction = serde_json::from_value(json!({
+            "uuid": "tx-uuid",
+            "txid": ZERO_TXID,
+            "fee": 123,
+            "fee_rate": 4,
+            "block_height": null,
+            "confirmed_at": null,
+            "label": "payroll",
+            "raw": serialize_hex(&tx),
+            "inputs": [{
+                "txid": ONE_TXID,
+                "vout": 0,
+                "amount": 1000,
+                "label": null,
+                "kind": "external",
+                "coin": null
+            }],
+            "outputs": [{
+                "address": MAINNET_ADDRESS,
+                "label": null,
+                "address_label": "deposit",
+                "amount": 877,
+                "kind": "deposit",
+                "coin": null
+            }],
+            "is_batch": false
+        }))
+        .unwrap();
+
+        assert_eq!(transaction.uuid, "tx-uuid");
+        assert_eq!(transaction.txid, ZERO_TXID);
+        assert_eq!(transaction.raw, tx);
+        assert!(matches!(transaction.inputs[0].kind, UTXOKind::External));
+        assert!(matches!(transaction.outputs[0].kind, UTXOKind::Deposit));
+        assert!(!transaction.is_batch);
+    }
+
+    #[test]
+    fn payload_serializers_preserve_backend_wire_shape() {
+        let address = Address::from_str(MAINNET_ADDRESS).unwrap();
+        let recipient = payload::Recipient {
+            amount: Some(10_000),
+            address,
+            is_max: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&recipient).unwrap(),
+            json!({
+                "amount": 10_000,
+                "address": MAINNET_ADDRESS,
+                "is_max": false
+            })
+        );
+
+        let rbf = payload::GenerateRbfPsbt {
+            txid: Txid::from_str(ZERO_TXID).unwrap(),
+            feerate: None,
+            is_cancel: true,
+            save: true,
+        };
+        assert_eq!(
+            serde_json::to_value(&rbf).unwrap(),
+            json!({
+                "txid": ZERO_TXID,
+                "feerate": null,
+                "is_cancel": true,
+                "save": true
+            })
+        );
+
+        let update = payload::UpdateWallet {
+            alias: Some("Family Vault".to_string()),
+            ledger_hmac: Some(payload::UpdateLedgerHmac {
+                fingerprint: "aabbccdd".to_string(),
+                hmac: "hmac-token".to_string(),
+            }),
+            fingerprint_aliases: Some(vec![payload::UpdateFingerprintAlias {
+                fingerprint: "11223344".to_string(),
+                alias: "Alice".to_string(),
+            }]),
+        };
+        assert_eq!(
+            serde_json::to_value(&update).unwrap(),
+            json!({
+                "alias": "Family Vault",
+                "ledger_hmac": {
+                    "fingerprint": "aabbccdd",
+                    "hmac": "hmac-token"
+                },
+                "fingerprint_aliases": [{
+                    "fingerprint": "11223344",
+                    "alias": "Alice"
+                }]
+            })
+        );
+    }
+}

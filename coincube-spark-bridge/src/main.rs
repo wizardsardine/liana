@@ -115,3 +115,23 @@ mod smoke_test {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Cli;
+    use clap::Parser;
+
+    #[test]
+    fn cli_defaults_to_json_rpc_server_mode() {
+        let cli = Cli::try_parse_from(["coincube-spark-bridge"]).unwrap();
+
+        assert!(!cli.smoke_test);
+    }
+
+    #[test]
+    fn cli_accepts_smoke_test_flag() {
+        let cli = Cli::try_parse_from(["coincube-spark-bridge", "--smoke-test"]).unwrap();
+
+        assert!(cli.smoke_test);
+    }
+}

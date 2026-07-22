@@ -2422,6 +2422,10 @@ mod tests {
 
     use super::*;
 
+    const TESTNET_XPUB: &str = "tpubD6NzVbkrYhZ4XHQ1pLJ7pdpEGWCVbSUEaUakxnrtENzaZaDp4vL6gBgGH7n983ZPgsVe5G2JEAM2oYZkEPCNrfo9XLq8nHFhp9GzFjGc1uQ";
+    const TESTNET_DESCRIPTOR_KEY: &str = "[8a550171/48'/1'/0'/2']tpubD6NzVbkrYhZ4XHQ1pLJ7pdpEGWCVbSUEaUakxnrtENzaZaDp4vL6gBgGH7n983ZPgsVe5G2JEAM2oYZkEPCNrfo9XLq8nHFhp9GzFjGc1uQ";
+    const MAINNET_DESCRIPTOR_KEY: &str = "[abcdef01/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW";
+
     #[test]
     fn test_default_derivation_path() {
         assert_eq!(
@@ -2667,5 +2671,251 @@ mod tests {
         // A placement carrying no coordinates is treated as used elsewhere.
         let picker = picker_with_placed_key(vec![(0, 0)], vec![], fg);
         assert!(picker.key_placed_elsewhere(fg));
+    }
+
+    fn raw_key(id: u64, fingerprint: &str, owner_id: u64) -> CubeKeyRaw {
+        CubeKeyRaw {
+            id,
+            name: format!("Key {id}"),
+            xpub: TESTNET_XPUB.to_string(),
+            fingerprint: fingerprint.to_string(),
+            derivation_path: "m/48'/1'/0'/2'".to_string(),
+            network: "signet".to_string(),
+            status: "active".to_string(),
+            primary_owner_id: owner_id,
+            keychain_id: Some(1),
+            curve: "secp256k1".to_string(),
+            taproot: true,
+            cube_id: 1,
+            created_at: "2026-07-20T00:00:00Z".to_string(),
+            updated_at: "2026-07-20T00:00:00Z".to_string(),
+            owner_user_id: owner_id,
+            owner_email: format!("owner{owner_id}@example.com"),
+            is_own_key: true,
+            used_by_vault: false,
+        }
+    }
+
+    fn resolved_key(id: u64, fingerprint: &str, owner_id: u64) -> ResolvedCubeKey {
+        ResolvedCubeKey {
+            raw: raw_key(id, fingerprint, owner_id),
+            owner: KeychainKeyOwner::SelfUser {
+                primary_owner_id: owner_id,
+            },
+        }
+    }
+
+    fn keychain_key(fingerprint: Fingerprint, owner_id: u64, key_id: u64) -> Key {
+        let mut key = manual_key(fingerprint);
+        key.source = KeySource::KeychainKey {
+            owner: KeychainKeyOwner::SelfUser {
+                primary_owner_id: owner_id,
+            },
+            key_id,
+            name: format!("Key {key_id}"),
+        };
+        key
+    }
+
+    #[test]
+    fn selected_key_fingerprint_and_network_checks_cover_key_shapes() {
+        assert!(SelectedKey::None.fingerprint().is_none());
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        assert_eq!(SelectedKey::Existing(fg).fingerprint(), Some(fg));
+        assert_eq!(
+            SelectedKey::New(Box::new(manual_key(fg))).fingerprint(),
+            Some(fg)
+        );
+
+        let testnet_key = DescriptorPublicKey::from_str(TESTNET_DESCRIPTOR_KEY).unwrap();
+        assert!(check_key_network(&testnet_key, Network::Signet));
+        assert!(!check_key_network(&testnet_key, Network::Bitcoin));
+
+        let mainnet_key = DescriptorPublicKey::from_str(MAINNET_DESCRIPTOR_KEY).unwrap();
+        assert!(check_key_network(&mainnet_key, Network::Bitcoin));
+        assert!(!check_key_network(&mainnet_key, Network::Regtest));
+
+        let DescriptorPublicKey::XPub(xpub) = testnet_key else {
+            panic!("fixture should be a descriptor xpub");
+        };
+        let multixkey = new_multixkey_from_xpub(xpub, 3);
+        assert_eq!(
+            multixkey
+                .derivation_paths
+                .paths()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec!["6".to_string(), "7".to_string()]
+        );
+        assert_eq!(multixkey.wildcard, Wildcard::Unhardened);
+    }
+
+    #[test]
+    fn xpub_entry_validates_empty_invalid_origin_network_duplicate_and_imported_keys() {
+        let mut picker = empty_picker();
+
+        let _ = picker.on_select_enter_xpub();
+        assert_eq!(picker.step, Step::PasteXpubEntry);
+        assert!(picker.form_xpub.valid);
+
+        let _ = picker.on_update_xpub(String::new());
+        assert!(picker.form_xpub.valid);
+
+        let _ = picker.on_update_xpub("not an xpub".to_string());
+        assert!(!picker.form_xpub.valid);
+        assert_eq!(picker.form_xpub.warning, Some("Invalid Xpub"));
+
+        let _ = picker.on_update_xpub(TESTNET_XPUB.to_string());
+        assert!(!picker.form_xpub.valid);
+        assert_eq!(picker.form_xpub.warning, Some("Origin missing"));
+
+        let _ = picker.on_update_xpub(format!("{TESTNET_DESCRIPTOR_KEY}/0/*"));
+        assert!(!picker.form_xpub.valid);
+        assert_eq!(picker.form_xpub.warning, Some("Wrong derivation path"));
+
+        picker.network = Network::Bitcoin;
+        let _ = picker.on_update_xpub(TESTNET_DESCRIPTOR_KEY.to_string());
+        assert!(!picker.form_xpub.valid);
+        assert_eq!(picker.form_xpub.warning, Some("Wrong network"));
+
+        picker.network = Network::Signet;
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        picker.keys.insert(fg, (vec![(0, 0)], manual_key(fg)));
+        let _ = picker.on_update_xpub(TESTNET_DESCRIPTOR_KEY.to_string());
+        assert!(!picker.form_xpub.valid);
+        assert_eq!(picker.form_xpub.warning, Some("Key already used"));
+
+        picker.keys.clear();
+        let _ = picker.on_update_xpub(TESTNET_DESCRIPTOR_KEY.to_string());
+        assert!(picker.form_xpub.valid);
+        assert!(matches!(picker.selected_key, SelectedKey::New(_)));
+        assert_eq!(picker.step, Step::Details);
+
+        picker.step = Step::Grid;
+        picker.selected_key = SelectedKey::None;
+        picker.keys.insert(fg, (vec![(0, 0)], manual_key(fg)));
+        let _ = picker.on_import_xpub(TESTNET_DESCRIPTOR_KEY.to_string());
+        assert_eq!(
+            picker.import_xpub_error.as_deref(),
+            Some("Imported key already used")
+        );
+        assert_eq!(picker.focus, Focus::None);
+    }
+
+    #[test]
+    fn alias_previous_next_retry_and_collapse_state_are_synchronous() {
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        let mut picker = picker_with_placed_key(vec![(0, 0)], vec![(1, 0)], fg);
+        let new_fg = Fingerprint::from_str("c658b283").unwrap();
+        picker.selected_key = SelectedKey::New(Box::new(manual_key(new_fg)));
+        picker.form_alias.value = "Existing".to_string();
+        picker.keys.get_mut(&fg).unwrap().1.name = "Existing".to_string();
+
+        let _ = picker.on_update_alias("Existing".to_string());
+        assert!(!picker.form_alias.valid);
+        assert_eq!(
+            picker.form_alias.warning,
+            Some("This alias is already used for another key")
+        );
+
+        let long_alias = "abcdefghijklmnopqrstuvwxyz".to_string();
+        let before = picker.form_alias.value.clone();
+        let _ = picker.on_update_alias(long_alias);
+        assert_eq!(picker.form_alias.value, before);
+
+        let _ = picker.on_update_alias("Fresh".to_string());
+        assert!(picker.form_alias.valid);
+        assert_eq!(picker.form_alias.value, "Fresh");
+
+        picker.step = Step::Details;
+        picker.focus = Focus::Device(fg);
+        picker.form_xpub.value = "stale".to_string();
+        picker.form_xpub.valid = false;
+        picker.form_safety_net_token.value = "stale".to_string();
+        picker.form_safety_net_token.valid = false;
+        let _ = picker.on_previous();
+        assert_eq!(picker.step, Step::HardwareListen);
+        assert_eq!(picker.focus, Focus::None);
+        assert!(picker.form_xpub.value.is_empty());
+        assert!(picker.form_xpub.valid);
+        assert!(picker.form_safety_net_token.value.is_empty());
+        assert!(picker.form_safety_net_token.valid);
+
+        let _ = picker.on_collapse(true);
+        assert!(picker.options_collapsed);
+        picker.focus = Focus::GenerateMasterKey;
+        picker.form_account = Some(ChildNumber::from_hardened_idx(7).unwrap());
+        let _ = picker.on_retry();
+        assert!(picker.details_error.is_none());
+    }
+
+    #[test]
+    fn keychain_key_selection_accepts_valid_keys_and_rejects_conflicts() {
+        let mut picker = empty_picker();
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+
+        let _ = picker.on_select_keychain_key(resolved_key(1, "8a550171", 7));
+        assert!(matches!(picker.selected_key, SelectedKey::New(_)));
+        assert_eq!(picker.form_alias.value, "Key 1");
+        assert_eq!(picker.step, Step::Details);
+
+        let mut invalid = resolved_key(2, "not-hex", 7);
+        let _ = picker.on_select_keychain_key(invalid.clone());
+        assert_eq!(
+            picker.error.as_deref(),
+            Some("Invalid fingerprint: not-hex")
+        );
+
+        invalid.raw.fingerprint = "8a550171".to_string();
+        invalid.raw.xpub = "not-xpub".to_string();
+        let _ = picker.on_select_keychain_key(invalid.clone());
+        assert_eq!(picker.error.as_deref(), Some("Invalid xpub: not-xpub"));
+
+        invalid.raw.xpub = TESTNET_XPUB.to_string();
+        invalid.raw.derivation_path = "not-path".to_string();
+        let _ = picker.on_select_keychain_key(invalid);
+        assert_eq!(
+            picker.error.as_deref(),
+            Some("Invalid derivation path: not-path")
+        );
+
+        let mut bitcoin_picker = empty_picker();
+        bitcoin_picker.network = Network::Bitcoin;
+        let _ = bitcoin_picker.on_select_keychain_key(resolved_key(3, "8a550171", 7));
+        assert_eq!(
+            bitcoin_picker.error.as_deref(),
+            Some("Key network does not match")
+        );
+
+        let mut elsewhere_picker = picker_with_placed_key(vec![(0, 0)], vec![(1, 0)], fg);
+        let _ = elsewhere_picker.on_select_keychain_key(resolved_key(4, "8a550171", 7));
+        assert_eq!(
+            elsewhere_picker.error.as_deref(),
+            Some("This Keychain key is already used elsewhere in this Vault.")
+        );
+
+        let owner_fg = Fingerprint::from_str("c658b283").unwrap();
+        let mut owner_picker = empty_picker();
+        owner_picker.actual_path.coordinates = vec![(0, 0)];
+        owner_picker
+            .keys
+            .insert(owner_fg, (vec![(1, 0)], keychain_key(owner_fg, 42, 99)));
+        let _ = owner_picker.on_select_keychain_key(resolved_key(5, "8a550171", 42));
+        assert_eq!(
+            owner_picker.error.as_deref(),
+            Some("This owner already has a Keychain key placed in this Vault.")
+        );
+
+        let mut collision_picker = empty_picker();
+        collision_picker.actual_path.coordinates = vec![(0, 0)];
+        collision_picker
+            .keys
+            .insert(fg, (vec![(0, 0)], keychain_key(fg, 7, 99)));
+        let _ = collision_picker.on_select_keychain_key(resolved_key(6, "8a550171", 7));
+        assert_eq!(
+            collision_picker.error.as_deref(),
+            Some("A different key with the same master fingerprint is already in this Vault.")
+        );
     }
 }

@@ -1619,3 +1619,374 @@ fn recovery_paths(wallet: &Wallet, coins: &[Coin], tip_height: i32) -> Vec<Recov
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coincube_core::descriptors::CoincubeDescriptor;
+    use coincube_core::miniscript::bitcoin::{bip32::ChildNumber, Txid};
+    use std::str::FromStr;
+
+    const DESC: &str = "wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr";
+    const MAINNET_ADDR: &str = "bc1qvrl2849aggm6qry9ea7xqp2kk39j8vaa8r3cwg";
+
+    fn wallet() -> Arc<Wallet> {
+        Arc::new(Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap()))
+    }
+
+    fn outpoint(n: u32) -> OutPoint {
+        OutPoint::new(Txid::from_str(&format!("{n:064x}")).unwrap(), n)
+    }
+
+    fn address() -> Address {
+        Address::from_str(MAINNET_ADDR).unwrap().assume_checked()
+    }
+
+    fn coin(n: u32, sats: u64, block_height: Option<i32>) -> Coin {
+        Coin {
+            amount: Amount::from_sat(sats),
+            outpoint: outpoint(n),
+            address: address(),
+            block_height,
+            derivation_index: ChildNumber::from(n),
+            spend_info: None,
+            is_immature: false,
+            is_change: false,
+            is_from_self: false,
+        }
+    }
+
+    #[test]
+    fn filter_coins_excludes_unspendable_and_sets_default_selection_by_path() {
+        let mut spent = coin(2, 20_000, Some(90));
+        spent.spend_info = Some(coincubed::commands::LCSpendInfo {
+            txid: Txid::from_str(&format!("{:064x}", 99)).unwrap(),
+            height: None,
+        });
+        let mut immature = coin(3, 30_000, Some(90));
+        immature.is_immature = true;
+        let unconfirmed = coin(4, 40_000, None);
+        let mature = coin(1, 10_000, Some(90));
+        let too_young = coin(5, 50_000, Some(96));
+        let coins = vec![
+            mature.clone(),
+            spent,
+            immature,
+            unconfirmed.clone(),
+            too_young.clone(),
+        ];
+
+        let primary = filter_coins(&coins, None, 100, None);
+        assert_eq!(primary.len(), 3);
+        assert!(primary.iter().all(|(_, selected)| !*selected));
+        assert!(primary
+            .iter()
+            .any(|(coin, _)| coin.outpoint == unconfirmed.outpoint));
+
+        let recovery = filter_coins(&coins, Some(10), 100, None);
+        assert_eq!(recovery.len(), 1);
+        assert_eq!(recovery[0].0.outpoint, mature.outpoint);
+        assert!(recovery[0].1);
+
+        let selected = HashSet::from_iter([too_young.outpoint]);
+        let later_recovery = filter_coins(&coins, Some(10), 105, Some(selected));
+        assert_eq!(later_recovery.len(), 2);
+        assert_eq!(
+            later_recovery
+                .iter()
+                .find(|(coin, _)| coin.outpoint == mature.outpoint)
+                .map(|(_, selected)| *selected),
+            Some(false)
+        );
+        assert_eq!(
+            later_recovery
+                .iter()
+                .find(|(coin, _)| coin.outpoint == too_young.outpoint)
+                .map(|(_, selected)| *selected),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn define_spend_initializes_primary_recovery_and_self_send_modes() {
+        let wallet = wallet();
+        let coins = vec![coin(1, 10_000, Some(90)), coin(2, 20_000, Some(91))];
+
+        let primary = DefineSpend::new(
+            Network::Bitcoin,
+            wallet.clone(),
+            &coins,
+            100,
+            None,
+            true,
+            Amount::from_sat(30_000),
+            Amount::ZERO,
+            SyncStatus::Synced,
+            BitcoinDisplayUnit::Sats,
+        )
+        .with_preselected_coins(&[coins[1].outpoint])
+        .with_coins_sorted(100);
+        assert_eq!(primary.recipients.len(), 1);
+        assert_eq!(primary.send_max_to_recipient, None);
+        assert!(primary.coins[0].1);
+        assert_eq!(primary.coins[0].0.outpoint, coins[1].outpoint);
+        assert_eq!(
+            primary.timelock(),
+            wallet.main_descriptor.first_timelock_value()
+        );
+
+        let recovery = DefineSpend::new(
+            Network::Bitcoin,
+            wallet.clone(),
+            &coins,
+            100,
+            Some(10),
+            false,
+            Amount::from_sat(30_000),
+            Amount::ZERO,
+            SyncStatus::Synced,
+            BitcoinDisplayUnit::Sats,
+        );
+        assert_eq!(recovery.send_max_to_recipient, Some(0));
+        assert!(recovery.recipients[0].is_recovery);
+        assert!(recovery.coins.iter().all(|(_, selected)| *selected));
+        assert_eq!(recovery.timelock(), 10);
+
+        let self_send = recovery.self_send();
+        assert!(self_send.recipients.is_empty());
+        assert!(self_send.is_user_coin_selection);
+    }
+
+    #[test]
+    fn recipient_validates_address_amount_label_and_truncates_btc_precision() {
+        let mut recipient = Recipient::default();
+        recipient.update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "address", "not an address".to_string()),
+        );
+        assert!(!recipient.address.valid);
+
+        recipient.update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "address", MAINNET_ADDR.to_string()),
+        );
+        assert!(recipient.address_valid());
+
+        recipient.update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "amount", "1 234".to_string()),
+        );
+        assert_eq!(recipient.amount().unwrap(), 1_234);
+        assert!(recipient.valid());
+
+        recipient.update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::BTC,
+            view::CreateSpendMessage::RecipientEdited(0, "amount", "0.123456789".to_string()),
+        );
+        assert_eq!(recipient.amount.value, "0.12345678");
+        assert_eq!(
+            recipient.amount.warning,
+            Some("Amount has been truncated to 8 decimal places")
+        );
+
+        recipient.update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::BTC,
+            view::CreateSpendMessage::RecipientEdited(0, "label", "x".repeat(101)),
+        );
+        assert!(!recipient.label.valid);
+        assert!(!recipient.valid());
+    }
+
+    #[test]
+    fn recipient_rejects_empty_zero_dust_and_wrong_network_amounts() {
+        let mut recipient = Recipient::default();
+        assert!(recipient.amount().is_err());
+
+        recipient.update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "address", MAINNET_ADDR.to_string()),
+        );
+        recipient.update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "amount", "0".to_string()),
+        );
+        assert!(recipient.amount().is_err());
+
+        recipient.update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "amount", "1".to_string()),
+        );
+        assert!(recipient.amount().is_err());
+
+        recipient.update(
+            Network::Signet,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "address", MAINNET_ADDR.to_string()),
+        );
+        assert!(!recipient.address.valid);
+    }
+
+    #[test]
+    fn duplicate_detection_and_check_valid_track_form_and_coin_selection() {
+        let wallet = wallet();
+        let coins = vec![coin(1, 10_000, Some(90))];
+        let mut state = DefineSpend::new(
+            Network::Bitcoin,
+            wallet,
+            &coins,
+            100,
+            None,
+            true,
+            Amount::from_sat(10_000),
+            Amount::ZERO,
+            SyncStatus::Synced,
+            BitcoinDisplayUnit::Sats,
+        )
+        .with_preselected_coins(&[coins[0].outpoint]);
+
+        state.feerate = form::Value {
+            value: "2".to_string(),
+            valid: true,
+            warning: None,
+        };
+        state.recipients[0].update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "address", MAINNET_ADDR.to_string()),
+        );
+        state.recipients[0].update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "amount", "1000".to_string()),
+        );
+        state.check_valid();
+        assert!(state.is_valid);
+        assert!(!state.is_duplicate);
+
+        state.recipients.push(state.recipients[0].clone());
+        state.batch_label.valid = true;
+        state.check_valid();
+        assert!(state.exists_duplicate());
+        assert!(state.is_duplicate);
+
+        state.batch_label.valid = false;
+        state.check_valid();
+        assert!(!state.is_valid);
+    }
+
+    #[test]
+    fn redraft_result_insufficient_funds_sets_missing_or_under_dust_state() {
+        let wallet = wallet();
+        let coins = vec![coin(1, 10_000, Some(90))];
+        let mut state = DefineSpend::new(
+            Network::Bitcoin,
+            wallet,
+            &coins,
+            100,
+            None,
+            true,
+            Amount::from_sat(10_000),
+            Amount::ZERO,
+            SyncStatus::Synced,
+            BitcoinDisplayUnit::Sats,
+        );
+        state.coins[0].1 = true;
+        state.apply_redraft_result(
+            Address::from_str(MAINNET_ADDR).unwrap(),
+            None,
+            false,
+            Ok(CreateSpendResult::InsufficientFunds { missing: 2_500 }),
+        );
+        assert_eq!(state.amount_left_to_select, Some(Amount::from_sat(2_500)));
+        assert!(state.coins[0].1);
+        assert!(state.fee_amount.is_none());
+
+        state.send_max_to_recipient = Some(0);
+        state.recipients[0].update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "address", MAINNET_ADDR.to_string()),
+        );
+        state.recipients[0].update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "amount", "1000".to_string()),
+        );
+        state.apply_redraft_result(
+            Address::from_str(MAINNET_ADDR).unwrap(),
+            Some(0),
+            false,
+            Ok(CreateSpendResult::InsufficientFunds { missing: 100 }),
+        );
+        assert!(state.amount_left_to_select.is_none());
+        assert!(state.recipients[0]
+            .dust_warning
+            .as_deref()
+            .is_some_and(|warning| warning.contains("Minimum amount")));
+        assert!(state.recipients[0].amount.value.is_empty());
+    }
+
+    #[test]
+    fn recovery_paths_count_only_confirmed_mature_unspent_coins() {
+        let wallet = wallet();
+        let mut spent = coin(2, 20_000, Some(80));
+        spent.spend_info = Some(coincubed::commands::LCSpendInfo {
+            txid: Txid::from_str(&format!("{:064x}", 88)).unwrap(),
+            height: Some(100),
+        });
+        let coins = vec![
+            coin(1, 10_000, Some(90)),
+            spent,
+            coin(3, 30_000, None),
+            coin(4, 40_000, Some(95)),
+        ];
+
+        let paths = recovery_paths(&wallet, &coins, 100);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].sequence, 10);
+        assert_eq!(paths[0].number_of_coins, 1);
+        assert_eq!(paths[0].total_amount, Amount::from_sat(10_000));
+        assert_eq!(paths[0].threshold, 1);
+        assert_eq!(
+            paths[0].origins[0].0,
+            Fingerprint::from_str("8a64f2a9").unwrap()
+        );
+    }
+
+    #[test]
+    fn select_recovery_path_preserves_selection_across_reload_when_sequence_remains() {
+        let wallet = wallet();
+        let coins = vec![coin(1, 10_000, Some(90))];
+        let mut selector = SelectRecoveryPath::new(wallet, &coins, 100);
+        selector.selected_path = Some(0);
+
+        selector.load_from_coins_and_tip_height(&[coin(2, 20_000, Some(80))], 100);
+        assert_eq!(selector.selected_path, Some(0));
+        assert_eq!(
+            selector.recovery_paths[0].total_amount,
+            Amount::from_sat(20_000)
+        );
+
+        let mut draft = TransactionDraft::new(Network::Bitcoin, None);
+        selector.apply(&mut draft);
+        assert_eq!(draft.recovery_timelock, Some(10));
+
+        let daemon = crate::utils::mock::Daemon::new(vec![]);
+        let _ = selector.update(
+            Arc::new(crate::daemon::client::Coincubed::new(daemon.run())),
+            &Cache::default(),
+            Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::SelectPath(0),
+            )),
+        );
+        assert_eq!(selector.selected_path, None);
+    }
+}

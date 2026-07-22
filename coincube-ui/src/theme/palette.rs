@@ -1165,3 +1165,61 @@ impl Palette {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_mode_defaults_and_round_trips_lowercase_wire_values() {
+        assert_eq!(ThemeMode::default(), ThemeMode::Dark);
+        assert_eq!(serde_json::to_string(&ThemeMode::Dark).unwrap(), "\"dark\"");
+        assert_eq!(
+            serde_json::to_string(&ThemeMode::Light).unwrap(),
+            "\"light\""
+        );
+
+        let decoded: ThemeMode = serde_json::from_str("\"light\"").unwrap();
+        assert_eq!(decoded, ThemeMode::Light);
+    }
+
+    #[test]
+    fn dark_palette_is_default_and_matches_mode_dispatch() {
+        let dark = Palette::dark();
+
+        assert_eq!(dark, Palette::default());
+        assert_eq!(Palette::from_mode(ThemeMode::Dark), dark);
+        assert_eq!(dark.general.background, color::LIGHT_BLACK);
+        assert_eq!(dark.general.foreground, color::BLACK);
+        assert_eq!(dark.text.primary, color::WHITE);
+        assert_eq!(dark.buttons.primary.active.background, color::ORANGE);
+        assert_eq!(dark.buttons.primary.active.text, color::LIGHT_BLACK);
+        assert_eq!(dark.buttons.primary.hovered.background, color::DARK_ORANGE);
+        assert_eq!(
+            dark.buttons.orange_outline.active.background,
+            color::TRANSPARENT
+        );
+        assert_eq!(dark.text_inputs.invalid.active.border, Some(color::RED));
+        assert_eq!(dark.togglers.off.background, color::GREY_2);
+    }
+
+    #[test]
+    fn light_palette_matches_mode_dispatch_and_light_surface_contracts() {
+        let light = Palette::light();
+
+        assert_eq!(Palette::from_mode(ThemeMode::Light), light);
+        assert_ne!(light, Palette::dark());
+        assert_eq!(light.general.background, color::LIGHT_BG);
+        assert_eq!(light.general.foreground, color::WARM_PAPER);
+        assert_eq!(light.text.primary, color::DARK_GRAY);
+        assert_eq!(light.text.success, color::DARK_GREEN);
+        assert_eq!(light.buttons.menu.hovered.background, color::LIGHT_HOVER);
+        assert_eq!(light.cards.simple.background, color::LIGHT_CARD_BG);
+        assert_eq!(light.notifications.debug.text, Some(color::DARK_GRAY));
+        assert_eq!(
+            light.sliders.rail_backgrounds,
+            (color::ORANGE, color::LIGHT_BORDER)
+        );
+        assert_eq!(light.togglers.off.background, color::LIGHT_BORDER);
+    }
+}

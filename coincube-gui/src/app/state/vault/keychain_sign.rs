@@ -1956,11 +1956,44 @@ fn event_type_from_i32(v: i32) -> crate::services::connect::grpc::connect_v1::Ev
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::state::vault::test_support::{empty_psbt, tokens};
     use std::str::FromStr;
 
     // Primary signer `f5acc2fd`; recovery signer `8a64f2a9` behind a CSV.
     // Same fixture used by the `signers` classification tests.
     const RECOVERY_DESC: &str = "wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr";
+
+    fn modal() -> KeychainSignModal {
+        let wallet = Arc::new(Wallet::new(
+            CoincubeDescriptor::from_str(RECOVERY_DESC).unwrap(),
+        ));
+        KeychainSignModal::new(
+            wallet,
+            CoincubeClient::new(),
+            tokens(),
+            "https://grpc.example.test".to_string(),
+            "desktop-device".to_string(),
+            42,
+            "cube-local".to_string(),
+            RECOVERY_DESC.to_string(),
+            empty_psbt(),
+        )
+    }
+
+    fn pending(status: PendingSessionStatus) -> PendingSession {
+        PendingSession {
+            session_id: "session-1".to_string(),
+            key_id: 7,
+            fingerprint: Fingerprint::from_str("f5acc2fd").unwrap(),
+            device_id: "phone-1".to_string(),
+            label: "Phone (you)".to_string(),
+            status,
+            error: None,
+            cancel_requested: false,
+            signed_psbt_persisted: false,
+            signed_psbt_fetching: false,
+        }
+    }
 
     #[test]
     fn descriptor_fingerprints_covers_primary_and_recovery() {
@@ -1972,5 +2005,191 @@ mod tests {
         assert!(fps.contains(&Fingerprint::from_str("f5acc2fd").unwrap()));
         assert!(fps.contains(&Fingerprint::from_str("8a64f2a9").unwrap()));
         assert_eq!(fps.len(), 2);
+    }
+
+    #[test]
+    fn pending_session_status_labels_and_terminal_flags_are_stable() {
+        let cases = [
+            (PendingSessionStatus::Idle, "", false, false),
+            (PendingSessionStatus::Creating, "Requesting…", false, false),
+            (PendingSessionStatus::Pending, "Requested…", false, false),
+            (PendingSessionStatus::Delivered, "Delivered", false, false),
+            (PendingSessionStatus::Viewed, "Viewed", false, false),
+            (PendingSessionStatus::Approved, "Approved", false, false),
+            (
+                PendingSessionStatus::PartiallySigned,
+                "Signing…",
+                false,
+                false,
+            ),
+            (PendingSessionStatus::Completed, "Signed", true, true),
+            (PendingSessionStatus::Rejected, "Rejected", true, false),
+            (PendingSessionStatus::Cancelled, "Cancelled", true, false),
+            (PendingSessionStatus::Expired, "Expired", true, false),
+            (PendingSessionStatus::Failed, "Failed", true, false),
+        ];
+
+        for (status, label, terminal, success) in cases {
+            assert_eq!(status.label(), label);
+            assert_eq!(status.is_terminal(), terminal);
+            assert_eq!(status.is_terminal_success(), success);
+        }
+        assert!(PendingSessionStatus::Idle.is_idle());
+        assert!(!PendingSessionStatus::Pending.is_idle());
+    }
+
+    #[test]
+    fn modal_phase_helpers_track_loading_resolution_and_done_states() {
+        let mut modal = modal();
+        assert!(modal.is_loading());
+        assert!(!modal.is_resolved());
+        assert!(!modal.is_done());
+
+        modal.phase = Phase::Resolving;
+        assert!(modal.is_loading());
+        assert!(!modal.is_resolved());
+
+        modal.phase = Phase::Sessions;
+        assert!(!modal.is_loading());
+        assert!(modal.is_resolved());
+        assert!(!modal.is_done());
+
+        modal.phase = Phase::AllDone;
+        assert!(modal.is_resolved());
+        assert!(modal.is_done());
+    }
+
+    #[test]
+    fn stream_health_banner_only_shows_for_degraded_pending_sessions() {
+        let mut modal = modal();
+        assert!(modal.stream_health_banner().is_none());
+
+        modal.pending.push(pending(PendingSessionStatus::Pending));
+        assert!(modal.stream_health_banner().is_none());
+
+        modal.stream_health = crate::app::ConnectionStatus::Connecting;
+        assert!(modal
+            .stream_health_banner()
+            .is_some_and(|b| b.contains("reconnecting")));
+
+        modal.stream_health = crate::app::ConnectionStatus::Error("socket closed".to_string());
+        assert!(modal
+            .stream_health_banner()
+            .is_some_and(|b| b.contains("socket closed")));
+
+        modal.pending[0].status = PendingSessionStatus::Completed;
+        assert!(modal.stream_health_banner().is_none());
+    }
+
+    #[test]
+    fn done_and_dismissed_drain_helpers_ignore_idle_but_wait_for_active_sessions() {
+        let mut modal = modal();
+        assert!(!modal.check_all_done());
+        assert!(!modal.has_undrained_sessions());
+
+        modal.pending.push(pending(PendingSessionStatus::Idle));
+        assert!(!modal.check_all_done());
+        assert!(!modal.has_undrained_sessions());
+
+        modal.pending[0].status = PendingSessionStatus::Creating;
+        assert!(modal.has_undrained_sessions());
+        modal.mark_dismissed();
+        let _ = modal.close_if_dismissed_and_drained();
+        assert!(!matches!(modal.phase, Phase::AllDone));
+
+        modal.pending[0].status = PendingSessionStatus::Completed;
+        assert!(!modal.has_undrained_sessions());
+        assert!(!modal.check_all_done());
+
+        modal.pending[0].signed_psbt_persisted = true;
+        assert!(modal.check_all_done());
+
+        modal.pending[0].status = PendingSessionStatus::Cancelled;
+        modal.pending[0].signed_psbt_persisted = false;
+        let _ = modal.close_if_dismissed_and_drained();
+        assert!(matches!(modal.phase, Phase::AllDone));
+    }
+
+    #[test]
+    fn proto_status_mapping_handles_known_and_unknown_values() {
+        use ProtoSessionStatus::*;
+
+        let cases = [
+            (Pending, PendingSessionStatus::Pending),
+            (Delivered, PendingSessionStatus::Delivered),
+            (Viewed, PendingSessionStatus::Viewed),
+            (Approved, PendingSessionStatus::Approved),
+            (PartiallySigned, PendingSessionStatus::PartiallySigned),
+            (Completed, PendingSessionStatus::Completed),
+            (Rejected, PendingSessionStatus::Rejected),
+            (Cancelled, PendingSessionStatus::Cancelled),
+            (Expired, PendingSessionStatus::Expired),
+            (Failed, PendingSessionStatus::Failed),
+            (Unspecified, PendingSessionStatus::Pending),
+        ];
+
+        for (proto, status) in cases {
+            assert_eq!(PendingSessionStatus::from_proto(proto), status);
+        }
+
+        assert_eq!(session_status_from_i32(1), Pending);
+        assert_eq!(session_status_from_i32(6), Completed);
+        assert_eq!(session_status_from_i32(10), Failed);
+        assert_eq!(session_status_from_i32(999), Unspecified);
+    }
+
+    #[test]
+    fn event_type_mapping_handles_known_and_unknown_values() {
+        use crate::services::connect::grpc::connect_v1::EventType;
+
+        assert_eq!(event_type_from_i32(1), EventType::SessionCreated);
+        assert_eq!(event_type_from_i32(6), EventType::SignatureSubmitted);
+        assert_eq!(event_type_from_i32(12), EventType::DeviceOffline);
+        assert_eq!(event_type_from_i32(-1), EventType::Unspecified);
+    }
+
+    #[test]
+    fn auth_failure_detectors_classify_rest_and_grpc_errors() {
+        assert!(is_rest_auth_failure("HTTP 401 Unauthorized"));
+        assert!(is_rest_auth_failure("jwt expired"));
+        assert!(is_rest_auth_failure("invalid token"));
+        assert!(is_rest_auth_failure("403 forbidden"));
+        assert!(!is_rest_auth_failure("temporary network failure"));
+
+        let unauth = OpError::from_status(tonic::Status::unauthenticated("JWT expired"));
+        assert!(unauth.auth);
+        assert_eq!(
+            unauth.message,
+            "Your Connect session has expired. Please sign in again."
+        );
+
+        let denied = friendly_grpc_error(tonic::Status::permission_denied("nope"));
+        assert!(denied.1);
+        assert!(denied.0.contains("don't have permission"));
+
+        let unavailable = friendly_grpc_error(tonic::Status::unavailable("offline"));
+        assert!(!unavailable.1);
+        assert!(unavailable.0.contains("temporarily unreachable"));
+
+        let timed_out = friendly_grpc_error(tonic::Status::deadline_exceeded("slow"));
+        assert!(!timed_out.1);
+        assert!(timed_out.0.contains("timed out"));
+
+        let other = friendly_grpc_error(tonic::Status::internal("boom"));
+        assert_eq!(other, ("boom".to_string(), false));
+    }
+
+    #[test]
+    fn generated_ids_and_fingerprint_strings_have_expected_wire_shape() {
+        let id = uuid_v4();
+        assert_eq!(id.len(), 36);
+        assert_eq!(id.as_bytes()[14], b'4');
+        assert!(matches!(id.as_bytes()[19], b'8' | b'9' | b'a' | b'b'));
+        assert_eq!(id.matches('-').count(), 4);
+
+        let fp = Fingerprint::from_str("f5acc2fd").unwrap();
+        assert_eq!(fingerprint_as_str(&fp), "f5acc2fd");
+        assert_eq!(OpError::new("plain").message, "plain");
+        assert!(!OpError::new("plain").auth);
     }
 }
