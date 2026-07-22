@@ -1163,117 +1163,94 @@ pub fn start_internal_bitcoind<'a>(
     install_state: Option<&InstallState>,
 ) -> Element<'a, Message> {
     let version = crate::node::bitcoind::VERSION;
-    let msg_next = if let Some(Ok(_)) = started {
-        Some(Message::Next)
-    } else {
-        None
+    let msg_next = matches!(started, Some(Ok(_))).then_some(Message::Next);
+    let status = |icon: Option<Text<'static>>, label: Text<'static>| {
+        match icon {
+            Some(icon) => row![icon, label],
+            None => row![label],
+        }
+        .spacing(10)
+        .align_y(Alignment::Center)
     };
+    let empty_status = || row![].spacing(10).align_y(Alignment::Center);
+
+    let download = download_state.map(|state| match state {
+        DownloadState::Idle => empty_status(),
+        DownloadState::Downloading { progress } => status(
+            None,
+            new::caption(format!(
+                "Downloading Bitcoin Core {version}... {progress:.2}%"
+            )),
+        ),
+        DownloadState::Finished(_) => status(
+            Some(icon::circle_check_icon().style(theme::text::success)),
+            new::caption("Download complete").style(theme::text::success),
+        ),
+        DownloadState::Errored(e) => status(
+            Some(icon::circle_cross_icon().style(theme::text::error)),
+            new::caption(format!("Download failed: '{e}'.")).style(theme::text::error),
+        ),
+    });
+
+    let install: Element<'static, Message> = match (install_state, exe_path, download_state) {
+        (Some(InstallState::InProgress), _, _) => {
+            status(None, new::caption("Installing bitcoind...")).into()
+        }
+        (Some(InstallState::Finished), _, _) => status(
+            Some(icon::circle_check_icon().style(theme::text::success)),
+            new::caption("Installation complete").style(theme::text::success),
+        )
+        .into(),
+        (Some(InstallState::Errored(e)), _, _) => status(
+            Some(icon::circle_cross_icon().style(theme::text::error)),
+            new::caption(format!("Installation failed: '{e}'.")).style(theme::text::error),
+        )
+        .into(),
+        (None, Some(_), _) => status(
+            Some(icon::circle_check_icon().style(theme::text::success)),
+            new::caption("Liana-managed bitcoind already installed").style(theme::text::success),
+        )
+        .into(),
+        (None, None, Some(DownloadState::Downloading { progress })) => {
+            row![progress_bar(0.0..=100.0, *progress)]
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .into()
+        }
+        (None, None, _) => empty_status().into(),
+    };
+
+    let started: Element<'static, Message> = match started {
+        Some(Ok(())) => status(
+            Some(icon::circle_check_icon().style(theme::text::success)),
+            new::caption("Started").style(theme::text::success),
+        )
+        .into(),
+        Some(Err(e)) => status(
+            Some(icon::circle_cross_icon().style(theme::text::error)),
+            new::caption(e.to_string()).style(theme::text::error),
+        )
+        .into(),
+        None => match (install_state, exe_path) {
+            // We have either just installed bitcoind or it was already installed.
+            (Some(InstallState::Finished), _) | (None, Some(_)) => {
+                status(None, new::caption("Starting...")).into()
+            }
+            _ => Space::with_height(25).into(),
+        },
+    };
+
+    let button_next = row![Space::fill_width(), btn_next(msg_next)];
+    let error = error.map(|e| card::invalid(new::caption(e)));
+    let content = column![download, install, started, button_next, error].spacing(50);
+
     layout(
         progress,
         network,
         None,
         "Start Bitcoin full node",
-        Column::new()
-            .push_maybe(download_state.map(|s| {
-                match s {
-                    DownloadState::Finished(_) => Row::new()
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .push(icon::circle_check_icon().style(theme::text::success))
-                        .push(new::caption("Download complete").style(theme::text::success)),
-                    DownloadState::Downloading { progress } => Row::new()
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .push(new::caption(format!(
-                            "Downloading Bitcoin Core {version}... {progress:.2}%"
-                        ))),
-                    DownloadState::Errored(e) => Row::new()
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .push(icon::circle_cross_icon().style(theme::text::error))
-                        .push(
-                            new::caption(format!("Download failed: '{e}'."))
-                                .style(theme::text::error),
-                        ),
-                    _ => Row::new().spacing(10).align_y(Alignment::Center),
-                }
-            }))
-            .push(Container::new(if let Some(state) = install_state {
-                match state {
-                    InstallState::InProgress => Row::new()
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .push("Installing bitcoind..."),
-                    InstallState::Finished => Row::new()
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .push(icon::circle_check_icon().style(theme::text::success))
-                        .push(new::caption("Installation complete").style(theme::text::success)),
-                    InstallState::Errored(e) => Row::new()
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .push(icon::circle_cross_icon().style(theme::text::error))
-                        .push(
-                            new::caption(format!("Installation failed: '{e}'."))
-                                .style(theme::text::error),
-                        ),
-                }
-            } else if exe_path.is_some() {
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(icon::circle_check_icon().style(theme::text::success))
-                    .push(
-                        new::caption("Liana-managed bitcoind already installed")
-                            .style(theme::text::success),
-                    )
-            } else if let Some(DownloadState::Downloading { progress }) = download_state {
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(progress_bar(0.0..=100.0, *progress))
-            } else {
-                Row::new().spacing(10).align_y(Alignment::Center)
-            }))
-            .push_maybe(if started.is_some() {
-                started.map(|res| {
-                    if res.is_ok() {
-                        Container::new(
-                            Row::new()
-                                .spacing(10)
-                                .align_y(Alignment::Center)
-                                .push(icon::circle_check_icon().style(theme::text::success))
-                                .push(new::caption("Started").style(theme::text::success)),
-                        )
-                    } else {
-                        Container::new(
-                            Row::new()
-                                .spacing(10)
-                                .align_y(Alignment::Center)
-                                .push(icon::circle_cross_icon().style(theme::text::error))
-                                .push(
-                                    new::caption(res.as_ref().err().unwrap().to_string())
-                                        .style(theme::text::error),
-                                ),
-                        )
-                    }
-                })
-            } else {
-                match (install_state, exe_path) {
-                    // We have either just installed bitcoind or it was already installed.
-                    (Some(InstallState::Finished), _) | (None, Some(_)) => Some(Container::new(
-                        Row::new()
-                            .spacing(10)
-                            .align_y(Alignment::Center)
-                            .push(new::caption("Starting...")),
-                    )),
-                    _ => Some(Container::new(Space::with_height(Length::Fixed(25.0)))),
-                }
-            })
-            .spacing(50)
-            .push(btn_next(msg_next))
-            .push_maybe(error.map(|e| card::invalid(new::caption(e)))),
-        Some(message::Message::InternalBitcoind(
+        content,
+        Some(Message::InternalBitcoind(
             message::InternalBitcoindMsg::Previous,
         )),
     )
