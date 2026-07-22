@@ -161,6 +161,12 @@ pub struct Cache {
     /// drift banner (W12). `None` when no descriptor has ever been
     /// backed up, or when the kit has been removed.
     pub recovery_kit_last_backed_up_descriptor_fingerprint: Option<String>,
+    /// Keychain (phone) analogue of the field above: mirrors
+    /// `CubeSettings::recovery_kit_last_backed_up_keychain_descriptor_fingerprint`.
+    /// The Settings card compares it to `current_descriptor_fingerprint` to
+    /// surface the phone copy's independent drift verdict (per-method drift,
+    /// PR 3). `None` when never phone-sealed or after the kit is removed.
+    pub recovery_kit_last_backed_up_keychain_descriptor_fingerprint: Option<String>,
     /// Connect gRPC base URL, populated once `Message::ConnectStreamReady`
     /// fires after login. `None` until then or for local-daemon installs
     /// — the Keychain "Sign via Keychain" button stays disabled while
@@ -229,6 +235,7 @@ impl std::default::Default for Cache {
             current_cube_server_id: None,
             current_descriptor_fingerprint: None,
             recovery_kit_last_backed_up_descriptor_fingerprint: None,
+            recovery_kit_last_backed_up_keychain_descriptor_fingerprint: None,
             connect_grpc_url: None,
             connect_tokens: None,
             connect_stream_status: crate::app::ConnectionStatus::default(),

@@ -1222,9 +1222,12 @@ pub enum RecoveryKitMessage {
     /// three-way [`PhoneKeyOutcome`] so the choice screen can enable the phone
     /// options (`Present`), show guidance (`Absent`), or surface an error.
     ProvisionResult(PhoneKeyOutcome),
-    /// Async result of the phone seal+upload (PR 2). `Ok(())` on success; the
-    /// error string is display-safe.
-    PhoneSealResult(Result<(), String>),
+    /// Async result of the phone seal+upload (PR 2). On success carries the
+    /// SHA-256 fingerprint of the descriptor that was sealed, so the handler can
+    /// persist the keychain drift slot (per-method drift, PR 3); the hex is
+    /// redacted from `Debug` (a stable cross-session identifier). The error
+    /// string is display-safe.
+    PhoneSealResult(Result<Option<String>, String>),
     /// User toggled the "I've written this down" gate on the password
     /// screen. Submit is inert until this is true.
     AcknowledgeToggled(bool),
@@ -1238,10 +1241,38 @@ pub enum RecoveryKitMessage {
     /// User dismissed the Completed screen — return to card view and
     /// trigger a fresh `LoadStatus`.
     DismissCompleted,
-    /// User clicked Remove. Fires `delete_recovery_kit`.
+    /// User clicked Remove on the card. Enters the `ConfirmRemove` confirmation
+    /// screen — it does **not** delete anything (master F5: removal is
+    /// destructive and irreversible, so it's gated behind an explicit confirm).
     Remove,
-    /// Async result of Remove.
-    RemoveResult(Result<(), String>),
+    /// User confirmed removal on the `ConfirmRemove` screen. Fires the actual
+    /// delete set — `delete_recovery_kit` for the password half and/or
+    /// `delete_recovery_kit_recipient` (cascades envelopes) for the phone half,
+    /// run sequentially; partial failure fails loudly.
+    ConfirmRemove,
+    /// Async result of the removal. The error carries [`RemoveFailure`] so the
+    /// handler can tell whether the password kit was already torn down before
+    /// the failure and drop the now-stale local fingerprint slot accordingly.
+    RemoveResult(Result<(), RemoveFailure>),
+}
+
+/// Failure payload from the removal flow ([`remove_backups`]). The password
+/// Recovery Kit delete runs **first and unconditionally**, so any failure
+/// *after* it (the Keychain teardown or the phone-copy verification) leaves the
+/// local `recovery_kit_last_backed_up_descriptor_fingerprint` pointing at a kit
+/// Connect no longer holds. `password_kit_deleted` lets the error handler clear
+/// just that slot so `has_recovery_kit()` / `connect_state()` don't keep
+/// reporting a password backup that's gone. No sensitive fields — `message` is
+/// the user-facing error copy — so `Debug` is derived.
+#[derive(Clone, Debug)]
+pub struct RemoveFailure {
+    /// User-facing error copy, shown via `ShowError` and stored on the
+    /// `Error` flow state.
+    pub message: String,
+    /// Whether the password kit was already deleted server-side before the
+    /// failure. `false` only when the password delete itself was the failing
+    /// step (the kit is still present, so the local slot is still accurate).
+    pub password_kit_deleted: bool,
 }
 
 /// What the upload handler hands back to the state machine on success.
@@ -1318,7 +1349,16 @@ impl std::fmt::Debug for RecoveryKitMessage {
             }
             Self::ProvisionPhone => write!(f, "ProvisionPhone"),
             Self::ProvisionResult(r) => f.debug_tuple("ProvisionResult").field(r).finish(),
-            Self::PhoneSealResult(r) => f.debug_tuple("PhoneSealResult").field(r).finish(),
+            // Redact the descriptor fingerprint hex (a stable cross-session
+            // identifier), preserving Ok/Err and presence for diagnostics.
+            Self::PhoneSealResult(Ok(fp)) => f
+                .debug_tuple("PhoneSealResult")
+                .field(&Ok::<_, ()>(fp.as_ref().map(|_| "<redacted>")))
+                .finish(),
+            Self::PhoneSealResult(Err(e)) => f
+                .debug_tuple("PhoneSealResult")
+                .field(&Err::<(), _>(e))
+                .finish(),
             Self::AcknowledgeToggled(b) => f.debug_tuple("AcknowledgeToggled").field(b).finish(),
             Self::SubmitPassword => write!(f, "SubmitPassword"),
             Self::UploadResult(Ok(o)) => f.debug_tuple("UploadResult(Ok)").field(o).finish(),
@@ -1328,6 +1368,7 @@ impl std::fmt::Debug for RecoveryKitMessage {
                 .finish(),
             Self::DismissCompleted => write!(f, "DismissCompleted"),
             Self::Remove => write!(f, "Remove"),
+            Self::ConfirmRemove => write!(f, "ConfirmRemove"),
             Self::RemoveResult(r) => f.debug_tuple("RemoveResult").field(r).finish(),
         }
     }
@@ -2284,6 +2325,20 @@ mod recovery_kit_upload_outcome_debug_tests {
         assert!(
             !rendered.contains(CANARY_FP),
             "Debug(RecoveryKitMessage::UploadResult(Ok(..))) leaked fingerprint: {}",
+            rendered
+        );
+        assert!(rendered.contains("<redacted>"));
+    }
+
+    #[test]
+    fn phone_seal_result_ok_debug_does_not_leak_fingerprint() {
+        // The keychain drift fingerprint (PR 3) is the same class of stable
+        // cross-session identifier as the upload outcome's — redact its hex.
+        let msg = RecoveryKitMessage::PhoneSealResult(Ok(Some(CANARY_FP.to_string())));
+        let rendered = format!("{:?}", msg);
+        assert!(
+            !rendered.contains(CANARY_FP),
+            "Debug(RecoveryKitMessage::PhoneSealResult(Ok(..))) leaked fingerprint: {}",
             rendered
         );
         assert!(rendered.contains("<redacted>"));

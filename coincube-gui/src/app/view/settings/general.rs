@@ -123,21 +123,22 @@ fn recovery_section<'a>(
                 "back up your Cube Recovery Kit",
             ));
         } else {
-            // W12 drift: compute on the fly by comparing the cached live
-            // fingerprint (refreshed every App tick) with the last-backed-up
-            // fingerprint (persisted on `CubeSettings`). Only meaningful when a
-            // descriptor has actually been backed up — otherwise the card's
-            // "incomplete" copy already prompts the user.
-            let server_has_descriptor = rk
-                .status
-                .as_ref()
-                .map(|s| s.has_encrypted_wallet_descriptor)
-                .unwrap_or(false);
+            // W12 drift, per method (PR 3): compare the live descriptor
+            // fingerprint (refreshed every App tick) against each method's
+            // last-backed-up fingerprint (persisted per-method on `CubeSettings`).
+            // A method's descriptor presence comes from the server status via
+            // `backup_overview`; the positive-evidence-only rule keeps a missing
+            // slot from firing that method's banner.
+            let overview = backup_overview(rk.status.as_ref());
             let drift = descriptor_drift(
-                server_has_descriptor,
                 cache.current_descriptor_fingerprint.as_deref(),
+                overview.password.map(|m| m.descriptor).unwrap_or(false),
                 cache
                     .recovery_kit_last_backed_up_descriptor_fingerprint
+                    .as_deref(),
+                overview.keychain.map(|m| m.descriptor).unwrap_or(false),
+                cache
+                    .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
                     .as_deref(),
             );
             col = col.push(recovery_kit_card(
@@ -502,20 +503,117 @@ pub(crate) fn backup_pill<'a>(label: &'static str) -> Element<'a, Message> {
         .into()
 }
 
+/// Which halves a single backup method holds. A method is "enabled" (in use)
+/// when it holds at least one half; whether it's *complete* depends on the
+/// Cube's shape (see [`method_complete`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MethodBackup {
+    pub(crate) seed: bool,
+    pub(crate) descriptor: bool,
+}
+
+/// One source of truth for "what's backed up, by which method" — the master
+/// §definitions distilled into a per-method view the card (and, later, the
+/// duress-vault-gate `CubeBackupCompleteness`) both read. `password` /
+/// `keychain` are `Some` iff that method holds any restorable material (a
+/// recipient without envelopes never counts — master F1). `last_updated` is
+/// the later of the password kit's and the phone envelope's timestamps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BackupOverview {
+    /// Password-encrypted kit. `Some` ⇔ any password blob present.
+    pub(crate) password: Option<MethodBackup>,
+    /// Owner-keychain ("phone") envelopes. `Some` ⇔ any envelope kind present
+    /// (`has_envelope`; never `has_recipient` alone — master F1).
+    pub(crate) keychain: Option<MethodBackup>,
+    /// `max(kit.updated_at, owner_self.updated_at)`, compared by parsed instant.
+    pub(crate) last_updated: Option<String>,
+}
+
+impl BackupOverview {
+    /// At least one method holds restorable material.
+    pub(crate) fn any_enabled(&self) -> bool {
+        self.password.is_some() || self.keychain.is_some()
+    }
+}
+
+/// Distill a `RecoveryKitStatus` into the per-method [`BackupOverview`]. Absent
+/// status (not loaded yet) → every method `None`. Keychain presence keys off
+/// `has_envelope()` (kinds non-empty), never a bare recipient (master F1).
+pub(crate) fn backup_overview(status: Option<&RecoveryKitStatus>) -> BackupOverview {
+    let Some(s) = status else {
+        return BackupOverview {
+            password: None,
+            keychain: None,
+            last_updated: None,
+        };
+    };
+    let password =
+        (s.has_encrypted_seed || s.has_encrypted_wallet_descriptor).then_some(MethodBackup {
+            seed: s.has_encrypted_seed,
+            descriptor: s.has_encrypted_wallet_descriptor,
+        });
+    let keychain = s
+        .owner_self
+        .as_ref()
+        .filter(|o| o.has_envelope())
+        .map(|o| MethodBackup {
+            seed: o.envelope_kinds.iter().any(|k| k == "seed"),
+            descriptor: o.envelope_kinds.iter().any(|k| k == "descriptor"),
+        });
+    let owner_updated = s.owner_self.as_ref().and_then(|o| o.updated_at.as_deref());
+    let last_updated = later_timestamp(s.updated_at.as_deref(), owner_updated);
+    BackupOverview {
+        password,
+        keychain,
+        last_updated,
+    }
+}
+
+/// Whether a method independently holds everything the Cube's shape requires
+/// (master §definitions: completeness is per-method):
+///   * passkey — descriptor only (the seed is unextractable on-device);
+///   * mnemonic + vault — seed **and** descriptor;
+///   * mnemonic, no vault — seed alone.
+pub(crate) fn method_complete(m: &MethodBackup, has_vault: bool, is_passkey: bool) -> bool {
+    if is_passkey {
+        m.descriptor
+    } else if has_vault {
+        m.seed && m.descriptor
+    } else {
+        m.seed
+    }
+}
+
+/// The later of two RFC 3339 timestamps, compared by parsed instant so
+/// mixed-precision strings sort correctly. Falls back to whichever side parses
+/// when only one does, and to the first present value when neither parses.
+fn later_timestamp(a: Option<&str>, b: Option<&str>) -> Option<String> {
+    match (a, b) {
+        (Some(a), Some(b)) => {
+            let pa = chrono::DateTime::parse_from_rfc3339(a).ok();
+            let pb = chrono::DateTime::parse_from_rfc3339(b).ok();
+            match (pa, pb) {
+                (Some(pa), Some(pb)) => Some(if pa >= pb { a } else { b }.to_string()),
+                (Some(_), None) => Some(a.to_string()),
+                (None, Some(_)) => Some(b.to_string()),
+                // Neither parses — deterministic fall back to the first (password).
+                (None, None) => Some(a.to_string()),
+            }
+        }
+        (Some(a), None) => Some(a.to_string()),
+        (None, Some(b)) => Some(b.to_string()),
+        (None, None) => None,
+    }
+}
+
 /// Which Recovery-Kit backup methods are actually in place, from the status.
-/// Returns `(password_present, keychain_present)`. Password = ciphertext on the
-/// password kit; Keychain = recovery material actually sealed to the owner's
-/// phone key (envelope uploaded, not merely a recipient registered). Shared by
-/// the Settings card and the protection-choice wizard screen.
+/// Returns `(password_present, keychain_present)` — presence, not completeness,
+/// so a partial method still shows its pill. Thin wrapper over
+/// [`backup_overview`]; shared by the Settings card and the protection-choice
+/// wizard screen.
 pub(crate) fn backup_methods_present(status: Option<&RecoveryKitStatus>) -> (bool, bool) {
-    let password = status
-        .map(|s| s.has_encrypted_seed || s.has_encrypted_wallet_descriptor)
-        .unwrap_or(false);
-    let keychain = status
-        .and_then(|s| s.owner_self.as_ref())
-        .map(|o| o.has_envelope())
-        .unwrap_or(false);
-    (password, keychain)
+    let o = backup_overview(status);
+    (o.password.is_some(), o.keychain.is_some())
 }
 
 /// Format an RFC 3339 timestamp as the API returns it (e.g.
@@ -529,6 +627,191 @@ fn format_backup_time(raw: &str) -> String {
                 .to_string()
         })
         .unwrap_or_else(|_| raw.to_string())
+}
+
+/// The computed textual state of the Recovery-Kit card — title, subtitle, and
+/// primary CTA — factored out of [`recovery_kit_card`] so the per-method state
+/// matrix (plan §PR1) is unit-testable without standing up iced Elements.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CardState {
+    title: &'static str,
+    subtitle: String,
+    primary_label: &'static str,
+    primary_mode: RecoveryKitMode,
+}
+
+/// The "Create" (nothing backed up yet) card state, per Cube shape.
+fn create_state(is_passkey: bool) -> CardState {
+    if is_passkey {
+        CardState {
+            title: "Back up your Wallet Descriptor",
+            subtitle: "Your Master Seed Phrase is protected by your passkey and isn't included \
+                       in the Recovery Kit — we back up the Wallet Descriptor only."
+                .to_string(),
+            primary_label: "Create Recovery Kit",
+            primary_mode: RecoveryKitMode::Create,
+        }
+    } else {
+        CardState {
+            title: "Back up your Cube Recovery Kit",
+            subtitle: "Back up your Master Seed Phrase and Wallet Descriptor to your Connect \
+                       account so you can restore your Cube if you lose this device."
+                .to_string(),
+            primary_label: "Create Recovery Kit",
+            primary_mode: RecoveryKitMode::Create,
+        }
+    }
+}
+
+/// A sentence naming the missing half of an incomplete enabled method (`label`
+/// is "password" / "phone"), or `None` when the method is complete for the
+/// shape. An enabled method holds at least one half, so for the mnemonic+vault
+/// shape the gap is whichever half is absent; for the descriptor-only (passkey)
+/// and seed-only (vaultless) shapes it names that required half.
+fn method_gap_sentence(
+    m: &MethodBackup,
+    has_vault: bool,
+    is_passkey: bool,
+    label: &str,
+) -> Option<String> {
+    if method_complete(m, has_vault, is_passkey) {
+        return None;
+    }
+    let missing_half = if is_passkey || m.seed {
+        // Passkey needs the descriptor; a mnemonic+vault method that already
+        // holds the seed is missing the descriptor.
+        "Wallet Descriptor"
+    } else {
+        // No seed present — the seed is what's missing (mnemonic, either shape).
+        "Master Seed Phrase"
+    };
+    Some(format!(
+        "Your {} backup is missing the {}.",
+        label, missing_half
+    ))
+}
+
+/// The CTA that closes the *password* method's gap, when the password method is
+/// enabled and incomplete. `None` when password is absent or already complete —
+/// the gap is then on the keychain method, closed by re-sealing via `Rotate`.
+fn password_gap_cta(
+    password: &Option<MethodBackup>,
+    has_vault: bool,
+    is_passkey: bool,
+) -> Option<(&'static str, RecoveryKitMode)> {
+    let pw = password.as_ref()?;
+    if method_complete(pw, has_vault, is_passkey) {
+        return None;
+    }
+    if pw.seed && !pw.descriptor {
+        // Seed backed up, descriptor missing → the existing AddDescriptor branch.
+        Some(("Add Wallet Descriptor", RecoveryKitMode::AddDescriptor))
+    } else {
+        // Descriptor present but seed missing (or vaultless seed-shape with no
+        // seed) → the existing AddSeed branch.
+        Some(("Add Master Seed Phrase", RecoveryKitMode::AddSeed))
+    }
+}
+
+/// Derive the card's copy + primary CTA from the per-method [`BackupOverview`]
+/// and the Cube's shape. The Cube reads "backed up" iff ≥1 method is enabled
+/// and every enabled method is complete for the shape (master F6); any
+/// enabled-but-incomplete method drops to the "Finish backing up" state,
+/// naming each gap (password first) with the CTA pointed at the first gap.
+/// `status_present` distinguishes "loaded, no methods" (Create) from "not
+/// loaded yet" (loading / sign-in copy — mnemonic only, matching prior copy).
+fn recovery_kit_card_state(
+    overview: &BackupOverview,
+    is_passkey: bool,
+    has_vault: bool,
+    loading: bool,
+    status_present: bool,
+) -> CardState {
+    // Not loaded yet. The passkey card historically shows its Create copy here;
+    // the mnemonic card shows a loading / sign-in line. Preserve both.
+    if !status_present {
+        if is_passkey {
+            return create_state(true);
+        }
+        return CardState {
+            title: "Cube Recovery Kit",
+            subtitle: if loading {
+                "Checking your Connect account…".to_string()
+            } else {
+                "Sign in to Connect to back up your Cube Recovery Kit.".to_string()
+            },
+            primary_label: "Create Recovery Kit",
+            primary_mode: RecoveryKitMode::Create,
+        };
+    }
+
+    // No method enabled → Create.
+    if !overview.any_enabled() {
+        return create_state(is_passkey);
+    }
+
+    // Per-method completeness. A disabled method vacuously satisfies the
+    // conjunction, so `unwrap_or(true)`.
+    let pw_complete = overview
+        .password
+        .as_ref()
+        .map(|m| method_complete(m, has_vault, is_passkey))
+        .unwrap_or(true);
+    let kc_complete = overview
+        .keychain
+        .as_ref()
+        .map(|m| method_complete(m, has_vault, is_passkey))
+        .unwrap_or(true);
+
+    if pw_complete && kc_complete {
+        // Every enabled method complete → backed up.
+        let title = if is_passkey {
+            "Wallet Descriptor backed up"
+        } else {
+            "Recovery Kit backed up"
+        };
+        let subtitle = format!(
+            "Last updated {}.",
+            overview
+                .last_updated
+                .as_deref()
+                .map(format_backup_time)
+                .unwrap_or_else(|| "—".to_string())
+        );
+        return CardState {
+            title,
+            subtitle,
+            primary_label: "Update",
+            primary_mode: RecoveryKitMode::Rotate,
+        };
+    }
+
+    // At least one enabled method is incomplete → "Finish backing up", listing
+    // each gap in deterministic order (password first).
+    let mut gaps: Vec<String> = Vec::new();
+    if let Some(pw) = &overview.password {
+        if let Some(s) = method_gap_sentence(pw, has_vault, is_passkey, "password") {
+            gaps.push(s);
+        }
+    }
+    if let Some(kc) = &overview.keychain {
+        if let Some(s) = method_gap_sentence(kc, has_vault, is_passkey, "phone") {
+            gaps.push(s);
+        }
+    }
+
+    // The CTA closes the first gap (password first); a keychain-only gap
+    // re-seals via Rotate (the protection-choice → phone re-seal fills whatever
+    // the tier requires in one pass).
+    let (primary_label, primary_mode) = password_gap_cta(&overview.password, has_vault, is_passkey)
+        .unwrap_or(("Finish backing up", RecoveryKitMode::Rotate));
+
+    CardState {
+        title: "Finish backing up your Recovery Kit",
+        subtitle: gaps.join(" "),
+        primary_label,
+        primary_mode,
+    }
 }
 
 /// Cube Recovery Kit card — rendered below the local paper-phrase
@@ -548,7 +831,7 @@ fn recovery_kit_card<'a>(
     has_vault: bool,
     status: Option<&RecoveryKitStatus>,
     loading: bool,
-    drift: bool,
+    drift: DescriptorDrift,
 ) -> Element<'a, Message> {
     // Passkey + no vault => nothing to back up yet. Render a thin
     // informational card rather than the regular flow.
@@ -569,85 +852,24 @@ fn recovery_kit_card<'a>(
         .into();
     }
 
-    let (title, subtitle, primary_label, primary_mode) = if is_passkey {
-        // Passkey variant — descriptor-only. Two states.
-        match status {
-            Some(s) if s.has_encrypted_wallet_descriptor => (
-                "Wallet Descriptor backed up",
-                format!(
-                    "Last updated {}.",
-                    s.updated_at
-                        .as_deref()
-                        .map(format_backup_time)
-                        .unwrap_or_else(|| "—".to_string())
-                ),
-                "Update",
-                RecoveryKitMode::Rotate,
-            ),
-            _ => (
-                "Back up your Wallet Descriptor",
-                "Your Master Seed Phrase is protected by your passkey and isn't included \
-                 in the Recovery Kit — we back up the Wallet Descriptor only."
-                    .to_string(),
-                "Create Recovery Kit",
-                RecoveryKitMode::Create,
-            ),
-        }
-    } else {
-        // Mnemonic variant — full four-state matrix per plan §6.3.
-        match status {
-            Some(s) if !s.has_recovery_kit => (
-                "Back up your Cube Recovery Kit",
-                "Back up your Master Seed Phrase and Wallet Descriptor to your Connect \
-                 account so you can restore your Cube if you lose this device."
-                    .to_string(),
-                "Create Recovery Kit",
-                RecoveryKitMode::Create,
-            ),
-            Some(s) if s.has_encrypted_seed && !s.has_encrypted_wallet_descriptor && has_vault => (
-                "Finish backing up your Recovery Kit",
-                "Your Master Seed Phrase is backed up, but your Wallet Descriptor isn't."
-                    .to_string(),
-                "Add Wallet Descriptor",
-                RecoveryKitMode::AddDescriptor,
-            ),
-            Some(s) if !s.has_encrypted_seed && s.has_encrypted_wallet_descriptor => (
-                "Finish backing up your Recovery Kit",
-                "Your Wallet Descriptor is backed up, but your Master Seed Phrase isn't."
-                    .to_string(),
-                "Add Master Seed Phrase",
-                RecoveryKitMode::AddSeed,
-            ),
-            Some(s) => (
-                "Recovery Kit backed up",
-                format!(
-                    "Last updated {}.",
-                    s.updated_at
-                        .as_deref()
-                        .map(format_backup_time)
-                        .unwrap_or_else(|| "—".to_string())
-                ),
-                "Update",
-                RecoveryKitMode::Rotate,
-            ),
-            None => (
-                "Cube Recovery Kit",
-                if loading {
-                    "Checking your Connect account…".to_string()
-                } else {
-                    "Sign in to Connect to back up your Cube Recovery Kit.".to_string()
-                },
-                "Create Recovery Kit",
-                RecoveryKitMode::Create,
-            ),
-        }
-    };
+    // One source of truth for what's backed up, by which method (master
+    // §definitions). Drives the card state, the pills, and Remove visibility.
+    let overview = backup_overview(status);
+    let CardState {
+        title,
+        subtitle,
+        primary_label,
+        primary_mode,
+    } = recovery_kit_card_state(&overview, is_passkey, has_vault, loading, status.is_some());
 
-    // Drift overrides the "complete" state: primary CTA becomes
-    // "Update now" and the subtitle swaps to the drift warning.
-    let (subtitle, primary_label, primary_mode) = if drift {
+    // Drift overrides the "complete" state: primary CTA becomes "Update now"
+    // and the subtitle swaps to a drift warning naming the stale method(s)
+    // (per-method drift, PR 3). Each method is judged independently, so a
+    // keychain-only kit can now drift (unlike PR 1, which kept drift
+    // password-scoped); re-sealing one method clears only its warning.
+    let (subtitle, primary_label, primary_mode) = if drift.any() {
         (
-            "Your Wallet Descriptor changed since your last backup — update now.".to_string(),
+            drift_subtitle(&drift).to_string(),
             "Update now",
             RecoveryKitMode::Rotate,
         )
@@ -655,8 +877,8 @@ fn recovery_kit_card<'a>(
         (subtitle, primary_label, primary_mode)
     };
 
-    // Render with Remove button when a kit exists.
-    let has_kit = status.map(|s| s.has_recovery_kit).unwrap_or(false);
+    // Render with Remove button when any method is enabled.
+    let has_kit = overview.any_enabled();
     let mut actions = Row::new().spacing(10).align_y(Alignment::Center).push(
         button::primary(None, primary_label)
             .padding([8, 16])
@@ -672,8 +894,10 @@ fn recovery_kit_card<'a>(
         );
     }
 
-    // Which backup methods are actually in place — drives the method pills.
-    let (password_present, keychain_present) = backup_methods_present(status);
+    // Which backup methods are actually in place (presence, not completeness) —
+    // drives the method pills. A partial method still shows its pill.
+    let (password_present, keychain_present) =
+        (overview.password.is_some(), overview.keychain.is_some());
 
     let mut body = Column::new()
         .spacing(4)
@@ -692,9 +916,9 @@ fn recovery_kit_card<'a>(
             .push(Space::new().height(Length::Fixed(2.0)))
             .push(pills);
     }
-    if drift {
+    if drift.any() {
         body = body.push(
-            text("⚠ Descriptor out of sync with your Connect backup.")
+            text(drift_warning_line(&drift))
                 .size(12)
                 .style(coincube_ui::theme::text::warning),
         );
@@ -879,20 +1103,54 @@ pub fn fiat_price<'a>(
     .into()
 }
 
-/// Decide whether the Recovery-Kit card should flag "descriptor
-/// drift". Split out of `general_section` so the branch table is
-/// testable without standing up a full `Cache`.
+/// Per-method descriptor drift verdict (per-method drift, PR 3). Each enabled
+/// method's cached descriptor fingerprint is compared to the live descriptor
+/// independently, so re-sealing one method clears only that method's warning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct DescriptorDrift {
+    pub(crate) password: bool,
+    pub(crate) keychain: bool,
+}
+
+impl DescriptorDrift {
+    /// Any enabled method's descriptor is out of sync with the live Vault.
+    pub(crate) fn any(&self) -> bool {
+        self.password || self.keychain
+    }
+}
+
+/// Per-method drift verdicts for the Recovery-Kit card. Each method is judged by
+/// the same positive-evidence-only rule as [`method_descriptor_drift`]:
+/// `{password,keychain}_present` is whether that method has a descriptor on the
+/// server; `*_slot` is that method's last locally-cached upload fingerprint;
+/// `live` is what the wallet would currently upload.
+fn descriptor_drift(
+    live: Option<&str>,
+    password_present: bool,
+    password_slot: Option<&str>,
+    keychain_present: bool,
+    keychain_slot: Option<&str>,
+) -> DescriptorDrift {
+    DescriptorDrift {
+        password: method_descriptor_drift(password_present, live, password_slot),
+        keychain: method_descriptor_drift(keychain_present, live, keychain_slot),
+    }
+}
+
+/// Whether a single backup method's descriptor is out of sync with the live
+/// Vault. Split out of `general_section` so the branch table is testable without
+/// standing up a full `Cache`, and shared by both methods (PR 3).
 ///
-/// - `server_has_descriptor`: the Connect-side `RecoveryKitStatus`
-///   reports a descriptor half is backed up.
+/// - `present`: this method reports a descriptor backed up on Connect
+///   (password: `has_encrypted_wallet_descriptor`; keychain:
+///   `envelope_kinds ∋ "descriptor"`).
 /// - `live`: SHA-256 of what the live wallet would currently upload
 ///   (`None` when no Vault is loaded).
-/// - `cached`: SHA-256 of what this device last uploaded
-///   (`None` when the local cache was cleared, the kit was made from
-///   a different install, or the backup happened before the cache
-///   field existed).
-fn descriptor_drift(server_has_descriptor: bool, live: Option<&str>, cached: Option<&str>) -> bool {
-    if !server_has_descriptor {
+/// - `cached`: SHA-256 of what this device last backed up for this method
+///   (`None` when the local slot was cleared, the kit was made from a different
+///   install, or the backup predates the slot field).
+fn method_descriptor_drift(present: bool, live: Option<&str>, cached: Option<&str>) -> bool {
+    if !present {
         return false;
     }
     match (live, cached) {
@@ -904,8 +1162,8 @@ fn descriptor_drift(server_has_descriptor: bool, live: Option<&str>, cached: Opt
         // kit restored onto this device (we never re-uploaded so
         // never populated the cache), kit uploaded from a different
         // device, and installs that pre-date the cache field. In
-        // all three, the server's `has_encrypted_wallet_descriptor`
-        // flag already tells us a backup exists — firing the banner
+        // all three, the server's descriptor-present flag already
+        // tells us a backup exists — firing the banner
         // here produces a *permanent* false positive that stays up
         // until the user manually re-uploads, training them to
         // ignore the signal entirely (banner blindness). The
@@ -918,6 +1176,31 @@ fn descriptor_drift(server_has_descriptor: bool, live: Option<&str>, cached: Opt
     }
 }
 
+/// The card subtitle when a descriptor has drifted — names the stale method(s)
+/// (per-method drift, PR 3). Empty string when nothing drifted (callers guard
+/// with [`DescriptorDrift::any`]).
+fn drift_subtitle(d: &DescriptorDrift) -> &'static str {
+    match (d.password, d.keychain) {
+        (true, true) => {
+            "Your Wallet Descriptor changed since your last backup — update both copies now."
+        }
+        (true, false) => "Your password backup's Wallet Descriptor is out of date — update now.",
+        (false, true) => "Your phone backup's Wallet Descriptor is out of date — update now.",
+        (false, false) => "",
+    }
+}
+
+/// The inline ⚠ warning line under the pills when a descriptor has drifted —
+/// names the stale method(s) (per-method drift, PR 3).
+fn drift_warning_line(d: &DescriptorDrift) -> &'static str {
+    match (d.password, d.keychain) {
+        (true, true) => "⚠ Your password and phone descriptors are out of sync with your Vault.",
+        (true, false) => "⚠ Your password descriptor is out of sync with your Vault.",
+        (false, true) => "⚠ Your phone descriptor is out of sync with your Vault.",
+        (false, false) => "",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -926,19 +1209,19 @@ mod tests {
     fn no_drift_when_server_has_no_descriptor() {
         // Card's "incomplete" copy already covers this case; drift
         // must not double up the signal.
-        assert!(!descriptor_drift(false, Some("a"), Some("b")));
-        assert!(!descriptor_drift(false, Some("a"), None));
-        assert!(!descriptor_drift(false, None, Some("b")));
+        assert!(!method_descriptor_drift(false, Some("a"), Some("b")));
+        assert!(!method_descriptor_drift(false, Some("a"), None));
+        assert!(!method_descriptor_drift(false, None, Some("b")));
     }
 
     #[test]
     fn drift_when_live_and_cached_differ() {
-        assert!(descriptor_drift(true, Some("a"), Some("b")));
+        assert!(method_descriptor_drift(true, Some("a"), Some("b")));
     }
 
     #[test]
     fn no_drift_when_live_and_cached_match() {
-        assert!(!descriptor_drift(true, Some("a"), Some("a")));
+        assert!(!method_descriptor_drift(true, Some("a"), Some("a")));
     }
 
     #[test]
@@ -948,19 +1231,490 @@ mod tests {
         // cached fingerprint is the normal state after a kit is
         // restored to this device, uploaded from another device, or
         // created by a client version predating the cache field.
-        // The server's `has_encrypted_wallet_descriptor=true` is the
+        // The server's descriptor-present flag is the
         // authoritative signal that a backup exists; firing a
         // permanent banner here would train users to tune it out.
-        assert!(!descriptor_drift(true, Some("a"), None));
+        assert!(!method_descriptor_drift(true, Some("a"), None));
     }
 
     #[test]
     fn no_drift_when_live_missing() {
         // No Vault loaded yet — can't compute a comparison.
-        // `server_has_descriptor` being true here means another
+        // `present` being true here means another
         // device backed up the descriptor; we can't usefully flag
         // drift until this device has a wallet to diff against.
-        assert!(!descriptor_drift(true, None, Some("b")));
-        assert!(!descriptor_drift(true, None, None));
+        assert!(!method_descriptor_drift(true, None, Some("b")));
+        assert!(!method_descriptor_drift(true, None, None));
+    }
+
+    // ── Per-method descriptor drift (plan §PR3) ─────────────────────────────
+    //
+    // Each enabled method is judged independently against the live descriptor,
+    // so re-sealing one method clears only that method's warning. The
+    // positive-evidence-only rule carries over per slot (a missing slot never
+    // fires that method's banner).
+
+    #[test]
+    fn drift_only_flags_the_stale_method() {
+        // Password fresh (slot matches live), keychain stale (slot differs).
+        let d = descriptor_drift(Some("live"), true, Some("live"), true, Some("old"));
+        assert_eq!(
+            d,
+            DescriptorDrift {
+                password: false,
+                keychain: true
+            }
+        );
+        assert!(d.any());
+        // The inverse: password stale, keychain fresh.
+        let d = descriptor_drift(Some("live"), true, Some("old"), true, Some("live"));
+        assert_eq!(
+            d,
+            DescriptorDrift {
+                password: true,
+                keychain: false
+            }
+        );
+    }
+
+    #[test]
+    fn drift_flags_both_methods_when_both_stale() {
+        let d = descriptor_drift(Some("live"), true, Some("old"), true, Some("older"));
+        assert_eq!(
+            d,
+            DescriptorDrift {
+                password: true,
+                keychain: true
+            }
+        );
+    }
+
+    #[test]
+    fn no_drift_when_both_methods_match_live() {
+        let d = descriptor_drift(Some("live"), true, Some("live"), true, Some("live"));
+        assert!(!d.any());
+    }
+
+    #[test]
+    fn drift_ignores_a_disabled_method() {
+        // Keychain not present on the server → its slot is irrelevant even if it
+        // differs from live; only the enabled password method is judged.
+        let d = descriptor_drift(Some("live"), true, Some("old"), false, Some("whatever"));
+        assert_eq!(
+            d,
+            DescriptorDrift {
+                password: true,
+                keychain: false
+            }
+        );
+    }
+
+    #[test]
+    fn restored_install_with_no_slots_never_drifts() {
+        // Both methods present on the server, but neither local slot exists
+        // (fresh restore / other-device upload / pre-field install) →
+        // positive-evidence-only means no banner for either method.
+        let d = descriptor_drift(Some("live"), true, None, true, None);
+        assert!(!d.any());
+    }
+
+    #[test]
+    fn no_drift_before_a_vault_loads() {
+        // No live fingerprint yet → nothing to compare, either method.
+        let d = descriptor_drift(None, true, Some("old"), true, Some("older"));
+        assert!(!d.any());
+    }
+
+    #[test]
+    fn drift_copy_names_the_stale_methods() {
+        let phone_only = DescriptorDrift {
+            password: false,
+            keychain: true,
+        };
+        assert!(drift_subtitle(&phone_only).contains("phone"));
+        assert!(drift_warning_line(&phone_only).contains("phone"));
+
+        let password_only = DescriptorDrift {
+            password: true,
+            keychain: false,
+        };
+        assert!(drift_subtitle(&password_only).contains("password"));
+        assert!(drift_warning_line(&password_only).contains("password"));
+
+        let both = DescriptorDrift {
+            password: true,
+            keychain: true,
+        };
+        assert!(drift_subtitle(&both).contains("both"));
+        assert!(
+            drift_warning_line(&both).contains("password")
+                && drift_warning_line(&both).contains("phone")
+        );
+
+        // No drift → empty (callers guard with `any()`).
+        let none = DescriptorDrift::default();
+        assert!(drift_subtitle(&none).is_empty());
+        assert!(drift_warning_line(&none).is_empty());
+    }
+
+    // ── Per-method backup overview + card state matrix (plan §PR1) ──────────
+    //
+    // These pin the single source of truth (`backup_overview`/`method_complete`)
+    // and the card copy derived from it. The bug they guard: the old card read
+    // only the password-kit halves, so a keychain-only backup showed "Create
+    // Recovery Kit" with a contradictory Keychain pill and no timestamp.
+
+    use crate::services::coincube::OwnerSelfRecoverySummary;
+
+    /// Password-kit status with the given halves; `owner` folds in the keychain
+    /// (phone) summary. `has_recovery_kit` mirrors the password halves (the
+    /// server's password-scoped flag) so these fixtures match real payloads.
+    fn status(
+        seed: bool,
+        descriptor: bool,
+        updated_at: Option<&str>,
+        owner: Option<OwnerSelfRecoverySummary>,
+    ) -> RecoveryKitStatus {
+        RecoveryKitStatus {
+            has_recovery_kit: seed || descriptor,
+            has_encrypted_seed: seed,
+            has_encrypted_wallet_descriptor: descriptor,
+            encryption_scheme: "aes-256-gcm".into(),
+            created_at: None,
+            updated_at: updated_at.map(|s| s.to_string()),
+            owner_self: owner,
+        }
+    }
+
+    fn owner(kinds: &[&str], updated_at: Option<&str>) -> OwnerSelfRecoverySummary {
+        OwnerSelfRecoverySummary {
+            has_recipient: true,
+            tier: "full_cube".into(),
+            envelope_kinds: kinds.iter().map(|k| k.to_string()).collect(),
+            updated_at: updated_at.map(|s| s.to_string()),
+        }
+    }
+
+    /// Convenience: card state for a mnemonic-with-vault cube.
+    fn mnemonic_vault_state(st: &RecoveryKitStatus) -> CardState {
+        recovery_kit_card_state(&backup_overview(Some(st)), false, true, false, true)
+    }
+
+    // ---- method_complete truth table (all shapes) ----
+
+    #[test]
+    fn method_complete_passkey_needs_descriptor_only() {
+        let seed_only = MethodBackup {
+            seed: true,
+            descriptor: false,
+        };
+        let desc_only = MethodBackup {
+            seed: false,
+            descriptor: true,
+        };
+        assert!(!method_complete(&seed_only, true, true));
+        assert!(method_complete(&desc_only, true, true));
+        // has_vault is irrelevant for passkey.
+        assert!(method_complete(&desc_only, false, true));
+    }
+
+    #[test]
+    fn method_complete_mnemonic_vaultless_needs_seed_only() {
+        let seed_only = MethodBackup {
+            seed: true,
+            descriptor: false,
+        };
+        let desc_only = MethodBackup {
+            seed: false,
+            descriptor: true,
+        };
+        assert!(method_complete(&seed_only, false, false));
+        assert!(!method_complete(&desc_only, false, false));
+    }
+
+    #[test]
+    fn method_complete_mnemonic_vault_needs_both() {
+        let both = MethodBackup {
+            seed: true,
+            descriptor: true,
+        };
+        let seed_only = MethodBackup {
+            seed: true,
+            descriptor: false,
+        };
+        let desc_only = MethodBackup {
+            seed: false,
+            descriptor: true,
+        };
+        assert!(method_complete(&both, true, false));
+        assert!(!method_complete(&seed_only, true, false));
+        assert!(!method_complete(&desc_only, true, false));
+    }
+
+    // ---- backup_overview presence rules (master F1) ----
+
+    #[test]
+    fn overview_absent_status_is_all_none() {
+        let o = backup_overview(None);
+        assert!(o.password.is_none());
+        assert!(o.keychain.is_none());
+        assert!(o.last_updated.is_none());
+        assert!(!o.any_enabled());
+    }
+
+    #[test]
+    fn overview_recipient_without_envelopes_never_counts_as_keychain() {
+        // A registered recipient with an empty envelope set is NOT a backup
+        // (master F1 — presence = restorable material, not a bare recipient).
+        let st = status(false, false, None, Some(owner(&[], None)));
+        let o = backup_overview(Some(&st));
+        assert!(
+            o.keychain.is_none(),
+            "empty envelope set must not enable keychain"
+        );
+        assert!(!o.any_enabled());
+    }
+
+    #[test]
+    fn overview_keychain_reads_envelope_kinds() {
+        let st = status(
+            false,
+            false,
+            None,
+            Some(owner(&["seed", "descriptor"], None)),
+        );
+        let o = backup_overview(Some(&st));
+        let kc = o.keychain.expect("keychain enabled by envelopes");
+        assert!(kc.seed && kc.descriptor);
+        assert!(
+            o.password.is_none(),
+            "no password blobs → no password method"
+        );
+    }
+
+    #[test]
+    fn overview_last_updated_is_the_later_of_the_two() {
+        // Keychain sealed after the password kit → keychain timestamp wins.
+        let st = status(
+            true,
+            true,
+            Some("2026-05-01T00:00:00Z"),
+            Some(owner(&["seed", "descriptor"], Some("2026-06-01T00:00:00Z"))),
+        );
+        let o = backup_overview(Some(&st));
+        assert_eq!(o.last_updated.as_deref(), Some("2026-06-01T00:00:00Z"));
+    }
+
+    // ---- password-only regression (master F4): the original four states ----
+
+    #[test]
+    fn password_only_no_kit_is_create() {
+        let st = status(false, false, None, None);
+        let s = mnemonic_vault_state(&st);
+        assert_eq!(s.title, "Back up your Cube Recovery Kit");
+        assert_eq!(s.primary_mode, RecoveryKitMode::Create);
+    }
+
+    #[test]
+    fn password_only_seed_only_with_vault_prompts_add_descriptor() {
+        let st = status(true, false, Some("2026-05-01T00:00:00Z"), None);
+        let s = mnemonic_vault_state(&st);
+        assert_eq!(s.title, "Finish backing up your Recovery Kit");
+        assert_eq!(s.primary_mode, RecoveryKitMode::AddDescriptor);
+        assert_eq!(s.primary_label, "Add Wallet Descriptor");
+        assert!(s.subtitle.contains("Wallet Descriptor"));
+    }
+
+    #[test]
+    fn password_only_descriptor_only_prompts_add_seed() {
+        let st = status(false, true, Some("2026-05-01T00:00:00Z"), None);
+        let s = mnemonic_vault_state(&st);
+        assert_eq!(s.title, "Finish backing up your Recovery Kit");
+        assert_eq!(s.primary_mode, RecoveryKitMode::AddSeed);
+        assert_eq!(s.primary_label, "Add Master Seed Phrase");
+        assert!(s.subtitle.contains("Master Seed Phrase"));
+    }
+
+    #[test]
+    fn password_only_both_halves_is_backed_up() {
+        let st = status(true, true, Some("2026-05-08T14:36:50Z"), None);
+        let s = mnemonic_vault_state(&st);
+        assert_eq!(s.title, "Recovery Kit backed up");
+        assert_eq!(s.primary_mode, RecoveryKitMode::Rotate);
+        assert_eq!(s.primary_label, "Update");
+        assert!(s.subtitle.contains("Last updated"));
+        assert!(s.subtitle.contains("8 May 2026"));
+    }
+
+    #[test]
+    fn password_only_seed_only_vaultless_is_backed_up() {
+        // A seed-only kit on a vaultless cube is already complete.
+        let st = status(true, false, Some("2026-05-01T00:00:00Z"), None);
+        let s = recovery_kit_card_state(&backup_overview(Some(&st)), false, false, false, true);
+        assert_eq!(s.title, "Recovery Kit backed up");
+        assert_eq!(s.primary_mode, RecoveryKitMode::Rotate);
+    }
+
+    // ---- keychain-only (the shipped bug) ----
+
+    #[test]
+    fn keychain_only_full_cube_is_backed_up_with_pill_and_remove() {
+        // Phone-sealed both halves, no password kit. This used to show "Create".
+        let st = status(
+            false,
+            false,
+            None,
+            Some(owner(&["seed", "descriptor"], Some("2026-06-01T09:00:00Z"))),
+        );
+        let o = backup_overview(Some(&st));
+        let s = mnemonic_vault_state(&st);
+        assert_eq!(s.title, "Recovery Kit backed up");
+        assert_eq!(s.primary_mode, RecoveryKitMode::Rotate);
+        assert!(
+            s.subtitle.contains("1 Jun 2026"),
+            "timestamp from owner_self: {}",
+            s.subtitle
+        );
+        // Keychain pill shows; password pill does not; Remove is offered.
+        assert_eq!(backup_methods_present(Some(&st)), (false, true));
+        assert!(o.any_enabled(), "has_kit → Remove button visible");
+    }
+
+    #[test]
+    fn keychain_descriptor_only_on_vault_cube_misses_the_seed() {
+        // Phone sealed only the descriptor; a mnemonic+vault cube needs the seed.
+        let st = status(
+            false,
+            false,
+            None,
+            Some(owner(&["descriptor"], Some("2026-06-01T00:00:00Z"))),
+        );
+        let s = mnemonic_vault_state(&st);
+        assert_eq!(s.title, "Finish backing up your Recovery Kit");
+        assert_eq!(
+            s.subtitle, "Your phone backup is missing the Master Seed Phrase.",
+            "keychain gap must name the phone method + missing seed"
+        );
+        // No password method → the CTA re-seals via Rotate.
+        assert_eq!(s.primary_mode, RecoveryKitMode::Rotate);
+    }
+
+    // ---- cross-method halves: never "backed up" (master F6) ----
+
+    #[test]
+    fn cross_method_halves_surface_both_gaps_and_are_never_backed_up() {
+        // Password holds the seed only; keychain holds the descriptor only.
+        // Neither method is independently complete for a mnemonic+vault cube,
+        // so the Cube is NOT backed up (per-method conjunction, not a union).
+        let st = status(
+            true,
+            false,
+            Some("2026-05-01T00:00:00Z"),
+            Some(owner(&["descriptor"], Some("2026-05-02T00:00:00Z"))),
+        );
+        let s = mnemonic_vault_state(&st);
+        assert_eq!(s.title, "Finish backing up your Recovery Kit");
+        // Both gaps listed, password first.
+        assert_eq!(
+            s.subtitle,
+            "Your password backup is missing the Wallet Descriptor. \
+             Your phone backup is missing the Master Seed Phrase."
+        );
+        // CTA closes the first (password) gap.
+        assert_eq!(s.primary_mode, RecoveryKitMode::AddDescriptor);
+        // Both pills present (presence, not completeness).
+        assert_eq!(backup_methods_present(Some(&st)), (true, true));
+    }
+
+    // ---- both methods complete ----
+
+    #[test]
+    fn both_methods_complete_shows_two_pills_and_later_timestamp() {
+        let st = status(
+            true,
+            true,
+            Some("2026-05-01T00:00:00Z"),
+            Some(owner(&["seed", "descriptor"], Some("2026-07-01T00:00:00Z"))),
+        );
+        let o = backup_overview(Some(&st));
+        let s = mnemonic_vault_state(&st);
+        assert_eq!(s.title, "Recovery Kit backed up");
+        assert_eq!(backup_methods_present(Some(&st)), (true, true));
+        // Later of the two timestamps (keychain).
+        assert_eq!(o.last_updated.as_deref(), Some("2026-07-01T00:00:00Z"));
+        assert!(s.subtitle.contains("1 Jul 2026"));
+    }
+
+    // ---- older API (owner_self None) → exact prior behavior ----
+
+    #[test]
+    fn older_api_without_owner_self_matches_password_only_states() {
+        // owner_self absent on older APIs → keychain never enabled; the card
+        // behaves exactly as the pre-keychain password-only card did.
+        let complete = status(true, true, Some("2026-05-01T00:00:00Z"), None);
+        assert_eq!(
+            mnemonic_vault_state(&complete).title,
+            "Recovery Kit backed up"
+        );
+        let absent = status(false, false, None, None);
+        assert_eq!(
+            mnemonic_vault_state(&absent).title,
+            "Back up your Cube Recovery Kit"
+        );
+        assert!(backup_overview(Some(&absent)).keychain.is_none());
+    }
+
+    // ---- passkey variant (descriptor-only shape) ----
+
+    #[test]
+    fn passkey_descriptor_backed_up() {
+        let st = status(false, true, Some("2026-05-01T00:00:00Z"), None);
+        let s = recovery_kit_card_state(&backup_overview(Some(&st)), true, true, false, true);
+        assert_eq!(s.title, "Wallet Descriptor backed up");
+        assert_eq!(s.primary_mode, RecoveryKitMode::Rotate);
+    }
+
+    #[test]
+    fn passkey_no_kit_is_create() {
+        let st = status(false, false, None, None);
+        let s = recovery_kit_card_state(&backup_overview(Some(&st)), true, true, false, true);
+        assert_eq!(s.title, "Back up your Wallet Descriptor");
+        assert_eq!(s.primary_mode, RecoveryKitMode::Create);
+    }
+
+    // ---- not-loaded-yet (status None) preserves prior copy ----
+
+    #[test]
+    fn not_loaded_mnemonic_shows_loading_or_signin() {
+        let loading = recovery_kit_card_state(&backup_overview(None), false, true, true, false);
+        assert_eq!(loading.title, "Cube Recovery Kit");
+        assert!(loading.subtitle.contains("Checking"));
+        let idle = recovery_kit_card_state(&backup_overview(None), false, true, false, false);
+        assert!(idle.subtitle.contains("Sign in"));
+    }
+
+    // ---- later_timestamp comparison ----
+
+    #[test]
+    fn later_timestamp_prefers_the_later_instant() {
+        assert_eq!(
+            later_timestamp(Some("2026-01-01T00:00:00Z"), Some("2026-02-01T00:00:00Z")).as_deref(),
+            Some("2026-02-01T00:00:00Z")
+        );
+        assert_eq!(
+            later_timestamp(Some("2026-03-01T00:00:00Z"), Some("2026-02-01T00:00:00Z")).as_deref(),
+            Some("2026-03-01T00:00:00Z")
+        );
+        // Only one side present.
+        assert_eq!(
+            later_timestamp(Some("2026-03-01T00:00:00Z"), None).as_deref(),
+            Some("2026-03-01T00:00:00Z")
+        );
+        assert_eq!(later_timestamp(None, None), None);
+        // One side unparseable → prefer the parseable side.
+        assert_eq!(
+            later_timestamp(Some("not-a-date"), Some("2026-02-01T00:00:00Z")).as_deref(),
+            Some("2026-02-01T00:00:00Z")
+        );
     }
 }

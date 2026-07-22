@@ -3808,6 +3808,7 @@ mod tests {
             has_recipient,
             tier: tier.to_string(),
             envelope_kinds: kinds.iter().map(|k| k.to_string()).collect(),
+            updated_at: None,
         }
     }
 
