@@ -504,15 +504,25 @@ impl CubeSettings {
         self.passkey_metadata.is_some()
     }
 
-    /// True when this Cube has a Cube Recovery Kit pushed to Connect. We treat
-    /// a recorded backed-up descriptor fingerprint as the CRK-presence signal
-    /// (`recovery_kit_last_backed_up_descriptor_fingerprint` is set on a
-    /// successful kit upload and cleared on delete). Distinct from
+    /// True when this Cube has a Cube Recovery Kit pushed to Connect **from this
+    /// device**, by either method. We treat a recorded backed-up descriptor
+    /// fingerprint as the CRK-presence signal — set on a successful kit upload
+    /// (password slot) or phone seal (keychain slot) and cleared on delete. Both
+    /// slots count: a keychain-only backup is a recovery kit too, so keying off
+    /// the password slot alone would make the Home card read "no recovery kit"
+    /// while Settings (which reads the server per-method status) reads "backed
+    /// up" (keychain-crk-status-fixes). This stays a **local** heuristic: it
+    /// reflects backups made from this device, not the server-authoritative
+    /// state, so an other-device backup can still read `false` here — the same
+    /// limitation the password slot has always had. Distinct from
     /// [`backed_up`](Self::backed_up), which tracks the *local* seed-phrase
     /// backup, not the server-side recovery kit.
     pub fn has_recovery_kit(&self) -> bool {
         self.recovery_kit_last_backed_up_descriptor_fingerprint
             .is_some()
+            || self
+                .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
+                .is_some()
     }
 
     /// Classifies this Cube's relationship to Connect for the card indicator
@@ -1556,6 +1566,26 @@ mod test {
         // as Sovereign — registration is the gating signal.
         cube.remote_synced = false;
         assert_eq!(cube.connect_state(), CubeConnectState::Sovereign);
+    }
+
+    #[test]
+    fn keychain_only_backup_reads_as_backed_up() {
+        use super::{CubeConnectState, CubeSettings};
+        use coincube_core::miniscript::bitcoin::Network;
+
+        // A keychain-only backup persists the keychain descriptor slot but not
+        // the password slot. `has_recovery_kit` must still report a kit, so the
+        // Home card reads "Backed up" in agreement with Settings — not "no
+        // recovery kit" (keychain-crk-status-fixes).
+        let mut cube = CubeSettings::new("Keychain-only".to_string(), Network::Bitcoin);
+        cube.remote_synced = true;
+        assert!(cube
+            .recovery_kit_last_backed_up_descriptor_fingerprint
+            .is_none());
+        cube.recovery_kit_last_backed_up_keychain_descriptor_fingerprint =
+            Some("kc-fp".to_string());
+        assert!(cube.has_recovery_kit());
+        assert_eq!(cube.connect_state(), CubeConnectState::BackedUp);
     }
 
     #[test]
