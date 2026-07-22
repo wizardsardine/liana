@@ -745,7 +745,7 @@ pub fn btn_add_recovery_path<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T>
 }
 
 pub fn btn_skip<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Skip", BtnWidth::XL, msg)
+    btn_secondary(None, "Skip", BtnWidth::M, msg)
 }
 
 pub fn btn_skip_registration<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
