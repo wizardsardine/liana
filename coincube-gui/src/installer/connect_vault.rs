@@ -13,10 +13,12 @@
 //!   only matters for those.
 //! - **Role** defaults to `Keyholder` for every member. Refinement into
 //!   Beneficiary/Observer is a follow-up.
-//! - **Failure UX**: the W9 409 (`KEY_ALREADY_USED_IN_VAULT`) rolls
-//!   back the just-created vault so the user can restart with a clean
-//!   slate; other errors leave the partial vault in place and surface a
-//!   retry-able warning.
+//! - **Failure UX**: the W9 409 (`KEY_ALREADY_USED_IN_VAULT`) and the
+//!   I2 409 (`KEY_IS_RECOVERY_RECIPIENT`) both roll back the just-created
+//!   vault — W9 so the user can restart with a clean slate, I2 because a
+//!   retry can't help (the sealed descriptor still holds the recovery
+//!   key, so it must be rebuilt first). Other errors leave the partial
+//!   vault in place and surface a retry-able warning.
 
 use crate::services::coincube::{
     AddVaultMemberRequest, CoincubeClient, ConnectVaultResponse, CreateConnectVaultRequest,
@@ -46,6 +48,12 @@ pub enum ConnectVaultError {
     /// back before the error surfaced, so the user can restart. Carries
     /// the offending `key_id` for the dialog.
     KeyAlreadyUsedInVault { key_id: u64 },
+    /// I2 409 `KEY_IS_RECOVERY_RECIPIENT`. The descriptor was sealed with
+    /// a recovery key, which can never be a Vault signer. Like W9 the
+    /// vault shell is rolled back first, but retrying is useless here —
+    /// the descriptor itself must be rebuilt without the recovery key.
+    /// Carries the offending `key_id` for the dialog.
+    KeyIsRecoveryRecipient { key_id: u64 },
     /// Any other failure (network, backend 5xx, partial success). The
     /// caller gets a message suitable for display.
     Other(String),
@@ -61,6 +69,15 @@ impl std::fmt::Display for ConnectVaultError {
                     "Key #{} is already used in another Vault. A key can \
                      only participate in one Vault. Remove it from this \
                      configuration and pick a different key.",
+                    key_id
+                )
+            }
+            Self::KeyIsRecoveryRecipient { key_id } => {
+                write!(
+                    f,
+                    "Key #{} is a recovery key and can't be a Vault signer. \
+                     Rebuild the Vault descriptor without the recovery key, \
+                     then try again.",
                     key_id
                 )
             }
@@ -119,7 +136,7 @@ pub async fn create_connect_vault(
         .await
         .map_err(|e| ConnectVaultError::Other(format!("Failed to create Connect vault: {}", e)))?;
 
-    // 3. Fan out member rows. On W9 409, roll back and bail.
+    // 3. Fan out member rows. On the W9 or I2 409, roll back and bail.
     let mut members_added = 0usize;
     for payload in &members {
         let req = AddVaultMemberRequest {
@@ -146,6 +163,26 @@ pub async fn create_connect_vault(
                     );
                 }
                 return Err(ConnectVaultError::KeyAlreadyUsedInVault {
+                    key_id: payload.key_id,
+                });
+            }
+            Err(e) if e.is_key_is_recovery_recipient() => {
+                // I2 backstop: the descriptor was sealed with a recovery
+                // key, which can never fan out into a signer. Unlike W9,
+                // retrying is hopeless — the sealed descriptor still
+                // contains the recovery key — so we roll the partial
+                // vault back (same best-effort delete as W9) and surface a
+                // distinct "rebuild the descriptor" error. PR 2 should make
+                // this unreachable from a current build, but stale desktops
+                // and future pickers keep it worth having.
+                if let Err(rollback_err) = client.delete_connect_vault(cube.id).await {
+                    tracing::warn!(
+                        "I2 rollback failed to delete vault {}: {}",
+                        vault.id,
+                        rollback_err
+                    );
+                }
+                return Err(ConnectVaultError::KeyIsRecoveryRecipient {
                     key_id: payload.key_id,
                 });
             }
@@ -385,6 +422,103 @@ mod tests {
         assert!(
             matches!(err, ConnectVaultError::KeyAlreadyUsedInVault { key_id: 99 }),
             "expected W9 error with key_id=99, got: {:?}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn i2_409_recovery_recipient_rolls_back_vault_and_surfaces_key_id() {
+        let server = MockServer::start();
+
+        let register = server.mock(|when, then| {
+            when.method(Method::POST).path("/api/v1/connect/cubes");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 42,
+                        "uuid": "abc-uuid",
+                        "name": "My Cube",
+                        "network": "mainnet",
+                        "lightningAddress": null,
+                        "bolt12Offer": null,
+                        "status": "active"
+                    }
+                }));
+        });
+
+        let create_vault = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/cubes/42/vault");
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 5,
+                        "cubeId": 42,
+                        "timelockDays": 180,
+                        "timelockExpiresAt": "2026-10-15T00:00:00Z",
+                        "lastResetAt": "2026-04-18T00:00:00Z",
+                        "status": "active",
+                        "members": [],
+                        "createdAt": "2026-04-18T00:00:00Z",
+                        "updatedAt": "2026-04-18T00:00:00Z"
+                    }
+                }));
+        });
+
+        // I2 guard: 409 with the recovery-recipient code.
+        let add_member = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/cubes/42/vault/members");
+            then.status(409)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": {
+                        "code": "KEY_IS_RECOVERY_RECIPIENT",
+                        "message": "This key is a recovery key and cannot be a Vault signer"
+                    }
+                }));
+        });
+
+        let rollback = server.mock(|when, then| {
+            when.method(Method::DELETE)
+                .path("/api/v1/connect/cubes/42/vault");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": { "deleted": true }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = create_connect_vault(
+            Some(client),
+            Some("abc-uuid".to_string()),
+            Some("My Cube".to_string()),
+            "mainnet".to_string(),
+            vec![sample_member("deadbeef", 99, None)],
+            Some(180),
+        )
+        .await
+        .expect_err("expected I2 409 error");
+
+        register.assert();
+        create_vault.assert();
+        add_member.assert();
+        // The partial vault is rolled back, exactly like W9 — retrying can't
+        // help, so we don't strand a vault the descriptor can never fan out.
+        rollback.assert();
+        assert!(
+            matches!(
+                err,
+                ConnectVaultError::KeyIsRecoveryRecipient { key_id: 99 }
+            ),
+            "expected I2 error with key_id=99, got: {:?}",
             err
         );
     }

@@ -152,3 +152,52 @@ impl GrpcSessionClient {
         })
     }
 }
+
+/// The two decrypt-relay calls [`crate::services::inheritance::heir::decrypt_envelopes`]
+/// drives, behind a trait so the orchestration can be unit-tested with a
+/// recording mock (asserting every `create_decrypt_request` fires before the
+/// first `get_decrypt_result` poll — the up-front-batching invariant). The
+/// production implementor is [`GrpcSessionClient`], delegating to its inherent
+/// methods; nothing else depends on the trait.
+#[async_trait::async_trait]
+pub trait DecryptRelay {
+    async fn create_decrypt_request(
+        &mut self,
+        request_id: String,
+        cube_id: String,
+        artifact_kind: String,
+        transport_pubkey: Vec<u8>,
+    ) -> Result<(), tonic::Status>;
+
+    async fn get_decrypt_result(
+        &mut self,
+        request_id: String,
+    ) -> Result<DecryptOutcome, tonic::Status>;
+}
+
+#[async_trait::async_trait]
+impl DecryptRelay for GrpcSessionClient {
+    async fn create_decrypt_request(
+        &mut self,
+        request_id: String,
+        cube_id: String,
+        artifact_kind: String,
+        transport_pubkey: Vec<u8>,
+    ) -> Result<(), tonic::Status> {
+        GrpcSessionClient::create_decrypt_request(
+            self,
+            request_id,
+            cube_id,
+            artifact_kind,
+            transport_pubkey,
+        )
+        .await
+    }
+
+    async fn get_decrypt_result(
+        &mut self,
+        request_id: String,
+    ) -> Result<DecryptOutcome, tonic::Status> {
+        GrpcSessionClient::get_decrypt_result(self, request_id).await
+    }
+}
