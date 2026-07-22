@@ -28,6 +28,10 @@ jobs:
   unit_tests:
     needs: linter
     strategy:
+      # Don't cancel the whole matrix when one leg fails: a flaky Windows job
+      # was masking otherwise-green macOS/ubuntu results and forcing full
+      # re-runs to see them.
+      fail-fast: false
       matrix:
         toolchain:
           - stable
@@ -46,6 +50,20 @@ jobs:
         run: |
           rustup update ${{ matrix.toolchain }}
           rustup default ${{ matrix.toolchain }}
+      # Windows Defender's real-time scanning briefly locks files the tests
+      # have just written under %TEMP%, so a follow-up read/enumerate can miss
+      # them and surface as os error 2/3/5. Exclude the temp/work dirs (and drop
+      # real-time monitoring as a fallback) so the filesystem-heavy tests aren't
+      # racing an antivirus scan. Best-effort: ignore failures if a cmdlet is
+      # blocked, since the code paths are also hardened with bounded retries.
+      - name: Reduce Defender interference (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath $env:TEMP -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionPath $env:RUNNER_TEMP -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE -ErrorAction SilentlyContinue
+          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
       - name: Test on Rust ${{ matrix.toolchain }} (Windows)
         if: matrix.os == 'windows-latest'
         run: |
