@@ -359,6 +359,7 @@ mod tests {
             owner_email: String::new(),
             is_own_key: false,
             used_by_vault: false,
+            recovery_role: String::new(),
         }
     }
 

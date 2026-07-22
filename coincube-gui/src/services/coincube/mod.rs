@@ -754,7 +754,19 @@ pub struct CubeKeyRaw {
     /// Drives the W9 pre-check in the Vault Builder key picker.
     #[serde(default)]
     pub used_by_vault: bool,
+    /// Recovery-recipient annotation: `"owner-self"` when this key backs the
+    /// Cube's owner-self recovery recipient (a key that *restores* the Cube but
+    /// must never be a Vault signer — invariant I2), empty otherwise. On the
+    /// `/keys` endpoint the API only annotates owner-self keys; heir-recipient
+    /// keys are left blank because an heir's key legitimately signs today.
+    /// `#[serde(default)]` so a pre-annotation backend deserialises as before.
+    #[serde(default)]
+    pub recovery_role: String,
 }
+
+/// `recoveryRole` value marking a key as the Cube's owner-self recovery
+/// recipient. Mirrors the API's `models.RecoveryRecipientRoleOwnerSelf`.
+pub const RECOVERY_ROLE_OWNER_SELF: &str = "owner-self";
 
 impl CubeKeyRaw {
     /// Returns the server-supplied `ownerUserId` when present, falling back
@@ -766,6 +778,13 @@ impl CubeKeyRaw {
         } else {
             self.primary_owner_id
         }
+    }
+
+    /// `true` iff this key is the Cube's owner-self recovery key. Such a key
+    /// restores the Cube but can never be a Vault signer (I2), so the picker
+    /// shows it as a disabled row and the selection handler refuses it.
+    pub fn is_owner_self_recovery(&self) -> bool {
+        self.recovery_role == RECOVERY_ROLE_OWNER_SELF
     }
 }
 
@@ -1418,6 +1437,14 @@ pub fn member_joined_after_vault(member_joined_at: &str, vault_created_at: &str)
 /// can match on it when routing 409s.
 pub const ERR_KEY_ALREADY_USED_IN_VAULT: &str = "KEY_ALREADY_USED_IN_VAULT";
 
+/// Error code returned by the backend's I2 guard: 409 from
+/// `POST /connect/cubes/{cubeId}/vault/members` when the key is registered as a
+/// recovery recipient and therefore may never be a Vault signer. Mirrors the
+/// API's `responses.ErrKeyIsRecoveryRecipient`. Retrying is useless — the
+/// sealed descriptor must be rebuilt without the recovery key — so the caller
+/// rolls the just-created vault back (see `installer/connect_vault.rs`).
+pub const ERR_KEY_IS_RECOVERY_RECIPIENT: &str = "KEY_IS_RECOVERY_RECIPIENT";
+
 /// Error code returned by the backend's W16 guard (see
 /// `coincube-api` PR 8): 409 from
 /// `POST /connect/cubes/{cubeId}/vault/members` when `role=keyholder`
@@ -1472,6 +1499,24 @@ impl CoincubeError {
         }
         if let Ok(env) = serde_json::from_str::<ApiErrorResponse>(&info.text) {
             return env.error.code == ERR_KEY_ALREADY_USED_IN_VAULT;
+        }
+        false
+    }
+
+    /// Returns `true` if this error is the I2 "key is a recovery recipient"
+    /// conflict from `POST /connect/cubes/{id}/vault/members` — the key backs a
+    /// recovery recipient and can't be a Vault signer. Drives the vault
+    /// rollback in the installer (a retry can't help; the descriptor must be
+    /// rebuilt without the recovery key).
+    pub fn is_key_is_recovery_recipient(&self) -> bool {
+        let CoincubeError::Unsuccessful(info) = self else {
+            return false;
+        };
+        if info.status_code != 409 {
+            return false;
+        }
+        if let Ok(env) = serde_json::from_str::<ApiErrorResponse>(&info.text) {
+            return env.error.code == ERR_KEY_IS_RECOVERY_RECIPIENT;
         }
         false
     }

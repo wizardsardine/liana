@@ -1070,6 +1070,17 @@ impl SelectKeySource {
     }
 
     fn on_select_keychain_key(&mut self, resolved: ResolvedCubeKey) -> Task<Message> {
+        // I2 backstop: an owner-self recovery key restores this Cube but must
+        // never be a Vault signer. The row is rendered disabled, but view state
+        // can lag a re-fetch, so refuse it here too — sealing a descriptor with
+        // it would only be rejected by the server's I2 guard later (PR 3).
+        if resolved.raw.is_owner_self_recovery() {
+            self.error = Some(
+                "This is a recovery key — it restores this Cube but can never be a Vault signer."
+                    .to_string(),
+            );
+            return Task::none();
+        }
         let fingerprint_str = &resolved.raw.fingerprint;
         let xpub_str = &resolved.raw.xpub;
         let derivation_str = &resolved.raw.derivation_path;
@@ -1258,7 +1269,11 @@ impl SelectKeySource {
             let key_reused = candidate_fp.is_some_and(|fp| self.key_placed_elsewhere(fp));
             // W9 pre-check: reject keys that another Vault already claims.
             let used_elsewhere = rk.raw.used_by_vault;
-            let disabled = owner_blocked || key_reused || used_elsewhere;
+            // I2: the owner-self recovery key restores this Cube but is never a
+            // signer. Show it — it teaches the model — but disabled, and let
+            // its caption win over the reuse/selection reasons below.
+            let is_recovery = rk.raw.is_owner_self_recovery();
+            let disabled = is_recovery || owner_blocked || key_reused || used_elsewhere;
             let fp_short: String = rk.raw.fingerprint.chars().take(8).collect();
             let fingerprint = Some(format!("#{}", fp_short));
             let msg = if disabled {
@@ -1269,10 +1284,13 @@ impl SelectKeySource {
                     Self::route(SelectKeySourceMessage::SelectKeychainKey(rk_clone.clone()))
                 })
             };
-            // Surface the most specific reason when several apply: a key
-            // claimed by another Vault reports that first, then an exact
-            // reuse in this quorum, then the owner being placed elsewhere.
-            let warning = if used_elsewhere {
+            // Surface the most specific reason when several apply: the recovery
+            // caption first (it's the whole point of the row), then a key
+            // claimed by another Vault, then an exact reuse in this quorum,
+            // then the owner being placed elsewhere.
+            let warning = if is_recovery {
+                Some("Recovery key — restores this Cube, never signs".to_string())
+            } else if used_elsewhere {
                 Some("Used by another Vault".to_string())
             } else if key_reused {
                 Some("Already used in this Vault".to_string())
@@ -2693,6 +2711,7 @@ mod tests {
             owner_email: format!("owner{owner_id}@example.com"),
             is_own_key: true,
             used_by_vault: false,
+            recovery_role: String::new(),
         }
     }
 
@@ -2703,6 +2722,14 @@ mod tests {
                 primary_owner_id: owner_id,
             },
         }
+    }
+
+    /// A resolved owner-self recovery key — the `recoveryRole: "owner-self"`
+    /// annotation the API stamps on the Cube's recovery recipient (PR 2).
+    fn resolved_recovery_key(id: u64, fingerprint: &str, owner_id: u64) -> ResolvedCubeKey {
+        let mut rk = resolved_key(id, fingerprint, owner_id);
+        rk.raw.recovery_role = "owner-self".to_string();
+        rk
     }
 
     fn keychain_key(fingerprint: Fingerprint, owner_id: u64, key_id: u64) -> Key {
@@ -2917,5 +2944,36 @@ mod tests {
             collision_picker.error.as_deref(),
             Some("A different key with the same master fingerprint is already in this Vault.")
         );
+    }
+
+    #[test]
+    fn owner_self_recovery_key_selection_is_a_no_op() {
+        // I2: an owner-self recovery key restores the Cube but can never be a
+        // Vault signer. The view renders it disabled; the submit-side backstop
+        // must refuse it too — an otherwise-valid key (right network, no
+        // conflicts) is rejected purely on the recovery annotation, with no
+        // selection made and no step advance.
+        let mut picker = empty_picker();
+        let _ = picker.on_select_keychain_key(resolved_recovery_key(1, "8a550171", 7));
+        assert!(
+            matches!(picker.selected_key, SelectedKey::None),
+            "a recovery key must not be selected"
+        );
+        assert_eq!(
+            picker.step,
+            Step::Grid,
+            "selection must not advance the step"
+        );
+        assert_eq!(
+            picker.error.as_deref(),
+            Some("This is a recovery key — it restores this Cube but can never be a Vault signer.")
+        );
+
+        // The same key without the annotation is accepted — proving the refusal
+        // keys off `recoveryRole` alone, not some other property of the fixture.
+        let mut ok_picker = empty_picker();
+        let _ = ok_picker.on_select_keychain_key(resolved_key(1, "8a550171", 7));
+        assert!(matches!(ok_picker.selected_key, SelectedKey::New(_)));
+        assert_eq!(ok_picker.step, Step::Details);
     }
 }

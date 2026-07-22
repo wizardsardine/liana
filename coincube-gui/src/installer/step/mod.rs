@@ -256,6 +256,22 @@ impl Step for Final {
                     ));
                     return Task::perform(async move {}, |_| Message::RedeemNextKey);
                 }
+                Err(ConnectVaultError::KeyIsRecoveryRecipient { key_id }) => {
+                    // I2: the descriptor was sealed with a recovery key,
+                    // which can never be a Vault signer. The partial vault
+                    // was rolled back upstream. Unlike W9, a plain retry
+                    // won't help — the descriptor must be rebuilt without
+                    // the recovery key — so the copy says exactly that. The
+                    // local install still stands, so continue with redemption.
+                    self.warning = Some(format!(
+                        "This key (#{}) is a recovery key and can't be a Vault \
+                         signer. Your local wallet is installed; rebuild the \
+                         Vault descriptor without the recovery key, then restart \
+                         the Vault Builder to create the Connect vault.",
+                        key_id
+                    ));
+                    return Task::perform(async move {}, |_| Message::RedeemNextKey);
+                }
                 Err(ConnectVaultError::Other(msg)) => {
                     // Transient / unexpected failure. Warn but continue
                     // — the local wallet is already persisted, and the

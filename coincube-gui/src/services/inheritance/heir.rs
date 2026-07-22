@@ -16,7 +16,7 @@ use super::error::EciesError;
 use super::wire::wire_to_envelope;
 use super::{open_with_shared_key, transport_keypair, unwrap_shared_key, SCHEME};
 use crate::services::coincube::InheritanceEnvelopeWire;
-use crate::services::connect::grpc::session::{DecryptOutcome, GrpcSessionClient};
+use crate::services::connect::grpc::session::{DecryptOutcome, DecryptRelay};
 use crate::services::recovery::{DecryptedKit, DescriptorBlob, SeedBlob, BLOB_VERSION};
 
 /// Length of the HKDF-derived symmetric key Keychain returns.
@@ -152,8 +152,16 @@ pub fn assemble(artifacts: Vec<OpenedArtifact>) -> DecryptedKit {
 /// Returns the assembled [`DecryptedKit`] for the existing restore machinery.
 /// `grpc` is the authenticated Connect SessionService client; `cube_id` selects
 /// the recovery key on the heir's Keychain and is bound into each envelope's AAD.
+///
+/// The two envelopes of a Full-Cube restore (seed + descriptor) are brokered as
+/// **one** consent ceremony on the phone: every `create_decrypt_request` fires
+/// in phase 1 — before any result poll — so both `DecryptRequestedEvent`s reach
+/// the Keychain's queue before the owner approves (SPEC-ecies-v1 §4b; master
+/// F1/F2). Sequentially awaiting each request one at a time (the old shape) made
+/// the phone see only one pending request and turned a Full-Cube restore into
+/// two separate approvals.
 pub async fn decrypt_envelopes(
-    grpc: &mut GrpcSessionClient,
+    grpc: &mut impl DecryptRelay,
     cube_id: u64,
     wires: &[InheritanceEnvelopeWire],
 ) -> Result<DecryptedKit, HeirDecryptError> {
@@ -166,16 +174,26 @@ pub async fn decrypt_envelopes(
     // per-request `request_id` keeps each wrap bound to its own request (§4b).
     let transport = transport_keypair();
     let cube_id_str = cube_id.to_string();
-    let mut artifacts = Vec::with_capacity(wires.len());
+
+    // Refuse any scheme we can't open before creating a single request — an
+    // unsupported envelope must not leave a half-created group on the phone.
     for wire in wires {
-        // Refuse a scheme we can't open before round-tripping to Keychain.
         if wire.scheme != SCHEME {
             return Err(HeirDecryptError::Envelope(format!(
                 "unsupported scheme '{}'",
                 wire.scheme
             )));
         }
-        // 1. Broker the decrypt; 2–4. wait for the Keychain's wrapped key.
+    }
+
+    // Phase 1 — create every decrypt request up-front. This loop completes
+    // before any phase-2 wait, so all requests land on the Keychain's queue as
+    // a batch and the phone runs a single ceremony. If any *create* fails we
+    // abort the whole restore here, before prompting for approval, rather than
+    // await a half-created group; the already-created requests fall away via
+    // their TTL, and the phone rejects a group coherently (keychain PR 1).
+    let mut pending = Vec::with_capacity(wires.len());
+    for wire in wires {
         let request_id = uuid::Uuid::new_v4().to_string();
         grpc.create_decrypt_request(
             request_id.clone(),
@@ -185,9 +203,16 @@ pub async fn decrypt_envelopes(
         )
         .await
         .map_err(|s| HeirDecryptError::Keychain(s.message().to_string()))?;
-        let wrapped = await_wrapped_key(grpc, &request_id).await?;
+        pending.push((request_id, wire));
+    }
 
-        // 5. Unwrap `K` with the transport key, then open + parse the envelope.
+    // Phase 2 — await each wrapped key, unwrap it (bound to its own
+    // `request_id`, §4b), then open + parse the envelope. The relay client is
+    // `&mut`-threaded, so these waits stay sequential — that's fine; only the
+    // creates above must be up-front.
+    let mut artifacts = Vec::with_capacity(pending.len());
+    for (request_id, wire) in pending {
+        let wrapped = await_wrapped_key(grpc, &request_id).await?;
         let k = unwrap_shared_key(&transport, &request_id, &wrapped)?;
         artifacts.push(open_blob(wire, &k, cube_id)?);
     }
@@ -200,7 +225,7 @@ pub async fn decrypt_envelopes(
 /// the realtime handler) will later let this resolve promptly instead of at the
 /// poll cadence.
 async fn await_wrapped_key(
-    grpc: &mut GrpcSessionClient,
+    grpc: &mut impl DecryptRelay,
     request_id: &str,
 ) -> Result<Vec<u8>, HeirDecryptError> {
     const POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -418,5 +443,169 @@ mod tests {
                 other
             ),
         }
+    }
+
+    // ── decrypt_envelopes batching (PR 1) ─────────────────────────────
+    //
+    // The defect these guard against: envelopes were brokered one at a time
+    // (create → await → open, per wire), so the phone only ever saw one
+    // pending request and a Full-Cube restore became two consent ceremonies.
+    // The fix fires every `create_decrypt_request` up-front (phase 1) before
+    // any `get_decrypt_result` poll (phase 2). We assert that ordering with a
+    // recording mock; the poll returning `Rejected` is fine — the call log is
+    // already complete by the first poll, which is exactly what we check.
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum RelayCall {
+        /// A `create_decrypt_request`, tagged with the envelope's artifact kind.
+        Create(String),
+        /// A `get_decrypt_result` poll, tagged with the request id.
+        Get(String),
+    }
+
+    /// Records the order of relay calls and returns a canned poll outcome.
+    struct MockRelay {
+        calls: Vec<RelayCall>,
+        /// 1-based index of a `create` that should fail (simulating a broker
+        /// error mid-batch); `None` means every create succeeds.
+        fail_create_on: Option<usize>,
+        creates_seen: usize,
+        /// What each poll returns. `Rejected` lets phase 2 terminate on the
+        /// first poll without needing a real wrapped key.
+        poll_outcome: DecryptOutcome,
+    }
+
+    impl MockRelay {
+        fn new(poll_outcome: DecryptOutcome) -> Self {
+            Self {
+                calls: Vec::new(),
+                fail_create_on: None,
+                creates_seen: 0,
+                poll_outcome,
+            }
+        }
+
+        fn get_calls(&self) -> usize {
+            self.calls
+                .iter()
+                .filter(|c| matches!(c, RelayCall::Get(_)))
+                .count()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl DecryptRelay for MockRelay {
+        async fn create_decrypt_request(
+            &mut self,
+            _request_id: String,
+            _cube_id: String,
+            artifact_kind: String,
+            _transport_pubkey: Vec<u8>,
+        ) -> Result<(), tonic::Status> {
+            self.creates_seen += 1;
+            self.calls.push(RelayCall::Create(artifact_kind));
+            if self.fail_create_on == Some(self.creates_seen) {
+                return Err(tonic::Status::internal("mock broker failure"));
+            }
+            Ok(())
+        }
+
+        async fn get_decrypt_result(
+            &mut self,
+            request_id: String,
+        ) -> Result<DecryptOutcome, tonic::Status> {
+            self.calls.push(RelayCall::Get(request_id));
+            Ok(self.poll_outcome.clone())
+        }
+    }
+
+    /// Builds a two-envelope (seed + descriptor) escrow set for the batching
+    /// tests — the exact Full-Cube shape the defect regressed on.
+    fn two_envelope_set() -> Vec<InheritanceEnvelopeWire> {
+        let heir = kh(b"batch-heir-seed-vector-000000000000000000000");
+        let khs = vec![KeyholderXpub {
+            key_id: 5,
+            xpub: heir.xpub,
+            account_derivation: "m/48'/0'/0'/2'".to_string(),
+        }];
+        let descriptor_json = serde_json::to_vec(&sample_descriptor_blob()).unwrap();
+        let seed_json = serde_json::to_vec(&sample_seed_blob()).unwrap();
+        build_escrow_set(&khs, CUBE, &descriptor_json, Some(&seed_json)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn two_envelopes_create_both_before_first_poll() {
+        let set = two_envelope_set();
+        assert_eq!(set.len(), 2, "Full-Cube seals seed + descriptor");
+
+        let mut relay = MockRelay::new(DecryptOutcome::Rejected);
+        // The phone rejects on the first poll; we only care about ordering.
+        let res = decrypt_envelopes(&mut relay, CUBE, &set).await;
+        assert!(matches!(res, Err(HeirDecryptError::Rejected)));
+
+        // Both creates must land before any poll — that's what lets the phone
+        // run one ceremony. The first `Get` therefore can't appear until both
+        // `Create`s have.
+        let first_get = relay
+            .calls
+            .iter()
+            .position(|c| matches!(c, RelayCall::Get(_)))
+            .expect("phase 2 polled at least once");
+        assert_eq!(first_get, 2, "the first poll comes after both creates");
+        assert!(
+            matches!(relay.calls[0], RelayCall::Create(_))
+                && matches!(relay.calls[1], RelayCall::Create(_)),
+            "phase 1 issues both creates up-front, got {:?}",
+            relay.calls
+        );
+    }
+
+    #[tokio::test]
+    async fn single_envelope_creates_then_polls() {
+        // Descriptor-only (vault) restore: one create, then poll — unchanged.
+        let heir = kh(b"single-heir-seed-vector-00000000000000000000");
+        let khs = vec![KeyholderXpub {
+            key_id: 7,
+            xpub: heir.xpub,
+            account_derivation: "m/48'/0'/0'/2'".to_string(),
+        }];
+        let descriptor_json = serde_json::to_vec(&sample_descriptor_blob()).unwrap();
+        let set = build_escrow_set(&khs, CUBE, &descriptor_json, None).unwrap();
+        assert_eq!(set.len(), 1);
+
+        let mut relay = MockRelay::new(DecryptOutcome::Rejected);
+        let res = decrypt_envelopes(&mut relay, CUBE, &set).await;
+        assert!(matches!(res, Err(HeirDecryptError::Rejected)));
+        assert_eq!(
+            relay.calls.len(),
+            2,
+            "one create then one poll, got {:?}",
+            relay.calls
+        );
+        assert!(matches!(relay.calls[0], RelayCall::Create(_)));
+        assert!(matches!(relay.calls[1], RelayCall::Get(_)));
+    }
+
+    #[tokio::test]
+    async fn create_failure_on_second_envelope_aborts_without_awaiting_first() {
+        let set = two_envelope_set();
+
+        let mut relay = MockRelay::new(DecryptOutcome::Completed(vec![]));
+        relay.fail_create_on = Some(2); // second create errors mid-batch.
+
+        let res = decrypt_envelopes(&mut relay, CUBE, &set).await;
+        assert!(
+            matches!(res, Err(HeirDecryptError::Keychain(_))),
+            "a create failure surfaces as a Keychain error, got {:?}",
+            res
+        );
+        // The whole restore is abandoned before any approval is awaited: no
+        // poll for the already-created first request.
+        assert_eq!(
+            relay.get_calls(),
+            0,
+            "must not await the first envelope after the second create fails, got {:?}",
+            relay.calls
+        );
     }
 }

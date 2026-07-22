@@ -2526,7 +2526,8 @@ mod cube_member_tests {
                             "ownerUserId": 99,
                             "ownerEmail": "alice@example.com",
                             "isOwnKey": false,
-                            "usedByVault": true
+                            "usedByVault": true,
+                            "recoveryRole": "owner-self"
                         }
                     ]
                 }));
@@ -2546,6 +2547,9 @@ mod cube_member_tests {
         assert_eq!(k.owner_email, "alice@example.com");
         assert!(!k.is_own_key);
         assert!(k.used_by_vault);
+        // The recovery annotation (PR 2) round-trips and the helper reads it.
+        assert_eq!(k.recovery_role, "owner-self");
+        assert!(k.is_owner_self_recovery());
         // Legacy fields default out.
         assert_eq!(k.primary_owner_id, 0);
     }
@@ -2597,6 +2601,10 @@ mod cube_member_tests {
         assert!(k.owner_email.is_empty());
         assert!(!k.is_own_key);
         assert!(!k.used_by_vault);
+        // A pre-annotation backend omits `recoveryRole`; it defaults to empty
+        // and the key is treated as a normal signer (PR 2 back-compat).
+        assert!(k.recovery_role.is_empty());
+        assert!(!k.is_owner_self_recovery());
     }
 
     #[tokio::test]
@@ -2751,6 +2759,55 @@ mod cube_member_tests {
         assert!(
             !err.is_key_already_used_in_vault(),
             "generic 409 must not match the W9 helper"
+        );
+        assert!(
+            !err.is_key_is_recovery_recipient(),
+            "generic 409 must not match the I2 helper"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_vault_member_409_recovery_recipient_maps_to_helper() {
+        use crate::services::coincube::{AddVaultMemberRequest, VaultMemberRole};
+        // I2 guard: a recovery key can never be a Vault signer. The 409 must
+        // trip the recovery helper and NOT the W9 helper — they drive
+        // different rollback copy in the installer.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/cubes/42/vault/members");
+            then.status(409)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": {
+                        "code": "KEY_IS_RECOVERY_RECIPIENT",
+                        "message": "This key is a recovery key and cannot be a Vault signer"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .add_vault_member(
+                42,
+                AddVaultMemberRequest {
+                    contact_id: None,
+                    key_id: Some(99),
+                    role: VaultMemberRole::Keyholder,
+                },
+            )
+            .await
+            .expect_err("expected 409");
+        mock.assert();
+        assert!(
+            err.is_key_is_recovery_recipient(),
+            "is_key_is_recovery_recipient() should match: {}",
+            err
+        );
+        assert!(
+            !err.is_key_already_used_in_vault(),
+            "recovery-recipient 409 must not match the W9 helper"
         );
     }
 
