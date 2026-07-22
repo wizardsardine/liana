@@ -1481,7 +1481,9 @@ fn normalize_delete_result(res: Result<(), CoincubeError>) -> Result<(), String>
 ///   * always → `DELETE /recovery-kit` (the password kit), `404`-tolerant;
 ///   * `delete_keychain` → resolve the `owner-self` recipient and
 ///     `DELETE .../recipients/{keyId}`, which cascade-deletes its envelopes
-///     server-side. A missing recipient / `404` is idempotent success.
+///     server-side. A `404` on the recipient DELETE is idempotent success; a
+///     *missing* recipient is **verified** gone via [`verify_phone_copy_gone`]
+///     rather than assumed (F5).
 ///
 /// A password-kit failure returns **before** touching the keychain half, so the
 /// envelopes stay untouched and the user can retry cleanly. Both deletes are
@@ -1515,9 +1517,16 @@ async fn remove_backups(
                     ))
                 }
             },
-            // No recipient registered any more — nothing to delete on the phone
-            // side. Treat as success (the phone copy isn't restorable).
-            Err(OwnerSelfError::NoRecipient) => {}
+            // No owner-self recipient to delete. The cached status said the
+            // phone copy existed, so this normally means it was already torn
+            // down elsewhere (the recipient DELETE cascades its envelopes) — but
+            // F5 forbids *assuming* a restorable path is gone. Re-fetch status
+            // and only succeed if the phone envelopes are confirmed absent; a
+            // survivor (or a state we can't confirm) fails loudly so we never
+            // clear the drift slots over a live phone copy.
+            Err(OwnerSelfError::NoRecipient) => {
+                verify_phone_copy_gone(&client, cube_id).await?;
+            }
             Err(e) => {
                 return Err(format!(
                     "Couldn't reach the copy sealed to your phone (Keychain) ({}). The phone \
@@ -1528,6 +1537,45 @@ async fn remove_backups(
         }
     }
     Ok(())
+}
+
+/// Confirm the owner-keychain (phone) copy is actually gone before treating a
+/// missing recipient as a successful removal (F5). Reached only from the
+/// `NoRecipient` branch of [`remove_backups`], where the cached status said
+/// envelopes existed but no owner-self recipient remains to delete. Re-fetches
+/// `/recovery-kit/status`:
+///   * envelopes still present → hard error (the phone copy survives and can't
+///     be removed from here — its recovery key is unregistered);
+///   * no envelopes / no kit at all → the copy is confirmed gone → `Ok`;
+///   * the check itself fails → uncertain → hard error, so we never claim a
+///     removal we couldn't confirm.
+async fn verify_phone_copy_gone(client: &CoincubeClient, cube_id: u64) -> Result<(), String> {
+    match client.get_recovery_kit_status(cube_id).await {
+        Ok(status) => {
+            let phone_present = status
+                .owner_self
+                .as_ref()
+                .map(|o| o.has_envelope())
+                .unwrap_or(false);
+            if phone_present {
+                Err(
+                    "The copy sealed to your phone (Keychain) is still restorable but its \
+                     recovery key is no longer registered, so it couldn't be removed from this \
+                     device. Contact support to clear it."
+                        .to_string(),
+                )
+            } else {
+                Ok(())
+            }
+        }
+        // No kit at all on the server → nothing restorable survives.
+        Err(CoincubeError::NotFound) => Ok(()),
+        Err(e) => Err(format!(
+            "Removed your password kit, but couldn't confirm the copy sealed to your phone \
+             (Keychain) was cleared ({}). Reopen Settings to check before relying on removal.",
+            e
+        )),
+    }
 }
 
 /// On upload failure, restore the `PasswordEntry` screen from the
@@ -2723,9 +2771,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remove_backups_missing_recipient_is_idempotent_success() {
+    async fn remove_backups_missing_recipient_verified_gone_is_success() {
         // Keychain flagged enabled but the recipient is already gone (404 on the
-        // list) → nothing to delete on the phone side; still success.
+        // list). The status re-fetch confirms no phone envelopes survive (the
+        // recipient DELETE cascaded them elsewhere) → success.
         let server = MockServer::start();
         let kit = server.mock(|when, then| {
             when.method(MockMethod::DELETE)
@@ -2737,12 +2786,118 @@ mod tests {
                 .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
             then.status(404);
         });
+        // Verification: no owner-self envelopes remain → the phone copy is gone.
+        let status = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "hasRecoveryKit": false,
+                        "hasEncryptedSeed": false,
+                        "hasEncryptedWalletDescriptor": false,
+                        "encryptionScheme": "",
+                        "ownerSelf": null
+                    }
+                }));
+        });
 
         let client = CoincubeClient::for_test(server.base_url());
         remove_backups(client, 42, true)
             .await
-            .expect("missing recipient must be idempotent success");
+            .expect("verified-gone phone copy must be idempotent success");
         kit.assert();
         list.assert();
+        status.assert();
+    }
+
+    #[tokio::test]
+    async fn remove_backups_orphaned_envelopes_fail_loudly() {
+        // The recipient is gone (404 on the list) but the status re-fetch shows
+        // owner-self envelopes still present — an orphaned, still-restorable
+        // phone copy the desktop can't delete (no recipient key to target). F5:
+        // this must fail loudly, not report success while a path survives.
+        let server = MockServer::start();
+        let kit = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(404);
+        });
+        let list = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
+            then.status(404);
+        });
+        let status = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "hasRecoveryKit": false,
+                        "hasEncryptedSeed": false,
+                        "hasEncryptedWalletDescriptor": false,
+                        "encryptionScheme": "",
+                        "ownerSelf": {
+                            "hasRecipient": false,
+                            "tier": "",
+                            "envelopeKinds": ["descriptor"]
+                        }
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = remove_backups(client, 42, true)
+            .await
+            .expect_err("a surviving phone copy must fail loudly (F5)");
+        kit.assert();
+        list.assert();
+        status.assert();
+        assert!(
+            err.contains("phone") || err.contains("Keychain"),
+            "error must name the surviving phone path: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_backups_missing_recipient_unverifiable_fails() {
+        // Recipient gone, and the verification status fetch itself fails (500) —
+        // we can't confirm the phone copy was cleared, so we must not claim
+        // success (F5); the error tells the user to re-check.
+        let server = MockServer::start();
+        let kit = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(404);
+        });
+        let list = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
+            then.status(404);
+        });
+        let status = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+            then.status(500);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = remove_backups(client, 42, true)
+            .await
+            .expect_err("an unconfirmable phone copy must not report success");
+        kit.assert();
+        list.assert();
+        status.assert();
+        assert!(
+            err.contains("confirm"),
+            "error must flag the unconfirmed removal: {}",
+            err
+        );
     }
 }
