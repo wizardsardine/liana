@@ -411,3 +411,261 @@ impl State for SparkTransactions {
         Task::none()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::state::State;
+    use crate::app::view::spark::SparkPaymentMethod;
+    use crate::app::view::{Message as ViewMessage, SparkTransactionsMessage};
+    use crate::app::wallets::DomainPaymentStatus;
+
+    fn payment(id: &str, amount_sat: i64) -> PaymentSummary {
+        PaymentSummary {
+            id: id.to_string(),
+            amount_sat,
+            fees_sat: 7,
+            token_amount: None,
+            token_decimals: None,
+            token_ticker: None,
+            timestamp: 1_700_000_000,
+            status: "Completed".to_string(),
+            direction: if amount_sat >= 0 {
+                "Receive".to_string()
+            } else {
+                "Send".to_string()
+            },
+            method: "lightning".to_string(),
+            description: Some(format!("payment {id}")),
+        }
+    }
+
+    fn payments(count: usize) -> Vec<PaymentSummary> {
+        (0..count)
+            .map(|i| payment(&format!("payment-{i}"), (i as i64 + 1) * 1_000))
+            .collect()
+    }
+
+    fn update(panel: &mut SparkTransactions, msg: SparkTransactionsMessage) {
+        let _ = State::update(
+            panel,
+            None,
+            &Cache::default(),
+            Message::View(ViewMessage::SparkTransactions(msg)),
+        );
+    }
+
+    #[test]
+    fn new_panel_starts_empty() {
+        let panel = SparkTransactions::new(None);
+
+        assert!(panel.backend.is_none());
+        assert!(panel.payments.is_empty());
+        assert!(panel.recent_transactions.is_empty());
+        assert!(!panel.loading);
+        assert_eq!(panel.current_page, 0);
+        assert_eq!(panel.pending_page, None);
+        assert_eq!(panel.fetch_token, 0);
+        assert!(!panel.is_last_page);
+        assert!(!panel.processing);
+        assert!(matches!(panel.modal, SparkTransactionsModal::None));
+        assert!(panel.selected_payment.is_none());
+    }
+
+    #[test]
+    fn reload_without_backend_is_noop() {
+        let mut panel = SparkTransactions::new(None);
+        panel.loading = true;
+        panel.error = Some("keep me".to_string());
+
+        let _ = State::reload(&mut panel, None, None);
+
+        assert!(panel.loading);
+        assert_eq!(panel.error.as_deref(), Some("keep me"));
+        assert_eq!(panel.fetch_token, 0);
+    }
+
+    #[test]
+    fn stale_data_response_is_ignored() {
+        let mut panel = SparkTransactions::new(None);
+        panel.fetch_token = 2;
+        panel.loading = true;
+        panel.processing = true;
+        panel.payments = vec![payment("current", 1_000)];
+
+        update(
+            &mut panel,
+            SparkTransactionsMessage::DataLoaded(1, payments(3)),
+        );
+
+        assert!(panel.loading);
+        assert!(panel.processing);
+        assert_eq!(panel.payments.len(), 1);
+        assert_eq!(panel.payments[0].id, "current");
+        assert!(panel.recent_transactions.is_empty());
+    }
+
+    #[test]
+    fn data_loaded_commits_pending_page_and_trims_probe_row() {
+        let mut panel = SparkTransactions::new(None);
+        panel.fetch_token = 9;
+        panel.pending_page = Some(2);
+        panel.loading = true;
+        panel.processing = true;
+        panel.error = Some("old error".to_string());
+
+        update(
+            &mut panel,
+            SparkTransactionsMessage::DataLoaded(9, payments(PAGE_SIZE as usize + 1)),
+        );
+
+        assert!(!panel.loading);
+        assert!(!panel.processing);
+        assert_eq!(panel.current_page, 2);
+        assert_eq!(panel.pending_page, None);
+        assert!(!panel.is_last_page);
+        assert_eq!(panel.payments.len(), PAGE_SIZE as usize);
+        assert_eq!(panel.recent_transactions.len(), PAGE_SIZE as usize);
+        assert_eq!(panel.error, None);
+
+        let first = &panel.recent_transactions[0];
+        assert_eq!(first.id, "payment-0");
+        assert_eq!(first.description, "payment payment-0");
+        assert_eq!(first.amount.to_sat(), 1_000);
+        assert_eq!(first.fees_sat.to_sat(), 7);
+        assert_eq!(first.status, DomainPaymentStatus::Complete);
+        assert_eq!(first.method, SparkPaymentMethod::Lightning);
+    }
+
+    #[test]
+    fn exact_page_marks_last_page() {
+        let mut panel = SparkTransactions::new(None);
+        panel.fetch_token = 3;
+        panel.loading = true;
+
+        update(
+            &mut panel,
+            SparkTransactionsMessage::DataLoaded(3, payments(PAGE_SIZE as usize)),
+        );
+
+        assert!(panel.is_last_page);
+        assert_eq!(panel.payments.len(), PAGE_SIZE as usize);
+    }
+
+    #[test]
+    fn current_error_response_rolls_back_pending_navigation() {
+        let mut panel = SparkTransactions::new(None);
+        panel.fetch_token = 5;
+        panel.current_page = 1;
+        panel.pending_page = Some(2);
+        panel.loading = true;
+        panel.processing = true;
+
+        update(
+            &mut panel,
+            SparkTransactionsMessage::Error(5, "bridge timed out".to_string()),
+        );
+
+        assert!(!panel.loading);
+        assert!(!panel.processing);
+        assert_eq!(panel.current_page, 1);
+        assert_eq!(panel.pending_page, None);
+        assert_eq!(panel.error.as_deref(), Some("bridge timed out"));
+    }
+
+    #[test]
+    fn stale_error_response_is_ignored() {
+        let mut panel = SparkTransactions::new(None);
+        panel.fetch_token = 8;
+        panel.current_page = 1;
+        panel.pending_page = Some(2);
+        panel.loading = true;
+        panel.processing = true;
+
+        update(
+            &mut panel,
+            SparkTransactionsMessage::Error(7, "old timeout".to_string()),
+        );
+
+        assert!(panel.loading);
+        assert!(panel.processing);
+        assert_eq!(panel.pending_page, Some(2));
+        assert_eq!(panel.error, None);
+    }
+
+    #[test]
+    fn select_preselect_and_close_manage_detail_selection() {
+        let mut panel = SparkTransactions::new(None);
+        panel.fetch_token = 1;
+        update(
+            &mut panel,
+            SparkTransactionsMessage::DataLoaded(1, payments(2)),
+        );
+
+        update(&mut panel, SparkTransactionsMessage::Select(1));
+        assert_eq!(
+            panel.selected_payment.as_ref().map(|p| p.id.as_str()),
+            Some("payment-1")
+        );
+
+        let explicit = panel.recent_transactions[0].clone();
+        update(
+            &mut panel,
+            SparkTransactionsMessage::Preselect(explicit.clone()),
+        );
+        assert_eq!(
+            panel.selected_payment.as_ref().map(|p| p.id.as_str()),
+            Some(explicit.id.as_str())
+        );
+
+        let _ = State::update(
+            &mut panel,
+            None,
+            &Cache::default(),
+            Message::View(ViewMessage::Close),
+        );
+        assert!(panel.selected_payment.is_none());
+    }
+
+    #[test]
+    fn export_modal_progress_and_close_are_local_state_only() {
+        let mut panel = SparkTransactions::new(None);
+        panel.modal = SparkTransactionsModal::Export {
+            state: ImportExportState::Started,
+        };
+
+        let _ = State::update(
+            &mut panel,
+            None,
+            &Cache::default(),
+            Message::View(ViewMessage::ImportExport(ImportExportMessage::Progress(
+                crate::export::Progress::Ended,
+            ))),
+        );
+        assert!(matches!(
+            panel.modal,
+            SparkTransactionsModal::Export {
+                state: ImportExportState::Ended
+            }
+        ));
+
+        let _ = State::update(
+            &mut panel,
+            None,
+            &Cache::default(),
+            Message::View(ViewMessage::ImportExport(ImportExportMessage::Close)),
+        );
+        assert!(matches!(panel.modal, SparkTransactionsModal::None));
+
+        panel.modal = SparkTransactionsModal::Export {
+            state: ImportExportState::Started,
+        };
+        let _ = State::update(
+            &mut panel,
+            None,
+            &Cache::default(),
+            Message::View(ViewMessage::ImportExport(ImportExportMessage::Path(None))),
+        );
+        assert!(matches!(panel.modal, SparkTransactionsModal::None));
+    }
+}

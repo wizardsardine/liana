@@ -297,28 +297,8 @@ pub fn transaction_detail_view<'a>(
         SparkPaymentMethod::Spark => asset_network_logo::<Message>("btc", "spark", 56.0),
         SparkPaymentMethod::StableBalance => asset_network_logo::<Message>("btc", "spark", 56.0),
     };
-    let method_text = match tx.method {
-        SparkPaymentMethod::Lightning => "Lightning payment",
-        SparkPaymentMethod::OnChainBitcoin => {
-            if is_incoming {
-                "On-chain deposit"
-            } else {
-                "On-chain withdrawal"
-            }
-        }
-        SparkPaymentMethod::Spark => "Spark transfer",
-        SparkPaymentMethod::StableBalance => "Stable Balance",
-    };
-    let status_text = match tx.status {
-        DomainPaymentStatus::Complete => "Completed",
-        DomainPaymentStatus::Pending => "Pending",
-        DomainPaymentStatus::Failed => "Failed",
-        DomainPaymentStatus::TimedOut => "Timed out",
-        DomainPaymentStatus::Created => "Created",
-        DomainPaymentStatus::Refundable => "Refundable",
-        DomainPaymentStatus::RefundPending => "Refund pending",
-        DomainPaymentStatus::WaitingFeeAcceptance => "Awaiting fee",
-    };
+    let method_text = payment_method_text(tx.method, is_incoming);
+    let status_text = payment_status_text(tx.status);
     let date_text = format_timestamp(tx.timestamp).unwrap_or_else(|| "Unknown".to_string());
     let fiat_str = total_fiat
         .as_ref()
@@ -404,6 +384,34 @@ pub fn transaction_detail_view<'a>(
         .into()
 }
 
+fn payment_method_text(method: SparkPaymentMethod, is_incoming: bool) -> &'static str {
+    match method {
+        SparkPaymentMethod::Lightning => "Lightning payment",
+        SparkPaymentMethod::OnChainBitcoin => {
+            if is_incoming {
+                "On-chain deposit"
+            } else {
+                "On-chain withdrawal"
+            }
+        }
+        SparkPaymentMethod::Spark => "Spark transfer",
+        SparkPaymentMethod::StableBalance => "Stable Balance",
+    }
+}
+
+fn payment_status_text(status: DomainPaymentStatus) -> &'static str {
+    match status {
+        DomainPaymentStatus::Complete => "Completed",
+        DomainPaymentStatus::Pending => "Pending",
+        DomainPaymentStatus::Failed => "Failed",
+        DomainPaymentStatus::TimedOut => "Timed out",
+        DomainPaymentStatus::Created => "Created",
+        DomainPaymentStatus::Refundable => "Refundable",
+        DomainPaymentStatus::RefundPending => "Refund pending",
+        DomainPaymentStatus::WaitingFeeAcceptance => "Awaiting fee",
+    }
+}
+
 fn detail_back_button() -> Element<'static, Message> {
     button::secondary(None, "< Back")
         .width(Length::Fixed(150.0))
@@ -414,3 +422,50 @@ fn detail_back_button() -> Element<'static, Message> {
 // `Amount` is kept in scope for future use (e.g. the detail pane).
 #[allow(dead_code)]
 fn _keep_amount_in_scope(_: Amount) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn payment_method_text_names_directional_onchain_rows() {
+        assert_eq!(
+            payment_method_text(SparkPaymentMethod::Lightning, true),
+            "Lightning payment"
+        );
+        assert_eq!(
+            payment_method_text(SparkPaymentMethod::OnChainBitcoin, true),
+            "On-chain deposit"
+        );
+        assert_eq!(
+            payment_method_text(SparkPaymentMethod::OnChainBitcoin, false),
+            "On-chain withdrawal"
+        );
+        assert_eq!(
+            payment_method_text(SparkPaymentMethod::Spark, false),
+            "Spark transfer"
+        );
+        assert_eq!(
+            payment_method_text(SparkPaymentMethod::StableBalance, true),
+            "Stable Balance"
+        );
+    }
+
+    #[test]
+    fn payment_status_text_covers_every_domain_status() {
+        use DomainPaymentStatus::*;
+
+        for (status, label) in [
+            (Created, "Created"),
+            (Pending, "Pending"),
+            (Complete, "Completed"),
+            (Failed, "Failed"),
+            (TimedOut, "Timed out"),
+            (Refundable, "Refundable"),
+            (RefundPending, "Refund pending"),
+            (WaitingFeeAcceptance, "Awaiting fee"),
+        ] {
+            assert_eq!(payment_status_text(status), label);
+        }
+    }
+}

@@ -356,11 +356,11 @@ fn deposit_row<'a>(
 /// error stays in the panel state; this just keeps the row from
 /// blowing up vertically.
 fn short_error(err: &str) -> String {
-    const MAX: usize = 60;
-    if err.len() <= MAX {
+    const MAX_CHARS: usize = 60;
+    if err.chars().count() <= MAX_CHARS {
         err.to_string()
     } else {
-        format!("{}…", &err[..MAX])
+        format!("{}…", err.chars().take(MAX_CHARS).collect::<String>())
     }
 }
 
@@ -794,4 +794,74 @@ fn kv_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
                 .push(p1_regular(value)),
         )
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_error_leaves_short_and_boundary_length_errors_unchanged() {
+        let short = "bridge unavailable";
+        assert_eq!(short_error(short), short);
+
+        let boundary = "x".repeat(60);
+        assert_eq!(short_error(&boundary), boundary);
+    }
+
+    #[test]
+    fn short_error_truncates_long_ascii_errors() {
+        let err = format!("{}tail", "x".repeat(60));
+
+        assert_eq!(short_error(&err), format!("{}…", "x".repeat(60)));
+    }
+
+    #[test]
+    fn short_error_truncates_on_char_boundaries() {
+        let err = format!("{}⚡tail", "x".repeat(59));
+
+        assert_eq!(short_error(&err), format!("{}⚡…", "x".repeat(59)));
+    }
+
+    #[test]
+    fn bitcoin_rail_display_labels_are_stable() {
+        assert_eq!(
+            rail_display(SparkReceiveMethod::Bolt11),
+            ("lightning", "Lightning")
+        );
+        assert_eq!(
+            rail_display(SparkReceiveMethod::OnchainBitcoin),
+            ("bitcoin", "On-chain")
+        );
+        assert_eq!(rail_display(SparkReceiveMethod::Spark), ("spark", "Spark"));
+    }
+
+    #[test]
+    fn cross_network_asset_display_names_are_stable() {
+        assert_eq!(asset_display_name("usdt"), "USDt");
+        assert_eq!(asset_display_name("usdc"), "USDC");
+        assert_eq!(asset_display_name("eth"), "Ether");
+        assert_eq!(asset_display_name("sol"), "Solana");
+        assert_eq!(asset_display_name("trx"), "Tron");
+        assert_eq!(asset_display_name("doge"), "doge");
+    }
+
+    #[test]
+    fn selector_card_border_only_highlights_on_hover() {
+        let theme = theme::Theme::default();
+        let active = card_button_style(&theme, iced::widget::button::Status::Active);
+        let hovered = card_button_style(&theme, iced::widget::button::Status::Hovered);
+
+        assert_eq!(active.border.color, color::TRANSPARENT);
+        assert_eq!(hovered.border.color, color::ORANGE);
+    }
+
+    #[test]
+    fn selected_picker_row_uses_orange_border_in_both_themes() {
+        for theme in [theme::Theme::dark(), theme::Theme::light()] {
+            let style = picker_row_selected(&theme);
+            assert_eq!(style.border.color, color::ORANGE);
+            assert_eq!(style.border.width, 1.0);
+        }
+    }
 }

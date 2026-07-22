@@ -817,6 +817,21 @@ mod tests {
     }
 
     #[test]
+    fn conversion_fee_is_asset_only_with_non_positive_prices() {
+        for price in [Some(0.0), Some(-1.0)] {
+            let s = conversion_fee_display(97_921, 6, "USDT", price, BitcoinDisplayUnit::Sats);
+            assert_eq!(s, "0.097921 USDT");
+        }
+    }
+
+    #[test]
+    fn conversion_fee_uses_the_selected_bitcoin_display_unit() {
+        // 0.097921 USDT at $65,000/BTC = 150 sats, rendered in BTC mode.
+        let s = conversion_fee_display(97_921, 6, "USDT", Some(65_000.0), BitcoinDisplayUnit::BTC);
+        assert_eq!(s, "0.097921 USDT (≈ 0.00 000 150 BTC)");
+    }
+
+    #[test]
     fn conversion_fee_shows_the_hint_for_a_sub_one_sat_fee_when_priced() {
         // A tiny fee rounds to 0 sats, but with a price known the hint should
         // still show — the old `sats == 0` gate wrongly suppressed it.

@@ -72,3 +72,38 @@ impl std::fmt::Display for SparkConfigError {
 }
 
 impl std::error::Error for SparkConfigError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn for_network_maps_bitcoin_and_regtest_to_protocol_networks() {
+        let mainnet_dir = std::path::PathBuf::from("/tmp/spark-mainnet");
+        let mainnet =
+            SparkConfig::for_network(bitcoin::Network::Bitcoin, mainnet_dir.clone()).unwrap();
+        assert_eq!(mainnet.api_key, env!("BREEZ_API_KEY"));
+        assert!(matches!(mainnet.network, ProtocolNetwork::Mainnet));
+        assert_eq!(mainnet.storage_dir, mainnet_dir);
+
+        let regtest_dir = std::path::PathBuf::from("/tmp/spark-regtest");
+        let regtest =
+            SparkConfig::for_network(bitcoin::Network::Regtest, regtest_dir.clone()).unwrap();
+        assert_eq!(regtest.api_key, env!("BREEZ_API_KEY"));
+        assert!(matches!(regtest.network, ProtocolNetwork::Regtest));
+        assert_eq!(regtest.storage_dir, regtest_dir);
+    }
+
+    #[test]
+    fn for_network_rejects_testnet_and_signet() {
+        for network in [bitcoin::Network::Testnet, bitcoin::Network::Signet] {
+            let err = SparkConfig::for_network(network, std::path::PathBuf::from("/tmp/spark"))
+                .unwrap_err();
+            assert!(matches!(err, SparkConfigError::UnsupportedNetwork(n) if n == network));
+            assert_eq!(
+                err.to_string(),
+                format!("Spark wallet is not supported on {} network", network)
+            );
+        }
+    }
+}
