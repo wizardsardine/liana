@@ -109,19 +109,34 @@ impl State {
 fn duress_wipe_targets(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     const CUBE_MATERIAL: &[&str] = &["data", "mnemonics", "settings.json"];
     let mut targets = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(root) {
-        for entry in entries.flatten() {
-            let net_dir = entry.path();
-            if !net_dir.is_dir() {
-                continue;
-            }
-            for name in CUBE_MATERIAL {
-                let p = net_dir.join(name);
-                if p.exists() {
-                    targets.push(p);
+
+    // A duress wipe must never leave seeds or PIN hashes behind because a virus
+    // scanner briefly locked a directory (a real transient on Windows). The
+    // filesystem probes below therefore retry on transient errors and fail SAFE
+    // toward wiping: a path whose existence can't be determined is targeted
+    // anyway — CubeWiper deletes idempotently (a NotFound is a no-op), so an
+    // extra target is harmless while a missed one is a security failure. If the
+    // network enumeration itself can't be read, log loudly instead of silently
+    // wiping nothing; the launch-time reconcile (`complete_pending_wipe`) retries.
+    match read_dir_paths_with_retry(root) {
+        Ok(entries) => {
+            for net_dir in entries {
+                if !is_dir_or_unknown(&net_dir) {
+                    continue;
+                }
+                for name in CUBE_MATERIAL {
+                    let p = net_dir.join(name);
+                    if exists_or_target_on_doubt(&p) {
+                        targets.push(p);
+                    }
                 }
             }
         }
+        Err(e) => error!(
+            "duress: could not list networks under {} to wipe ({e}); Cube material \
+             may remain until the launch-time reconcile retries",
+            root.display()
+        ),
     }
     // Identifying material from inbound-over-Tor: the managed Tor data directory
     // and bitcoind's onion-service key(s). These live under `<root>/bitcoind`,
@@ -131,6 +146,55 @@ fn duress_wipe_targets(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     // device. See `PLAN-inbound-tor-connectivity.md` Decision 4.
     targets.extend(crate::node::tor::duress_identifying_targets(root));
     targets
+}
+
+/// `read_dir` returning entry paths, retried on transient errors. On Windows a
+/// virus scanner can briefly lock a directory; for a duress wipe an unread
+/// directory means seeds could be left behind, so a first transient error is
+/// not accepted as "nothing here". The whole scan is retried if `read_dir` or
+/// any entry surfaces an error, and only a persistent error is returned.
+fn read_dir_paths_with_retry(dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let mut attempt = 0u32;
+    loop {
+        let scan = std::fs::read_dir(dir).and_then(|entries| {
+            entries
+                .map(|entry| entry.map(|e| e.path()))
+                .collect::<std::io::Result<Vec<_>>>()
+        });
+        match scan {
+            Ok(paths) => return Ok(paths),
+            Err(_) if attempt < 5 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20 * u64::from(attempt)));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Whether `p` should be descended into as a network directory. A stat error
+/// must not silently exclude a directory from the wipe, so treat "unknown" as
+/// "descend": a non-directory simply has no Cube-material children to target.
+fn is_dir_or_unknown(p: &std::path::Path) -> bool {
+    std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(true)
+}
+
+/// Fail-safe existence check for a wipe target: retry transient errors and, if
+/// existence still can't be determined, return `true` so the path is wiped
+/// anyway. CubeWiper deletes idempotently, so targeting an absent path is a
+/// harmless no-op, whereas skipping a present one leaves Cube material behind.
+fn exists_or_target_on_doubt(p: &std::path::Path) -> bool {
+    let mut attempt = 0u32;
+    loop {
+        match std::fs::exists(p) {
+            Ok(present) => return present,
+            Err(_) if attempt < 5 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20 * u64::from(attempt)));
+            }
+            Err(_) => return true,
+        }
+    }
 }
 
 /// Completes an interrupted duress wipe on launch. No-op when the journal
@@ -2271,24 +2335,10 @@ mod duress_wipe_target_tests {
                 .join("onion_v3_private_key"),
         );
 
-        // On Windows CI a virus scanner can briefly hide a just-created dir from
-        // read_dir/exists, so duress_wipe_targets may momentarily miss freshly
-        // written cube material. Everything was written above, so retry until the
-        // expected paths appear before asserting.
-        let expected_wiped = [
-            net.join("data"),
-            net.join("mnemonics"),
-            net.join("settings.json"),
-            root.join("testnet").join("mnemonics"),
-        ];
-        let mut targets = duress_wipe_targets(&root);
-        for _ in 0..20 {
-            if expected_wiped.iter().all(|p| targets.contains(p)) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(25));
-            targets = duress_wipe_targets(&root);
-        }
+        // duress_wipe_targets retries transient read_dir/exists failures
+        // internally (see its helpers), so a single call is reliable even on
+        // Windows where a virus scanner can briefly hide a just-created dir.
+        let targets = duress_wipe_targets(&root);
 
         assert!(targets.contains(&net.join("data")), "data/ must be wiped");
         assert!(
@@ -2326,6 +2376,38 @@ mod duress_wipe_target_tests {
                     .join("onion_v3_private_key")
             ),
             "onion-service key must be wiped"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_targets_only_material_that_exists() {
+        // Fail-safe wiping must not over-target in the normal case: material
+        // that genuinely isn't present is excluded (existence returns a definite
+        // "no", not the "on doubt, wipe it" fallback).
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        let root = std::env::temp_dir().join(format!(
+            "coincube-wipe-partial-{}-{}",
+            std::process::id(),
+            seq
+        ));
+        let net = root.join("bitcoin");
+        touch(&net.join("data").join("wallet.db")); // only data/ exists
+
+        let targets = duress_wipe_targets(&root);
+
+        assert!(
+            targets.contains(&net.join("data")),
+            "present data/ is targeted"
+        );
+        assert!(
+            !targets.contains(&net.join("mnemonics")),
+            "absent mnemonics/ must not be targeted"
+        );
+        assert!(
+            !targets.contains(&net.join("settings.json")),
+            "absent settings.json must not be targeted"
         );
 
         let _ = std::fs::remove_dir_all(&root);
