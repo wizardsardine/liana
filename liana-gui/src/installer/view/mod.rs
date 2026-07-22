@@ -1601,22 +1601,14 @@ pub fn choose_backend(progress: (usize, usize), network: Network) -> Element<'st
             .width(Length::FillPortion(1));
     let descriptions = row![local_description, remote_description].spacing(20);
 
-    let local_action = Container::new(
-        button::secondary(None, "Select")
-            .on_press(Message::SelectBackend(
-                message::SelectBackend::ContinueWithLocalWallet(true),
-            ))
-            .width(200),
-    )
+    let local_action = Container::new(btn_select(Some(Message::SelectBackend(
+        message::SelectBackend::ContinueWithLocalWallet(true),
+    ))))
     .padding(PADDING)
     .center_x(Length::FillPortion(1));
-    let remote_action = Container::new(
-        button::secondary(None, "Select")
-            .on_press(Message::SelectBackend(
-                message::SelectBackend::ContinueWithLocalWallet(false),
-            ))
-            .width(200),
-    )
+    let remote_action = Container::new(btn_select(Some(Message::SelectBackend(
+        message::SelectBackend::ContinueWithLocalWallet(false),
+    ))))
     .padding(PADDING)
     .center_x(Length::FillPortion(1));
     let actions = row![local_action, remote_action].spacing(20);
