@@ -27,7 +27,7 @@ use crate::app::view;
 use crate::app::view::settings::general::backup_overview;
 use crate::app::view::{
     PhoneKeyOutcome, RecoveryKitMessage, RecoveryKitMode, RecoveryKitUploadOutcome,
-    RecoveryProtectionMode,
+    RecoveryProtectionMode, RemoveFailure,
 };
 use crate::app::wallet::Wallet;
 use crate::feature_flags;
@@ -759,8 +759,13 @@ pub fn update(
                     let reload = load_status(rk, client, server_cube_id);
                     Task::batch([persist, reload])
                 }
-                Err(e) => {
-                    rk.flow = RecoveryKitState::Error { message: e.clone() };
+                Err(RemoveFailure {
+                    message,
+                    password_kit_deleted,
+                }) => {
+                    rk.flow = RecoveryKitState::Error {
+                        message: message.clone(),
+                    };
                     // Removal runs sequentially and can partially succeed — e.g.
                     // the password kit was deleted, then the phone (Keychain)
                     // step failed. The server state has already changed even
@@ -770,8 +775,27 @@ pub fn update(
                     // no longer has once the user dismisses the error. Mirrors
                     // the `PhoneSealResult` partial-failure handling.
                     let reload = load_status(rk, client, server_cube_id);
+                    // `load_status` only fixes the in-memory `rk.status`; the
+                    // persisted per-method fingerprint slots drive
+                    // `has_recovery_kit()` / `connect_state()`. When the password
+                    // kit was already torn down before the failure, its local
+                    // fingerprint now points at a kit Connect no longer holds, so
+                    // clear just that slot. The keychain slot stays: its copy may
+                    // well survive the failure (the very reason we failed loudly),
+                    // and a retry — or the phone-seal path — reconciles it.
+                    let clear_stale_password = if password_kit_deleted {
+                        persist_descriptor_fingerprint(
+                            cache,
+                            local_cube_id,
+                            DescriptorFingerprintSlot::Password,
+                            None,
+                        )
+                    } else {
+                        Task::none()
+                    };
                     Task::batch([
-                        Task::done(Message::View(view::Message::ShowError(e))),
+                        Task::done(Message::View(view::Message::ShowError(message))),
+                        clear_stale_password,
                         reload,
                     ])
                 }
@@ -1492,16 +1516,42 @@ async fn remove_backups(
     client: CoincubeClient,
     cube_id: u64,
     delete_keychain: bool,
-) -> Result<(), String> {
+) -> Result<(), RemoveFailure> {
     normalize_delete_result(client.delete_recovery_kit(cube_id).await).map_err(|e| {
-        format!(
-            "Couldn't remove your password-encrypted Recovery Kit ({}). It's still \
-             restorable — try Remove again.",
-            e
-        )
+        RemoveFailure {
+            message: format!(
+                "Couldn't remove your password-encrypted Recovery Kit ({}). It's still \
+                 restorable — try Remove again.",
+                e
+            ),
+            // The delete itself failed, so the password kit is still on Connect
+            // and the local fingerprint slot is still accurate — don't drop it.
+            password_kit_deleted: false,
+        }
     })?;
+    // The password kit is now gone (deleted, or a 404 meaning it was already
+    // absent). The phone-half work below can still fail, but the password half
+    // is torn down — tag any failure so the caller clears the now-stale local
+    // password fingerprint slot instead of leaving it pointing at a dead kit.
+    remove_phone_copy(&client, cube_id, delete_keychain)
+        .await
+        .map_err(|message| RemoveFailure {
+            message,
+            password_kit_deleted: true,
+        })
+}
+
+/// Tear down (or verify absent) the owner-keychain (phone) copy — the second
+/// half of [`remove_backups`], split out so the password-half and phone-half
+/// failures can carry different `password_kit_deleted` flags. Returns the
+/// user-facing error string on failure; the caller wraps it in [`RemoveFailure`].
+async fn remove_phone_copy(
+    client: &CoincubeClient,
+    cube_id: u64,
+    delete_keychain: bool,
+) -> Result<(), String> {
     if delete_keychain {
-        match find_owner_self_recipient(&client, cube_id).await {
+        match find_owner_self_recipient(client, cube_id).await {
             Ok(recipient) => match client
                 .delete_recovery_kit_recipient(cube_id, recipient.key_id)
                 .await
@@ -1528,7 +1578,7 @@ async fn remove_backups(
             // device — the user must contact support.
             Err(OwnerSelfError::NoRecipient) => {
                 verify_phone_copy_gone(
-                    &client,
+                    client,
                     cube_id,
                     "The copy sealed to your phone (Keychain) is still restorable but its \
                      recovery key is no longer registered, so it couldn't be removed from this \
@@ -1555,7 +1605,7 @@ async fn remove_backups(
         // recipient may well still exist — a fresh Remove (with up-to-date
         // status) would target it — so the message says to retry.
         verify_phone_copy_gone(
-            &client,
+            client,
             cube_id,
             "The copy sealed to your phone (Keychain) is still restorable. Reopen Settings and \
              try Remove again to clear it.",
@@ -2613,7 +2663,10 @@ mod tests {
         let client = CoincubeClient::for_test("http://localhost");
         let _ = update(
             &mut rk,
-            RecoveryKitMessage::RemoveResult(Err("phone step failed".to_string())),
+            RecoveryKitMessage::RemoveResult(Err(RemoveFailure {
+                message: "phone step failed".to_string(),
+                password_kit_deleted: true,
+            })),
             &Cache::default(),
             "cube-1",
             SeedSource::Mnemonic,
@@ -2793,14 +2846,18 @@ mod tests {
         status.assert();
         assert_eq!(list.hits(), 0, "recipient path must not be resolved");
         assert!(
-            err.contains("phone") || err.contains("Keychain"),
-            "error must name the surviving phone path: {}",
-            err
+            err.password_kit_deleted,
+            "password kit was deleted before the verify failed — the caller must drop its slot"
         );
         assert!(
-            err.contains("try Remove again"),
+            err.message.contains("phone") || err.message.contains("Keychain"),
+            "error must name the surviving phone path: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("try Remove again"),
             "stale-overview survivor must advise a retry, not contact support: {}",
-            err
+            err.message
         );
     }
 
@@ -2832,9 +2889,13 @@ mod tests {
             .expect_err("hard kit-delete error must fail loudly");
         kit.assert();
         assert!(
-            err.contains("password"),
+            !err.password_kit_deleted,
+            "the delete itself failed, so the kit is still on Connect — the local slot stays"
+        );
+        assert!(
+            err.message.contains("password"),
             "error must name the password path: {}",
-            err
+            err.message
         );
         assert_eq!(
             list.hits(),
@@ -2876,9 +2937,13 @@ mod tests {
         list.assert();
         recip.assert();
         assert!(
-            err.contains("phone") || err.contains("Keychain"),
+            err.password_kit_deleted,
+            "password kit was deleted before the recipient step failed — its slot must drop"
+        );
+        assert!(
+            err.message.contains("phone") || err.message.contains("Keychain"),
             "error must name the phone path: {}",
-            err
+            err.message
         );
     }
 
@@ -2971,9 +3036,13 @@ mod tests {
         list.assert();
         status.assert();
         assert!(
-            err.contains("phone") || err.contains("Keychain"),
+            err.password_kit_deleted,
+            "the kit 404 counts as torn down (idempotent), so its slot must drop"
+        );
+        assert!(
+            err.message.contains("phone") || err.message.contains("Keychain"),
             "error must name the surviving phone path: {}",
-            err
+            err.message
         );
     }
 
@@ -3007,9 +3076,13 @@ mod tests {
         list.assert();
         status.assert();
         assert!(
-            err.contains("confirm"),
+            err.password_kit_deleted,
+            "the kit 404 counts as torn down (idempotent), so its slot must drop"
+        );
+        assert!(
+            err.message.contains("confirm"),
             "error must flag the unconfirmed removal: {}",
-            err
+            err.message
         );
     }
 }

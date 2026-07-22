@@ -1250,8 +1250,29 @@ pub enum RecoveryKitMessage {
     /// `delete_recovery_kit_recipient` (cascades envelopes) for the phone half,
     /// run sequentially; partial failure fails loudly.
     ConfirmRemove,
-    /// Async result of the removal.
-    RemoveResult(Result<(), String>),
+    /// Async result of the removal. The error carries [`RemoveFailure`] so the
+    /// handler can tell whether the password kit was already torn down before
+    /// the failure and drop the now-stale local fingerprint slot accordingly.
+    RemoveResult(Result<(), RemoveFailure>),
+}
+
+/// Failure payload from the removal flow ([`remove_backups`]). The password
+/// Recovery Kit delete runs **first and unconditionally**, so any failure
+/// *after* it (the Keychain teardown or the phone-copy verification) leaves the
+/// local `recovery_kit_last_backed_up_descriptor_fingerprint` pointing at a kit
+/// Connect no longer holds. `password_kit_deleted` lets the error handler clear
+/// just that slot so `has_recovery_kit()` / `connect_state()` don't keep
+/// reporting a password backup that's gone. No sensitive fields — `message` is
+/// the user-facing error copy — so `Debug` is derived.
+#[derive(Clone, Debug)]
+pub struct RemoveFailure {
+    /// User-facing error copy, shown via `ShowError` and stored on the
+    /// `Error` flow state.
+    pub message: String,
+    /// Whether the password kit was already deleted server-side before the
+    /// failure. `false` only when the password delete itself was the failing
+    /// step (the kit is still present, so the local slot is still accurate).
+    pub password_kit_deleted: bool,
 }
 
 /// What the upload handler hands back to the state machine on success.

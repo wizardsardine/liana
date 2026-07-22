@@ -1586,6 +1586,24 @@ mod test {
             Some("kc-fp".to_string());
         assert!(cube.has_recovery_kit());
         assert_eq!(cube.connect_state(), CubeConnectState::BackedUp);
+
+        // The keychain slot must survive persistence — the field is
+        // `skip_serializing_if = "Option::is_none"` but populated here, so it
+        // has to appear in the serialized form and come back verbatim. A future
+        // `skip_serializing` (or a rename without a serde alias) would silently
+        // drop the fingerprint and regress the Cube to "no recovery kit" on the
+        // next launch, so round-trip through the JSON persistence API.
+        let json = serde_json::to_string(&cube).expect("CubeSettings must serialize");
+        let restored: CubeSettings = serde_json::from_str(&json).expect("CubeSettings must deserialize");
+        assert_eq!(
+            restored
+                .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
+                .as_deref(),
+            Some("kc-fp"),
+            "keychain fingerprint must persist across a serialize/deserialize round-trip"
+        );
+        assert!(restored.has_recovery_kit());
+        assert_eq!(restored.connect_state(), CubeConnectState::BackedUp);
     }
 
     #[test]
