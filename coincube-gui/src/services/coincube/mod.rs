@@ -1527,6 +1527,13 @@ pub struct OwnerSelfRecoverySummary {
     /// `"seed"`). Empty when a recipient is registered but nothing sealed yet.
     #[serde(default)]
     pub envelope_kinds: Vec<String>,
+    /// When the phone (keychain) envelope set was last sealed/updated, RFC 3339.
+    /// Folded into the card's "Last updated" line alongside the password kit's
+    /// `updated_at` (the later of the two wins). Absent on older APIs that don't
+    /// yet emit it (API PR 1c) → `None`, which keeps the card's timestamp on the
+    /// password kit's value.
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 impl OwnerSelfRecoverySummary {

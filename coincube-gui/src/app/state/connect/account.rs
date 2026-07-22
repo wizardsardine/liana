@@ -4768,6 +4768,54 @@ mod duress_enroll_tests {
     }
 
     #[test]
+    fn duress_cube_has_recovery_kit_mirrors_list_cubes_verbatim() {
+        // Symptom 2 (a keychain-only Cube tagged "No recovery kit") is fixed
+        // server-side: `list_cubes` now reports `hasRecoveryKit=true` for a
+        // Cube whose only backup is the phone (Keychain) envelope. The desktop
+        // must carry that flag through **verbatim** — `load_duress_cubes`
+        // assigns `DuressCube.has_recovery_kit = c.has_recovery_kit` (this file,
+        // ~line 4161) and must never re-derive it from the password `halves`,
+        // or a keychain-only backup would read as unbacked again.
+        use crate::services::coincube::CubeResponse;
+
+        // A keychain-only Cube: `hasRecoveryKit` true, but NO password halves in
+        // the per-cube status (both false).
+        let c: CubeResponse = serde_json::from_value(serde_json::json!({
+            "id": 42,
+            "uuid": "keychain-only-uuid",
+            "name": "Keychain-only",
+            "network": "mainnet",
+            "status": "active",
+            "hasRecoveryKit": true,
+        }))
+        .expect("list_cubes cube deserializes");
+        assert!(
+            c.has_recovery_kit,
+            "hasRecoveryKit must deserialize to has_recovery_kit"
+        );
+
+        // Model the loader's assignment: a plain copy of the server flag, with
+        // the password halves empty (keychain-only).
+        let dc = DuressCube {
+            server_id: c.id,
+            uuid: Some(c.uuid),
+            name: c.name,
+            has_recovery_kit: c.has_recovery_kit,
+            halves: Some((false, false)),
+            has_vault: Some(true),
+            is_passkey: Some(false),
+            local: true,
+        };
+        // The flag is mirrored verbatim and stays independent of the password
+        // halves — true even though both halves are absent.
+        assert_eq!(dc.has_recovery_kit, c.has_recovery_kit);
+        assert!(
+            dc.has_recovery_kit && dc.halves == Some((false, false)),
+            "has_recovery_kit must come from list_cubes, not the password halves"
+        );
+    }
+
+    #[test]
     fn require_backup_ack_gating() {
         let mut panel = ConnectAccountPanel::new();
 

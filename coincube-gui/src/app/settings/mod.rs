@@ -419,6 +419,15 @@ pub struct CubeSettings {
     /// on `delete_recovery_kit`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_kit_last_backed_up_descriptor_fingerprint: Option<String>,
+    /// Keychain (owner-self "phone") analogue of
+    /// `recovery_kit_last_backed_up_descriptor_fingerprint`: SHA-256 (hex) of
+    /// the `DescriptorBlob` plaintext last **sealed to the phone** recovery
+    /// envelope. Drives the phone copy's independent drift verdict (per-method
+    /// drift, PR 3). `None` when no descriptor was ever phone-sealed; written on
+    /// a successful `PhoneSealResult`, cleared alongside the password slot on
+    /// Remove-all. Back-compat is free — only the phone-seal path ever writes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_kit_last_backed_up_keychain_descriptor_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -459,6 +468,7 @@ impl CubeSettings {
             allow_random_grid_phrase: false,
             balance_masked: false,
             recovery_kit_last_backed_up_descriptor_fingerprint: None,
+            recovery_kit_last_backed_up_keychain_descriptor_fingerprint: None,
         }
     }
 

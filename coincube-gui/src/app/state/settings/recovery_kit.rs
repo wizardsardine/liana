@@ -24,6 +24,7 @@ use crate::app::cache::Cache;
 use crate::app::message::Message;
 use crate::app::settings::{self, update_settings_file};
 use crate::app::view;
+use crate::app::view::settings::general::backup_overview;
 use crate::app::view::{
     PhoneKeyOutcome, RecoveryKitMessage, RecoveryKitMode, RecoveryKitUploadOutcome,
     RecoveryProtectionMode,
@@ -163,6 +164,11 @@ pub enum RecoveryKitState {
         now_has_seed: bool,
         now_has_descriptor: bool,
     },
+    /// Full-page confirmation before any delete happens (master F5). Lists which
+    /// backup paths will be torn down (derived from the current `rk.status` in
+    /// the view) and waits for an explicit `ConfirmRemove`. No payload — the
+    /// delete set is rebuilt from `rk.status` at confirm time.
+    ConfirmRemove,
     Removing,
     Error {
         message: String,
@@ -229,6 +235,7 @@ impl std::fmt::Debug for RecoveryKitState {
                 .field("now_has_seed", now_has_seed)
                 .field("now_has_descriptor", now_has_descriptor)
                 .finish(),
+            Self::ConfirmRemove => write!(f, "ConfirmRemove"),
             Self::Removing => write!(f, "Removing"),
             Self::Error { message } => f.debug_struct("Error").field("message", message).finish(),
         }
@@ -575,8 +582,24 @@ pub fn update(
                 return Task::none();
             }
             match res {
-                Ok(()) => {
+                Ok(descriptor_fingerprint) => {
                     rk.reset_flow();
+                    // Persist the keychain drift slot from the descriptor that was
+                    // actually sealed (per-method drift, PR 3). Mirror
+                    // `next_fingerprint_to_persist`'s rule: only a seal that
+                    // included a descriptor writes the slot — never wipe a stored
+                    // fingerprint on a descriptor-less seal (the seal path always
+                    // seals a descriptor today, so this is normally `Some`).
+                    let persist = if let Some(fp) = descriptor_fingerprint {
+                        persist_descriptor_fingerprint(
+                            cache,
+                            local_cube_id,
+                            DescriptorFingerprintSlot::Keychain,
+                            Some(fp),
+                        )
+                    } else {
+                        Task::none()
+                    };
                     let reload = load_status(rk, client, server_cube_id);
                     let toast = Task::done(Message::View(view::Message::ShowToast(
                         log::Level::Info,
@@ -584,7 +607,7 @@ pub fn update(
                          your Keychain."
                             .to_string(),
                     )));
-                    Task::batch([toast, reload])
+                    Task::batch([toast, persist, reload])
                 }
                 Err(e) => {
                     rk.flow = RecoveryKitState::Error { message: e.clone() };
@@ -623,7 +646,12 @@ pub fn update(
                     // fingerprint through its own dedicated call.
                     let fp_to_persist = next_fingerprint_to_persist(&outcome);
                     let persist = if let Some(fp) = fp_to_persist {
-                        persist_descriptor_fingerprint(cache, local_cube_id, Some(fp))
+                        persist_descriptor_fingerprint(
+                            cache,
+                            local_cube_id,
+                            DescriptorFingerprintSlot::Password,
+                            Some(fp),
+                        )
                     } else {
                         Task::none()
                     };
@@ -678,6 +706,15 @@ pub fn update(
         }
 
         RecoveryKitMessage::Remove => {
+            // Removal is destructive and irreversible (master F5): don't delete
+            // on the first press. Take over the page with a confirmation screen
+            // that names exactly which backup paths will be torn down; the
+            // actual delete runs only on `ConfirmRemove`. Cancel → `reset_flow`.
+            rk.flow = RecoveryKitState::ConfirmRemove;
+            Task::none()
+        }
+
+        RecoveryKitMessage::ConfirmRemove => {
             let Some(client) = client else {
                 return Task::done(Message::View(view::Message::ShowError(
                     "Sign in to Connect to remove your Recovery Kit.".to_string(),
@@ -688,9 +725,21 @@ pub fn update(
                     "This Cube isn't registered with Connect yet.".to_string(),
                 )));
             };
+            // Build the delete set from the current status — the same
+            // per-method view the confirm screen showed the user. The password
+            // kit is always torn down (idempotent, 404-tolerant); the keychain
+            // half only when a phone envelope set is present.
+            let overview = backup_overview(rk.status.as_ref());
+            let delete_keychain = overview.keychain.is_some();
+            if !overview.any_enabled() {
+                // No-op guard: nothing enabled (e.g. status changed underneath
+                // us). Return to the card rather than firing empty deletes.
+                rk.reset_flow();
+                return load_status(rk, Some(client), server_cube_id);
+            }
             rk.flow = RecoveryKitState::Removing;
             Task::perform(
-                async move { normalize_delete_result(client.delete_recovery_kit(cube_id).await) },
+                async move { remove_backups(client, cube_id, delete_keychain).await },
                 |res| {
                     Message::View(view::Message::Settings(view::SettingsMessage::RecoveryKit(
                         RecoveryKitMessage::RemoveResult(res),
@@ -703,9 +752,10 @@ pub fn update(
             match res {
                 Ok(()) => {
                     rk.reset_flow();
-                    // Clear local drift fingerprint cache — there's
-                    // nothing backed up to compare against any more.
-                    let persist = persist_descriptor_fingerprint(cache, local_cube_id, None);
+                    // Clear both local drift fingerprint slots — Remove-all left
+                    // nothing backed up to compare against, by either method
+                    // (per-method drift, PR 3).
+                    let persist = clear_descriptor_fingerprints(cache, local_cube_id);
                     let reload = load_status(rk, client, server_cube_id);
                     Task::batch([persist, reload])
                 }
@@ -1169,19 +1219,27 @@ fn start_phone_seal(
 /// upload the envelope set (PR 2). Owner-side desktop crypto only. The seed half
 /// is included iff the recipient's registered tier is Full-Cube. The seed
 /// plaintext stays `Zeroizing` exactly as the password path keeps it.
+///
+/// On success returns the SHA-256 fingerprint of the descriptor blob that was
+/// sealed — the same helper the password path uses — so the handler can persist
+/// the keychain drift slot (per-method drift, PR 3). `None` only if the
+/// fingerprint couldn't be computed; the seal always includes a descriptor.
 async fn seal_phone(
     client: CoincubeClient,
     cube_id: u64,
     descriptor_blob: Option<DescriptorBlob>,
     mnemonic: Option<Zeroizing<Vec<String>>>,
     cube_meta: SeedBlobCube,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let recipient = find_owner_self_recipient(&client, cube_id)
         .await
         .map_err(|e| e.to_string())?;
     let descriptor_blob = descriptor_blob.ok_or_else(|| {
         "Create a Vault first — phone recovery needs a Wallet Descriptor to back up.".to_string()
     })?;
+    // Fingerprint the exact descriptor being sealed, before it's serialized into
+    // the envelope, so the keychain drift slot reflects what the phone now holds.
+    let descriptor_fingerprint = descriptor_blob_fingerprint(&descriptor_blob);
     let descriptor_json: Zeroizing<Vec<u8>> = Zeroizing::new(
         serde_json::to_vec(&descriptor_blob).map_err(|e| format!("serialize descriptor: {}", e))?,
     );
@@ -1205,7 +1263,8 @@ async fn seal_phone(
     };
     seal_and_upload_owner_self(&client, cube_id, &recipient, &descriptor_json, seed_json)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(descriptor_fingerprint)
 }
 
 /// Detect the owner's phone-registered `owner-self` recovery recipient (PR 1).
@@ -1398,6 +1457,67 @@ fn normalize_delete_result(res: Result<(), CoincubeError>) -> Result<(), String>
     }
 }
 
+/// Tear down every backup path for this Cube (master F5). "Remove clears
+/// everything", so the password-kit delete runs **unconditionally** — it's
+/// idempotent and a `404` (envelope-only Cube, or a kit already removed from
+/// another device) counts as success — while the keychain teardown runs only
+/// when a phone envelope set is present. The deletes run **sequentially** and
+/// **fail loudly** on the first hard error, naming the path that's still
+/// restorable so the caller never reports success while recovery material
+/// survives:
+///
+///   * always → `DELETE /recovery-kit` (the password kit), `404`-tolerant;
+///   * `delete_keychain` → resolve the `owner-self` recipient and
+///     `DELETE .../recipients/{keyId}`, which cascade-deletes its envelopes
+///     server-side. A missing recipient / `404` is idempotent success.
+///
+/// A password-kit failure returns **before** touching the keychain half, so the
+/// envelopes stay untouched and the user can retry cleanly. Both deletes are
+/// idempotent, so a retry after a partial success finishes the teardown.
+async fn remove_backups(
+    client: CoincubeClient,
+    cube_id: u64,
+    delete_keychain: bool,
+) -> Result<(), String> {
+    normalize_delete_result(client.delete_recovery_kit(cube_id).await).map_err(|e| {
+        format!(
+            "Couldn't remove your password-encrypted Recovery Kit ({}). It's still \
+             restorable — try Remove again.",
+            e
+        )
+    })?;
+    if delete_keychain {
+        match find_owner_self_recipient(&client, cube_id).await {
+            Ok(recipient) => match client
+                .delete_recovery_kit_recipient(cube_id, recipient.key_id)
+                .await
+            {
+                // 404 → the recipient was already gone; the cascade left nothing
+                // to remove. Idempotent success.
+                Ok(()) | Err(CoincubeError::NotFound) => {}
+                Err(e) => {
+                    return Err(format!(
+                        "Couldn't remove the copy sealed to your phone (Keychain) ({}). The \
+                         phone copy is still restorable — try Remove again.",
+                        e
+                    ))
+                }
+            },
+            // No recipient registered any more — nothing to delete on the phone
+            // side. Treat as success (the phone copy isn't restorable).
+            Err(OwnerSelfError::NoRecipient) => {}
+            Err(e) => {
+                return Err(format!(
+                    "Couldn't reach the copy sealed to your phone (Keychain) ({}). The phone \
+                     copy may still be restorable — try Remove again.",
+                    e
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
 /// On upload failure, restore the `PasswordEntry` screen from the
 /// snapshot we stashed inside `Uploading { pending }` at submit
 /// time. The user keeps their password, confirm, acknowledge flag,
@@ -1525,9 +1645,37 @@ async fn encrypt_and_upload(
     })
 }
 
+/// Which per-method descriptor drift slot a persist targets (per-method drift,
+/// PR 3). The password kit and the phone (Keychain) envelope each cache their
+/// own last-sealed descriptor fingerprint so drift is judged independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DescriptorFingerprintSlot {
+    Password,
+    Keychain,
+}
+
+/// Write one method's cached descriptor fingerprint onto a `CubeSettings`. Pure
+/// (no IO) so the slot routing is unit-testable; `persist_descriptor_fingerprint`
+/// and `clear_descriptor_fingerprints` apply it inside the settings-file update.
+fn apply_descriptor_fingerprint(
+    cube: &mut settings::CubeSettings,
+    slot: DescriptorFingerprintSlot,
+    fingerprint: Option<String>,
+) {
+    match slot {
+        DescriptorFingerprintSlot::Password => {
+            cube.recovery_kit_last_backed_up_descriptor_fingerprint = fingerprint;
+        }
+        DescriptorFingerprintSlot::Keychain => {
+            cube.recovery_kit_last_backed_up_keychain_descriptor_fingerprint = fingerprint;
+        }
+    }
+}
+
 fn persist_descriptor_fingerprint(
     cache: &Cache,
     local_cube_id: &str,
+    slot: DescriptorFingerprintSlot,
     fingerprint: Option<String>,
 ) -> Task<Message> {
     let network_dir = cache.datadir_path.network_directory(cache.network);
@@ -1536,7 +1684,32 @@ fn persist_descriptor_fingerprint(
         async move {
             update_settings_file(&network_dir, |mut s| {
                 if let Some(cube) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
-                    cube.recovery_kit_last_backed_up_descriptor_fingerprint = fingerprint.clone();
+                    apply_descriptor_fingerprint(cube, slot, fingerprint.clone());
+                }
+                Some(s)
+            })
+            .await
+            .map_err(|e| format!("Failed to update settings: {}", e))
+        },
+        |res: Result<(), String>| match res {
+            Ok(()) => Message::SettingsSaved,
+            Err(e) => Message::View(view::Message::ShowError(e)),
+        },
+    )
+}
+
+/// Clear **both** per-method descriptor drift slots in a single settings write —
+/// the Remove-all path leaves nothing backed up to compare against, by either
+/// method (per-method drift, PR 3).
+fn clear_descriptor_fingerprints(cache: &Cache, local_cube_id: &str) -> Task<Message> {
+    let network_dir = cache.datadir_path.network_directory(cache.network);
+    let cube_id = local_cube_id.to_string();
+    Task::perform(
+        async move {
+            update_settings_file(&network_dir, |mut s| {
+                if let Some(cube) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
+                    apply_descriptor_fingerprint(cube, DescriptorFingerprintSlot::Password, None);
+                    apply_descriptor_fingerprint(cube, DescriptorFingerprintSlot::Keychain, None);
                 }
                 Some(s)
             })
@@ -1922,6 +2095,102 @@ mod tests {
         assert_eq!(next_fingerprint_to_persist(&outcome), Some("a".repeat(64)));
     }
 
+    // ── Per-method descriptor drift slots (plan §PR3) ───────────────────────
+    //
+    // The password kit and the phone (Keychain) envelope each cache their own
+    // last-sealed descriptor fingerprint so drift is judged independently. These
+    // pin the slot routing `persist_descriptor_fingerprint` /
+    // `clear_descriptor_fingerprints` apply inside the settings-file update.
+
+    fn cube_with_both_slots() -> settings::CubeSettings {
+        let mut cube = settings::CubeSettings::new("Slots".to_string(), Network::Bitcoin);
+        cube.recovery_kit_last_backed_up_descriptor_fingerprint = Some("pw-fp".to_string());
+        cube.recovery_kit_last_backed_up_keychain_descriptor_fingerprint =
+            Some("kc-fp".to_string());
+        cube
+    }
+
+    #[test]
+    fn keychain_persist_writes_only_the_keychain_slot() {
+        // A phone seal persists the keychain slot and must not touch the
+        // password slot (they're independent restore paths).
+        let mut cube = settings::CubeSettings::new("C".to_string(), Network::Bitcoin);
+        cube.recovery_kit_last_backed_up_descriptor_fingerprint = Some("pw-fp".to_string());
+        apply_descriptor_fingerprint(
+            &mut cube,
+            DescriptorFingerprintSlot::Keychain,
+            Some("kc-fp".to_string()),
+        );
+        assert_eq!(
+            cube.recovery_kit_last_backed_up_keychain_descriptor_fingerprint
+                .as_deref(),
+            Some("kc-fp")
+        );
+        assert_eq!(
+            cube.recovery_kit_last_backed_up_descriptor_fingerprint
+                .as_deref(),
+            Some("pw-fp"),
+            "keychain persist must leave the password slot intact"
+        );
+    }
+
+    #[test]
+    fn password_persist_writes_only_the_password_slot() {
+        let mut cube = settings::CubeSettings::new("C".to_string(), Network::Bitcoin);
+        cube.recovery_kit_last_backed_up_keychain_descriptor_fingerprint =
+            Some("kc-fp".to_string());
+        apply_descriptor_fingerprint(
+            &mut cube,
+            DescriptorFingerprintSlot::Password,
+            Some("pw-fp".to_string()),
+        );
+        assert_eq!(
+            cube.recovery_kit_last_backed_up_descriptor_fingerprint
+                .as_deref(),
+            Some("pw-fp")
+        );
+        assert_eq!(
+            cube.recovery_kit_last_backed_up_keychain_descriptor_fingerprint
+                .as_deref(),
+            Some("kc-fp"),
+            "password persist must leave the keychain slot intact"
+        );
+    }
+
+    #[test]
+    fn remove_clears_both_slots() {
+        // `clear_descriptor_fingerprints` applies both clears in one write —
+        // Remove-all leaves nothing to drift against by either method.
+        let mut cube = cube_with_both_slots();
+        apply_descriptor_fingerprint(&mut cube, DescriptorFingerprintSlot::Password, None);
+        apply_descriptor_fingerprint(&mut cube, DescriptorFingerprintSlot::Keychain, None);
+        assert!(cube
+            .recovery_kit_last_backed_up_descriptor_fingerprint
+            .is_none());
+        assert!(cube
+            .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
+            .is_none());
+    }
+
+    #[test]
+    fn seal_persists_the_sealed_descriptor_fingerprint() {
+        // The keychain slot the seal writes is exactly `descriptor_blob_fingerprint`
+        // of the sealed blob (the same SHA-256 helper the password path uses), so
+        // a later re-render compares like-for-like and reports no spurious drift.
+        let blob = descriptor_some().unwrap();
+        let sealed_fp = descriptor_blob_fingerprint(&blob).unwrap();
+        let mut cube = settings::CubeSettings::new("C".to_string(), Network::Bitcoin);
+        apply_descriptor_fingerprint(
+            &mut cube,
+            DescriptorFingerprintSlot::Keychain,
+            Some(sealed_fp.clone()),
+        );
+        assert_eq!(
+            cube.recovery_kit_last_backed_up_keychain_descriptor_fingerprint,
+            Some(sealed_fp)
+        );
+    }
+
     // Regression tests for the W10 post-vault-creation nudge: the
     // decision must be based on a *freshly-loaded* status, not the
     // in-memory cache at the moment the vault transition fires. A
@@ -2166,5 +2435,273 @@ mod tests {
             descriptor_blob_fingerprint(&a).unwrap(),
             descriptor_blob_fingerprint(&b).unwrap(),
         );
+    }
+
+    // ── Remove-clears-everything behind confirmation (plan §PR2, master F5) ──
+
+    use crate::services::coincube::OwnerSelfRecoverySummary;
+    use httpmock::{Method as MockMethod, MockServer};
+    use serde_json::json;
+
+    fn status_both_modes() -> RecoveryKitStatus {
+        RecoveryKitStatus {
+            owner_self: Some(OwnerSelfRecoverySummary {
+                has_recipient: true,
+                tier: "full_cube".into(),
+                envelope_kinds: vec!["seed".into(), "descriptor".into()],
+                updated_at: Some("2026-06-01T00:00:00Z".into()),
+            }),
+            ..status_complete()
+        }
+    }
+
+    /// One `owner-self` recipient row (keyId 7) as the recipients endpoint
+    /// returns it; `remove_backups` reads `keyId` to target the DELETE.
+    fn owner_self_recipients_body() -> serde_json::Value {
+        json!({
+            "success": true,
+            "data": [{ "id": 1, "keyId": 7, "role": "owner-self", "tier": "full_cube" }]
+        })
+    }
+
+    // ---- Remove is confirm-gated: it deletes nothing, Cancel is intact ----
+
+    #[test]
+    fn remove_enters_confirm_and_deletes_nothing() {
+        // Pressing Remove must NOT fire a delete — it only takes over the page
+        // with the confirmation screen. The handler never touches the client,
+        // so no network call is possible from this transition.
+        let mut rk = RecoveryKit::new();
+        rk.status = Some(status_both_modes());
+        let _ = update(
+            &mut rk,
+            RecoveryKitMessage::Remove,
+            &Cache::default(),
+            "cube-1",
+            SeedSource::Mnemonic,
+            None,
+            Some(42),
+            None,
+        );
+        assert!(matches!(rk.flow, RecoveryKitState::ConfirmRemove));
+        // Status is untouched — the confirm view reads it to name the paths.
+        assert!(rk.status.is_some());
+    }
+
+    #[test]
+    fn cancel_from_confirm_restores_card_with_status_intact() {
+        let mut rk = RecoveryKit::new();
+        rk.status = Some(status_both_modes());
+        rk.flow = RecoveryKitState::ConfirmRemove;
+        let _ = update(
+            &mut rk,
+            RecoveryKitMessage::Cancel,
+            &Cache::default(),
+            "cube-1",
+            SeedSource::Mnemonic,
+            None,
+            Some(42),
+            None,
+        );
+        assert!(matches!(rk.flow, RecoveryKitState::None));
+        let s = rk.status.as_ref().expect("status must survive Cancel");
+        assert!(s.has_encrypted_seed && s.has_encrypted_wallet_descriptor);
+    }
+
+    // ---- remove_backups delete set (the ConfirmRemove teardown) ----
+
+    #[tokio::test]
+    async fn remove_backups_keychain_only_tolerates_kit_404_and_deletes_recipient() {
+        // Envelope-only Cube: the password-kit DELETE 404s (tolerated), then the
+        // owner-self recipient is resolved and DELETEd (cascading its envelopes).
+        let server = MockServer::start();
+        let kit = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(404);
+        });
+        let list = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(owner_self_recipients_body());
+        });
+        let recip = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients/7");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({ "success": true, "data": { "deleted": true } }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        remove_backups(client, 42, true)
+            .await
+            .expect("keychain-only remove should succeed");
+        kit.assert();
+        list.assert();
+        recip.assert();
+    }
+
+    #[tokio::test]
+    async fn remove_backups_both_modes_deletes_kit_and_recipient() {
+        let server = MockServer::start();
+        let kit = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({ "success": true, "data": { "status": "deleted" } }));
+        });
+        let list = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(owner_self_recipients_body());
+        });
+        let recip = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients/7");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({ "success": true, "data": { "deleted": true } }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        remove_backups(client, 42, true)
+            .await
+            .expect("both-modes remove should succeed");
+        kit.assert();
+        list.assert();
+        recip.assert();
+    }
+
+    #[tokio::test]
+    async fn remove_backups_password_only_deletes_kit_and_skips_recipient() {
+        let server = MockServer::start();
+        let kit = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({ "success": true, "data": { "status": "deleted" } }));
+        });
+        // No keychain half → the recipients endpoint must never be touched.
+        let list = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
+            then.status(200).json_body(owner_self_recipients_body());
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        remove_backups(client, 42, false)
+            .await
+            .expect("password-only remove should succeed");
+        kit.assert();
+        assert_eq!(list.hits(), 0, "recipient path must not be resolved");
+    }
+
+    #[tokio::test]
+    async fn remove_backups_kit_delete_failure_names_password_and_leaves_envelopes() {
+        // A hard (non-404) kit-delete error must fail loudly, name the password
+        // path, and return BEFORE touching the recipient — envelopes untouched.
+        let server = MockServer::start();
+        let kit = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(500);
+        });
+        let list = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
+            then.status(200).json_body(owner_self_recipients_body());
+        });
+        let recip = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients/7");
+            then.status(200)
+                .json_body(json!({ "success": true, "data": {} }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = remove_backups(client, 42, true)
+            .await
+            .expect_err("hard kit-delete error must fail loudly");
+        kit.assert();
+        assert!(
+            err.contains("password"),
+            "error must name the password path: {}",
+            err
+        );
+        assert_eq!(
+            list.hits(),
+            0,
+            "must not resolve recipient after kit failure"
+        );
+        assert_eq!(recip.hits(), 0, "envelopes must be left untouched");
+    }
+
+    #[tokio::test]
+    async fn remove_backups_recipient_delete_failure_after_kit_names_phone() {
+        // Kit deleted OK, then the recipient DELETE fails — the error must name
+        // the phone (Keychain) path that's still restorable (F5).
+        let server = MockServer::start();
+        let kit = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(200)
+                .json_body(json!({ "success": true, "data": { "status": "deleted" } }));
+        });
+        let list = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(owner_self_recipients_body());
+        });
+        let recip = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients/7");
+            then.status(500);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = remove_backups(client, 42, true)
+            .await
+            .expect_err("recipient-delete failure must fail loudly");
+        kit.assert();
+        list.assert();
+        recip.assert();
+        assert!(
+            err.contains("phone") || err.contains("Keychain"),
+            "error must name the phone path: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_backups_missing_recipient_is_idempotent_success() {
+        // Keychain flagged enabled but the recipient is already gone (404 on the
+        // list) → nothing to delete on the phone side; still success.
+        let server = MockServer::start();
+        let kit = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(404);
+        });
+        let list = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
+            then.status(404);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        remove_backups(client, 42, true)
+            .await
+            .expect("missing recipient must be idempotent success");
+        kit.assert();
+        list.assert();
     }
 }

@@ -522,7 +522,120 @@ pub fn uploading_view() -> Element<'static, Message> {
         .into()
 }
 
-/// "Removing" placeholder while `delete_recovery_kit` is in flight.
+/// The Connect-hosted backup paths a confirmed Remove will delete, given which
+/// methods are present. Deterministic order (password first) so the confirm
+/// screen and its regression test agree. Pure so the three method combinations
+/// are unit-testable without building the Element.
+pub(crate) fn confirm_remove_paths(password: bool, keychain: bool) -> Vec<&'static str> {
+    let mut paths = Vec::new();
+    if password {
+        paths.push("Your password-encrypted Recovery Kit");
+    }
+    if keychain {
+        paths.push("The copy sealed to your phone (Keychain)");
+    }
+    paths
+}
+
+/// Confirmation takeover shown before any delete happens (master F5). Names the
+/// exact backup paths that will be torn down (from the current
+/// `backup_overview`), states the teardown is irreversible, reassures that the
+/// Cube and its local backup phrase are untouched, and warns that without a
+/// hosted kit the Cube can't be restored from Connect if the device is lost.
+/// The destructive action uses the alert (non-primary) style; Cancel is the
+/// safe default.
+pub fn confirm_remove_view<'a>(password: bool, keychain: bool) -> Element<'a, Message> {
+    // Which paths will be deleted. At least one is always true when this screen
+    // is reachable (Remove only shows when a method is enabled).
+    let mut what = Column::new().spacing(6).width(Length::Fixed(600.0));
+    for path in confirm_remove_paths(password, keychain) {
+        what = what.push(text(format!("• {}", path)).size(15));
+    }
+
+    let mut col = Column::new()
+        .spacing(16)
+        .width(Length::Fill)
+        .push(header())
+        .push(Space::new().height(Length::Fixed(8.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .push(Space::new().width(Length::Fill))
+                .push(icon::trash_icon().size(80).color(color::RED))
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .push(Space::new().width(Length::Fill))
+                .push(text("Remove your Recovery Kit?").size(22).bold())
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(8.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    Container::new(text("This will delete from your Connect account:").size(16))
+                        .width(Length::Fixed(600.0)),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .push(Space::new().width(Length::Fill))
+                .push(what)
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(8.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    Container::new(
+                        text(
+                            "COINCUBE can't undo this. Your Cube and the recovery phrase you \
+                             wrote down stay exactly as they are — this only removes the copies \
+                             hosted in Connect. Afterwards, if you lose this device you won't be \
+                             able to restore this Cube from Connect; you'll need your local \
+                             recovery phrase.",
+                        )
+                        .size(14),
+                    )
+                    .width(Length::Fixed(600.0)),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(16.0)));
+
+    col = col.push(
+        Row::new()
+            .spacing(20)
+            .width(Length::Fill)
+            .align_y(Alignment::Center)
+            .push(Space::new().width(Length::Fill))
+            .push(
+                ui_button::secondary(None, "Cancel")
+                    .on_press(wrap(RecoveryKitMessage::Cancel))
+                    .padding([8, 16])
+                    .width(Length::Fixed(150.0)),
+            )
+            .push(
+                ui_button::alert(None, "Remove backup")
+                    .on_press(wrap(RecoveryKitMessage::ConfirmRemove))
+                    .padding([8, 16])
+                    .width(Length::Fixed(220.0)),
+            )
+            .push(Space::new().width(Length::Fill)),
+    );
+
+    col.into()
+}
+
+/// "Removing" placeholder while the delete set is in flight.
 pub fn removing_view() -> Element<'static, Message> {
     Column::new()
         .spacing(20)
@@ -645,6 +758,12 @@ pub fn dispatch<'a>(
             error.as_deref(),
         )),
         RecoveryKitState::Uploading { .. } => Some(uploading_view()),
+        RecoveryKitState::ConfirmRemove => {
+            // Name exactly which backup paths the confirm will delete, from the
+            // current per-method presence (master F5).
+            let (password, keychain) = backup_methods_present(status);
+            Some(confirm_remove_view(password, keychain))
+        }
         RecoveryKitState::Removing => Some(removing_view()),
         RecoveryKitState::Completed {
             updated_at,
@@ -656,5 +775,42 @@ pub fn dispatch<'a>(
             *now_has_descriptor,
         )),
         RecoveryKitState::Error { message } => Some(error_view(message)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The confirm screen must name exactly the backup paths that will be
+    // deleted, in a deterministic order, for each method combination (plan
+    // §PR2). Testing the pure path list is the Element-free equivalent of the
+    // three-combination confirm-view snapshot.
+
+    #[test]
+    fn confirm_remove_paths_password_only() {
+        assert_eq!(
+            confirm_remove_paths(true, false),
+            vec!["Your password-encrypted Recovery Kit"]
+        );
+    }
+
+    #[test]
+    fn confirm_remove_paths_keychain_only() {
+        assert_eq!(
+            confirm_remove_paths(false, true),
+            vec!["The copy sealed to your phone (Keychain)"]
+        );
+    }
+
+    #[test]
+    fn confirm_remove_paths_both_lists_password_first() {
+        assert_eq!(
+            confirm_remove_paths(true, true),
+            vec![
+                "Your password-encrypted Recovery Kit",
+                "The copy sealed to your phone (Keychain)",
+            ]
+        );
     }
 }

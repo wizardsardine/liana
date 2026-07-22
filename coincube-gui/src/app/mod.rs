@@ -1674,6 +1674,9 @@ impl App {
             recovery_kit_last_backed_up_descriptor_fingerprint: cube_settings
                 .recovery_kit_last_backed_up_descriptor_fingerprint
                 .clone(),
+            recovery_kit_last_backed_up_keychain_descriptor_fingerprint: cube_settings
+                .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
+                .clone(),
             ..Default::default()
         };
 
@@ -3263,6 +3266,16 @@ impl App {
                         self.cube_settings
                             .recovery_kit_last_backed_up_descriptor_fingerprint = cube
                             .recovery_kit_last_backed_up_descriptor_fingerprint
+                            .clone();
+                        // Same for the keychain (phone) drift slot (per-method
+                        // drift, PR 3).
+                        self.cache
+                            .recovery_kit_last_backed_up_keychain_descriptor_fingerprint = cube
+                            .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
+                            .clone();
+                        self.cube_settings
+                            .recovery_kit_last_backed_up_keychain_descriptor_fingerprint = cube
+                            .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
                             .clone();
 
                         // Clear cached fiat display price if disabled.
