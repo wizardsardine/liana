@@ -761,7 +761,19 @@ pub fn update(
                 }
                 Err(e) => {
                     rk.flow = RecoveryKitState::Error { message: e.clone() };
-                    Task::done(Message::View(view::Message::ShowError(e)))
+                    // Removal runs sequentially and can partially succeed — e.g.
+                    // the password kit was deleted, then the phone (Keychain)
+                    // step failed. The server state has already changed even
+                    // though the overall op reports failure, so refresh status
+                    // now (it only updates `rk.status`, not the `Error` flow) —
+                    // otherwise the card keeps showing a password backup Connect
+                    // no longer has once the user dismisses the error. Mirrors
+                    // the `PhoneSealResult` partial-failure handling.
+                    let reload = load_status(rk, client, server_cube_id);
+                    Task::batch([
+                        Task::done(Message::View(view::Message::ShowError(e))),
+                        reload,
+                    ])
                 }
             }
         }
@@ -2506,6 +2518,35 @@ mod tests {
         assert!(matches!(rk.flow, RecoveryKitState::None));
         let s = rk.status.as_ref().expect("status must survive Cancel");
         assert!(s.has_encrypted_seed && s.has_encrypted_wallet_descriptor);
+    }
+
+    #[test]
+    fn remove_failure_refreshes_status_for_partial_removal() {
+        // A partial removal (password kit deleted, then the phone step failed)
+        // leaves the cached status stale — Connect no longer has the password
+        // kit. The error handler must kick off a status refresh so the card
+        // reflects reality once the user dismisses the error, rather than keep
+        // showing a password backup that's already gone.
+        let mut rk = RecoveryKit::new();
+        rk.status = Some(status_both_modes());
+        rk.flow = RecoveryKitState::Removing;
+        assert!(!rk.status_loading);
+        let client = CoincubeClient::for_test("http://localhost");
+        let _ = update(
+            &mut rk,
+            RecoveryKitMessage::RemoveResult(Err("phone step failed".to_string())),
+            &Cache::default(),
+            "cube-1",
+            SeedSource::Mnemonic,
+            Some(client),
+            Some(42),
+            None,
+        );
+        assert!(matches!(rk.flow, RecoveryKitState::Error { .. }));
+        assert!(
+            rk.status_loading,
+            "RemoveResult(Err) must refresh status so the card drops the deleted kit"
+        );
     }
 
     // ---- remove_backups delete set (the ConfirmRemove teardown) ----
