@@ -20,6 +20,7 @@ use iced::{
     Background, Length,
 };
 
+use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::component::empty_placeholder;
 
 use crate::app::view::spark::{SparkPaymentMethod, SparkRecentTransaction};
@@ -57,11 +58,7 @@ pub fn last_transactions_section<'a, M: 'a + Clone + 'static>(
             SparkPaymentMethod::StableBalance => asset_network_logo("btc", "spark", 40.0),
         };
 
-        let display_amount = if tx.is_incoming {
-            tx.amount
-        } else {
-            tx.amount + tx.fees_sat
-        };
+        let display_amount = row_display_amount(tx);
 
         let mut item = TransactionListItem::new(direction, &display_amount, bitcoin_unit)
             .with_custom_icon(tx_icon)
@@ -165,4 +162,43 @@ pub fn last_transactions_section<'a, M: 'a + Clone + 'static>(
         )
         .push(Space::new().height(Length::Fixed(40.0)))
         .into()
+}
+
+fn row_display_amount(tx: &SparkRecentTransaction) -> Amount {
+    if tx.is_incoming {
+        tx.amount
+    } else {
+        tx.amount + tx.fees_sat
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tx(is_incoming: bool, amount_sat: u64, fees_sat: u64) -> SparkRecentTransaction {
+        SparkRecentTransaction {
+            id: "payment".to_string(),
+            description: "Spark transfer".to_string(),
+            time_ago: "just now".to_string(),
+            timestamp: 1_700_000_000,
+            amount: Amount::from_sat(amount_sat),
+            fees_sat: Amount::from_sat(fees_sat),
+            fiat_amount: None,
+            is_incoming,
+            status: DomainPaymentStatus::Complete,
+            method: SparkPaymentMethod::Spark,
+            token_display: None,
+        }
+    }
+
+    #[test]
+    fn row_display_amount_keeps_incoming_net_amount() {
+        assert_eq!(row_display_amount(&tx(true, 5_000, 21)).to_sat(), 5_000);
+    }
+
+    #[test]
+    fn row_display_amount_adds_outgoing_fees() {
+        assert_eq!(row_display_amount(&tx(false, 5_000, 21)).to_sat(), 5_021);
+    }
 }

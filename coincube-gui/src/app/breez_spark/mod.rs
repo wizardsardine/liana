@@ -138,3 +138,56 @@ impl From<SparkClientError> for SparkLoadError {
         Self::Client(value)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coincube_spark_protocol::ErrorKind;
+
+    #[tokio::test]
+    async fn load_spark_client_rejects_unsupported_networks_before_loading_signer() {
+        let fingerprint = Fingerprint::from([0xaa, 0xbb, 0xcc, 0xdd]);
+        let datadir = std::path::Path::new("/this/path/should/not/be/read");
+
+        for network in [Network::Testnet, Network::Signet] {
+            let err = load_spark_client(datadir, network, fingerprint, "pin")
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                SparkLoadError::NetworkNotSupported(n) if n == network
+            ));
+        }
+    }
+
+    #[test]
+    fn load_errors_keep_actionable_context_in_display_strings() {
+        let fingerprint = Fingerprint::from([0xaa, 0xbb, 0xcc, 0xdd]);
+
+        assert_eq!(
+            SparkLoadError::NetworkNotSupported(Network::Testnet).to_string(),
+            "Spark wallet is not supported on testnet network"
+        );
+        assert_eq!(
+            SparkLoadError::SignerNotFound(fingerprint).to_string(),
+            "Spark wallet signer not found for fingerprint: aabbccdd"
+        );
+        assert_eq!(
+            SparkLoadError::SignerError("bad pin".to_string()).to_string(),
+            "Spark signer error: bad pin"
+        );
+        assert_eq!(
+            SparkLoadError::Config("missing key".to_string()).to_string(),
+            "Spark config error: missing key"
+        );
+
+        let client = SparkClientError::BridgeError {
+            kind: ErrorKind::BadRequest,
+            message: "invalid handle".to_string(),
+        };
+        assert_eq!(
+            SparkLoadError::from(client).to_string(),
+            "Spark client error: Spark bridge returned BadRequest: invalid handle"
+        );
+    }
+}

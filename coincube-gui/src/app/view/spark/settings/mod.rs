@@ -108,25 +108,15 @@ fn stable_balance_card<'a>(
     saving: bool,
     spark_available: bool,
 ) -> Element<'a, Message> {
-    let status_line: Element<'_, Message> = match (active, spark_available) {
-        (_, false) => p2_regular("Spark bridge unavailable — toggle disabled.").into(),
-        (None, true) => p2_regular("Loading…").into(),
-        (Some(true), true) => p2_regular("Stable Balance is ON").into(),
-        (Some(false), true) => p2_regular("Stable Balance is OFF").into(),
-    };
+    let status_line: Element<'_, Message> =
+        p2_regular(stable_balance_status_text(active, spark_available)).into();
 
-    let can_toggle = spark_available && active.is_some() && !saving;
-    let target = active.unwrap_or(false);
-    let (button_label, next_state) = if target {
-        ("Turn off", false)
-    } else {
-        ("Turn on", true)
-    };
-    let toggle_btn = button::primary(None, button_label).width(Length::Fixed(140.0));
-    let toggle_btn: Element<'_, Message> = if can_toggle {
+    let toggle = stable_balance_toggle_state(active, saving, spark_available);
+    let toggle_btn = button::primary(None, toggle.button_label).width(Length::Fixed(140.0));
+    let toggle_btn: Element<'_, Message> = if toggle.can_toggle {
         toggle_btn
             .on_press(Message::SparkSettings(
-                SparkSettingsMessage::StableBalanceToggled(next_state),
+                SparkSettingsMessage::StableBalanceToggled(toggle.next_state),
             ))
             .into()
     } else {
@@ -159,16 +149,73 @@ fn stable_balance_card<'a>(
     .into()
 }
 
+fn stable_balance_status_text(active: Option<bool>, spark_available: bool) -> &'static str {
+    match (active, spark_available) {
+        (_, false) => "Spark bridge unavailable — toggle disabled.",
+        (None, true) => "Loading…",
+        (Some(true), true) => "Stable Balance is ON",
+        (Some(false), true) => "Stable Balance is OFF",
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct StableBalanceToggleState {
+    button_label: &'static str,
+    next_state: bool,
+    can_toggle: bool,
+}
+
+fn stable_balance_toggle_state(
+    active: Option<bool>,
+    saving: bool,
+    spark_available: bool,
+) -> StableBalanceToggleState {
+    let can_toggle = spark_available && active.is_some() && !saving;
+    let target = active.unwrap_or(false);
+    let (button_label, next_state) = if target {
+        ("Turn off", false)
+    } else {
+        ("Turn on", true)
+    };
+    StableBalanceToggleState {
+        button_label,
+        next_state,
+        can_toggle,
+    }
+}
+
 /// Small live diagnostic card — shows whether the Spark bridge
 /// subprocess is reachable. Green check for a healthy round-trip,
 /// red X for an error, a neutral dot while loading.
 fn bridge_status_card<'a>(status: &SparkSettingsStatus) -> Element<'a, Message> {
-    let (indicator_char, indicator_color, headline, detail): (
-        &'static str,
-        iced::Color,
-        &'static str,
-        String,
-    ) = match status {
+    let (indicator_char, indicator_color, headline, detail) = bridge_status_copy(status);
+
+    Container::new(
+        Column::new()
+            .spacing(8)
+            .push(h4_bold("Bridge status"))
+            .push(
+                Row::new()
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .push(iced::widget::text(indicator_char).size(18).style(
+                        move |_: &theme::Theme| iced::widget::text::Style {
+                            color: Some(indicator_color),
+                        },
+                    ))
+                    .push(p1_regular(headline)),
+            )
+            .push(p2_regular(detail)),
+    )
+    .padding(12)
+    .style(theme::card::simple)
+    .into()
+}
+
+fn bridge_status_copy(
+    status: &SparkSettingsStatus,
+) -> (&'static str, iced::Color, &'static str, String) {
+    match status {
         SparkSettingsStatus::Loading => (
             "●",
             color::GREY_3,
@@ -201,26 +248,74 @@ fn bridge_status_card<'a>(status: &SparkSettingsStatus) -> Element<'a, Message> 
              failed to spawn."
                 .to_string(),
         ),
-    };
+    }
+}
 
-    Container::new(
-        Column::new()
-            .spacing(8)
-            .push(h4_bold("Bridge status"))
-            .push(
-                Row::new()
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .push(iced::widget::text(indicator_char).size(18).style(
-                        move |_: &theme::Theme| iced::widget::text::Style {
-                            color: Some(indicator_color),
-                        },
-                    ))
-                    .push(p1_regular(headline)),
-            )
-            .push(p2_regular(detail)),
-    )
-    .padding(12)
-    .style(theme::card::simple)
-    .into()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stable_balance_status_text_covers_loading_on_off_and_unavailable() {
+        assert_eq!(
+            stable_balance_status_text(None, false),
+            "Spark bridge unavailable — toggle disabled."
+        );
+        assert_eq!(stable_balance_status_text(None, true), "Loading…");
+        assert_eq!(
+            stable_balance_status_text(Some(true), true),
+            "Stable Balance is ON"
+        );
+        assert_eq!(
+            stable_balance_status_text(Some(false), true),
+            "Stable Balance is OFF"
+        );
+    }
+
+    #[test]
+    fn stable_balance_toggle_state_only_enables_when_loaded_available_and_idle() {
+        assert_eq!(
+            stable_balance_toggle_state(Some(true), false, true),
+            StableBalanceToggleState {
+                button_label: "Turn off",
+                next_state: false,
+                can_toggle: true,
+            }
+        );
+        assert_eq!(
+            stable_balance_toggle_state(Some(false), false, true),
+            StableBalanceToggleState {
+                button_label: "Turn on",
+                next_state: true,
+                can_toggle: true,
+            }
+        );
+        assert!(!stable_balance_toggle_state(None, false, true).can_toggle);
+        assert!(!stable_balance_toggle_state(Some(true), true, true).can_toggle);
+        assert!(!stable_balance_toggle_state(Some(true), false, false).can_toggle);
+    }
+
+    #[test]
+    fn bridge_status_copy_names_loading_connected_error_and_unavailable() {
+        let loading = bridge_status_copy(&SparkSettingsStatus::Loading);
+        assert_eq!(loading.0, "●");
+        assert_eq!(loading.1, color::GREY_3);
+        assert_eq!(loading.2, "Checking bridge…");
+
+        let connected = bridge_status_copy(&SparkSettingsStatus::Connected);
+        assert_eq!(connected.0, "✓");
+        assert_eq!(connected.1, color::GREEN);
+        assert_eq!(connected.2, "Connected");
+
+        let error = bridge_status_copy(&SparkSettingsStatus::Error("boom".to_string()));
+        assert_eq!(error.0, "✗");
+        assert_eq!(error.1, color::RED);
+        assert_eq!(error.2, "Disconnected");
+        assert!(error.3.contains("boom"));
+
+        let unavailable = bridge_status_copy(&SparkSettingsStatus::Unavailable);
+        assert_eq!(unavailable.0, "✗");
+        assert_eq!(unavailable.1, color::RED);
+        assert_eq!(unavailable.2, "Unavailable");
+    }
 }

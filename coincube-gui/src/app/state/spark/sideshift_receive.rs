@@ -32,7 +32,7 @@ use crate::app::wallets::SparkBackend;
 use crate::services::coincube::CoincubeClient;
 use crate::services::sideshift::{
     deposit_options, validate_refund_address, DepositOption, ShiftResponse, ShiftStatusKind,
-    SideshiftClient,
+    SideshiftClient, SideshiftNetwork,
 };
 
 use view::SparkSideshiftReceiveMessage as Msg;
@@ -274,7 +274,7 @@ impl SparkSideshiftReceiveFlow {
                     // Changing chains invalidates the refund address — it was
                     // for the *old* origin chain, and silently carrying it over
                     // is exactly how a refund goes to the wrong network.
-                    if option.network != self.selected.network {
+                    if deposit_selection_clears_refund(self.selected, option) {
                         self.refund_address.clear();
                         self.refund_error = None;
                     }
@@ -287,11 +287,7 @@ impl SparkSideshiftReceiveFlow {
             Msg::RefundAddressEdited(value) => {
                 self.refund_address = value.clone();
                 // Validate as they type, but don't nag on an empty field.
-                self.refund_error = if value.trim().is_empty() {
-                    None
-                } else {
-                    validate_refund_address(self.selected.network, value).err()
-                };
+                self.refund_error = refund_address_edit_error(self.selected.network, value);
                 Task::none()
             }
 
@@ -375,14 +371,7 @@ impl SparkSideshiftReceiveFlow {
                     // string) once a deposit is detected. Keep the latest so the
                     // view can show how much bitcoin is arriving. Parse it exactly
                     // (BTC → sats) rather than via f64, which rounds.
-                    let settle_sat = status.settle_amount.as_deref().and_then(|s| {
-                        coincube_core::miniscript::bitcoin::Amount::from_str_in(
-                            s.trim(),
-                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin,
-                        )
-                        .ok()
-                        .map(|a| a.to_sat())
-                    });
+                    let settle_sat = parse_btc_settle_amount_sats(status.settle_amount.as_deref());
                     if settle_sat.is_some() {
                         self.settle_amount_sat = settle_sat;
                     }
@@ -501,6 +490,18 @@ fn arrival_belongs_to_this_shift(
         )
 }
 
+fn deposit_selection_clears_refund(current: DepositOption, next: DepositOption) -> bool {
+    current.network != next.network
+}
+
+fn refund_address_edit_error(network: SideshiftNetwork, value: &str) -> Option<String> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        validate_refund_address(network, value).err()
+    }
+}
+
 fn nothing_sent_yet(detail: &str) -> String {
     format!(
         "{}. Nothing has been sent — try again.",
@@ -519,6 +520,17 @@ fn bare_bitcoin_address(payment_request: &str) -> String {
         .next()
         .unwrap_or(payment_request)
         .to_string()
+}
+
+fn parse_btc_settle_amount_sats(value: Option<&str>) -> Option<u64> {
+    value.and_then(|s| {
+        coincube_core::miniscript::bitcoin::Amount::from_str_in(
+            s.trim(),
+            coincube_core::miniscript::bitcoin::Denomination::Bitcoin,
+        )
+        .ok()
+        .map(|a| a.to_sat())
+    })
 }
 
 #[cfg(test)]
@@ -620,6 +632,43 @@ mod tests {
         assert!(validate_refund_address(solana.network, tron_address).is_err());
     }
 
+    #[test]
+    fn deposit_selection_clears_refund_only_when_the_origin_chain_changes() {
+        let eth_usdt = deposit_option_by_key("usdt:ethereum").unwrap();
+        let eth_usdc = deposit_option_by_key("usdc:ethereum").unwrap();
+        let tron_usdt = deposit_option_by_key("usdt:tron").unwrap();
+
+        assert!(
+            !deposit_selection_clears_refund(eth_usdt, eth_usdc),
+            "same-chain asset changes can keep the refund address"
+        );
+        assert!(
+            deposit_selection_clears_refund(eth_usdt, tron_usdt),
+            "cross-chain changes must clear the refund address"
+        );
+    }
+
+    #[test]
+    fn refund_address_edit_error_is_quiet_for_blank_input_but_validates_nonblank() {
+        assert_eq!(refund_address_edit_error(SideshiftNetwork::Tron, ""), None);
+        assert_eq!(
+            refund_address_edit_error(SideshiftNetwork::Tron, "   "),
+            None
+        );
+        assert_eq!(
+            refund_address_edit_error(SideshiftNetwork::Tron, "TJRyWwFs9wTFGZg3JbrVriFbNfCug5tDeC"),
+            None
+        );
+
+        let err = refund_address_edit_error(
+            SideshiftNetwork::Tron,
+            "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        )
+        .expect("wrong-chain addresses should be rejected");
+        assert!(err.contains("Tron"));
+        assert!(err.contains("lost"));
+    }
+
     /// The affiliate id comes from *our* API (`/api/v1/config/sideshift`), not
     /// from SideShift. Blaming SideShift for a Coincube outage sends whoever
     /// debugs it to a third party that was never contacted, and tells the user
@@ -677,5 +726,18 @@ mod tests {
             bare_bitcoin_address("bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"),
             "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"
         );
+    }
+
+    #[test]
+    fn settle_amounts_are_parsed_exactly_as_bitcoin_not_floats() {
+        assert_eq!(parse_btc_settle_amount_sats(Some("0.00000001")), Some(1));
+        assert_eq!(
+            parse_btc_settle_amount_sats(Some(" 1.23456789 ")),
+            Some(123_456_789)
+        );
+        assert_eq!(parse_btc_settle_amount_sats(None), None);
+        assert_eq!(parse_btc_settle_amount_sats(Some("")), None);
+        assert_eq!(parse_btc_settle_amount_sats(Some("not btc")), None);
+        assert_eq!(parse_btc_settle_amount_sats(Some("0.000000001")), None);
     }
 }

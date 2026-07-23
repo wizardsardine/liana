@@ -57,6 +57,16 @@ pub fn is_supported(network: Network) -> bool {
     esplora_base(network).is_some()
 }
 
+fn confirmation_count(status: &TxStatus, tip_height: u32) -> u32 {
+    if !status.confirmed {
+        return 0;
+    }
+    status
+        .block_height
+        .map(|h| tip_height.saturating_sub(h).saturating_add(1))
+        .unwrap_or(1)
+}
+
 /// Fetch the current confirmation count for each `(txid, vout)` against
 /// the given network's Esplora.
 ///
@@ -118,14 +128,7 @@ pub async fn fetch_confirmations(
         {
             Ok(resp) => match resp.json::<TxStatus>().await {
                 Ok(status) => {
-                    let confs = if status.confirmed {
-                        status
-                            .block_height
-                            .map(|h| tip_height.saturating_sub(h).saturating_add(1))
-                            .unwrap_or(1)
-                    } else {
-                        0
-                    };
+                    let confs = confirmation_count(&status, tip_height);
                     out.insert((txid, vout), confs);
                 }
                 Err(e) => tracing::warn!("esplora: status decode failed for {txid}: {e}"),
@@ -135,4 +138,77 @@ pub async fn fetch_confirmations(
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn support_matrix_only_enables_mainnet_esplora() {
+        assert!(is_supported(Network::Bitcoin));
+        assert!(!is_supported(Network::Regtest));
+        assert!(!is_supported(Network::Testnet));
+        assert!(!is_supported(Network::Signet));
+    }
+
+    #[test]
+    fn confirmation_count_tracks_confirmed_mempool_and_missing_height_cases() {
+        assert_eq!(
+            confirmation_count(
+                &TxStatus {
+                    confirmed: true,
+                    block_height: Some(98),
+                },
+                100,
+            ),
+            3
+        );
+        assert_eq!(
+            confirmation_count(
+                &TxStatus {
+                    confirmed: false,
+                    block_height: None,
+                },
+                100,
+            ),
+            0
+        );
+        assert_eq!(
+            confirmation_count(
+                &TxStatus {
+                    confirmed: true,
+                    block_height: None,
+                },
+                100,
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn confirmation_count_saturates_for_inconsistent_tip_data() {
+        assert_eq!(
+            confirmation_count(
+                &TxStatus {
+                    confirmed: true,
+                    block_height: Some(101),
+                },
+                100,
+            ),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_confirmations_short_circuits_without_network_for_empty_or_unsupported_inputs() {
+        assert!(fetch_confirmations(Network::Bitcoin, Vec::new())
+            .await
+            .is_empty());
+        assert!(
+            fetch_confirmations(Network::Regtest, vec![("txid".to_string(), 0)])
+                .await
+                .is_empty()
+        );
+    }
 }

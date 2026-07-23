@@ -1140,7 +1140,8 @@ fn make_spark_event_stream(
 
 #[cfg(test)]
 mod stderr_relay_tests {
-    use super::{embedded_level, strip_ansi};
+    use super::{embedded_level, strip_ansi, SparkClientError};
+    use coincube_spark_protocol::ErrorKind;
     use tracing::Level;
 
     #[test]
@@ -1174,6 +1175,41 @@ mod stderr_relay_tests {
     }
 
     #[test]
+    fn embedded_level_requires_an_exact_uppercase_level_token() {
+        assert_eq!(embedded_level("ts INFORMATION spark::x: ok"), None);
+        assert_eq!(embedded_level("ts info spark::x: ok"), None);
+        assert_eq!(embedded_level("ts WARN spark::x: ok"), Some(Level::WARN));
+    }
+
+    #[test]
+    fn embedded_level_accepts_every_structured_level_before_the_message() {
+        assert_eq!(
+            embedded_level("ts TRACE spark::x: verbose"),
+            Some(Level::TRACE)
+        );
+        assert_eq!(
+            embedded_level("ts DEBUG spark::x: detail"),
+            Some(Level::DEBUG)
+        );
+        assert_eq!(embedded_level("ts INFO spark::x: ok"), Some(Level::INFO));
+        assert_eq!(
+            embedded_level("ts WARN spark::x: careful"),
+            Some(Level::WARN)
+        );
+        assert_eq!(
+            embedded_level("ts ERROR spark::x: boom"),
+            Some(Level::ERROR)
+        );
+    }
+
+    #[test]
+    fn embedded_level_ignores_level_like_punctuation_and_key_value_pairs() {
+        assert_eq!(embedded_level("ts INFO:spark::x: ok"), None);
+        assert_eq!(embedded_level("ts level=INFO spark::x: ok"), None);
+        assert_eq!(embedded_level("ts [INFO] spark::x: ok"), None);
+    }
+
+    #[test]
     fn strips_ansi_colour_codes() {
         let raw =
             "\x1b[2m2026-06-13T07:08:38Z\x1b[0m \x1b[32m INFO\x1b[0m \x1b[2mspark::x\x1b[0m: ok";
@@ -1183,5 +1219,36 @@ mod stderr_relay_tests {
         assert!(clean.contains("spark::x"));
         // Level is still detectable post-strip.
         assert_eq!(embedded_level(&clean), Some(Level::INFO));
+    }
+
+    #[test]
+    fn strips_multi_parameter_ansi_sequences_without_touching_text() {
+        let clean = strip_ansi("plain \x1b[31;1mERROR\x1b[0m spark::x: boom");
+        assert_eq!(clean, "plain ERROR spark::x: boom");
+        assert_eq!(embedded_level(&clean), Some(Level::ERROR));
+    }
+
+    #[test]
+    fn client_errors_display_the_layer_that_failed() {
+        assert_eq!(
+            SparkClientError::Config("missing key".to_string()).to_string(),
+            "Spark config error: missing key"
+        );
+        assert_eq!(
+            SparkClientError::BridgeUnavailable("child exited".to_string()).to_string(),
+            "Spark bridge subprocess unavailable: child exited"
+        );
+        assert_eq!(
+            SparkClientError::BridgeError {
+                kind: ErrorKind::NotConnected,
+                message: "bridge offline".to_string(),
+            }
+            .to_string(),
+            "Spark bridge returned NotConnected: bridge offline"
+        );
+        assert_eq!(
+            SparkClientError::Protocol("wrong payload".to_string()).to_string(),
+            "Spark protocol error: wrong payload"
+        );
     }
 }

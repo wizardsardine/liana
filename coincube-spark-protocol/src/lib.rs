@@ -1029,6 +1029,8 @@ pub enum Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::{Deserialize, Serialize};
+    use serde_json::json;
 
     /// The exact `prepare_send` response (USDT on Solana) that used to fail to
     /// parse with "u128 is not supported": its `estimated_out` / `fee_amount`
@@ -1149,5 +1151,217 @@ mod tests {
             !json.contains("amount"),
             "None amount must be omitted: {json}"
         );
+    }
+
+    #[test]
+    fn request_frames_use_snake_case_method_tags_and_expected_params() {
+        let set_stable = Frame::Request(Request {
+            id: 7,
+            method: Method::SetStableBalance(SetStableBalanceParams { enabled: true }),
+        });
+        assert_eq!(
+            serde_json::to_value(set_stable).expect("serialize"),
+            json!({
+                "type": "request",
+                "id": 7,
+                "method": "set_stable_balance",
+                "params": { "enabled": true }
+            })
+        );
+
+        let receive_spark = Frame::Request(Request {
+            id: 8,
+            method: Method::ReceiveSpark,
+        });
+        assert_eq!(
+            serde_json::to_value(receive_spark).expect("serialize"),
+            json!({
+                "type": "request",
+                "id": 8,
+                "method": "receive_spark"
+            })
+        );
+    }
+
+    #[test]
+    fn response_helpers_emit_ok_and_error_envelopes() {
+        assert_eq!(
+            serde_json::to_value(Frame::Response(Response::ok(
+                11,
+                OkPayload::SetStableBalance {}
+            )))
+            .expect("serialize ok"),
+            json!({
+                "type": "response",
+                "id": 11,
+                "ok": {
+                    "kind": "set_stable_balance",
+                    "data": {}
+                }
+            })
+        );
+
+        assert_eq!(
+            serde_json::to_value(Frame::Response(Response::err(
+                12,
+                ErrorKind::BadRequest,
+                "bad frame"
+            )))
+            .expect("serialize err"),
+            json!({
+                "type": "response",
+                "id": 12,
+                "err": {
+                    "kind": "bad_request",
+                    "message": "bad frame"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn events_default_missing_optional_payload_fields() {
+        let parsed: Frame = serde_json::from_value(json!({
+            "type": "event",
+            "event": "payment_succeeded",
+            "payload": {
+                "id": "payment-1",
+                "amount_sat": 42
+            }
+        }))
+        .expect("event parses");
+        let Frame::Event(Event::PaymentSucceeded {
+            id,
+            amount_sat,
+            bolt11,
+        }) = parsed
+        else {
+            panic!("expected payment succeeded event");
+        };
+        assert_eq!(id, "payment-1");
+        assert_eq!(amount_sat, 42);
+        assert_eq!(bolt11, None);
+
+        assert_eq!(
+            serde_json::to_value(Frame::Event(Event::DepositsChanged)).expect("serialize"),
+            json!({
+                "type": "event",
+                "event": "deposits_changed"
+            })
+        );
+    }
+
+    #[test]
+    fn payment_summary_defaults_keep_old_list_payments_frames_parsing() {
+        let payment: PaymentSummary = serde_json::from_value(json!({
+            "id": "payment-1",
+            "amount_sat": 21,
+            "timestamp": 1_700_000_000u64,
+            "status": "completed",
+            "direction": "receive"
+        }))
+        .expect("legacy payment summary parses");
+
+        assert_eq!(payment.fees_sat, 0);
+        assert_eq!(payment.token_amount, None);
+        assert_eq!(payment.token_decimals, None);
+        assert_eq!(payment.token_ticker, None);
+        assert_eq!(payment.method, "");
+        assert_eq!(payment.description, None);
+    }
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct OptionalAmountProbe {
+        #[serde(with = "super::opt_u128_dec")]
+        amount: Option<u128>,
+    }
+
+    #[test]
+    fn optional_u128_codec_accepts_null_and_serializes_none_as_null() {
+        let parsed: OptionalAmountProbe =
+            serde_json::from_value(json!({ "amount": null })).expect("null parses as None");
+        assert_eq!(parsed, OptionalAmountProbe { amount: None });
+
+        let encoded =
+            serde_json::to_value(OptionalAmountProbe { amount: None }).expect("serialize None");
+        assert_eq!(encoded, json!({ "amount": null }));
+    }
+
+    #[test]
+    fn u128_codecs_reject_non_numeric_json_with_useful_errors() {
+        let err = serde_json::from_value::<Frame>(json!({
+            "type": "response",
+            "id": 1,
+            "ok": {
+                "kind": "prepare_send",
+                "data": {
+                    "handle": "h",
+                    "amount_sat": 1,
+                    "fee_sat": 0,
+                    "method": "CrossChainAddress",
+                    "cross_chain": {
+                        "route": {
+                            "provider": "boltz",
+                            "chain": "Solana",
+                            "asset": "USDT",
+                            "decimals": 6,
+                            "btc_source_supported": true
+                        },
+                        "estimated_out": true,
+                        "fee_amount": "1",
+                        "source_transfer_fee_sats": 0,
+                        "expires_at": "1784180130",
+                        "retry_safe": true
+                    }
+                }
+            }
+        }))
+        .expect_err("bool is not a u128");
+        assert!(
+            err.to_string()
+                .contains("a u128 as a decimal string or a JSON integer"),
+            "{err}"
+        );
+
+        let err = serde_json::from_value::<OptionalAmountProbe>(json!({ "amount": false }))
+            .expect_err("bool is not an optional u128");
+        assert!(
+            err.to_string()
+                .contains("a u128 as a decimal string or a JSON integer"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn u128_codec_accepts_positive_signed_integers_and_rejects_negative() {
+        let frame = json!({
+            "type": "response",
+            "id": 79,
+            "ok": {
+                "kind": "prepare_send",
+                "data": {
+                    "handle": "h",
+                    "amount_sat": 10173,
+                    "fee_sat": 43,
+                    "method": "CrossChainAddress",
+                    "cross_chain": {
+                        "route": {
+                            "provider": "boltz",
+                            "chain": "Solana",
+                            "asset": "USDT",
+                            "decimals": 6,
+                            "btc_source_supported": true
+                        },
+                        "estimated_out": 42,
+                        "fee_amount": -1,
+                        "source_transfer_fee_sats": 43,
+                        "expires_at": "1784180130",
+                        "retry_safe": true
+                    }
+                }
+            }
+        });
+        let err = serde_json::from_value::<Frame>(frame).expect_err("negative u128 rejected");
+        assert!(err.to_string().contains("out of range"), "{err}");
     }
 }

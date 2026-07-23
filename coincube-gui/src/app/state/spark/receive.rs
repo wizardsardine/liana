@@ -843,6 +843,8 @@ mod tests {
     use crate::app::message::Message as AppMessage;
     use crate::app::state::State;
     use crate::app::view::{Message as ViewMessage, SparkReceiveMessage};
+    use coincube_core::miniscript::bitcoin::Network;
+    use coincube_spark_protocol::{PaymentSummary, StableBalanceSnapshot};
 
     fn receive_ok(payment_request: &str) -> ReceivePaymentOk {
         ReceivePaymentOk {
@@ -861,13 +863,41 @@ mod tests {
         }
     }
 
-    fn update(panel: &mut SparkReceive, msg: SparkReceiveMessage) {
+    fn payment(id: &str, amount_sat: i64) -> PaymentSummary {
+        PaymentSummary {
+            id: id.to_string(),
+            amount_sat,
+            fees_sat: 12,
+            token_amount: None,
+            token_decimals: None,
+            token_ticker: None,
+            timestamp: 1_700_000_000,
+            status: "completed".to_string(),
+            direction: "receive".to_string(),
+            method: "spark".to_string(),
+            description: None,
+        }
+    }
+
+    fn stable_balance(balance: u64, decimals: u32) -> StableBalanceSnapshot {
+        StableBalanceSnapshot {
+            balance,
+            decimals,
+            ticker: "USDB".to_string(),
+        }
+    }
+
+    fn update_with_cache(panel: &mut SparkReceive, cache: &Cache, msg: SparkReceiveMessage) {
         let _task = State::update(
             panel,
             None,
-            &Cache::default(),
+            cache,
             AppMessage::View(ViewMessage::SparkReceive(msg)),
         );
+    }
+
+    fn update(panel: &mut SparkReceive, msg: SparkReceiveMessage) {
+        update_with_cache(panel, &Cache::default(), msg);
     }
 
     #[test]
@@ -1226,6 +1256,7 @@ mod tests {
     fn claim_result_messages_update_claim_error_state() {
         let mut panel = SparkReceive::new(None);
 
+        panel.claim_error = Some("old claim error".to_string());
         update(
             &mut panel,
             SparkReceiveMessage::ClaimDepositRequested {
@@ -1234,6 +1265,7 @@ mod tests {
             },
         );
         assert!(panel.claiming.is_none());
+        assert_eq!(panel.claim_error.as_deref(), Some("old claim error"));
 
         panel.claiming = Some(("tx".to_string(), 0));
         update(
@@ -1271,6 +1303,38 @@ mod tests {
     }
 
     #[test]
+    fn balance_loaded_folds_stable_balance_using_cache_price() {
+        let mut panel = SparkReceive::new(None);
+        let cache = Cache {
+            btc_usd_price: Some(50_000.0),
+            ..Cache::default()
+        };
+
+        update_with_cache(
+            &mut panel,
+            &cache,
+            SparkReceiveMessage::BalanceLoaded(Some((123, Some(stable_balance(2_500_000, 6))))),
+        );
+
+        assert_eq!(panel.balance_sats, 5_123);
+    }
+
+    #[test]
+    fn payments_loaded_keeps_only_five_recent_rows() {
+        let mut panel = SparkReceive::new(None);
+        let payments: Vec<_> = (0..7)
+            .map(|i| payment(&format!("payment-{i}"), 1_000 + i))
+            .collect();
+
+        update(&mut panel, SparkReceiveMessage::PaymentsLoaded(payments));
+
+        assert_eq!(panel.recent_transactions.len(), 5);
+        assert_eq!(panel.recent_transactions[0].id, "payment-0");
+        assert_eq!(panel.recent_transactions[4].id, "payment-4");
+        assert_eq!(panel.recent_transactions[4].amount.to_sat(), 1_004);
+    }
+
+    #[test]
     fn payments_failed_clears_recent_transactions() {
         let mut panel = SparkReceive::new(None);
         panel.recent_transactions.push(SparkRecentTransaction {
@@ -1293,5 +1357,34 @@ mod tests {
         );
 
         assert!(panel.recent_transactions.is_empty());
+    }
+
+    #[test]
+    fn cross_network_selection_without_backend_or_support_is_noop() {
+        let mut panel = SparkReceive::new(None);
+        panel.sender_picker_open = true;
+        let unsupported = Cache {
+            network: Network::Regtest,
+            ..Cache::default()
+        };
+
+        update_with_cache(
+            &mut panel,
+            &unsupported,
+            SparkReceiveMessage::SelectSenderCrossNetwork("usdt:tron".to_string()),
+        );
+
+        assert!(!panel.sender_picker_open);
+        assert!(panel.sideshift_flow.is_none());
+        assert_eq!(panel.method, SparkReceiveMethod::Bolt11);
+
+        update_with_cache(
+            &mut panel,
+            &Cache::default(),
+            SparkReceiveMessage::SelectSenderCrossNetwork("usdt:tron".to_string()),
+        );
+
+        assert!(panel.sideshift_flow.is_none());
+        assert_eq!(panel.method, SparkReceiveMethod::Bolt11);
     }
 }

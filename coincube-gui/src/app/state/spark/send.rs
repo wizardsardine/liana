@@ -1097,6 +1097,50 @@ mod tests {
         assert!(parse_amount_to_sats("abc", BitcoinDisplayUnit::BTC).is_err());
     }
 
+    #[test]
+    fn send_targets_define_picker_order_labels_badges_and_placeholders() {
+        assert_eq!(
+            SparkSendTarget::all(),
+            [
+                SparkSendTarget::Lightning,
+                SparkSendTarget::OnChain,
+                SparkSendTarget::Spark,
+                SparkSendTarget::Usdt,
+                SparkSendTarget::Usdc,
+            ]
+        );
+
+        assert_eq!(SparkSendTarget::Lightning.label(), "Bitcoin");
+        assert_eq!(SparkSendTarget::Lightning.badge(), "Lightning");
+        assert_eq!(
+            SparkSendTarget::Lightning.destination_placeholder(),
+            "Lightning invoice or Lightning address"
+        );
+
+        assert_eq!(SparkSendTarget::OnChain.badge(), "On-chain");
+        assert_eq!(SparkSendTarget::Spark.badge(), "Spark");
+        assert_eq!(SparkSendTarget::Usdt.label(), "USDt");
+        assert_eq!(SparkSendTarget::Usdt.badge(), "Cross-chain");
+        assert_eq!(SparkSendTarget::Usdt.stablecoin(), Some("USDT"));
+        assert_eq!(SparkSendTarget::Usdc.stablecoin(), Some("USDC"));
+        assert!(SparkSendTarget::Usdc.is_stablecoin());
+        assert!(!SparkSendTarget::Spark.is_stablecoin());
+    }
+
+    #[test]
+    fn amount_error_messages_name_the_active_unit() {
+        assert_eq!(amount_unit_word(BitcoinDisplayUnit::BTC), "BTC");
+        assert_eq!(amount_unit_word(BitcoinDisplayUnit::Sats), "sats");
+        assert_eq!(
+            parse_amount_to_sats("", BitcoinDisplayUnit::Sats).unwrap_err(),
+            "Amount must be a whole number of sats."
+        );
+        assert_eq!(
+            parse_amount_to_sats("-1", BitcoinDisplayUnit::BTC).unwrap_err(),
+            "Amount must be a valid BTC value."
+        );
+    }
+
     fn route() -> CrossChainRoute {
         CrossChainRoute {
             provider: "orchestra".to_string(),
@@ -1106,6 +1150,23 @@ mod tests {
             contract_address: None,
             decimals: 6,
             btc_source_supported: true,
+        }
+    }
+
+    fn route_with_asset(asset: &str) -> CrossChainRoute {
+        CrossChainRoute {
+            asset: asset.to_string(),
+            ..route()
+        }
+    }
+
+    fn cross_chain_address(family: &str) -> CrossChainAddress {
+        CrossChainAddress {
+            address: "0xabc".to_string(),
+            family: family.to_string(),
+            contract_address: None,
+            chain_id: None,
+            amount: None,
         }
     }
 
@@ -1267,6 +1328,103 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cross_chain_context_selected_route_obeys_bounds() {
+        let ctx = CrossChainContext {
+            address: cross_chain_address("evm"),
+            routes: vec![route_with_asset("USDT"), route_with_asset("USDC")],
+            selected: 1,
+        };
+        assert_eq!(ctx.selected_route().map(|r| r.asset.as_str()), Some("USDC"));
+
+        let out_of_bounds = CrossChainContext {
+            selected: 99,
+            ..ctx
+        };
+        assert!(out_of_bounds.selected_route().is_none());
+    }
+
+    #[test]
+    fn set_receive_target_clears_the_previous_payment_intent() {
+        let mut panel = failed_panel(cross_chain::RetryPolicy::SafeToRetry);
+        panel.destination_input = "old destination".to_string();
+        panel.amount_input = "123".to_string();
+        panel.receive_picker_open = true;
+
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::SetReceiveTarget(SparkSendTarget::Usdt),
+        );
+
+        assert_eq!(panel.receive_target, SparkSendTarget::Usdt);
+        assert!(!panel.receive_picker_open);
+        assert!(panel.destination_input.is_empty());
+        assert!(panel.amount_input.is_empty());
+        assert!(panel.send_idempotency_key.is_none());
+        assert!(panel.cross_chain_prepare.is_none());
+        assert!(panel.cross_chain.is_none());
+        assert!(matches!(panel.phase, SparkSendPhase::Idle));
+    }
+
+    #[test]
+    fn cross_chain_routes_loaded_filters_to_the_selected_stablecoin() {
+        let mut panel = SparkSend::new(None);
+        panel.receive_target = SparkSendTarget::Usdt;
+
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::CrossChainRoutesLoaded(coincube_spark_protocol::CrossChainRoutesOk {
+                address: Some(cross_chain_address("tron")),
+                routes: vec![
+                    route_with_asset("USDC"),
+                    route_with_asset("USDT"),
+                    route_with_asset("usdt"),
+                ],
+            }),
+        );
+
+        assert!(matches!(panel.phase, SparkSendPhase::CrossChainRoutes));
+        let ctx = panel.cross_chain.as_ref().expect("routes retained");
+        assert_eq!(ctx.address.family, "tron");
+        assert_eq!(ctx.routes.len(), 2);
+        assert!(ctx
+            .routes
+            .iter()
+            .all(|r| r.asset.eq_ignore_ascii_case("USDT")));
+        assert_eq!(ctx.selected, 0);
+    }
+
+    #[test]
+    fn cross_chain_routes_loaded_reports_unrecognized_or_unroutable_destinations() {
+        let mut panel = SparkSend::new(None);
+        panel.receive_target = SparkSendTarget::Usdc;
+
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::CrossChainRoutesLoaded(coincube_spark_protocol::CrossChainRoutesOk {
+                address: None,
+                routes: vec![],
+            }),
+        );
+        assert!(matches!(
+            &panel.phase,
+            SparkSendPhase::Error(msg) if msg.contains("doesn't look like a USDC address")
+        ));
+
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::CrossChainRoutesLoaded(coincube_spark_protocol::CrossChainRoutesOk {
+                address: Some(cross_chain_address("solana")),
+                routes: vec![route_with_asset("USDT")],
+            }),
+        );
+        assert!(matches!(
+            &panel.phase,
+            SparkSendPhase::Error(msg)
+                if msg == "No route can currently send USDC to this solana address."
+        ));
+    }
+
     fn prepared_with_quote(expires_at: &str) -> PrepareSendOk {
         PrepareSendOk {
             handle: "h".to_string(),
@@ -1418,5 +1576,154 @@ mod tests {
         assert!(panel.send_idempotency_key.is_none());
         assert!(panel.cross_chain.is_none());
         assert!(matches!(panel.phase, SparkSendPhase::Idle));
+    }
+
+    #[test]
+    fn receive_picker_open_and_close_are_local_state_only() {
+        let mut panel = SparkSend::new(None);
+
+        let _ = send(&mut panel, SparkSendMessage::OpenReceivePicker);
+        assert!(panel.receive_picker_open);
+        assert!(matches!(panel.phase, SparkSendPhase::Idle));
+        assert_eq!(panel.receive_target, SparkSendTarget::Lightning);
+
+        let _ = send(&mut panel, SparkSendMessage::CloseReceivePicker);
+        assert!(!panel.receive_picker_open);
+        assert!(matches!(panel.phase, SparkSendPhase::Idle));
+        assert_eq!(panel.receive_target, SparkSendTarget::Lightning);
+    }
+
+    #[test]
+    fn advanced_and_slippage_controls_only_update_their_local_fields() {
+        let mut panel = SparkSend::new(None);
+        assert!(!panel.advanced_open);
+
+        let _ = send(&mut panel, SparkSendMessage::ToggleAdvanced);
+        assert!(panel.advanced_open);
+
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::SlippageChanged("250".to_string()),
+        );
+        assert_eq!(panel.slippage_input, "250");
+        assert!(panel.advanced_open);
+        assert!(matches!(panel.phase, SparkSendPhase::Idle));
+
+        let _ = send(&mut panel, SparkSendMessage::ToggleAdvanced);
+        assert!(!panel.advanced_open);
+        assert_eq!(panel.slippage_input, "250");
+    }
+
+    #[test]
+    fn route_selection_updates_valid_indices_and_ignores_out_of_bounds() {
+        let mut panel = SparkSend::new(None);
+        panel.cross_chain = Some(CrossChainContext {
+            address: cross_chain_address("evm"),
+            routes: vec![route_with_asset("USDT"), route_with_asset("USDC")],
+            selected: 0,
+        });
+        panel.phase = SparkSendPhase::CrossChainRoutes;
+
+        let _ = send(&mut panel, SparkSendMessage::CrossChainRouteSelected(1));
+        assert_eq!(panel.cross_chain.as_ref().unwrap().selected, 1);
+
+        let _ = send(&mut panel, SparkSendMessage::CrossChainRouteSelected(99));
+        assert_eq!(
+            panel.cross_chain.as_ref().unwrap().selected,
+            1,
+            "out-of-bounds route selections must leave the current route alone"
+        );
+    }
+
+    #[test]
+    fn quote_request_requires_a_selected_route_before_backend_or_amount_work() {
+        let mut no_context = SparkSend::new(None);
+        let _ = send(&mut no_context, SparkSendMessage::CrossChainQuoteRequested);
+        assert!(matches!(no_context.phase, SparkSendPhase::Idle));
+
+        let mut missing_route = SparkSend::new(None);
+        missing_route.cross_chain = Some(CrossChainContext {
+            address: cross_chain_address("evm"),
+            routes: vec![route()],
+            selected: 99,
+        });
+        missing_route.phase = SparkSendPhase::CrossChainRoutes;
+
+        let _ = send(
+            &mut missing_route,
+            SparkSendMessage::CrossChainQuoteRequested,
+        );
+        assert!(
+            matches!(missing_route.phase, SparkSendPhase::CrossChainRoutes),
+            "without a selected route, quote request must be a no-op"
+        );
+    }
+
+    #[test]
+    fn quote_request_with_a_route_fails_fast_when_backend_is_missing() {
+        let mut panel = SparkSend::new(None);
+        panel.cross_chain = Some(CrossChainContext {
+            address: cross_chain_address("evm"),
+            routes: vec![route()],
+            selected: 0,
+        });
+        panel.amount_input = "1000".to_string();
+
+        let _ = send(&mut panel, SparkSendMessage::CrossChainQuoteRequested);
+        assert!(matches!(
+            &panel.phase,
+            SparkSendPhase::Error(msg) if msg == "Spark backend is not available."
+        ));
+    }
+
+    fn sent_panel_after_method(method: &str) -> SparkSend {
+        let mut panel = failed_panel(cross_chain::RetryPolicy::SafeToRetry);
+        panel.destination_input = "destination".to_string();
+        panel.amount_input = "123".to_string();
+        panel.last_send_method = method.to_string();
+
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::SendSucceeded(SendPaymentOk {
+                payment_id: "payment-id".to_string(),
+                amount_sat: 42_000,
+                fee_sat: 17,
+            }),
+        );
+        panel
+    }
+
+    #[test]
+    fn send_success_clears_the_payment_intent_and_formats_the_sent_amount() {
+        let panel = sent_panel_after_method("BitcoinAddress");
+
+        assert!(matches!(panel.phase, SparkSendPhase::Sent(_)));
+        assert_eq!(panel.sent_amount_display, "42,000 sats");
+        assert!(panel.destination_input.is_empty());
+        assert!(panel.amount_input.is_empty());
+        assert!(panel.send_idempotency_key.is_none());
+        assert!(panel.cross_chain_prepare.is_none());
+        assert!(panel.quote_countdown.is_none());
+        assert!(panel.cross_chain.is_none());
+    }
+
+    #[test]
+    fn send_success_picks_celebration_context_from_the_send_method() {
+        assert_eq!(
+            sent_panel_after_method("BitcoinAddress").sent_celebration_context,
+            "bitcoin-send"
+        );
+        assert_eq!(
+            sent_panel_after_method("Bolt11Invoice").sent_celebration_context,
+            "lightning-send"
+        );
+        assert_eq!(
+            sent_panel_after_method("LnurlPay").sent_celebration_context,
+            "lightning-send"
+        );
+        assert_eq!(
+            sent_panel_after_method("SparkAddress").sent_celebration_context,
+            "spark-send"
+        );
     }
 }

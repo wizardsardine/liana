@@ -1637,6 +1637,42 @@ impl CoincubeClient {
         let res = self.client.get(&url).send().await?;
         Self::parse_recovery_response(res).await
     }
+
+    /// `DELETE /api/v1/connect/cubes/{cubeId}/recovery-kit/recipients/{keyId}`
+    /// (authenticated, owner-only). True-deletes the recovery recipient and
+    /// **cascade-deletes its envelopes** server-side — revoking the phone
+    /// (Keychain) recovery mode. Used by the Remove-clears-everything flow to
+    /// tear down the owner-self keychain half (the password half goes via
+    /// [`Self::delete_recovery_kit`]). `404` → `NotFound` (recipient already
+    /// gone — the caller treats it as idempotent success); `429` →
+    /// `RateLimited`; other non-2xx → `Unsuccessful` with the body preserved.
+    pub async fn delete_recovery_kit_recipient(
+        &self,
+        cube_id: u64,
+        key_id: u64,
+    ) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/recovery-kit/recipients/{}",
+            self.base_url, cube_id, key_id
+        );
+        let res = self.client.delete(&url).send().await?;
+        let status = res.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        match status.as_u16() {
+            404 => Err(CoincubeError::NotFound),
+            429 => Err(CoincubeError::RateLimited {
+                retry_after: parse_retry_after(res.headers()),
+            }),
+            _ => Err(CoincubeError::Unsuccessful(
+                crate::services::http::NotSuccessResponseInfo {
+                    status_code: status.as_u16(),
+                    text: res.text().await.unwrap_or_default(),
+                },
+            )),
+        }
+    }
 }
 
 // =============================================================================
@@ -2268,6 +2304,47 @@ mod recovery_kit_tests {
         let client = CoincubeClient::for_test(server.base_url());
         let err = client
             .delete_recovery_kit(42)
+            .await
+            .expect_err("expected NotFound");
+        mock.assert();
+        assert!(err.is_not_found());
+    }
+
+    #[tokio::test]
+    async fn delete_recovery_kit_recipient_ok_on_200() {
+        // Owner-self recipient DELETE — cascades envelopes server-side. The
+        // route embeds the keyId; assert we hit the exact path.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients/7");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({ "success": true, "data": { "deleted": true } }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        client
+            .delete_recovery_kit_recipient(42, 7)
+            .await
+            .expect("recipient delete should succeed");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn delete_recovery_kit_recipient_404_maps_to_not_found() {
+        // Recipient already gone (removed from another device, or a race).
+        // Surfaced typed so the Remove flow treats it as idempotent success.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients/7");
+            then.status(404);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .delete_recovery_kit_recipient(42, 7)
             .await
             .expect_err("expected NotFound");
         mock.assert();
