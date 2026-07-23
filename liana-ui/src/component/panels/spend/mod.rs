@@ -395,7 +395,7 @@ pub fn coin_row<'a, M: Clone + 'static>(
         new::b3_medium(txt)
     }
     fn label_style(theme: &Theme) -> Style {
-        theme::amount::zeroes(theme, false)
+        theme::amount::sats(theme, false)
     }
     let max_len = label_len(available_width);
     let short = |s: String| -> String {
@@ -408,7 +408,7 @@ pub fn coin_row<'a, M: Clone + 'static>(
     let coin_label: Element<M> = match label {
         CoinLabel::Outpoint(label) => font(short(label)).style(label_style).into(),
         CoinLabel::Transaction(label) => {
-            let from = font("From").style(theme::text::secondary);
+            let from = font("From").style(|t| theme::amount::zeroes(t, false));
             row![from, font(short(label)).style(label_style)]
                 .spacing(5)
                 .into()
