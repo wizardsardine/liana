@@ -4922,6 +4922,7 @@ mod duress_enroll_tests {
                     has_recipient: true,
                     tier: "full_cube".to_string(),
                     envelope_kinds: envelope_kinds.iter().map(|s| s.to_string()).collect(),
+                    updated_at: None,
                 })
             },
         }
@@ -4984,6 +4985,7 @@ mod duress_enroll_tests {
             has_recipient: true,
             tier: "full_cube".to_string(),
             envelope_kinds: vec![],
+            updated_at: None,
         });
         assert_eq!(duress_kit_halves(&s), (false, false));
     }
@@ -4999,6 +5001,7 @@ mod duress_enroll_tests {
             has_recipient: false,
             tier: "full_cube".to_string(),
             envelope_kinds: vec!["seed".to_string(), "descriptor".to_string()],
+            updated_at: None,
         });
         assert_eq!(duress_kit_halves(&s), (false, false));
     }
