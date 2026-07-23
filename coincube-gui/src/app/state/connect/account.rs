@@ -13,7 +13,8 @@ use crate::{
         CoincubeClient, ConnectPlan, Contact, ContactCube, ContactRole,
         CreateDuressAlertContactRequest, CreateInviteRequest, DuressAlertContact,
         DuressCheckOutcome, FeaturesResponse, Invite, LoginActivity, LoginResponse, OtpRequest,
-        OtpVerifyRequest, PlanStatus, PlanTier, ReceivedInvite, UpdateDuressAlertContactRequest,
+        OtpVerifyRequest, PlanStatus, PlanTier, ReceivedInvite, RecoveryKitStatus,
+        UpdateDuressAlertContactRequest,
         User, VerifiedDevice, DURESS_CHANNEL_EMAIL, DURESS_CHANNEL_SMS, DURESS_CHANNEL_WHATSAPP,
         MAX_DURESS_ALERT_CONTACTS,
     },
@@ -238,6 +239,31 @@ pub fn cube_backup_completeness(
             (false, false) => NoKit,
         }
     }
+}
+
+/// Fold a Cube's `/recovery-kit/status` into the duress checklist's
+/// `(seed, descriptor)` halves. A half counts as backed up when EITHER
+/// protection mode holds restorable material on Connect: the password kit's
+/// ciphertext (`has_encrypted_seed` / `has_encrypted_wallet_descriptor`) OR an
+/// owner-keychain ECIES envelope actually **sealed** for that artifact kind
+/// (`ownerSelf.envelopeKinds` — envelope uploaded, not merely a recipient
+/// registered, mirroring `backup_methods_present` in
+/// `app/view/settings/general.rs`). The duress gate asks "is everything a wipe
+/// would destroy restorable from Connect?", and a phone-sealed envelope
+/// restores the same material as the password blob — so either satisfies it
+/// (PLAN-duress-vault-gate; the checklist half PLAN-keychain-crk-status-fixes
+/// missed, fixed 2026-07-22).
+pub fn duress_kit_halves(status: &RecoveryKitStatus) -> (bool, bool) {
+    let sealed = |kind: &str| {
+        status
+            .owner_self
+            .as_ref()
+            .is_some_and(|o| o.envelope_kinds.iter().any(|k| k == kind))
+    };
+    (
+        status.has_encrypted_seed || sealed("seed"),
+        status.has_encrypted_wallet_descriptor || sealed("descriptor"),
+    )
 }
 
 impl DuressCube {
@@ -4128,7 +4154,9 @@ fn load_duress_cubes(client: &CoincubeClient, generation: u64, seq: u64) -> iced
             let rows = iced::futures::future::join_all(mainnet.into_iter().map(|c| async move {
                 let halves = if c.has_recovery_kit {
                     match client_ref.get_recovery_kit_status(c.id).await {
-                        Ok(s) => Some((s.has_encrypted_seed, s.has_encrypted_wallet_descriptor)),
+                        // Password blobs OR phone-sealed envelopes — either
+                        // mode makes a half restorable (duress_kit_halves).
+                        Ok(s) => Some(duress_kit_halves(&s)),
                         // 404 = no kit yet — not an error for our logic.
                         Err(CoincubeError::NotFound) => Some((false, false)),
                         Err(e) => {
@@ -4648,6 +4676,7 @@ fn validate_enroll_step(e: &DuressEnrollState) -> Result<(), String> {
 #[cfg(test)]
 mod duress_enroll_tests {
     use super::*;
+    use crate::services::coincube::OwnerSelfRecoverySummary;
 
     fn state(tier: EnrollTier, step: DuressEnrollStep) -> DuressEnrollState {
         DuressEnrollState {
@@ -4863,6 +4892,91 @@ mod duress_enroll_tests {
             Unknown
         );
         assert_eq!(cube_backup_completeness(None, false, None), Unknown);
+    }
+
+    /// `RecoveryKitStatus` fixture: password-kit halves plus the artifact
+    /// kinds (if any) sealed to the owner's phone key. Empty kinds → no
+    /// `ownerSelf` block, as the API reports for a never-enrolled Cube.
+    fn kit_status(
+        pw_seed: bool,
+        pw_descriptor: bool,
+        envelope_kinds: &[&str],
+    ) -> RecoveryKitStatus {
+        RecoveryKitStatus {
+            has_recovery_kit: pw_seed || pw_descriptor || !envelope_kinds.is_empty(),
+            has_encrypted_seed: pw_seed,
+            has_encrypted_wallet_descriptor: pw_descriptor,
+            encryption_scheme: String::new(),
+            created_at: None,
+            updated_at: None,
+            owner_self: if envelope_kinds.is_empty() {
+                None
+            } else {
+                Some(OwnerSelfRecoverySummary {
+                    has_recipient: true,
+                    tier: "full_cube".to_string(),
+                    envelope_kinds: envelope_kinds.iter().map(|s| s.to_string()).collect(),
+                })
+            },
+        }
+    }
+
+    /// The QA defect (2026-07-22): a keychain-encrypted (phone-mode-only)
+    /// Recovery Kit — no password blobs, both artifact kinds sealed to the
+    /// owner's phone key — must count both halves as backed up, so the
+    /// checklist reads "Backed up" and the duress gate opens.
+    #[test]
+    fn duress_kit_halves_counts_phone_only_kit() {
+        assert_eq!(
+            duress_kit_halves(&kit_status(false, false, &["seed", "descriptor"])),
+            (true, true)
+        );
+    }
+
+    #[test]
+    fn duress_kit_halves_password_only_unchanged() {
+        assert_eq!(duress_kit_halves(&kit_status(true, true, &[])), (true, true));
+        assert_eq!(
+            duress_kit_halves(&kit_status(true, false, &[])),
+            (true, false)
+        );
+        assert_eq!(
+            duress_kit_halves(&kit_status(false, false, &[])),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn duress_kit_halves_modes_combine_per_half() {
+        // Password seed + phone-sealed descriptor → both halves covered.
+        assert_eq!(
+            duress_kit_halves(&kit_status(true, false, &["descriptor"])),
+            (true, true)
+        );
+        // Phone sealed the seed only → the descriptor half is still missing.
+        assert_eq!(
+            duress_kit_halves(&kit_status(false, false, &["seed"])),
+            (true, false)
+        );
+        // An unrecognised kind never satisfies a half.
+        assert_eq!(
+            duress_kit_halves(&kit_status(false, false, &["mystery"])),
+            (false, false)
+        );
+    }
+
+    /// A registered recipient with nothing sealed carries no restorable
+    /// material and must not satisfy either half (mirrors
+    /// `backup_methods_present`'s envelope-uploaded rule).
+    #[test]
+    fn duress_kit_halves_ignores_unsealed_recipient() {
+        let mut s = kit_status(false, false, &[]);
+        s.owner_self = Some(OwnerSelfRecoverySummary {
+            has_recipient: true,
+            tier: "full_cube".to_string(),
+            envelope_kinds: vec![],
+        });
+        assert_eq!(duress_kit_halves(&s), (false, false));
     }
 
     #[test]
