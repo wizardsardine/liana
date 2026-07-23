@@ -70,6 +70,7 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
 
     layout_with_scrollable_list(
         (7, INSTALLER_STEPS),
+        state.network,
         Some(current_user_email),
         false,
         &breadcrumb,
@@ -204,7 +205,7 @@ pub fn registration_key_entry(
     let trailing = if done {
         Some(pill::registered().into())
     } else if can_register {
-        Some(list::entry_chevron())
+        Some(list::right_chevron())
     } else {
         Some(text::new::caption("-").style(theme::text::tertiary).into())
     };

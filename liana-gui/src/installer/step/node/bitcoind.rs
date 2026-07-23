@@ -332,9 +332,10 @@ impl Step for SelectBitcoindTypeStep {
         &self,
         _hws: &HardwareWallets,
         progress: (usize, usize),
+        network: Network,
         _email: Option<&str>,
     ) -> Element<'_, Message> {
-        view::select_bitcoind_type(progress)
+        view::select_bitcoind_type(progress, network)
     }
 }
 
@@ -780,10 +781,12 @@ impl Step for InternalBitcoindStep {
         &self,
         _hws: &HardwareWallets,
         progress: (usize, usize),
+        network: Network,
         _email: Option<&str>,
     ) -> Element<'_, Message> {
         view::start_internal_bitcoind(
             progress,
+            network,
             self.exe_path.as_ref(),
             self.started.as_ref(),
             self.error.as_ref(),

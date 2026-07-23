@@ -54,10 +54,11 @@ Use these; do not build equivalents.
   `fingerprint`, `coin_sequence`, feature-specific helpers. `pill`, `pill_with_icon`, `compact_pill`,
   `compact_metric`, and direct `PillWidth` + `theme::pill::*` composition are liana-ui internals. If a
   consumer needs a new pill, add a named helper in `component::pill` first, then use that helper.
-- **list**: `list_entry_row(tile, body, trailing, accent, width, msg)` and the `entry_*` constructors
-  (`entry_wallet/key/path/set_key/organization/register/device_list/action`, `account_entry`,
-  `entry_paste_xpub`); helpers `entry_chevron`, `breadcrumb_chevron`, `key_count`, `see_more`. Status enums
-  `Entry*`, `DeviceStatus`.
+- **list**: `list_entry_row(tile, body, trailing, accent, width, msg)`, `list_entry_row_static`,
+  `list_entry_chevron`, and the `entry_*` constructors
+  (`entry_wallet/key/path/set_key/organization/register/device_list/action/collapsible/action_accent/no_devices`,
+  `account_entry`, `account_select_entry`, `entry_paste_xpub`); helpers `right_chevron`,
+  `breadcrumb_chevron`, `key_count`, `see_more`. Status enums `Entry*`, `DeviceStatus`.
 - **modal**: `modal_view(title, back, close, width, content)` (and `modal_view_with_theme`); width
   `ModalWidth`.
 - **badge**: icon badges, `tile(Tile::..)`, `avatar(initials)`, `coin()`.
@@ -68,13 +69,15 @@ Use these; do not build equivalents.
 - **tab**: `tab_header(items, active, on_select)`; `Dot`.
 - **widget traits** (`widget/mod.rs`): `RowExt` / `ColumnExt::push_maybe` (dynamic building only), `SpaceExt`.
 
-## Per-app layout
+## Installer Layout
 
-Each app owns its page scaffolding on top of the components above. Read the real helpers, do not restate them:
+Installer page scaffolding is shared by `liana-ui::component::installer`. Each installer keeps a thin local
+wrapper that enforces its own width policy and navigation message behavior:
 
-- **liana-gui**: sidebar, dashboard, and menu scaffolding in `liana-gui/src/app/view/mod.rs`.
-- **liana-business**: `layout()`, `layout_with_scrollable_list()`, `menu_entry()`, and the breadcrumb +
-  step-dot header in `liana-business/business-installer/src/views/mod.rs`.
+- **liana-gui installer**: `layout()` in `liana-gui/src/installer/view/mod.rs`, with an 800px content width.
+- **liana-business installer**: `layout()` and `layout_with_scrollable_list()` in
+  `liana-business/business-installer/src/views/mod.rs`, with the standard list-entry width.
+- **liana-gui app**: sidebar, dashboard, and menu scaffolding in `liana-gui/src/app/view/mod.rs`.
 
 ## liana-business specifics
 

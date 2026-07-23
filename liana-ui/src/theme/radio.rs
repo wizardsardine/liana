@@ -15,6 +15,16 @@ impl Catalog for Theme {
 }
 
 pub fn primary(theme: &Theme, status: Status) -> Style {
+    if !theme.is_business() {
+        return Style {
+            dot_color: theme.colors.radio_buttons.dot,
+            text_color: theme.colors.radio_buttons.text.into(),
+            background: theme.colors.cards.simple.background.into(),
+            border_width: 1.0,
+            border_color: theme.colors.radio_buttons.border,
+        };
+    }
+
     let is_selected = match status {
         Status::Active { is_selected } | Status::Hovered { is_selected } => is_selected,
     };

@@ -65,6 +65,7 @@ pub enum Message {
     KeyRedeemed(ProviderKey, Result<(), liana_connect::keys::Error>),
     AllKeysRedeemed,
     BackupDescriptor,
+    ShowBackupDescriptorHelp(bool),
     ExportEncryptedDescriptor(Result<Box<LianaDescriptor>, encrypted_backup::Error>),
     ExportXpub(String),
     ImportExport(ImportExportMessage),
@@ -103,6 +104,8 @@ pub enum SelectBackend {
     // view messages
     RequestOTP,
     EditEmail,
+    ConnectWithAnotherEmail,
+    BackToConnectAccounts,
     EmailEdited(String),
     OTPEdited(String),
     ContinueWithLocalWallet(bool),
@@ -116,6 +119,8 @@ pub enum SelectBackend {
 
 #[derive(Debug, Clone)]
 pub enum ImportRemoteWallet {
+    ToggleOptions(bool),
+    ToggleOption(ImportWalletOption),
     RemoteWallets(Result<Vec<liana_connect::wallets::api::Wallet>, Error>),
     ImportDescriptor(String),
     ConfirmDescriptor,
@@ -126,6 +131,12 @@ pub enum ImportRemoteWallet {
     InvitationAccepted(Result<liana_connect::wallets::api::Wallet, Error>),
     ImportDescriptorFromFile,
     ImportExport(ImportExportMessage),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportWalletOption {
+    Invitation,
+    PasteDescriptor,
 }
 
 #[derive(Debug, Clone)]
@@ -180,6 +191,7 @@ pub enum DefineDescriptor {
     AddSafetyNetPath,
     ThresholdSequenceModal(ThresholdSequenceModal),
     Reset,
+    ShowImportDescriptor(bool),
     AliasEdited(Fingerprint, String /* alias*/),
     Compiled(Result<Box<LianaDescriptor>, String>),
 }

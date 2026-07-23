@@ -6,12 +6,14 @@ use iced::{
 };
 use liana_ui::{
     component::{
-        self, badge, button, card,
+        self, badge,
+        button::btn_register_on_device,
+        card,
         panels::setting::{header, settings_section, SectionKind},
         pick_list, scrollable, separation,
         text::*,
     },
-    icon, theme,
+    theme,
     widget::{ColumnExt, Element, SpaceExt},
 };
 
@@ -49,10 +51,7 @@ pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
                 Row::new()
                     .spacing(10)
                     .push(Space::with_width(Length::Fill))
-                    .push(
-                        button::secondary(Some(icon::chip_icon()), "Register on device")
-                            .on_press(Msg::RegisterWallet),
-                    ),
+                    .push(btn_register_on_device(Msg::RegisterWallet)),
             )
             .spacing(10),
     )

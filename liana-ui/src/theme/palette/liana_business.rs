@@ -503,6 +503,27 @@ impl Palette {
                     pressed: None,
                     disabled: None,
                 },
+                optional_section: Button {
+                    active: ButtonPalette {
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_TERTIARY_FG,
+                        border: BTN_TERTIARY_BG.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_TERTIARY_FG,
+                        border: BTN_TERTIARY_BG.into(),
+                        shadow: BTN_SHADOW,
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: BTN_TERTIARY_PRESSED,
+                        text: color::WHITE,
+                        border: BTN_TERTIARY_PRESSED.into(),
+                        shadow: BTN_SHADOW,
+                    }),
+                    disabled: btn_disabled(),
+                },
             },
             cards: Cards {
                 simple: ContainerPalette {

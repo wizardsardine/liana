@@ -95,6 +95,7 @@ pub struct Buttons {
     pub link_subtle: Button,
     pub pick_list: Button,
     pub signing_devices: Button,
+    pub optional_section: Button,
     pub border_width: f32,
 }
 

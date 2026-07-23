@@ -601,12 +601,14 @@ impl Step for DefineDescriptor {
         &'a self,
         hws: &'a HardwareWallets,
         progress: (usize, usize),
+        network: Network,
         _email: Option<&'a str>,
     ) -> Element<'a, Message> {
         let content = match self.descriptor_template {
             DescriptorTemplate::SimpleInheritance => {
                 view::editor::template::inheritance::inheritance_template(
                     progress,
+                    network,
                     self.use_taproot,
                     &self.paths[0],
                     &self.paths[1],
@@ -617,6 +619,7 @@ impl Step for DefineDescriptor {
             DescriptorTemplate::MultisigSecurity => {
                 view::editor::template::multisig_security_wallet::multisig_security_template(
                     progress,
+                    network,
                     self.use_taproot,
                     &self.paths[0],
                     &self.paths[1],
@@ -626,6 +629,7 @@ impl Step for DefineDescriptor {
             }
             DescriptorTemplate::Custom => view::editor::template::custom::custom_template(
                 progress,
+                network,
                 self.use_taproot,
                 &self.paths[0],
                 &mut self.paths[1..]

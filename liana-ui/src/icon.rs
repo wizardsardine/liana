@@ -53,10 +53,6 @@ pub fn arrow_down() -> Text<'static> {
     bootstrap_icon('\u{F128}')
 }
 
-pub fn arrow_back<'a>() -> Text<'a> {
-    bootstrap_icon('\u{F12E}')
-}
-
 pub fn arrow_right() -> Text<'static> {
     bootstrap_icon('\u{F138}')
 }
@@ -133,16 +129,12 @@ pub fn warning_fill_icon() -> Text<'static> {
     bootstrap_icon('\u{F33A}')
 }
 
-pub fn chip_icon() -> Text<'static> {
+pub fn chip_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F2D6}')
 }
 
 pub fn trash_icon() -> Text<'static> {
     bootstrap_icon('\u{F5DE}')
-}
-
-pub fn pencil_icon() -> Text<'static> {
-    bootstrap_icon('\u{F4CB}')
 }
 
 pub fn collapse_icon() -> Text<'static> {
@@ -181,11 +173,11 @@ pub fn round_key_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F44E}')
 }
 
-pub fn backup_icon() -> Text<'static> {
+pub fn backup_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F356}')
 }
 
-pub fn restore_icon() -> Text<'static> {
+pub fn restore_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F358}')
 }
 
@@ -247,6 +239,10 @@ pub fn clock_icon() -> Text<'static> {
 
 pub fn clock_fill_icon() -> Text<'static> {
     bootstrap_icon('\u{F291}')
+}
+
+pub fn edit_icon_padding<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F4CA}')
 }
 
 pub fn edit_icon<'a>() -> Text<'a> {

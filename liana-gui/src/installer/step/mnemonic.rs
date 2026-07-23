@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use iced::Task;
-use liana::{bip39, signer::HotSigner};
+use liana::{bip39, miniscript::bitcoin::Network, signer::HotSigner};
 
 use liana_ui::widget::Element;
 
@@ -55,9 +55,10 @@ impl Step for BackupMnemonic {
         &'a self,
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
+        network: Network,
         email: Option<&'a str>,
     ) -> Element<'a, Message> {
-        view::backup_mnemonic(progress, email, &self.words, self.done)
+        view::backup_mnemonic(progress, network, email, &self.words, self.done)
     }
 }
 
@@ -96,7 +97,7 @@ impl Step for RecoverMnemonic {
         match message {
             Message::MnemonicWord(index, value) => {
                 if let Some((word, valid)) = self.words.get_mut(index) {
-                    if value.len() >= 3 {
+                    if value.len() > 1 {
                         let suggestions = self.language.words_by_prefix(&value);
                         if suggestions.contains(&value.as_ref()) {
                             *valid = true;
@@ -172,10 +173,12 @@ impl Step for RecoverMnemonic {
         &'a self,
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
+        network: Network,
         email: Option<&'a str>,
     ) -> Element<'a, Message> {
         view::recover_mnemonic(
             progress,
+            network,
             email,
             &self.words,
             self.current,

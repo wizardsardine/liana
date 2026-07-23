@@ -23,9 +23,12 @@ pub struct Collapse<'a, Message> {
     after: Element<'a, Message, Theme, Renderer>,
     content: Element<'a, Message, Theme, Renderer>,
     init_expanded: bool,
+    expanded: Option<bool>,
+    on_toggle: Option<Box<dyn Fn() -> Message + 'a>>,
     padding: Padding,
     width: Length,
     header_style: Box<dyn Fn(&Theme, button::Status) -> button::Style + 'a>,
+    style_bounds: bool,
 }
 
 impl<'a, Message: 'a> Collapse<'a, Message> {
@@ -39,14 +42,32 @@ impl<'a, Message: 'a> Collapse<'a, Message> {
             after: after.into(),
             content: content.into(),
             init_expanded: false,
+            expanded: None,
+            on_toggle: None,
             padding: Padding::ZERO,
             width: Length::Fill,
             header_style: Box::new(crate::theme::button::transparent_border),
+            style_bounds: false,
         }
     }
 
     pub fn collapsed(mut self, state: bool) -> Self {
         self.init_expanded = state;
+        self
+    }
+
+    pub fn expanded(mut self, state: bool) -> Self {
+        self.expanded = Some(state);
+        self
+    }
+
+    pub fn on_toggle(mut self, on_toggle: impl Fn() -> Message + 'a) -> Self {
+        self.on_toggle = Some(Box::new(on_toggle));
+        self
+    }
+
+    pub fn style_bounds(mut self) -> Self {
+        self.style_bounds = true;
         self
     }
 
@@ -86,6 +107,9 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for Collapse<'a, Message>
     }
 
     fn diff(&self, tree: &mut Tree) {
+        if let Some(expanded) = self.expanded {
+            tree.state.downcast_mut::<CollapseState>().expanded = expanded;
+        }
         tree.diff_children(&[&self.before, &self.after, &self.content]);
     }
 
@@ -174,7 +198,11 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for Collapse<'a, Message>
         // Handle click on header to toggle.
         if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
             if cursor.is_over(header_bounds) {
-                state.expanded = !state.expanded;
+                if let Some(on_toggle) = &self.on_toggle {
+                    shell.publish(on_toggle());
+                } else {
+                    state.expanded = !state.expanded;
+                }
                 shell.invalidate_layout();
                 shell.request_redraw();
                 shell.capture_event();
@@ -223,10 +251,15 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for Collapse<'a, Message>
         let style = (self.header_style)(theme, status);
 
         if let Some(background) = style.background {
+            let bounds = if self.style_bounds {
+                layout.bounds()
+            } else {
+                header_bounds
+            };
             renderer::Renderer::fill_quad(
                 renderer,
                 renderer::Quad {
-                    bounds: header_bounds,
+                    bounds,
                     border: style.border,
                     shadow: style.shadow,
                     snap: style.snap,

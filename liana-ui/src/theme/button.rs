@@ -47,6 +47,7 @@ button_styles!(
     link,
     link_subtle,
     signing_devices,
+    optional_section,
 );
 
 pub fn auxiliary(theme: &Theme, status: Status) -> Style {

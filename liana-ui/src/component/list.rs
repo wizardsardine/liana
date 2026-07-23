@@ -8,22 +8,31 @@ use iced::{
 };
 
 use crate::{
+    color,
     component::{
         badge::{self, Tile},
         button::{self, EntryWidth, ListEntryAccent},
-        form,
+        collapse, form,
         text::{self, new::caption},
         tooltip,
     },
-    icon, theme,
+    icon,
+    spacing::HSpacing,
+    theme,
     widget::{Button, Container, Element, Row},
 };
 
+use super::text::truncate;
+
+const COLLAPSIBLE_ENTRY_CONTENT_BOTTOM_PADDING: u16 = 10;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum EntryStatus {
+pub enum EntryAccent {
     Simple,
     Warning,
     Success,
+    Bitcoin,
+    Testnet,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -162,7 +171,7 @@ pub fn list_entry_row<'a, M: Clone + 'a>(
     button::list_entry(content, accent, width, msg)
 }
 
-pub fn entry_chevron<'a, M: 'a>() -> Element<'a, M> {
+pub fn right_chevron<'a, M: 'a>() -> Element<'a, M> {
     icon::chevron_right()
         .size(18)
         .style(theme::text::secondary)
@@ -215,16 +224,72 @@ pub fn entry_paste_xpub<'a, M: Clone + 'a>(
     )
 }
 
+pub struct CollapsibleEntry<'a, M> {
+    pub accent: Option<EntryAccent>,
+    pub tile: Tile,
+    pub title: &'static str,
+    pub collapsed_subtitle: Option<&'static str>,
+    pub expanded_subtitle: Option<&'static str>,
+    pub content: Element<'a, M>,
+    pub expanded: bool,
+    pub on_toggle: M,
+}
+
+pub fn entry_collapsible<'a, M: Clone + 'static>(cfg: CollapsibleEntry<'a, M>) -> Element<'a, M> {
+    let accent = cfg.accent.map(entry_accent);
+    let entry = collapse::Collapse::new(
+        collapsible_entry_header(
+            cfg.tile,
+            cfg.title.to_string(),
+            cfg.collapsed_subtitle.map(str::to_string),
+        ),
+        collapsible_entry_header(
+            cfg.tile,
+            cfg.title.to_string(),
+            cfg.expanded_subtitle.map(str::to_string),
+        ),
+        Container::new(cfg.content).padding(iced::Padding {
+            left: button::LIST_ENTRY_PADDING[1].into(),
+            right: button::LIST_ENTRY_PADDING[1].into(),
+            bottom: COLLAPSIBLE_ENTRY_CONTENT_BOTTOM_PADDING.into(),
+            ..iced::Padding::ZERO
+        }),
+    )
+    .expanded(cfg.expanded)
+    .on_toggle(move || cfg.on_toggle.clone())
+    .style(move |theme, status| button::list_entry_style(theme, status, accent, true))
+    .style_bounds()
+    .padding(button::LIST_ENTRY_PADDING)
+    .width(Length::Fill);
+
+    button::list_entry_card(entry, accent, EntryWidth::Standard)
+}
+
+fn collapsible_entry_header<'a, M: Clone + 'a>(
+    tile: Tile,
+    title: String,
+    subtitle: Option<String>,
+) -> Element<'a, M> {
+    let content = row![
+        badge::tile_accent(tile),
+        Container::new(item_body(title, subtitle)).width(Length::Fill),
+    ]
+    .spacing(16)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+
+    Container::new(content).width(Length::Fill).into()
+}
+
 pub fn entry_organization<'a, M: Clone + 'a>(
     title: impl Display,
     subtitle: Option<impl Display>,
-    trailing: Option<Element<'a, M>>,
     msg: Option<M>,
 ) -> Element<'a, M> {
-    list_entry_row(
+    list_entry_chevron(
         Some(badge::tile(Tile::Org).into()),
         section_body(title, subtitle),
-        trailing,
+        None,
         None,
         EntryWidth::Standard,
         msg,
@@ -246,25 +311,48 @@ pub fn account_entry<'a, M: Clone + 'a>(
         (on_select, on_delete)
     };
 
-    let body: Element<'a, M> = if connecting {
-        text::new::b5_medium("Connecting...")
-            .width(Length::Fill)
-            .align_x(Horizontal::Center)
-            .into()
-    } else {
-        item_body(email, None::<String>)
-    };
+    let body = account_body(email, connecting);
 
     let entry = list_entry_row(
         Some(badge::tile(Tile::Account).into()),
         body,
-        Some(entry_chevron()),
+        Some(right_chevron()),
         None,
         EntryWidth::Deletable,
         on_select,
     );
 
     with_delete_button(entry, on_delete)
+}
+
+pub fn account_select_entry<'a, M: Clone + 'a>(
+    email: impl Display,
+    connecting: bool,
+    on_select: Option<M>,
+) -> Element<'a, M> {
+    let on_select = if connecting { None } else { on_select };
+
+    let body = account_body(email, connecting);
+
+    list_entry_row(
+        Some(badge::tile(Tile::Account).into()),
+        body,
+        Some(right_chevron()),
+        None,
+        EntryWidth::Standard,
+        on_select,
+    )
+}
+
+fn account_body<'a, M: 'a>(email: impl Display, connecting: bool) -> Element<'a, M> {
+    if connecting {
+        text::new::b5_medium("Connecting...")
+            .width(Length::Fill)
+            .align_x(Horizontal::Center)
+            .into()
+    } else {
+        item_body(email, None::<String>)
+    }
 }
 
 /// Append a delete (cross) button after a [`EntryWidth::Deletable`] entry, in the reserved slot.
@@ -283,21 +371,46 @@ fn with_delete_button<'a, M: Clone + 'a>(
 }
 
 pub fn entry_wallet<'a, M: Clone + 'a>(
-    status: EntryStatus,
+    accent: Option<EntryAccent>,
     title: impl Display,
-    role: Option<Element<'a, M>>,
     subtitle: Option<Element<'a, M>>,
-    trailing: Option<Element<'a, M>>,
+    role_pill: Option<Element<'a, M>>,
+    status_pill: Option<Element<'a, M>>,
     msg: Option<M>,
 ) -> Element<'a, M> {
-    list_entry_row(
+    let title = title.to_string();
+    let title = truncate(&title, 25);
+
+    let accent = accent.map(|s| entry_accent(s));
+
+    list_entry_chevron(
         Some(badge::tile(Tile::Wallet).into()),
-        wallet_body(title, role, subtitle),
-        trailing,
-        Some(status_accent(status)),
+        wallet_body(title, role_pill, subtitle),
+        status_pill,
+        accent,
         EntryWidth::Standard,
         msg,
     )
+}
+
+pub fn list_entry_chevron<'a, M: Clone + 'a>(
+    tile: Option<Element<'a, M>>,
+    body: impl Into<Element<'a, M>>,
+    trailing: Option<Element<'a, M>>,
+    accent: Option<ListEntryAccent>,
+    width: EntryWidth,
+    msg: Option<M>,
+) -> Element<'a, M> {
+    let trailing = row![trailing, right_chevron()]
+        .spacing(HSpacing::ML)
+        .align_y(Alignment::Center);
+    let body = Container::new(body).width(Length::Fill);
+    let content = row![tile, body, trailing]
+        .spacing(16)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+
+    button::list_entry(content, accent, width, msg)
 }
 
 /// "(1 key)" / "({n} keys)" caption shown beside a wallet title; `None` for no keys.
@@ -463,6 +576,26 @@ pub fn entry_action<'a, M: Clone + 'a>(
     leaf_entry(tile, title, subtitle, trailing, None, width, msg)
 }
 
+pub fn entry_action_accent<'a, M: Clone + 'a>(
+    accent: Option<EntryAccent>,
+    tile: Tile,
+    title: impl Display,
+    subtitle: Option<impl Display>,
+    trailing: Option<Element<'a, M>>,
+    width: EntryWidth,
+    msg: Option<M>,
+) -> Element<'a, M> {
+    leaf_entry(
+        tile,
+        title,
+        subtitle,
+        trailing,
+        accent.map(entry_accent),
+        width,
+        msg,
+    )
+}
+
 pub fn entry_no_devices<'a, M: Clone + 'a>(
     title: impl Display,
     subtitle: Option<impl Display>,
@@ -512,8 +645,14 @@ fn leaf_entry<'a, M: Clone + 'a>(
     width: EntryWidth,
     msg: Option<M>,
 ) -> Element<'a, M> {
+    let tile = if accent.is_some() {
+        badge::tile_accent(tile)
+    } else {
+        badge::tile(tile)
+    };
+
     list_entry_row(
-        Some(badge::tile(tile).into()),
+        Some(tile.into()),
         item_body(title, subtitle),
         trailing,
         accent,
@@ -611,9 +750,9 @@ fn body<'a, M: 'a>(
     Container::new(content).width(Length::Fill).into()
 }
 
-fn status_accent(status: EntryStatus) -> ListEntryAccent {
+fn entry_accent(status: EntryAccent) -> ListEntryAccent {
     match status {
-        EntryStatus::Simple => |theme| {
+        EntryAccent::Simple => |theme| {
             theme
                 .colors
                 .pills
@@ -621,7 +760,7 @@ fn status_accent(status: EntryStatus) -> ListEntryAccent {
                 .border
                 .unwrap_or(theme.colors.general.accent)
         },
-        EntryStatus::Warning => |theme| {
+        EntryAccent::Warning => |theme| {
             theme
                 .colors
                 .pills
@@ -629,7 +768,7 @@ fn status_accent(status: EntryStatus) -> ListEntryAccent {
                 .border
                 .unwrap_or(theme.colors.text.warning)
         },
-        EntryStatus::Success => |theme| {
+        EntryAccent::Success => |theme| {
             theme
                 .colors
                 .pills
@@ -637,6 +776,8 @@ fn status_accent(status: EntryStatus) -> ListEntryAccent {
                 .border
                 .unwrap_or(theme.colors.text.success)
         },
+        EntryAccent::Bitcoin => |t| t.colors.general.accent,
+        EntryAccent::Testnet => |_| color::BLUE,
     }
 }
 

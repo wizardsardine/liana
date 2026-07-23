@@ -424,7 +424,7 @@ fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
             Tile::Import,
             "Import extended public key file",
             None::<String>,
-            Some(list::entry_chevron()),
+            Some(list::right_chevron()),
             button::EntryWidth::Standard,
             Some(Msg::XpubLoadFromFile),
         );
@@ -433,7 +433,7 @@ fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
             Tile::Paste,
             "Paste an extended public key",
             None::<String>,
-            Some(list::entry_chevron()),
+            Some(list::right_chevron()),
             button::EntryWidth::Standard,
             Some(Msg::XpubSelectPaste),
         );
@@ -466,7 +466,7 @@ fn select_footer_buttons(modal_state: &XpubEntryModalState) -> Element<'_, Msg> 
     let buttons = row![
         btn_cancel(Some(Msg::XpubCancelModal)),
         clear_button,
-        btn_save(can_save.then_some(Msg::XpubSave))
+        btn_save(can_save.then_some(Msg::XpubSave), true)
     ]
     .spacing(HSpacing::M);
 
@@ -482,7 +482,7 @@ fn details_footer_buttons(modal_state: &XpubEntryModalState) -> Element<'_, Msg>
     let can_save =
         modal_state.validate().is_ok() && modal_state.has_changes() && !modal_state.processing;
     let clear_button = btn_clear(modal_state.current_xpub.is_some().then_some(Msg::XpubClear));
-    let save_button = btn_save(can_save.then_some(Msg::XpubSave));
+    let save_button = btn_save(can_save.then_some(Msg::XpubSave), true);
 
     if let Some(retry_button) = retry_button {
         row![retry_button, Space::fill_width(), clear_button, save_button]

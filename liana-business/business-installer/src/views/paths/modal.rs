@@ -254,7 +254,7 @@ pub fn edit_path_modal_view<'a>(
     let has_keys = !modal_state.selected_key_ids.is_empty();
     let can_save = has_keys && threshold_valid && (modal_state.is_primary || timelock_valid);
 
-    let save_button = btn_save(can_save.then_some(Msg::TemplateSavePath));
+    let save_button = btn_save(can_save.then_some(Msg::TemplateSavePath), true);
 
     let footer = row![
         Space::fill_width(),

@@ -37,6 +37,7 @@ pub struct ImportDescriptor {
     imported_descriptor: form::Value<String>,
     imported_backup: Option<Backup>,
     imported_aliases: Option<HashMap<Fingerprint, KeySetting>>,
+    paste_descriptor_expanded: bool,
 }
 
 impl ImportDescriptor {
@@ -49,6 +50,7 @@ impl ImportDescriptor {
             modal: ImportDescriptorModal::None,
             imported_backup: None,
             imported_aliases: None,
+            paste_descriptor_expanded: false,
         }
     }
 
@@ -101,6 +103,12 @@ impl Step for ImportDescriptor {
                 }
                 self.imported_descriptor.value = desc;
                 self.check_descriptor(self.network);
+                None
+            }
+            Message::DefineDescriptor(message::DefineDescriptor::ShowImportDescriptor(
+                expanded,
+            )) => {
+                self.paste_descriptor_expanded = expanded;
                 None
             }
             Message::ImportBackup => {
@@ -226,15 +234,18 @@ impl Step for ImportDescriptor {
         &'a self,
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
+        network: Network,
         email: Option<&'a str>,
     ) -> Element<'a, Message> {
         let content = view::import_descriptor(
             progress,
+            network,
             email,
             &self.imported_descriptor,
             self.imported_backup.is_some(),
             self.wrong_network,
             self.error.as_ref(),
+            self.paste_descriptor_expanded,
         );
         self.modal.view(content)
     }
@@ -374,12 +385,14 @@ impl Step for RegisterDescriptor {
         &'a self,
         hws: &'a HardwareWallets,
         progress: (usize, usize),
+        network: Network,
         email: Option<&'a str>,
     ) -> Element<'a, Message> {
         let desc = self.descriptor.as_ref().unwrap();
 
         view::register_descriptor(
             progress,
+            network,
             email,
             desc,
             &hws.list,
@@ -420,6 +433,7 @@ pub struct BackupDescriptor {
     modal: Option<ExportModal>,
     error: Option<Error>,
     context: Option<Context>,
+    help_open: bool,
 }
 
 impl Step for BackupDescriptor {
@@ -479,6 +493,9 @@ impl Step for BackupDescriptor {
             Message::UserActionDone(done) => {
                 self.done = done;
             }
+            Message::ShowBackupDescriptorHelp(open) => {
+                self.help_open = open;
+            }
             _ => {}
         }
         Task::none()
@@ -499,15 +516,18 @@ impl Step for BackupDescriptor {
         &'a self,
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
+        network: Network,
         email: Option<&'a str>,
     ) -> Element<'a, Message> {
         let content = view::backup_descriptor(
             progress,
+            network,
             email,
             self.descriptor.as_ref().expect("Must be a descriptor"),
             &self.keys,
             self.error.as_ref(),
             self.done,
+            self.help_open,
         );
         if let Some(modal) = &self.modal {
             modal.view(content)

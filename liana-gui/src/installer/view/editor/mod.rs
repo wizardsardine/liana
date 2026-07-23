@@ -2,9 +2,10 @@
 
 pub mod template;
 
-use iced::widget::{container, slider, Button, Space};
+use iced::widget::{container, slider, Space};
 use iced::{alignment, Alignment, Length};
 
+use liana_ui::component::button::{btn_edit, btn_remove, btn_set};
 use liana_ui::component::text::{p1_bold, p2_regular, H3_SIZE};
 use std::borrow::Cow;
 use std::fmt::Display;
@@ -171,6 +172,8 @@ pub fn defined_key<'a>(
     warning: Option<&'static str>,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {
+    let delete_button = (!fixed).then_some(btn_remove(Some(message::DefineKey::Delete)));
+    let edit_button = btn_edit(Some(message::DefineKey::EditAlias));
     card::simple(
         Row::new()
             .spacing(10)
@@ -194,20 +197,8 @@ pub fn defined_key<'a>(
             } else {
                 None
             })
-            .push(
-                button::secondary(Some(icon::pencil_icon()), "Edit")
-                    .on_press(message::DefineKey::EditAlias),
-            )
-            .push_maybe(if fixed {
-                None
-            } else {
-                Some(
-                    Button::new(icon::trash_icon())
-                        .style(theme::button::secondary)
-                        .padding(5)
-                        .on_press(message::DefineKey::Delete),
-                )
-            }),
+            .push(edit_button)
+            .push_maybe(delete_button),
     )
     .into()
 }
@@ -218,6 +209,8 @@ pub fn undefined_key<'a>(
     active: bool,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {
+    let delete_button = (!fixed).then_some(btn_remove(Some(message::DefineKey::Delete)));
+    let set_button = active.then_some(btn_set(Some(message::DefineKey::Edit)));
     card::simple(
         Row::new()
             .spacing(10)
@@ -230,24 +223,8 @@ pub fn undefined_key<'a>(
                     .spacing(5)
                     .push(p1_bold(title)),
             )
-            .push_maybe(if active {
-                Some(
-                    button::primary(Some(icon::pencil_icon()), "Set")
-                        .on_press(message::DefineKey::Edit),
-                )
-            } else {
-                None
-            })
-            .push_maybe(if fixed {
-                None
-            } else {
-                Some(
-                    Button::new(icon::trash_icon())
-                        .style(theme::button::secondary)
-                        .padding(5)
-                        .on_press(message::DefineKey::Delete),
-                )
-            }),
+            .push_maybe(set_button)
+            .push_maybe(delete_button),
     )
     .into()
 }

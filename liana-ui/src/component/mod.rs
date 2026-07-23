@@ -7,6 +7,7 @@ pub mod checkbox;
 pub mod collapse;
 pub mod combobox;
 pub mod form;
+pub mod installer;
 pub mod label;
 pub mod list;
 pub mod modal;

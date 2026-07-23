@@ -10,7 +10,7 @@ use iced::{
     alignment::{Horizontal, Vertical},
     clipboard,
     widget::{column, container, row, Column, Row, Space},
-    Length, Subscription, Task,
+    Alignment, Length, Subscription, Task,
 };
 use liana::miniscript::{
     bitcoin::{
@@ -1004,16 +1004,13 @@ impl SelectKeySource {
     ) -> Element<'_, Message> {
         let mut col = column![p1_bold("Detected hardware")]
             .spacing(5)
+            .align_x(Alignment::Center)
             .width(modal::BTN_W);
         for hw in hws {
             col = col.push(self.widget_signing_device(hw));
         }
         if hws.is_empty() {
-            col = col.push(row![
-                Space::with_width(Length::Fill),
-                p1_regular("- No other sources detected -"),
-                Space::with_width(Length::Fill)
-            ])
+            col = col.push(modal_no_devices_placeholder());
         }
         col.into()
     }

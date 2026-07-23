@@ -72,9 +72,9 @@ pub fn border(theme: &Theme) -> Style {
     }
 }
 
-pub fn step_dot_filled(_theme: &Theme) -> Style {
+pub fn step_dot_filled(theme: &Theme) -> Style {
     Style {
-        background: Some(Background::Color(color::BUSINESS_BLUE)),
+        background: Some(Background::Color(theme.colors.general.accent)),
         border: Border {
             radius: 4.0.into(),
             ..Default::default()

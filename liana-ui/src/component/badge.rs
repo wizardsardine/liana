@@ -105,15 +105,31 @@ icon_badge!(backup, backup_icon, simple);
 icon_badge!(restore, restore_icon, simple);
 
 pub fn tile<'a, M>(name: Tile) -> Container<'a, M> {
+    tile_with_tone(name, None)
+}
+
+pub fn tile_accent<'a, M>(name: Tile) -> Container<'a, M> {
+    tile_with_tone(name, Some(TileStyle::Accent))
+}
+
+fn tile_with_tone<'a, M>(name: Tile, tone: Option<TileStyle>) -> Container<'a, M> {
+    let none = tone.is_none();
     let spec = tile_spec(name);
-    let tone = spec.tone;
+    let tone = tone.unwrap_or(spec.tone);
     let size = spec.size;
     let icon =
         spec.icon
             .width(size.size)
             .size(size.icon_size)
-            .style(move |theme: &theme::Theme| iced::widget::text::Style {
-                color: Some(tile_tone(theme, tone).fg),
+            .style(move |theme: &theme::Theme| {
+                let tone = if !theme.is_business() && none {
+                    TileStyle::Accent
+                } else {
+                    tone
+                };
+                iced::widget::text::Style {
+                    color: Some(tile_tone(theme, tone).fg),
+                }
             });
 
     Container::new(icon)

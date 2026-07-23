@@ -1,10 +1,15 @@
-use iced::{alignment, widget::Space, Alignment, Length};
+use iced::{
+    alignment,
+    widget::{row, Space},
+    Alignment, Length,
+};
+use liana::miniscript::bitcoin::Network;
 
 use liana_ui::{
     color,
     component::{
-        button,
-        text::{h3, p1_regular, Text, H3_SIZE},
+        button::btn_next,
+        text::{new, H3_SIZE},
     },
     icon, image, theme,
     widget::*,
@@ -19,17 +24,21 @@ use crate::installer::{
     },
 };
 
-pub fn inheritance_template_description(progress: (usize, usize)) -> Element<'static, Message> {
+pub fn inheritance_template_description(
+    progress: (usize, usize),
+    network: Network,
+) -> Element<'static, Message> {
+    let row_next = row![Space::fill_width(), btn_next(Some(Message::Next))];
     layout(
         progress,
+        network,
         None,
         "Introduction",
         Column::new()
             .align_x(Alignment::Start)
-            .push(h3("Simple inheritance wallet"))
-            .max_width(800.0)
+            .push(new::b1_bold("Simple inheritance wallet"))
             .push(Container::new(
-                p1_regular("For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key.")
+                new::caption("For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key.")
                 .style(theme::text::secondary)
                 .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
@@ -40,31 +49,31 @@ pub fn inheritance_template_description(progress: (usize, usize)) -> Element<'st
                     .align_y(Alignment::Center)
                     .spacing(10)
                     .push(icon::round_key_icon().size(H3_SIZE).color(color::GREEN))
-                    .push(p1_regular("Primary key").bold())
+                    .push(new::b5_bold("Primary key"))
                 ).push(
                     Row::new()
                         .align_y(Alignment::Center)
                         .spacing(10)
                         .push(icon::round_key_icon().size(H3_SIZE).color(color::WHITE))
-                        .push(p1_regular("Inheritance key").bold())
+                        .push(new::b5_bold("Inheritance key"))
             ))
             .push(Container::new(
-                p1_regular("You will always be able to spend using your Primary Key.
+                new::caption("You will always be able to spend using your Primary Key.
 After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds.")
                 .style(theme::text::secondary)
                 .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::inheritance_template_description().width(Length::Fill))
-            .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
+            .push(row_next)
             .push(Space::with_height(50.0))
             .spacing(20),
-        true,
         Some(Message::Previous),
     )
 }
 
 pub fn inheritance_template<'a>(
     progress: (usize, usize),
+    network: Network,
     use_taproot: bool,
     primary_path: &'a Path,
     recovery_path: &'a Path,
@@ -135,11 +144,11 @@ pub fn inheritance_template<'a>(
 
     layout(
         progress,
+        network,
         None,
         "Set keys",
         Column::new()
             .align_x(Alignment::Start)
-            .max_width(super::MAX_WIDTH)
             .push(advanced_settings)
             .push(primary)
             .push(recovery)
@@ -147,7 +156,6 @@ pub fn inheritance_template<'a>(
             .push(footer)
             .push(Space::with_height(super::BOTTOM_PADDING))
             .spacing(20),
-        true,
         Some(Message::Previous),
     )
 }

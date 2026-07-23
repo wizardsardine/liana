@@ -24,6 +24,10 @@ pub fn vertical<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Scrollable<'a,
         .spacing(SPACING)
 }
 
+pub fn vertical_floating<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Scrollable<'a, M> {
+    Scrollable::new(content).direction(Direction::Vertical(Scrollbar::default()))
+}
+
 pub fn horizontal_thin<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Scrollable<'a, M> {
     Scrollable::new(content)
         .direction(Direction::Horizontal(thin_scrollbar()))

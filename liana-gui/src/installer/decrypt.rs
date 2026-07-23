@@ -591,6 +591,9 @@ fn valid_content(state: &DecryptModal) -> Container<'static, installer::Message>
     );
 
     let mut col = Column::new().spacing(5).push(description);
+    if devices.is_empty() {
+        col = col.push(modal::modal_no_devices_placeholder());
+    }
     for d in devices {
         col = col.push(d);
     }
@@ -668,7 +671,7 @@ pub fn mnemonic_input_button<'a>(
     modal::acked_input_button(
         collapsed,
         ack,
-        || icon::pencil_icon().color(color::WHITE),
+        || icon::edit_icon().color(color::WHITE),
         "UNSAFE: Enter mnemonic of one of the keys",
         " This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds.",
         "code code code code code code code code code code code brave",

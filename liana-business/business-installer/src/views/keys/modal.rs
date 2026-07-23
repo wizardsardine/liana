@@ -298,7 +298,7 @@ fn footer<'a>(can_save: bool) -> Element<'a, Message> {
     row![
         Space::fill_width(),
         btn_cancel(Some(Message::KeyCancelModal)),
-        btn_save(can_save.then_some(Message::KeySave)),
+        btn_save(can_save.then_some(Message::KeySave), true),
     ]
     .spacing(HSpacing::ML)
     .align_y(Vertical::Center)

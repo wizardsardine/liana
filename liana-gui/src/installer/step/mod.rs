@@ -51,6 +51,7 @@ pub trait Step {
         &'a self,
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
+        network: Network,
         email: Option<&'a str>,
     ) -> Element<'a, Message>;
 
@@ -189,10 +190,12 @@ impl Step for Final {
         &'a self,
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
+        network: Network,
         email: Option<&'a str>,
     ) -> Element<'a, Message> {
         view::install(
             progress,
+            network,
             email,
             self.generating,
             self.wallet_settings.is_some(),

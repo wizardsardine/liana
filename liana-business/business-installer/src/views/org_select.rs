@@ -84,11 +84,10 @@ fn is_wallet_accessible(
 
 pub fn org_card<'a>(name: String, id: Uuid, subtitle: Option<String>) -> Element<'a, Msg> {
     let name = truncate(&name, 30);
-    let trailing = list::entry_chevron();
 
     let message = Some(Msg::OrgSelected(id));
 
-    list::entry_organization(name, subtitle, Some(trailing), message)
+    list::entry_organization(name, subtitle, message)
 }
 
 pub fn no_org_card() -> Container<'static, Msg> {
@@ -191,6 +190,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
 
     select_list_view(SelectListView {
         progress: (3, INSTALLER_STEPS),
+        network: state.network,
         email: current_user_email,
         is_ws_admin,
         breadcrumb: vec!["Organizations".to_string()],
