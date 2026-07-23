@@ -25,6 +25,8 @@ use crate::{
 use super::text::truncate;
 
 const COLLAPSIBLE_ENTRY_CONTENT_BOTTOM_PADDING: u16 = 10;
+/// Gap between the leading tile and the body of an entry row.
+pub const ENTRY_H_SPACING: HSpacing = HSpacing::L;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum EntryAccent {
@@ -164,7 +166,7 @@ pub fn list_entry_row<'a, M: Clone + 'a>(
     let body = Container::new(body).width(Length::Fill);
     let trailing = trailing.map(|trailing| Container::new(trailing).align_y(Alignment::Center));
     let content = row![tile, body, trailing]
-        .spacing(16)
+        .spacing(ENTRY_H_SPACING)
         .align_y(Alignment::Center)
         .width(Length::Fill);
 
@@ -197,7 +199,7 @@ pub fn list_entry_row_static<'a, M: Clone + 'a>(
     let body = Container::new(body).width(Length::Fill);
     let trailing = trailing.map(|trailing| Container::new(trailing).align_y(Alignment::Center));
     let content = row![tile, body, trailing]
-        .spacing(16)
+        .spacing(ENTRY_H_SPACING)
         .align_y(Alignment::Center)
         .width(Length::Fill);
 
@@ -274,7 +276,7 @@ fn collapsible_entry_header<'a, M: Clone + 'a>(
         badge::tile_accent(tile),
         Container::new(item_body(title, subtitle)).width(Length::Fill),
     ]
-    .spacing(16)
+    .spacing(ENTRY_H_SPACING)
     .align_y(Alignment::Center)
     .width(Length::Fill);
 
@@ -406,7 +408,7 @@ pub fn list_entry_chevron<'a, M: Clone + 'a>(
         .align_y(Alignment::Center);
     let body = Container::new(body).width(Length::Fill);
     let content = row![tile, body, trailing]
-        .spacing(16)
+        .spacing(ENTRY_H_SPACING)
         .align_y(Alignment::Center)
         .width(Length::Fill);
 
@@ -539,7 +541,7 @@ fn list_entry_row_with_enabled<'a, M: Clone + 'a>(
     let body = Container::new(body).width(Length::Fill);
     let trailing = trailing.map(|trailing| Container::new(trailing).align_y(Alignment::Center));
     let content = row![tile, body, trailing]
-        .spacing(16)
+        .spacing(ENTRY_H_SPACING)
         .align_y(Alignment::Center)
         .width(Length::Fill);
 

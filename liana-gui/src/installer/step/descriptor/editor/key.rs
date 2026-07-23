@@ -1,4 +1,3 @@
-use crate::utils::example_xpub;
 use std::{
     collections::HashMap,
     str::FromStr,
@@ -24,12 +23,12 @@ use liana_ui::{
     color,
     component::{
         button, card, form,
-        modal::{self, collapsible_input_button, modal_no_devices_placeholder},
+        modal::{self, modal_no_devices_placeholder, KeySourceKind},
         pick_list,
         text::{p1_bold, p1_regular},
         tooltip,
     },
-    icon, theme,
+    theme,
     widget::{ColumnExt, Container, Element, RowExt, SpaceExt},
 };
 
@@ -1029,17 +1028,36 @@ impl SelectKeySource {
         self.actual_path.token_kind.contains(&KeyKind::Cosigner)
     }
     fn view_other_options(&self) -> Element<'_, Message> {
-        let safety_net_token = self
-            .safety_net_enabled()
-            .then_some(self.widget_paste_safety_net_token());
+        let safety_net_token = self.safety_net_enabled().then(|| {
+            modal::safety_net_token_entry(
+                self.focus == Focus::EnterSafetyNetToken,
+                &self.form_safety_net_token,
+                Some(|token| Self::route(SelectKeySourceMessage::Token(token))),
+                Some(|| Self::route(SelectKeySourceMessage::PasteToken)),
+                || Self::route(SelectKeySourceMessage::SelectEnterSafetyNetToken),
+            )
+        });
 
-        let cosigner_token = self
-            .cosigner_enabled()
-            .then_some(self.widget_paste_cosigner_token());
+        let cosigner_token = self.cosigner_enabled().then(|| {
+            modal::cosigner_token_entry(
+                self.focus == Focus::EnterCosignerToken,
+                &self.form_cosigner_token,
+                Some(|token| Self::route(SelectKeySourceMessage::Token(token))),
+                Some(|| Self::route(SelectKeySourceMessage::PasteToken)),
+                || Self::route(SelectKeySourceMessage::SelectEnterCosignerToken),
+            )
+        });
 
-        let paste_xpub = safety_net_token
-            .is_none()
-            .then_some(self.widget_paste_xpub());
+        let paste_xpub = safety_net_token.is_none().then(|| {
+            modal::paste_xpub_entry(
+                self.focus == Focus::EnterXpub,
+                self.network,
+                &self.form_xpub,
+                Some(|xpub| Self::route(SelectKeySourceMessage::Xpub(xpub))),
+                Some(|| Self::route(SelectKeySourceMessage::PasteXpub)),
+                || Self::route(SelectKeySourceMessage::SelectEnterXpub),
+            )
+        });
 
         let collapsed = self.options_collapsed || safety_net_token.is_some();
 
@@ -1052,9 +1070,18 @@ impl SelectKeySource {
 
         let hot_signer_fg = self.hot_signer.lock().expect("poisoned").fingerprint();
         let hot_signer = (!self.keys.contains_key(&hot_signer_fg) && safety_net_token.is_none())
-            .then_some(self.widget_generate_hot_key());
+            .then(|| {
+                modal::generate_hot_key_entry(Some(|| {
+                    Self::route(SelectKeySourceMessage::SelectGenerateHotKey)
+                }))
+            });
 
-        let load_key = safety_net_token.is_none().then_some(self.widget_load_key());
+        let load_key = safety_net_token.is_none().then(|| {
+            modal::import_xpub_entry(
+                self.import_xpub_error.clone(),
+                Some(|| Self::route(SelectKeySourceMessage::SelectLoadXpub)),
+            )
+        });
 
         let mut col = Column::new()
             .push(option_section)
@@ -1123,7 +1150,7 @@ impl SelectKeySource {
         }
         let fingerprint = fg.map(|fg| format!("#{fg}"));
         modal::key_entry(
-            Some(icon::usb_drive_icon()),
+            KeySourceKind::Device,
             alias,
             fingerprint,
             None,
@@ -1142,11 +1169,11 @@ impl SelectKeySource {
         ),
     ) -> Element<'_, Message> {
         let (source, alias, fg, available) = key;
-        let icon = match source {
-            KeySource::Device(..) => icon::usb_drive_icon(),
-            KeySource::HotSigner => icon::round_key_icon().color(color::RED),
-            KeySource::Manual => icon::round_key_icon(),
-            KeySource::Token(..) => icon::hdd_icon(),
+        let kind = match source {
+            KeySource::Device(..) => KeySourceKind::Device,
+            KeySource::HotSigner => KeySourceKind::HotKey,
+            KeySource::Manual => KeySourceKind::Xpub,
+            KeySource::Token(..) => KeySourceKind::Token,
         };
         let message = if let KeySource::Token(kind, _) = source {
             if !self.actual_path.token_kind.contains(&kind) {
@@ -1161,69 +1188,7 @@ impl SelectKeySource {
         let on_press = message
             .is_none()
             .then_some(Self::route(SelectKeySourceMessage::SelectKey(fg)));
-        modal::key_entry(
-            Some(icon),
-            alias,
-            Some(fg_str),
-            None,
-            None,
-            message,
-            on_press,
-        )
-    }
-    fn widget_load_key(&self) -> Element<'_, Message> {
-        modal::button_entry(
-            Some(icon::import_icon()),
-            "Import extended public key file",
-            None,
-            self.import_xpub_error.clone(),
-            Some(|| Self::route(SelectKeySourceMessage::SelectLoadXpub)),
-        )
-    }
-    fn widget_generate_hot_key(&self) -> Element<'_, Message> {
-        modal::button_entry(
-            Some(icon::round_key_icon().color(color::RED)),
-            "Generate hot key stored on this computer",
-            Some("We recommend to use this option only for test purposes"),
-            None,
-            Some(|| Self::route(SelectKeySourceMessage::SelectGenerateHotKey)),
-        )
-    }
-    fn widget_paste_xpub(&self) -> Element<'_, Message> {
-        collapsible_input_button(
-            self.focus == Focus::EnterXpub,
-            Some(icon::paste_icon()),
-            "Paste an extended public key".to_string(),
-            example_xpub(self.network),
-            &self.form_xpub,
-            Some(|xpub| Self::route(SelectKeySourceMessage::Xpub(xpub))),
-            Some(|| Self::route(SelectKeySourceMessage::PasteXpub)),
-            || Self::route(SelectKeySourceMessage::SelectEnterXpub),
-        )
-    }
-    fn widget_paste_safety_net_token(&self) -> Element<'_, Message> {
-        collapsible_input_button(
-            self.focus == Focus::EnterSafetyNetToken,
-            Some(icon::enter_box_icon()),
-            "Enter a Safety Net token".to_string(),
-            "aaaa-bbbb-cccc".to_string(),
-            &self.form_safety_net_token,
-            Some(|token| Self::route(SelectKeySourceMessage::Token(token))),
-            Some(|| Self::route(SelectKeySourceMessage::PasteToken)),
-            || Self::route(SelectKeySourceMessage::SelectEnterSafetyNetToken),
-        )
-    }
-    fn widget_paste_cosigner_token(&self) -> Element<'_, Message> {
-        collapsible_input_button(
-            self.focus == Focus::EnterCosignerToken,
-            Some(icon::enter_box_icon()),
-            "Enter a Cosigner token".to_string(),
-            "aaaa-bbbb-cccc".to_string(),
-            &self.form_cosigner_token,
-            Some(|token| Self::route(SelectKeySourceMessage::Token(token))),
-            Some(|| Self::route(SelectKeySourceMessage::PasteToken)),
-            || Self::route(SelectKeySourceMessage::SelectEnterCosignerToken),
-        )
+        modal::key_entry(kind, alias, Some(fg_str), None, None, message, on_press)
     }
 }
 

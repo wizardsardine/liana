@@ -26,7 +26,6 @@ use liana::{
     },
 };
 use liana_ui::{
-    color,
     component::{
         card,
         form::Value,
@@ -44,7 +43,7 @@ use crate::{
     export::ImportExportType,
     hw::{HardwareWallet, HardwareWallets},
     installer,
-    utils::{default_derivation_path, example_xpub},
+    utils::default_derivation_path,
 };
 
 #[allow(unused, clippy::enum_variant_names)]
@@ -624,29 +623,28 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
         ))
         .spacing(5);
 
-    let import = modal::button_entry(
-        Some(icon::import_icon()),
-        "Upload extended public key file",
-        None,
+    let import = modal::import_xpub_entry(
         state.import_xpub_error.clone(),
         Some(|| Decrypt::SelectImportXpub.into()),
     );
 
-    let xpub = modal::collapsible_input_button(
+    let xpub = modal::paste_xpub_entry(
         state.focus == Focus::Xpub,
-        Some(icon::paste_icon()),
-        "Paste an extended public key".to_string(),
-        example_xpub(state.network),
+        state.network,
         &state.xpub,
         Some(|s| Decrypt::Xpub(s).into()),
         Some(|| Decrypt::PasteXpub.into()),
         || Decrypt::SelectXpub.into(),
     );
 
-    let mnemonic = mnemonic_input_button(
+    let mnemonic = modal::enter_mnemonic_entry(
         state.focus == Focus::Mnemonic,
         state.mnemonic_ack,
         &state.mnemonic,
+        |ack| Decrypt::MnemonicAck(ack).into(),
+        |s| Decrypt::Mnemonic(s).into(),
+        || Decrypt::PasteMnemonic.into(),
+        || Decrypt::SelectMnemonic.into(),
     );
 
     let col = column![
@@ -661,26 +659,6 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
     ];
 
     Container::new(col)
-}
-
-pub fn mnemonic_input_button<'a>(
-    collapsed: bool,
-    ack: bool,
-    input_value: &Value<String>,
-) -> Element<'a, installer::Message> {
-    modal::acked_input_button(
-        collapsed,
-        ack,
-        || icon::edit_icon().color(color::WHITE),
-        "UNSAFE: Enter mnemonic of one of the keys",
-        " This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds.",
-        "code code code code code code code code code code code brave",
-        input_value,
-        |ack| Decrypt::MnemonicAck(ack).into(),
-        |s| Decrypt::Mnemonic(s).into(),
-        || Decrypt::PasteMnemonic.into(),
-        || Decrypt::SelectMnemonic.into(),
-    )
 }
 
 /// Return the modal view for an export task

@@ -3,7 +3,7 @@ use std::{
     time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
 
-use liana::miniscript::bitcoin::{self, bip32::DerivationPath, Network};
+use liana::miniscript::bitcoin::{bip32::DerivationPath, Network};
 
 pub mod serde;
 pub mod subscription;
@@ -22,12 +22,6 @@ pub fn now() -> Duration {
 /// Faliible version of [`now`].
 pub fn now_fallible() -> Result<Duration, SystemTimeError> {
     SystemTime::now().duration_since(UNIX_EPOCH)
-}
-
-pub fn example_xpub(network: Network) -> String {
-    format!("[aabbccdd/42'/0']{}pub6DAkq8LWw91WGgUGnkR5Sbzjev5JCsXaTVZQ9MwsPV4BkNFKygtJ8GHodfDVx1udR723nT7JASqGPpKvz7zQ25pUTW6zVEBdiWoaC4aUqik",
-        if network == bitcoin::Network::Bitcoin { "x" } else { "t" }
-    )
 }
 
 pub fn default_derivation_path(network: Network) -> DerivationPath {

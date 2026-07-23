@@ -22,6 +22,7 @@ pub enum Tile {
     KeyInternal,
     KeyExternal,
     KeyService,
+    KeyHot,
     Device,
     Account,
     DeviceMuted,
@@ -30,6 +31,8 @@ pub enum Tile {
     Restricted,
     Import,
     Paste,
+    EnterToken,
+    Mnemonic,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -182,6 +185,7 @@ tile_specs! {
     (KeyInternal, round_key_icon, Neutral, DEFAULT),
     (KeyExternal, scale_icon, Neutral, DEFAULT),
     (KeyService, shield_icon, Neutral, DEFAULT),
+    (KeyHot, round_key_icon, Danger, DEFAULT),
     (Device, usb_icon, Neutral, DEFAULT),
     (Account, person_icon, Neutral, DEFAULT),
     (DeviceMuted, usb_icon, Muted, DEFAULT),
@@ -190,6 +194,8 @@ tile_specs! {
     (Restricted, lock_icon, Muted, XL),
     (Import, import_icon, Neutral, DEFAULT),
     (Paste, paste_icon, Neutral, DEFAULT),
+    (EnterToken, enter_box_icon, Neutral, DEFAULT),
+    (Mnemonic, edit_icon, Neutral, DEFAULT),
 }
 
 fn tile_tone(theme: &theme::Theme, tone: TileStyle) -> theme::palette::Tile {
