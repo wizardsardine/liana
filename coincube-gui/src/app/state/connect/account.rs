@@ -14,9 +14,8 @@ use crate::{
         CreateDuressAlertContactRequest, CreateInviteRequest, DuressAlertContact,
         DuressCheckOutcome, FeaturesResponse, Invite, LoginActivity, LoginResponse, OtpRequest,
         OtpVerifyRequest, PlanStatus, PlanTier, ReceivedInvite, RecoveryKitStatus,
-        UpdateDuressAlertContactRequest,
-        User, VerifiedDevice, DURESS_CHANNEL_EMAIL, DURESS_CHANNEL_SMS, DURESS_CHANNEL_WHATSAPP,
-        MAX_DURESS_ALERT_CONTACTS,
+        UpdateDuressAlertContactRequest, User, VerifiedDevice, DURESS_CHANNEL_EMAIL,
+        DURESS_CHANNEL_SMS, DURESS_CHANNEL_WHATSAPP, MAX_DURESS_ALERT_CONTACTS,
     },
 };
 
@@ -253,12 +252,19 @@ pub fn cube_backup_completeness(
 /// restores the same material as the password blob — so either satisfies it
 /// (PLAN-duress-vault-gate; the checklist half PLAN-keychain-crk-status-fixes
 /// missed, fixed 2026-07-22).
+///
+/// A sealed kind only counts when a recipient is also registered
+/// (`has_recipient`), matching `derive_phone_recovery`'s restorability gate in
+/// `home.rs`: phone recovery needs the phone key present, so kinds arriving
+/// without a recipient are not restorable. Failing closed here keeps the gate
+/// from reading "Complete" (and permitting enrollment) for material Connect
+/// could not actually restore after a wipe.
 pub fn duress_kit_halves(status: &RecoveryKitStatus) -> (bool, bool) {
     let sealed = |kind: &str| {
         status
             .owner_self
             .as_ref()
-            .is_some_and(|o| o.envelope_kinds.iter().any(|k| k == kind))
+            .is_some_and(|o| o.has_recipient && o.envelope_kinds.iter().any(|k| k == kind))
     };
     (
         status.has_encrypted_seed || sealed("seed"),
@@ -4935,7 +4941,10 @@ mod duress_enroll_tests {
 
     #[test]
     fn duress_kit_halves_password_only_unchanged() {
-        assert_eq!(duress_kit_halves(&kit_status(true, true, &[])), (true, true));
+        assert_eq!(
+            duress_kit_halves(&kit_status(true, true, &[])),
+            (true, true)
+        );
         assert_eq!(
             duress_kit_halves(&kit_status(true, false, &[])),
             (true, false)
@@ -4975,6 +4984,21 @@ mod duress_enroll_tests {
             has_recipient: true,
             tier: "full_cube".to_string(),
             envelope_kinds: vec![],
+        });
+        assert_eq!(duress_kit_halves(&s), (false, false));
+    }
+
+    /// Kinds without a registered recipient are not restorable by phone
+    /// recovery (mirrors `derive_phone_recovery`'s `has_recipient` gate in
+    /// `home.rs`), so the duress gate must fail closed rather than read
+    /// "Complete" for material Connect could not restore after a wipe.
+    #[test]
+    fn duress_kit_halves_ignores_recipientless_kinds() {
+        let mut s = kit_status(false, false, &[]);
+        s.owner_self = Some(OwnerSelfRecoverySummary {
+            has_recipient: false,
+            tier: "full_cube".to_string(),
+            envelope_kinds: vec!["seed".to_string(), "descriptor".to_string()],
         });
         assert_eq!(duress_kit_halves(&s), (false, false));
     }
