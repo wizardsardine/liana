@@ -192,16 +192,12 @@ fn signer_field<'a>(state: &'a State, modal_state: &'a EditKeyModalState) -> Ele
     });
 
     let hint_text = text::new::caption(hint).style(theme::text::secondary);
-    if let Some(invalid_email) = invalid_email {
-        column![
-            field_label("Signer"),
-            signer_picker,
-            invalid_email,
-            hint_text,
-        ]
-    } else {
-        column![field_label("Signer"), signer_picker, hint_text]
-    }
+    column![
+        field_label("Signer email"),
+        signer_picker,
+        invalid_email,
+        hint_text,
+    ]
     .spacing(VSpacing::S)
     .into()
 }
