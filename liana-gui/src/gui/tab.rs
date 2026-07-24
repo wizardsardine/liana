@@ -763,17 +763,22 @@ async fn connect_for_business(
         .ok_or_else(|| login::Error::Unexpected(format!("Wallet {wallet_id} not found")))?;
 
     // Wallet confirmed to belong to the connected user — safe to stamp the
-    // local cache and settings entry. The by_email fallback in the cache
-    // lookup above could otherwise have produced tokens for a different sub.
-    let backfill_auth_cfg = crate::app::settings::AuthConfig {
-        user_id: user_id.clone(),
-        email: email.clone(),
-        wallet_id: wallet_id.clone(),
-        refresh_token: None,
-    };
-    if let Err(e) = login::backfill_local_link(&network_dir, &client, &backfill_auth_cfg).await {
+    // connect-token cache with the authoritative user_id/email. The by_email
+    // fallback in the cache lookup above could otherwise have produced tokens
+    // for a different sub. Business settings are backend-managed, so (unlike
+    // the GUI path) there is no settings.json entry to backfill — only
+    // connect.json.
+    if let Err(e) = connect_cache::stamp_account_identity(
+        &network_dir,
+        user_id.as_deref(),
+        &email,
+        client.user_id(),
+        client.user_email(),
+    )
+    .await
+    {
         // Non-fatal: the wallet still works for this session.
-        tracing::warn!("Failed to backfill Liana-Connect link: {}", e);
+        tracing::warn!("Failed to stamp Liana-Connect cache: {}", e);
     }
 
     // Create wallet client
