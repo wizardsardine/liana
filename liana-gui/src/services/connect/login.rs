@@ -176,12 +176,12 @@ impl LianaLiteLogin {
                     let client = AuthClient::new(
                         service_config.auth_api_url,
                         service_config.auth_api_public_key,
-                        auth_cfg.email,
+                        auth_cfg.email.clone(),
                         backend_type.user_agent(),
                     );
                     connect_with_credentials(
                         client,
-                        auth_cfg.wallet_id,
+                        auth_cfg,
                         service_config.backend_api_url,
                         network,
                         &datadir.network_directory(network),
@@ -495,7 +495,21 @@ pub async fn connect(
     let client =
         BackendClient::connect(auth.clone(), backend_api_url, access.clone(), network).await?;
 
-    update_connect_cache(&network_dir, &access, &auth, false).await?;
+    update_connect_cache(&network_dir, &access, &auth, false, Some(client.user_id())).await?;
+    // If the user just OTP'd in with a different email than a previously
+    // stamped row (server-side email change), `update_connect_cache` will have
+    // written a second row sharing the same user_id. Dedupe here.
+    if let Err(e) = cache::stamp_account_identity(
+        &network_dir,
+        None,
+        &auth.email,
+        client.user_id(),
+        client.user_email(),
+    )
+    .await
+    {
+        tracing::warn!("Failed to stamp user_id on Liana-Connect cache: {}", e);
+    }
 
     let wallets = client.list_wallets().await?;
     if wallets.is_empty() {
@@ -515,6 +529,19 @@ pub async fn connect(
             settings,
         ))
     } else if let Some(wallet) = wallets.into_iter().find(|w| w.id == connect_wallet_id) {
+        // Wallet is confirmed to belong to the OTP'd user, so it's safe to
+        // rewrite its settings entry with the authoritative user_id.
+        if let Err(e) = backfill_settings_for_wallet(
+            &network_dir,
+            &connect_wallet_id,
+            client.user_id(),
+            client.user_email(),
+        )
+        .await
+        {
+            tracing::warn!("Failed to update settings.json after OTP: {}", e);
+        }
+
         let (wallet_client, wallet) = client.connect_wallet(wallet);
         let coins = coins_to_cache(Arc::new(wallet_client.clone())).await?;
         let settings = wallet_client.get_wallet_settings().await?;
@@ -532,21 +559,33 @@ pub async fn connect(
 
 pub async fn connect_with_credentials(
     auth: AuthClient,
-    wallet_id: String,
+    auth_cfg: settings::AuthConfig,
     backend_api_url: String,
     network: Network,
     network_dir: &NetworkDirectory,
 ) -> Result<BackendState, Error> {
-    let mut tokens = cache::Account::from_cache(network_dir, &auth.email)
-        .map_err(|e| match e {
-            ConnectCacheError::NotFound => Error::CredentialsMissing,
-            _ => e.into(),
-        })?
-        .ok_or(Error::CredentialsMissing)?
-        .tokens;
+    let cached = cache::Account::from_cache_by_uid_or_email(
+        network_dir,
+        auth_cfg.user_id.as_deref(),
+        &auth.email,
+    )
+    .map_err(|e| match e {
+        ConnectCacheError::NotFound => Error::CredentialsMissing,
+        _ => e.into(),
+    })?
+    .ok_or(Error::CredentialsMissing)?;
+
+    let mut tokens = cached.tokens;
 
     if tokens.expires_at < chrono::Utc::now().timestamp() {
-        tokens = cache::update_connect_cache(network_dir, &tokens, &auth, true).await?;
+        tokens = cache::update_connect_cache(
+            network_dir,
+            &tokens,
+            &auth,
+            true,
+            auth_cfg.user_id.as_deref(),
+        )
+        .await?;
     }
 
     let client = BackendClient::connect(auth, backend_api_url, tokens, network).await?;
@@ -555,8 +594,13 @@ pub async fn connect_with_credentials(
         .list_wallets()
         .await?
         .into_iter()
-        .find(|w| w.id == wallet_id)
+        .find(|w| w.id == auth_cfg.wallet_id)
     {
+        // Only stamp settings/cache once we've confirmed the wallet belongs
+        // to the connected user. The cached-token by_email fallback above
+        // could otherwise have matched a row for a different `sub`.
+        backfill_local_link(network_dir, &client, &auth_cfg).await?;
+
         let (wallet_client, wallet) = client.connect_wallet(wallet);
         let coins = coins_to_cache(Arc::new(wallet_client.clone())).await?;
         let settings = wallet_client.get_wallet_settings().await?;
@@ -569,4 +613,70 @@ pub async fn connect_with_credentials(
     } else {
         Ok(BackendState::NoWallet(client))
     }
+}
+
+/// After a successful `BackendClient::connect`, ensure both the connect cache
+/// and the per-wallet settings carry the latest `user_id` (JWT `sub`) and email
+/// reported by the backend. Lazily migrates legacy entries that lack `user_id`
+/// and refreshes a stale email if it has been changed on Liana-Connect.
+///
+/// MUST be called only after the wallet has been verified to belong to the
+/// connected user (i.e. `list_wallets` returned a wallet whose id matches
+/// `auth_cfg.wallet_id`); otherwise a stale-by-email cache row could point us
+/// at a different `sub` and we would rewrite local state to that wrong
+/// identity.
+pub async fn backfill_local_link(
+    network_dir: &NetworkDirectory,
+    client: &BackendClient,
+    auth_cfg: &settings::AuthConfig,
+) -> Result<(), Error> {
+    let server_user_id = client.user_id();
+    let server_email = client.user_email();
+
+    cache::stamp_account_identity(
+        network_dir,
+        auth_cfg.user_id.as_deref(),
+        &auth_cfg.email,
+        server_user_id,
+        server_email,
+    )
+    .await?;
+
+    if auth_cfg.user_id.as_deref() != Some(server_user_id) || auth_cfg.email != server_email {
+        backfill_settings_for_wallet(
+            network_dir,
+            &auth_cfg.wallet_id,
+            server_user_id,
+            server_email,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// Patch the `remote_backend_auth` of the wallet identified by `wallet_id` in
+/// settings.json so its `user_id` and `email` match the backend's. Idempotent.
+pub async fn backfill_settings_for_wallet(
+    network_dir: &NetworkDirectory,
+    wallet_id: &str,
+    user_id: &str,
+    email: &str,
+) -> Result<(), Error> {
+    let wallet_id = wallet_id.to_string();
+    let user_id = user_id.to_string();
+    let email = email.to_string();
+    settings::update_settings_file(network_dir, move |mut s: settings::LianaSettings| {
+        for w in s.wallets.iter_mut() {
+            if let Some(a) = w.remote_backend_auth.as_mut() {
+                if a.wallet_id == wallet_id {
+                    a.user_id = Some(user_id.clone());
+                    a.email = email.clone();
+                }
+            }
+        }
+        s
+    })
+    .await
+    .map_err(Error::Settings)
 }

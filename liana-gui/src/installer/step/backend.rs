@@ -537,13 +537,16 @@ pub async fn connect_with_existing_account(
         client::BackendType::LianaConnect.user_agent(),
     );
 
-    let mut tokens = cache::Account::from_cache(&network_dir, &client.email)
+    let mut tokens = cache::Account::from_cache_by_email(&network_dir, &client.email)
         .map_err(|_| Error::Unexpected("Account must be in cache".to_string()))?
         .ok_or(Error::Unexpected("Account must be in cache".to_string()))?
         .tokens;
 
     if tokens.expires_at < chrono::Utc::now().timestamp() {
-        tokens = cache::update_connect_cache(&network_dir, &tokens, &client, true)
+        // BackendClient::connect runs right after this, so we don't yet know
+        // the user_id from the JWT. `upsert_credential` preserves whatever
+        // user_id the existing row already carries.
+        tokens = cache::update_connect_cache(&network_dir, &tokens, &client, true, None)
             .await
             .map_err(|e| Error::Unexpected(format!("Failed to update cache: {e}")))?;
     }

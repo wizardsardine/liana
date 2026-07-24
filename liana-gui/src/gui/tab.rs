@@ -327,11 +327,13 @@ where
                             datadir,
                             network,
                             wallet_id,
+                            user_id,
                             email,
                         } => {
                             // Spawn async task to connect using cached tokens
                             let datadir_clone = datadir.clone();
                             let wallet_id_clone = wallet_id.clone();
+                            let user_id_clone = user_id.clone();
                             let email_clone = email.clone();
                             Task::perform(
                                 async move {
@@ -339,6 +341,7 @@ where
                                         datadir_clone.clone(),
                                         network,
                                         wallet_id_clone.clone(),
+                                        user_id_clone.clone(),
                                         email_clone.clone(),
                                         I::backend_type(),
                                     )
@@ -477,6 +480,9 @@ where
                         let directory_wallet_id =
                             crate::app::settings::WalletId::new(wallet_id.clone(), None);
 
+                        // Capture user_id before moving the backend client.
+                        let user_id = backend_client.user_id().to_string();
+
                         // Use the trait method to create App
                         let result = S::create_app_for_remote_backend(
                             directory_wallet_id,
@@ -498,6 +504,7 @@ where
                                 tracing::error!("Failed to create app: {}", e);
                                 // Fall back to login flow
                                 let auth_cfg = crate::app::settings::AuthConfig {
+                                    user_id: Some(user_id),
                                     email,
                                     wallet_id,
                                     refresh_token: None,
@@ -687,6 +694,7 @@ async fn connect_for_business(
     datadir: LianaDirectory,
     network: bitcoin::Network,
     wallet_id: String,
+    user_id: Option<String>,
     email: String,
     backend_type: crate::services::connect::client::BackendType,
 ) -> Result<
@@ -714,20 +722,30 @@ async fn connect_for_business(
         backend_type.user_agent(),
     );
 
-    // Get tokens from cache
+    // Get tokens from cache: user_id-first, then legacy-email fallback.
     let network_dir = datadir.network_directory(network);
-    let mut tokens = connect_cache::Account::from_cache(&network_dir, &email)
-        .map_err(|e| match e {
-            connect_cache::ConnectCacheError::NotFound => login::Error::CredentialsMissing,
-            _ => e.into(),
-        })?
-        .ok_or(login::Error::CredentialsMissing)?
-        .tokens;
+    let cached = connect_cache::Account::from_cache_by_uid_or_email(
+        &network_dir,
+        user_id.as_deref(),
+        &email,
+    )
+    .map_err(|e| match e {
+        connect_cache::ConnectCacheError::NotFound => login::Error::CredentialsMissing,
+        _ => e.into(),
+    })?
+    .ok_or(login::Error::CredentialsMissing)?;
+    let mut tokens = cached.tokens;
 
     // Refresh if expired
     if tokens.expires_at < chrono::Utc::now().timestamp() {
-        tokens =
-            connect_cache::update_connect_cache(&network_dir, &tokens, &auth_client, true).await?;
+        tokens = connect_cache::update_connect_cache(
+            &network_dir,
+            &tokens,
+            &auth_client,
+            true,
+            user_id.as_deref(),
+        )
+        .await?;
     }
 
     // Connect to backend
@@ -744,6 +762,25 @@ async fn connect_for_business(
         .into_iter()
         .find(|w| w.id == wallet_id)
         .ok_or_else(|| login::Error::Unexpected(format!("Wallet {wallet_id} not found")))?;
+
+    // Wallet confirmed to belong to the connected user — safe to stamp the
+    // connect-token cache with the authoritative user_id/email. The by_email
+    // fallback in the cache lookup above could otherwise have produced tokens
+    // for a different sub. Business settings are backend-managed, so (unlike
+    // the GUI path) there is no settings.json entry to backfill — only
+    // connect.json.
+    if let Err(e) = connect_cache::stamp_account_identity(
+        &network_dir,
+        user_id.as_deref(),
+        &email,
+        client.user_id(),
+        client.user_email(),
+    )
+    .await
+    {
+        // Non-fatal: the wallet still works for this session.
+        tracing::warn!("Failed to stamp Liana-Connect cache: {}", e);
+    }
 
     // Create wallet client
     let (wallet_client, wallet) = client.connect_wallet(wallet);

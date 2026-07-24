@@ -618,7 +618,7 @@ pub async fn check_membership(
             auth.email.to_string(),
             backend_type.user_agent(),
         ),
-        auth.wallet_id.clone(),
+        auth.clone(),
         service_config.backend_api_url,
         network,
         network_dir,

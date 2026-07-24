@@ -149,6 +149,10 @@ impl Installer<'_, Message> for BusinessInstaller {
                 datadir: self.datadir.clone(),
                 network: self.network,
                 wallet_id,
+                // user_id will be populated lazily on the next connect via
+                // `backfill_local_link`, since the business installer flow
+                // does not currently retain a connected BackendClient here.
+                user_id: None,
                 email,
             });
         }
