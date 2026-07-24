@@ -205,7 +205,7 @@ pub fn hdd_icon() -> Text<'static> {
     bootstrap_icon('\u{F412}')
 }
 
-pub fn enter_box_icon() -> Text<'static> {
+pub fn enter_box_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F1BE}')
 }
 
