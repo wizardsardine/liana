@@ -626,6 +626,11 @@ impl Step for ImportRemoteWallet {
                     _ => unreachable!("Step must be skipped otherwise"),
                 };
 
+                let wallets = wallets
+                    .into_iter()
+                    .filter(|w| w.is_personal())
+                    .collect::<Vec<_>>();
+
                 Ok(wallets)
             },
             |res| Message::ImportRemoteWallet(message::ImportRemoteWallet::RemoteWallets(res)),
