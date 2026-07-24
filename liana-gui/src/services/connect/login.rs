@@ -564,27 +564,16 @@ pub async fn connect_with_credentials(
     network: Network,
     network_dir: &NetworkDirectory,
 ) -> Result<BackendState, Error> {
-    let cached = {
-        let by_uid = match &auth_cfg.user_id {
-            Some(uid) => cache::Account::from_cache_by_user_id(network_dir, uid),
-            None => Ok(None),
-        }
-        .map_err(|e| match e {
-            ConnectCacheError::NotFound => Error::CredentialsMissing,
-            _ => e.into(),
-        })?;
-        // Email lookup is the migration fallback: covers caches written before
-        // the user_id stamp landed, plus the picker-by-email flow.
-        match by_uid {
-            Some(a) => a,
-            None => cache::Account::from_cache_by_email(network_dir, &auth.email)
-                .map_err(|e| match e {
-                    ConnectCacheError::NotFound => Error::CredentialsMissing,
-                    _ => e.into(),
-                })?
-                .ok_or(Error::CredentialsMissing)?,
-        }
-    };
+    let cached = cache::Account::from_cache_by_uid_or_email(
+        network_dir,
+        auth_cfg.user_id.as_deref(),
+        &auth.email,
+    )
+    .map_err(|e| match e {
+        ConnectCacheError::NotFound => Error::CredentialsMissing,
+        _ => e.into(),
+    })?
+    .ok_or(Error::CredentialsMissing)?;
 
     let mut tokens = cached.tokens;
 

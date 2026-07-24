@@ -91,6 +91,128 @@ impl Account {
         ConnectCache::from_file(network_dir)
             .map(|cache| cache.accounts.into_iter().find(|c| c.email == email))
     }
+
+    /// Preferred `user_id` lookup with an email fallback. The email path covers
+    /// caches written before the user_id stamp landed and the picker-by-email
+    /// flow. A missing cache file surfaces as `ConnectCacheError::NotFound`.
+    pub fn from_cache_by_uid_or_email(
+        network_dir: &NetworkDirectory,
+        user_id: Option<&str>,
+        email: &str,
+    ) -> Result<Option<Self>, ConnectCacheError> {
+        if let Some(uid) = user_id {
+            if let Some(account) = Self::from_cache_by_user_id(network_dir, uid)? {
+                return Ok(Some(account));
+            }
+        }
+        Self::from_cache_by_email(network_dir, email)
+    }
+}
+
+/// Guard returned by [`open_locked_cache`]; holds the exclusive file lock.
+type LockedCache = async_fd_lock::RwLockWriteGuard<tokio::fs::File>;
+
+/// Open the connect cache under an exclusive write lock and return the parsed
+/// contents alongside the still-locked handle. Returns `None` when the file is
+/// absent and `create_if_missing` is false; an unparsable or empty file yields
+/// an empty cache rather than an error.
+async fn open_locked_cache(
+    network_dir: &NetworkDirectory,
+    create_if_missing: bool,
+) -> Result<Option<(LockedCache, ConnectCache)>, ConnectCacheError> {
+    let mut path = network_dir.path().to_path_buf();
+    path.push(CONNECT_CACHE_FILENAME);
+
+    let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
+    if !file_exists && !create_if_missing {
+        return Ok(None);
+    }
+
+    if create_if_missing {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ConnectCacheError::WritingFile(format!("Creating directory: {e}")))?;
+        }
+    }
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(create_if_missing)
+        .truncate(false)
+        .open(&path)
+        .await
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Opening file: {e}")))?
+        .lock_write()
+        .await
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Locking file: {e:?}")))?;
+
+    let mut file_content = Vec::new();
+    file.read_to_end(&mut file_content)
+        .await
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Reading file content: {e}")))?;
+
+    let cache = if file_content.is_empty() {
+        ConnectCache::default()
+    } else {
+        match serde_json::from_slice::<ConnectCache>(&file_content) {
+            Ok(cache) => cache,
+            Err(e) => {
+                tracing::warn!("Something wrong with Liana-Connect cache file: {:?}", e);
+                tracing::warn!("Liana-Connect cache file is reset");
+                ConnectCache::default()
+            }
+        }
+    };
+
+    Ok(Some((file, cache)))
+}
+
+/// Serialize `cache` back over the locked file, truncating any trailing bytes.
+async fn write_cache_back(
+    file: &mut LockedCache,
+    cache: &ConnectCache,
+) -> Result<(), ConnectCacheError> {
+    let content = serde_json::to_vec_pretty(cache).map_err(|e| {
+        ConnectCacheError::WritingFile(format!("Failed to serialize settings: {e}"))
+    })?;
+
+    file.seek(SeekFrom::Start(0)).await.map_err(|e| {
+        ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {e}"))
+    })?;
+
+    file.write_all(&content).await.map_err(|e| {
+        tracing::warn!("failed to write to file: {:?}", e);
+        ConnectCacheError::WritingFile(e.to_string())
+    })?;
+
+    file.inner_mut()
+        .set_len(content.len() as u64)
+        .await
+        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {e}")))?;
+
+    Ok(())
+}
+
+/// Read-modify-write the cache under lock, persisting only when `mutate`
+/// returns `true`. For mutations that need to `.await` while holding the lock,
+/// use [`open_locked_cache`]/[`write_cache_back`] directly.
+async fn with_locked_cache<F>(
+    network_dir: &NetworkDirectory,
+    create_if_missing: bool,
+    mutate: F,
+) -> Result<(), ConnectCacheError>
+where
+    F: FnOnce(&mut ConnectCache) -> bool,
+{
+    let Some((mut file, mut cache)) = open_locked_cache(network_dir, create_if_missing).await?
+    else {
+        return Ok(());
+    };
+    if mutate(&mut cache) {
+        write_cache_back(&mut file, &cache).await?;
+    }
+    Ok(())
 }
 
 pub async fn update_connect_cache(
@@ -101,45 +223,11 @@ pub async fn update_connect_cache(
     user_id: Option<&str>,
 ) -> Result<AccessTokenResponse, ConnectCacheError> {
     let email = &client.email;
-    let mut path = network_dir.path().to_path_buf();
-    path.push(CONNECT_CACHE_FILENAME);
 
-    // Create parent directory if it doesn't exist
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| ConnectCacheError::WritingFile(format!("Creating directory: {e}")))?;
-    }
-
-    let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
-
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)
-        .await
-        .map_err(|e| ConnectCacheError::ReadingFile(format!("Opening file: {e}")))?
-        .lock_write()
-        .await
-        .map_err(|e| ConnectCacheError::ReadingFile(format!("Locking file: {e:?}")))?;
-
-    let mut cache = if file_exists {
-        let mut file_content = Vec::new();
-        file.read_to_end(&mut file_content)
-            .await
-            .map_err(|e| ConnectCacheError::ReadingFile(format!("Reading file content: {e}")))?;
-
-        match serde_json::from_slice::<ConnectCache>(&file_content) {
-            Ok(cache) => cache,
-            Err(e) => {
-                tracing::warn!("Something wrong with Liana-Connect cache file: {:?}", e);
-                tracing::warn!("Liana-Connect cache file is reset");
-                ConnectCache::default()
-            }
-        }
-    } else {
-        ConnectCache::default()
+    let Some((mut file, mut cache)) = open_locked_cache(network_dir, true).await? else {
+        return Err(ConnectCacheError::Unexpected(
+            "connect cache file missing despite create".to_string(),
+        ));
     };
 
     let existing = cache.accounts.iter().position(|cred| cred.email == *email);
@@ -179,23 +267,7 @@ pub async fn update_connect_cache(
     };
 
     if write_needed {
-        let content = serde_json::to_vec_pretty(&cache).map_err(|e| {
-            ConnectCacheError::WritingFile(format!("Failed to serialize settings: {e}"))
-        })?;
-
-        file.seek(SeekFrom::Start(0)).await.map_err(|e| {
-            ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {e}"))
-        })?;
-
-        file.write_all(&content).await.map_err(|e| {
-            tracing::warn!("failed to write to file: {:?}", e);
-            ConnectCacheError::WritingFile(e.to_string())
-        })?;
-
-        file.inner_mut()
-            .set_len(content.len() as u64)
-            .await
-            .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {e}")))?;
+        write_cache_back(&mut file, &cache).await?;
     }
 
     Ok(tokens_to_return)
@@ -206,71 +278,14 @@ pub async fn filter_connect_cache(
     user_ids: &HashSet<String>,
     legacy_emails: &HashSet<String>,
 ) -> Result<(), ConnectCacheError> {
-    let mut path = network_dir.path().to_path_buf();
-    path.push(CONNECT_CACHE_FILENAME);
-
-    // Create parent directory if it doesn't exist
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| ConnectCacheError::WritingFile(format!("Creating directory: {e}")))?;
-    }
-
-    let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
-
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)
-        .await
-        .map_err(|e| ConnectCacheError::ReadingFile(format!("Opening file: {e}")))?
-        .lock_write()
-        .await
-        .map_err(|e| ConnectCacheError::ReadingFile(format!("Locking file: {e:?}")))?;
-
-    let mut cache = if file_exists {
-        let mut file_content = Vec::new();
-        file.read_to_end(&mut file_content)
-            .await
-            .map_err(|e| ConnectCacheError::ReadingFile(format!("Reading file content: {e}")))?;
-
-        match serde_json::from_slice::<ConnectCache>(&file_content) {
-            Ok(cache) => cache,
-            Err(e) => {
-                tracing::warn!("Something wrong with Liana-Connect cache file: {:?}", e);
-                tracing::warn!("Liana-Connect cache file is reset");
-                ConnectCache::default()
-            }
-        }
-    } else {
-        ConnectCache::default()
-    };
-
-    cache.accounts.retain(|a| match &a.user_id {
-        Some(uid) => user_ids.contains(uid),
-        None => legacy_emails.contains(&a.email),
-    });
-
-    let content = serde_json::to_vec_pretty(&cache).map_err(|e| {
-        ConnectCacheError::WritingFile(format!("Failed to serialize settings: {e}"))
-    })?;
-
-    file.seek(SeekFrom::Start(0)).await.map_err(|e| {
-        ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {e}"))
-    })?;
-
-    file.write_all(&content).await.map_err(|e| {
-        tracing::warn!("failed to write to file: {:?}", e);
-        ConnectCacheError::WritingFile(e.to_string())
-    })?;
-
-    file.inner_mut()
-        .set_len(content.len() as u64)
-        .await
-        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {e}")))?;
-
-    Ok(())
+    with_locked_cache(network_dir, true, |cache| {
+        cache.accounts.retain(|a| match &a.user_id {
+            Some(uid) => user_ids.contains(uid),
+            None => legacy_emails.contains(&a.email),
+        });
+        true
+    })
+    .await
 }
 
 /// Stamp the authoritative `user_id` and `email` reported by Liana-Connect onto
@@ -287,68 +302,10 @@ pub async fn stamp_account_identity(
     new_user_id: &str,
     new_email: &str,
 ) -> Result<(), ConnectCacheError> {
-    let mut path = network_dir.path().to_path_buf();
-    path.push(CONNECT_CACHE_FILENAME);
-
-    let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
-    if !file_exists {
-        return Ok(());
-    }
-
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(false)
-        .truncate(false)
-        .open(&path)
-        .await
-        .map_err(|e| ConnectCacheError::ReadingFile(format!("Opening file: {e}")))?
-        .lock_write()
-        .await
-        .map_err(|e| ConnectCacheError::ReadingFile(format!("Locking file: {e:?}")))?;
-
-    let mut file_content = Vec::new();
-    file.read_to_end(&mut file_content)
-        .await
-        .map_err(|e| ConnectCacheError::ReadingFile(format!("Reading file content: {e}")))?;
-
-    let mut cache = match serde_json::from_slice::<ConnectCache>(&file_content) {
-        Ok(cache) => cache,
-        Err(e) => {
-            tracing::warn!("Cannot parse Liana-Connect cache file: {:?}", e);
-            return Ok(());
-        }
-    };
-
-    if !stamp_in_memory(
-        &mut cache,
-        lookup_user_id,
-        lookup_email,
-        new_user_id,
-        new_email,
-    ) {
-        return Ok(());
-    }
-
-    let content = serde_json::to_vec_pretty(&cache).map_err(|e| {
-        ConnectCacheError::WritingFile(format!("Failed to serialize settings: {e}"))
-    })?;
-
-    file.seek(SeekFrom::Start(0)).await.map_err(|e| {
-        ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {e}"))
-    })?;
-
-    file.write_all(&content).await.map_err(|e| {
-        tracing::warn!("failed to write to file: {:?}", e);
-        ConnectCacheError::WritingFile(e.to_string())
-    })?;
-
-    file.inner_mut()
-        .set_len(content.len() as u64)
-        .await
-        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {e}")))?;
-
-    Ok(())
+    with_locked_cache(network_dir, false, |cache| {
+        stamp_in_memory(cache, lookup_user_id, lookup_email, new_user_id, new_email)
+    })
+    .await
 }
 
 /// In-memory stamp + dedup. Returns true if anything changed.

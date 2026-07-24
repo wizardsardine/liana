@@ -723,25 +723,16 @@ async fn connect_for_business(
 
     // Get tokens from cache: user_id-first, then legacy-email fallback.
     let network_dir = datadir.network_directory(network);
-    let cached = {
-        let by_uid = match &user_id {
-            Some(uid) => connect_cache::Account::from_cache_by_user_id(&network_dir, uid),
-            None => Ok(None),
-        }
-        .map_err(|e| match e {
-            connect_cache::ConnectCacheError::NotFound => login::Error::CredentialsMissing,
-            _ => e.into(),
-        })?;
-        match by_uid {
-            Some(a) => a,
-            None => connect_cache::Account::from_cache_by_email(&network_dir, &email)
-                .map_err(|e| match e {
-                    connect_cache::ConnectCacheError::NotFound => login::Error::CredentialsMissing,
-                    _ => e.into(),
-                })?
-                .ok_or(login::Error::CredentialsMissing)?,
-        }
-    };
+    let cached = connect_cache::Account::from_cache_by_uid_or_email(
+        &network_dir,
+        user_id.as_deref(),
+        &email,
+    )
+    .map_err(|e| match e {
+        connect_cache::ConnectCacheError::NotFound => login::Error::CredentialsMissing,
+        _ => e.into(),
+    })?
+    .ok_or(login::Error::CredentialsMissing)?;
     let mut tokens = cached.tokens;
 
     // Refresh if expired
