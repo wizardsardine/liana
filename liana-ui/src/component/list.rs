@@ -122,11 +122,11 @@ impl<'a, M: 'static> From<DeviceStatus> for Option<Element<'a, M>> {
             DeviceStatus::Processing => {
                 Some(text::new::b5_medium("Processing, please check your device").into())
             }
-            DeviceStatus::NotInPath => {
-                Some(text::new::b5_medium("This signer is not part of this spending path.").into())
-            }
+            DeviceStatus::NotInPath => Some(
+                text::new::b5_medium("This signer is not part of this \nspending path.").into(),
+            ),
             DeviceStatus::Unrelated => Some(
-                text::new::b5_medium("This signing device is not related to this Liana wallet.")
+                text::new::b5_medium("This signing device is not related to \nthis Liana wallet.")
                     .into(),
             ),
             DeviceStatus::WrongNetwork => {
@@ -138,7 +138,8 @@ impl<'a, M: 'static> From<DeviceStatus> for Option<Element<'a, M>> {
             }
             DeviceStatus::Locked(None) => Some(text::new::b5_medium("Locked").into()),
             DeviceStatus::OutdatedFirmware(version) => Some(
-                text::new::b5_medium(format!("Install firmware version {version} or later")).into(),
+                text::new::b5_medium(format!("Install firmware version {version} \nor later"))
+                    .into(),
             ),
             DeviceStatus::Signed => Some(device_success_mark(Some("Signed"))),
             DeviceStatus::Registered => Some(device_success_mark(Some("Registered"))),
