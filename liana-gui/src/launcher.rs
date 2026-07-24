@@ -11,7 +11,7 @@ use liana_ui::{
         card, installer as installer_layout,
         list::{self, EntryAccent},
         notification,
-        text::new,
+        text::{new, short_email},
     },
     icon, image, theme,
     widget::{modal::Modal, Column, Container, Element, SpaceExt},
@@ -344,12 +344,11 @@ fn entry_wallet(network: Network, settings: &WalletSettings, i: usize) -> Elemen
     let checksum = new::caption(format!("Liana-{}", settings.descriptor_checksum))
         .style(theme::text::secondary);
     let email = settings.remote_backend_auth.as_ref().map(|auth| {
-        row![
-            Space::fill_width(),
-            new::caption(&auth.email).style(theme::text::secondary)
-        ]
+        let mail = short_email(&auth.email, 35);
+        new::caption(&mail).style(theme::text::secondary)
     });
-    let subtitle = Some(column![checksum, email].into());
+    let subtitle = row![checksum, Space::fill_width(), email];
+    let subtitle = Some(subtitle.into());
 
     let accent = Some(match network {
         Network::Bitcoin => EntryAccent::Bitcoin,
