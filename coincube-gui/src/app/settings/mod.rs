@@ -1594,7 +1594,8 @@ mod test {
         // drop the fingerprint and regress the Cube to "no recovery kit" on the
         // next launch, so round-trip through the JSON persistence API.
         let json = serde_json::to_string(&cube).expect("CubeSettings must serialize");
-        let restored: CubeSettings = serde_json::from_str(&json).expect("CubeSettings must deserialize");
+        let restored: CubeSettings =
+            serde_json::from_str(&json).expect("CubeSettings must deserialize");
         assert_eq!(
             restored
                 .recovery_kit_last_backed_up_keychain_descriptor_fingerprint

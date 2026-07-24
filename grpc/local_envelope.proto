@@ -6,9 +6,6 @@ package coincube.local.v1;
 // (coincube-gui) and the Keychain phone app. Mirrors the gRPC types
 // from connect.proto so the same Phone <-> Vault flow can run over a
 // local TLS/Noise socket without the Connect API.
-//
-// See plans/PLAN-local-signer-lan-desktop.md and
-// keychain-app/plans/PLAN-local-signer-lan.md.
 
 import "connect.proto";
 
@@ -57,7 +54,6 @@ message PairingComplete {
   // phone's own self-signed cert DER (same value as field 1). The
   // desktop recomputes this using the cert fp it captured from the
   // live TLS handshake (not field 1) and constant-time compares.
-  // See plans/PLAN-local-signer-pairing-phone-auth.md.
   string pairing_proof         = 5;
 }
 
