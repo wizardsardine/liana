@@ -27,7 +27,7 @@ use crate::{
     state::{message::Msg, State},
 };
 use iced::{
-    widget::{column, container, row, Space},
+    widget::{column, container, Space},
     Alignment, Length,
 };
 use liana_ui::{
@@ -35,6 +35,7 @@ use liana_ui::{
         button::{self, EntryWidth},
         form, list,
         text::{self, short_email, truncate},
+        tooltip,
     },
     spacing::VSpacing,
     theme,
@@ -47,14 +48,18 @@ pub const INSTALLER_STEPS: usize = 7;
 pub const MENU_ENTRY_HEIGHT: u32 = 100;
 const CONTENT_WIDTH: f32 = button::STANDARD_ENTRY_WIDTH;
 
-fn format_last_edit_info_string_helper(
+/// Build the collapsed line and the hover detail for a last-edit info.
+/// Visible: "Edited <relative time>". Hover: "Edited by <editor> on <absolute time>".
+fn format_last_edit_info_strings(
     last_edited: Option<u64>,
     last_editor: Option<Uuid>,
     state: &State,
     current_user_email_lower: &str,
 ) -> Option<(String, String)> {
     let timestamp = last_edited?;
-    let editor_str = last_editor
+    let visible = format!("Edited {}", state.app.format_relative_time(timestamp));
+
+    let editor = last_editor
         .and_then(|editor_id| {
             state.backend.get_user(editor_id).map(|user| {
                 if user.email.to_lowercase() == current_user_email_lower {
@@ -63,15 +68,21 @@ fn format_last_edit_info_string_helper(
                     let name = admin_name_from_email(&user.email).unwrap_or_default();
                     format!("Admin{name}")
                 } else {
-                    short_email(&user.email, 25)
+                    user.email.clone()
                 }
             })
         })
         .map(|name| format!(" by {name}"))
         .unwrap_or_default();
-    let relative_time = state.app.format_relative_time(timestamp);
-    let edited = format!("Edited{editor_str} ");
-    Some((edited, relative_time))
+    let absolute = state.app.format_absolute_time(timestamp);
+    let on = if absolute.is_empty() {
+        String::new()
+    } else {
+        format!(" on {absolute}")
+    };
+    let hover = format!("Edited{editor}{on}");
+
+    Some((visible, hover))
 }
 
 pub fn format_last_edit_info<'a, M>(
@@ -83,15 +94,16 @@ pub fn format_last_edit_info<'a, M>(
 where
     M: 'a + Clone,
 {
-    format_last_edit_info_string_helper(last_edited, last_editor, state, current_user_email_lower)
-        .map(|(a, b)| {
-            row![
-                text::new::caption(a).style(theme::text::secondary),
-                text::new::caption(b).style(theme::text::secondary)
-            ]
-            .wrap()
+    format_last_edit_info_strings(last_edited, last_editor, state, current_user_email_lower).map(
+        |(visible, hover)| {
+            tooltip::tooltip_custom(
+                text::new::caption(hover).style(theme::text::secondary),
+                text::new::caption(visible).style(theme::text::secondary),
+                iced::widget::tooltip::Position::Bottom,
+            )
             .into()
-        })
+        },
+    )
 }
 
 fn admin_name_from_email(mail: &str) -> Option<String> {
