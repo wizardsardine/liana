@@ -320,7 +320,7 @@ fn next_disabled_reason(
         || (recipients.len() >= 2 && !batch_label.valid)
     {
         Some(NextBlocker::Reason(
-            "Payment decription is missing or invalid",
+            "Payment description is missing or invalid",
         ))
     } else if recipients.iter().any(|r| empty_or_invalid(&r.amount)) {
         Some(NextBlocker::Reason(if max_under_dust {
