@@ -18,7 +18,7 @@ pub fn tooltip<'a, T: 'a>(help: &'a str) -> Container<'a, T> {
 }
 
 pub fn tooltip_custom<'a, T: 'a>(
-    help: &'a str,
+    help: impl Into<Element<'a, T>>,
     content: impl Into<Element<'a, T>>,
     position: Position,
 ) -> Container<'a, T> {
