@@ -893,18 +893,29 @@ impl KeychainSignModal {
         // We prune a *clone* and merge the returned signatures back into the
         // full `tx.psbt`, so the stored PSBT keeps all its derivations — this
         // mirrors the hardware-wallet (BitBox02) handling in `sign_psbt`.
-        let psbt_to_sign = self
+        let psbt_to_sign = match self
             .wallet
             .main_descriptor
             .prune_bip32_derivs_last_avail(self.psbt.clone())
-            .unwrap_or_else(|e| {
+        {
+            Ok(psbt) => psbt,
+            Err(e) => {
+                // Never fall back to sending the unpruned PSBT: the remote
+                // signer could then sign a key from the wrong spending path,
+                // producing a signature that can't satisfy this spend. Abort the
+                // session (mark it Failed for retry) instead.
                 tracing::warn!(
                     target: "coincube_gui::signing",
                     error = %e,
-                    "Could not prune PSBT to the spending path; sending unpruned"
+                    "Could not prune PSBT to the spending path; aborting signing session"
                 );
-                self.psbt.clone()
-            });
+                if let Some(entry) = self.pending.get_mut(index) {
+                    entry.status = PendingSessionStatus::Failed;
+                    entry.error = Some(format!("Could not prepare PSBT for signing: {e}"));
+                }
+                return Task::none();
+            }
+        };
         let psbt_bytes = psbt_to_sign.serialize();
         let vault_id = self.vault_id.unwrap_or(0).to_string();
         let descriptor_id = self.descriptor_id.clone();
@@ -2370,7 +2381,10 @@ mod tests {
             let _ = modal.poll_pending_sessions();
             assert!(
                 !modal.pending[0].signed_psbt_fetching,
-                "captured/given-up session ({status:?}, merged={merged}, persisted={persisted}) must not poll"
+                "captured/given-up session ({:?}, merged={}, persisted={}) must not poll",
+                status,
+                merged,
+                persisted
             );
         }
     }
