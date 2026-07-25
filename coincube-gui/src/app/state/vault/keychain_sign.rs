@@ -1052,14 +1052,20 @@ impl KeychainSignModal {
             EventType::SessionApproved => entry.status = PendingSessionStatus::Approved,
             EventType::SignatureSubmitted => {
                 entry.status = PendingSessionStatus::PartiallySigned;
-                if !entry.signed_psbt_fetching && !entry.signed_psbt_persisted {
+                if !entry.signed_psbt_fetching
+                    && !entry.signed_psbt_merged
+                    && !entry.signed_psbt_persisted
+                {
                     entry.signed_psbt_fetching = true;
                     fetch_session_id = Some(event.session_id.clone());
                 }
             }
             EventType::SessionCompleted => {
                 entry.status = PendingSessionStatus::Completed;
-                if !entry.signed_psbt_fetching && !entry.signed_psbt_persisted {
+                if !entry.signed_psbt_fetching
+                    && !entry.signed_psbt_merged
+                    && !entry.signed_psbt_persisted
+                {
                     entry.signed_psbt_fetching = true;
                     fetch_session_id = Some(event.session_id.clone());
                 }
@@ -1290,11 +1296,13 @@ impl KeychainSignModal {
             // Skip sessions that are finished, cancelled by the user (cancel
             // RPC may still be in flight, so status isn't `Cancelled` yet),
             // not yet created, already being fetched (event path or a
-            // previous tick), or already captured.
+            // previous tick), already merged (persist may still be in flight),
+            // or already captured.
             if entry.status.is_terminal()
                 || entry.cancel_requested
                 || entry.session_id.is_empty()
                 || entry.signed_psbt_fetching
+                || entry.signed_psbt_merged
                 || entry.signed_psbt_persisted
             {
                 continue;
@@ -1540,11 +1548,17 @@ impl Modal for KeychainSignModal {
         // Poll pending signing sessions as a fallback for realtime
         // `SessionEvent`s that never arrive (gRPC stream flapping/superseded,
         // vault-scope mismatch, …). Active only while we have at least one
-        // non-terminal session whose signature hasn't yet been captured —
-        // so it self-stops once everyone has signed (or the flow ends).
+        // non-terminal session whose signature hasn't yet been fetched — once
+        // merged we're waiting on the local persist, not the remote, so a
+        // merged-but-not-yet-persisted row must not keep polling (it would
+        // re-fetch and re-persist the same signature). It self-stops once
+        // everyone has signed (or the flow ends).
         let needs_poll = matches!(self.phase, Phase::Sessions)
             && self.pending.iter().any(|p| {
-                !p.status.is_terminal() && !p.signed_psbt_persisted && !p.session_id.is_empty()
+                !p.status.is_terminal()
+                    && !p.signed_psbt_merged
+                    && !p.signed_psbt_persisted
+                    && !p.session_id.is_empty()
             });
         if needs_poll {
             iced::time::every(std::time::Duration::from_secs(SESSION_POLL_INTERVAL_SECS))
@@ -2168,6 +2182,32 @@ mod tests {
         modal.pending[0].status = PendingSessionStatus::Completed;
         modal.pending[0].signed_psbt_persisted = true;
         assert!(!modal.has_persistence_pending());
+    }
+
+    #[test]
+    fn poll_does_not_refetch_a_merged_but_unpersisted_row() {
+        // A non-terminal row whose signature is already merged (persist still
+        // in flight) must not be re-fetched — doing so would run a second
+        // GetSigningSession + update_spend_tx for the same session. The network
+        // work in `poll_pending_sessions` is lazy, so calling it here only
+        // exercises the synchronous skip/mark logic.
+        let mut modal = modal();
+        modal
+            .pending
+            .push(pending(PendingSessionStatus::PartiallySigned));
+
+        // Baseline: an un-merged, non-terminal row *is* polled (marks fetching).
+        let _ = modal.poll_pending_sessions();
+        assert!(modal.pending[0].signed_psbt_fetching);
+
+        // Merged-but-unpersisted: reset the fetch flag and confirm poll skips it.
+        modal.pending[0].signed_psbt_fetching = false;
+        modal.pending[0].signed_psbt_merged = true;
+        let _ = modal.poll_pending_sessions();
+        assert!(
+            !modal.pending[0].signed_psbt_fetching,
+            "merged row must not be re-fetched by a poll tick"
+        );
     }
 
     #[test]
