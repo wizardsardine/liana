@@ -1291,7 +1291,7 @@ impl CoincubeClient {
         Ok(resp.data)
     }
 
-    /// `GET /api/v1/cubes/{cube_id}/recovery-kit` (Approach C, dual-password).
+    /// `GET /api/v1/connect/cubes/{cube_id}/recovery-kit` (Approach C, dual-password).
     ///
     /// Distinct from [`get_recovery_kit`](Self::get_recovery_kit): the password
     /// hash gates which envelope (regular vs. duress) the server returns, and a
