@@ -460,8 +460,14 @@ impl PsbtState {
                     } else {
                         self.tx.spend_amount
                     };
-                    let amount_display =
-                        display_amount.to_formatted_string_with_unit(cache.bitcoin_unit);
+                    // Include the unit label ("SATS" / "BTC") so the success
+                    // screen reads e.g. "149,794 SATS has been sent successfully"
+                    // rather than a bare number.
+                    let amount_display = format!(
+                        "{} {}",
+                        display_amount.to_formatted_string_with_unit(cache.bitcoin_unit),
+                        cache.bitcoin_unit.label(),
+                    );
                     self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
                         conflicting_txids,
                         broadcast: false,
@@ -1087,7 +1093,10 @@ impl SignModal {
             return (Task::none(), false);
         };
         let cancel = k.cancel_all();
-        let keep = k.has_undrained_sessions();
+        // Keep the hidden modal mounted while sessions still need draining OR a
+        // persist callback is in flight — the latter so a `Persisted(Err)` can
+        // still mark its row Failed instead of landing on a dropped modal.
+        let keep = k.has_undrained_sessions() || k.has_persistence_in_flight();
         if keep {
             k.mark_dismissed();
             self.display_modal = false;
@@ -1096,13 +1105,14 @@ impl SignModal {
     }
 
     /// True once the picker was dismissed (hidden) and its keychain sessions
-    /// have all drained — the signal the panel uses to finally drop it.
+    /// have all drained *and* no persist callback is still in flight — the
+    /// signal the panel uses to finally drop it.
     pub fn should_close_after_dismiss(&self) -> bool {
         !self.display_modal
             && self
                 .keychain
                 .as_ref()
-                .is_none_or(|k| !k.has_undrained_sessions())
+                .is_none_or(|k| !k.has_undrained_sessions() && !k.has_persistence_in_flight())
     }
 
     /// True when this picker offers Keychain signing but the nested flow

@@ -128,6 +128,24 @@ pub struct PendingSession {
     /// broadcast, and a persist failure needs the row to stay visible so it
     /// can be marked Failed and retried. Reset on retry.
     pub signed_psbt_merged: bool,
+    /// True while this session's `update_spend_tx` persist callback is
+    /// in flight — set when the persist is dispatched, cleared when it
+    /// returns (Ok *or* Err). Distinct from `signed_psbt_merged`: a failed
+    /// persist stays "merged but unsaved" (blocking threshold teardown) yet is
+    /// no longer "in flight", so manual dismissal — which only waits for active
+    /// persistence — can proceed instead of hanging on the failed row.
+    pub signed_psbt_persisting: bool,
+}
+
+impl PendingSession {
+    /// True once this session's signed PSBT has been merged into the local
+    /// `SpendTx` (in memory) or durably persisted. The retry gates stop
+    /// fetching a session only once its signature is captured — reaching
+    /// `Completed` status alone is not enough, since the fetch+merge can lag
+    /// (or miss) the `SESSION_COMPLETED` event.
+    fn signature_captured(&self) -> bool {
+        self.signed_psbt_merged || self.signed_psbt_persisted
+    }
 }
 
 /// View-friendly mirror of the gRPC `SessionStatus` enum, plus a
@@ -168,6 +186,18 @@ impl PendingSessionStatus {
 
     pub fn is_terminal_success(&self) -> bool {
         matches!(self, Self::Completed)
+    }
+
+    /// True only for the *give-up* terminal states — the session failed or was
+    /// abandoned and its signature will never arrive. Distinct from
+    /// `is_terminal()`, which also counts `Completed`: a `Completed` session
+    /// whose signed PSBT hasn't been fetched+merged yet must keep being
+    /// retried, so fetch/poll retry gates key off this, not `is_terminal()`.
+    pub fn is_give_up(&self) -> bool {
+        matches!(
+            self,
+            Self::Rejected | Self::Cancelled | Self::Expired | Self::Failed
+        )
     }
 
     pub fn from_proto(status: ProtoSessionStatus) -> Self {
@@ -496,6 +526,15 @@ impl KeychainSignModal {
             .any(|p| p.signed_psbt_merged && !p.signed_psbt_persisted)
     }
 
+    /// True while any pending session's `update_spend_tx` persist callback is
+    /// still in flight (dispatched, not yet returned). Manual dismissal keeps
+    /// the hidden modal mounted while this holds so the callback can land and
+    /// mark the row Failed on error. Unlike `has_persistence_pending`, a persist
+    /// that already *failed* is not in flight, so dismissal doesn't hang on it.
+    pub fn has_persistence_in_flight(&self) -> bool {
+        self.pending.iter().any(|p| p.signed_psbt_persisting)
+    }
+
     /// True while any pending session is non-terminal. After
     /// `cancel_all()`, such entries still depend on the modal staying
     /// mounted: empty-`session_id` rows are cancelled later by
@@ -523,7 +562,12 @@ impl KeychainSignModal {
     /// existing `Phase::AllDone` + `Message::Updated(Ok)` close path
     /// that the panel already drives `self.modal = None` from.
     fn close_if_dismissed_and_drained(&mut self) -> Task<Message> {
+        // A merged row is terminal-by-status (Completed) while its persist
+        // callback is still in flight — don't tear down until it returns, so a
+        // `Persisted(Err)` can still mark the row Failed.
+        let persisting = self.has_persistence_in_flight();
         if self.dismissed
+            && !persisting
             && !self.pending.is_empty()
             && self
                 .pending
@@ -806,6 +850,7 @@ impl KeychainSignModal {
                 signed_psbt_persisted: false,
                 signed_psbt_fetching: false,
                 signed_psbt_merged: false,
+                signed_psbt_persisting: false,
             });
         }
 
@@ -836,8 +881,31 @@ impl KeychainSignModal {
         entry.signed_psbt_persisted = false;
         entry.signed_psbt_fetching = false;
         entry.signed_psbt_merged = false;
+        entry.signed_psbt_persisting = false;
 
-        let psbt_bytes = self.psbt.serialize();
+        // Prune the PSBT's BIP32 derivations to the active spending path before
+        // sending it to the remote signer. The Keychain signs a single key at a
+        // time; if the PSBT advertises this signer's fingerprint on more than
+        // one spending path (e.g. both the primary `multi(...)` key at `/0;1/*`
+        // and the recovery `pkh(...)` key at `/2;3/*`), the phone can sign the
+        // wrong-path key, which then cannot satisfy the path this transaction
+        // actually spends. Pruning leaves only the keys for the current path.
+        // We prune a *clone* and merge the returned signatures back into the
+        // full `tx.psbt`, so the stored PSBT keeps all its derivations — this
+        // mirrors the hardware-wallet (BitBox02) handling in `sign_psbt`.
+        let psbt_to_sign = self
+            .wallet
+            .main_descriptor
+            .prune_bip32_derivs_last_avail(self.psbt.clone())
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    target: "coincube_gui::signing",
+                    error = %e,
+                    "Could not prune PSBT to the spending path; sending unpruned"
+                );
+                self.psbt.clone()
+            });
+        let psbt_bytes = psbt_to_sign.serialize();
         let vault_id = self.vault_id.unwrap_or(0).to_string();
         let descriptor_id = self.descriptor_id.clone();
         let tokens = self.tokens.clone();
@@ -1069,6 +1137,10 @@ impl KeychainSignModal {
                     entry.signed_psbt_fetching = true;
                     fetch_session_id = Some(event.session_id.clone());
                 }
+                // If the fetch is skipped here (already fetching/merged/
+                // persisted) and the in-flight fetch never lands the signature,
+                // the poll fallback re-fetches this `Completed` row until it is
+                // captured.
             }
             EventType::SessionRejected => {
                 entry.status = PendingSessionStatus::Rejected;
@@ -1155,12 +1227,12 @@ impl KeychainSignModal {
         let resp = match result {
             Ok(r) => r,
             Err(e) => {
-                if e.auth {
-                    self.error = Some(e.message);
-                    self.phase = Phase::AllDone;
-                    return Task::none();
-                }
                 if let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) {
+                    // Always clear the in-flight flag — otherwise the poll/
+                    // event fetch guards keep skipping this row and it can
+                    // never be retried. (Auth errors are no exception: a stale
+                    // token clears on the next attempt via the interceptor, and
+                    // one row's failure must not force-close the whole modal.)
                     entry.signed_psbt_fetching = false;
                     // A transient failure on a background *poll* must not
                     // fail the session — the realtime event or the next
@@ -1248,10 +1320,12 @@ impl KeychainSignModal {
             "Merging signed PSBT from session into local SpendTx"
         );
         super::psbt::merge_signatures_pub(&mut tx.psbt, &signed_psbt);
-        // Mark the row merged-but-not-yet-persisted so threshold-close waits
-        // for the persist (or its failure) below.
+        // Mark the row merged-but-not-yet-persisted (blocks threshold close
+        // until saved or retried) and persist-in-flight (keeps a dismissed
+        // modal mounted until the callback below returns).
         if let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) {
             entry.signed_psbt_merged = true;
+            entry.signed_psbt_persisting = true;
         }
         // Persist the merged PSBT so a restart picks it up. Carry the
         // session_id through so a persistence failure marks the right
@@ -1293,17 +1367,19 @@ impl KeychainSignModal {
         let desktop_device_id = self.desktop_device_id.clone();
         let mut tasks = Vec::new();
         for entry in self.pending.iter_mut() {
-            // Skip sessions that are finished, cancelled by the user (cancel
-            // RPC may still be in flight, so status isn't `Cancelled` yet),
-            // not yet created, already being fetched (event path or a
-            // previous tick), already merged (persist may still be in flight),
-            // or already captured.
-            if entry.status.is_terminal()
+            // Skip sessions that gave up (rejected/cancelled/expired/failed),
+            // were cancelled by the user (cancel RPC may still be in flight, so
+            // status isn't `Cancelled` yet), not yet created, already being
+            // fetched (event path or a previous tick), already merged (persist
+            // may still be in flight), or already captured. NOTE: `Completed`
+            // is deliberately NOT a skip — a `Completed` session whose signed
+            // PSBT hasn't been fetched+merged yet must keep being polled until
+            // its signature actually lands (`is_give_up`, not `is_terminal`).
+            if entry.status.is_give_up()
                 || entry.cancel_requested
                 || entry.session_id.is_empty()
                 || entry.signed_psbt_fetching
-                || entry.signed_psbt_merged
-                || entry.signed_psbt_persisted
+                || entry.signature_captured()
             {
                 continue;
             }
@@ -1495,6 +1571,7 @@ impl KeychainSignModal {
                             self.pending.iter_mut().find(|p| p.session_id == session_id)
                         {
                             entry.signed_psbt_persisted = true;
+                            entry.signed_psbt_persisting = false;
                         }
                         if self.check_all_done() {
                             self.phase = Phase::AllDone;
@@ -1514,6 +1591,11 @@ impl KeychainSignModal {
                         {
                             entry.status = PendingSessionStatus::Failed;
                             entry.signed_psbt_fetching = false;
+                            // Persist callback returned — no longer in flight.
+                            // `signed_psbt_merged` stays set so threshold close
+                            // remains blocked (row is Failed, awaiting retry),
+                            // but dismissal need not wait on it any longer.
+                            entry.signed_psbt_persisting = false;
                             entry.error = Some(format!("Failed to persist signed PSBT: {}", e));
                         }
                     }
@@ -1547,18 +1629,16 @@ impl Modal for KeychainSignModal {
     fn subscription(&self) -> Subscription<Message> {
         // Poll pending signing sessions as a fallback for realtime
         // `SessionEvent`s that never arrive (gRPC stream flapping/superseded,
-        // vault-scope mismatch, …). Active only while we have at least one
-        // non-terminal session whose signature hasn't yet been fetched — once
-        // merged we're waiting on the local persist, not the remote, so a
-        // merged-but-not-yet-persisted row must not keep polling (it would
-        // re-fetch and re-persist the same signature). It self-stops once
-        // everyone has signed (or the flow ends).
+        // vault-scope mismatch, …), or that announce `SESSION_COMPLETED` before
+        // the signed PSBT was actually fetched+merged. Active while any session
+        // hasn't given up (rejected/cancelled/expired/failed) and its signature
+        // isn't captured yet — `Completed` alone does NOT stop it, otherwise a
+        // completed-but-unfetched signature would be stranded with no retry.
+        // Once captured we wait on the local persist, not the remote, so a
+        // merged row stops polling. It self-stops once everyone has signed.
         let needs_poll = matches!(self.phase, Phase::Sessions)
             && self.pending.iter().any(|p| {
-                !p.status.is_terminal()
-                    && !p.signed_psbt_merged
-                    && !p.signed_psbt_persisted
-                    && !p.session_id.is_empty()
+                !p.status.is_give_up() && !p.signature_captured() && !p.session_id.is_empty()
             });
         if needs_poll {
             iced::time::every(std::time::Duration::from_secs(SESSION_POLL_INTERVAL_SECS))
@@ -2043,6 +2123,7 @@ mod tests {
             signed_psbt_persisted: false,
             signed_psbt_fetching: false,
             signed_psbt_merged: false,
+            signed_psbt_persisting: false,
         }
     }
 
@@ -2185,6 +2266,47 @@ mod tests {
     }
 
     #[test]
+    fn dismissal_waits_for_in_flight_persist_then_closes_on_persisted_err() {
+        // Cancel during persistence, followed by Persisted(Err): the dismissed
+        // modal must stay mounted until the persist callback returns, so the
+        // failure can mark the row Failed instead of landing on a dropped modal.
+        let mut modal = modal();
+        modal.pending.push(pending(PendingSessionStatus::Completed));
+        // Signature merged; `update_spend_tx` dispatched, callback not back yet
+        // (the state `on_session_fetched` leaves behind).
+        modal.pending[0].signed_psbt_merged = true;
+        modal.pending[0].signed_psbt_persisting = true;
+
+        // Both gates hold while the persist is in flight.
+        assert!(modal.has_persistence_in_flight());
+        assert!(modal.has_persistence_pending());
+
+        // User cancels/dismisses. `close_if_dismissed_and_drained` (the update
+        // choke point) must NOT tear down while the callback is outstanding,
+        // even though the row's status (Completed) is terminal.
+        modal.mark_dismissed();
+        let _ = modal.close_if_dismissed_and_drained();
+        assert!(
+            !matches!(modal.phase, Phase::AllDone),
+            "dismissed modal must wait for the in-flight persist callback"
+        );
+
+        // Persisted(Err) lands: row Failed, no longer in flight, but still
+        // merged-but-unsaved (so threshold teardown would stay blocked).
+        modal.pending[0].status = PendingSessionStatus::Failed;
+        modal.pending[0].signed_psbt_persisting = false;
+        assert!(!modal.has_persistence_in_flight());
+        assert!(
+            modal.has_persistence_pending(),
+            "a failed persist still blocks threshold teardown until retry"
+        );
+
+        // With the callback resolved, the dismissed modal can finally drain.
+        let _ = modal.close_if_dismissed_and_drained();
+        assert!(matches!(modal.phase, Phase::AllDone));
+    }
+
+    #[test]
     fn poll_does_not_refetch_a_merged_but_unpersisted_row() {
         // A non-terminal row whose signature is already merged (persist still
         // in flight) must not be re-fetched — doing so would run a second
@@ -2208,6 +2330,49 @@ mod tests {
             !modal.pending[0].signed_psbt_fetching,
             "merged row must not be re-fetched by a poll tick"
         );
+    }
+
+    #[test]
+    fn poll_retries_a_completed_but_uncaptured_session() {
+        // The core regression: a session that reached `Completed` (e.g. the
+        // stream event landed before the signed PSBT was fetched) but whose
+        // signature is NOT captured must keep being polled — `Completed` is
+        // terminal, but retries key off `is_give_up`/`signature_captured`, not
+        // `is_terminal`. Without this the signature is stranded forever.
+        let mut modal = modal();
+        modal.pending.push(pending(PendingSessionStatus::Completed));
+        // session_id is set by `pending()`, no capture flags, not fetching.
+        assert!(!modal.pending[0].signature_captured());
+
+        let _ = modal.poll_pending_sessions();
+        assert!(
+            modal.pending[0].signed_psbt_fetching,
+            "a Completed-but-uncaptured session must be re-fetched by the poll"
+        );
+    }
+
+    #[test]
+    fn poll_skips_captured_and_given_up_sessions() {
+        // Captured (merged OR persisted) and give-up terminals must NOT poll.
+        for (status, merged, persisted) in [
+            (PendingSessionStatus::Completed, true, false), // merged
+            (PendingSessionStatus::Completed, false, true), // persisted
+            (PendingSessionStatus::Failed, false, false),
+            (PendingSessionStatus::Rejected, false, false),
+            (PendingSessionStatus::Cancelled, false, false),
+            (PendingSessionStatus::Expired, false, false),
+        ] {
+            let mut modal = modal();
+            modal.pending.push(pending(status));
+            modal.pending[0].signed_psbt_merged = merged;
+            modal.pending[0].signed_psbt_persisted = persisted;
+
+            let _ = modal.poll_pending_sessions();
+            assert!(
+                !modal.pending[0].signed_psbt_fetching,
+                "captured/given-up session ({status:?}, merged={merged}, persisted={persisted}) must not poll"
+            );
+        }
     }
 
     #[test]
