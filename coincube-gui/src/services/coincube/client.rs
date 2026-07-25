@@ -1307,7 +1307,7 @@ impl CoincubeClient {
         crk_password_hash: &str,
     ) -> Result<RecoveryKit, super::DownloadError> {
         use super::DownloadError;
-        let url = format!("{}/api/v1/cubes/{}/recovery-kit", self.base_url, cube_id);
+        let url = format!("{}/api/v1/connect/cubes/{}/recovery-kit", self.base_url, cube_id);
         let res = self
             .client
             .get(&url)

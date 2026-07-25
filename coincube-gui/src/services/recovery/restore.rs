@@ -200,7 +200,7 @@ pub async fn fetch_and_decrypt_kit(
     cube_id: u64,
     password: &Zeroizing<String>,
 ) -> Result<DecryptedKit, RestoreError> {
-    let kit = client.get_recovery_kit(cube_id).await?;
+    let kit = client.download_recovery_kit(cube_id, password.as_str()).await?;
 
     // Empty strings on the wire mean "this half wasn't uploaded."
     // Treat them the same as `None` here so the caller can pattern-
@@ -778,5 +778,18 @@ mod integration_tests {
             .expect_err("expected BadPasswordOrCorrupt");
         mock.assert();
         assert!(matches!(err, RestoreError::BadPasswordOrCorrupt));
+    }
+}
+impl From<crate::services::coincube::DownloadError> for RestoreError {
+    fn from(e: crate::services::coincube::DownloadError) -> Self {
+        use crate::services::coincube::DownloadError;
+        match e {
+            DownloadError::DuressLocked { unlock_at } => Self::DuressLocked { unlock_at },
+            DownloadError::TrustedDeviceDelay { available_at } => {
+                Self::TrustedDeviceDelay { available_at }
+            }
+            DownloadError::Invalid => Self::Api("Invalid request".to_string()),
+            DownloadError::Other(e) => Self::from(e),
+        }
     }
 }
