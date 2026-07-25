@@ -526,13 +526,20 @@ impl KeychainSignModal {
             .any(|p| p.signed_psbt_merged && !p.signed_psbt_persisted)
     }
 
-    /// True while any pending session's `update_spend_tx` persist callback is
-    /// still in flight (dispatched, not yet returned). Manual dismissal keeps
-    /// the hidden modal mounted while this holds so the callback can land and
-    /// mark the row Failed on error. Unlike `has_persistence_pending`, a persist
-    /// that already *failed* is not in flight, so dismissal doesn't hang on it.
-    pub fn has_persistence_in_flight(&self) -> bool {
-        self.pending.iter().any(|p| p.signed_psbt_persisting)
+    /// True while any pending session has an async signed-PSBT capture still in
+    /// flight — either a `GetSigningSession` fetch (`signed_psbt_fetching`) or an
+    /// `update_spend_tx` persist (`signed_psbt_persisting`) that was dispatched
+    /// and hasn't returned. Manual dismissal keeps the hidden modal mounted while
+    /// this holds so the fetch can merge and the persist callback can land (and
+    /// mark the row Failed on error) instead of being dropped. A `Completed`
+    /// session whose fetch is still running looks status-drained, so keying
+    /// dismissal off status alone would silently lose its signature. Unlike
+    /// `has_persistence_pending`, an op that already *failed* is no longer in
+    /// flight, so dismissal doesn't hang on it.
+    pub fn has_capture_in_flight(&self) -> bool {
+        self.pending
+            .iter()
+            .any(|p| p.signed_psbt_fetching || p.signed_psbt_persisting)
     }
 
     /// True while any pending session is non-terminal. After
@@ -562,12 +569,13 @@ impl KeychainSignModal {
     /// existing `Phase::AllDone` + `Message::Updated(Ok)` close path
     /// that the panel already drives `self.modal = None` from.
     fn close_if_dismissed_and_drained(&mut self) -> Task<Message> {
-        // A merged row is terminal-by-status (Completed) while its persist
-        // callback is still in flight — don't tear down until it returns, so a
-        // `Persisted(Err)` can still mark the row Failed.
-        let persisting = self.has_persistence_in_flight();
+        // A `Completed` row can still have an in-flight fetch or persist callback
+        // (it is terminal-by-status but not yet captured) — don't tear down until
+        // that async op returns, so the fetch can merge and a `Persisted(Err)`
+        // can still mark the row Failed.
+        let capturing = self.has_capture_in_flight();
         if self.dismissed
-            && !persisting
+            && !capturing
             && !self.pending.is_empty()
             && self
                 .pending
@@ -2289,7 +2297,7 @@ mod tests {
         modal.pending[0].signed_psbt_persisting = true;
 
         // Both gates hold while the persist is in flight.
-        assert!(modal.has_persistence_in_flight());
+        assert!(modal.has_capture_in_flight());
         assert!(modal.has_persistence_pending());
 
         // User cancels/dismisses. `close_if_dismissed_and_drained` (the update
@@ -2306,13 +2314,40 @@ mod tests {
         // merged-but-unsaved (so threshold teardown would stay blocked).
         modal.pending[0].status = PendingSessionStatus::Failed;
         modal.pending[0].signed_psbt_persisting = false;
-        assert!(!modal.has_persistence_in_flight());
+        assert!(!modal.has_capture_in_flight());
         assert!(
             modal.has_persistence_pending(),
             "a failed persist still blocks threshold teardown until retry"
         );
 
         // With the callback resolved, the dismissed modal can finally drain.
+        let _ = modal.close_if_dismissed_and_drained();
+        assert!(matches!(modal.phase, Phase::AllDone));
+    }
+
+    #[test]
+    fn dismissal_waits_for_in_flight_fetch_of_a_completed_session() {
+        // A SessionCompleted event sets status=Completed AND dispatches the
+        // GetSigningSession fetch (signed_psbt_fetching=true) *before* the merge.
+        // Dismissing in that window must NOT drop the modal — otherwise the
+        // returning fetch lands on nothing and the signature is lost even though
+        // the signer already signed.
+        let mut modal = modal();
+        modal.pending.push(pending(PendingSessionStatus::Completed));
+        modal.pending[0].signed_psbt_fetching = true; // fetch dispatched, not merged yet
+
+        assert!(modal.has_capture_in_flight());
+
+        modal.mark_dismissed();
+        let _ = modal.close_if_dismissed_and_drained();
+        assert!(
+            !matches!(modal.phase, Phase::AllDone),
+            "dismissed modal must wait for the in-flight signed-PSBT fetch of a Completed session"
+        );
+
+        // Fetch resolves (flag cleared); with nothing else in flight it drains.
+        modal.pending[0].signed_psbt_fetching = false;
+        assert!(!modal.has_capture_in_flight());
         let _ = modal.close_if_dismissed_and_drained();
         assert!(matches!(modal.phase, Phase::AllDone));
     }

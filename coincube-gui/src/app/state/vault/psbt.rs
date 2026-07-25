@@ -1094,9 +1094,10 @@ impl SignModal {
         };
         let cancel = k.cancel_all();
         // Keep the hidden modal mounted while sessions still need draining OR a
-        // persist callback is in flight — the latter so a `Persisted(Err)` can
-        // still mark its row Failed instead of landing on a dropped modal.
-        let keep = k.has_undrained_sessions() || k.has_persistence_in_flight();
+        // signed-PSBT capture (fetch or persist) is in flight — so a `Completed`
+        // session's fetch can still merge and a `Persisted(Err)` can still mark
+        // its row Failed instead of landing on a dropped modal.
+        let keep = k.has_undrained_sessions() || k.has_capture_in_flight();
         if keep {
             k.mark_dismissed();
             self.display_modal = false;
@@ -1105,14 +1106,14 @@ impl SignModal {
     }
 
     /// True once the picker was dismissed (hidden) and its keychain sessions
-    /// have all drained *and* no persist callback is still in flight — the
-    /// signal the panel uses to finally drop it.
+    /// have all drained *and* no signed-PSBT capture (fetch or persist) is still
+    /// in flight — the signal the panel uses to finally drop it.
     pub fn should_close_after_dismiss(&self) -> bool {
         !self.display_modal
             && self
                 .keychain
                 .as_ref()
-                .is_none_or(|k| !k.has_undrained_sessions() && !k.has_persistence_in_flight())
+                .is_none_or(|k| !k.has_undrained_sessions() && !k.has_capture_in_flight())
     }
 
     /// True when this picker offers Keychain signing but the nested flow
@@ -1272,13 +1273,20 @@ impl SignModal {
             });
         let kind = self.signing_key_kind(fp, master_fp, kc.is_some());
 
+        // A resolved Keychain session in a give-up state (rejected / expired /
+        // failed — including a *persist* failure) must fall through to the Retry
+        // branch below, even if its signature is transiently counted in
+        // `self.signed`. A failed `update_spend_tx` leaves the signature
+        // merged-but-unsaved, so rendering it Signed would hide the Retry
+        // affordance and overstate the durable "X of N collected" count.
+        let kc_needs_retry = matches!(kc, Some((_, status)) if status.is_give_up());
         // Signature already collected. `self.signed` is the single source of
         // truth — it mirrors the signers actually counted in the merged PSBT
         // (refreshed by `set_counted_signers` on every reconcile), so the row
         // and the "X of N collected" badge can't disagree. No persistence-based
         // shortcut: a Keychain response only counts once its signature is merged
         // and counted, which is exactly what puts the key into `self.signed`.
-        if self.signed.contains(&fp) {
+        if self.signed.contains(&fp) && !kc_needs_retry {
             return (kind, St::Signed);
         }
         // Inactive spending path — nothing here can sign this transaction.
