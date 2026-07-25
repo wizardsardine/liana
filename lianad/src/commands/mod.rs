@@ -1251,6 +1251,10 @@ impl DaemonControl {
     /// otherwise not currently recoverable using the given recovery path.
     ///
     /// Note that not all coins may be spendable through a single recovery path at the same time.
+    ///
+    /// A warning will be included in the result's `warnings` field if the sweep address is
+    /// known to belong to this same wallet, since recovered funds would be locked under the
+    /// same descriptor again.
     pub fn create_recovery(
         &self,
         address: bitcoin::Address<address::NetworkUnchecked>,
@@ -1311,7 +1315,14 @@ impl DaemonControl {
             return Err(CommandError::RecoveryNotAvailable);
         }
 
+        // If DB knows (as derived address) about the provided address, it means
+        // the sweep address belongs to this wallet.
         let sweep_addr_info = sweep_addr.info;
+        let mut warnings = Vec::new();
+        if sweep_addr_info.is_some() {
+            warnings.push(CreateRecoveryWarning::ToOwnAddress);
+        }
+
         let locktime = self.anti_fee_sniping_locktime();
         let CreateSpendRes {
             psbt, has_change, ..
@@ -1329,7 +1340,7 @@ impl DaemonControl {
             self.maybe_increase_last_deriv_index(&mut db_conn, &sweep_addr_info);
         }
 
-        Ok(CreateRecoveryResult { psbt })
+        Ok(CreateRecoveryResult { psbt, warnings })
     }
 }
 
@@ -1523,6 +1534,34 @@ pub struct TransactionInfo {
 pub struct CreateRecoveryResult {
     #[serde(serialize_with = "ser_to_string", deserialize_with = "deser_fromstr")]
     pub psbt: Psbt,
+    #[serde(default)]
+    pub warnings: Vec<CreateRecoveryWarning>,
+}
+
+/// Warnings to be included in the `warnings` response field.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CreateRecoveryWarning {
+    /// A warning if the sweep address is known to belong to user's wallet.
+    #[serde(rename = "to_own_address")]
+    ToOwnAddress,
+
+    /// Warning returned by connect api.
+    #[serde(untagged)]
+    String(String),
+}
+
+impl fmt::Display for CreateRecoveryWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CreateRecoveryWarning::ToOwnAddress => write!(
+                f,
+                "Recovery address belongs to the same wallet. If you can no \
+                longer spend with the primary path, use an address from a \
+                different wallet instead."
+            ),
+            CreateRecoveryWarning::String(str) => write!(f, "{str}"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1544,7 +1583,7 @@ mod tests {
 
     #[test]
     fn getinfo() {
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), DEFAULT_TIMELOCK);
         // We can query getinfo
         ms.control().get_info();
         ms.shutdown();
@@ -1552,8 +1591,7 @@ mod tests {
 
     #[test]
     fn getnewaddress() {
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
-
+        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), DEFAULT_TIMELOCK);
         let control = &ms.control();
         // We can get an address (it will have index 1)
         let addr = control.get_new_address().address;
@@ -1579,7 +1617,7 @@ mod tests {
 
     #[test]
     fn listaddresses() {
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), DEFAULT_TIMELOCK);
 
         let control = &ms.control();
 
@@ -1693,7 +1731,7 @@ mod tests {
 
     #[test]
     fn list_revealed_addresses() {
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), DEFAULT_TIMELOCK);
 
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
@@ -2010,7 +2048,7 @@ mod tests {
             output: vec![],
         };
         let dummy_op = bitcoin::OutPoint::new(dummy_tx.compute_txid(), 0);
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), DEFAULT_TIMELOCK);
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
         db_conn.new_txs(&[dummy_tx]);
@@ -2549,7 +2587,11 @@ mod tests {
             .txs
             .insert(dummy_op_a.txid, (dummy_tx.clone(), None));
         dummy_bitcoind.txs.insert(dummy_op_b.txid, (dummy_tx, None));
-        let ms = DummyLiana::new(dummy_bitcoind, DummyDatabase::new());
+        let ms = DummyLiana::new(
+            dummy_bitcoind,
+            DummyDatabase::new(dummy_descriptor(DEFAULT_TIMELOCK)),
+            false,
+        );
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
 
@@ -2697,7 +2739,7 @@ mod tests {
         };
         let dummy_txid_a = dummy_psbt_a.unsigned_tx.compute_txid();
         dummy_bitcoind.txs.insert(dummy_txid_a, (dummy_tx_a, None));
-        let ms = DummyLiana::new(dummy_bitcoind, DummyDatabase::new());
+        let ms = DummyLiana::new_timelock(dummy_bitcoind, DEFAULT_TIMELOCK);
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
         // The spend needs to be in DB before using RBF.
@@ -2820,7 +2862,7 @@ mod tests {
             ],
         };
 
-        let mut db = DummyDatabase::new();
+        let mut db = DummyDatabase::new(dummy_descriptor(DEFAULT_TIMELOCK));
         db.insert_coins(vec![
             // Deposit 1
             Coin {
@@ -2939,7 +2981,7 @@ mod tests {
             ),
         );
 
-        let ms = DummyLiana::new(DummyBitcoind::new(), db);
+        let ms = DummyLiana::new(DummyBitcoind::new(), db, false);
 
         let control = &ms.control();
         let mut db_conn = control.db.connection();
@@ -3076,7 +3118,7 @@ mod tests {
             ),
         );
 
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), DEFAULT_TIMELOCK);
         let control = &ms.control();
         let mut db_conn = control.db.connection();
         let txs: Vec<_> = txs_map.values().map(|(tx, _)| tx.clone()).collect();
@@ -3136,7 +3178,7 @@ mod tests {
         };
         let dummy_txid = dummy_tx.compute_txid();
         let dummy_op = bitcoin::OutPoint::new(dummy_txid, 0);
-        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), DummyDatabase::new(), 10);
+        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), 10);
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
         db_conn.new_txs(&[dummy_tx]);
@@ -3241,6 +3283,14 @@ mod tests {
             control.create_recovery(dummy_addr.clone(), &[dummy_op], 1, Some(11)),
             Err(CommandError::OutpointNotRecoverable(dummy_op, 11)),
         );
+
+        // allow to recover with own address with a warning attached.
+        let own_addr = control.get_new_address();
+        let own_unchecked_addr = own_addr.address.as_unchecked().clone();
+        let res = control
+            .create_recovery(own_unchecked_addr, &[], 1, None)
+            .unwrap();
+        assert_eq!(res.warnings, vec![CreateRecoveryWarning::ToOwnAddress]);
 
         // If the coin is spending, it is no longer recoverable.
         db_conn.spend_coins(&[(

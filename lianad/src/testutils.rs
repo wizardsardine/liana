@@ -23,6 +23,10 @@ use miniscript::{
     descriptor,
 };
 
+const TEST_OWNER_KEY_SINGLE: &str = "[aabbccdd]xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/<0;1>/*";
+const TEST_HEIR_KEY_SINGLE: &str = "[aabbccdd]xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/<0;1>/*";
+pub const DEFAULT_TIMELOCK: u16 = 10_000;
+
 pub struct DummyBitcoind {
     pub txs: HashMap<Txid, (Transaction, Option<Block>)>,
 }
@@ -156,6 +160,7 @@ struct DummyDbState {
     timestamp: u32,
     rescan_timestamp: Option<u32>,
     last_poll_timestamp: Option<u32>,
+    main_descriptor: descriptors::LianaDescriptor,
 }
 
 pub struct DummyDatabase {
@@ -171,7 +176,7 @@ impl DatabaseInterface for DummyDatabase {
 }
 
 impl DummyDatabase {
-    pub fn new() -> DummyDatabase {
+    pub fn new(main_descriptor: descriptors::LianaDescriptor) -> DummyDatabase {
         let now: u32 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -191,6 +196,7 @@ impl DummyDatabase {
                 timestamp: now,
                 rescan_timestamp: None,
                 last_poll_timestamp: None,
+                main_descriptor,
             })),
         }
     }
@@ -363,8 +369,29 @@ impl DatabaseConnection for DummyDatabase {
 
     fn derivation_index_by_address(
         &mut self,
-        _: &bitcoin::Address,
+        addr: &bitcoin::Address,
     ) -> Option<(bip32::ChildNumber, bool)> {
+        let net = self.network();
+        let db = self.db.read().unwrap();
+        let desc = &db.main_descriptor;
+        let context = secp256k1::Secp256k1::verification_only();
+
+        // Check in list of ([recv | change] desc path, child idx, is change or not)
+        let data = vec![
+            (desc.receive_descriptor(), db.deposit_index, false),
+            (desc.change_descriptor(), db.change_index, true),
+        ];
+
+        // From first to last index used, if gets we found
+        for (wall_desc, idx, is_change) in data {
+            for i in 0..=u32::from(idx) {
+                let index = bip32::ChildNumber::from(i);
+                let look = wall_desc.derive(index, &context).address(net);
+                if &look == addr {
+                    return Some((index, is_change));
+                }
+            }
+        }
         None
     }
 
@@ -576,13 +603,27 @@ pub fn tmp_dir() -> path::PathBuf {
     ))
 }
 
+pub fn dummy_descriptor(timelock: u16) -> descriptors::LianaDescriptor {
+    let owner_key = descriptors::PathInfo::Single(
+        descriptor::DescriptorPublicKey::from_str(TEST_OWNER_KEY_SINGLE).unwrap(),
+    );
+    let heir_key = descriptors::PathInfo::Single(
+        descriptor::DescriptorPublicKey::from_str(TEST_HEIR_KEY_SINGLE).unwrap(),
+    );
+    let policy = descriptors::LianaPolicy::new_legacy(
+        owner_key,
+        [(timelock, heir_key)].iter().cloned().collect(),
+    )
+    .unwrap();
+    descriptors::LianaDescriptor::new(policy)
+}
+
 impl DummyLiana {
     /// Creates a new DummyLiana interface
     pub fn _new(
         bitcoin_interface: impl BitcoinInterface + 'static,
-        database: impl DatabaseInterface + 'static,
+        database: DummyDatabase,
         rpc_server: bool,
-        timelock: u16,
     ) -> DummyLiana {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
@@ -599,19 +640,11 @@ impl DummyLiana {
             poll_interval_secs: time::Duration::from_secs(2),
         };
 
-        let owner_key = descriptors::PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[aabbccdd]xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/<0;1>/*").unwrap());
-        let heir_key = descriptors::PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[aabbccdd]xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/<0;1>/*").unwrap());
-        let policy = descriptors::LianaPolicy::new_legacy(
-            owner_key,
-            [(timelock, heir_key)].iter().cloned().collect(),
-        )
-        .unwrap();
-        let desc = descriptors::LianaDescriptor::new(policy);
         let config = Config::new(
             bitcoin_config,
             None,
             log::LevelFilter::Debug,
-            desc,
+            database.db.read().unwrap().main_descriptor.clone(),
             DataDirectory::new(data_directory),
         );
 
@@ -624,26 +657,30 @@ impl DummyLiana {
     /// Creates a new DummyLiana interface
     pub fn new(
         bitcoin_interface: impl BitcoinInterface + 'static,
-        database: impl DatabaseInterface + 'static,
+        database: DummyDatabase,
+        rpc_server: bool,
     ) -> DummyLiana {
-        Self::_new(bitcoin_interface, database, false, 10_000)
+        Self::_new(bitcoin_interface, database, rpc_server)
     }
 
     /// Creates a new DummyLiana interface with the specified recovery path timelock.
     pub fn new_timelock(
         bitcoin_interface: impl BitcoinInterface + 'static,
-        database: impl DatabaseInterface + 'static,
         timelock: u16,
     ) -> DummyLiana {
-        Self::_new(bitcoin_interface, database, false, timelock)
+        let descriptor = dummy_descriptor(timelock);
+        let database = DummyDatabase::new(descriptor);
+        Self::new(bitcoin_interface, database, false)
     }
 
     /// Creates a new DummyLiana interface which also spins up an RPC server.
     pub fn new_server(
         bitcoin_interface: impl BitcoinInterface + 'static,
-        database: impl DatabaseInterface + 'static,
+        timelock: u16,
     ) -> DummyLiana {
-        Self::_new(bitcoin_interface, database, true, 10_000)
+        let descriptor = dummy_descriptor(timelock);
+        let database = DummyDatabase::new(descriptor);
+        Self::new(bitcoin_interface, database, true)
     }
 
     pub fn control(&self) -> &DaemonControl {

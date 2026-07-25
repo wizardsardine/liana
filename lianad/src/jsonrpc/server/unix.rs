@@ -402,7 +402,7 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn server_sanity_check() {
-        let ms = DummyLiana::new_server(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyLiana::new_server(DummyBitcoind::new(), DEFAULT_TIMELOCK);
         let socket_path: path::PathBuf = [
             ms.tmp_dir.as_path(),
             path::Path::new("d"),
