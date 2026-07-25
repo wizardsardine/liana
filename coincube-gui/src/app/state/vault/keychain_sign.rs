@@ -2382,9 +2382,7 @@ mod tests {
             assert!(
                 !modal.pending[0].signed_psbt_fetching,
                 "captured/given-up session ({:?}, merged={}, persisted={}) must not poll",
-                status,
-                merged,
-                persisted
+                status, merged, persisted
             );
         }
     }
