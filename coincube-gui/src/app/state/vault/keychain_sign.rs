@@ -1090,13 +1090,15 @@ impl KeychainSignModal {
             // fetch+merge — `check_all_done` is still false here and the
             // `Persisted { Ok }` arm performs this transition instead.
             self.phase = Phase::AllDone;
-            // `SessionCompleted` produces no follow-up message on its
-            // own, and the panel's `Message::Updated(Ok)` arm is the
-            // sole place that closes this modal — so without this
-            // re-emit the modal would stay stuck on "Closing…".
-            return Task::done(Message::Updated(Ok(())));
         }
-        Task::none()
+        // Any status change reconciles the panel: the sole recompute/close
+        // authority lives in the panel's `Message::Updated(Ok)` arm, so
+        // re-emit it on every event — even when this one started no fetch
+        // (e.g. it raced a poll that already holds the fetch) and not all
+        // sessions are done yet. Without this a merged signature can sit
+        // uncounted (badge stuck below threshold, modal never closing) until
+        // some unrelated message happens to trigger a reconcile.
+        Task::done(Message::Updated(Ok(())))
     }
 
     /// Merge the signed PSBT returned by `GetSigningSession` into the
@@ -1224,7 +1226,7 @@ impl KeychainSignModal {
         // generic `Message::Updated(Err)` path.
         let merged = tx.psbt.clone();
         let daemon = daemon.clone();
-        Task::perform(
+        let persist = Task::perform(
             async move {
                 daemon
                     .update_spend_tx(&merged)
@@ -1237,7 +1239,12 @@ impl KeychainSignModal {
                     result,
                 })
             },
-        )
+        );
+        // The signature is already merged into `tx.psbt`; reconcile the panel's
+        // count/badge/close decision now rather than waiting on the persist
+        // round-trip (`Persisted { Ok }` also re-emits this, but a slow or
+        // failed persist must not strand a merged signature uncounted).
+        Task::batch([persist, Task::done(Message::Updated(Ok(())))])
     }
 
     /// Poll `GetSigningSession` for every live, identified pending signer.
