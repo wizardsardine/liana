@@ -154,7 +154,14 @@ impl PsbtState {
         let close = match self.modal.as_mut() {
             Some(PsbtModal::Sign(sign)) => {
                 sign.set_counted_signers(counted);
-                self.tx.path_ready().is_some() || sign.should_close_after_dismiss()
+                // Threshold close waits for any Keychain signature that is
+                // merged in memory but not yet durably persisted — otherwise a
+                // slow or failing persist would tear the picker down before the
+                // daemon holds the signature it must broadcast (and before the
+                // failing row could be marked Failed). Dismissal-driven close
+                // has its own drain gate and is unaffected.
+                (self.tx.path_ready().is_some() && !sign.keychain_persistence_pending())
+                    || sign.should_close_after_dismiss()
             }
             _ => false,
         };
@@ -405,6 +412,14 @@ impl PsbtState {
                         return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                 };
+            }
+            Message::Reconcile => {
+                // UI-only: recompute collected signatures and maybe close the
+                // picker after an in-memory merge. Unlike `Updated(Ok)` this
+                // does NOT set `saved` — the persist may still be in flight or
+                // may fail, and marking the tx saved here would wrongly enable
+                // Export/Delete on a never-persisted spend.
+                return self.reconcile_and_maybe_close();
             }
             Message::Updated(Ok(_)) => {
                 self.saved = true;
@@ -1111,6 +1126,16 @@ impl SignModal {
         self.signed = counted;
     }
 
+    /// True while the nested Keychain flow has a signature merged into the
+    /// PSBT but not yet durably persisted. The picker must not close on
+    /// threshold until this resolves, so a persist failure can mark the row
+    /// Failed instead of tearing the modal down on an unsaved signature.
+    pub fn keychain_persistence_pending(&self) -> bool {
+        self.keychain
+            .as_ref()
+            .is_some_and(|k| k.has_persistence_pending())
+    }
+
     /// Best-effort cancel of any keychain sessions still in flight, used when
     /// the picker is about to close because the threshold was met so those
     /// sessions don't outlive it server-side.
@@ -1233,18 +1258,17 @@ impl SignModal {
                     .iter()
                     .enumerate()
                     .find(|(_, p)| p.fingerprint == fp)
-                    .map(|(i, p)| {
-                        (
-                            i,
-                            p.status,
-                            p.status.is_terminal_success() && p.signed_psbt_persisted,
-                        )
-                    })
+                    .map(|(i, p)| (i, p.status))
             });
         let kind = self.signing_key_kind(fp, master_fp, kc.is_some());
 
-        // Signature already collected (local or keychain).
-        if self.signed.contains(&fp) || kc.map(|(_, _, s)| s).unwrap_or(false) {
+        // Signature already collected. `self.signed` is the single source of
+        // truth — it mirrors the signers actually counted in the merged PSBT
+        // (refreshed by `set_counted_signers` on every reconcile), so the row
+        // and the "X of N collected" badge can't disagree. No persistence-based
+        // shortcut: a Keychain response only counts once its signature is merged
+        // and counted, which is exactly what puts the key into `self.signed`.
+        if self.signed.contains(&fp) {
             return (kind, St::Signed);
         }
         // Inactive spending path — nothing here can sign this transaction.
@@ -1298,7 +1322,7 @@ impl SignModal {
             }
         }
         // A Connect-resolved Keychain signer.
-        if let Some((idx, status, _)) = kc {
+        if let Some((idx, status)) = kc {
             return match status {
                 PendingSessionStatus::Idle => (Kind::Keychain, St::Available(Act::Keychain)),
                 PendingSessionStatus::Rejected

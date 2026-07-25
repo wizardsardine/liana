@@ -121,6 +121,13 @@ pub struct PendingSession {
     /// `SIGNATURE_SUBMITTED` and `SESSION_COMPLETED` can both ask for the
     /// signed PSBT; this prevents duplicate fetch/persist races.
     pub signed_psbt_fetching: bool,
+    /// True once this session's signed PSBT has been merged into the local
+    /// `SpendTx` in memory, until that merge is durably persisted
+    /// (`signed_psbt_persisted`). While set-but-not-persisted the picker must
+    /// not close on threshold: the daemon lacks the signature it would
+    /// broadcast, and a persist failure needs the row to stay visible so it
+    /// can be marked Failed and retried. Reset on retry.
+    pub signed_psbt_merged: bool,
 }
 
 /// View-friendly mirror of the gRPC `SessionStatus` enum, plus a
@@ -477,6 +484,18 @@ impl KeychainSignModal {
                 .all(|p| p.status.is_terminal_success() && p.signed_psbt_persisted)
     }
 
+    /// True while any pending session has its signed PSBT merged into the
+    /// local `SpendTx` but not yet durably persisted — persist in flight *or*
+    /// a persist that failed. Threshold-based modal teardown must wait for
+    /// these: closing on the in-memory merge alone would drop the modal (and
+    /// the daemon would lack a signature it needs to broadcast) before a
+    /// persist failure could mark the row Failed for retry.
+    pub fn has_persistence_pending(&self) -> bool {
+        self.pending
+            .iter()
+            .any(|p| p.signed_psbt_merged && !p.signed_psbt_persisted)
+    }
+
     /// True while any pending session is non-terminal. After
     /// `cancel_all()`, such entries still depend on the modal staying
     /// mounted: empty-`session_id` rows are cancelled later by
@@ -786,6 +805,7 @@ impl KeychainSignModal {
                 cancel_requested: false,
                 signed_psbt_persisted: false,
                 signed_psbt_fetching: false,
+                signed_psbt_merged: false,
             });
         }
 
@@ -815,6 +835,7 @@ impl KeychainSignModal {
         entry.cancel_requested = false;
         entry.signed_psbt_persisted = false;
         entry.signed_psbt_fetching = false;
+        entry.signed_psbt_merged = false;
 
         let psbt_bytes = self.psbt.serialize();
         let vault_id = self.vault_id.unwrap_or(0).to_string();
@@ -1091,14 +1112,15 @@ impl KeychainSignModal {
             // `Persisted { Ok }` arm performs this transition instead.
             self.phase = Phase::AllDone;
         }
-        // Any status change reconciles the panel: the sole recompute/close
-        // authority lives in the panel's `Message::Updated(Ok)` arm, so
-        // re-emit it on every event — even when this one started no fetch
-        // (e.g. it raced a poll that already holds the fetch) and not all
-        // sessions are done yet. Without this a merged signature can sit
-        // uncounted (badge stuck below threshold, modal never closing) until
-        // some unrelated message happens to trigger a reconcile.
-        Task::done(Message::Updated(Ok(())))
+        // Any status change reconciles the panel: the recompute/close
+        // authority lives in `PsbtState`, so emit a UI-only `Reconcile` on
+        // every event — even when this one started no fetch (e.g. it raced a
+        // poll that already holds the fetch) and not all sessions are done yet.
+        // Without this a merged signature can sit uncounted (badge stuck below
+        // threshold, modal never closing) until some unrelated message happens
+        // to trigger a reconcile. `Reconcile` (not `Updated(Ok)`) because no
+        // save occurred here — persist success is signalled by `Persisted`.
+        Task::done(Message::Reconcile)
     }
 
     /// Merge the signed PSBT returned by `GetSigningSession` into the
@@ -1220,6 +1242,11 @@ impl KeychainSignModal {
             "Merging signed PSBT from session into local SpendTx"
         );
         super::psbt::merge_signatures_pub(&mut tx.psbt, &signed_psbt);
+        // Mark the row merged-but-not-yet-persisted so threshold-close waits
+        // for the persist (or its failure) below.
+        if let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) {
+            entry.signed_psbt_merged = true;
+        }
         // Persist the merged PSBT so a restart picks it up. Carry the
         // session_id through so a persistence failure marks the right
         // row instead of being silently swallowed by the panel's
@@ -1242,9 +1269,11 @@ impl KeychainSignModal {
         );
         // The signature is already merged into `tx.psbt`; reconcile the panel's
         // count/badge/close decision now rather than waiting on the persist
-        // round-trip (`Persisted { Ok }` also re-emits this, but a slow or
-        // failed persist must not strand a merged signature uncounted).
-        Task::batch([persist, Task::done(Message::Updated(Ok(())))])
+        // round-trip (`Persisted { Ok }` re-emits `Updated(Ok)` on real save
+        // success). `Reconcile` is UI-only — it must not mark the tx saved,
+        // since this persist may still fail — but it must not strand a merged
+        // signature uncounted either.
+        Task::batch([persist, Task::done(Message::Reconcile)])
     }
 
     /// Poll `GetSigningSession` for every live, identified pending signer.
@@ -1999,6 +2028,7 @@ mod tests {
             cancel_requested: false,
             signed_psbt_persisted: false,
             signed_psbt_fetching: false,
+            signed_psbt_merged: false,
         }
     }
 
@@ -2115,6 +2145,29 @@ mod tests {
         modal.pending[0].signed_psbt_persisted = false;
         let _ = modal.close_if_dismissed_and_drained();
         assert!(matches!(modal.phase, Phase::AllDone));
+    }
+
+    #[test]
+    fn persistence_pending_tracks_merged_but_unsaved_rows() {
+        let mut modal = modal();
+        modal.pending.push(pending(PendingSessionStatus::Completed));
+
+        // Terminal-success alone is not persistence-pending: nothing merged.
+        assert!(!modal.has_persistence_pending());
+
+        // Merged but not yet persisted — threshold close must wait.
+        modal.pending[0].signed_psbt_merged = true;
+        assert!(modal.has_persistence_pending());
+
+        // A persist that *failed* still leaves the sig unsaved: keep blocking
+        // so the row can be marked Failed rather than closing the modal.
+        modal.pending[0].status = PendingSessionStatus::Failed;
+        assert!(modal.has_persistence_pending());
+
+        // Once durably persisted, no longer pending.
+        modal.pending[0].status = PendingSessionStatus::Completed;
+        modal.pending[0].signed_psbt_persisted = true;
+        assert!(!modal.has_persistence_pending());
     }
 
     #[test]
