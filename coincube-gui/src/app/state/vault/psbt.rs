@@ -133,6 +133,52 @@ impl PsbtState {
         self.modal = None;
     }
 
+    /// Single authority for reflecting collected signatures. Recomputes
+    /// `tx.sigs` from the authoritative merged `tx.psbt`, refreshes the Sign
+    /// picker's per-key "Signed" set from the *counted* signers (so a row can
+    /// never show Signed without being counted), and closes the picker once a
+    /// spending path is satisfied (or it was dismissed and its Keychain
+    /// sessions drained). Idempotent — safe to call after every signature
+    /// merge, decoupled from the persist round-trip.
+    fn reconcile_and_maybe_close(&mut self) -> Task<Message> {
+        if let Ok(sigs) = self
+            .wallet
+            .main_descriptor
+            .partial_spend_info(&self.tx.psbt)
+        {
+            self.tx.sigs = sigs;
+        }
+        // Derive the picker's "Signed" indicator from the counted signers so
+        // the per-key rows and the "X of N collected" badge can't diverge.
+        let counted = self.tx.signers();
+        let close = match self.modal.as_mut() {
+            Some(PsbtModal::Sign(sign)) => {
+                sign.set_counted_signers(counted);
+                // Threshold close waits for any Keychain signature that is
+                // merged in memory but not yet durably persisted — otherwise a
+                // slow or failing persist would tear the picker down before the
+                // daemon holds the signature it must broadcast (and before the
+                // failing row could be marked Failed). Dismissal-driven close
+                // has its own drain gate and is unaffected.
+                (self.tx.path_ready().is_some() && !sign.keychain_persistence_pending())
+                    || sign.should_close_after_dismiss()
+            }
+            _ => false,
+        };
+        if close {
+            // Best-effort: cancel any Keychain sessions still in flight so they
+            // don't outlive the closed picker.
+            let extra = if let Some(PsbtModal::Sign(sign)) = self.modal.as_mut() {
+                sign.cancel_keychain_if_active()
+            } else {
+                Task::none()
+            };
+            self.modal = None;
+            return extra;
+        }
+        Task::none()
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         if let Some(modal) = &self.modal {
             modal.as_ref().subscription()
@@ -367,48 +413,26 @@ impl PsbtState {
                     }
                 };
             }
+            Message::Reconcile => {
+                // UI-only: recompute collected signatures and maybe close the
+                // picker after an in-memory merge. Unlike `Updated(Ok)` this
+                // does NOT set `saved` — the persist may still be in flight or
+                // may fail, and marking the tx saved here would wrongly enable
+                // Export/Delete on a never-persisted spend.
+                return self.reconcile_and_maybe_close();
+            }
             Message::Updated(Ok(_)) => {
                 self.saved = true;
                 if let Some(modal) = self.modal.as_mut() {
+                    // Let the modal run its own side-effects (e.g. Keychain
+                    // bookkeeping), then reconcile the collected signatures and
+                    // decide whether to close. The recompute/close/close-after-
+                    // dismiss logic lives in `reconcile_and_maybe_close` so
+                    // every merge site (local sign, Keychain merge, dismissal
+                    // drain) drives the same idempotent path regardless of
+                    // persist ordering.
                     let cmd = modal.as_mut().update(daemon.clone(), message, &mut self.tx);
-                    // Recompute path_ready / sigs against the newly merged
-                    // PSBT so the close decision below — and the outer view's
-                    // Sign→Broadcast swap — reflect the just-added signature.
-                    // The signature may have come from a local device
-                    // (`SignModal`'s own Updated arm) or a Keychain session
-                    // (which re-emits `Updated(Ok)` through here after its
-                    // merge+persist), so recompute unconditionally.
-                    if let Ok(sigs) = self
-                        .wallet
-                        .main_descriptor
-                        .partial_spend_info(&self.tx.psbt)
-                    {
-                        self.tx.sigs = sigs;
-                    }
-                    // Close the unified picker only when the spending path
-                    // threshold is met, or when it was dismissed mid-flight
-                    // and its Keychain sessions have finished draining. A
-                    // single local/keychain signature that doesn't meet the
-                    // threshold keeps the picker open so more signers can be
-                    // added.
-                    let close = match modal {
-                        PsbtModal::Sign(sign) => {
-                            self.tx.path_ready().is_some() || sign.should_close_after_dismiss()
-                        }
-                        _ => false,
-                    };
-                    if close {
-                        // Best-effort: cancel any Keychain sessions still in
-                        // flight so they don't outlive the closed picker.
-                        let extra = if let PsbtModal::Sign(sign) = modal {
-                            sign.cancel_keychain_if_active()
-                        } else {
-                            Task::none()
-                        };
-                        self.modal = None;
-                        return Task::batch([cmd, extra]);
-                    }
-                    return cmd;
+                    return Task::batch([cmd, self.reconcile_and_maybe_close()]);
                 }
             }
             Message::BroadcastModal(res) => match res {
@@ -436,8 +460,14 @@ impl PsbtState {
                     } else {
                         self.tx.spend_amount
                     };
-                    let amount_display =
-                        display_amount.to_formatted_string_with_unit(cache.bitcoin_unit);
+                    // Include the unit label ("SATS" / "BTC") so the success
+                    // screen reads e.g. "149,794 SATS has been sent successfully"
+                    // rather than a bare number.
+                    let amount_display = format!(
+                        "{} {}",
+                        display_amount.to_formatted_string_with_unit(cache.bitcoin_unit),
+                        cache.bitcoin_unit.label(),
+                    );
                     self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
                         conflicting_txids,
                         broadcast: false,
@@ -1063,7 +1093,11 @@ impl SignModal {
             return (Task::none(), false);
         };
         let cancel = k.cancel_all();
-        let keep = k.has_undrained_sessions();
+        // Keep the hidden modal mounted while sessions still need draining OR a
+        // signed-PSBT capture (fetch or persist) is in flight — so a `Completed`
+        // session's fetch can still merge and a `Persisted(Err)` can still mark
+        // its row Failed instead of landing on a dropped modal.
+        let keep = k.has_undrained_sessions() || k.has_capture_in_flight();
         if keep {
             k.mark_dismissed();
             self.display_modal = false;
@@ -1072,13 +1106,14 @@ impl SignModal {
     }
 
     /// True once the picker was dismissed (hidden) and its keychain sessions
-    /// have all drained — the signal the panel uses to finally drop it.
+    /// have all drained *and* no signed-PSBT capture (fetch or persist) is still
+    /// in flight — the signal the panel uses to finally drop it.
     pub fn should_close_after_dismiss(&self) -> bool {
         !self.display_modal
             && self
                 .keychain
                 .as_ref()
-                .is_none_or(|k| !k.has_undrained_sessions())
+                .is_none_or(|k| !k.has_undrained_sessions() && !k.has_capture_in_flight())
     }
 
     /// True when this picker offers Keychain signing but the nested flow
@@ -1092,6 +1127,24 @@ impl SignModal {
     /// Connect becomes ready for a picker that opened without it.
     pub fn set_keychain(&mut self, keychain: Option<super::keychain_sign::KeychainSignModal>) {
         self.keychain = keychain;
+    }
+
+    /// Replace the per-key "Signed" set with the authoritative signers counted
+    /// from the merged PSBT (`SpendTx::signers()`). Called on every reconcile so
+    /// a row can only read Signed once its signature is actually counted — the
+    /// optimistic `signed.insert` on local-sign return is corrected here.
+    pub fn set_counted_signers(&mut self, counted: HashSet<Fingerprint>) {
+        self.signed = counted;
+    }
+
+    /// True while the nested Keychain flow has a signature merged into the
+    /// PSBT but not yet durably persisted. The picker must not close on
+    /// threshold until this resolves, so a persist failure can mark the row
+    /// Failed instead of tearing the modal down on an unsaved signature.
+    pub fn keychain_persistence_pending(&self) -> bool {
+        self.keychain
+            .as_ref()
+            .is_some_and(|k| k.has_persistence_pending())
     }
 
     /// Best-effort cancel of any keychain sessions still in flight, used when
@@ -1216,18 +1269,24 @@ impl SignModal {
                     .iter()
                     .enumerate()
                     .find(|(_, p)| p.fingerprint == fp)
-                    .map(|(i, p)| {
-                        (
-                            i,
-                            p.status,
-                            p.status.is_terminal_success() && p.signed_psbt_persisted,
-                        )
-                    })
+                    .map(|(i, p)| (i, p.status))
             });
         let kind = self.signing_key_kind(fp, master_fp, kc.is_some());
 
-        // Signature already collected (local or keychain).
-        if self.signed.contains(&fp) || kc.map(|(_, _, s)| s).unwrap_or(false) {
+        // A resolved Keychain session in a give-up state (rejected / expired /
+        // failed — including a *persist* failure) must fall through to the Retry
+        // branch below, even if its signature is transiently counted in
+        // `self.signed`. A failed `update_spend_tx` leaves the signature
+        // merged-but-unsaved, so rendering it Signed would hide the Retry
+        // affordance and overstate the durable "X of N collected" count.
+        let kc_needs_retry = matches!(kc, Some((_, status)) if status.is_give_up());
+        // Signature already collected. `self.signed` is the single source of
+        // truth — it mirrors the signers actually counted in the merged PSBT
+        // (refreshed by `set_counted_signers` on every reconcile), so the row
+        // and the "X of N collected" badge can't disagree. No persistence-based
+        // shortcut: a Keychain response only counts once its signature is merged
+        // and counted, which is exactly what puts the key into `self.signed`.
+        if self.signed.contains(&fp) && !kc_needs_retry {
             return (kind, St::Signed);
         }
         // Inactive spending path — nothing here can sign this transaction.
@@ -1281,7 +1340,7 @@ impl SignModal {
             }
         }
         // A Connect-resolved Keychain signer.
-        if let Some((idx, status, _)) = kc {
+        if let Some((idx, status)) = kc {
             return match status {
                 PendingSessionStatus::Idle => (Kind::Keychain, St::Available(Act::Keychain)),
                 PendingSessionStatus::Rejected
@@ -1505,9 +1564,18 @@ impl Modal for SignModal {
                         self.signed.insert(fingerprint);
                         let daemon = daemon.clone();
                         merge_signatures(&mut tx.psbt, &psbt);
+                        // Persist the *merged* PSBT (not the lone single-signer
+                        // result) so the daemon's stored copy always matches the
+                        // desktop's in-memory set. Otherwise a later re-read of
+                        // the tx from the daemon (list refresh / reopen) can
+                        // surface a partially-signed psbt and drop signatures
+                        // collected earlier in the same session.
+                        let merged = tx.psbt.clone();
                         if self.is_saved {
                             return Task::perform(
-                                async move { daemon.update_spend_tx(&psbt).await.map_err(|e| e.into()) },
+                                async move {
+                                    daemon.update_spend_tx(&merged).await.map_err(|e| e.into())
+                                },
                                 Message::Updated,
                             );
                         // If the spend transaction was never saved before, then both the psbt and
@@ -1521,7 +1589,7 @@ impl Modal for SignModal {
                             }
                             return Task::perform(
                                 async move {
-                                    daemon.update_spend_tx(&psbt).await?;
+                                    daemon.update_spend_tx(&merged).await?;
                                     daemon.update_labels(&labels).await.map_err(|e| e.into())
                                 },
                                 Message::Updated,
@@ -1663,39 +1731,43 @@ async fn sign_psbt(
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     mut psbt: Psbt,
 ) -> Result<Psbt, Error> {
-    // The BitBox02 is only going to produce a signature for a single key in the Script. In order
-    // to make sure it doesn't sign for a public key from another spending path we remove the BIP32
-    // derivation for the other paths.
-    if matches!(hw.device_kind(), async_hwi::DeviceKind::BitBox02) {
-        // We need to make sure we don't prune the BIP32 derivations from the original PSBT (which
-        // would end up being updated in the daemon's database and erase the previously unpruned
-        // one). To this end we create a new, pruned, psbt we use for signing and then merge its
-        // signatures back into the original PSBT.
-        let mut pruned_psbt = wallet
-            .main_descriptor
-            .prune_bip32_derivs_last_avail(psbt.clone())
-            .map_err(Error::Desc)?;
-        hw.sign_tx(&mut pruned_psbt).await.map_err(Error::from)?;
-        for (i, psbt_in) in psbt.inputs.iter_mut().enumerate() {
-            if let Some(pruned_psbt_in) = pruned_psbt.inputs.get_mut(i) {
-                psbt_in
-                    .partial_sigs
-                    .append(&mut pruned_psbt_in.partial_sigs);
-                if let Some(tap_key_sig) = pruned_psbt_in.tap_key_sig {
-                    psbt_in.tap_key_sig = Some(tap_key_sig);
-                }
-                psbt_in
-                    .tap_script_sigs
-                    .append(&mut pruned_psbt_in.tap_script_sigs);
-            } else {
-                log::error!(
-                    "Not all PSBT inputs are present in the pruned psbt. Pruned psbt: '{}'.",
-                    &pruned_psbt
-                );
+    // Sign against a copy pruned to the active spending path. Some signers
+    // (e.g. the BitBox02) only produce a signature for a single key per Script,
+    // so an unpruned PSBT — in which a signer's key appears on more than one
+    // spending path (a primary `multi(...)` key and a recovery `pkh(...)` key) —
+    // can lead them to sign the wrong path's key, which then can't satisfy the
+    // path this transaction actually spends. Pruning removes the BIP32
+    // derivations for the inactive paths so every signer signs the right key(s).
+    // Applied to all devices, not just the BitBox02, so a future single-key
+    // signer is safe by construction; multi-key signers are unaffected (they
+    // just sign the active-path key instead of also signing an unused
+    // recovery-path key).
+    //
+    // We prune a *clone* and merge the returned signatures back into the
+    // original PSBT, so its full derivations are preserved in the daemon's
+    // stored copy.
+    let mut pruned_psbt = wallet
+        .main_descriptor
+        .prune_bip32_derivs_last_avail(psbt.clone())
+        .map_err(Error::Desc)?;
+    hw.sign_tx(&mut pruned_psbt).await.map_err(Error::from)?;
+    for (i, psbt_in) in psbt.inputs.iter_mut().enumerate() {
+        if let Some(pruned_psbt_in) = pruned_psbt.inputs.get_mut(i) {
+            psbt_in
+                .partial_sigs
+                .append(&mut pruned_psbt_in.partial_sigs);
+            if let Some(tap_key_sig) = pruned_psbt_in.tap_key_sig {
+                psbt_in.tap_key_sig = Some(tap_key_sig);
             }
+            psbt_in
+                .tap_script_sigs
+                .append(&mut pruned_psbt_in.tap_script_sigs);
+        } else {
+            log::error!(
+                "Not all PSBT inputs are present in the pruned psbt. Pruned psbt: '{}'.",
+                &pruned_psbt
+            );
         }
-    } else {
-        hw.sign_tx(&mut psbt).await.map_err(Error::from)?;
     }
     Ok(psbt)
 }
@@ -1817,6 +1889,70 @@ mod tests {
         };
         let (modal, _task) = build_keychain_if_ready(&ready, &wallet, &psbt);
         assert!(modal.is_some());
+    }
+
+    #[test]
+    fn counted_signers_drive_the_signed_row_state() {
+        use view::vault::psbt::SigningKeyState;
+
+        // Regression: a per-key row must read "Signed" only when its signature
+        // is actually counted (present in the merged PSBT / `tx.sigs`), never
+        // from an optimistic flag alone. `reconcile_and_maybe_close` feeds the
+        // counted set here via `set_counted_signers`.
+        let mut modal = SignModal::new(
+            HashSet::new(),
+            Arc::new(wallet()),
+            CoincubeDirectory::new(PathBuf::new()),
+            Network::Signet,
+            false,
+            None,
+            None,
+            false,
+        );
+
+        let signer = fingerprint("f714c228");
+        let other = fingerprint("2522f23c");
+
+        let primary_before = modal
+            .signing_paths()
+            .into_iter()
+            .find(|p| p.is_primary)
+            .unwrap();
+        let row_before = primary_before
+            .keys
+            .iter()
+            .find(|r| r.fingerprint == signer)
+            .expect("signer is a primary key");
+        assert!(
+            !matches!(row_before.state, SigningKeyState::Signed),
+            "uncounted key must not render as Signed"
+        );
+
+        modal.set_counted_signers(HashSet::from([signer]));
+
+        let primary_after = modal
+            .signing_paths()
+            .into_iter()
+            .find(|p| p.is_primary)
+            .unwrap();
+        let signer_row = primary_after
+            .keys
+            .iter()
+            .find(|r| r.fingerprint == signer)
+            .unwrap();
+        assert!(
+            matches!(signer_row.state, SigningKeyState::Signed),
+            "counted key must render as Signed"
+        );
+        let other_row = primary_after
+            .keys
+            .iter()
+            .find(|r| r.fingerprint == other)
+            .unwrap();
+        assert!(
+            !matches!(other_row.state, SigningKeyState::Signed),
+            "uncounted key must stay un-Signed"
+        );
     }
 
     #[tokio::test]

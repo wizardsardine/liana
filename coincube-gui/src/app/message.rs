@@ -89,6 +89,13 @@ pub enum Message {
     Signed(Fingerprint, Result<Psbt, Error>),
     WalletUpdated(Result<Arc<Wallet>, Error>),
     Updated(Result<(), Error>),
+    /// UI-only signal to recompute collected signatures and re-evaluate the
+    /// Sign picker's close/broadcast state after an in-memory PSBT merge —
+    /// distinct from `Updated(Ok)`, which additionally marks the spend tx as
+    /// persisted (`saved = true`). Emitted speculatively by the Keychain flow
+    /// before/independent of the `update_spend_tx` round-trip, so it must not
+    /// imply a successful save.
+    Reconcile,
     Saved(Result<(), Error>),
     Verified(Fingerprint, Result<(), Error>),
     StartRescan(Result<(), Error>),

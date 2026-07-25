@@ -21,6 +21,17 @@ impl std::fmt::Display for BitcoinDisplayUnit {
     }
 }
 
+impl BitcoinDisplayUnit {
+    /// The uppercase label shown next to an amount ("BTC" / "SATS"), matching
+    /// how amounts render throughout the UI.
+    pub fn label(&self) -> &'static str {
+        match self {
+            BitcoinDisplayUnit::BTC => "BTC",
+            BitcoinDisplayUnit::Sats => "SATS",
+        }
+    }
+}
+
 pub trait DisplayAmount {
     fn to_formatted_string(&self) -> String;
     fn to_formatted_string_with_unit(&self, unit: BitcoinDisplayUnit) -> String;
@@ -221,10 +232,7 @@ fn render_amount<'a, T: 'a>(
     unit: BitcoinDisplayUnit,
 ) -> Row<'a, T> {
     let spacing = if size > P1_SIZE { 10 } else { 5 };
-    let unit_text = match unit {
-        BitcoinDisplayUnit::BTC => "BTC",
-        BitcoinDisplayUnit::Sats => "SATS",
-    };
+    let unit_text = unit.label();
 
     let (before, after) = match split_at_first_non_zero(amount.clone()) {
         Some((b, a)) => (b, a),
@@ -254,10 +262,7 @@ fn render_unconfirmed_amount<'a, T: 'a>(
     unit: BitcoinDisplayUnit,
 ) -> Row<'a, T> {
     let spacing = if size > P1_SIZE { 10 } else { 5 };
-    let unit_text = match unit {
-        BitcoinDisplayUnit::BTC => "BTC",
-        BitcoinDisplayUnit::Sats => "SATS",
-    };
+    let unit_text = unit.label();
 
     Row::with_children(vec![
         text(amount).size(size).color(color::GREY_3).into(),
