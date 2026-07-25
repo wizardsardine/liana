@@ -1328,7 +1328,8 @@ impl CoincubeClient {
                 let body = res.text().await.unwrap_or_default();
                 Err(DownloadError::from_locked_body(&body))
             }
-            400 | 401 | 403 | 404 | 422 => Err(DownloadError::Invalid),
+            404 => Err(DownloadError::NotFound),
+            400 | 401 | 403 | 422 => Err(DownloadError::Invalid),
             other => Err(DownloadError::Other(CoincubeError::Unsuccessful(
                 crate::services::http::NotSuccessResponseInfo {
                     status_code: other,

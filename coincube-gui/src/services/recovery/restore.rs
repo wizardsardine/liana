@@ -789,6 +789,7 @@ impl From<crate::services::coincube::DownloadError> for RestoreError {
                 Self::TrustedDeviceDelay { available_at }
             }
             DownloadError::Invalid => Self::Api("Invalid request".to_string()),
+            DownloadError::NotFound => Self::NotFound,
             DownloadError::Other(e) => Self::from(e),
         }
     }
