@@ -1723,39 +1723,43 @@ async fn sign_psbt(
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     mut psbt: Psbt,
 ) -> Result<Psbt, Error> {
-    // The BitBox02 is only going to produce a signature for a single key in the Script. In order
-    // to make sure it doesn't sign for a public key from another spending path we remove the BIP32
-    // derivation for the other paths.
-    if matches!(hw.device_kind(), async_hwi::DeviceKind::BitBox02) {
-        // We need to make sure we don't prune the BIP32 derivations from the original PSBT (which
-        // would end up being updated in the daemon's database and erase the previously unpruned
-        // one). To this end we create a new, pruned, psbt we use for signing and then merge its
-        // signatures back into the original PSBT.
-        let mut pruned_psbt = wallet
-            .main_descriptor
-            .prune_bip32_derivs_last_avail(psbt.clone())
-            .map_err(Error::Desc)?;
-        hw.sign_tx(&mut pruned_psbt).await.map_err(Error::from)?;
-        for (i, psbt_in) in psbt.inputs.iter_mut().enumerate() {
-            if let Some(pruned_psbt_in) = pruned_psbt.inputs.get_mut(i) {
-                psbt_in
-                    .partial_sigs
-                    .append(&mut pruned_psbt_in.partial_sigs);
-                if let Some(tap_key_sig) = pruned_psbt_in.tap_key_sig {
-                    psbt_in.tap_key_sig = Some(tap_key_sig);
-                }
-                psbt_in
-                    .tap_script_sigs
-                    .append(&mut pruned_psbt_in.tap_script_sigs);
-            } else {
-                log::error!(
-                    "Not all PSBT inputs are present in the pruned psbt. Pruned psbt: '{}'.",
-                    &pruned_psbt
-                );
+    // Sign against a copy pruned to the active spending path. Some signers
+    // (e.g. the BitBox02) only produce a signature for a single key per Script,
+    // so an unpruned PSBT — in which a signer's key appears on more than one
+    // spending path (a primary `multi(...)` key and a recovery `pkh(...)` key) —
+    // can lead them to sign the wrong path's key, which then can't satisfy the
+    // path this transaction actually spends. Pruning removes the BIP32
+    // derivations for the inactive paths so every signer signs the right key(s).
+    // Applied to all devices, not just the BitBox02, so a future single-key
+    // signer is safe by construction; multi-key signers are unaffected (they
+    // just sign the active-path key instead of also signing an unused
+    // recovery-path key).
+    //
+    // We prune a *clone* and merge the returned signatures back into the
+    // original PSBT, so its full derivations are preserved in the daemon's
+    // stored copy.
+    let mut pruned_psbt = wallet
+        .main_descriptor
+        .prune_bip32_derivs_last_avail(psbt.clone())
+        .map_err(Error::Desc)?;
+    hw.sign_tx(&mut pruned_psbt).await.map_err(Error::from)?;
+    for (i, psbt_in) in psbt.inputs.iter_mut().enumerate() {
+        if let Some(pruned_psbt_in) = pruned_psbt.inputs.get_mut(i) {
+            psbt_in
+                .partial_sigs
+                .append(&mut pruned_psbt_in.partial_sigs);
+            if let Some(tap_key_sig) = pruned_psbt_in.tap_key_sig {
+                psbt_in.tap_key_sig = Some(tap_key_sig);
             }
+            psbt_in
+                .tap_script_sigs
+                .append(&mut pruned_psbt_in.tap_script_sigs);
+        } else {
+            log::error!(
+                "Not all PSBT inputs are present in the pruned psbt. Pruned psbt: '{}'.",
+                &pruned_psbt
+            );
         }
-    } else {
-        hw.sign_tx(&mut psbt).await.map_err(Error::from)?;
     }
     Ok(psbt)
 }
