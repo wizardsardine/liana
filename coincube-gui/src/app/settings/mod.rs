@@ -51,25 +51,48 @@ impl Settings {
         // virus scanner or search indexer briefly holds a just-written
         // settings.json (or its directory): std::fs::read can momentarily return
         // ACCESS_DENIED ("os error 5") or PATH/FILE_NOT_FOUND ("os error 2/3")
-        // for a file that does exist. Retry both with a short backoff. A
-        // NotFound that survives the whole budget is treated as genuine absence
-        // (SettingsError::NotFound), exactly as before — retrying only adds a
-        // little latency to the rare "no settings file yet" path, never changes
-        // its result.
+        // for a file that does exist. It can also return a *successful* but
+        // empty or partially-written read for a file whose full contents are
+        // already durable on disk (this reader takes no file lock — see
+        // `update_settings_file`), which then fails to parse. Retry all of these
+        // with a short backoff: since every write persists non-empty, valid JSON
+        // (flushed + fsync'd under a write lock), an empty read or a parse error
+        // right after a write is a transient artifact, not genuine corruption.
+        // A NotFound / empty / parse failure that survives the whole budget is
+        // surfaced exactly as before — retrying only adds a little latency to
+        // those rare paths, never changes their result.
+        const MAX_ATTEMPTS: u32 = 5;
         let mut attempt = 0u32;
-        let file_content = loop {
+        loop {
+            let retryable = attempt < MAX_ATTEMPTS;
             match std::fs::read(&path) {
-                Ok(bytes) => break bytes,
+                // Full, parseable read — the common path.
+                Ok(bytes) if !bytes.is_empty() => {
+                    match serde_json::from_slice::<Settings>(&bytes) {
+                        Ok(settings) => return Ok(settings),
+                        Err(_) if retryable => {}
+                        Err(e) => {
+                            return Err(SettingsError::ReadingFile(format!(
+                                "Parsing settings file: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                // Existing-but-empty read: a just-written file can momentarily
+                // read back empty. Retry; if it persists, treat as corrupt.
+                Ok(_) if retryable => {}
+                Ok(_) => {
+                    return Err(SettingsError::ReadingFile(
+                        "Reading settings file: file was empty".to_string(),
+                    ))
+                }
                 Err(e)
-                    if attempt < 5
+                    if retryable
                         && matches!(
                             e.kind(),
                             std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
-                        ) =>
-                {
-                    attempt += 1;
-                    std::thread::sleep(std::time::Duration::from_millis(20 * u64::from(attempt)));
-                }
+                        ) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     return Err(SettingsError::NotFound)
                 }
@@ -80,10 +103,9 @@ impl Settings {
                     )))
                 }
             }
-        };
-
-        serde_json::from_slice::<Settings>(&file_content)
-            .map_err(|e| SettingsError::ReadingFile(format!("Parsing settings file: {}", e)))
+            attempt += 1;
+            std::thread::sleep(std::time::Duration::from_millis(20 * u64::from(attempt)));
+        }
     }
 }
 
@@ -1645,5 +1667,44 @@ mod test {
             !cube.has_recovery_kit(),
             "local seed backup must not be mistaken for a Connect recovery kit"
         );
+    }
+
+    #[test]
+    fn from_file_distinguishes_missing_empty_and_valid() {
+        use super::{Settings, SettingsError, SETTINGS_FILE_NAME};
+        use crate::dir::NetworkDirectory;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        let dir =
+            std::env::temp_dir().join(format!("coincube-from-file-{}-{}", std::process::id(), seq));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let nd = NetworkDirectory::new(dir.clone());
+        let path = dir.join(SETTINGS_FILE_NAME);
+
+        // Genuinely absent file → NotFound (retries exhaust without changing it).
+        assert!(matches!(
+            Settings::from_file(&nd),
+            Err(SettingsError::NotFound)
+        ));
+
+        // An existing-but-empty file is corrupt, not absent: the retry loop must
+        // terminate and surface a read error — never NotFound, never hang. (A
+        // transient empty read of a real file is what these retries paper over;
+        // a persistently-empty one falls through to this error.)
+        std::fs::write(&path, b"").unwrap();
+        assert!(matches!(
+            Settings::from_file(&nd),
+            Err(SettingsError::ReadingFile(_))
+        ));
+
+        // A well-formed file parses on the first read.
+        std::fs::write(&path, br#"{"cubes":[],"wallets":[]}"#).unwrap();
+        let settings = Settings::from_file(&nd).expect("valid settings must parse");
+        assert!(settings.cubes.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
