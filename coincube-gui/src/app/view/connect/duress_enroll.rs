@@ -14,9 +14,7 @@ use coincube_ui::{
 };
 use iced::Length;
 
-use crate::app::state::connect::{
-    DuressDisableState, DuressEnrollState, DuressEnrollStep, EnrollTier, BACKUP_ACK_PHRASE,
-};
+use crate::app::state::connect::{DuressDisableState, DuressEnrollState, DuressEnrollStep};
 use crate::app::view::{ConnectAccountMessage, DuressMessage};
 use crate::services::duress::enroll::{DuressDelay, MIN_ALL_CLEAR_LEN};
 
@@ -185,12 +183,11 @@ pub fn disable_ux(state: &DuressDisableState) -> Element<'_, ConnectAccountMessa
 // Phases 2 & 8 — enrollment wizard
 // =============================================================================
 
-/// The multi-step enrollment wizard. Tier-aware: sovereign opens with the
-/// Connect-encouragement screen, Connect tiers start at the duress-PIN step.
+/// The multi-step enrollment wizard: duress PIN → all-clear passphrase → duress
+/// recovery-kit password → unlock delay → confirm. Single path — duress is a
+/// paid feature behind the hard, server-verified Recovery-Kit gate.
 pub fn enroll_ux(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {
     let body = match state.step {
-        DuressEnrollStep::Encourage => encourage_step(),
-        DuressEnrollStep::BackupAck => backup_ack_step(state),
         DuressEnrollStep::SetDuressPin => duress_pin_step(state),
         DuressEnrollStep::SetAllClear => all_clear_step(state),
         DuressEnrollStep::SetCrkPassword => crk_password_step(state),
@@ -208,126 +205,42 @@ pub fn enroll_ux(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage
         col = col.push(text::p2_regular(err.clone()).color(color::RED));
     }
 
-    // Navigation row. `Encourage` is special (its own CTAs); every other step
-    // gets Back + (Next | Complete enrollment).
-    if !matches!(state.step, DuressEnrollStep::Encourage) {
-        let is_last = matches!(state.step, DuressEnrollStep::Confirm);
-        let primary = if is_last {
-            if state.submitting {
-                button::primary(None, "Enrolling…").width(Length::Fixed(200.0))
-            } else {
-                button::primary(None, "Complete enrollment")
-                    .width(Length::Fixed(200.0))
-                    .on_press(msg(DuressMessage::SubmitEnrollment))
-            }
+    // Navigation row: Back + (Next | Complete enrollment).
+    let is_last = matches!(state.step, DuressEnrollStep::Confirm);
+    let primary = if is_last {
+        if state.submitting {
+            button::primary(None, "Enrolling…").width(Length::Fixed(200.0))
         } else {
-            // On the backup-acknowledgement gate, "Next" stays disabled until
-            // the phrase is an exact, case-sensitive match — no paraphrase, no
-            // checkbox shortcut. Every other step advances freely (its own
-            // validation runs on press).
-            let ready =
-                !matches!(state.step, DuressEnrollStep::BackupAck) || state.backup_ack_satisfied();
-            button::primary(None, "Next")
-                .width(Length::Fixed(120.0))
-                .on_press_maybe(ready.then(|| msg(DuressMessage::EnrollNext)))
-        };
-        col = col.push(
-            Row::new()
-                .spacing(12)
-                .push(
-                    button::secondary(None, "Back")
-                        .width(Length::Fixed(120.0))
-                        .on_press(msg(DuressMessage::EnrollBack)),
-                )
-                .push(iced::widget::Space::new().width(Length::Fill))
-                .push(
-                    // Disabled while submitting: cancelling mid-enroll would
-                    // zeroize the duress secrets before the server result lands.
-                    button::transparent(None, "Cancel").on_press_maybe(
-                        (!state.submitting).then(|| msg(DuressMessage::CancelEnrollment)),
-                    ),
-                )
-                .push(primary),
-        );
-    }
+            button::primary(None, "Complete enrollment")
+                .width(Length::Fixed(200.0))
+                .on_press(msg(DuressMessage::SubmitEnrollment))
+        }
+    } else {
+        // Each step advances freely; its own validation runs on press.
+        button::primary(None, "Next")
+            .width(Length::Fixed(120.0))
+            .on_press(msg(DuressMessage::EnrollNext))
+    };
+    col = col.push(
+        Row::new()
+            .spacing(12)
+            .push(
+                button::secondary(None, "Back")
+                    .width(Length::Fixed(120.0))
+                    .on_press(msg(DuressMessage::EnrollBack)),
+            )
+            .push(iced::widget::Space::new().width(Length::Fill))
+            .push(
+                // Disabled while submitting: cancelling mid-enroll would
+                // zeroize the duress secrets before the server result lands.
+                button::transparent(None, "Cancel").on_press_maybe(
+                    (!state.submitting).then(|| msg(DuressMessage::CancelEnrollment)),
+                ),
+            )
+            .push(primary),
+    );
 
     col.width(Length::Fill).into()
-}
-
-fn encourage_step<'a>() -> Element<'a, ConnectAccountMessage> {
-    card(
-        Column::new()
-            .push(
-                text::p1_bold("We recommend setting up Connect before enabling duress mode.")
-                    .style(theme::text::primary),
-            )
-            .push(
-                text::p2_regular("Connect makes duress mode safer and more forgiving:")
-                    .color(color::GREY_3),
-            )
-            .push(
-                text::p2_regular(
-                    "• Cube Recovery Kit — restore after a wipe with no paper seed phrase.\n\
-                 • All-clear passphrase — undo an accidental or coerced activation from a \
-                 trusted device. Sovereign duress has no all-clear.\n\
-                 • Lockout window (24h–90d) — buys you time to reach a trusted device.\n\
-                 • Cross-device signaling — the Keychain signer auto-refuses during duress.\n\
-                 • Trusted-device delay on new-device downloads.",
-                )
-                .color(color::GREY_3),
-            )
-            .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-            .push(
-                button::primary(None, "Sign up for Connect")
-                    .width(Length::Fixed(240.0))
-                    .on_press(msg(DuressMessage::SignUpForConnect)),
-            )
-            .push(
-                button::transparent(None, "Continue without Connect (advanced)")
-                    .on_press(msg(DuressMessage::EnrollNext)),
-            ),
-    )
-}
-
-fn backup_ack_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {
-    // Name BOTH destroyed artifacts explicitly — the Master Seed Phrase(s) AND
-    // the Vault Wallet Descriptor(s) — and the funds consequence. A duress wipe
-    // without a Cube Recovery Kit is only reversible from the user's own
-    // external backup of both.
-    let mut col = Column::new()
-        .push(text::p1_bold("No recovery without your own backup").style(theme::text::warning))
-        .push(
-            text::p2_regular(
-                "Activating duress permanently destroys every Cube on this device. Without a \
-                 Cube Recovery Kit, the only way back is your OWN external backup of BOTH your \
-                 Master Seed Phrase(s) AND your Vault Wallet Descriptor(s). If you don't have \
-                 both, the wipe is irreversible and any funds held in those Cubes are gone — \
-                 there is no server-side recovery path.",
-            )
-            .color(color::GREY_3),
-        )
-        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-        .push(text::p2_regular("Type the following exactly to continue:").color(color::GREY_3))
-        .push(text::p2_bold(BACKUP_ACK_PHRASE).style(theme::text::primary))
-        .push(
-            TextInput::new("Type the confirmation phrase exactly", &state.backup_ack)
-                .on_input(|v| msg(DuressMessage::BackupAckChanged(v)))
-                .padding(15),
-        );
-
-    // Connect tiers: keep the recommended path one tap away. Cancelling returns
-    // to the Duress panel, where the per-Cube recovery-kit checklist lives.
-    // Sovereign has no recovery kit, so there's no off-ramp to offer.
-    if state.tier != EnrollTier::Sovereign {
-        col = col
-            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-            .push(
-                button::secondary(None, "Set up a Recovery Kit first")
-                    .on_press(msg(DuressMessage::CancelEnrollment)),
-            );
-    }
-
-    card(col)
 }
 
 fn duress_pin_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {
@@ -448,18 +361,14 @@ fn delay_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {
 }
 
 fn confirm_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {
-    // Every tier sets a duress PIN; only Connect tiers collect an all-clear
-    // passphrase, and only Tier 1 a recovery-kit password. Sovereign never
-    // creates an all-clear, so don't tell it to memorize one.
-    let mut creds = Column::new()
+    // The single enrollment path always collects all three credentials: a
+    // duress PIN, an all-clear passphrase, and the account-level duress
+    // recovery-kit password.
+    let creds = Column::new()
         .spacing(4)
-        .push(text::p2_regular("• Duress PIN").color(color::GREY_3));
-    if state.tier != EnrollTier::Sovereign {
-        creds = creds.push(text::p2_regular("• All-clear passphrase").color(color::GREY_3));
-    }
-    if state.tier == EnrollTier::Tier1 {
-        creds = creds.push(text::p2_regular("• Duress recovery-kit password").color(color::GREY_3));
-    }
+        .push(text::p2_regular("• Duress PIN").color(color::GREY_3))
+        .push(text::p2_regular("• All-clear passphrase").color(color::GREY_3))
+        .push(text::p2_regular("• Duress recovery-kit password").color(color::GREY_3));
 
     card(
         Column::new()

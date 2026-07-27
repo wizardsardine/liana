@@ -30,6 +30,10 @@ pub enum ViewMessage {
     /// handler focuses an existing Home tab and routes it to its
     /// Connect overview so the user can sign in.
     OpenConnectSignIn,
+    /// Bubbled from a tab whose paid-feature locked card emitted
+    /// [`crate::app::view::Message::OpenPlanBilling`]. The handler focuses an
+    /// existing Home tab and routes it to Connect → Plan & Billing.
+    OpenPlanBilling,
     /// Bubbled from the Home tab on its auth-success edge. The
     /// handler broadcasts a `ConnectAccountMessage::Init` to every
     /// open Cube tab so those panels re-read the shared keyring
@@ -157,6 +161,9 @@ impl Pane {
                             tab::Message::OpenConnectSignIn => {
                                 Task::done(Message::View(ViewMessage::OpenConnectSignIn))
                             }
+                            tab::Message::OpenPlanBilling => {
+                                Task::done(Message::View(ViewMessage::OpenPlanBilling))
+                            }
                             tab::Message::ConnectSignedIn => {
                                 Task::done(Message::View(ViewMessage::ConnectSignedIn))
                             }
@@ -217,6 +224,35 @@ impl Pane {
                 // No Home tab open — spawn one and queue the
                 // navigation against its id so it lands on Connect →
                 // Overview rather than the default Cubes view.
+                let add_task = self.add_tab(cfg);
+                let new_tab_id = self.tabs.last().map(|t| t.id);
+                if let Some(tab_id) = new_tab_id {
+                    return Task::batch([
+                        add_task,
+                        Task::done(Message::Tab(tab_id, tab::Message::Launch(nav))),
+                    ]);
+                }
+                return add_task;
+            }
+            Message::View(ViewMessage::OpenPlanBilling) => {
+                // Mirror OpenConnectSignIn, but land on Connect → Plan & Billing
+                // so a paid-feature "View plans" CTA outside the Connect page
+                // (e.g. Settings → Vault Recovery Alerts) routes to the picker.
+                let home_tab = self
+                    .tabs
+                    .iter()
+                    .enumerate()
+                    .find(|(_, t)| matches!(&t.state, tab::State::Home(_)))
+                    .map(|(i, t)| (i, t.id));
+                let nav = crate::home::Message::View(crate::home::ViewMessage::GoToSection(
+                    crate::home::HomeSection::Connect(
+                        crate::app::menu::ConnectSubMenu::PlanBilling,
+                    ),
+                ));
+                if let Some((idx, tab_id)) = home_tab {
+                    self.focused_tab = idx;
+                    return Task::done(Message::Tab(tab_id, tab::Message::Launch(nav)));
+                }
                 let add_task = self.add_tab(cfg);
                 let new_tab_id = self.tabs.last().map(|t| t.id);
                 if let Some(tab_id) = new_tab_id {

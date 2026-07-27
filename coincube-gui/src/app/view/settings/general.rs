@@ -177,13 +177,20 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
 
     // Locked affordance for non-Estate accounts.
     if !ra.entitled {
-        body = body.push(
-            text(
-                "Recovery alerts are part of the Estate plan. Upgrade your Connect plan to \
-                 enable chain monitoring and keyholder alerts.",
+        body = body
+            .push(
+                text(
+                    "Recovery alerts are part of the Estate plan. Upgrade your Connect plan to \
+                     enable chain monitoring and keyholder alerts.",
+                )
+                .size(13),
             )
-            .size(13),
-        );
+            .push(Space::new().height(Length::Fixed(12.0)))
+            .push(
+                button::primary(None, "View plans")
+                    .width(Length::Fixed(160.0))
+                    .on_press(Message::OpenPlanBilling),
+            );
         return card::simple(body).width(Length::Fill).into();
     }
 
