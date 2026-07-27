@@ -229,9 +229,7 @@ where
     let kind = kind.map(|kind| kind.to_string());
     let alias = alias.map(|alias| alias.to_string());
 
-    let title = alias
-        .or_else(|| kind.clone())
-        .unwrap_or_else(|| fingerprint.clone().unwrap_or_else(|| " - ".to_string()));
+    let title = alias.unwrap_or_else(|| " - ".to_string());
     let subtitle = match (kind, fingerprint) {
         (Some(kind), Some(fingerprint)) => Some(format!("{kind} {fingerprint}")),
         (Some(kind), None) => Some(kind),
