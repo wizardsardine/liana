@@ -1,6 +1,6 @@
 [package]
 name = "liana-connect"
-version = "0.1.0"
+version = "15.0.0"
 authors = ["Pyth <pythcoiner@proton.me>"]
 edition = "2021"
 repository = "https://github.com/wizardsardine/liana"
