@@ -3,7 +3,7 @@ use crate::state::{
     Msg as Message, SharedWaker, State,
 };
 use crossbeam::channel::{self};
-use iced::Task;
+use iced::{event, keyboard, Subscription, Task};
 use liana::miniscript::bitcoin::{self};
 use liana_gui::{
     dir::LianaDirectory,
@@ -99,6 +99,25 @@ impl Installer<'_, Message> for BusinessInstaller {
             tracing::trace!("BusinessInstaller::update received {:?}", message);
         }
         self.state.update(message)
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        if self.state.views.login.current != LoginState::AccountSelect {
+            return Subscription::none();
+        }
+
+        iced::event::listen_with(|event, status, _| match (event, status) {
+            (
+                iced::Event::Keyboard(keyboard::Event::KeyPressed { ref key, .. }),
+                event::Status::Ignored,
+            ) => match key {
+                keyboard::Key::Character(c) if c.as_str().eq_ignore_ascii_case("s") => {
+                    Some(Message::AccountSelectSwitchSignet)
+                }
+                _ => None,
+            },
+            _ => None,
+        })
     }
 
     fn view(&self) -> Element<'_, Message> {

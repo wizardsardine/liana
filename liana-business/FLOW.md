@@ -222,7 +222,7 @@ State::update() (state/update.rs)
 |                     | LoginResendToken, LoginSendAuthCode, Logout              |
 +---------------------+----------------------------------------------------------+
 | Account Select      | AccountSelectConnect, AccountSelectDelete,               |
-|                     | AccountSelectNewEmail                                    |
+|                     | AccountSelectNewEmail, AccountSelectSwitchSignet        |
 +---------------------+----------------------------------------------------------+
 | Org Management      | OrgSelected, OrgWalletSelected, OrgCreateNewWallet,      |
 |                     | OrgSelectUpdateSearchFilter                              |

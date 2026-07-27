@@ -17,6 +17,7 @@ pub enum Msg {
     AccountSelectConnect(String), // Connect with cached account by email
     AccountSelectDelete(String),  // Delete cached account by email
     AccountSelectNewEmail,        // Start fresh login with new email
+    AccountSelectSwitchSignet,    // Switch account selection to Signet network
 
     // Org management
     OrgSelected(Uuid),          // Select an organization

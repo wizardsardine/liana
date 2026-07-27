@@ -13,6 +13,7 @@ use liana_ui::{
     },
     widget::*,
 };
+use miniscript::bitcoin::Network;
 
 pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     let accounts = &state.views.login.account_select.accounts;
@@ -32,10 +33,24 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
         Space::with_width(Length::Fill),
     ];
 
+    let network_hint = if state.network == Network::Signet {
+        "Signet network active"
+    } else {
+        "Press S to switch to Signet"
+    };
+
+    let network_text = row![
+        Space::with_width(Length::Fill),
+        text::p2_medium(network_hint),
+        Space::with_width(Length::Fill),
+    ];
+
     let header_content = Column::new()
         .push(liana_business)
         .push(Space::with_height(30))
         .push(select_account_text)
+        .push(Space::with_height(10))
+        .push(network_text)
         .push(Space::with_height(30));
 
     // Scrollable list of accounts

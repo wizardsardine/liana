@@ -36,6 +36,7 @@ impl State {
             Msg::AccountSelectConnect(email) => return self.on_account_select_connect(email),
             Msg::AccountSelectDelete(email) => self.on_account_select_delete(email),
             Msg::AccountSelectNewEmail => return self.on_account_select_new_email(),
+            Msg::AccountSelectSwitchSignet => return self.on_account_select_switch_signet(),
 
             // Org management
             Msg::OrgSelected(id) => self.on_org_selected(id),
@@ -262,6 +263,36 @@ impl State {
             .retain(|a| a.email != email);
         if self.views.login.account_select.accounts.is_empty() {
             self.views.login.current = views::LoginState::EmailEntry;
+        }
+    }
+
+    /// Switch the login cache to signet and refresh the account list.
+    fn on_account_select_switch_signet(&mut self) -> Task<Msg> {
+        if self.network == miniscript::bitcoin::Network::Signet {
+            return Task::none();
+        }
+
+        self.network = miniscript::bitcoin::Network::Signet;
+        self.backend.set_network(self.network, self.datadir.clone());
+
+        let was_hw_running = self.hw_running;
+        self.stop_hw();
+        let rt = tokio::runtime::Handle::current().clone();
+        self.hw = async_hwi::service::HwiService::new(self.network, Some(rt));
+        self.hw.set_bitbox_noise_config(self.bitbox_config.clone());
+        if was_hw_running {
+            self.hw.start(self.hw_sender.clone());
+            self.hw_running = true;
+        }
+
+        let (valid_accounts, to_remove) = self.backend.validate_all_cached_tokens();
+        self.backend.clear_invalid_tokens(&to_remove);
+        self.views.login = views::login::Login::with_cached_accounts(valid_accounts);
+
+        if self.views.login.current == views::LoginState::EmailEntry {
+            text_input::focus("login_email")
+        } else {
+            Task::none()
         }
     }
 }
