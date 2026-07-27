@@ -85,8 +85,8 @@ pub use account::{
     cube_backup_completeness, duress_gate_blocked, duress_tier1_gate_blocked, AddToCubeDialog,
     CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep, ContactsState,
     ContactsStep, CubeBackupCompleteness, DuressContactsState, DuressContactsStep, DuressCube,
-    DuressDisableState, DuressEnrollState, DuressEnrollStep, DuressGateStatus, EnrollTier,
-    InviteCubeOption, PlanLifecycle, BACKUP_ACK_PHRASE,
+    DuressDisableState, DuressEnrollState, DuressEnrollStep, DuressGateStatus, InviteCubeOption,
+    PlanLifecycle,
 };
 pub use cube::ConnectCubePanel;
 pub use cube_members::ConnectCubeMembersState;
