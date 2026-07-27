@@ -8,7 +8,7 @@ use crate::{app::settings::ProviderKey, hw::is_compatible_with_tapminiscript};
 use liana_connect::keys::api::KeyKind;
 
 /// Whether to enable cosigner keys on all paths (excluding safety net paths).
-const ENABLE_COSIGNER_KEYS: bool = false;
+const ENABLE_COSIGNER_KEYS: bool = true;
 
 /// The source of a descriptor public key.
 #[derive(Debug, Clone, PartialEq, Eq)]
