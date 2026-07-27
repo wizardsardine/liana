@@ -2207,7 +2207,7 @@ impl ConnectAccountPanel {
         // never drops its secrets unzeroized.
         self.clear_duress_enroll();
         self.duress_enroll = Some(DuressEnrollState {
-            step: enroll_steps()[0],
+            step: ENROLL_STEPS[0],
             duress_pin: String::new(),
             duress_pin_confirm: String::new(),
             all_clear: String::new(),
@@ -2805,7 +2805,9 @@ impl ConnectAccountPanel {
 
                 // Generate this device's duress code ONCE: its hash goes to the
                 // server, the same plaintext is persisted (encrypted) locally.
-                let code = enroll::generate_duress_code();
+                // Held in `Zeroizing` so the local plaintext is scrubbed on drop
+                // — on normal completion and on every early-return below.
+                let code = zeroize::Zeroizing::new(enroll::generate_duress_code());
 
                 // Enroll on the server FIRST. The duress PIN + code are persisted
                 // locally only after a successful EnrollResult, so a server
@@ -2813,13 +2815,13 @@ impl ConnectAccountPanel {
                 // code for that success handler. Zeroize any code stashed by a
                 // prior submit (retry) before replacing it, so the superseded
                 // plaintext doesn't linger.
-                if let Some(mut old) = e.pending_code.replace(code.clone()) {
+                if let Some(mut old) = e.pending_code.replace((*code).clone()) {
                     zeroize::Zeroize::zeroize(&mut old);
                 }
                 let all_clear_hash = enroll::hash_duress_secret(&e.all_clear);
                 // Single path always collects the account-level duress
                 // recovery-kit password (Approach C).
-                let crk_hash = Some(enroll::hash_duress_secret(&e.crk_password));
+                let crk_hash = enroll::hash_duress_secret(&e.crk_password);
                 let code_hash = enroll::hash_duress_secret(&code);
                 let delay_minutes = e.delay.minutes();
 
@@ -2832,13 +2834,12 @@ impl ConnectAccountPanel {
                     }
                 };
                 let crk_hash = match crk_hash {
-                    Some(Ok(h)) => Some(h),
-                    Some(Err(_)) => {
+                    Ok(h) => Some(h),
+                    Err(_) => {
                         e.error = Some("Failed to hash credentials.".to_string());
                         e.submitting = false;
                         return iced::Task::none();
                     }
-                    None => None,
                 };
                 // A stable device fingerprint is required so the server can
                 // recognise this desktop. If it can't be resolved, fail the
@@ -4522,29 +4523,24 @@ fn device_fingerprint() -> Result<String, String> {
 /// account-level duress recovery-kit password → unlock delay → confirm. Duress
 /// is paid + behind the hard Recovery-Kit gate, so there is no tier branching
 /// and no self-attestation step.
-fn enroll_steps() -> Vec<DuressEnrollStep> {
-    use DuressEnrollStep::*;
-    vec![
-        SetDuressPin,
-        SetAllClear,
-        SetCrkPassword,
-        PickDelay,
-        Confirm,
-    ]
-}
+const ENROLL_STEPS: [DuressEnrollStep; 5] = [
+    DuressEnrollStep::SetDuressPin,
+    DuressEnrollStep::SetAllClear,
+    DuressEnrollStep::SetCrkPassword,
+    DuressEnrollStep::PickDelay,
+    DuressEnrollStep::Confirm,
+];
 
 fn next_enroll_step(cur: DuressEnrollStep) -> DuressEnrollStep {
-    let steps = enroll_steps();
-    match steps.iter().position(|s| *s == cur) {
-        Some(i) if i + 1 < steps.len() => steps[i + 1],
+    match ENROLL_STEPS.iter().position(|s| *s == cur) {
+        Some(i) if i + 1 < ENROLL_STEPS.len() => ENROLL_STEPS[i + 1],
         _ => cur,
     }
 }
 
 fn prev_enroll_step(cur: DuressEnrollStep) -> DuressEnrollStep {
-    let steps = enroll_steps();
-    match steps.iter().position(|s| *s == cur) {
-        Some(i) if i > 0 => steps[i - 1],
+    match ENROLL_STEPS.iter().position(|s| *s == cur) {
+        Some(i) if i > 0 => ENROLL_STEPS[i - 1],
         _ => cur,
     }
 }
@@ -4613,8 +4609,8 @@ mod duress_enroll_tests {
         // Duress is paid + behind the hard Recovery-Kit gate, so there is one
         // path: no tier branching, no self-attestation step.
         assert_eq!(
-            enroll_steps(),
-            vec![
+            ENROLL_STEPS,
+            [
                 DuressEnrollStep::SetDuressPin,
                 DuressEnrollStep::SetAllClear,
                 DuressEnrollStep::SetCrkPassword,
@@ -5156,10 +5152,11 @@ mod duress_enroll_tests {
     }
 
     #[test]
-    fn submit_enrollment_rechecks_the_vault_gate_for_tier1() {
+    fn submit_enrollment_rechecks_the_vault_gate() {
         // The gate is enforced at StartEnrollment, but state can change while
         // the wizard is open (a mid-wizard Vault creation invalidates the
-        // checklist). SubmitEnrollment must re-check for Tier-1 and refuse.
+        // checklist). SubmitEnrollment must re-check the single gated path and
+        // refuse.
         let mut panel = ConnectAccountPanel::new();
         panel.duress_enroll = Some(state(DuressEnrollStep::Confirm));
 

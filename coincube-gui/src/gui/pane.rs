@@ -89,6 +89,33 @@ impl Pane {
         task.map(move |msg| Message::Tab(id, msg))
     }
 
+    /// Focus an existing Home tab (or spawn one) and route it to `nav`. Shared
+    /// by the OpenConnectSignIn / OpenPlanBilling handlers, which differ only in
+    /// the Connect sub-section `nav` targets.
+    fn focus_home_tab_with(&mut self, nav: crate::home::Message, cfg: &Config) -> Task<Message> {
+        let home_tab = self
+            .tabs
+            .iter()
+            .enumerate()
+            .find(|(_, t)| matches!(&t.state, tab::State::Home(_)))
+            .map(|(i, t)| (i, t.id));
+        if let Some((idx, tab_id)) = home_tab {
+            self.focused_tab = idx;
+            return Task::done(Message::Tab(tab_id, tab::Message::Launch(nav)));
+        }
+        // No Home tab open — spawn one and queue the navigation against its id
+        // so it lands on the target Connect section rather than the default view.
+        let add_task = self.add_tab(cfg);
+        let new_tab_id = self.tabs.last().map(|t| t.id);
+        if let Some(tab_id) = new_tab_id {
+            return Task::batch([
+                add_task,
+                Task::done(Message::Tab(tab_id, tab::Message::Launch(nav))),
+            ]);
+        }
+        add_task
+    }
+
     pub fn close_tab(&mut self, i: usize) {
         if let Some(mut tab) = self.remove_tab(i) {
             tab.stop();
@@ -205,63 +232,23 @@ impl Pane {
                 }
             }
             Message::View(ViewMessage::OpenConnectSignIn) => {
-                // Find an existing Home tab and focus it; if none is
-                // open, create one. Either way, route it to the
-                // Connect overview so the user lands on the login form.
-                let home_tab = self
-                    .tabs
-                    .iter()
-                    .enumerate()
-                    .find(|(_, t)| matches!(&t.state, tab::State::Home(_)))
-                    .map(|(i, t)| (i, t.id));
+                // Focus/spawn a Home tab and land on Connect → Overview so the
+                // user reaches the login form.
                 let nav = crate::home::Message::View(crate::home::ViewMessage::GoToSection(
                     crate::home::HomeSection::Connect(crate::app::menu::ConnectSubMenu::Overview),
                 ));
-                if let Some((idx, tab_id)) = home_tab {
-                    self.focused_tab = idx;
-                    return Task::done(Message::Tab(tab_id, tab::Message::Launch(nav)));
-                }
-                // No Home tab open — spawn one and queue the
-                // navigation against its id so it lands on Connect →
-                // Overview rather than the default Cubes view.
-                let add_task = self.add_tab(cfg);
-                let new_tab_id = self.tabs.last().map(|t| t.id);
-                if let Some(tab_id) = new_tab_id {
-                    return Task::batch([
-                        add_task,
-                        Task::done(Message::Tab(tab_id, tab::Message::Launch(nav))),
-                    ]);
-                }
-                return add_task;
+                return self.focus_home_tab_with(nav, cfg);
             }
             Message::View(ViewMessage::OpenPlanBilling) => {
-                // Mirror OpenConnectSignIn, but land on Connect → Plan & Billing
-                // so a paid-feature "View plans" CTA outside the Connect page
-                // (e.g. Settings → Vault Recovery Alerts) routes to the picker.
-                let home_tab = self
-                    .tabs
-                    .iter()
-                    .enumerate()
-                    .find(|(_, t)| matches!(&t.state, tab::State::Home(_)))
-                    .map(|(i, t)| (i, t.id));
+                // Focus/spawn a Home tab and land on Connect → Plan & Billing,
+                // for a paid-feature "View plans" CTA outside the Connect page
+                // (e.g. Settings → Vault Recovery Alerts).
                 let nav = crate::home::Message::View(crate::home::ViewMessage::GoToSection(
                     crate::home::HomeSection::Connect(
                         crate::app::menu::ConnectSubMenu::PlanBilling,
                     ),
                 ));
-                if let Some((idx, tab_id)) = home_tab {
-                    self.focused_tab = idx;
-                    return Task::done(Message::Tab(tab_id, tab::Message::Launch(nav)));
-                }
-                let add_task = self.add_tab(cfg);
-                let new_tab_id = self.tabs.last().map(|t| t.id);
-                if let Some(tab_id) = new_tab_id {
-                    return Task::batch([
-                        add_task,
-                        Task::done(Message::Tab(tab_id, tab::Message::Launch(nav))),
-                    ]);
-                }
-                return add_task;
+                return self.focus_home_tab_with(nav, cfg);
             }
         }
 

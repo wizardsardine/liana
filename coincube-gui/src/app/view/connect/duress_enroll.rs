@@ -225,9 +225,14 @@ pub fn enroll_ux(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage
         Row::new()
             .spacing(12)
             .push(
+                // Inert on the first step: there is no previous step to return
+                // to (matches the Cancel affordance's disabled pattern).
                 button::secondary(None, "Back")
                     .width(Length::Fixed(120.0))
-                    .on_press(msg(DuressMessage::EnrollBack)),
+                    .on_press_maybe(
+                        (!matches!(state.step, DuressEnrollStep::SetDuressPin))
+                            .then(|| msg(DuressMessage::EnrollBack)),
+                    ),
             )
             .push(iced::widget::Space::new().width(Length::Fill))
             .push(
