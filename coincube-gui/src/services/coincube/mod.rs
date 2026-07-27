@@ -1835,10 +1835,13 @@ pub enum DownloadError {
     TrustedDeviceDelay {
         available_at: Option<chrono::DateTime<chrono::Utc>>,
     },
-    /// Wrong password / malformed request (4xx other than 423/404).
+    /// Wrong password / malformed request (4xx other than 423/404/429).
     Invalid,
     /// `404 Not Found` — no kit exists for this cube.
     NotFound,
+    /// `429 Too Many Requests` — the caller should back off. `retry_after`
+    /// is the parsed `Retry-After` duration (defaults to 60s when absent).
+    RateLimited { retry_after: std::time::Duration },
     /// Network, 5xx, or parse failure.
     Other(CoincubeError),
 }
@@ -1854,6 +1857,9 @@ impl std::fmt::Display for DownloadError {
             }
             DownloadError::Invalid => write!(f, "Incorrect recovery kit password."),
             DownloadError::NotFound => write!(f, "Recovery kit not found."),
+            DownloadError::RateLimited { retry_after } => {
+                write!(f, "Rate limited — try again in {}s.", retry_after.as_secs())
+            }
             DownloadError::Other(e) => write!(f, "{}", e),
         }
     }

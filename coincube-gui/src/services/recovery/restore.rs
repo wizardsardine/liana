@@ -200,7 +200,9 @@ pub async fn fetch_and_decrypt_kit(
     cube_id: u64,
     password: &Zeroizing<String>,
 ) -> Result<DecryptedKit, RestoreError> {
-    let kit = client.download_recovery_kit(cube_id, password.as_str()).await?;
+    let kit = client
+        .download_recovery_kit(cube_id, password.as_str())
+        .await?;
 
     // Empty strings on the wire mean "this half wasn't uploaded."
     // Treat them the same as `None` here so the caller can pattern-
@@ -779,6 +781,74 @@ mod integration_tests {
         mock.assert();
         assert!(matches!(err, RestoreError::BadPasswordOrCorrupt));
     }
+
+    #[tokio::test]
+    async fn fetch_and_decrypt_kit_423_duress_locked_maps_to_typed_variant() {
+        // Approach C headline case: entering the *duress* CRK password makes
+        // the server withhold the kit with `423 DURESS_LOCKED`. This must reach
+        // the UI as the typed `DuressLocked` variant (carrying `unlock_at`), not
+        // a generic error, so the cryptic-but-deniable cue renders.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(423)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "error": {
+                        "code": "DURESS_LOCKED",
+                        "unlockAt": "2026-06-10T00:00:00Z"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = fetch_and_decrypt_kit(&client, 42, &pw("duress password"))
+            .await
+            .expect_err("expected DuressLocked");
+        mock.assert();
+        match err {
+            RestoreError::DuressLocked { unlock_at } => {
+                assert_eq!(
+                    unlock_at.expect("unlock_at present").to_rfc3339(),
+                    "2026-06-10T00:00:00+00:00"
+                );
+            }
+            other => panic!("expected DuressLocked, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_and_decrypt_kit_423_trusted_device_delay_maps_to_typed_variant() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(423)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "error": {
+                        "code": "TRUSTED_DEVICE_DELAY",
+                        "availableAt": "2026-06-11T00:00:00Z"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = fetch_and_decrypt_kit(&client, 42, &pw("pw"))
+            .await
+            .expect_err("expected TrustedDeviceDelay");
+        mock.assert();
+        match err {
+            RestoreError::TrustedDeviceDelay { available_at } => {
+                assert_eq!(
+                    available_at.expect("available_at present").to_rfc3339(),
+                    "2026-06-11T00:00:00+00:00"
+                );
+            }
+            other => panic!("expected TrustedDeviceDelay, got {:?}", other),
+        }
+    }
 }
 impl From<crate::services::coincube::DownloadError> for RestoreError {
     fn from(e: crate::services::coincube::DownloadError) -> Self {
@@ -790,6 +860,7 @@ impl From<crate::services::coincube::DownloadError> for RestoreError {
             }
             DownloadError::Invalid => Self::Api("Invalid request".to_string()),
             DownloadError::NotFound => Self::NotFound,
+            DownloadError::RateLimited { retry_after } => Self::RateLimited { retry_after },
             DownloadError::Other(e) => Self::from(e),
         }
     }

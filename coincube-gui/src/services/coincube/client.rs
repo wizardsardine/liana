@@ -1294,10 +1294,18 @@ impl CoincubeClient {
     /// `GET /api/v1/connect/cubes/{cube_id}/recovery-kit` (Approach C, dual-password).
     ///
     /// Distinct from [`get_recovery_kit`](Self::get_recovery_kit): the password
-    /// hash gates which envelope (regular vs. duress) the server returns, and a
-    /// duress password yields `423 DURESS_LOCKED` rather than a kit. The hash is
-    /// sent in the `X-CRK-Password-Hash` header rather than the query string so
-    /// it never lands in access logs.
+    /// gates which envelope (regular vs. duress) the server returns, and a
+    /// duress password yields `423 DURESS_LOCKED` rather than a kit.
+    ///
+    /// IMPORTANT: despite the `crk_password_hash` / `X-CRK-Password-Hash`
+    /// naming, the value carried here is the **raw** CRK password, not a hash.
+    /// The server stores each candidate as an argon2id PHC string with a random
+    /// salt (see [`hash_duress_secret`](crate::services::duress::enroll::hash_duress_secret)),
+    /// so it can only tell a regular password from the duress one by running
+    /// `argon2::verify` on the plaintext. Pre-hashing here would produce a
+    /// fresh-salt digest that can never match the stored one, silently breaking
+    /// duress — do NOT "fix" this by hashing. The value rides in a header rather
+    /// than the query string so it never lands in access logs.
     ///
     /// NOTE: the exact transport is pinned by Connect API Phase 4; the header
     /// name here is provisional and revisited in Phase 7.
@@ -1307,7 +1315,10 @@ impl CoincubeClient {
         crk_password_hash: &str,
     ) -> Result<RecoveryKit, super::DownloadError> {
         use super::DownloadError;
-        let url = format!("{}/api/v1/connect/cubes/{}/recovery-kit", self.base_url, cube_id);
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/recovery-kit",
+            self.base_url, cube_id
+        );
         let res = self
             .client
             .get(&url)
@@ -1329,6 +1340,9 @@ impl CoincubeClient {
                 Err(DownloadError::from_locked_body(&body))
             }
             404 => Err(DownloadError::NotFound),
+            429 => Err(DownloadError::RateLimited {
+                retry_after: parse_retry_after(res.headers()),
+            }),
             400 | 401 | 403 | 422 => Err(DownloadError::Invalid),
             other => Err(DownloadError::Other(CoincubeError::Unsuccessful(
                 crate::services::http::NotSuccessResponseInfo {
@@ -3518,7 +3532,7 @@ mod duress_tests {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
             when.method(MockMethod::GET)
-                .path("/api/v1/cubes/42/recovery-kit")
+                .path("/api/v1/connect/cubes/42/recovery-kit")
                 .header("X-CRK-Password-Hash", "regular-hash");
             then.status(200)
                 .header("content-type", "application/json")
@@ -3551,7 +3565,7 @@ mod duress_tests {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(MockMethod::GET)
-                .path("/api/v1/cubes/42/recovery-kit");
+                .path("/api/v1/connect/cubes/42/recovery-kit");
             then.status(423)
                 .header("content-type", "application/json")
                 .json_body(json!({
@@ -3583,7 +3597,7 @@ mod duress_tests {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(MockMethod::GET)
-                .path("/api/v1/cubes/42/recovery-kit");
+                .path("/api/v1/connect/cubes/42/recovery-kit");
             then.status(423)
                 .header("content-type", "application/json")
                 .json_body(json!({
@@ -3615,7 +3629,7 @@ mod duress_tests {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(MockMethod::GET)
-                .path("/api/v1/cubes/42/recovery-kit");
+                .path("/api/v1/connect/cubes/42/recovery-kit");
             then.status(403)
                 .header("content-type", "application/json")
                 .json_body(json!({ "error": { "code": "WRONG_PASSWORD" } }));
@@ -3627,6 +3641,28 @@ mod duress_tests {
             .await
             .expect_err("expected invalid");
         assert!(matches!(err, DownloadError::Invalid), "got {:?}", err);
+    }
+
+    #[tokio::test]
+    async fn download_kit_429_parses_retry_after() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(429).header("Retry-After", "17");
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .download_recovery_kit(42, "regular-hash")
+            .await
+            .expect_err("expected rate limit");
+        match err {
+            DownloadError::RateLimited { retry_after } => {
+                assert_eq!(retry_after, std::time::Duration::from_secs(17));
+            }
+            other => panic!("expected RateLimited, got {:?}", other),
+        }
     }
 }
 
