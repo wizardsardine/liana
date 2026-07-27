@@ -60,6 +60,8 @@ pub struct State {
     hw_running: bool,
     /// Bitcoin network (mainnet, testnet, signet, regtest)
     pub network: Network,
+    /// Datadir used to reload network-specific cache state.
+    pub datadir: LianaDirectory,
     /// Dedicated sender for HwiService - messages are bridged to notif_sender with waking
     hw_sender: channel::Sender<Message>,
     /// Handle to the bridge thread (kept alive until State is dropped)
@@ -118,6 +120,7 @@ impl State {
             hw,
             hw_running: false,
             network,
+            datadir,
             hw_sender,
             _hw_bridge_handle: Some(hw_bridge_handle),
             bitbox_config,
