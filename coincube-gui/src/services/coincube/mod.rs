@@ -1835,12 +1835,13 @@ pub enum DownloadError {
     TrustedDeviceDelay {
         available_at: Option<chrono::DateTime<chrono::Utc>>,
     },
-    /// Wrong password / malformed request (4xx other than 423/404/429).
+    /// Wrong password / malformed request (`400`, `401`, `403`, or `422`).
     Invalid,
     /// `404 Not Found` — no kit exists for this cube.
     NotFound,
     /// `429 Too Many Requests` — the caller should back off. `retry_after`
-    /// is the parsed `Retry-After` duration (defaults to 60s when absent).
+    /// is the parsed `Retry-After` duration (defaults to 60s when the header
+    /// is missing or malformed).
     RateLimited { retry_after: std::time::Duration },
     /// Network, 5xx, or parse failure.
     Other(CoincubeError),
