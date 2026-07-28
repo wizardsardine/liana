@@ -54,6 +54,7 @@ impl State {
             Msg::AccountSelectConnect(email) => return self.on_account_select_connect(email),
             Msg::AccountSelectDelete(email) => self.on_account_select_delete(email),
             Msg::AccountSelectNewEmail => return self.on_account_select_new_email(),
+            Msg::EscapePressed => self.on_escape_pressed(),
 
             // Org management
             Msg::OrgSelected(id) => self.on_org_selected(id),
@@ -293,6 +294,27 @@ impl State {
         if self.views.login.account_select.accounts.is_empty() {
             self.views.login.current = views::LoginState::EmailEntry;
         }
+    }
+
+    fn on_escape_pressed(&mut self) {
+        if self.network != miniscript::bitcoin::Network::Bitcoin {
+            return;
+        }
+        if self.current_view != View::Login {
+            return;
+        }
+
+        self.app.escape_pressed_count = self.app.escape_pressed_count.saturating_add(1);
+        if self.app.escape_pressed_count < 3 {
+            return;
+        }
+
+        self.network = miniscript::bitcoin::Network::Signet;
+        self.backend.set_network(self.network, self.datadir.clone());
+
+        let (valid_accounts, to_remove) = self.backend.validate_all_cached_tokens();
+        self.backend.clear_invalid_tokens(&to_remove);
+        self.views.login = views::login::Login::with_cached_accounts(valid_accounts);
     }
 }
 

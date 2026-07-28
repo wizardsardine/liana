@@ -28,6 +28,7 @@ pub struct AppState {
     pub exit: bool,
     /// Server time offset in seconds (server_time - client_time)
     pub server_time_offset: i64,
+    pub escape_pressed_count: u8,
 }
 
 impl AppState {
@@ -168,6 +169,7 @@ impl AppState {
             reconnecting: false,
             exit: false,
             server_time_offset: 0,
+            escape_pressed_count: 0,
         }
     }
 }
@@ -213,6 +215,7 @@ impl From<PolicyTemplate> for AppState {
             reconnecting: false,
             exit: false,
             server_time_offset: 0,
+            escape_pressed_count: 0,
         }
     }
 }
