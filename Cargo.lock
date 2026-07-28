@@ -798,7 +798,7 @@ checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 
 [[package]]
 name = "business-installer"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-hwi",
  "chrono",
@@ -3161,7 +3161,7 @@ dependencies = [
 
 [[package]]
 name = "liana"
-version = "14.0.0"
+version = "15.0.0"
 dependencies = [
  "bdk_coin_select",
  "bip39",
@@ -3174,7 +3174,7 @@ dependencies = [
 
 [[package]]
 name = "liana-business"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "async-hwi",
  "backtrace",
@@ -3195,7 +3195,7 @@ dependencies = [
 
 [[package]]
 name = "liana-connect"
-version = "0.1.0"
+version = "15.0.0"
 dependencies = [
  "async-trait",
  "bip329",
@@ -3223,7 +3223,7 @@ dependencies = [
 
 [[package]]
 name = "liana-gui"
-version = "14.0.0"
+version = "15.0.0"
 dependencies = [
  "async-fd-lock",
  "async-hwi",
@@ -3265,7 +3265,7 @@ dependencies = [
 
 [[package]]
 name = "liana-ui"
-version = "0.4.0"
+version = "15.0.0"
 dependencies = [
  "bitcoin",
  "chrono",
@@ -3278,7 +3278,7 @@ dependencies = [
 
 [[package]]
 name = "lianad"
-version = "14.0.0"
+version = "15.0.0"
 dependencies = [
  "backtrace",
  "bdk_electrum",

@@ -1,6 +1,43 @@
 
 # Liana daemon and GUI release notes
 
+## 15.0
+
+This release delivers a major UI rework of liana-gui and the installer, a bump to iced 0.14, and
+several fixes.
+
+### Features
+
+#### Liana GUI
+
+- UI rework: reworked home, receive, and spend panels, the installer flow, the tab menu, and the
+  sidebar responsive mechanism, with new signing-device modals, chunked address display, badges,
+  cards, and amount components.
+- Rework the receive flow with label-first address generation.
+- Add a loading spinner.
+- Add copy-button feedback across the app.
+- Enable the cosigner token in the installer.
+- Limit label inputs to 80 bytes.
+- Link Liana Connect credentials by JWT user_id.
+
+#### Dependencies
+
+- Bump iced to 0.14.
+- Bump Rust to 1.88.
+
+### Fixes
+
+#### Liana GUI
+
+- Fix signing device entry.
+- Fix Ledger devices always being reported as locked.
+- Hide Liana Business wallets in the liana-gui installer.
+- Leave the new business path timelock empty.
+- Fix business key type tooltip.
+- Reword the spend warning shown when a label is missing.
+- Make launcher wallet entries consistent in height.
+- Fix reproducible Windows build by stripping the COFF symbol table.
+
 ## 14.0
 
 This release includes a UI rework for liana-gui, several UX improvements, and bug fixes across liana,
