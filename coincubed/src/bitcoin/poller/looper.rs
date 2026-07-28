@@ -666,6 +666,17 @@ mod tests {
             shallow.common_ancestor(&our_tip, MAX_REORG_DEPTH + 1),
             AncestorSearch::Found(tip(19_990, 0xcc))
         );
+
+        // A walk starts at the tip and only moves down, so no real backend can hand
+        // back an ancestor *above* it. The double refuses to model one: left to fall
+        // through, the depth would compute as zero, read as a shallow reorg, and roll
+        // our tip forward — a scenario production can never actually be shown.
+        let mut inverted = forked_backend(&our_tip, 10);
+        inverted.ancestor = Some(tip(our_tip.height + 1, 0xdd));
+        assert_eq!(
+            inverted.common_ancestor(&our_tip, MAX_REORG_DEPTH + 1),
+            AncestorSearch::Failed
+        );
     }
 
     #[test]
