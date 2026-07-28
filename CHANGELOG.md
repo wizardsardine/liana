@@ -12,13 +12,15 @@ several fixes.
 
 - UI rework: reworked home, receive, and spend panels, the installer flow, the tab menu, and the
   sidebar responsive mechanism, with new signing-device modals, chunked address display, badges,
-  cards, and amount components.
+  cards and amount components, we reworked button sizes and definition of primary, secondary and tertiary buttons.
 - Rework the receive flow with label-first address generation.
-- Add a loading spinner.
+- Add spinner when loading a long descriptor in installer.
 - Add copy-button feedback across the app.
 - Enable the cosigner token in the installer.
 - Limit label inputs to 80 bytes.
 - Link Liana Connect credentials by JWT user_id.
+- Remove address index in "Show QR code" of a receive address and move it to the address verification step
+- Change format of receive address for better readibility
 
 #### Dependencies
 
@@ -32,8 +34,6 @@ several fixes.
 - Fix signing device entry.
 - Fix Ledger devices always being reported as locked.
 - Hide Liana Business wallets in the liana-gui installer.
-- Leave the new business path timelock empty.
-- Fix business key type tooltip.
 - Reword the spend warning shown when a label is missing.
 - Make launcher wallet entries consistent in height.
 - Fix reproducible Windows build by stripping the COFF symbol table.
