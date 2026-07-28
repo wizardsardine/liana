@@ -264,7 +264,7 @@ pub fn update(
                         .await
                         .map_err(|e| e.to_string())?;
                     let status = client
-                        .get_vault_monitoring(vault.id)
+                        .get_vault_monitoring(cube_id)
                         .await
                         .map_err(|e| e.to_string())?;
                     Ok((vault.id, status))
@@ -322,7 +322,10 @@ pub fn update(
             if ra.tier() == Some(tier) {
                 return Task::none();
             }
-            let (Some(client), Some(vault_id), Some(server_cube_id)) =
+            // `ra.vault_id` is checked (not used further) as the "does Connect
+            // know about a Vault for this cube yet" gate — monitoring/escrow
+            // calls below are cube-scoped and never need the vault id itself.
+            let (Some(client), Some(_vault_id), Some(server_cube_id)) =
                 (client, ra.vault_id, server_cube_id)
             else {
                 ra.error = Some(
@@ -336,7 +339,7 @@ pub fn update(
                     ra.error = None;
                     Task::perform(
                         async move {
-                            disable_escrow(&client, server_cube_id, vault_id)
+                            disable_escrow(&client, server_cube_id)
                                 .await
                                 .map_err(|e| e.to_string())
                         },

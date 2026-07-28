@@ -2173,18 +2173,22 @@ impl KeyholderDownloadPolicy {
     }
 }
 
-/// Status returned by `GET /api/v1/connect/vaults/{id}/monitoring`.
+/// Status returned by `GET /api/v1/connect/cubes/{cubeId}/vault/monitoring`.
+///
+/// The API's `MonitoringStatusResponse` names these `monitoringLevel` and
+/// `state` (not `level` / `lastNotifiedState`) — explicit `rename`s below
+/// override the struct-level `camelCase` for those two fields.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultMonitoringStatus {
-    #[serde(default)]
+    #[serde(rename = "monitoringLevel", default)]
     pub level: VaultMonitoringLevel,
     #[serde(default)]
     pub crk_keyholder_download: KeyholderDownloadPolicy,
     /// Server's per-vault recovery state machine value, when the sweep has
     /// run: `none` / `approaching` / `available` / `reminding`. `None` when
     /// the API doesn't expose it (nice-to-have; the UI degrades silently).
-    #[serde(default)]
+    #[serde(rename = "state", default)]
     pub last_notified_state: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
@@ -2201,8 +2205,8 @@ impl Default for VaultMonitoringStatus {
     }
 }
 
-/// Body for `POST /api/v1/connect/vaults/{id}/monitoring` (Estate-gated).
-/// Sets the monitoring tier. `descriptor` is required for
+/// Body for `POST /api/v1/connect/cubes/{cubeId}/vault/monitoring`
+/// (Estate-gated). Sets the monitoring tier. `descriptor` is required for
 /// [`VaultMonitoringLevel::Full`] (the escrowed copy) and omitted for
 /// `Heartbeat`. `crk_keyholder_download` is included when the owner changes
 /// the download policy alongside the level.
@@ -2230,11 +2234,12 @@ pub struct SetKeyholderDownloadPolicyRequest {
     pub crk_keyholder_download: KeyholderDownloadPolicy,
 }
 
-/// Body for `POST /api/v1/connect/vaults/{id}/heartbeat` (Estate-gated,
-/// PR 5). Fire-and-forget after each vault sync for Heartbeat-tier (and
-/// Full, as a cross-check) vaults. `earliest_recovery_height` is the block
-/// height at which this vault's earliest recovery branch opens; a newer
-/// report always wins server-side (monotonic-staleness rule).
+/// Body for `POST /api/v1/connect/cubes/{cubeId}/vault/heartbeat`
+/// (Estate-gated, PR 5). Fire-and-forget after each vault sync for
+/// Heartbeat-tier (and Full, as a cross-check) vaults.
+/// `earliest_recovery_height` is the block height at which this vault's
+/// earliest recovery branch opens; a newer report always wins server-side
+/// (monotonic-staleness rule).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultHeartbeatRequest {
@@ -2676,8 +2681,10 @@ mod vault_monitoring_tests {
 
     #[test]
     fn monitoring_status_tolerates_minimal_body() {
-        // A vault with no monitoring record: server may send just the level.
-        let v = serde_json::json!({ "level": "off" });
+        // A vault with no monitoring record: server may send just the level,
+        // under its real field name `monitoringLevel` (not `level` — see the
+        // explicit `rename` on `VaultMonitoringStatus::level`).
+        let v = serde_json::json!({ "monitoringLevel": "off" });
         let s: VaultMonitoringStatus = serde_json::from_value(v).unwrap();
         assert_eq!(s.level, VaultMonitoringLevel::Off);
         // Absent download policy defaults to at_approaching.
@@ -2685,6 +2692,19 @@ mod vault_monitoring_tests {
             s.crk_keyholder_download,
             KeyholderDownloadPolicy::AtApproaching
         );
+        assert!(s.last_notified_state.is_none());
+    }
+
+    #[test]
+    fn monitoring_status_ignores_unrenamed_field_name() {
+        // Regression guard: before the explicit `rename`, a body keyed on the
+        // wrong field name (`level`/`lastNotifiedState` instead of the API's
+        // real `monitoringLevel`/`state`) silently deserialized to the
+        // defaults rather than erroring, which is exactly how a successful
+        // enable could still render "Off" on the settings card.
+        let v = serde_json::json!({ "level": "full", "lastNotifiedState": "approaching" });
+        let s: VaultMonitoringStatus = serde_json::from_value(v).unwrap();
+        assert_eq!(s.level, VaultMonitoringLevel::Off);
         assert!(s.last_notified_state.is_none());
     }
 
