@@ -114,6 +114,9 @@ impl BitcoinInterface for DummyBitcoind {
 
     fn common_ancestor(&self, tip: &BlockChainTip, max_depth: i32) -> AncestorSearch {
         match self.ancestor {
+            // An ancestor above our tip is a nonsensical fixture; a real backend
+            // could never return one, so reject it before considering the bound.
+            Some(ancestor) if ancestor.height > tip.height => AncestorSearch::Failed,
             // Honour the bound like a real backend would, so callers are exercised
             // against the truncated case and not just the found one.
             Some(ancestor) if tip.height.saturating_sub(ancestor.height) > max_depth => {
