@@ -1,5 +1,7 @@
 use crate::{
-    bitcoin::{BitcoinInterface, BlockChainTip, ReorgAlertCache, UTxO, UTxOAddress},
+    bitcoin::{
+        AncestorSearch, BitcoinInterface, BlockChainTip, ReorgAlertCache, UTxO, UTxOAddress,
+    },
     database::{Coin, DatabaseConnection, DatabaseInterface},
 };
 
@@ -21,7 +23,10 @@ use miniscript::bitcoin::{self, secp256k1};
 /// rather than corrupting it on a backend we have reason to distrust.
 ///
 /// 500 blocks is ~3.5 days of chain. The deepest reorg ever observed on mainnet is
-/// 53 blocks (March 2013, the v0.7/v0.8 split), so this is a generous margin.
+/// 53 blocks (August 2010, the value overflow incident: the corrected chain
+/// overtook the bad one at height 74691, 53 above the offending block 74638). The
+/// deepest since is 24 blocks (March 2013, the v0.7/v0.8 split). So this is a
+/// generous margin over both.
 pub const MAX_REORG_DEPTH: i32 = 500;
 
 /// How many times to retry a failed common-ancestor lookup within a single poll
@@ -229,8 +234,10 @@ enum TipUpdate {
     // There is a new best block that extends a chain which does not contain our former tip.
     Reorged(BlockChainTip),
     // The backend reports a reorg deeper than `MAX_REORG_DEPTH`. We decline to apply it and
-    // leave our state alone; see that constant for why.
-    ImplausibleReorg { depth: i32 },
+    // leave our state alone; see that constant for why. `min_depth` is a lower bound: once
+    // the ancestor walk hits its limit we stop paying for round-trips, so past that point we
+    // know only that the fork is at least this deep.
+    ImplausibleReorg { min_depth: i32 },
     // We could not establish how the backend's chain relates to ours. Skip this poll rather
     // than update state from a backend we could not read.
     Unavailable,
@@ -262,17 +269,31 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
         // block chain re-organisation. Find the common ancestor between our current chain and
         // the new chain and return that. The caller will take care of rewinding our state.
         log::info!("Block chain reorganization detected. Looking for common ancestor.");
-        if let Some(common_ancestor) = bit.common_ancestor(current_tip) {
-            let depth = current_tip.height.saturating_sub(common_ancestor.height);
-            if depth > MAX_REORG_DEPTH {
-                return TipUpdate::ImplausibleReorg { depth };
+        // Bounded at one past the limit: any fork we would accept is found inside it, and
+        // anything deeper is refused without walking the rest of the way. Unbounded, a
+        // backend claiming a 10k-block reorg would cost us 10k sequential round-trips before
+        // we rejected the answer.
+        match bit.common_ancestor(current_tip, MAX_REORG_DEPTH + 1) {
+            AncestorSearch::Found(common_ancestor) => {
+                let depth = current_tip.height.saturating_sub(common_ancestor.height);
+                if depth > MAX_REORG_DEPTH {
+                    return TipUpdate::ImplausibleReorg { min_depth: depth };
+                }
+                log::info!(
+                    "Common ancestor found: '{}'. Starting rescan from there. Old tip was '{}'.",
+                    common_ancestor,
+                    current_tip
+                );
+                return TipUpdate::Reorged(common_ancestor);
             }
-            log::info!(
-                "Common ancestor found: '{}'. Starting rescan from there. Old tip was '{}'.",
-                common_ancestor,
-                current_tip
-            );
-            return TipUpdate::Reorged(common_ancestor);
+            // An answer, not a failure: retrying would just spend the same round-trips again
+            // to reach the same conclusion.
+            AncestorSearch::TooDeep => {
+                return TipUpdate::ImplausibleReorg {
+                    min_depth: MAX_REORG_DEPTH + 1,
+                }
+            }
+            AncestorSearch::Failed => {}
         }
 
         log::error!(
@@ -293,6 +314,44 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
         ANCESTOR_LOOKUP_ATTEMPTS
     );
     TipUpdate::Unavailable
+}
+
+/// Whether a refused reorg's depth was measured or merely bounded.
+#[derive(Debug, Clone, Copy)]
+enum RefusedDepth {
+    /// We reached the fork point, so this is the true depth.
+    Exact(i32),
+    /// The ancestor walk stopped at its limit, so the fork is at least this deep.
+    AtLeast(i32),
+}
+
+/// Decline a reorganization deeper than [`MAX_REORG_DEPTH`]: say so loudly, publish it
+/// for `get_info`, and leave wallet state alone.
+///
+/// Shared by both paths that can encounter one — the ancestor walk in [`new_tip`], and
+/// the ancestor an Electrum-style backend hands us directly from `sync_wallet`. The
+/// refusal has to be identical either way; keeping two copies is how their messages
+/// drifted apart once already.
+fn refuse_deep_reorg(
+    reorg_alert: &ReorgAlertCache,
+    current_tip: &BlockChainTip,
+    depth: RefusedDepth,
+) {
+    let (depth, bound) = match depth {
+        RefusedDepth::Exact(depth) => (depth, ""),
+        RefusedDepth::AtLeast(depth) => (depth, " or more"),
+    };
+    log::error!(
+        "Backend reports a reorganization of {} blocks{} from our tip '{}', deeper than the \
+         {}-block limit. Refusing to roll back our state: this is far more likely a misreporting \
+         backend than real chain history being undone. Wallet state is left untouched and no \
+         coins are removed.",
+        depth,
+        bound,
+        current_tip,
+        MAX_REORG_DEPTH
+    );
+    reorg_alert.store(depth);
 }
 
 fn updates(
@@ -324,17 +383,8 @@ fn updates(
                     log::info!("Tip was rolled back to '{}'.", new_tip);
                     return updates(db_conn, bit, descs, secp, reorg_alert);
                 }
-                TipUpdate::ImplausibleReorg { depth } => {
-                    log::error!(
-                        "Backend reports a {}-block reorganization from our tip '{}', deeper than \
-                         the {}-block limit. Refusing to roll back our state: this is far more \
-                         likely a misreporting backend than real chain history being undone. \
-                         Wallet state is left untouched and no coins are removed.",
-                        depth,
-                        current_tip,
-                        MAX_REORG_DEPTH
-                    );
-                    reorg_alert.store(depth);
+                TipUpdate::ImplausibleReorg { min_depth } => {
+                    refuse_deep_reorg(reorg_alert, &current_tip, RefusedDepth::AtLeast(min_depth));
                     return;
                 }
                 TipUpdate::Unavailable => return,
@@ -356,16 +406,7 @@ fn updates(
                     .height
                     .saturating_sub(reorg_common_ancestor.height);
                 if depth > MAX_REORG_DEPTH {
-                    log::error!(
-                        "Backend reports a {}-block reorganization from our tip '{}', deeper than \
-                         the {}-block limit. Refusing to roll back our state: this is far more \
-                         likely a misreporting backend than real chain history being undone. \
-                         Wallet state is left untouched and no coins are removed.",
-                        depth,
-                        current_tip,
-                        MAX_REORG_DEPTH
-                    );
-                    reorg_alert.store(depth);
+                    refuse_deep_reorg(reorg_alert, &current_tip, RefusedDepth::Exact(depth));
                     return;
                 }
                 db_conn.rollback_tip(&reorg_common_ancestor);
@@ -584,19 +625,47 @@ mod tests {
     #[test]
     fn deep_reorg_is_refused() {
         let our_tip = tip(20_000, 0xaa);
-        // One block past the limit is already refused.
+        // One block past the limit is already refused, and is still inside the
+        // ancestor walk's bound, so the depth is known exactly.
         let bit = forked_backend(&our_tip, MAX_REORG_DEPTH + 1);
         match new_tip(&bit, &our_tip) {
-            TipUpdate::ImplausibleReorg { depth } => assert_eq!(depth, MAX_REORG_DEPTH + 1),
+            TipUpdate::ImplausibleReorg { min_depth } => {
+                assert_eq!(min_depth, MAX_REORG_DEPTH + 1)
+            }
             other => panic!("expected the reorg to be refused, got {:?}", other),
         }
 
-        // And so is the 10k-block rewind an `invalidateblock` at the RDTS anchor would produce.
+        // And so is the 10k-block rewind an `invalidateblock` at the RDTS anchor
+        // would produce. Here the walk stops at its bound rather than paying for
+        // 10k round-trips, so we know only that the fork is at least that deep —
+        // and crucially this must NOT come back as a failed lookup to be retried.
         let bit = forked_backend(&our_tip, 10_000);
         match new_tip(&bit, &our_tip) {
-            TipUpdate::ImplausibleReorg { depth } => assert_eq!(depth, 10_000),
+            TipUpdate::ImplausibleReorg { min_depth } => {
+                assert_eq!(min_depth, MAX_REORG_DEPTH + 1)
+            }
             other => panic!("expected the deep reorg to be refused, got {:?}", other),
         }
+    }
+
+    // The bound is what stops a misreporting backend from extracting one round-trip
+    // per claimed block from us before we reject its answer.
+    #[test]
+    fn the_ancestor_walk_is_bounded() {
+        use crate::bitcoin::AncestorSearch;
+
+        let our_tip = tip(20_000, 0xaa);
+        let bit = forked_backend(&our_tip, 10_000);
+        assert_eq!(
+            bit.common_ancestor(&our_tip, MAX_REORG_DEPTH + 1),
+            AncestorSearch::TooDeep
+        );
+        // Within the bound the ancestor is still found normally.
+        let shallow = forked_backend(&our_tip, 10);
+        assert_eq!(
+            shallow.common_ancestor(&our_tip, MAX_REORG_DEPTH + 1),
+            AncestorSearch::Found(tip(19_990, 0xcc))
+        );
     }
 
     #[test]
@@ -705,9 +774,11 @@ mod tests {
             "no coin may be removed on a refused reorg"
         );
         assert_eq!(db_conn.chain_tip(), Some(our_tip), "our tip must not move");
+        // A lower bound, not the true 10,000: the ancestor walk stops at its limit
+        // rather than paying for a round-trip per block just to report a number.
         assert_eq!(
             alert.load(),
-            Some(10_000),
+            Some(MAX_REORG_DEPTH + 1),
             "the refusal must be published for get_info"
         );
     }

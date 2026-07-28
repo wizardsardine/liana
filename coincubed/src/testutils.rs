@@ -1,5 +1,7 @@
 use crate::{
-    bitcoin::{BitcoinInterface, Block, BlockChainTip, MempoolEntry, SyncProgress, UTxO},
+    bitcoin::{
+        AncestorSearch, BitcoinInterface, Block, BlockChainTip, MempoolEntry, SyncProgress, UTxO,
+    },
     config::{BitcoinConfig, Config},
     database::{
         BlockInfo, Coin, CoinStatus, DatabaseConnection, DatabaseInterface, LabelItem, Wallet,
@@ -110,8 +112,16 @@ impl BitcoinInterface for DummyBitcoind {
         (Vec::new(), Vec::new())
     }
 
-    fn common_ancestor(&self, _: &BlockChainTip) -> Option<BlockChainTip> {
-        self.ancestor
+    fn common_ancestor(&self, tip: &BlockChainTip, max_depth: i32) -> AncestorSearch {
+        match self.ancestor {
+            // Honour the bound like a real backend would, so callers are exercised
+            // against the truncated case and not just the found one.
+            Some(ancestor) if tip.height.saturating_sub(ancestor.height) > max_depth => {
+                AncestorSearch::TooDeep
+            }
+            Some(ancestor) => AncestorSearch::Found(ancestor),
+            None => AncestorSearch::Failed,
+        }
     }
 
     fn broadcast_tx(&self, _: &bitcoin::Transaction) -> Result<(), String> {

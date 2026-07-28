@@ -676,10 +676,12 @@ pub fn chain_repair_section<'a>() -> Element<'a, NodeSettingsMessage> {
 ///   shared block index. Those marks persist across the swap, so without it Core
 ///   would keep following the chain Knots chose rather than the one with the most
 ///   work. That can change which transactions are confirmed.
-/// * Switching **to Knots** starts enforcing the stricter rules from now on, but
-///   does not re-check history that Core already accepted. Doing so requires
-///   rewinding the chain, which is not implemented yet — so we say so plainly
-///   rather than implying a guarantee we don't provide.
+/// * Switching **to Knots** starts enforcing the stricter rules *and* rewinds the
+///   chain to the BIP-110 anchor so blocks Core accepted are replayed under them.
+///   That takes hours and parks every Vault's poller while it runs, so the copy
+///   has to set both expectations. It also cannot reach below `pruneheight` —
+///   coverage is bounded by what the node still stores — so the copy says that too
+///   rather than implying the whole chain was verified.
 fn flavor_switch_chain_note(target: NodeFlavor) -> &'static str {
     match target {
         NodeFlavor::Core => {
@@ -2465,8 +2467,9 @@ mod tests {
 
     // The two directions are not symmetric, and the copy must not imply they are:
     // switching to Core can change which chain the node follows, while switching to
-    // Knots enforces from now on WITHOUT re-checking history it already accepted.
-    // Overstating the latter would promise a guarantee Phase 1 does not deliver.
+    // Knots re-checks the recent blocks the node still stores. The Knots copy has to
+    // mention both halves — the re-check and the pruning bound — because claiming
+    // the re-check without its limit would promise coverage we cannot deliver.
     #[test]
     fn flavor_switch_copy_is_direction_specific() {
         let to_core = flavor_switch_chain_note(NodeFlavor::Core);

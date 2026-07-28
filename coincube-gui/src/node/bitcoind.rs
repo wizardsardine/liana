@@ -1183,6 +1183,7 @@ impl Bitcoind {
                 crate::node::revalidate::reconcile_after_start(
                     coincube_datadir,
                     &running,
+                    &config,
                     network,
                     running_flavor,
                 );
@@ -1290,6 +1291,7 @@ impl Bitcoind {
                     crate::node::revalidate::reconcile_after_start(
                         coincube_datadir,
                         &started,
+                        &config,
                         network,
                         observed_flavor,
                     );

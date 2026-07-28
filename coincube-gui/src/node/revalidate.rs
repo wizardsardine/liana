@@ -110,9 +110,9 @@ pub struct ChainFacts {
     pub blocks: i32,
     /// Whether the RDTS deployment is locked in or active on this node.
     pub deployment_live: bool,
-    /// Oldest block the node still stores; `None` when it isn't pruned. Nothing at
-    /// or below this can be disconnected — the data needed to do so is gone.
-    pub prune_height: Option<i32>,
+    /// How much history the node still stores. Nothing at or below the prune height
+    /// can be disconnected — the data needed to do so is gone.
+    pub prune_state: coincubed::PruneState,
     /// Whether the node knows of a branch with more work than the one it follows
     /// (see [`needs_reconsider`]).
     ///
@@ -138,6 +138,10 @@ pub enum SkipReason {
     /// Core → Knots, but pruning has already discarded everything above the
     /// anchor, so there is nothing left we are able to re-check.
     NothingRetainedAboveAnchor,
+    /// Core → Knots, but the node reported a prune height we could not read, so we
+    /// cannot establish that any disconnect is safe. Declining is the only option:
+    /// disconnecting into pruned data aborts the node.
+    PruneHeightUnknown,
 }
 
 /// What to do about the observed flavour change.
@@ -215,9 +219,16 @@ pub fn plan(facts: ChainFacts) -> RevalidationPlan {
             // We can only disconnect blocks we still have. `pruneheight` climbs
             // forever while the anchor stays put, so past roughly the prune window
             // this floor — not the anchor — is what bounds the replay.
-            let floor_height = match facts.prune_height {
-                Some(prune_height) => anchor_height.max(prune_height + PRUNE_SAFETY_MARGIN),
-                None => anchor_height,
+            let floor_height = match facts.prune_state {
+                coincubed::PruneState::NotPruned => anchor_height,
+                coincubed::PruneState::Pruned(prune_height) => {
+                    anchor_height.max(prune_height + PRUNE_SAFETY_MARGIN)
+                }
+                // Unreadable height: we cannot prove any disconnect is safe, and the
+                // penalty for being wrong is an aborted node.
+                coincubed::PruneState::PrunedUnknown => {
+                    return RevalidationPlan::Skip(SkipReason::PruneHeightUnknown)
+                }
             };
             if floor_height >= facts.blocks {
                 return RevalidationPlan::Skip(SkipReason::NothingRetainedAboveAnchor);
@@ -283,19 +294,32 @@ impl ManagedNodeState {
         internal_bitcoind_directory(coincube_datadir).join("managed_node_state.json")
     }
 
-    /// Load the ledger, or the empty default when the sidecar is absent or
-    /// unreadable. Fail-safe: an unreadable ledger reads as "we've never seen this
-    /// node run", which makes the next start record the truth rather than act on a
-    /// guess.
-    pub fn load(coincube_datadir: &CoincubeDirectory) -> Self {
+    /// Load the ledger, distinguishing "there is no sidecar yet" from "there is one
+    /// and we could not read it".
+    ///
+    /// Only a missing file yields the default. A read error or a corrupt file is an
+    /// error, because anything that acts on [`Self::rewind`] must not mistake "we
+    /// couldn't tell" for "nothing is pending" — that would leave a node parked
+    /// below an invalidated block with nothing left to release it.
+    pub fn try_load(coincube_datadir: &CoincubeDirectory) -> io::Result<Self> {
         let path = Self::path(coincube_datadir);
-        match std::fs::read_to_string(&path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_else(|e| {
-                warn!("unreadable managed-node state at {path:?} ({e}); treating as unknown");
-                Self::default()
-            }),
-            Err(_) => Self::default(),
-        }
+        let contents = match std::fs::read_to_string(&path) {
+            Ok(contents) => contents,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => return Err(e),
+        };
+        serde_json::from_str(&contents).map_err(io::Error::other)
+    }
+
+    /// Fail-safe view of [`Self::try_load`] for the flavour ledger, where "unknown"
+    /// is a safe answer: the next start just records the truth rather than acting on
+    /// a guess. Callers that touch [`Self::rewind`] must use `try_load` instead.
+    pub fn load(coincube_datadir: &CoincubeDirectory) -> Self {
+        Self::try_load(coincube_datadir).unwrap_or_else(|e| {
+            let path = Self::path(coincube_datadir);
+            warn!("unreadable managed-node state at {path:?} ({e}); treating as unknown");
+            Self::default()
+        })
     }
 
     /// Persist the ledger via a temp file and a rename, so an interrupted write
@@ -313,8 +337,18 @@ impl ManagedNodeState {
 
     /// Record the flavour the node was just observed running as, preserving any
     /// in-flight rewind.
+    ///
+    /// Reads with `try_load` rather than `load`: defaulting on an unreadable sidecar
+    /// would write back a state with no `rewind`, silently erasing the only record
+    /// that can release a parked node. Skipping the update is the safe failure.
     pub fn record_run(coincube_datadir: &CoincubeDirectory, flavor: NodeFlavor) {
-        let mut state = Self::load(coincube_datadir);
+        let mut state = match Self::try_load(coincube_datadir) {
+            Ok(state) => state,
+            Err(e) => {
+                warn!("not recording the managed-node flavour: state unreadable ({e})");
+                return;
+            }
+        };
         state.last_run_flavor = Some(flavor);
         if let Err(e) = state.save(coincube_datadir) {
             warn!("could not record managed-node flavour: {e}");
@@ -323,13 +357,21 @@ impl ManagedNodeState {
 
     /// Record (or clear) an in-flight rewind, preserving the flavour ledger.
     ///
-    /// Returns whether the write succeeded: a rewind whose intent we could not
-    /// persist must not be started, because we would have no way to finish it.
+    /// Returns whether the state is now on disk as asked. A rewind whose intent we
+    /// could not persist must not be started, because we would have no way to
+    /// finish it — so a read failure is reported as failure too, not papered over
+    /// with a default.
     pub fn set_rewind(
         coincube_datadir: &CoincubeDirectory,
         rewind: Option<RewindInFlight>,
     ) -> bool {
-        let mut state = Self::load(coincube_datadir);
+        let mut state = match Self::try_load(coincube_datadir) {
+            Ok(state) => state,
+            Err(e) => {
+                warn!("could not read managed-node state to record the rewind: {e}");
+                return false;
+            }
+        };
         state.rewind = rewind;
         match state.save(coincube_datadir) {
             Ok(()) => true,
@@ -343,6 +385,11 @@ impl ManagedNodeState {
 
 /// Write `contents` to `path` through a sibling temp file, flushing before the
 /// rename so the visible file is either the old one or the complete new one.
+///
+/// The directory is fsynced after the rename as well. Without that, the file's
+/// contents are durable but the directory entry pointing at them may not be, so a
+/// crash can lose the rename and with it a rewind record — precisely the crash this
+/// record exists to survive.
 fn write_atomically(path: &Path, contents: &[u8]) -> io::Result<()> {
     use std::io::Write;
 
@@ -352,7 +399,16 @@ fn write_atomically(path: &Path, contents: &[u8]) -> io::Result<()> {
         file.write_all(contents)?;
         file.sync_all()?;
     }
-    std::fs::rename(&tmp, path)
+    std::fs::rename(&tmp, path)?;
+
+    // Unix only: Windows has no equivalent (a directory can't be opened as a file
+    // without backup semantics), and NTFS metadata journalling makes the rename
+    // durable there anyway.
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -391,9 +447,15 @@ pub fn needs_reconsider(tips: &[coincubed::ChainTipEntry]) -> bool {
 ///
 /// Best-effort throughout: a node that just started is more important than this
 /// check, so every failure is logged and swallowed rather than blocking startup.
+///
+/// Returns promptly. The inline work is a handful of RPCs plus, at most, one
+/// fire-and-forget `reconsiderblock`. A Core → Knots replay is *not* inline —
+/// it can run for hours, and this sits on the startup path of every Vault — so it
+/// is handed to a background thread. See [`execute_replay`].
 pub fn reconcile_after_start(
     coincube_datadir: &CoincubeDirectory,
     bitcoind: &coincubed::BitcoinD,
+    config: &coincubed::config::BitcoindConfig,
     network: Network,
     observed_flavor: NodeFlavor,
 ) {
@@ -437,7 +499,7 @@ pub fn reconcile_after_start(
         current_flavor: observed_flavor,
         blocks: status.blocks,
         deployment_live,
-        prune_height: status.prune_height,
+        prune_state: status.prune_state,
         node_stranded,
     });
     match plan {
@@ -453,11 +515,59 @@ pub fn reconcile_after_start(
             floor_height,
             target_height,
         } => {
-            if let Err(e) = execute_replay(coincube_datadir, bitcoind, floor_height, target_height)
+            spawn_replay(
+                coincube_datadir.clone(),
+                config.clone(),
+                floor_height,
+                target_height,
+            );
+        }
+    }
+}
+
+/// Run a Core → Knots replay on its own thread.
+///
+/// The replay disconnects and reconnects blocks and can take hours. Every caller of
+/// [`reconcile_after_start`] is on a node-startup path — the loader at app launch,
+/// the installer, the settings flavour switch — so doing this inline would stall
+/// app startup, or leave the settings screen on "starting…" until it finished.
+///
+/// The thread opens its own RPC connection rather than borrowing the caller's, so
+/// nothing here is tied to the lifetime of the start that triggered it.
+fn spawn_replay(
+    coincube_datadir: CoincubeDirectory,
+    config: coincubed::config::BitcoindConfig,
+    floor_height: i32,
+    target_height: i32,
+) {
+    // The maintenance flag is held for the whole replay, so it doubles as a cheap
+    // "one at a time" check: several Vaults can start against the same shared node
+    // at once and must not each kick off their own rewind of it. Best-effort, not a
+    // lock — the flag is set by the thread we are about to spawn, so two calls
+    // landing in the same instant can still both get through. The durable rewind
+    // record is what keeps that recoverable, and the work is idempotent besides.
+    if coincubed::managed_node_maintenance() {
+        info!("A chain replay is already running; not starting another.");
+        return;
+    }
+    let spawned = thread::Builder::new()
+        .name("rdts-replay".to_string())
+        .spawn(move || {
+            let bitcoind = match coincubed::BitcoinD::new(&config, "rdts_replay".to_string()) {
+                Ok(bitcoind) => bitcoind,
+                Err(e) => {
+                    warn!("could not connect to the managed node to replay the chain: {e}");
+                    return;
+                }
+            };
+            if let Err(e) =
+                execute_replay(&coincube_datadir, &bitcoind, floor_height, target_height)
             {
                 warn!("RDTS replay failed: {e}");
             }
-        }
+        });
+    if let Err(e) = spawned {
+        warn!("could not spawn the chain-replay thread: {e}");
     }
 }
 
@@ -468,7 +578,23 @@ pub fn reconcile_after_start(
 /// persistent and nothing in the node records that we were mid-operation.
 /// Idempotent, so running it when there is nothing to finish costs one RPC.
 pub fn resume_pending_rewind(coincube_datadir: &CoincubeDirectory, bitcoind: &coincubed::BitcoinD) {
-    let Some(rewind) = ManagedNodeState::load(coincube_datadir).rewind else {
+    // `try_load`, not `load`: an unreadable sidecar must not read as "nothing
+    // pending". If a rewind really is in flight, defaulting here would leave the
+    // node parked below the invalidated block with nothing left to release it, and
+    // no sign of why.
+    let state = match ManagedNodeState::try_load(coincube_datadir) {
+        Ok(state) => state,
+        Err(e) => {
+            tracing::error!(
+                "Could not read the managed-node state ({e}). If a chain rewind was left \
+                 unfinished, this node may be stuck below the block it invalidated — check \
+                 its height against the network, and use \"Re-check chain\" in Node settings \
+                 to release it."
+            );
+            return;
+        }
+    };
+    let Some(rewind) = state.rewind else {
         return;
     };
     warn!(
@@ -522,11 +648,22 @@ pub fn execute_replay(
     let status = bitcoind
         .chain_status()
         .map_err(|e| format!("could not re-check the prune height before rewinding: {e}"))?;
-    if let Some(prune_height) = status.prune_height {
-        if floor_height <= prune_height + PRUNE_SAFETY_MARGIN {
-            return Err(format!(
-                "refusing to rewind to {floor_height}: pruning has reached {prune_height} and                  disconnecting pruned blocks would abort the node"
-            ));
+    match status.prune_state {
+        coincubed::PruneState::NotPruned => {}
+        coincubed::PruneState::Pruned(prune_height) => {
+            if floor_height <= prune_height + PRUNE_SAFETY_MARGIN {
+                return Err(format!(
+                    "refusing to rewind to {floor_height}: pruning has reached \
+                     {prune_height} and disconnecting pruned blocks would abort the node"
+                ));
+            }
+        }
+        coincubed::PruneState::PrunedUnknown => {
+            return Err(
+                "refusing to rewind: the node is pruned but did not report a readable \
+                 prune height, so we cannot tell which blocks are safe to disconnect"
+                    .to_string(),
+            );
         }
     }
 
@@ -665,7 +802,7 @@ mod tests {
             deployment_live: true,
             // Unpruned unless a test says otherwise, so the prune floor isn't a
             // hidden variable in the cases that aren't about it.
-            prune_height: None,
+            prune_state: coincubed::PruneState::NotPruned,
             node_stranded: false,
         }
     }
@@ -799,7 +936,7 @@ mod tests {
     fn pruning_raises_the_floor_and_makes_coverage_partial() {
         let mut f = facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots);
         let prune_height = RDTS_ANCHOR_MAINNET + 2_000;
-        f.prune_height = Some(prune_height);
+        f.prune_state = coincubed::PruneState::Pruned(prune_height);
         let p = plan(f);
         assert_eq!(
             p,
@@ -815,7 +952,7 @@ mod tests {
 
         // Pruning below the anchor cannot pull the floor down past it — there is
         // nothing to check below the anchor in the first place.
-        f.prune_height = Some(RDTS_ANCHOR_MAINNET - 50_000);
+        f.prune_state = coincubed::PruneState::Pruned(RDTS_ANCHOR_MAINNET - 50_000);
         assert_eq!(
             plan(f),
             RevalidationPlan::ReplayUnderRdts {
@@ -831,7 +968,7 @@ mod tests {
     #[test]
     fn a_fully_pruned_window_is_declined() {
         let mut f = facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots);
-        f.prune_height = Some(f.blocks);
+        f.prune_state = coincubed::PruneState::Pruned(f.blocks);
         assert_eq!(
             plan(f),
             RevalidationPlan::Skip(SkipReason::NothingRetainedAboveAnchor),
@@ -839,11 +976,29 @@ mod tests {
 
         // And the margin counts: a floor that lands exactly on the tip is refused,
         // not attempted with a zero-length replay.
-        f.prune_height = Some(f.blocks - PRUNE_SAFETY_MARGIN);
+        f.prune_state = coincubed::PruneState::Pruned(f.blocks - PRUNE_SAFETY_MARGIN);
         assert_eq!(
             plan(f),
             RevalidationPlan::Skip(SkipReason::NothingRetainedAboveAnchor),
         );
+    }
+
+    // An unreadable prune height must not read as "unpruned". Conflating the two
+    // would skip the prune floor entirely and let the rewind disconnect blocks whose
+    // data is gone, which aborts bitcoind rather than returning an error.
+    #[test]
+    fn an_unreadable_prune_height_declines_rather_than_assuming_unpruned() {
+        let mut f = facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots);
+        f.prune_state = coincubed::PruneState::PrunedUnknown;
+        assert_eq!(
+            plan(f),
+            RevalidationPlan::Skip(SkipReason::PruneHeightUnknown)
+        );
+
+        // Contrast: genuinely unpruned still replays from the anchor, so the new
+        // state hasn't just made everything decline.
+        f.prune_state = coincubed::PruneState::NotPruned;
+        assert!(matches!(plan(f), RevalidationPlan::ReplayUnderRdts { .. }));
     }
 
     // A rewind is only ever justified by an actual swap from Core. Restarting a
@@ -950,10 +1105,27 @@ mod tests {
             Some(NodeFlavor::Core),
         );
 
-        // A corrupt sidecar must fail safe to "unknown" rather than panic, so the
-        // next start records the truth instead of acting on garbage.
+        // A corrupt sidecar fails safe to "unknown" for the flavour ledger...
         std::fs::write(ManagedNodeState::path(&datadir), b"{ not json").unwrap();
         assert_eq!(ManagedNodeState::load(&datadir).last_run_flavor, None);
+
+        // ...but `try_load` must report it, because a caller acting on `rewind`
+        // cannot be allowed to read "unreadable" as "nothing pending" and leave a
+        // node parked below the block it invalidated.
+        assert!(ManagedNodeState::try_load(&datadir).is_err());
+
+        // A write must not clobber state it could not read: better to skip the
+        // update than to erase a pending rewind.
+        ManagedNodeState::record_run(&datadir, NodeFlavor::Core);
+        assert!(ManagedNodeState::try_load(&datadir).is_err());
+        assert!(!ManagedNodeState::set_rewind(&datadir, None));
+
+        // A *missing* sidecar is different: that genuinely means "nothing yet".
+        std::fs::remove_file(ManagedNodeState::path(&datadir)).unwrap();
+        assert_eq!(
+            ManagedNodeState::try_load(&datadir).unwrap(),
+            ManagedNodeState::default()
+        );
 
         // No stray temp file is left behind by the atomic write.
         assert!(!ManagedNodeState::path(&datadir)

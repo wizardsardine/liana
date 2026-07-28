@@ -15,7 +15,10 @@ use datadir::DataDirectory;
 pub use miniscript;
 
 pub use crate::bitcoin::{
-    d::{BitcoinD, BitcoindError, ChainStatus, ChainTipEntry, DeploymentStatus, WalletError},
+    d::{
+        BitcoinD, BitcoindError, ChainStatus, ChainTipEntry, DeploymentStatus, PruneState,
+        WalletError,
+    },
     electrum::{Electrum, ElectrumError},
     esplora::{Esplora, EsploraError},
     managed_node_maintenance, set_managed_node_maintenance, MaintenanceGuard,

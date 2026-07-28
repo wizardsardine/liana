@@ -1270,6 +1270,17 @@ impl BitcoinD {
                 .and_then(Json::as_i64)
                 .and_then(|v| v.try_into().ok())
         };
+        // `pruneheight` is absent exactly when the node is unpruned. Present but
+        // unreadable is a third case and must not collapse into the first: callers
+        // use this to decide whether disconnecting a block is safe, and getting that
+        // wrong aborts the node outright.
+        let prune_state = match info.get("pruneheight") {
+            None => PruneState::NotPruned,
+            Some(_) => match int("pruneheight") {
+                Some(height) => PruneState::Pruned(height),
+                None => PruneState::PrunedUnknown,
+            },
+        };
         Ok(ChainStatus {
             blocks: int("blocks").unwrap_or(0),
             headers: int("headers").unwrap_or(0),
@@ -1277,8 +1288,7 @@ impl BitcoinD {
                 .get("bestblockhash")
                 .and_then(Json::as_str)
                 .and_then(|s| bitcoin::BlockHash::from_str(s).ok()),
-            // Absent when the node isn't pruned.
-            prune_height: int("pruneheight"),
+            prune_state,
         })
     }
 
@@ -1585,11 +1595,24 @@ pub struct ChainStatus {
     pub headers: i32,
     /// The active chain's tip, when the node reported a parseable one.
     pub best_block_hash: Option<bitcoin::BlockHash>,
-    /// Oldest block the node still stores. `None` when the node isn't pruned.
-    ///
-    /// Nothing at or below this height can be disconnected — the block and undo
-    /// data needed to do so are gone.
-    pub prune_height: Option<i32>,
+    /// How much history the node still stores.
+    pub prune_state: PruneState,
+}
+
+/// What `getblockchaininfo` says about pruning.
+///
+/// Three states, not two: a node that reports a `pruneheight` we cannot read is
+/// pruned, and treating that as unpruned would let a caller disconnect blocks whose
+/// data is gone — which aborts bitcoind rather than returning an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PruneState {
+    /// No `pruneheight` reported: the node stores the whole chain.
+    NotPruned,
+    /// Oldest block still stored. Nothing at or below this can be disconnected.
+    Pruned(i32),
+    /// Pruned, but the height was unreadable. Callers must treat this as "we cannot
+    /// establish that any disconnect is safe" and decline, not as unpruned.
+    PrunedUnknown,
 }
 
 /// One entry of `getchaintips`.

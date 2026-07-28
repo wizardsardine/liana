@@ -41,6 +41,19 @@ impl fmt::Display for BlockChainTip {
     }
 }
 
+/// Outcome of walking back from our tip to where it rejoins the backend's chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AncestorSearch {
+    /// The fork point, found within the allowed depth.
+    Found(BlockChainTip),
+    /// The walk hit its bound without rejoining, so the fork is at least that deep.
+    /// Distinct from [`Self::Failed`] because it is an answer, not an absence of
+    /// one: the caller should reject the reorg rather than retry the lookup.
+    TooDeep,
+    /// The backend could not answer.
+    Failed,
+}
+
 /// Lock-free cache of the latest [`SyncProgress`], published by the poller and
 /// read by `get_info` WITHOUT taking the `BitcoinInterface` mutex.
 ///
@@ -244,7 +257,14 @@ pub trait BitcoinInterface: Send {
     ) -> (Vec<SpentCoin>, Vec<bitcoin::OutPoint>);
 
     /// Get the common ancestor between the Bitcoin backend's tip and the given tip.
-    fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip>;
+    /// Walk back from `tip` until it rejoins our chain, giving up after `max_depth`
+    /// steps.
+    ///
+    /// The bound matters: this costs one backend round-trip per block, so an
+    /// unbounded walk lets a misreporting backend extract tens of thousands of
+    /// sequential requests from us before the caller gets a chance to reject the
+    /// result. `TooDeep` lets the caller refuse without paying for the rest.
+    fn common_ancestor(&self, tip: &BlockChainTip, max_depth: i32) -> AncestorSearch;
 
     /// Broadcast this transaction to the Bitcoin P2P network
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String>;
@@ -498,19 +518,32 @@ impl BitcoinInterface for d::BitcoinD {
         (spent, expired)
     }
 
-    fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip> {
-        let mut stats = self.get_block_stats(tip.hash)?;
+    fn common_ancestor(&self, tip: &BlockChainTip, max_depth: i32) -> AncestorSearch {
+        let Some(mut stats) = self.get_block_stats(tip.hash) else {
+            return AncestorSearch::Failed;
+        };
         let mut ancestor = *tip;
 
+        let mut steps = 0;
         while stats.confirmations == -1 {
-            stats = self.get_block_stats(stats.previous_blockhash?)?;
+            if steps >= max_depth {
+                return AncestorSearch::TooDeep;
+            }
+            steps += 1;
+            let Some(previous) = stats.previous_blockhash else {
+                return AncestorSearch::Failed;
+            };
+            let Some(next) = self.get_block_stats(previous) else {
+                return AncestorSearch::Failed;
+            };
+            stats = next;
             ancestor = BlockChainTip {
                 hash: stats.blockhash,
                 height: stats.height,
             };
         }
 
-        Some(ancestor)
+        AncestorSearch::Found(ancestor)
     }
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
@@ -727,7 +760,7 @@ impl BitcoinInterface for electrum::Electrum {
 
     /// FIXME: make the Bitcoin backend interface higher level. See the comment in the poller next
     /// to the `sync_wallet()` call.
-    fn common_ancestor(&self, _tip: &BlockChainTip) -> Option<BlockChainTip> {
+    fn common_ancestor(&self, _tip: &BlockChainTip, _max_depth: i32) -> AncestorSearch {
         unreachable!("The common ancestor is returned in `sync_wallet()`. If no reorg was detected then, this method will never be called on an Electrum backend.")
     }
 
@@ -852,7 +885,7 @@ impl BitcoinInterface for esplora::Esplora {
 
     /// FIXME: make the Bitcoin backend interface higher level. See the comment in the poller next
     /// to the `sync_wallet()` call.
-    fn common_ancestor(&self, _tip: &BlockChainTip) -> Option<BlockChainTip> {
+    fn common_ancestor(&self, _tip: &BlockChainTip, _max_depth: i32) -> AncestorSearch {
         unreachable!("The common ancestor is returned in `sync_wallet()`. If no reorg was detected then, this method will never be called on an Esplora backend.")
     }
 
@@ -969,8 +1002,8 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         self.lock().unwrap().spent_coins(outpoints)
     }
 
-    fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip> {
-        self.lock().unwrap().common_ancestor(tip)
+    fn common_ancestor(&self, tip: &BlockChainTip, max_depth: i32) -> AncestorSearch {
+        self.lock().unwrap().common_ancestor(tip, max_depth)
     }
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
