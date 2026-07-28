@@ -20,3 +20,5 @@ First release of Liana Business and its installer.
 - Fix missing "Approve template" action.
 - Fix button size in the business installer.
 - Reword "Signer" to "Signer email" in the add key modal.
+- Leave the new business path timelock empty.
+- Fix business key type tooltip.
