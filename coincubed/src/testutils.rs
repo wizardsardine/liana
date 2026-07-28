@@ -25,14 +25,25 @@ use miniscript::{
 
 pub struct DummyBitcoind {
     pub txs: HashMap<Txid, (Transaction, Option<Block>)>,
+    /// What `chain_tip` reports. Defaults to the historical fixed value (height 100).
+    pub tip: BlockChainTip,
+    /// What `is_in_chain` reports. Defaults to `true`, i.e. no reorg.
+    pub in_chain: bool,
+    /// What `common_ancestor` reports. `None` models a lookup that keeps failing.
+    pub ancestor: Option<BlockChainTip>,
 }
-
-impl DummyBitcoind {}
 
 impl DummyBitcoind {
     pub fn new() -> Self {
+        let hash = bitcoin::BlockHash::from_str(
+            "000000007bc154e0fa7ea32218a72fe2c1bb9f86cf8c9ebf9a715ed27fdb229a",
+        )
+        .unwrap();
         Self {
             txs: HashMap::new(),
+            tip: BlockChainTip { hash, height: 100 },
+            in_chain: true,
+            ancestor: None,
         }
     }
 }
@@ -55,17 +66,11 @@ impl BitcoinInterface for DummyBitcoind {
     }
 
     fn chain_tip(&self) -> BlockChainTip {
-        let hash = bitcoin::BlockHash::from_str(
-            "000000007bc154e0fa7ea32218a72fe2c1bb9f86cf8c9ebf9a715ed27fdb229a",
-        )
-        .unwrap();
-        let height = 100;
-        BlockChainTip { hash, height }
+        self.tip
     }
 
     fn is_in_chain(&self, _: &BlockChainTip) -> bool {
-        // No reorg
-        true
+        self.in_chain
     }
 
     fn sync_wallet(
@@ -106,7 +111,7 @@ impl BitcoinInterface for DummyBitcoind {
     }
 
     fn common_ancestor(&self, _: &BlockChainTip) -> Option<BlockChainTip> {
-        todo!()
+        self.ancestor
     }
 
     fn broadcast_tx(&self, _: &bitcoin::Transaction) -> Result<(), String> {
@@ -156,6 +161,7 @@ struct DummyDbState {
     timestamp: u32,
     rescan_timestamp: Option<u32>,
     last_poll_timestamp: Option<u32>,
+    rollbacks: Vec<BlockChainTip>,
 }
 
 pub struct DummyDatabase {
@@ -191,8 +197,20 @@ impl DummyDatabase {
                 timestamp: now,
                 rescan_timestamp: None,
                 last_poll_timestamp: None,
+                rollbacks: Vec::new(),
             })),
         }
+    }
+
+    /// Every tip this database was asked to roll back to, in order.
+    pub fn rollbacks(&self) -> Vec<BlockChainTip> {
+        self.db.read().unwrap().rollbacks.clone()
+    }
+
+    /// The outpoints currently stored, for asserting that a poll did or did not
+    /// remove coins.
+    pub fn coin_outpoints(&self) -> Vec<bitcoin::OutPoint> {
+        self.db.read().unwrap().coins.keys().copied().collect()
     }
 
     pub fn insert_coins(&mut self, coins: Vec<Coin>) {
@@ -416,8 +434,10 @@ impl DatabaseConnection for DummyDatabase {
         self.db.write().unwrap().spend_txs.remove(txid);
     }
 
-    fn rollback_tip(&mut self, _: &BlockChainTip) {
-        todo!()
+    fn rollback_tip(&mut self, new_tip: &BlockChainTip) {
+        let mut db = self.db.write().unwrap();
+        db.rollbacks.push(*new_tip);
+        db.curr_tip = Some(*new_tip);
     }
 
     fn rescan_timestamp(&mut self) -> Option<u32> {

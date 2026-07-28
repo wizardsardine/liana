@@ -559,6 +559,13 @@ pub enum NodeSettingsMessage {
     ConfirmFlavorSwitch,
     /// Dismiss the flavour-switch confirmation without switching.
     CancelFlavorSwitch,
+    /// Ask the managed node to reconsider the blocks below the BIP-110 anchor.
+    ///
+    /// The manual escape hatch for a node left following a chain with less work
+    /// than one it knows about — normally repaired automatically on start, but the
+    /// automatic path depends on state that can be lost (a datadir moved between
+    /// machines, a wiped sidecar). The call is idempotent and never destructive.
+    RepairNodeChain,
     /// Restart the managed node now so freshly-changed inbound-over-Tor settings
     /// take effect (they otherwise apply only on the next node start).
     RestartNodeToApply,

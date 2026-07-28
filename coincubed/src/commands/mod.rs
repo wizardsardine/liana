@@ -395,6 +395,7 @@ impl DaemonControl {
                 main: self.config.main_descriptor.clone(),
             },
             rescan_progress,
+            refused_reorg_depth: self.reorg_alert_cache.load(),
             timestamp: wallet.timestamp,
             last_poll_timestamp: wallet.last_poll_timestamp,
             receive_index,
@@ -1417,6 +1418,12 @@ pub struct GetInfoResult {
     pub descriptors: GetInfoDescriptors,
     /// The progress as a percentage (between 0 and 1) of an ongoing rescan if there is any
     pub rescan_progress: Option<f64>,
+    /// Depth, in blocks, of a block chain reorganization the poller refused to apply because
+    /// it exceeded `MAX_REORG_DEPTH`. `Some` means our view of the chain is deliberately not
+    /// being updated from the backend, because the backend looks untrustworthy — see
+    /// [`crate::bitcoin::ReorgAlertCache`]. Absent from older daemons, hence `serde(default)`.
+    #[serde(default)]
+    pub refused_reorg_depth: Option<i32>,
     /// Timestamp at wallet creation date
     pub timestamp: u32,
     /// Timestamp of last poll, if any.

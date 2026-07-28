@@ -235,7 +235,13 @@ enum ClientKind {
     /// Wallet calls ([`BitcoinD::watchonly_client`]).
     Watchonly,
     /// Fire-and-forget calls with a low timeout ([`BitcoinD::sendonly_client`]).
+    ///
+    /// NOTE: built against the *watchonly* URL, because its only user is
+    /// `importdescriptors`. Non-wallet calls must use [`Self::SendonlyNode`].
     Sendonly,
+    /// Fire-and-forget calls with a low timeout, against the node URL
+    /// ([`BitcoinD::sendonly_node_client`]).
+    SendonlyNode,
 }
 
 pub struct BitcoinD {
@@ -248,6 +254,9 @@ pub struct BitcoinD {
     node_client: RwLock<Client>,
     /// A client that will disregard responses to the queries it makes.
     sendonly_client: RwLock<Client>,
+    /// Same, but for non-wallet calls: [`Self::sendonly_client`] points at the
+    /// `/wallet/<path>` URL.
+    sendonly_node_client: RwLock<Client>,
     /// A client for calls related to the wallet.
     watchonly_client: RwLock<Client>,
     watchonly_wallet_path: String,
@@ -316,9 +325,18 @@ impl BitcoinD {
                 .timeout(Duration::from_secs(3))
                 .build(),
         );
+        let sendonly_node_client = Client::with_transport(
+            builder
+                .clone()
+                .url(&node_url)
+                .map_err(BitcoindError::from)?
+                .timeout(Duration::from_secs(1))
+                .build(),
+        );
         let dummy_bitcoind = BitcoinD {
             node_client: RwLock::new(dummy_node_client),
             sendonly_client: RwLock::new(sendonly_client),
+            sendonly_node_client: RwLock::new(sendonly_node_client),
             watchonly_client: RwLock::new(dummy_wo_client),
             watchonly_wallet_path: watchonly_wallet_path.clone(),
             config: config.clone(),
@@ -339,6 +357,11 @@ impl BitcoinD {
                 config,
                 &watchonly_wallet_path,
                 ClientKind::Sendonly,
+            )?),
+            sendonly_node_client: RwLock::new(Self::build_client(
+                config,
+                &watchonly_wallet_path,
+                ClientKind::SendonlyNode,
             )?),
             watchonly_client: RwLock::new(Self::build_client(
                 config,
@@ -377,6 +400,7 @@ impl BitcoinD {
             ClientKind::Watchonly => (watchonly_url, RPC_SOCKET_TIMEOUT),
             // Fire-and-forget: a very low timeout so we ignore the response.
             ClientKind::Sendonly => (watchonly_url, 1),
+            ClientKind::SendonlyNode => (node_url, 1),
         };
         Ok(Client::with_transport(
             builder
@@ -393,6 +417,7 @@ impl BitcoinD {
             ClientKind::Node => &self.node_client,
             ClientKind::Watchonly => &self.watchonly_client,
             ClientKind::Sendonly => &self.sendonly_client,
+            ClientKind::SendonlyNode => &self.sendonly_node_client,
         }
     }
 
@@ -553,6 +578,25 @@ impl BitcoinD {
             Ok(_) => Ok(()),
             Err(e) => {
                 // A timeout error is expected, as that's our workaround to avoid blocking
+                if e.is_timeout() {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    // Same as `make_noreply_request` but for non-wallet calls.
+    fn make_noreply_node_request(
+        &self,
+        method: &str,
+        params: Option<&serde_json::value::RawValue>,
+    ) -> Result<(), BitcoindError> {
+        match self.make_request_inner(ClientKind::SendonlyNode, method, params, false) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                // A timeout error is expected, as that's our workaround to avoid blocking.
                 if e.is_timeout() {
                     Ok(())
                 } else {
@@ -1214,6 +1258,140 @@ impl BitcoinD {
         true
     }
 
+    /// A snapshot of the node's view of the chain: how far it has validated, how
+    /// far it has headers for, and the oldest block it still stores.
+    ///
+    /// Fallible, unlike [`Self::chain_tip`], because its callers are maintenance
+    /// paths that must tolerate a busy or restarting node rather than panic.
+    pub fn chain_status(&self) -> Result<ChainStatus, BitcoindError> {
+        let info = self.make_fallible_node_request("getblockchaininfo", None)?;
+        let int = |key: &str| -> Option<i32> {
+            info.get(key)
+                .and_then(Json::as_i64)
+                .and_then(|v| v.try_into().ok())
+        };
+        Ok(ChainStatus {
+            blocks: int("blocks").unwrap_or(0),
+            headers: int("headers").unwrap_or(0),
+            best_block_hash: info
+                .get("bestblockhash")
+                .and_then(Json::as_str)
+                .and_then(|s| bitcoin::BlockHash::from_str(s).ok()),
+            // Absent when the node isn't pruned.
+            prune_height: int("pruneheight"),
+        })
+    }
+
+    /// The tip of every branch in the node's block index (`getchaintips`).
+    ///
+    /// Note the `status` of a branch a node rejected is only `"invalid"` if it
+    /// actually validated the branch. A node that stopped downloading a chain it
+    /// knows it would reject reports `"headers-only"` instead, so this must not be
+    /// used as a correctness gate — see [`Self::reconsider_block_noreply`].
+    pub fn chain_tips(&self) -> Result<Vec<ChainTipEntry>, BitcoindError> {
+        let tips = self.make_fallible_node_request("getchaintips", None)?;
+        Ok(tips
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|entry| {
+                        Some(ChainTipEntry {
+                            height: entry
+                                .get("height")
+                                .and_then(Json::as_i64)?
+                                .try_into()
+                                .ok()?,
+                            hash: bitcoin::BlockHash::from_str(
+                                entry.get("hash").and_then(Json::as_str)?,
+                            )
+                            .ok()?,
+                            branch_len: entry
+                                .get("branchlen")
+                                .and_then(Json::as_i64)?
+                                .try_into()
+                                .ok()?,
+                            status: entry.get("status").and_then(Json::as_str)?.to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Status of the softfork deployment named `name` per `getdeploymentinfo`
+    /// (e.g. `"reduced_data"` for BIP-110 / RDTS).
+    ///
+    /// `None` when the RPC is unavailable or the deployment does not exist on this
+    /// network — Knots only ships `reduced_data` on mainnet and testnet4, so on
+    /// regtest and signet this is always `None`.
+    pub fn deployment_status(&self, name: &str) -> Option<DeploymentStatus> {
+        let info = self
+            .make_fallible_node_request("getdeploymentinfo", None)
+            .ok()?;
+        let deployment = info.get("deployments")?.get(name)?;
+        Some(DeploymentStatus {
+            active: deployment
+                .get("active")
+                .and_then(Json::as_bool)
+                .unwrap_or(false),
+            status: deployment
+                .get("bip9")
+                .and_then(|bip9| bip9.get("status"))
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        })
+    }
+
+    /// Mark `hash` invalid and disconnect it and everything built on it, rolling
+    /// the active chain back to its parent.
+    ///
+    /// # Danger
+    ///
+    /// Two ways this bites, both of which the caller must have handled:
+    ///
+    /// 1. **It is not self-undoing.** The `BLOCK_FAILED_VALID` flag is persisted in
+    ///    the block index and survives restarts *and* a swap to a different client.
+    ///    A caller that dies between this and [`Self::reconsider_block_noreply`]
+    ///    leaves the node parked below the invalidated block forever, with nothing
+    ///    in the node itself to indicate why. Record your intent durably *before*
+    ///    calling this.
+    /// 2. **Disconnecting a pruned block is fatal.** `DisconnectTip` must read each
+    ///    block and its undo data back off disk, and pruning deletes both. If the
+    ///    range crosses `pruneheight` the node aborts with an internal error rather
+    ///    than returning an RPC error — and because this call is fire-and-forget,
+    ///    you will not see it. Check `pruneheight` immediately before calling, keep
+    ///    a margin (it advances on every flush), and treat "the node stopped
+    ///    answering" afterwards as a failure, never as success.
+    ///
+    /// Fire-and-forget for the same reason as
+    /// [`Self::reconsider_block_noreply`]: disconnecting many blocks far exceeds
+    /// [`RPC_SOCKET_TIMEOUT`]. Poll [`Self::chain_status`] to follow it.
+    pub fn invalidate_block_noreply(&self, hash: &bitcoin::BlockHash) -> Result<(), BitcoindError> {
+        self.make_noreply_node_request("invalidateblock", params!(Json::String(hash.to_string())))
+    }
+
+    /// Clear the `BLOCK_FAILED_*` flags on `hash` **and all its descendants**,
+    /// including those on sibling branches, then re-activate the most-work chain.
+    ///
+    /// This is how a node recovers from having inherited another client's
+    /// rejections: those flags are persisted in the block index and survive both a
+    /// restart and a binary swap, so a Core node opening a datadir a Knots node
+    /// rejected blocks in will otherwise stay on the minority chain forever.
+    ///
+    /// Idempotent, and safe on a pruned node: pruning clears `BLOCK_HAVE_DATA`, so
+    /// blocks whose data is gone are never activation candidates. It also needs no
+    /// block data of its own, unlike `invalidateblock`.
+    ///
+    /// Fire-and-forget: re-activating the chain can reconnect a large number of
+    /// blocks and far exceed [`RPC_SOCKET_TIMEOUT`], so we don't wait for the
+    /// reply. Poll [`Self::chain_status`] to observe the effect. Mirrors
+    /// [`Self::start_rescan`].
+    pub fn reconsider_block_noreply(&self, hash: &bitcoin::BlockHash) -> Result<(), BitcoindError> {
+        self.make_noreply_node_request("reconsiderblock", params!(Json::String(hash.to_string())))
+    }
+
     // Make sure the bitcoind has enough blocks to rescan up to this timestamp.
     fn check_prune_height(&self, timestamp: u32) -> Result<(), BitcoindError> {
         let chain_info = self.block_chain_info();
@@ -1395,6 +1573,62 @@ impl BitcoinD {
                     .and_then(Json::as_str)
                     .map(String::from)
             })
+    }
+}
+
+/// A snapshot of the node's chain state, from `getblockchaininfo`.
+#[derive(Debug, Clone)]
+pub struct ChainStatus {
+    /// Blocks validated toward the best known tip.
+    pub blocks: i32,
+    /// Headers count for the best known tip.
+    pub headers: i32,
+    /// The active chain's tip, when the node reported a parseable one.
+    pub best_block_hash: Option<bitcoin::BlockHash>,
+    /// Oldest block the node still stores. `None` when the node isn't pruned.
+    ///
+    /// Nothing at or below this height can be disconnected — the block and undo
+    /// data needed to do so are gone.
+    pub prune_height: Option<i32>,
+}
+
+/// One entry of `getchaintips`.
+#[derive(Debug, Clone)]
+pub struct ChainTipEntry {
+    pub height: i32,
+    pub hash: bitcoin::BlockHash,
+    /// Blocks on this branch that are not on the active chain. `0` for the active tip.
+    pub branch_len: i32,
+    /// bitcoind's own label: `active`, `valid-fork`, `valid-headers`,
+    /// `headers-only`, or `invalid`.
+    pub status: String,
+}
+
+impl ChainTipEntry {
+    /// Whether this entry is the active chain's tip.
+    pub fn is_active(&self) -> bool {
+        self.status == "active"
+    }
+}
+
+/// Status of a softfork deployment, from `getdeploymentinfo`.
+#[derive(Debug, Clone)]
+pub struct DeploymentStatus {
+    /// Whether the deployment's rules are being enforced right now.
+    pub active: bool,
+    /// The BIP-9 state: `defined`, `started`, `locked_in`, `active`, or `failed`.
+    pub status: String,
+}
+
+impl DeploymentStatus {
+    /// Whether the deployment has reached a point where the enforcing and
+    /// non-enforcing chains can diverge — i.e. it is locked in or already active.
+    ///
+    /// `defined` and `started` mean no rule is being enforced yet, and `failed`
+    /// means none ever will be, so in all three cases there is nothing to
+    /// revalidate.
+    pub fn is_live(&self) -> bool {
+        self.active || matches!(self.status.as_str(), "locked_in" | "active")
     }
 }
 
@@ -1750,6 +1984,25 @@ impl From<&&Json> for MempoolEntryFees {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Only a locked-in or active deployment can make an enforcing and a
+    // non-enforcing node disagree. Before that there is no rule to enforce, and
+    // `failed` means there never will be — in both cases there is nothing to
+    // revalidate, so the whole flavour-swap remediation must stay a no-op.
+    #[test]
+    fn only_locked_in_or_active_deployments_are_live() {
+        let status = |s: &str, active: bool| DeploymentStatus {
+            active,
+            status: s.to_string(),
+        };
+        assert!(!status("defined", false).is_live());
+        assert!(!status("started", false).is_live());
+        assert!(!status("failed", false).is_live());
+        assert!(status("locked_in", false).is_live());
+        assert!(status("active", true).is_live());
+        // `active` alone is authoritative even if the textual state is missing.
+        assert!(status("", true).is_live());
+    }
 
     // Bitcoin Knots 29.x shares Core's numeric `getnetworkinfo.version` scheme:
     // the 29.x base reports 290000. Compatibility is gated on that number, not

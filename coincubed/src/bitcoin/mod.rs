@@ -84,8 +84,108 @@ impl SyncProgressCache {
     }
 }
 
+/// Lock-free flag published by the poller when it refuses to apply a block chain
+/// reorganisation because it is implausibly deep, and read by `get_info` without
+/// taking the `BitcoinInterface` mutex (same rationale as [`SyncProgressCache`]).
+///
+/// A reorg deeper than `MAX_REORG_DEPTH` blocks almost certainly means the backend
+/// is misreporting rather than that Bitcoin genuinely undid that much history: a
+/// node rewound with `invalidateblock`, a datadir swapped underneath us, or a
+/// chainstate mid-rebuild. Applying it would clear the confirmation state of every
+/// coin above the ancestor and hard-delete any deposit no longer in the mempool, so
+/// the poller declines and publishes the observed depth here instead.
+///
+/// Stored as the depth in blocks; `0` means "no alert".
+#[derive(Debug, Default)]
+pub struct ReorgAlertCache {
+    depth: sync::atomic::AtomicI64,
+}
+
+impl ReorgAlertCache {
+    /// Record that a reorg of `depth` blocks was refused.
+    pub fn store(&self, depth: i32) {
+        self.depth
+            .store(depth.into(), sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Clear the alert. Called on every poll that completes normally, so a
+    /// transient misreport resolves itself once the backend behaves again.
+    pub fn clear(&self) {
+        self.depth.store(0, sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The depth of the most recently refused reorg, if one is outstanding.
+    pub fn load(&self) -> Option<i32> {
+        match self.depth.load(sync::atomic::Ordering::Relaxed) {
+            0 => None,
+            depth => Some(depth as i32),
+        }
+    }
+}
+
+/// Set while the shared managed node is being deliberately rewound, so pollers
+/// know to stand down instead of reacting to a chain they are being shown
+/// mid-surgery.
+///
+/// Process-wide because the managed node is process-wide: every Vault runs its own
+/// poller against the one node, so a rewind driven by one Vault's settings screen
+/// has to quiesce all of them. A per-daemon channel would only reach the Vault that
+/// started it. (Same reasoning as the process-wide managed-Tor registry.)
+///
+/// This is a courtesy, not a safety mechanism. It stops pollers from *starting*
+/// work; it cannot stop one already in flight. What actually protects wallet state
+/// is the depth guard in the poller, which refuses an implausible rollback whether
+/// or not this flag is set.
+static MANAGED_NODE_MAINTENANCE: sync::atomic::AtomicBool = sync::atomic::AtomicBool::new(false);
+
+/// Mark the shared managed node as under (or no longer under) maintenance.
+///
+/// Callers MUST clear this on every exit path, including failures — a flag left
+/// set silently stops every Vault from updating. Prefer [`MaintenanceGuard`].
+pub fn set_managed_node_maintenance(active: bool) {
+    MANAGED_NODE_MAINTENANCE.store(active, sync::atomic::Ordering::SeqCst);
+}
+
+/// Whether the shared managed node is currently under maintenance.
+pub fn managed_node_maintenance() -> bool {
+    MANAGED_NODE_MAINTENANCE.load(sync::atomic::Ordering::SeqCst)
+}
+
+/// RAII wrapper around [`set_managed_node_maintenance`], so an early return or a
+/// panic cannot leave every Vault's poller parked forever.
+pub struct MaintenanceGuard;
+
+impl MaintenanceGuard {
+    pub fn new() -> Self {
+        set_managed_node_maintenance(true);
+        MaintenanceGuard
+    }
+}
+
+impl Default for MaintenanceGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for MaintenanceGuard {
+    fn drop(&mut self) {
+        set_managed_node_maintenance(false);
+    }
+}
+
 /// Our Bitcoin backend.
 pub trait BitcoinInterface: Send {
+    /// Whether this backend talks to a `bitcoind`.
+    ///
+    /// Used to scope the managed-node maintenance pause: an Esplora or Electrum
+    /// Vault is unaffected by a rewind of the managed node and must keep polling.
+    /// An external `bitcoind` we cannot distinguish from the managed one, so it
+    /// pauses too — conservative, and bounded by the rewind's duration.
+    fn is_bitcoind(&self) -> bool {
+        false
+    }
+
     fn genesis_block_timestamp(&self) -> u32;
 
     fn genesis_block(&self) -> BlockChainTip;
@@ -195,6 +295,10 @@ pub trait BitcoinInterface: Send {
 }
 
 impl BitcoinInterface for d::BitcoinD {
+    fn is_bitcoind(&self) -> bool {
+        true
+    }
+
     fn genesis_block_timestamp(&self) -> u32 {
         self.get_block_stats(
             self.get_block_hash(0)
@@ -802,6 +906,10 @@ impl BitcoinInterface for esplora::Esplora {
 
 // FIXME: do we need to repeat the entire trait implementation? Isn't there a nicer way?
 impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>> {
+    fn is_bitcoind(&self) -> bool {
+        self.lock().unwrap().is_bitcoind()
+    }
+
     fn genesis_block_timestamp(&self) -> u32 {
         self.lock().unwrap().genesis_block_timestamp()
     }

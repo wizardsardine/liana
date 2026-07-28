@@ -579,6 +579,10 @@ pub fn bitcoind<'a>(
 /// Switching restarts the shared node and may download the other client, so we
 /// gate it behind an explicit confirm. Rendered as a modal body by
 /// `BitcoindSettingsState::view`.
+///
+/// The second paragraph is direction-specific because the two swaps have
+/// genuinely different consequences for the chain the node follows — see
+/// [`flavor_switch_chain_note`].
 pub fn flavor_switch_confirm<'a>(target: NodeFlavor) -> Element<'a, NodeSettingsMessage> {
     card::modal(
         Column::new()
@@ -601,6 +605,11 @@ pub fn flavor_switch_confirm<'a>(target: NodeFlavor) -> Element<'a, NodeSettings
                 .style(theme::text::secondary),
             )
             .push(
+                text(flavor_switch_chain_note(target))
+                    .size(14)
+                    .style(theme::text::secondary),
+            )
+            .push(
                 Row::new()
                     .spacing(10)
                     .push(
@@ -617,6 +626,74 @@ pub fn flavor_switch_confirm<'a>(target: NodeFlavor) -> Element<'a, NodeSettings
     )
     .width(Length::Fixed(500.0))
     .into()
+}
+
+/// "Chain repair" card: a manual `reconsiderblock` at the BIP-110 anchor.
+///
+/// Bitcoin Knots records its rejections in the block index, and those marks
+/// persist when the datadir is later opened by Bitcoin Core — which would
+/// otherwise keep following the chain Knots chose rather than the one with the
+/// most work. The app repairs that automatically whenever the node starts, so this
+/// button only matters when the state driving that check has been lost (a datadir
+/// carried between machines, a wiped sidecar). Safe to press at any time: the call
+/// is idempotent and clears flags rather than discarding anything.
+pub fn chain_repair_section<'a>() -> Element<'a, NodeSettingsMessage> {
+    card::simple(Container::new(
+        Column::new()
+            .spacing(15)
+            .push(
+                Row::new()
+                    .push(badge::badge(icon::bitcoin_icon()))
+                    .push(text("Chain repair").bold())
+                    .spacing(20)
+                    .align_y(Alignment::Center),
+            )
+            .push(
+                text(
+                    "If your node is stuck behind a chain it knows has more work — \
+                     usually after switching between Bitcoin Knots and Bitcoin Core — \
+                     this asks it to re-check those blocks. Nothing is deleted, and \
+                     it's safe to run more than once.",
+                )
+                .size(14)
+                .style(theme::text::secondary),
+            )
+            .push(
+                button::secondary(None, "Re-check chain")
+                    .on_press(NodeSettingsMessage::RepairNodeChain),
+            ),
+    ))
+    .width(Length::Fill)
+    .into()
+}
+
+/// What switching *to* `target` means for the chain the node follows.
+///
+/// These are not symmetric. Bitcoin Knots can enforce BIP-110 (RDTS) and Bitcoin
+/// Core cannot, so:
+///
+/// * Switching **to Core** may have to undo rejections Knots recorded in the
+///   shared block index. Those marks persist across the swap, so without it Core
+///   would keep following the chain Knots chose rather than the one with the most
+///   work. That can change which transactions are confirmed.
+/// * Switching **to Knots** starts enforcing the stricter rules from now on, but
+///   does not re-check history that Core already accepted. Doing so requires
+///   rewinding the chain, which is not implemented yet — so we say so plainly
+///   rather than implying a guarantee we don't provide.
+fn flavor_switch_chain_note(target: NodeFlavor) -> &'static str {
+    match target {
+        NodeFlavor::Core => {
+            "Core doesn't enforce BIP-110. If Knots had rejected any blocks, your node \
+             will re-check them and may switch to a different chain, so some recent \
+             transactions could change confirmation state."
+        }
+        NodeFlavor::Knots => {
+            "Knots will enforce BIP-110. Your node will also re-check the recent blocks \
+             it still stores against the new rules, which can take a few hours; Vaults \
+             pause updating until it finishes. Blocks older than that were already \
+             pruned and can't be re-checked."
+        }
+    }
 }
 
 pub fn electrum_edit<'a>(
@@ -2383,6 +2460,26 @@ mod tests {
         let _ = inbound_tor_section(false, true, true, false, false, false, None);
         let _ = inbound_tor_section(true, true, true, true, true, true, Some(&stats));
         let _ = inbound_tor_section(true, false, false, true, false, true, Some(&stats));
+        let _ = chain_repair_section();
+    }
+
+    // The two directions are not symmetric, and the copy must not imply they are:
+    // switching to Core can change which chain the node follows, while switching to
+    // Knots enforces from now on WITHOUT re-checking history it already accepted.
+    // Overstating the latter would promise a guarantee Phase 1 does not deliver.
+    #[test]
+    fn flavor_switch_copy_is_direction_specific() {
+        let to_core = flavor_switch_chain_note(NodeFlavor::Core);
+        let to_knots = flavor_switch_chain_note(NodeFlavor::Knots);
+        assert_ne!(to_core, to_knots);
+        assert!(
+            to_core.contains("different chain"),
+            "switching to Core must warn that the followed chain may change"
+        );
+        assert!(
+            to_knots.contains("re-check") && to_knots.contains("pruned"),
+            "switching to Knots must say history is re-checked AND that pruning bounds it"
+        );
     }
 
     #[test]
