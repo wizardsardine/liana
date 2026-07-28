@@ -703,11 +703,21 @@ mod tests {
         assert!(!DummyBitcoind::new().is_bitcoind());
 
         {
-            let _guard = MaintenanceGuard::new();
+            let guard = MaintenanceGuard::try_acquire().expect("uncontended acquire");
             assert!(managed_node_maintenance());
+            // Mutual exclusion: several Vaults attach to the one shared node, and only
+            // one may rewind it. A check-then-set would let two through here.
+            assert!(
+                MaintenanceGuard::try_acquire().is_none(),
+                "a second holder must not be able to claim maintenance"
+            );
+            drop(guard);
         }
         // The guard must clear on drop — a flag left set silently stops every Vault
         // from ever updating again.
+        assert!(!managed_node_maintenance());
+        // And release must make it claimable again.
+        assert!(MaintenanceGuard::try_acquire().is_some());
         assert!(!managed_node_maintenance());
 
         set_managed_node_maintenance(true);

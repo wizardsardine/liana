@@ -164,20 +164,30 @@ pub fn managed_node_maintenance() -> bool {
     MANAGED_NODE_MAINTENANCE.load(sync::atomic::Ordering::SeqCst)
 }
 
-/// RAII wrapper around [`set_managed_node_maintenance`], so an early return or a
-/// panic cannot leave every Vault's poller parked forever.
+/// RAII wrapper around the maintenance flag, so an early return or a panic cannot
+/// leave every Vault's poller parked forever.
+///
+/// Acquired atomically, so it doubles as a mutual exclusion for the operation it
+/// guards: several Vaults can attach to the shared node at the same instant, and
+/// only one may rewind it.
 pub struct MaintenanceGuard;
 
 impl MaintenanceGuard {
-    pub fn new() -> Self {
-        set_managed_node_maintenance(true);
-        MaintenanceGuard
-    }
-}
-
-impl Default for MaintenanceGuard {
-    fn default() -> Self {
-        Self::new()
+    /// Claim maintenance, or `None` if another holder already has it.
+    ///
+    /// A compare-and-swap rather than a check followed by a set: the two Vaults this
+    /// exists to separate can arrive in the same instant, which is exactly when a
+    /// read-then-write loses.
+    pub fn try_acquire() -> Option<Self> {
+        MANAGED_NODE_MAINTENANCE
+            .compare_exchange(
+                false,
+                true,
+                sync::atomic::Ordering::SeqCst,
+                sync::atomic::Ordering::SeqCst,
+            )
+            .is_ok()
+            .then_some(MaintenanceGuard)
     }
 }
 

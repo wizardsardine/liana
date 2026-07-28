@@ -108,17 +108,20 @@ pub struct ChainFacts {
     pub current_flavor: NodeFlavor,
     /// Blocks validated toward the best known tip.
     pub blocks: i32,
-    /// Whether the RDTS deployment is locked in or active on this node.
-    pub deployment_live: bool,
+    /// Highest block on ANY branch the node knows of, including ones it rejected or
+    /// has headers for but never downloaded. Compared against [`Self::blocks`] this
+    /// is what tells us the node is following less work than it knows about.
+    pub best_known_height: i32,
+    /// Whether we have positive evidence the RDTS deployment will never activate.
+    ///
+    /// Note the polarity: this is set only on proof of failure, never on absence of
+    /// proof. Bitcoin Core does not define the deployment at all, so a Knots → Core
+    /// swap can only ever see "no such deployment" — and treating that as "not live"
+    /// made the entire repair unreachable on the very node that needs it.
+    pub rdts_abandoned: bool,
     /// How much history the node still stores. Nothing at or below the prune height
     /// can be disconnected — the data needed to do so is gone.
     pub prune_state: coincubed::PruneState,
-    /// Whether the node knows of a branch with more work than the one it follows
-    /// (see [`needs_reconsider`]).
-    ///
-    /// This is what keeps the ledger from being load-bearing: a swap we failed to
-    /// record still shows up here as an observable symptom.
-    pub node_stranded: bool,
 }
 
 /// Why no remediation is needed.
@@ -126,12 +129,13 @@ pub struct ChainFacts {
 pub enum SkipReason {
     /// RDTS isn't deployed on this network (regtest, signet, …).
     NoDeploymentOnNetwork,
-    /// The deployment has not locked in, so no rule is being enforced and the two
-    /// flavours cannot yet disagree.
-    DeploymentNotLive,
-    /// The chain has not reached the first height at which the flavours can
-    /// diverge. Until mainnet passes 961,632 this is the universal answer.
-    TipBelowAnchor,
+    /// The deployment timed out without activating, so its rules will never be
+    /// enforced and nothing can diverge over them.
+    DeploymentAbandoned,
+    /// No branch the node knows of reaches past the first height at which the
+    /// flavours can diverge. Until mainnet passes 961,632 this is the universal
+    /// answer.
+    NothingAboveAnchor,
     /// The node follows the best chain it knows of and did not just come from
     /// Knots. Nothing to clear.
     NothingToClear,
@@ -186,13 +190,20 @@ pub fn plan(facts: ChainFacts) -> RevalidationPlan {
     let Some(anchor_height) = rdts_anchor_height(facts.network) else {
         return RevalidationPlan::Skip(SkipReason::NoDeploymentOnNetwork);
     };
-    if !facts.deployment_live {
-        return RevalidationPlan::Skip(SkipReason::DeploymentNotLive);
+    if facts.rdts_abandoned {
+        return RevalidationPlan::Skip(SkipReason::DeploymentAbandoned);
     }
-    // Nothing above the anchor exists yet, so nothing can have diverged.
-    if facts.blocks <= anchor_height {
-        return RevalidationPlan::Skip(SkipReason::TipBelowAnchor);
+    // Measured against the best branch the node knows of, not the one it follows: a
+    // node parked at the anchor because it rejected the block above it has an active
+    // tip of exactly `anchor_height`, and gating on that would refuse to repair the
+    // very first rejection.
+    if facts.best_known_height <= anchor_height {
+        return RevalidationPlan::Skip(SkipReason::NothingAboveAnchor);
     }
+
+    // The node is following less work than it knows about. Kept as an observation
+    // rather than a stored flag so a swap we failed to record still surfaces.
+    let node_stranded = facts.best_known_height > facts.blocks;
 
     match facts.current_flavor {
         NodeFlavor::Core => {
@@ -201,7 +212,7 @@ pub fn plan(facts: ChainFacts) -> RevalidationPlan {
             // through the installer, a lost or corrupt sidecar, a datadir moved
             // between machines.
             let came_from_knots = facts.previous_flavor == Some(NodeFlavor::Knots);
-            if came_from_knots || facts.node_stranded {
+            if came_from_knots || node_stranded {
                 RevalidationPlan::ClearFailureFlags { anchor_height }
             } else {
                 RevalidationPlan::Skip(SkipReason::NothingToClear)
@@ -415,25 +426,19 @@ fn write_atomically(path: &Path, contents: &[u8]) -> io::Result<()> {
 // The stateless check
 // ---------------------------------------------------------------------------
 
-/// Whether the node is stranded off the best chain it knows about, and so needs a
-/// `reconsiderblock`.
+/// The highest block on any branch the node knows of, `getchaintips`-wide.
 ///
-/// This is the backstop that makes the ledger non-load-bearing: it asks only "is
-/// our active tip the most-work chain the node has headers for?", which is true of
-/// a healthy node regardless of history.
+/// Includes branches it rejected and ones it only has headers for. Comparing this
+/// against the active tip is the backstop that makes the flavour ledger
+/// non-load-bearing: it asks "is the node following the most work it knows about?",
+/// which a healthy node satisfies regardless of history.
 ///
 /// Deliberately **not** keyed on a branch's status being `"invalid"`. A node that
 /// rejects a block stops downloading that branch, so the honest most-work chain
 /// commonly shows up as `headers-only` rather than `invalid` — gating on
 /// `"invalid"` would miss exactly the stranded case this exists to catch.
-pub fn needs_reconsider(tips: &[coincubed::ChainTipEntry]) -> bool {
-    let Some(active_height) = tips.iter().find(|t| t.is_active()).map(|t| t.height) else {
-        return false;
-    };
-    // Any other branch reaching higher than our active tip means the node knows of
-    // more work than it is following.
-    tips.iter()
-        .any(|t| !t.is_active() && t.height > active_height)
+pub fn best_known_height(tips: &[coincubed::ChainTipEntry]) -> Option<i32> {
+    tips.iter().map(|t| t.height).max()
 }
 
 /// Observe how the managed node came up, record it, and remediate if the flavour
@@ -463,14 +468,12 @@ pub fn reconcile_after_start(
     // below an invalidated block and will not move until we release it.
     resume_pending_rewind(coincube_datadir, bitcoind);
 
-    // Record what we saw first. If the remediation below fails we would otherwise
-    // never record it, and retry the same failing path on every single startup;
-    // the stranded check is what catches the case regardless.
     let previous_flavor = ManagedNodeState::load(coincube_datadir).last_run_flavor;
-    ManagedNodeState::record_run(coincube_datadir, observed_flavor);
 
-    // Networks without the deployment cost us nothing: no RPCs at all.
+    // Networks without an anchor cost us nothing: no RPCs at all. Nothing can be
+    // planned there, so the flavour record is safe to advance immediately.
     if rdts_anchor_height(network).is_none() {
+        ManagedNodeState::record_run(coincube_datadir, observed_flavor);
         return;
     }
 
@@ -481,15 +484,18 @@ pub fn reconcile_after_start(
             return;
         }
     };
-    let deployment_live = bitcoind
+    // Absence is not evidence of failure. Core does not define this deployment at
+    // all, so on a Knots → Core swap the only honest reading of `None` is "this
+    // binary can't tell us", and the height gate decides instead.
+    let rdts_abandoned = bitcoind
         .deployment_status(RDTS_DEPLOYMENT)
-        .map(|d| d.is_live())
+        .map(|d| d.has_failed())
         .unwrap_or(false);
-    let node_stranded = match bitcoind.chain_tips() {
-        Ok(tips) => needs_reconsider(&tips),
+    let best_known = match bitcoind.chain_tips() {
+        Ok(tips) => best_known_height(&tips).unwrap_or(status.blocks),
         Err(e) => {
             warn!("could not read chain tips for the RDTS flavour check: {e}");
-            false
+            status.blocks
         }
     };
 
@@ -498,26 +504,39 @@ pub fn reconcile_after_start(
         previous_flavor,
         current_flavor: observed_flavor,
         blocks: status.blocks,
-        deployment_live,
+        best_known_height: best_known.max(status.blocks),
+        rdts_abandoned,
         prune_state: status.prune_state,
-        node_stranded,
     });
     match plan {
         RevalidationPlan::Skip(reason) => {
             tracing::debug!("No RDTS revalidation needed ({reason:?}).");
+            ManagedNodeState::record_run(coincube_datadir, observed_flavor);
         }
         RevalidationPlan::ClearFailureFlags { .. } => {
+            // Idempotent and cheap, so advancing the record is safe even if it fails:
+            // a node still following less work than it knows about is caught again by
+            // the height comparison on the next start, with no reliance on the ledger.
             if let Err(e) = execute(bitcoind, plan) {
                 warn!("RDTS revalidation failed: {e}");
             }
+            ManagedNodeState::record_run(coincube_datadir, observed_flavor);
         }
         RevalidationPlan::ReplayUnderRdts {
             floor_height,
             target_height,
         } => {
+            // Deliberately do NOT record the flavour here. The Core → Knots branch is
+            // the one case with no stateless backstop — a Knots node legitimately
+            // trailing the majority chain must never be "repaired" — so the ledger is
+            // the only thing that can trigger a retry. Advancing it before the replay
+            // succeeded would turn any transient failure into a permanent skip, since
+            // the next start would see Knots → Knots. The replay thread records it on
+            // success instead.
             spawn_replay(
                 coincube_datadir.clone(),
                 config.clone(),
+                observed_flavor,
                 floor_height,
                 target_height,
             );
@@ -537,22 +556,23 @@ pub fn reconcile_after_start(
 fn spawn_replay(
     coincube_datadir: CoincubeDirectory,
     config: coincubed::config::BitcoindConfig,
+    observed_flavor: NodeFlavor,
     floor_height: i32,
     target_height: i32,
 ) {
-    // The maintenance flag is held for the whole replay, so it doubles as a cheap
-    // "one at a time" check: several Vaults can start against the same shared node
-    // at once and must not each kick off their own rewind of it. Best-effort, not a
-    // lock — the flag is set by the thread we are about to spawn, so two calls
-    // landing in the same instant can still both get through. The durable rewind
-    // record is what keeps that recoverable, and the work is idempotent besides.
-    if coincubed::managed_node_maintenance() {
+    // Claim maintenance here, not inside the thread, and hand the guard over. Several
+    // Vaults can attach to the one shared node in the same instant; a check followed
+    // by a set would let two of them each start rewinding it. The guard's Drop
+    // releases on every exit path, including a spawn that never happens.
+    let Some(guard) = coincubed::MaintenanceGuard::try_acquire() else {
         info!("A chain replay is already running; not starting another.");
         return;
-    }
+    };
     let spawned = thread::Builder::new()
         .name("rdts-replay".to_string())
         .spawn(move || {
+            // Held for the whole replay; released when this closure returns.
+            let _guard = guard;
             let bitcoind = match coincubed::BitcoinD::new(&config, "rdts_replay".to_string()) {
                 Ok(bitcoind) => bitcoind,
                 Err(e) => {
@@ -560,10 +580,14 @@ fn spawn_replay(
                     return;
                 }
             };
-            if let Err(e) =
-                execute_replay(&coincube_datadir, &bitcoind, floor_height, target_height)
-            {
-                warn!("RDTS replay failed: {e}");
+            match execute_replay(&coincube_datadir, &bitcoind, floor_height, target_height) {
+                // Only now has the swap actually been dealt with, so only now may the
+                // ledger advance. Leaving it behind on failure is what makes the next
+                // start retry, instead of seeing Knots → Knots and skipping forever —
+                // this direction has no stateless backstop, because a Knots node
+                // legitimately trailing the majority chain must never be "repaired".
+                Ok(()) => ManagedNodeState::record_run(&coincube_datadir, observed_flavor),
+                Err(e) => warn!("RDTS replay failed: {e}"),
             }
         });
     if let Err(e) = spawned {
@@ -578,6 +602,14 @@ fn spawn_replay(
 /// persistent and nothing in the node records that we were mid-operation.
 /// Idempotent, so running it when there is nothing to finish costs one RPC.
 pub fn resume_pending_rewind(coincube_datadir: &CoincubeDirectory, bitcoind: &coincubed::BitcoinD) {
+    // A replay running right now has a rewind recorded and a half-disconnected chain.
+    // Another Vault attaching at that moment must not mistake it for a crash: issuing
+    // `reconsiderblock` would cut the live replay off mid-disconnect and clear the
+    // record out from under it, leaving the chain half-rewound with nothing to
+    // finish it.
+    if coincubed::managed_node_maintenance() {
+        return;
+    }
     // `try_load`, not `load`: an unreadable sidecar must not read as "nothing
     // pending". If a rewind really is in flight, defaulting here would leave the
     // node parked below the invalidated block with nothing left to release it, and
@@ -688,7 +720,6 @@ pub fn execute_replay(
         );
     }
 
-    let _maintenance = coincubed::MaintenanceGuard::new();
     info!(
         "Rewinding the managed node to height {floor_height} so Knots can re-check blocks \
          {first_divergent}..{target_height} under BIP-110."
@@ -799,12 +830,19 @@ mod tests {
             current_flavor: to,
             // Comfortably past the anchor, so the height gate isn't what's under test.
             blocks: RDTS_ANCHOR_MAINNET + 5_000,
-            deployment_live: true,
+            best_known_height: RDTS_ANCHOR_MAINNET + 5_000,
+            rdts_abandoned: false,
             // Unpruned unless a test says otherwise, so the prune floor isn't a
             // hidden variable in the cases that aren't about it.
             prune_state: coincubed::PruneState::NotPruned,
-            node_stranded: false,
         }
+    }
+
+    /// The node follows less work than it knows about — a rejected or headers-only
+    /// branch sits `above` blocks higher than its active tip.
+    fn stranded_by(mut f: ChainFacts, above: i32) -> ChainFacts {
+        f.best_known_height = f.blocks + above;
+        f
     }
 
     #[test]
@@ -818,9 +856,9 @@ mod tests {
     #[test]
     fn networks_without_an_anchor_are_skipped() {
         for network in [Network::Regtest, Network::Signet, Network::Testnet4] {
-            let mut f = facts(network, NodeFlavor::Knots, NodeFlavor::Core);
+            let f = facts(network, NodeFlavor::Knots, NodeFlavor::Core);
             // Even a stranded node: we have no defensible height to act from.
-            f.node_stranded = true;
+            let f = stranded_by(f, 10);
             assert_eq!(
                 plan(f),
                 RevalidationPlan::Skip(SkipReason::NoDeploymentOnNetwork),
@@ -828,16 +866,33 @@ mod tests {
         }
     }
 
-    // The runtime gate. Until RDTS locks in, both flavours enforce the same rules,
-    // so no swap can strand the node and this must stay entirely inert.
+    // The runtime gate rules out only a deployment that will never activate.
     #[test]
-    fn a_dormant_deployment_is_skipped() {
-        let mut f = facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Core);
-        f.deployment_live = false;
-        f.node_stranded = true;
+    fn an_abandoned_deployment_is_skipped() {
+        let mut f = stranded_by(
+            facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Core),
+            10,
+        );
+        f.rdts_abandoned = true;
         assert_eq!(
             plan(f),
-            RevalidationPlan::Skip(SkipReason::DeploymentNotLive)
+            RevalidationPlan::Skip(SkipReason::DeploymentAbandoned)
+        );
+    }
+
+    // Bitcoin Core does not define `reduced_data` at all, so after a Knots -> Core
+    // swap the deployment lookup can only ever come back empty. Reading that as
+    // "not live" made the entire repair unreachable on the one node that needs it,
+    // so absence must fall through to the height gate rather than short-circuit.
+    #[test]
+    fn a_missing_deployment_entry_does_not_block_the_repair() {
+        let f = facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Core);
+        assert!(!f.rdts_abandoned, "absence must not be recorded as failure");
+        assert_eq!(
+            plan(f),
+            RevalidationPlan::ClearFailureFlags {
+                anchor_height: RDTS_ANCHOR_MAINNET
+            },
         );
     }
 
@@ -845,13 +900,18 @@ mod tests {
     // node answers today. Shipping before activation is what lets the ledger be
     // seeded correctly on every install before divergence is possible at all.
     #[test]
-    fn a_tip_below_the_anchor_is_skipped() {
+    fn a_chain_below_the_anchor_is_skipped() {
         let mut f = facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Core);
         f.blocks = RDTS_ANCHOR_MAINNET;
-        assert_eq!(plan(f), RevalidationPlan::Skip(SkipReason::TipBelowAnchor));
+        f.best_known_height = RDTS_ANCHOR_MAINNET;
+        assert_eq!(
+            plan(f),
+            RevalidationPlan::Skip(SkipReason::NothingAboveAnchor)
+        );
 
         // One block into the mandatory-signalling window, divergence is possible.
         f.blocks = RDTS_ANCHOR_MAINNET + 1;
+        f.best_known_height = RDTS_ANCHOR_MAINNET + 1;
         assert_eq!(
             plan(f),
             RevalidationPlan::ClearFailureFlags {
@@ -883,9 +943,11 @@ mod tests {
     // switch, lost sidecar, datadir moved between machines).
     #[test]
     fn a_stranded_core_node_is_repaired_without_any_ledger() {
-        let mut f = facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Core);
+        let mut f = stranded_by(
+            facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Core),
+            10,
+        );
         f.previous_flavor = None;
-        f.node_stranded = true;
         assert_eq!(
             plan(f),
             RevalidationPlan::ClearFailureFlags {
@@ -899,17 +961,38 @@ mod tests {
     // its flags would re-validate and re-reject the same blocks on every startup.
     #[test]
     fn a_stranded_knots_node_is_never_repaired() {
-        let mut f = facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Knots);
-        f.node_stranded = true;
+        let f = stranded_by(
+            facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Knots),
+            10,
+        );
         assert_eq!(plan(f), RevalidationPlan::Skip(SkipReason::NothingToClear));
 
         // Not even right after a Core -> Knots swap. That swap does trigger work,
         // but it must be a replay under RDTS — never a "repair" that clears the
         // rejections and drags the node back onto the chain the user just opted out
         // of following.
-        let mut f = facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots);
-        f.node_stranded = true;
+        let f = stranded_by(
+            facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots),
+            10,
+        );
         assert!(matches!(plan(f), RevalidationPlan::ReplayUnderRdts { .. }));
+    }
+
+    // The first rejection is the whole point. A Knots node that rejected the block
+    // at the start of the mandatory-signalling window sits at exactly the anchor,
+    // with a higher branch it refuses to follow. Gating on the active tip alone
+    // declined to repair it after a swap to Core.
+    #[test]
+    fn a_node_parked_exactly_at_the_anchor_is_still_repaired() {
+        let mut f = facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Core);
+        f.blocks = RDTS_ANCHOR_MAINNET;
+        f.best_known_height = RDTS_ANCHOR_MAINNET + 1;
+        assert_eq!(
+            plan(f),
+            RevalidationPlan::ClearFailureFlags {
+                anchor_height: RDTS_ANCHOR_MAINNET
+            },
+        );
     }
 
     // Core -> Knots on an unpruned node: rewind all the way to the anchor, which is
@@ -1005,8 +1088,10 @@ mod tests {
     // Knots node must not re-run it every time.
     #[test]
     fn a_restarting_knots_node_does_not_replay() {
-        let mut f = facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Knots);
-        f.node_stranded = true;
+        let f = stranded_by(
+            facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Knots),
+            10,
+        );
         assert_eq!(plan(f), RevalidationPlan::Skip(SkipReason::NothingToClear));
 
         let mut f = facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Knots);
@@ -1058,25 +1143,24 @@ mod tests {
     }
 
     #[test]
-    fn a_healthy_node_needs_no_reconsider() {
-        assert!(!needs_reconsider(&[
-            tip(100, "active"),
-            tip(98, "valid-fork")
-        ]));
-        // No active tip at all (shouldn't happen) must not read as stranded.
-        assert!(!needs_reconsider(&[]));
-    }
+    fn best_known_height_spans_every_branch() {
+        assert_eq!(
+            best_known_height(&[tip(100, "active"), tip(98, "valid-fork")]),
+            Some(100)
+        );
+        assert_eq!(best_known_height(&[]), None);
 
-    // Note the branch is `headers-only`, not `invalid`: a node that rejects a block
-    // stops downloading that chain, so gating on `"invalid"` would miss exactly the
-    // case this check exists for.
-    #[test]
-    fn a_stranded_node_needs_a_reconsider() {
-        assert!(needs_reconsider(&[
-            tip(100, "active"),
-            tip(120, "headers-only")
-        ]));
-        assert!(needs_reconsider(&[tip(100, "active"), tip(120, "invalid")]));
+        // Note the branch is `headers-only`, not `invalid`: a node that rejects a
+        // block stops downloading that chain, so counting only `invalid` branches
+        // would miss exactly the stranded case this exists for.
+        assert_eq!(
+            best_known_height(&[tip(100, "active"), tip(120, "headers-only")]),
+            Some(120)
+        );
+        assert_eq!(
+            best_known_height(&[tip(100, "active"), tip(120, "invalid")]),
+            Some(120)
+        );
     }
 
     #[test]

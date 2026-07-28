@@ -1644,14 +1644,16 @@ pub struct DeploymentStatus {
 }
 
 impl DeploymentStatus {
-    /// Whether the deployment has reached a point where the enforcing and
-    /// non-enforcing chains can diverge — i.e. it is locked in or already active.
+    /// Whether the deployment is dead: it timed out without locking in, so its rules
+    /// will never be enforced and nothing can diverge over them.
     ///
-    /// `defined` and `started` mean no rule is being enforced yet, and `failed`
-    /// means none ever will be, so in all three cases there is nothing to
-    /// revalidate.
-    pub fn is_live(&self) -> bool {
-        self.active || matches!(self.status.as_str(), "locked_in" | "active")
+    /// Deliberately NOT the inverse of "locked in or active". BIP-110 rejects
+    /// non-signalling blocks throughout the mandatory-signalling window while the
+    /// deployment is still `started`, and only reaches `locked_in` afterwards — so
+    /// treating `started` as "not yet live" would skip precisely the window in which
+    /// an enforcing and a non-enforcing node first disagree.
+    pub fn has_failed(&self) -> bool {
+        !self.active && self.status == "failed"
     }
 }
 
@@ -2008,23 +2010,24 @@ impl From<&&Json> for MempoolEntryFees {
 mod tests {
     use super::*;
 
-    // Only a locked-in or active deployment can make an enforcing and a
-    // non-enforcing node disagree. Before that there is no rule to enforce, and
-    // `failed` means there never will be — in both cases there is nothing to
-    // revalidate, so the whole flavour-swap remediation must stay a no-op.
+    // The liveness gate exists only to rule out a deployment that will never
+    // activate. Anything else must fall through to the height check, which is the
+    // real divergence condition.
     #[test]
-    fn only_locked_in_or_active_deployments_are_live() {
+    fn only_an_abandoned_deployment_is_ruled_out() {
         let status = |s: &str, active: bool| DeploymentStatus {
             active,
             status: s.to_string(),
         };
-        assert!(!status("defined", false).is_live());
-        assert!(!status("started", false).is_live());
-        assert!(!status("failed", false).is_live());
-        assert!(status("locked_in", false).is_live());
-        assert!(status("active", true).is_live());
-        // `active` alone is authoritative even if the textual state is missing.
-        assert!(status("", true).is_live());
+        // Only an abandoned deployment can be ruled out. `started` in particular
+        // must NOT be: BIP-110's mandatory-signalling window rejects non-signalling
+        // blocks while still in that state, which is exactly when the enforcing and
+        // non-enforcing chains first diverge.
+        assert!(!status("defined", false).has_failed());
+        assert!(!status("started", false).has_failed());
+        assert!(!status("locked_in", false).has_failed());
+        assert!(!status("active", true).has_failed());
+        assert!(status("failed", false).has_failed());
     }
 
     // Bitcoin Knots 29.x shares Core's numeric `getnetworkinfo.version` scheme:
