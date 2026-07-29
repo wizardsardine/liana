@@ -41,6 +41,19 @@ impl fmt::Display for BlockChainTip {
     }
 }
 
+/// Outcome of walking back from our tip to where it rejoins the backend's chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AncestorSearch {
+    /// The fork point, found within the allowed depth.
+    Found(BlockChainTip),
+    /// The walk hit its bound without rejoining, so the fork is at least that deep.
+    /// Distinct from [`Self::Failed`] because it is an answer, not an absence of
+    /// one: the caller should reject the reorg rather than retry the lookup.
+    TooDeep,
+    /// The backend could not answer.
+    Failed,
+}
+
 /// Lock-free cache of the latest [`SyncProgress`], published by the poller and
 /// read by `get_info` WITHOUT taking the `BitcoinInterface` mutex.
 ///
@@ -84,8 +97,155 @@ impl SyncProgressCache {
     }
 }
 
+/// Lock-free flag published by the poller when it refuses to apply a block chain
+/// reorganisation because it is implausibly deep, and read by `get_info` without
+/// taking the `BitcoinInterface` mutex (same rationale as [`SyncProgressCache`]).
+///
+/// A reorg deeper than `MAX_REORG_DEPTH` blocks almost certainly means the backend
+/// is misreporting rather than that Bitcoin genuinely undid that much history: a
+/// node rewound with `invalidateblock`, a datadir swapped underneath us, or a
+/// chainstate mid-rebuild. Applying it would clear the confirmation state of every
+/// coin above the ancestor and hard-delete any deposit no longer in the mempool, so
+/// the poller declines and publishes the observed depth here instead.
+///
+/// Stored as the depth in blocks; `0` means "no alert".
+#[derive(Debug, Default)]
+pub struct ReorgAlertCache {
+    depth: sync::atomic::AtomicI64,
+}
+
+impl ReorgAlertCache {
+    /// Record that a reorg of `depth` blocks was refused.
+    pub fn store(&self, depth: i32) {
+        self.depth
+            .store(depth.into(), sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Clear the alert. Called on every poll that completes normally, so a
+    /// transient misreport resolves itself once the backend behaves again.
+    pub fn clear(&self) {
+        self.depth.store(0, sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The depth of the most recently refused reorg, if one is outstanding.
+    pub fn load(&self) -> Option<i32> {
+        match self.depth.load(sync::atomic::Ordering::Relaxed) {
+            0 => None,
+            depth => Some(depth as i32),
+        }
+    }
+}
+
+/// Set while the shared managed node is being deliberately rewound, so pollers
+/// know to stand down instead of reacting to a chain they are being shown
+/// mid-surgery.
+///
+/// Process-wide because the managed node is process-wide: every Vault runs its own
+/// poller against the one node, so a rewind driven by one Vault's settings screen
+/// has to quiesce all of them. A per-daemon channel would only reach the Vault that
+/// started it. (Same reasoning as the process-wide managed-Tor registry.)
+///
+/// This is a courtesy, not a safety mechanism. It stops pollers from *starting*
+/// work; it cannot stop one already in flight. What actually protects wallet state
+/// is the depth guard in the poller, which refuses an implausible rollback whether
+/// or not this flag is set.
+static MANAGED_NODE_MAINTENANCE: sync::atomic::AtomicBool = sync::atomic::AtomicBool::new(false);
+
+/// Mark the shared managed node as under (or no longer under) maintenance.
+///
+/// Callers MUST clear this on every exit path, including failures — a flag left
+/// set silently stops every Vault from updating. Prefer [`MaintenanceGuard`].
+pub fn set_managed_node_maintenance(active: bool) {
+    MANAGED_NODE_MAINTENANCE.store(active, sync::atomic::Ordering::SeqCst);
+}
+
+/// Whether the shared managed node is currently under maintenance.
+pub fn managed_node_maintenance() -> bool {
+    MANAGED_NODE_MAINTENANCE.load(sync::atomic::Ordering::SeqCst)
+}
+
+/// RAII wrapper around the maintenance flag, so an early return or a panic cannot
+/// leave every Vault's poller parked forever.
+///
+/// Acquired atomically, so it doubles as a mutual exclusion for the operation it
+/// guards: several Vaults can attach to the shared node at the same instant, and
+/// only one may rewind it.
+pub struct MaintenanceGuard;
+
+impl MaintenanceGuard {
+    /// Claim maintenance, or `None` if another holder already has it.
+    ///
+    /// A compare-and-swap rather than a check followed by a set: the two Vaults this
+    /// exists to separate can arrive in the same instant, which is exactly when a
+    /// read-then-write loses.
+    pub fn try_acquire() -> Option<Self> {
+        MANAGED_NODE_MAINTENANCE
+            .compare_exchange(
+                false,
+                true,
+                sync::atomic::Ordering::SeqCst,
+                sync::atomic::Ordering::SeqCst,
+            )
+            .is_ok()
+            .then_some(MaintenanceGuard)
+    }
+}
+
+impl Drop for MaintenanceGuard {
+    fn drop(&mut self) {
+        set_managed_node_maintenance(false);
+    }
+}
+
+/// The floor of a rollback we deliberately caused, which the poller may therefore
+/// apply even though it is deeper than its limit.
+///
+/// The depth guard exists to distrust the *backend*: past a few hundred blocks, a
+/// node claiming that much history was undone is far likelier to be misreporting
+/// than right. A managed-node repair breaks that assumption — we asked for the
+/// rewind and we chose how deep it went — and without an exception the guard is
+/// permanent: maintenance ends, every later poll sees the same over-deep reorg,
+/// refuses it, and the Vault stays pinned to a chain the node no longer has.
+///
+/// A floor rather than a single block, because the fork point is not knowable in
+/// advance. A repair rewinds to this block and lets the node reconnect from there;
+/// where the two chains part company is wherever the node first refuses a block,
+/// which can be anywhere above the floor. Rewinding to 961,631 and rejecting
+/// 966,000 leaves the chains sharing everything up to 965,999, and it is *that*
+/// block the poller will find — so pinning the exception to the floor would refuse
+/// every realistic outcome and authorise only the one where nothing replayed.
+///
+/// The hash is still carried, and still checked: the poller confirms the backend's
+/// chain actually contains this block before honouring the floor, so a sanction
+/// left over from a different chain or a different datadir authorises nothing.
+static SANCTIONED_ROLLBACK: sync::Mutex<Option<BlockChainTip>> = sync::Mutex::new(None);
+
+/// Authorise (or withdraw) over-deep rollbacks reaching no deeper than `floor`.
+pub fn set_sanctioned_rollback(floor: Option<BlockChainTip>) {
+    *SANCTIONED_ROLLBACK
+        .lock()
+        .expect("sanctioned rollback lock poisoned") = floor;
+}
+
+/// The floor the poller is currently allowed to roll back to past its depth limit.
+pub fn sanctioned_rollback() -> Option<BlockChainTip> {
+    *SANCTIONED_ROLLBACK
+        .lock()
+        .expect("sanctioned rollback lock poisoned")
+}
+
 /// Our Bitcoin backend.
 pub trait BitcoinInterface: Send {
+    /// Whether this backend talks to a `bitcoind`.
+    ///
+    /// Used to scope the managed-node maintenance pause: an Esplora or Electrum
+    /// Vault is unaffected by a rewind of the managed node and must keep polling.
+    /// An external `bitcoind` we cannot distinguish from the managed one, so it
+    /// pauses too — conservative, and bounded by the rewind's duration.
+    fn is_bitcoind(&self) -> bool {
+        false
+    }
+
     fn genesis_block_timestamp(&self) -> u32;
 
     fn genesis_block(&self) -> BlockChainTip;
@@ -144,7 +304,14 @@ pub trait BitcoinInterface: Send {
     ) -> (Vec<SpentCoin>, Vec<bitcoin::OutPoint>);
 
     /// Get the common ancestor between the Bitcoin backend's tip and the given tip.
-    fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip>;
+    /// Walk back from `tip` until it rejoins our chain, giving up after `max_depth`
+    /// steps.
+    ///
+    /// The bound matters: this costs one backend round-trip per block, so an
+    /// unbounded walk lets a misreporting backend extract tens of thousands of
+    /// sequential requests from us before the caller gets a chance to reject the
+    /// result. `TooDeep` lets the caller refuse without paying for the rest.
+    fn common_ancestor(&self, tip: &BlockChainTip, max_depth: i32) -> AncestorSearch;
 
     /// Broadcast this transaction to the Bitcoin P2P network
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String>;
@@ -195,6 +362,10 @@ pub trait BitcoinInterface: Send {
 }
 
 impl BitcoinInterface for d::BitcoinD {
+    fn is_bitcoind(&self) -> bool {
+        true
+    }
+
     fn genesis_block_timestamp(&self) -> u32 {
         self.get_block_stats(
             self.get_block_hash(0)
@@ -394,19 +565,32 @@ impl BitcoinInterface for d::BitcoinD {
         (spent, expired)
     }
 
-    fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip> {
-        let mut stats = self.get_block_stats(tip.hash)?;
+    fn common_ancestor(&self, tip: &BlockChainTip, max_depth: i32) -> AncestorSearch {
+        let Some(mut stats) = self.get_block_stats(tip.hash) else {
+            return AncestorSearch::Failed;
+        };
         let mut ancestor = *tip;
 
+        let mut steps = 0;
         while stats.confirmations == -1 {
-            stats = self.get_block_stats(stats.previous_blockhash?)?;
+            if steps >= max_depth {
+                return AncestorSearch::TooDeep;
+            }
+            steps += 1;
+            let Some(previous) = stats.previous_blockhash else {
+                return AncestorSearch::Failed;
+            };
+            let Some(next) = self.get_block_stats(previous) else {
+                return AncestorSearch::Failed;
+            };
+            stats = next;
             ancestor = BlockChainTip {
                 hash: stats.blockhash,
                 height: stats.height,
             };
         }
 
-        Some(ancestor)
+        AncestorSearch::Found(ancestor)
     }
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
@@ -623,7 +807,7 @@ impl BitcoinInterface for electrum::Electrum {
 
     /// FIXME: make the Bitcoin backend interface higher level. See the comment in the poller next
     /// to the `sync_wallet()` call.
-    fn common_ancestor(&self, _tip: &BlockChainTip) -> Option<BlockChainTip> {
+    fn common_ancestor(&self, _tip: &BlockChainTip, _max_depth: i32) -> AncestorSearch {
         unreachable!("The common ancestor is returned in `sync_wallet()`. If no reorg was detected then, this method will never be called on an Electrum backend.")
     }
 
@@ -748,7 +932,7 @@ impl BitcoinInterface for esplora::Esplora {
 
     /// FIXME: make the Bitcoin backend interface higher level. See the comment in the poller next
     /// to the `sync_wallet()` call.
-    fn common_ancestor(&self, _tip: &BlockChainTip) -> Option<BlockChainTip> {
+    fn common_ancestor(&self, _tip: &BlockChainTip, _max_depth: i32) -> AncestorSearch {
         unreachable!("The common ancestor is returned in `sync_wallet()`. If no reorg was detected then, this method will never be called on an Esplora backend.")
     }
 
@@ -802,6 +986,10 @@ impl BitcoinInterface for esplora::Esplora {
 
 // FIXME: do we need to repeat the entire trait implementation? Isn't there a nicer way?
 impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>> {
+    fn is_bitcoind(&self) -> bool {
+        self.lock().unwrap().is_bitcoind()
+    }
+
     fn genesis_block_timestamp(&self) -> u32 {
         self.lock().unwrap().genesis_block_timestamp()
     }
@@ -861,8 +1049,8 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         self.lock().unwrap().spent_coins(outpoints)
     }
 
-    fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip> {
-        self.lock().unwrap().common_ancestor(tip)
+    fn common_ancestor(&self, tip: &BlockChainTip, max_depth: i32) -> AncestorSearch {
+        self.lock().unwrap().common_ancestor(tip, max_depth)
     }
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {

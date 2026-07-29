@@ -2287,13 +2287,21 @@ impl App {
             subscriptions.push(self.panels.spark_receive.sideshift_poll_subscription());
         }
 
-        // Stream the pending internal bitcoind's debug.log for UpdateTip lines.
-        if let Some(pending_cfg) = self
-            .daemon
-            .as_ref()
-            .and_then(|d| d.config())
-            .and_then(|c| c.pending_bitcoind.clone())
-        {
+        // Stream the internal bitcoind's debug.log for UpdateTip lines.
+        //
+        // Prefer a pending node (one being set up or switched to), but fall back to
+        // the active managed node: a chain repair after a Core↔Knots swap reconnects
+        // blocks on a node that is already live, with nothing pending, and until now
+        // that progress was invisible.
+        if let Some(pending_cfg) = self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
+            c.pending_bitcoind.clone().or_else(|| {
+                match c.bitcoin_backend.as_ref() {
+                    Some(coincubed::config::BitcoinBackend::Bitcoind(cfg)) => Some(cfg.clone()),
+                    // Electrum/Esplora backends have no debug.log to tail.
+                    _ => None,
+                }
+            })
+        }) {
             let internal_datadir = internal_bitcoind_datadir(&self.cache.datadir_path);
             let is_internal = match &pending_cfg.rpc_auth {
                 BitcoindRpcAuth::CookieFile(path) => path.starts_with(&internal_datadir),

@@ -3,6 +3,7 @@ use coincubed::config::BitcoinBackend;
 pub mod bitcoind;
 pub mod electrum;
 pub mod esplora;
+pub mod revalidate;
 pub mod tor;
 
 /// Configure `command` so its spawned child is detached from this process:

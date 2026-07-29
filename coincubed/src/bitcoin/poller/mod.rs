@@ -37,6 +37,9 @@ pub struct Poller {
     // without contending for the `BitcoinInterface` mutex this poller holds
     // across a full wallet scan.
     sync_cache: sync::Arc<crate::bitcoin::SyncProgressCache>,
+    // Published when a poll declines an implausibly deep reorg, so `get_info` can
+    // report it without taking the `BitcoinInterface` mutex.
+    reorg_alert: sync::Arc<crate::bitcoin::ReorgAlertCache>,
 }
 
 impl Poller {
@@ -45,6 +48,7 @@ impl Poller {
         db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         desc: descriptors::CoincubeDescriptor,
         sync_cache: sync::Arc<crate::bitcoin::SyncProgressCache>,
+        reorg_alert: sync::Arc<crate::bitcoin::ReorgAlertCache>,
     ) -> Poller {
         let secp = secp256k1::Secp256k1::verification_only();
         let descs = [
@@ -68,6 +72,7 @@ impl Poller {
             secp,
             descs,
             sync_cache,
+            reorg_alert,
         }
     }
 
@@ -78,6 +83,13 @@ impl Poller {
     /// repeat that bookkeeping or decide independently when the
     /// next scheduled tick should fire.
     fn run_immediate_poll(&mut self, synced: &mut bool, last_poll: &mut Option<time::Instant>) {
+        // An explicit "poll now" is still refused during a rewind — the caller wants
+        // fresh state, and mid-rewind the node has none to give.
+        if self.paused_for_node_maintenance() {
+            log::debug!("Skipped immediate poll: the managed node is under maintenance.");
+            *last_poll = Some(time::Instant::now());
+            return;
+        }
         // Polling while the block chain is syncing could lead to
         // poller restarts if the height increases before
         // completion, and in any case this is consistent with
@@ -98,7 +110,13 @@ impl Poller {
         // don't attempt another poll too soon.
         *last_poll = Some(time::Instant::now());
         if *synced {
-            looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
+            looper::poll(
+                &mut self.bit,
+                &self.db,
+                &self.secp,
+                &self.descs,
+                &self.reorg_alert,
+            );
         } else {
             log::warn!("Skipped poll as block chain is still synchronizing.");
         }
@@ -166,6 +184,13 @@ impl Poller {
             }
             last_poll = Some(time::Instant::now());
 
+            // Stand down while the managed node is being deliberately rewound: the
+            // chain it would show us mid-operation is not one to record.
+            if self.paused_for_node_maintenance() {
+                log::debug!("Skipped poll: the managed node is under maintenance.");
+                continue;
+            }
+
             // Don't poll until the Bitcoin backend is fully synced.
             if !synced {
                 let progress = self.bit.sync_progress();
@@ -182,7 +207,21 @@ impl Poller {
                 }
             }
 
-            looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
+            looper::poll(
+                &mut self.bit,
+                &self.db,
+                &self.secp,
+                &self.descs,
+                &self.reorg_alert,
+            );
         }
+    }
+
+    /// Whether to skip this tick because the shared managed node is being rewound.
+    ///
+    /// Only bitcoind-backed Vaults stand down: an Esplora or Electrum Vault has its
+    /// own view of the chain and is unaffected by whatever we do to the managed node.
+    fn paused_for_node_maintenance(&self) -> bool {
+        crate::bitcoin::managed_node_maintenance() && self.bit.is_bitcoind()
     }
 }

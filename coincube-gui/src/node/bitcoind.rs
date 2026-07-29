@@ -1177,6 +1177,16 @@ impl Bitcoind {
                 .unwrap_or(configured_flavor);
             if running_flavor == configured_flavor {
                 info!("Internal bitcoind is already running ({running_flavor:?})");
+                // Reconcile here too: this vault may be attaching to a node another
+                // vault swapped the flavour of, so this is a start path like any
+                // other. `running_flavor` is read from the node's own subversion.
+                crate::node::revalidate::reconcile_after_start(
+                    coincube_datadir,
+                    &running,
+                    &config,
+                    network,
+                    running_flavor,
+                );
                 return Ok(Bitcoind {
                     config,
                     lock: LockFile::create(coincube_datadir.bitcoind_directory(), network)
@@ -1268,8 +1278,23 @@ impl Bitcoind {
                 }
             }
             match coincubed::BitcoinD::new(&config, "internal_bitcoind_start".to_string()) {
-                Ok(_) => {
+                Ok(started) => {
                     log::info!("Bitcoind seems to have successfully started.");
+                    // Ask the node what it actually is rather than trusting
+                    // `configured_flavor`: `select_managed_bitcoind_exe` falls back to
+                    // the other flavour's binary when the preferred one isn't
+                    // installed, so the two can legitimately disagree.
+                    let observed_flavor = started
+                        .subversion()
+                        .map(|sv| NodeFlavor::from_subversion(&sv))
+                        .unwrap_or(configured_flavor);
+                    crate::node::revalidate::reconcile_after_start(
+                        coincube_datadir,
+                        &started,
+                        &config,
+                        network,
+                        observed_flavor,
+                    );
                     return Ok(Self {
                         config,
                         lock: LockFile::create(coincube_datadir.bitcoind_directory(), network)

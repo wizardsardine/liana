@@ -15,9 +15,14 @@ use datadir::DataDirectory;
 pub use miniscript;
 
 pub use crate::bitcoin::{
-    d::{BitcoinD, BitcoindError, WalletError},
+    d::{
+        BitcoinD, BitcoindError, ChainStatus, ChainTipEntry, DeploymentStatus, PruneState,
+        WalletError,
+    },
     electrum::{Electrum, ElectrumError},
     esplora::{Esplora, EsploraError},
+    managed_node_maintenance, sanctioned_rollback, set_managed_node_maintenance,
+    set_sanctioned_rollback, BlockChainTip, MaintenanceGuard,
 };
 
 use crate::jsonrpc::server;
@@ -401,6 +406,9 @@ pub struct DaemonControl {
     // this instead of locking `bitcoin`, so it never blocks behind the poller's
     // full wallet scan (the "Starting daemon…" stall).
     sync_progress_cache: sync::Arc<crate::bitcoin::SyncProgressCache>,
+    // Lock-free mirror of the poller's "refused an implausibly deep reorg" alert,
+    // read by `get_info` for the same reason as `sync_progress_cache`.
+    reorg_alert_cache: sync::Arc<crate::bitcoin::ReorgAlertCache>,
 }
 
 impl DaemonControl {
@@ -411,6 +419,7 @@ impl DaemonControl {
         db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
         sync_progress_cache: sync::Arc<crate::bitcoin::SyncProgressCache>,
+        reorg_alert_cache: sync::Arc<crate::bitcoin::ReorgAlertCache>,
     ) -> DaemonControl {
         DaemonControl {
             config,
@@ -419,6 +428,7 @@ impl DaemonControl {
             db,
             secp,
             sync_progress_cache,
+            reorg_alert_cache,
         }
     }
 
@@ -535,6 +545,7 @@ impl DaemonHandle {
         // `get_info` reads from it — so `get_info` (and the GUI's startup gate
         // that awaits it) never blocks behind the poller's full wallet scan.
         let sync_progress_cache = sync::Arc::new(crate::bitcoin::SyncProgressCache::default());
+        let reorg_alert_cache = sync::Arc::new(crate::bitcoin::ReorgAlertCache::default());
 
         // Start the poller thread. Keep the thread handle to be able to check if it crashed. Store
         // an atomic to be able to stop it.
@@ -543,6 +554,7 @@ impl DaemonHandle {
             db.clone(),
             config.main_descriptor.clone(),
             sync_progress_cache.clone(),
+            reorg_alert_cache.clone(),
         );
         let (poller_sender, poller_receiver) = mpsc::sync_channel(1);
         let poller_handle = thread::Builder::new()
@@ -566,6 +578,7 @@ impl DaemonHandle {
             db,
             secp,
             sync_progress_cache,
+            reorg_alert_cache,
         );
 
         if with_rpc_server {
