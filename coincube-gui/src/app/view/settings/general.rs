@@ -18,7 +18,7 @@ use crate::app::state::settings::recovery_alerts::RecoveryAlerts;
 use crate::app::state::settings::recovery_kit::RecoveryKit;
 use crate::app::view::dashboard;
 use crate::app::view::message::*;
-use crate::services::coincube::{KeyholderDownloadPolicy, RecoveryKitStatus};
+use crate::services::coincube::RecoveryKitStatus;
 use crate::services::fiat::{Currency, ALL_PRICE_SOURCES};
 use crate::services::inheritance::EscrowTier;
 
@@ -300,7 +300,7 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
         );
     }
 
-    // Keyholder list + download policy only make sense when escrow is on.
+    // The keyholder list only makes sense when escrow is on.
     if is_on {
         // Who would be notified.
         body = body.push(Space::new().height(Length::Fixed(4.0)));
@@ -317,32 +317,6 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
             }
             body = body.push(who);
         }
-
-        // Keyholder download policy.
-        body = body.push(Space::new().height(Length::Fixed(6.0)));
-        body = body.push(
-            text("When can keyholders download your recovery kit?")
-                .bold()
-                .size(14),
-        );
-        let policy = ra.download_policy();
-        body = body.push(
-            Row::new()
-                .spacing(8)
-                .push(policy_button(
-                    "Only when recovery nears",
-                    KeyholderDownloadPolicy::AtApproaching,
-                    policy,
-                    busy,
-                ))
-                .push(policy_button(
-                    "Anytime",
-                    KeyholderDownloadPolicy::Anytime,
-                    policy,
-                    busy,
-                )),
-        );
-        body = body.push(text(policy_copy(policy)).size(12));
     }
 
     if let Some(err) = ra.error.as_deref() {
@@ -368,29 +342,6 @@ fn tier_button<'a>(
     let on_press = (!busy && !is_active)
         .then_some(SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::SelectTier(this)).into());
     if is_active {
-        button::primary(None, label)
-            .padding([8, 14])
-            .on_press_maybe(None)
-            .into()
-    } else {
-        button::secondary(None, label)
-            .padding([8, 14])
-            .on_press_maybe(on_press)
-            .into()
-    }
-}
-
-/// A download-policy option button.
-fn policy_button<'a>(
-    label: &'static str,
-    this: KeyholderDownloadPolicy,
-    active: KeyholderDownloadPolicy,
-    busy: bool,
-) -> Element<'a, Message> {
-    let on_press = (!busy && this != active).then_some(
-        SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::SetDownloadPolicy(this)).into(),
-    );
-    if this == active {
         button::primary(None, label)
             .padding([8, 14])
             .on_press_maybe(None)
@@ -433,19 +384,6 @@ fn tier_copy(tier: Option<EscrowTier>) -> &'static str {
              keyholder can restore the entire Cube — Liquid, Spark and Vault. COINCUBE can never \
              read either; only the keyholder's key can. You'll re-confirm your PIN to include the \
              seed."
-        }
-    }
-}
-
-fn policy_copy(policy: KeyholderDownloadPolicy) -> &'static str {
-    match policy {
-        KeyholderDownloadPolicy::AtApproaching => {
-            "Keeps your balances private until the recovery window nears. You're notified \
-             whenever a keyholder downloads."
-        }
-        KeyholderDownloadPolicy::Anytime => {
-            "Lets family prepare and verify early — but if they have your recovery password, \
-             they'll also be able to see balances. You're notified whenever a keyholder downloads."
         }
     }
 }

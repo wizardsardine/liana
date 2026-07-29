@@ -1822,11 +1822,16 @@ impl App {
         // the same gate the mutating monitoring APIs apply.
         if !self.panels.connect.account.is_recovery_alerts_entitled()
             || matches!(ra.level(), VaultMonitoringLevel::Off)
+            // The heartbeat is cube-scoped, but this still gates on a
+            // resolved vault id: it's the "does this cube actually have a
+            // Vault" signal, distinct from `server_cube_id` (every Connect
+            // cube has one; not every cube has a Vault).
+            || ra.vault_id.is_none()
         {
             return Task::none();
         }
-        let (Some(vault_id), Some(wallet), Some(client)) = (
-            ra.vault_id,
+        let (Some(cube_id), Some(wallet), Some(client)) = (
+            self.panels.connect.cube.server_cube_id,
             self.wallet.as_ref(),
             self.authenticated_coincube_client(),
         ) else {
@@ -1863,14 +1868,24 @@ impl App {
             None => tip as i64 + timelock,
         };
         let earliest = earliest.max(0) as u32;
+        // The API's sweep keys the reported height to a chain tip, so tell it
+        // which chain in the Esplora-proxy id form it expects. It only
+        // distinguishes mainnet from testnet (and rejects any other value), so
+        // every non-mainnet network reports as `bitcoin-testnet`. Omitting this
+        // would let the server default to mainnet and mis-key a testnet vault.
+        let network = match self.cache.network {
+            bitcoin::Network::Bitcoin => "bitcoin-mainnet",
+            _ => "bitcoin-testnet",
+        };
         let req = VaultHeartbeatRequest {
             earliest_recovery_height: earliest,
             computed_at: chrono::Utc::now(),
+            network: network.to_string(),
         };
         Task::perform(
             async move {
                 client
-                    .post_vault_heartbeat(vault_id, req)
+                    .post_vault_heartbeat(cube_id, req)
                     .await
                     .map_err(|e| e.to_string())
             },

@@ -6,16 +6,18 @@
 //! monitoring record). The card supplies the already-built blob JSON so this
 //! layer is network-only.
 //!
-//! The escrow set is keyed on the **cube** id (`PUT …/cubes/{cubeId}/vault/
-//! escrow`); the heartbeat gate is keyed on the **vault** id
-//! (`…/vaults/{vaultId}/monitoring`).
+//! Both the escrow set and the monitoring/heartbeat gate are keyed on the
+//! **cube** id (`…/cubes/{cubeId}/vault/escrow` and `…/cubes/{cubeId}/vault/
+//! monitoring`) — the Vault is a 1:1 sub-resource of the Cube and the
+//! monitoring record itself is stored keyed on CubeID, not VaultID, so there
+//! is no separate vault-scoped surface to address.
 
 use zeroize::Zeroizing;
 
 use super::escrow::{build_escrow_set, keyholders_from_vault, EscrowError};
 use crate::services::coincube::{
-    CoincubeClient, CoincubeError, KeyholderDownloadPolicy, SetVaultMonitoringRequest,
-    VaultMonitoringLevel, VaultMonitoringStatus,
+    CoincubeClient, CoincubeError, SetVaultMonitoringRequest, VaultMonitoringLevel,
+    VaultMonitoringStatus,
 };
 
 /// Errors from the owner escrow orchestration.
@@ -75,7 +77,6 @@ pub async fn enroll_escrow(
     server_cube_id: u64,
     descriptor_json: Vec<u8>,
     seed_json: Option<Zeroizing<Vec<u8>>>,
-    download_policy: KeyholderDownloadPolicy,
 ) -> Result<VaultMonitoringStatus, OwnerEscrowError> {
     // 1. Resolve the current keyholders + xpubs, then build the envelope set
     //    locally (the server never sees plaintext). The `Zeroizing` seed buffer
@@ -93,22 +94,16 @@ pub async fn enroll_escrow(
     // 2. Upload the opaque ciphertext set (cube-scoped).
     client.put_vault_escrow(server_cube_id, set).await?;
 
-    // 3. Switch the server-blind heartbeat gate on, on the *freshly fetched*
-    //    vault rather than a caller-cached id that could be stale — so
-    //    monitoring lands on the same vault we just built the escrow set
-    //    against. No descriptor — under ECIES the server stores none.
-    //    `download_policy` is the vault's *current* keyholder download policy,
-    //    forwarded explicitly so a re-enrol / tier switch (Vault-only ↔
-    //    Full-Cube) preserves the owner's choice instead of letting an omitted
-    //    field reset it to the server default.
+    // 3. Switch the server-blind heartbeat gate on. Monitoring is keyed on
+    //    the same cube id as the escrow upload above — no vault id involved.
+    //    No descriptor — under ECIES the server stores none.
     let status = client
         .set_vault_monitoring(
-            vault.id,
+            server_cube_id,
             SetVaultMonitoringRequest {
                 level: VaultMonitoringLevel::Heartbeat,
                 descriptor: None,
                 gap_limit: None,
-                crk_keyholder_download: Some(download_policy),
             },
         )
         .await?;
@@ -126,26 +121,14 @@ pub async fn enroll_escrow(
 /// envelope set that a retry removes — never the inverse, a monitored Vault with
 /// no ciphertext, where a recovery window could open with nothing for heirs.
 ///
-/// Monitoring is **vault-scoped** and escrow is **cube-scoped** — two different
-/// resources keyed on two different ids (not the same vault in two forms). The
-/// monitoring delete resolves the *current* vault id from the server rather than
-/// trusting the caller's cached `vault_id`: if the vault was rebuilt with a new
-/// id, a stale cached id would 404 (no-op) and leave the live vault monitored
-/// after escrow is gone — the dangerous state above. Best-effort: if the lookup
-/// fails (vault gone / offline) we fall back to the caller's id, and we always
-/// attempt the cube-scoped escrow delete so it's never stranded.
+/// Monitoring and escrow are both **cube-scoped**, so unlike a vault-keyed
+/// design there is no separate id to keep in sync here — a rebuilt Vault
+/// (new vault id, same cube) doesn't strand either delete.
 pub async fn disable_escrow(
     client: &CoincubeClient,
     server_cube_id: u64,
-    vault_id: u64,
 ) -> Result<VaultMonitoringStatus, OwnerEscrowError> {
-    let monitoring_vault_id = client
-        .get_connect_vault(server_cube_id)
-        .await
-        .ok()
-        .map(|v| v.id)
-        .unwrap_or(vault_id);
-    client.delete_vault_monitoring(monitoring_vault_id).await?;
+    client.delete_vault_monitoring(server_cube_id).await?;
     client.delete_vault_escrow(server_cube_id).await?;
     Ok(VaultMonitoringStatus {
         level: VaultMonitoringLevel::Off,
@@ -214,31 +197,25 @@ mod tests {
             then.status(200).json_body(json!({ "success": true, "data": {} }));
         });
 
-        // set monitoring → heartbeat, no descriptor.
+        // set monitoring → heartbeat, no descriptor. Cube-scoped (42), not
+        // vault-scoped: monitoring is keyed on CubeID server-side.
         let monitoring_mock = server.mock(|when, then| {
             when.method(Method::POST)
-                .path("/api/v1/connect/vaults/9/monitoring")
-                // The current download policy must be forwarded (camelCase
-                // field, snake_case value) so a re-enrol doesn't reset it.
-                .json_body_partial(
-                    r#"{ "level": "heartbeat", "crkKeyholderDownload": "anytime" }"#,
-                );
+                .path("/api/v1/connect/cubes/42/vault/monitoring")
+                .json_body_partial(r#"{ "level": "heartbeat" }"#);
+            // Real API response shape: the level field is named
+            // `monitoringLevel`, not `level` (see VaultMonitoringStatus's
+            // explicit `rename`).
             then.status(200).json_body(json!({
                 "success": true,
-                "data": { "level": "heartbeat" }
+                "data": { "monitoringLevel": "heartbeat" }
             }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
-        let status = enroll_escrow(
-            &client,
-            42,
-            b"wsh(desc)#ck".to_vec(),
-            None,
-            KeyholderDownloadPolicy::Anytime,
-        )
-        .await
-        .expect("enroll should succeed");
+        let status = enroll_escrow(&client, 42, b"wsh(desc)#ck".to_vec(), None)
+            .await
+            .expect("enroll should succeed");
 
         vault_mock.assert();
         escrow_mock.assert();
@@ -257,13 +234,13 @@ mod tests {
         });
         let monitoring_del = server.mock(|when, then| {
             when.method(Method::DELETE)
-                .path("/api/v1/connect/vaults/9/monitoring");
+                .path("/api/v1/connect/cubes/42/vault/monitoring");
             then.status(200)
                 .json_body(json!({ "success": true, "data": {} }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
-        let status = disable_escrow(&client, 42, 9).await.expect("disable ok");
+        let status = disable_escrow(&client, 42).await.expect("disable ok");
         escrow_del.assert();
         monitoring_del.assert();
         assert_eq!(status.level, VaultMonitoringLevel::Off);
@@ -279,7 +256,7 @@ mod tests {
         let server = MockServer::start();
         let monitoring_del = server.mock(|when, then| {
             when.method(Method::DELETE)
-                .path("/api/v1/connect/vaults/9/monitoring");
+                .path("/api/v1/connect/cubes/42/vault/monitoring");
             then.status(500).json_body(json!({ "success": false }));
         });
         let escrow_del = server.mock(|when, then| {
@@ -290,7 +267,7 @@ mod tests {
         });
 
         let client = CoincubeClient::for_test(server.base_url());
-        let err = disable_escrow(&client, 42, 9)
+        let err = disable_escrow(&client, 42)
             .await
             .expect_err("monitoring delete failure should propagate");
         assert!(matches!(err, OwnerEscrowError::Connect(_)));
@@ -300,50 +277,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disable_resolves_fresh_vault_id_for_monitoring() {
-        // The server's current vault id (99) differs from the caller's stale
-        // cached id (9). Monitoring (vault-scoped) must be deleted on the FRESH
-        // id, not the stale one — otherwise a rebuilt vault stays monitored
-        // after escrow is gone. Escrow stays cube-scoped (42).
+    async fn get_monitoring_maps_real_api_response_shape() {
+        // Regression guard: the API names these fields `monitoringLevel` and
+        // `state` (MonitoringStatusResponse), not `level` and
+        // `lastNotifiedState`. A struct-level `camelCase` rename alone would
+        // silently deserialize both to their defaults (Off / None) on every
+        // real response — the bug that made a *successful* enable still show
+        // "Off" on the settings card.
         let server = MockServer::start();
-        let vault_mock = server.mock(|when, then| {
+        let monitoring_mock = server.mock(|when, then| {
             when.method(Method::GET)
-                .path("/api/v1/connect/cubes/42/vault");
+                .path("/api/v1/connect/cubes/42/vault/monitoring");
             then.status(200).json_body(json!({
                 "success": true,
                 "data": {
-                    "id": 99,
-                    "cubeId": 42,
-                    "timelockDays": 365,
-                    "timelockExpiresAt": "2027-06-22T00:00:00Z",
-                    "lastResetAt": "2026-06-22T00:00:00Z",
-                    "status": "active",
-                    "members": [],
-                    "createdAt": "2026-06-22T00:00:00Z",
-                    "updatedAt": "2026-06-22T00:00:00Z"
+                    "enabled": true,
+                    "gapLimit": 20,
+                    "optedInAt": "2026-07-26T00:00:00Z",
+                    "state": "none",
+                    "monitoringLevel": "full"
                 }
             }));
         });
-        // Monitoring on the FRESH id 99 (a /9 delete would be the stale bug).
-        let monitoring_del = server.mock(|when, then| {
-            when.method(Method::DELETE)
-                .path("/api/v1/connect/vaults/99/monitoring");
-            then.status(200)
-                .json_body(json!({ "success": true, "data": {} }));
-        });
-        let escrow_del = server.mock(|when, then| {
-            when.method(Method::DELETE)
-                .path("/api/v1/connect/cubes/42/vault/escrow");
-            then.status(200)
-                .json_body(json!({ "success": true, "data": {} }));
-        });
 
         let client = CoincubeClient::for_test(server.base_url());
-        let status = disable_escrow(&client, 42, 9).await.expect("disable ok");
-        vault_mock.assert();
-        monitoring_del.assert(); // hit on /99, not the stale /9
-        escrow_del.assert();
-        assert_eq!(status.level, VaultMonitoringLevel::Off);
+        let status = client
+            .get_vault_monitoring(42)
+            .await
+            .expect("get monitoring ok");
+        monitoring_mock.assert();
+        assert_eq!(status.level, VaultMonitoringLevel::Full);
+        assert_eq!(status.last_notified_state.as_deref(), Some("none"));
     }
 
     #[tokio::test]
@@ -366,15 +330,9 @@ mod tests {
         });
         // No escrow PUT mock — it must NOT be called.
         let client = CoincubeClient::for_test(server.base_url());
-        let err = enroll_escrow(
-            &client,
-            42,
-            b"d".to_vec(),
-            None,
-            KeyholderDownloadPolicy::AtApproaching,
-        )
-        .await
-        .expect_err("no keyholders should error");
+        let err = enroll_escrow(&client, 42, b"d".to_vec(), None)
+            .await
+            .expect_err("no keyholders should error");
         vault_mock.assert();
         assert!(matches!(
             err,

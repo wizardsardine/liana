@@ -1372,22 +1372,24 @@ impl CoincubeClient {
 // Vault recovery monitoring (Estate Notifications — PR 2)
 // =============================================================================
 //
-// Per-vault, three-tier monitoring opt-in keyed by the Connect vault id.
-// Estate-gated server-side (`recovery_alerts` entitlement). See the DTO
-// block in `mod.rs`.
+// Per-cube, three-tier monitoring opt-in keyed by the Connect cube id (the
+// Vault is a 1:1 sub-resource of the Cube — `ConnectVault.CubeID` is
+// unique-indexed server-side — and the monitoring record itself is keyed on
+// CubeID, not VaultID, so every call here is cube-scoped). Estate-gated
+// server-side (`recovery_alerts` entitlement). See the DTO block in `mod.rs`.
 
 impl CoincubeClient {
-    /// `GET /api/v1/connect/vaults/{id}/monitoring` (authenticated). A vault
-    /// with no monitoring record yet (404) resolves to a default
+    /// `GET /api/v1/connect/cubes/{cubeId}/vault/monitoring` (authenticated).
+    /// A cube with no monitoring record yet (404) resolves to a default
     /// "off / at_approaching" status so the settings panel renders cleanly
     /// for a brand-new vault rather than erroring.
     pub async fn get_vault_monitoring(
         &self,
-        vault_id: u64,
+        cube_id: u64,
     ) -> Result<super::VaultMonitoringStatus, CoincubeError> {
         let url = format!(
-            "{}/api/v1/connect/vaults/{}/monitoring",
-            self.base_url, vault_id
+            "{}/api/v1/connect/cubes/{}/vault/monitoring",
+            self.base_url, cube_id
         );
         let res = self.client.get(&url).send().await?;
         let status = res.status();
@@ -1399,19 +1401,19 @@ impl CoincubeClient {
         Ok(resp.data)
     }
 
-    /// `POST /api/v1/connect/vaults/{id}/monitoring` (authenticated,
+    /// `POST /api/v1/connect/cubes/{cubeId}/vault/monitoring` (authenticated,
     /// Estate-gated). Sets the monitoring tier (and optionally the keyholder
     /// download policy). For `Full`, `req.descriptor` carries the descriptor
     /// to escrow; for `Heartbeat` it's omitted and any previously-escrowed
     /// descriptor is true-deleted server-side.
     pub async fn set_vault_monitoring(
         &self,
-        vault_id: u64,
+        cube_id: u64,
         req: super::SetVaultMonitoringRequest,
     ) -> Result<super::VaultMonitoringStatus, CoincubeError> {
         let url = format!(
-            "{}/api/v1/connect/vaults/{}/monitoring",
-            self.base_url, vault_id
+            "{}/api/v1/connect/cubes/{}/vault/monitoring",
+            self.base_url, cube_id
         );
         let res = self.client.post(&url).json(&req).send().await?;
         let res = res.check_success().await?;
@@ -1419,13 +1421,13 @@ impl CoincubeClient {
         Ok(resp.data)
     }
 
-    /// `DELETE /api/v1/connect/vaults/{id}/monitoring` (authenticated).
+    /// `DELETE /api/v1/connect/cubes/{cubeId}/vault/monitoring` (authenticated).
     /// Turns monitoring off with a true delete of any escrowed descriptor
     /// record. Idempotent: a 404 (nothing to delete) is treated as success.
-    pub async fn delete_vault_monitoring(&self, vault_id: u64) -> Result<(), CoincubeError> {
+    pub async fn delete_vault_monitoring(&self, cube_id: u64) -> Result<(), CoincubeError> {
         let url = format!(
-            "{}/api/v1/connect/vaults/{}/monitoring",
-            self.base_url, vault_id
+            "{}/api/v1/connect/cubes/{}/vault/monitoring",
+            self.base_url, cube_id
         );
         let res = self.client.delete(&url).send().await?;
         if res.status().as_u16() == 404 {
@@ -1435,41 +1437,20 @@ impl CoincubeClient {
         Ok(())
     }
 
-    /// `PUT /api/v1/connect/vaults/{id}/keyholder-download-policy`
-    /// (authenticated, Estate-gated). Sets the keyholder recovery-kit
-    /// download policy independently of the monitoring level.
-    pub async fn set_keyholder_download_policy(
-        &self,
-        vault_id: u64,
-        policy: super::KeyholderDownloadPolicy,
-    ) -> Result<super::VaultMonitoringStatus, CoincubeError> {
-        let url = format!(
-            "{}/api/v1/connect/vaults/{}/keyholder-download-policy",
-            self.base_url, vault_id
-        );
-        let req = super::SetKeyholderDownloadPolicyRequest {
-            crk_keyholder_download: policy,
-        };
-        let res = self.client.put(&url).json(&req).send().await?;
-        let res = res.check_success().await?;
-        let resp: ApiResponse<super::VaultMonitoringStatus> = res.json().await?;
-        Ok(resp.data)
-    }
-
-    /// `POST /api/v1/connect/vaults/{id}/heartbeat` (authenticated, PR 5).
-    /// Fire-and-forget timelock heartbeat sent after a vault sync for
+    /// `POST /api/v1/connect/cubes/{cubeId}/vault/heartbeat` (authenticated,
+    /// PR 5). Fire-and-forget timelock heartbeat sent after a vault sync for
     /// Heartbeat-tier (and Full, as a cross-check) vaults. Callers MUST NOT
     /// block sync on this — wrap it in a detached task and ignore the
     /// result (a newer report always wins server-side, so a dropped one is
     /// harmless).
     pub async fn post_vault_heartbeat(
         &self,
-        vault_id: u64,
+        cube_id: u64,
         req: super::VaultHeartbeatRequest,
     ) -> Result<(), CoincubeError> {
         let url = format!(
-            "{}/api/v1/connect/vaults/{}/heartbeat",
-            self.base_url, vault_id
+            "{}/api/v1/connect/cubes/{}/vault/heartbeat",
+            self.base_url, cube_id
         );
         let res = self.client.post(&url).json(&req).send().await?;
         res.check_success().await?;

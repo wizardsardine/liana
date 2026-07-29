@@ -2148,43 +2148,20 @@ impl VaultMonitoringLevel {
     }
 }
 
-/// Per-vault owner policy for when keyholders may download the encrypted
-/// recovery kit. Wire values `anytime` / `at_approaching` match the
-/// coincube-api `crk_keyholder_download` column (PR 3). Default is the
-/// privacy-preserving `at_approaching`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum KeyholderDownloadPolicy {
-    /// Keyholders can download anytime — lets family prepare/verify early,
-    /// but with the pre-shared password that also means balance visibility.
-    Anytime,
-    /// Keyholders can only download once recovery is approaching/open —
-    /// keeps balances private until the recovery window nears.
-    #[default]
-    AtApproaching,
-}
-
-impl KeyholderDownloadPolicy {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Anytime => "anytime",
-            Self::AtApproaching => "at_approaching",
-        }
-    }
-}
-
-/// Status returned by `GET /api/v1/connect/vaults/{id}/monitoring`.
+/// Status returned by `GET /api/v1/connect/cubes/{cubeId}/vault/monitoring`.
+///
+/// The API's `MonitoringStatusResponse` names these `monitoringLevel` and
+/// `state` (not `level` / `lastNotifiedState`) — explicit `rename`s below
+/// override the struct-level `camelCase` for those two fields.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultMonitoringStatus {
-    #[serde(default)]
+    #[serde(rename = "monitoringLevel", default)]
     pub level: VaultMonitoringLevel,
-    #[serde(default)]
-    pub crk_keyholder_download: KeyholderDownloadPolicy,
     /// Server's per-vault recovery state machine value, when the sweep has
     /// run: `none` / `approaching` / `available` / `reminding`. `None` when
     /// the API doesn't expose it (nice-to-have; the UI degrades silently).
-    #[serde(default)]
+    #[serde(rename = "state", default)]
     pub last_notified_state: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
@@ -2194,18 +2171,16 @@ impl Default for VaultMonitoringStatus {
     fn default() -> Self {
         Self {
             level: VaultMonitoringLevel::Off,
-            crk_keyholder_download: KeyholderDownloadPolicy::AtApproaching,
             last_notified_state: None,
             updated_at: None,
         }
     }
 }
 
-/// Body for `POST /api/v1/connect/vaults/{id}/monitoring` (Estate-gated).
-/// Sets the monitoring tier. `descriptor` is required for
+/// Body for `POST /api/v1/connect/cubes/{cubeId}/vault/monitoring`
+/// (Estate-gated). Sets the monitoring tier. `descriptor` is required for
 /// [`VaultMonitoringLevel::Full`] (the escrowed copy) and omitted for
-/// `Heartbeat`. `crk_keyholder_download` is included when the owner changes
-/// the download policy alongside the level.
+/// `Heartbeat`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetVaultMonitoringRequest {
@@ -2215,31 +2190,25 @@ pub struct SetVaultMonitoringRequest {
     /// Gap-limit hint so the server's sweep derives enough addresses.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gap_limit: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub crk_keyholder_download: Option<KeyholderDownloadPolicy>,
 }
 
-/// Body for `PUT /api/v1/connect/vaults/{id}/keyholder-download-policy`
-/// (Estate-gated). Sets the keyholder recovery-kit download policy
-/// independently of the monitoring level — the policy governs the existing
-/// recovery-kit GET for keyholder callers, so it's meaningful even when
-/// chain monitoring is off.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SetKeyholderDownloadPolicyRequest {
-    pub crk_keyholder_download: KeyholderDownloadPolicy,
-}
-
-/// Body for `POST /api/v1/connect/vaults/{id}/heartbeat` (Estate-gated,
-/// PR 5). Fire-and-forget after each vault sync for Heartbeat-tier (and
-/// Full, as a cross-check) vaults. `earliest_recovery_height` is the block
-/// height at which this vault's earliest recovery branch opens; a newer
-/// report always wins server-side (monotonic-staleness rule).
+/// Body for `POST /api/v1/connect/cubes/{cubeId}/vault/heartbeat`
+/// (Estate-gated, PR 5). Fire-and-forget after each vault sync for
+/// Heartbeat-tier (and Full, as a cross-check) vaults.
+/// `earliest_recovery_height` is the block height at which this vault's
+/// earliest recovery branch opens; a newer report always wins server-side
+/// (monotonic-staleness rule).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultHeartbeatRequest {
     pub earliest_recovery_height: u32,
     pub computed_at: chrono::DateTime<chrono::Utc>,
+    /// Chain whose tip the server's sweep compares the reported height against,
+    /// in the Esplora-proxy id form the API expects (`bitcoin-mainnet` /
+    /// `bitcoin-testnet`). REQUIRED: an omitted/empty value makes the server
+    /// assume mainnet, which would key a testnet vault's recovery height against
+    /// the wrong tip and fire (or suppress) alerts incorrectly.
+    pub network: String,
 }
 
 // =============================================================================
@@ -2595,23 +2564,6 @@ mod vault_monitoring_tests {
     }
 
     #[test]
-    fn download_policy_wire_values() {
-        assert_eq!(
-            serde_json::to_string(&KeyholderDownloadPolicy::AtApproaching).unwrap(),
-            "\"at_approaching\""
-        );
-        assert_eq!(
-            serde_json::to_string(&KeyholderDownloadPolicy::Anytime).unwrap(),
-            "\"anytime\""
-        );
-        // Default is the privacy-preserving option.
-        assert_eq!(
-            KeyholderDownloadPolicy::default(),
-            KeyholderDownloadPolicy::AtApproaching
-        );
-    }
-
-    #[test]
     fn recoverable_vault_without_escrowed_tiers_is_not_recoverable() {
         // Under the ECIES pivot, actionability keys off `availableTiers` (what's
         // escrowed for the caller), not a recovery password. A payload that omits
@@ -2676,15 +2628,25 @@ mod vault_monitoring_tests {
 
     #[test]
     fn monitoring_status_tolerates_minimal_body() {
-        // A vault with no monitoring record: server may send just the level.
-        let v = serde_json::json!({ "level": "off" });
+        // A vault with no monitoring record: server may send just the level,
+        // under its real field name `monitoringLevel` (not `level` — see the
+        // explicit `rename` on `VaultMonitoringStatus::level`).
+        let v = serde_json::json!({ "monitoringLevel": "off" });
         let s: VaultMonitoringStatus = serde_json::from_value(v).unwrap();
         assert_eq!(s.level, VaultMonitoringLevel::Off);
-        // Absent download policy defaults to at_approaching.
-        assert_eq!(
-            s.crk_keyholder_download,
-            KeyholderDownloadPolicy::AtApproaching
-        );
+        assert!(s.last_notified_state.is_none());
+    }
+
+    #[test]
+    fn monitoring_status_ignores_unrenamed_field_name() {
+        // Regression guard: before the explicit `rename`, a body keyed on the
+        // wrong field name (`level`/`lastNotifiedState` instead of the API's
+        // real `monitoringLevel`/`state`) silently deserialized to the
+        // defaults rather than erroring, which is exactly how a successful
+        // enable could still render "Off" on the settings card.
+        let v = serde_json::json!({ "level": "full", "lastNotifiedState": "approaching" });
+        let s: VaultMonitoringStatus = serde_json::from_value(v).unwrap();
+        assert_eq!(s.level, VaultMonitoringLevel::Off);
         assert!(s.last_notified_state.is_none());
     }
 
@@ -2694,13 +2656,11 @@ mod vault_monitoring_tests {
             level: VaultMonitoringLevel::Heartbeat,
             descriptor: None,
             gap_limit: Some(20),
-            crk_keyholder_download: None,
         };
         let body = serde_json::to_value(&req).unwrap();
         assert_eq!(body["level"], "heartbeat");
         assert!(body.get("descriptor").is_none());
         assert_eq!(body["gapLimit"], 20);
-        assert!(body.get("crkKeyholderDownload").is_none());
     }
 
     #[test]
@@ -2709,12 +2669,26 @@ mod vault_monitoring_tests {
             level: VaultMonitoringLevel::Full,
             descriptor: Some("wsh(...)".into()),
             gap_limit: None,
-            crk_keyholder_download: Some(KeyholderDownloadPolicy::Anytime),
         };
         let body = serde_json::to_value(&req).unwrap();
         assert_eq!(body["level"], "full");
         assert_eq!(body["descriptor"], "wsh(...)");
-        assert_eq!(body["crkKeyholderDownload"], "anytime");
+    }
+
+    #[test]
+    fn heartbeat_request_carries_network_id() {
+        // The server requires the Esplora-proxy network id and rejects any value
+        // outside `bitcoin-mainnet` / `bitcoin-testnet`; a missing field would
+        // silently default it to mainnet server-side. Lock the wire field name
+        // (`network`) and a representative value.
+        let req = VaultHeartbeatRequest {
+            earliest_recovery_height: 850_000,
+            computed_at: chrono::Utc::now(),
+            network: "bitcoin-testnet".to_string(),
+        };
+        let body = serde_json::to_value(&req).unwrap();
+        assert_eq!(body["earliestRecoveryHeight"], 850_000);
+        assert_eq!(body["network"], "bitcoin-testnet");
     }
 }
 
