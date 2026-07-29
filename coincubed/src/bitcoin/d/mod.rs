@@ -78,6 +78,9 @@ pub enum BitcoindError {
     NetworkMismatch(String /*config*/, String /*bitcoind*/),
     StartRescan,
     RescanPastPruneHeight,
+    /// A field we rely on was missing, of the wrong type, or out of range in an
+    /// otherwise successful RPC response.
+    MalformedResponse(String /* what was wrong */),
 }
 
 impl BitcoindError {
@@ -170,6 +173,9 @@ impl std::fmt::Display for BitcoindError {
                     f,
                     "Trying to rescan the block chain past the prune block height."
                 )
+            }
+            BitcoindError::MalformedResponse(what) => {
+                write!(f, "Malformed response from bitcoind: {}.", what)
             }
         }
     }
@@ -1281,9 +1287,21 @@ impl BitcoinD {
                 None => PruneState::PrunedUnknown,
             },
         };
+        // `blocks` and `headers` are not optional the way `pruneheight` is, and a
+        // missing or unreadable one must not read as height 0: callers wait for the
+        // tip to fall to a floor, and a fabricated 0 satisfies that immediately —
+        // declaring a rewind complete while the node is still at its original tip.
+        let required = |key: &str| -> Result<i32, BitcoindError> {
+            int(key).ok_or_else(|| {
+                BitcoindError::MalformedResponse(format!(
+                    "missing or out-of-range '{}' in 'getblockchaininfo' result",
+                    key
+                ))
+            })
+        };
         Ok(ChainStatus {
-            blocks: int("blocks").unwrap_or(0),
-            headers: int("headers").unwrap_or(0),
+            blocks: required("blocks")?,
+            headers: required("headers")?,
             best_block_hash: info
                 .get("bestblockhash")
                 .and_then(Json::as_str)
