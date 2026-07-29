@@ -269,15 +269,39 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
         // block chain re-organisation. Find the common ancestor between our current chain and
         // the new chain and return that. The caller will take care of rewinding our state.
         log::info!("Block chain reorganization detected. Looking for common ancestor.");
+        // A repair we performed on the managed node publishes the exact block it rewound
+        // to. That rollback is ours, not a backend misreporting, so it is both walked for
+        // and applied past the limit — otherwise the repaired node and our state stay
+        // permanently divorced. See `crate::bitcoin::sanctioned_rollback`.
+        let sanctioned =
+            crate::bitcoin::sanctioned_rollback().filter(|point| point.height < current_tip.height);
         // Bounded at one past the limit: any fork we would accept is found inside it, and
         // anything deeper is refused without walking the rest of the way. Unbounded, a
         // backend claiming a 10k-block reorg would cost us 10k sequential round-trips before
-        // we rejected the answer.
-        match bit.common_ancestor(current_tip, MAX_REORG_DEPTH + 1) {
+        // we rejected the answer. A sanctioned rollback raises the bound just far enough to
+        // reach the one block it names.
+        let max_depth = match sanctioned {
+            Some(point) => current_tip
+                .height
+                .saturating_sub(point.height)
+                .max(MAX_REORG_DEPTH),
+            None => MAX_REORG_DEPTH,
+        };
+        match bit.common_ancestor(current_tip, max_depth + 1) {
             AncestorSearch::Found(common_ancestor) => {
                 let depth = current_tip.height.saturating_sub(common_ancestor.height);
                 if depth > MAX_REORG_DEPTH {
-                    return TipUpdate::ImplausibleReorg { min_depth: depth };
+                    if sanctioned != Some(common_ancestor) {
+                        return TipUpdate::ImplausibleReorg { min_depth: depth };
+                    }
+                    log::warn!(
+                        "Applying a {}-block rollback to '{}', past the {}-block limit: it lands \
+                         exactly on '{}', the block a managed-node repair rewound to.",
+                        depth,
+                        current_tip,
+                        MAX_REORG_DEPTH,
+                        common_ancestor
+                    );
                 }
                 log::info!(
                     "Common ancestor found: '{}'. Starting rescan from there. Old tip was '{}'.",
@@ -288,9 +312,11 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
             }
             // An answer, not a failure: retrying would just spend the same round-trips again
             // to reach the same conclusion.
+            // Deeper than we were willing to walk — including past a sanctioned rollback,
+            // which means the fork is not the one we authorised.
             AncestorSearch::TooDeep => {
                 return TipUpdate::ImplausibleReorg {
-                    min_depth: MAX_REORG_DEPTH + 1,
+                    min_depth: max_depth + 1,
                 }
             }
             AncestorSearch::Failed => {}
@@ -622,8 +648,86 @@ mod tests {
         }
     }
 
+    /// Serialises the tests that read or write the process-wide sanctioned-rollback
+    /// slot. Without it a test that arms the slot can change what a concurrently
+    /// running depth-guard test observes.
+    static SANCTION_LOCK: sync::Mutex<()> = sync::Mutex::new(());
+
+    /// Arms the sanctioned-rollback slot and disarms it again on drop, so a failing
+    /// assertion cannot leak the exception into the rest of the suite.
+    struct Sanction(#[allow(dead_code)] sync::MutexGuard<'static, ()>);
+
+    impl Sanction {
+        fn arm(point: BlockChainTip) -> Self {
+            let guard = SANCTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            crate::bitcoin::set_sanctioned_rollback(Some(point));
+            Self(guard)
+        }
+
+        fn none() -> Self {
+            let guard = SANCTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            crate::bitcoin::set_sanctioned_rollback(None);
+            Self(guard)
+        }
+    }
+
+    impl Drop for Sanction {
+        fn drop(&mut self) {
+            crate::bitcoin::set_sanctioned_rollback(None);
+        }
+    }
+
+    // A repair we performed ourselves rewinds the managed node far past the depth
+    // limit. Refusing it is what left every Vault pinned to a chain the node no
+    // longer had: maintenance ends, and every later poll re-refuses the same reorg.
+    #[test]
+    fn a_sanctioned_rollback_is_applied_past_the_limit() {
+        let our_tip = tip(20_000, 0xaa);
+        // Far deeper than the walk's usual bound, so this also covers the case where
+        // the fork point could not even be reached before.
+        let fork = tip(20_000 - 10_000, 0xcc);
+        let bit = forked_backend(&our_tip, 10_000);
+
+        let _armed = Sanction::arm(fork);
+        match new_tip(&bit, &our_tip) {
+            TipUpdate::Reorged(ancestor) => assert_eq!(ancestor, fork),
+            other => panic!(
+                "expected the sanctioned rollback to be applied, got {:?}",
+                other
+            ),
+        }
+    }
+
+    // The exception authorises one block, not a depth. A backend forking anywhere
+    // else — including deeper than the block we named — is refused exactly as before.
+    #[test]
+    fn a_sanction_does_not_authorise_a_different_fork() {
+        let our_tip = tip(20_000, 0xaa);
+        let bit = forked_backend(&our_tip, 10_000);
+
+        // Right height, wrong block.
+        let _armed = Sanction::arm(tip(10_000, 0xee));
+        match new_tip(&bit, &our_tip) {
+            TipUpdate::ImplausibleReorg { .. } => {}
+            other => panic!(
+                "expected a fork at another block to be refused, got {:?}",
+                other
+            ),
+        }
+        drop(_armed);
+
+        // Sanctioned at a depth the backend's fork sits below: the walk stops at the
+        // sanctioned height without finding it, so nothing is concluded from it.
+        let _armed = Sanction::arm(tip(15_000, 0xcc));
+        match new_tip(&bit, &our_tip) {
+            TipUpdate::ImplausibleReorg { min_depth } => assert_eq!(min_depth, 5_001),
+            other => panic!("expected a deeper fork to stay refused, got {:?}", other),
+        }
+    }
+
     #[test]
     fn deep_reorg_is_refused() {
+        let _disarmed = Sanction::none();
         let our_tip = tip(20_000, 0xaa);
         // One block past the limit is already refused, and is still inside the
         // ancestor walk's bound, so the depth is known exactly.

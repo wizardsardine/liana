@@ -197,6 +197,37 @@ impl Drop for MaintenanceGuard {
     }
 }
 
+/// A rollback we deliberately caused and may therefore apply, even though it is
+/// deeper than the poller's limit.
+///
+/// The depth guard exists to distrust the *backend*: past a few hundred blocks, a
+/// node claiming that much history was undone is far likelier to be misreporting
+/// than right. A managed-node repair breaks that assumption — we asked for the
+/// rewind and we chose the fork point — and without an exception the guard is
+/// permanent: maintenance ends, every later poll sees the same over-deep reorg,
+/// refuses it, and the Vault stays pinned to a chain the node no longer has.
+///
+/// Deliberately an exact `(height, hash)` and not a floor. A floor would weaken the
+/// guard for every rollback below it; naming the block means a misreporting backend
+/// has to land on the very one we picked. Set by the repair that creates it,
+/// republished from the durable record on each start, and overwritten by the next
+/// repair.
+static SANCTIONED_ROLLBACK: sync::Mutex<Option<BlockChainTip>> = sync::Mutex::new(None);
+
+/// Authorise (or withdraw) an over-deep rollback landing exactly on `point`.
+pub fn set_sanctioned_rollback(point: Option<BlockChainTip>) {
+    *SANCTIONED_ROLLBACK
+        .lock()
+        .expect("sanctioned rollback lock poisoned") = point;
+}
+
+/// The rollback the poller is currently allowed to apply past its depth limit.
+pub fn sanctioned_rollback() -> Option<BlockChainTip> {
+    *SANCTIONED_ROLLBACK
+        .lock()
+        .expect("sanctioned rollback lock poisoned")
+}
+
 /// Our Bitcoin backend.
 pub trait BitcoinInterface: Send {
     /// Whether this backend talks to a `bitcoind`.

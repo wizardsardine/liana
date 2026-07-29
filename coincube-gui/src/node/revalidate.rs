@@ -31,6 +31,7 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    str::FromStr,
     thread,
     time::{Duration, Instant},
 };
@@ -282,6 +283,24 @@ pub struct ManagedNodeState {
     /// the next start finish the job.
     #[serde(default)]
     pub rewind: Option<RewindInFlight>,
+    /// The block a repair rewound the chain to, so every Vault's poller can adopt
+    /// the result.
+    ///
+    /// Also load-bearing, and for a reason that only shows up after the repair
+    /// succeeds: a repair that moves the chain by more than the poller's
+    /// `MAX_REORG_DEPTH` is refused as implausible, forever, leaving Vaults pinned
+    /// to a chain the node no longer has. Publishing the fork point is what lets
+    /// them tell "we did this" from "the backend is lying". Durable because
+    /// adoption can outlive the session that performed the repair.
+    #[serde(default)]
+    pub sanctioned_rollback: Option<SanctionedRollback>,
+}
+
+/// The fork point of a rollback we performed deliberately.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SanctionedRollback {
+    pub hash: String,
+    pub height: i32,
 }
 
 /// A rewind we have started and not yet confirmed finished.
@@ -392,6 +411,71 @@ impl ManagedNodeState {
             }
         }
     }
+
+    /// Retire a completed rewind and advance the flavour ledger in a single write.
+    ///
+    /// Two writes would have a window between them, and a crash inside it is the
+    /// worst of both: `rewind` gone, so nothing knows a rewind ever happened, and
+    /// `last_run_flavor` still Core, so the next start plans the whole hours-long
+    /// replay again. One `save` makes the completion as atomic as the rename
+    /// underneath it.
+    pub fn finish_rewind(coincube_datadir: &CoincubeDirectory, flavor: NodeFlavor) -> bool {
+        let mut state = match Self::try_load(coincube_datadir) {
+            Ok(state) => state,
+            Err(e) => {
+                warn!("could not read managed-node state to retire the rewind: {e}");
+                return false;
+            }
+        };
+        state.rewind = None;
+        state.last_run_flavor = Some(flavor);
+        match state.save(coincube_datadir) {
+            Ok(()) => true,
+            Err(e) => {
+                warn!("could not retire the completed rewind: {e}");
+                false
+            }
+        }
+    }
+
+    /// Persist the fork point of a repair and tell this process's pollers about it.
+    ///
+    /// Persisting first: the poller that has to adopt the rollback may belong to a
+    /// Vault that is not open yet, or to a later session entirely.
+    pub fn set_sanctioned_rollback(
+        coincube_datadir: &CoincubeDirectory,
+        point: SanctionedRollback,
+    ) {
+        match Self::try_load(coincube_datadir) {
+            Ok(mut state) => {
+                state.sanctioned_rollback = Some(point.clone());
+                if let Err(e) = state.save(coincube_datadir) {
+                    warn!("could not record the repair's fork point: {e}");
+                }
+            }
+            Err(e) => warn!("could not read managed-node state to record the fork point: {e}"),
+        }
+        publish_sanctioned_rollback(Some(&point));
+    }
+}
+
+/// Hand the recorded fork point to coincubed, so every poller in this process can
+/// tell a rollback we caused from a backend misreporting one.
+fn publish_sanctioned_rollback(point: Option<&SanctionedRollback>) {
+    let tip =
+        point.and_then(|point| {
+            match coincube_core::miniscript::bitcoin::BlockHash::from_str(&point.hash) {
+                Ok(hash) => Some(coincubed::BlockChainTip {
+                    hash,
+                    height: point.height,
+                }),
+                Err(e) => {
+                    warn!("unreadable repair fork point {:?}: {e}", point.hash);
+                    None
+                }
+            }
+        });
+    coincubed::set_sanctioned_rollback(tip);
 }
 
 /// Write `contents` to `path` through a sibling temp file, flushing before the
@@ -464,9 +548,26 @@ pub fn reconcile_after_start(
     network: Network,
     observed_flavor: NodeFlavor,
 ) {
+    // Re-arm the poller exception first: a repair from an earlier session may still
+    // be waiting for some Vault to adopt its rollback, and that Vault's poller can
+    // start the moment we return.
+    publish_sanctioned_rollback(
+        ManagedNodeState::load(coincube_datadir)
+            .sanctioned_rollback
+            .as_ref(),
+    );
+
     // Before anything else: if a previous run died mid-rewind, the node is parked
-    // below an invalidated block and will not move until we release it.
-    resume_pending_rewind(coincube_datadir, bitcoind);
+    // below an invalidated block and will not move until we release it. Planning
+    // must not run alongside that. The node's height is meaningless mid-rewind, and
+    // a planner fed it draws exactly the wrong conclusion — a node parked at the
+    // floor looks like "nothing left above the anchor", which records the current
+    // flavour and retires the very swap the recovery is still working on.
+    if resume_pending_rewind(coincube_datadir, bitcoind, config, observed_flavor)
+        == RecoveryState::InFlight
+    {
+        return;
+    }
 
     let previous_flavor = ManagedNodeState::load(coincube_datadir).last_run_flavor;
 
@@ -517,7 +618,7 @@ pub fn reconcile_after_start(
             // Idempotent and cheap, so advancing the record is safe even if it fails:
             // a node still following less work than it knows about is caught again by
             // the height comparison on the next start, with no reliance on the ledger.
-            if let Err(e) = execute(bitcoind, plan) {
+            if let Err(e) = execute(coincube_datadir, bitcoind, plan) {
                 warn!("RDTS revalidation failed: {e}");
             }
             ManagedNodeState::record_run(coincube_datadir, observed_flavor);
@@ -586,7 +687,13 @@ fn spawn_replay(
                 // start retry, instead of seeing Knots → Knots and skipping forever —
                 // this direction has no stateless backstop, because a Knots node
                 // legitimately trailing the majority chain must never be "repaired".
-                Ok(()) => ManagedNodeState::record_run(&coincube_datadir, observed_flavor),
+                // Retiring the rewind and advancing the flavour is one write, not two.
+                // A crash between them would leave `rewind` gone and the flavour still
+                // Core, and the next start would plan the whole replay over again —
+                // hours of disconnect and reconnect, against a chain already re-checked.
+                Ok(()) => {
+                    ManagedNodeState::finish_rewind(&coincube_datadir, observed_flavor);
+                }
                 Err(e) => warn!("RDTS replay failed: {e}"),
             }
         });
@@ -595,21 +702,39 @@ fn spawn_replay(
     }
 }
 
+/// Whether a rewind is still being worked on, and so whether planning may proceed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryState {
+    /// Nothing was pending. The caller may plan from the node's current height.
+    Idle,
+    /// A rewind is being finished, here or by another holder. The node's height is
+    /// mid-operation and must not be planned from.
+    InFlight,
+}
+
 /// Finish a rewind that a previous run started but did not complete.
 ///
 /// Without this, dying between `invalidateblock` and `reconsiderblock` leaves the
 /// node parked below the invalidated block indefinitely: the failure flag is
 /// persistent and nothing in the node records that we were mid-operation.
 /// Idempotent, so running it when there is nothing to finish costs one RPC.
-pub fn resume_pending_rewind(coincube_datadir: &CoincubeDirectory, bitcoind: &coincubed::BitcoinD) {
-    // A replay running right now has a rewind recorded and a half-disconnected chain.
-    // Another Vault attaching at that moment must not mistake it for a crash: issuing
-    // `reconsiderblock` would cut the live replay off mid-disconnect and clear the
-    // record out from under it, leaving the chain half-rewound with nothing to
-    // finish it.
-    if coincubed::managed_node_maintenance() {
-        return;
-    }
+///
+/// The recovery is *not* complete when `reconsiderblock` returns. That call is
+/// fire-and-forget and the reconnect it starts can run for hours, so the record is
+/// only retired once the tip is observed back at the height the rewind started
+/// from — and retired together with the flavour, in one write. Clearing it on the
+/// RPC returning would throw away the only thing that can retry: a node that then
+/// crashes, or a reconnect that never lands, leaves neither a rewind to resume nor
+/// a Core → Knots transition to notice.
+///
+/// Returns promptly. The waiting happens on its own thread, for the same reason
+/// [`execute_replay`] does.
+pub fn resume_pending_rewind(
+    coincube_datadir: &CoincubeDirectory,
+    bitcoind: &coincubed::BitcoinD,
+    config: &coincubed::config::BitcoindConfig,
+    observed_flavor: NodeFlavor,
+) -> RecoveryState {
     // `try_load`, not `load`: an unreadable sidecar must not read as "nothing
     // pending". If a rewind really is in flight, defaulting here would leave the
     // node parked below the invalidated block with nothing left to release it, and
@@ -623,12 +748,24 @@ pub fn resume_pending_rewind(coincube_datadir: &CoincubeDirectory, bitcoind: &co
                  its height against the network, and use \"Re-check chain\" in Node settings \
                  to release it."
             );
-            return;
+            return RecoveryState::Idle;
         }
     };
     let Some(rewind) = state.rewind else {
-        return;
+        return RecoveryState::Idle;
     };
+
+    // A replay running right now has a rewind recorded and a half-disconnected chain.
+    // Another Vault attaching at that moment must not mistake it for a crash: issuing
+    // `reconsiderblock` would cut the live replay off mid-disconnect and clear the
+    // record out from under it, leaving the chain half-rewound with nothing to
+    // finish it. Claiming maintenance is both that check and this recovery's own
+    // exclusion, in one atomic step.
+    let Some(guard) = coincubed::MaintenanceGuard::try_acquire() else {
+        info!("A chain rewind is already being worked on; leaving it to its owner.");
+        return RecoveryState::InFlight;
+    };
+
     warn!(
         "A chain rewind from a previous run was left unfinished (floor {}, target {}). \
          Re-issuing reconsiderblock to release the node.",
@@ -640,21 +777,75 @@ pub fn resume_pending_rewind(coincube_datadir: &CoincubeDirectory, bitcoind: &co
              later start can retry.",
             rewind.floor_height
         );
-        return;
+        // Still in flight: the node is parked below an invalidated block, so its
+        // height describes a half-rewound chain and nothing may be planned from it.
+        return RecoveryState::InFlight;
     };
-    match bitcoind.reconsider_block_noreply(&anchor) {
-        Ok(()) => {
-            ManagedNodeState::set_rewind(coincube_datadir, None);
-        }
-        Err(e) => warn!("could not finish the pending rewind: {e}"),
+
+    let coincube_datadir = coincube_datadir.clone();
+    let config = config.clone();
+    let spawned = thread::Builder::new()
+        .name("rdts-rewind-recovery".to_string())
+        .spawn(move || {
+            let _guard = guard;
+            let bitcoind = match coincubed::BitcoinD::new(&config, "rdts_recovery".to_string()) {
+                Ok(bitcoind) => bitcoind,
+                Err(e) => {
+                    warn!("could not connect to the managed node to finish the rewind: {e}");
+                    return;
+                }
+            };
+            if let Err(e) = bitcoind.reconsider_block_noreply(&anchor) {
+                warn!("could not finish the pending rewind: {e}");
+                return;
+            }
+            // The rollback the interrupted rewind created is ours, so authorise the
+            // pollers to adopt it however deep it turns out to be.
+            ManagedNodeState::set_sanctioned_rollback(
+                &coincube_datadir,
+                SanctionedRollback {
+                    hash: anchor.to_string(),
+                    height: rewind.floor_height,
+                },
+            );
+            match wait_for_tip(&bitcoind, RECONNECT_DEADLINE, |blocks| {
+                blocks >= rewind.target_height
+            }) {
+                // A confirmed terminal state, either back where the rewind started or
+                // stopped short because Knots rejected a block. Either way the node is
+                // whole, so the record and the flavour may retire together.
+                Ok(TipWait::Reached(_)) => {
+                    ManagedNodeState::finish_rewind(&coincube_datadir, observed_flavor);
+                }
+                Ok(TipWait::Settled(height)) => {
+                    warn!(
+                        "The recovered node settled at height {height} rather than {}.",
+                        rewind.target_height
+                    );
+                    ManagedNodeState::finish_rewind(&coincube_datadir, observed_flavor);
+                }
+                // Still reconnecting when we stopped watching, or unresponsive. The
+                // record stays, so the next start picks the recovery up rather than
+                // losing both it and the swap that caused it.
+                Ok(TipWait::Deadline) => {
+                    warn!("the rewind recovery had not finished when we stopped watching")
+                }
+                Err(e) => warn!("the rewind recovery did not confirm: {e}"),
+            }
+        });
+    if let Err(e) = spawned {
+        warn!("could not spawn the rewind-recovery thread: {e}");
     }
+    RecoveryState::InFlight
 }
 
 /// How long to let each phase of a replay run before we stop watching it.
 ///
-/// Expiry is not an error: the node keeps working through the reconnect on its own,
-/// and the in-flight record means a later start can still finish the job. We simply
-/// stop holding every Vault's poller while we wait.
+/// Expiry is not a failure of the *node* — it keeps working through the reconnect
+/// on its own, and the in-flight record means a later start can still finish the
+/// job. It is reported as an error all the same, because the only thing we know at
+/// that point is that we stopped looking, and the record must survive to be
+/// confirmed later rather than be retired on an assumption.
 const DISCONNECT_DEADLINE: Duration = Duration::from_secs(30 * 60);
 const RECONNECT_DEADLINE: Duration = Duration::from_secs(6 * 60 * 60);
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -725,37 +916,87 @@ pub fn execute_replay(
          {first_divergent}..{target_height} under BIP-110."
     );
 
+    // The rollback about to happen is one we chose, so let every poller adopt it
+    // however deep it is. Published before the disconnect, not after: the poller
+    // that has to apply it may see the rewound chain before we get to observe it.
+    ManagedNodeState::set_sanctioned_rollback(
+        coincube_datadir,
+        SanctionedRollback {
+            hash: floor_hash.to_string(),
+            height: floor_height,
+        },
+    );
+
     bitcoind
         .invalidate_block_noreply(&invalidate_hash)
         .map_err(|e| format!("invalidateblock at height {first_divergent} failed: {e}"))?;
-    wait_for_tip(bitcoind, DISCONNECT_DEADLINE, |blocks| {
+    // Only an observed disconnect may be built on. If we merely stopped watching,
+    // the chain may still be anywhere, and the record we leave behind is what lets a
+    // later start pick the recovery up.
+    match wait_for_tip(bitcoind, DISCONNECT_DEADLINE, |blocks| {
         blocks <= floor_height
-    })?;
+    })? {
+        TipWait::Reached(_) => {}
+        TipWait::Settled(height) => {
+            return Err(format!(
+                "the rewind stalled at height {height} instead of reaching {floor_height}; \
+                 leaving the record so a later start can finish it"
+            ))
+        }
+        TipWait::Deadline => {
+            return Err(
+                "the rewind did not reach the floor before the deadline; leaving the record \
+                 so a later start can finish it"
+                    .to_string(),
+            )
+        }
+    }
 
     info!("Rewind complete; reconnecting under BIP-110 rules.");
     bitcoind
         .reconsider_block_noreply(&floor_hash)
         .map_err(|e| format!("reconsiderblock at height {floor_height} failed: {e}"))?;
-    let reached = wait_for_tip(bitcoind, RECONNECT_DEADLINE, |blocks| {
+    match wait_for_tip(bitcoind, RECONNECT_DEADLINE, |blocks| {
         blocks >= target_height
-    })?;
-
-    // Only now is the node whole again, so only now may the record go.
-    ManagedNodeState::set_rewind(coincube_datadir, None);
-    if reached < target_height {
-        // Knots rejected something Core had accepted, or the deadline expired. Either
-        // way the node is consistent; it just isn't where it started.
-        warn!(
-            "After re-checking, the node settled at height {reached} rather than {target_height}. \
-             If this is not simply a slow reconnect, blocks accepted under Core were rejected \
-             under BIP-110."
-        );
+    })? {
+        TipWait::Reached(_) => Ok(()),
+        // The node stopped reconnecting below where it started. That is a real
+        // terminal state, not a failure: Knots rejected something Core had accepted.
+        TipWait::Settled(height) => {
+            warn!(
+                "After re-checking, the node settled at height {height} rather than \
+                 {target_height}. Blocks accepted under Core were rejected under BIP-110."
+            );
+            Ok(())
+        }
+        // We stopped watching mid-reconnect. The node carries on by itself, and the
+        // record we leave behind lets a later start confirm and retire it.
+        TipWait::Deadline => Err(
+            "the reconnect had not finished when we stopped watching; leaving the record \
+             so a later start can confirm it"
+                .to_string(),
+        ),
     }
-    Ok(())
 }
 
-/// Poll the node's height until `done`, the deadline expires, or the node stops
-/// answering.
+/// How the wait ended. The distinction is the whole point: "we stopped watching"
+/// must never be mistaken for "the node got there", because the caller retires a
+/// durable recovery record on the strength of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TipWait {
+    /// The predicate was satisfied — an observed, confirmed transition.
+    Reached(i32),
+    /// The tip stopped moving without satisfying the predicate. The node is done;
+    /// it just did not end up where we expected. This is the shape a legitimate
+    /// RDTS rejection takes: Knots refuses a block Core accepted, so the reconnect
+    /// ends below the height it started from.
+    Settled(i32),
+    /// Neither happened before the deadline. Nothing may be concluded.
+    Deadline,
+}
+
+/// Poll the node's height until `done`, until it stops moving, until the deadline
+/// expires, or until the node stops answering.
 ///
 /// A node that stops answering after `invalidateblock` is the fatal-abort case —
 /// disconnecting pruned data kills bitcoind rather than returning an error — so a
@@ -764,19 +1005,31 @@ fn wait_for_tip(
     bitcoind: &coincubed::BitcoinD,
     deadline: Duration,
     done: impl Fn(i32) -> bool,
-) -> Result<i32, String> {
+) -> Result<TipWait, String> {
     const MAX_CONSECUTIVE_FAILURES: u32 = 15;
+    /// Consecutive readings at one height before the node counts as finished.
+    /// Generous, because a reconnect legitimately pauses while it validates.
+    const STABLE_POLLS: u32 = 150;
 
     let started = Instant::now();
-    let mut last_seen = None;
+    let mut last_seen: Option<i32> = None;
+    let mut stable = 0u32;
     let mut failures = 0u32;
     while started.elapsed() < deadline {
         match bitcoind.chain_status() {
             Ok(status) => {
                 failures = 0;
-                last_seen = Some(status.blocks);
                 if done(status.blocks) {
-                    return Ok(status.blocks);
+                    return Ok(TipWait::Reached(status.blocks));
+                }
+                if last_seen == Some(status.blocks) {
+                    stable += 1;
+                    if stable >= STABLE_POLLS {
+                        return Ok(TipWait::Settled(status.blocks));
+                    }
+                } else {
+                    stable = 0;
+                    last_seen = Some(status.blocks);
                 }
             }
             Err(e) => {
@@ -791,7 +1044,7 @@ fn wait_for_tip(
         }
         thread::sleep(POLL_INTERVAL);
     }
-    last_seen.ok_or_else(|| "the managed node never reported a height".to_string())
+    Ok(TipWait::Deadline)
 }
 
 /// Issue the `reconsiderblock` for `plan`, if it calls for one.
@@ -800,6 +1053,7 @@ fn wait_for_tip(
 /// exceed the RPC socket timeout. Progress is observed out of band, from the
 /// node's `getblockchaininfo` and its debug log.
 pub fn execute(
+    coincube_datadir: &CoincubeDirectory,
     bitcoind: &coincubed::BitcoinD,
     plan: RevalidationPlan,
 ) -> Result<Option<i32>, String> {
@@ -809,6 +1063,17 @@ pub fn execute(
     let anchor = bitcoind
         .get_block_hash(anchor_height)
         .ok_or_else(|| format!("no block at the RDTS anchor height {anchor_height}"))?;
+    // Clearing the flags can reorg the node onto a branch that forks at the anchor,
+    // which is far deeper than the poller will follow on its own authority. It forks
+    // at a block we named, so name it: without this every Vault refuses the repaired
+    // chain from here on.
+    ManagedNodeState::set_sanctioned_rollback(
+        coincube_datadir,
+        SanctionedRollback {
+            hash: anchor.to_string(),
+            height: anchor_height,
+        },
+    );
     info!(
         "Clearing inherited block-index rejections from the RDTS anchor \
          (height {anchor_height}, {anchor}) so this node can follow the most-work chain."
@@ -1128,6 +1393,95 @@ mod tests {
         let loaded = ManagedNodeState::load(&datadir);
         assert_eq!(loaded.rewind, None);
         assert_eq!(loaded.last_run_flavor, Some(NodeFlavor::Knots));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Completing a replay has to retire the rewind and advance the flavour together.
+    // Two writes leave a window whose crash outcome is the worst of both: no rewind
+    // record, so nothing knows one ever happened, and the flavour still Core, so the
+    // next start plans the entire hours-long replay again.
+    #[test]
+    fn a_completed_rewind_retires_with_the_flavour_in_one_write() {
+        let dir = std::env::temp_dir().join(format!(
+            "coincube-finish-rewind-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let datadir = CoincubeDirectory::new(dir.clone());
+
+        ManagedNodeState::record_run(&datadir, NodeFlavor::Core);
+        assert!(ManagedNodeState::set_rewind(
+            &datadir,
+            Some(RewindInFlight {
+                invalidated_hash: "00".repeat(32),
+                floor_height: RDTS_ANCHOR_MAINNET,
+                target_height: RDTS_ANCHOR_MAINNET + 100,
+            })
+        ));
+
+        assert!(ManagedNodeState::finish_rewind(&datadir, NodeFlavor::Knots));
+        let loaded = ManagedNodeState::load(&datadir);
+        assert_eq!(loaded.rewind, None);
+        assert_eq!(loaded.last_run_flavor, Some(NodeFlavor::Knots));
+
+        // Unreadable state must not be papered over with a default: writing back a
+        // fabricated one would erase a rewind that is still in flight.
+        std::fs::write(ManagedNodeState::path(&datadir), b"{ not json").unwrap();
+        assert!(!ManagedNodeState::finish_rewind(
+            &datadir,
+            NodeFlavor::Knots
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The fork point of a repair has to outlive the session that performed it: the
+    // Vault that must adopt the rollback may not even be open yet, and without the
+    // record its poller refuses the repaired chain as an implausible reorg forever.
+    #[test]
+    fn a_repairs_fork_point_is_persisted_and_published() {
+        let dir = std::env::temp_dir().join(format!(
+            "coincube-sanction-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let datadir = CoincubeDirectory::new(dir.clone());
+
+        let point = SanctionedRollback {
+            hash: "00".repeat(31) + "2a",
+            height: RDTS_ANCHOR_MAINNET,
+        };
+        ManagedNodeState::set_sanctioned_rollback(&datadir, point.clone());
+
+        // Durable...
+        assert_eq!(
+            ManagedNodeState::load(&datadir).sanctioned_rollback,
+            Some(point.clone())
+        );
+        // ...and live, so this session's pollers can already act on it.
+        let published = coincubed::sanctioned_rollback().expect("published");
+        assert_eq!(published.height, RDTS_ANCHOR_MAINNET);
+        assert_eq!(published.hash.to_string(), point.hash);
+
+        // Republishing from a fresh load is what re-arms it on the next start.
+        coincubed::set_sanctioned_rollback(None);
+        assert!(coincubed::sanctioned_rollback().is_none());
+        publish_sanctioned_rollback(
+            ManagedNodeState::load(&datadir)
+                .sanctioned_rollback
+                .as_ref(),
+        );
+        assert!(coincubed::sanctioned_rollback().is_some());
+
+        // An unreadable hash disarms rather than authorising something arbitrary.
+        publish_sanctioned_rollback(Some(&SanctionedRollback {
+            hash: "not a block hash".to_string(),
+            height: RDTS_ANCHOR_MAINNET,
+        }));
+        assert!(coincubed::sanctioned_rollback().is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

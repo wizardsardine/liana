@@ -760,10 +760,11 @@ impl State for BitcoindSettingsState {
                         };
                         let cfg = settings.bitcoind_config.clone();
                         let network = cache.network;
+                        let coincube_datadir = cache.datadir_path.clone();
                         return Task::perform(
                             async move {
                                 tokio::task::spawn_blocking(move || {
-                                    repair_managed_node_chain(&cfg, network)
+                                    repair_managed_node_chain(&coincube_datadir, &cfg, network)
                                 })
                                 .await
                                 .unwrap_or_else(|e| Err(e.to_string()))
@@ -1238,13 +1239,18 @@ fn write_internal_bitcoind_config(
 /// reconnect many blocks and outlast the RPC socket timeout, so we return as soon
 /// as the request is away and let the node get on with it. Progress shows up in
 /// the usual sync indicators.
-fn repair_managed_node_chain(cfg: &BitcoindConfig, network: Network) -> Result<String, String> {
+fn repair_managed_node_chain(
+    coincube_datadir: &CoincubeDirectory,
+    cfg: &BitcoindConfig,
+    network: Network,
+) -> Result<String, String> {
     let anchor_height = crate::node::revalidate::rdts_anchor_height(network).ok_or_else(|| {
         "BIP-110 isn't deployed on this network, so there is nothing to repair.".to_string()
     })?;
     let bitcoind = coincubed::BitcoinD::new(cfg, "repair_node_chain".to_string())
         .map_err(|e| format!("Could not reach the managed node: {e}"))?;
     crate::node::revalidate::execute(
+        coincube_datadir,
         &bitcoind,
         crate::node::revalidate::RevalidationPlan::ClearFailureFlags { anchor_height },
     )?;

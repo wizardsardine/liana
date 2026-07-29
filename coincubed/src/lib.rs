@@ -21,7 +21,8 @@ pub use crate::bitcoin::{
     },
     electrum::{Electrum, ElectrumError},
     esplora::{Esplora, EsploraError},
-    managed_node_maintenance, set_managed_node_maintenance, MaintenanceGuard,
+    managed_node_maintenance, sanctioned_rollback, set_managed_node_maintenance,
+    set_sanctioned_rollback, BlockChainTip, MaintenanceGuard,
 };
 
 use crate::jsonrpc::server;
