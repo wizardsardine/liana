@@ -269,21 +269,22 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
         // block chain re-organisation. Find the common ancestor between our current chain and
         // the new chain and return that. The caller will take care of rewinding our state.
         log::info!("Block chain reorganization detected. Looking for common ancestor.");
-        // A repair we performed on the managed node publishes the exact block it rewound
-        // to. That rollback is ours, not a backend misreporting, so it is both walked for
-        // and applied past the limit — otherwise the repaired node and our state stay
-        // permanently divorced. See `crate::bitcoin::sanctioned_rollback`.
+        // A repair we performed on the managed node publishes the block it rewound to.
+        // Rollbacks reaching no deeper than that one are ours, not a backend
+        // misreporting, so they are both walked for and applied past the limit —
+        // otherwise the repaired node and our state stay permanently divorced. See
+        // `crate::bitcoin::sanctioned_rollback`.
         let sanctioned =
-            crate::bitcoin::sanctioned_rollback().filter(|point| point.height < current_tip.height);
+            crate::bitcoin::sanctioned_rollback().filter(|floor| floor.height < current_tip.height);
         // Bounded at one past the limit: any fork we would accept is found inside it, and
         // anything deeper is refused without walking the rest of the way. Unbounded, a
         // backend claiming a 10k-block reorg would cost us 10k sequential round-trips before
         // we rejected the answer. A sanctioned rollback raises the bound just far enough to
-        // reach the one block it names.
+        // reach its floor, and no further.
         let max_depth = match sanctioned {
-            Some(point) => current_tip
+            Some(floor) => current_tip
                 .height
-                .saturating_sub(point.height)
+                .saturating_sub(floor.height)
                 .max(MAX_REORG_DEPTH),
             None => MAX_REORG_DEPTH,
         };
@@ -291,12 +292,22 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
             AncestorSearch::Found(common_ancestor) => {
                 let depth = current_tip.height.saturating_sub(common_ancestor.height);
                 if depth > MAX_REORG_DEPTH {
-                    if sanctioned != Some(common_ancestor) {
+                    // Two conditions, and the second is what keeps this from being a
+                    // blanket depth increase: the fork must be at or above the floor we
+                    // rewound to, *and* the backend's chain must actually contain that
+                    // floor block. A sanction left over from another chain, another
+                    // datadir, or a node that never underwent the repair authorises
+                    // nothing.
+                    let authorised = sanctioned.is_some_and(|floor| {
+                        common_ancestor.height >= floor.height && bit.is_in_chain(&floor)
+                    });
+                    if !authorised {
                         return TipUpdate::ImplausibleReorg { min_depth: depth };
                     }
                     log::warn!(
                         "Applying a {}-block rollback to '{}', past the {}-block limit: it lands \
-                         exactly on '{}', the block a managed-node repair rewound to.",
+                         on '{}', at or above the block a managed-node repair rewound this chain \
+                         to.",
                         depth,
                         current_tip,
                         MAX_REORG_DEPTH,
@@ -677,20 +688,33 @@ mod tests {
         }
     }
 
+    /// A backend that forks `depth` below our tip and whose chain still contains
+    /// `floor` — the shape a repaired managed node has: rewound to the floor, then
+    /// reconnected back up to wherever it stopped accepting blocks.
+    fn repaired_backend(
+        our_tip: &BlockChainTip,
+        depth: i32,
+        floor: BlockChainTip,
+    ) -> DummyBitcoind {
+        let mut bit = forked_backend(our_tip, depth);
+        bit.also_in_chain = vec![floor];
+        bit
+    }
+
     // A repair we performed ourselves rewinds the managed node far past the depth
     // limit. Refusing it is what left every Vault pinned to a chain the node no
     // longer had: maintenance ends, and every later poll re-refuses the same reorg.
     #[test]
     fn a_sanctioned_rollback_is_applied_past_the_limit() {
         let our_tip = tip(20_000, 0xaa);
-        // Far deeper than the walk's usual bound, so this also covers the case where
-        // the fork point could not even be reached before.
-        let fork = tip(20_000 - 10_000, 0xcc);
-        let bit = forked_backend(&our_tip, 10_000);
+        // Rewound to 10,000 below our tip. Far deeper than the walk's usual bound, so
+        // this also covers the case where the fork point could not even be reached.
+        let floor = tip(10_000, 0xcc);
+        let bit = repaired_backend(&our_tip, 10_000, floor);
 
-        let _armed = Sanction::arm(fork);
+        let _armed = Sanction::arm(floor);
         match new_tip(&bit, &our_tip) {
-            TipUpdate::Reorged(ancestor) => assert_eq!(ancestor, fork),
+            TipUpdate::Reorged(ancestor) => assert_eq!(ancestor, floor),
             other => panic!(
                 "expected the sanctioned rollback to be applied, got {:?}",
                 other
@@ -698,30 +722,57 @@ mod tests {
         }
     }
 
-    // The exception authorises one block, not a depth. A backend forking anywhere
-    // else — including deeper than the block we named — is refused exactly as before.
+    // The realistic outcome, and the one an exact-block exception got wrong: the node
+    // replays most of what it rewound and only refuses a block near the top, so the
+    // chains part company thousands of blocks *above* the floor. That fork point is
+    // not knowable when the repair starts, which is why the sanction is a floor.
     #[test]
-    fn a_sanction_does_not_authorise_a_different_fork() {
+    fn a_rollback_above_the_sanctioned_floor_is_applied() {
         let our_tip = tip(20_000, 0xaa);
-        let bit = forked_backend(&our_tip, 10_000);
+        let floor = tip(10_000, 0xcc);
+        // Rewound to 10,000; everything up to 19,000 was re-accepted, 19,001 was not.
+        let bit = repaired_backend(&our_tip, 1_000, floor);
 
-        // Right height, wrong block.
-        let _armed = Sanction::arm(tip(10_000, 0xee));
+        let _armed = Sanction::arm(floor);
+        match new_tip(&bit, &our_tip) {
+            TipUpdate::Reorged(ancestor) => assert_eq!(ancestor.height, 19_000),
+            other => panic!(
+                "expected a fork above the sanctioned floor to be applied, got {:?}",
+                other
+            ),
+        }
+    }
+
+    // The floor is a limit, not a licence. Anything deeper than it, and any backend
+    // whose chain does not contain the floor block at all, is refused as before.
+    #[test]
+    fn a_sanction_authorises_nothing_below_its_floor_or_off_its_chain() {
+        let our_tip = tip(20_000, 0xaa);
+        let floor = tip(10_000, 0xcc);
+
+        // A fork 1,000 blocks below the floor: outside what the repair could produce.
+        let bit = repaired_backend(&our_tip, 11_000, floor);
+        let _armed = Sanction::arm(floor);
         match new_tip(&bit, &our_tip) {
             TipUpdate::ImplausibleReorg { .. } => {}
             other => panic!(
-                "expected a fork at another block to be refused, got {:?}",
+                "expected a fork below the floor to be refused, got {:?}",
                 other
             ),
         }
         drop(_armed);
 
-        // Sanctioned at a depth the backend's fork sits below: the walk stops at the
-        // sanctioned height without finding it, so nothing is concluded from it.
-        let _armed = Sanction::arm(tip(15_000, 0xcc));
+        // Right depth, but this backend's chain never contained the block we rewound
+        // to — a sanction left over from another chain or another datadir.
+        let mut bit = forked_backend(&our_tip, 10_000);
+        bit.also_in_chain = vec![tip(10_000, 0xee)];
+        let _armed = Sanction::arm(floor);
         match new_tip(&bit, &our_tip) {
-            TipUpdate::ImplausibleReorg { min_depth } => assert_eq!(min_depth, 5_001),
-            other => panic!("expected a deeper fork to stay refused, got {:?}", other),
+            TipUpdate::ImplausibleReorg { .. } => {}
+            other => panic!(
+                "expected a sanction from another chain to authorise nothing, got {:?}",
+                other
+            ),
         }
     }
 

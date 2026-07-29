@@ -33,6 +33,9 @@ pub struct DummyBitcoind {
     pub in_chain: bool,
     /// What `common_ancestor` reports. `None` models a lookup that keeps failing.
     pub ancestor: Option<BlockChainTip>,
+    /// Blocks this backend's chain contains regardless of [`Self::in_chain`], so a
+    /// forked backend can still be asked about a block deeper than the fork point.
+    pub also_in_chain: Vec<BlockChainTip>,
 }
 
 impl DummyBitcoind {
@@ -46,6 +49,7 @@ impl DummyBitcoind {
             tip: BlockChainTip { hash, height: 100 },
             in_chain: true,
             ancestor: None,
+            also_in_chain: Vec::new(),
         }
     }
 }
@@ -71,8 +75,8 @@ impl BitcoinInterface for DummyBitcoind {
         self.tip
     }
 
-    fn is_in_chain(&self, _: &BlockChainTip) -> bool {
-        self.in_chain
+    fn is_in_chain(&self, tip: &BlockChainTip) -> bool {
+        self.in_chain || self.also_in_chain.contains(tip)
     }
 
     fn sync_wallet(
