@@ -27,6 +27,7 @@
 use std::convert::TryInto;
 use std::sync::Arc;
 
+use coincube_core::miniscript::bitcoin::bech32;
 use coincube_spark_protocol::{
     CrossChainAddress, CrossChainRoute, ParseInputKind, PrepareSendOk, SendPaymentOk,
 };
@@ -944,8 +945,23 @@ fn amount_unit_word(unit: BitcoinDisplayUnit) -> &'static str {
     }
 }
 
+/// BOLT11's bech32 variant: the bech32 checksum, with the 90-character limit
+/// waived (BOLT11 §"Encoding Overview" — an invoice with a description or a few
+/// route hints runs well past it, and past bech32's own 1023-character code
+/// length too).
+enum Bolt11Bech32 {}
+
+impl bech32::Checksum for Bolt11Bech32 {
+    type MidstateRepr = <bech32::Bech32 as bech32::Checksum>::MidstateRepr;
+    const CODE_LENGTH: usize = usize::MAX;
+    const CHECKSUM_LENGTH: usize = <bech32::Bech32 as bech32::Checksum>::CHECKSUM_LENGTH;
+    const GENERATOR_SH: [Self::MidstateRepr; 5] =
+        <bech32::Bech32 as bech32::Checksum>::GENERATOR_SH;
+    const TARGET_RESIDUE: Self::MidstateRepr = <bech32::Bech32 as bech32::Checksum>::TARGET_RESIDUE;
+}
+
 /// The amount a BOLT11 invoice commits to, in sats, or `None` when the input
-/// isn't a complete invoice or is amountless.
+/// isn't a well-formed invoice or is amountless.
 ///
 /// Read straight out of the invoice's human-readable part (`lnbc65m1…`), which
 /// is plain text ahead of the bech32 separator — no signature check, no SDK
@@ -953,6 +969,12 @@ fn amount_unit_word(unit: BitcoinDisplayUnit) -> &'static str {
 /// display only: the amount that actually gets paid still comes from the
 /// invoice itself at prepare time, so a mis-read here can't send the wrong
 /// number of sats.
+///
+/// The bech32 checksum is verified all the same, because the prefilled amount
+/// is only as trustworthy as the invoice it was read off. A mangled paste — a
+/// character dropped by a line wrap, a truncated copy — still carries an intact
+/// human-readable part, so without the checksum it would quote a confident
+/// amount for something that can never be paid, and lock the field on it.
 ///
 /// Grammar (BOLT11 §"Human-Readable Part"): `ln` + a currency prefix (`bc`,
 /// `tb`, `bcrt`, …) + an optional amount, which is a decimal followed by an
@@ -970,10 +992,13 @@ fn bolt11_amount_sat(input: &str) -> Option<u64> {
     let sep = s.rfind('1')?;
     let (hrp, data) = (&s[..sep], &s[sep + 1..]);
     // A signature alone is 104 bech32 characters, plus a 7-character timestamp:
-    // anything shorter is a partial paste, not an invoice we should read.
+    // anything shorter is a partial paste, not an invoice we should read. The
+    // checksum can't stand in for this — a short string can checksum cleanly.
     if data.len() < 104 {
         return None;
     }
+    // Charset, separator placement and checksum, in one pass over the string.
+    bech32::primitives::decode::CheckedHrpstring::new::<Bolt11Bech32>(s).ok()?;
 
     // The currency prefix is alphabetic, so the amount starts at the first
     // digit. No digits at all means an amountless invoice — a perfectly normal
@@ -1426,11 +1451,43 @@ mod tests {
         assert!(SparkSendTarget::Spark.accepts_parsed(&K::Other));
     }
 
-    /// A BOLT11 invoice with `hrp` as its human-readable part. Only the HRP and
-    /// the data part's *length* matter to `bolt11_amount_sat`, so the payload is
-    /// filler of a realistic size (a signature alone is 104 characters).
+    /// A BOLT11 invoice with `hrp` as its human-readable part, carrying a valid
+    /// bech32 checksum over a realistically-sized payload (a signature alone is
+    /// 104 characters). The fields inside aren't a real payment request — the
+    /// amount comes from the HRP and nothing here verifies a signature — but the
+    /// checksum is genuine, which is what `bolt11_amount_sat` insists on.
     fn invoice(hrp: &str) -> String {
-        format!("{hrp}1{}", "q".repeat(110))
+        bech32::encode_lower::<Bolt11Bech32>(
+            bech32::Hrp::parse(hrp).expect("test HRPs are valid"),
+            &[0x42; 70],
+        )
+        .expect("test payloads encode")
+    }
+
+    /// Flip one character of an otherwise valid invoice's data part, the way a
+    /// line wrap or a truncated copy would.
+    fn corrupt(invoice: &str) -> String {
+        let last = invoice.len() - 1;
+        let flipped = if invoice.ends_with('q') { 'p' } else { 'q' };
+        format!("{}{flipped}", &invoice[..last])
+    }
+
+    /// A real, signed BOLT11 invoice — the spec's own 0.025 BTC test vector.
+    ///
+    /// The synthetic fixtures above are checksummed by the same code that
+    /// verifies them, so on their own they'd pass even if `Bolt11Bech32`'s
+    /// constants were wrong. This one was checksummed by somebody else.
+    const SPEC_VECTOR_25M: &str = "lnbc25m1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rq\
+                                   wzqfqypqdq5vdhkven9v5sxyetpdeessp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3\
+                                   zyg3zyg3zyg3zyg3zyg3zygs9q5sqqqqqqqqqqqqqqqpqsq67gye39hfg3zd8r\
+                                   gc80k32tvy9xk2xunwm5lzexnvpx6fd77en8qaq424dxgt56cag2dpt359k3ss\
+                                   yhetktkpqh24jqnjyw6uqd08sgptq44qu";
+
+    #[test]
+    fn bolt11_amount_reads_a_real_signed_invoice() {
+        assert_eq!(bolt11_amount_sat(SPEC_VECTOR_25M), Some(2_500_000));
+        // …and rejects it once a character is mangled.
+        assert_eq!(bolt11_amount_sat(&corrupt(SPEC_VECTOR_25M)), None);
     }
 
     #[test]
@@ -1485,6 +1542,20 @@ mod tests {
         // Half-pasted: too short to be a signed invoice, so reading an amount
         // off it would show a number for something that can't be paid.
         assert_eq!(bolt11_amount_sat("lnbc20m1pvjluezpp5"), None);
+        // Right shape, right length, no valid checksum — the case a
+        // length-only guard waves through.
+        assert_eq!(
+            bolt11_amount_sat(&format!("lnbc20m1{}", "q".repeat(110))),
+            None
+        );
+        // A single mangled character in an otherwise valid invoice.
+        assert_eq!(bolt11_amount_sat(&corrupt(&invoice("lnbc20m"))), None);
+        // A character outside the bech32 data charset (`1`, `b`, `i`, `o`).
+        let inv = invoice("lnbc20m");
+        assert_eq!(
+            bolt11_amount_sat(&format!("{}b", &inv[..inv.len() - 1])),
+            None
+        );
         // Malformed amounts.
         assert_eq!(bolt11_amount_sat(&invoice("lnbc20x")), None);
         assert_eq!(bolt11_amount_sat(&invoice("lnbc0m")), None);
