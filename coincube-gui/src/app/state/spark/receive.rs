@@ -248,8 +248,11 @@ impl State for SparkReceive {
         // pattern as Liquid Receive. Owned here because the open flag lives in
         // this state.
         if self.sender_picker_open {
-            let modal_content =
-                crate::app::view::spark::sender_picker_modal(self.method, cache.network);
+            let modal_content = crate::app::view::spark::sender_picker_modal(
+                self.method,
+                self.sideshift_flow.as_ref().map(|flow| flow.selected()),
+                cache.network,
+            );
             return coincube_ui::widget::modal::Modal::new(content, modal_content)
                 .on_blur(Some(crate::app::view::Message::SparkReceive(
                     crate::app::view::SparkReceiveMessage::CloseSenderPicker,

@@ -27,7 +27,7 @@ use coincube_core::miniscript::bitcoin::{Amount, Network};
 use crate::app::breez_spark::assets::stable_token_as_sats;
 use crate::app::state::spark::cross_chain::{self, supported_on};
 use crate::app::state::spark::send::{CrossChainContext, SparkSendPhase, SparkSendTarget};
-use crate::app::view::shared::picker::picker_row;
+use crate::app::view::shared::picker::{picker_modal_card, picker_row};
 use crate::app::view::spark::{last_tx::last_transactions_section, SparkRecentTransaction};
 use crate::app::view::{Message, SparkSendMessage};
 
@@ -35,6 +35,11 @@ pub struct SparkSendView<'a> {
     pub backend_available: bool,
     pub destination_input: &'a str,
     pub amount_input: &'a str,
+    /// Whether `amount_input` was filled from the destination invoice rather
+    /// than typed. The field then shows the amount but doesn't accept edits —
+    /// the invoice fixes what gets paid, so an editable field would promise a
+    /// choice the payer doesn't have.
+    pub amount_set_by_invoice: bool,
     pub phase: &'a SparkSendPhase,
     pub sent_amount_display: &'a str,
     pub sent_celebration_context: &'a str,
@@ -131,11 +136,15 @@ impl<'a> SparkSendView<'a> {
             (false, true) => "Amount in BTC (optional for invoices with amount)",
             (false, false) => "Amount in sats (optional for invoices with amount)",
         };
-        let amount = text_input(amount_placeholder, self.amount_input)
-            .on_input(|v| {
+        // An invoice-set amount leaves the field without `on_input`, which is
+        // what makes it read-only — it still shows and can be selected, it just
+        // can't be edited into something the invoice won't honour.
+        let mut amount = text_input(amount_placeholder, self.amount_input).padding(10);
+        if !self.amount_set_by_invoice {
+            amount = amount.on_input(|v| {
                 Message::SparkSend(crate::app::view::SparkSendMessage::AmountInputChanged(v))
-            })
-            .padding(10);
+            });
+        }
 
         let input_card = Container::new(
             Column::new()
@@ -144,7 +153,10 @@ impl<'a> SparkSendView<'a> {
                 .push(destination)
                 .push(Space::new().height(Length::Fixed(8.0)))
                 .push(h4_bold(amount_label))
-                .push(amount),
+                .push(amount)
+                .push_maybe(self.amount_set_by_invoice.then(|| {
+                    p2_regular("This invoice sets its own amount.").style(theme::text::secondary)
+                })),
         )
         .padding(16)
         .style(theme::card::simple);
@@ -790,13 +802,7 @@ pub fn send_target_picker_modal<'a>(
         }
     }
 
-    Column::new()
-        .spacing(12)
-        .padding(24)
-        .max_width(460)
-        .push(text("THEY RECEIVE").size(16).bold())
-        .push(list)
-        .into()
+    picker_modal_card("THEY RECEIVE", list)
 }
 
 #[cfg(test)]
