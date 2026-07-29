@@ -16,8 +16,8 @@ use zeroize::Zeroizing;
 
 use super::escrow::{build_escrow_set, keyholders_from_vault, EscrowError};
 use crate::services::coincube::{
-    CoincubeClient, CoincubeError, KeyholderDownloadPolicy, SetVaultMonitoringRequest,
-    VaultMonitoringLevel, VaultMonitoringStatus,
+    CoincubeClient, CoincubeError, SetVaultMonitoringRequest, VaultMonitoringLevel,
+    VaultMonitoringStatus,
 };
 
 /// Errors from the owner escrow orchestration.
@@ -77,7 +77,6 @@ pub async fn enroll_escrow(
     server_cube_id: u64,
     descriptor_json: Vec<u8>,
     seed_json: Option<Zeroizing<Vec<u8>>>,
-    download_policy: KeyholderDownloadPolicy,
 ) -> Result<VaultMonitoringStatus, OwnerEscrowError> {
     // 1. Resolve the current keyholders + xpubs, then build the envelope set
     //    locally (the server never sees plaintext). The `Zeroizing` seed buffer
@@ -98,10 +97,6 @@ pub async fn enroll_escrow(
     // 3. Switch the server-blind heartbeat gate on. Monitoring is keyed on
     //    the same cube id as the escrow upload above — no vault id involved.
     //    No descriptor — under ECIES the server stores none.
-    //    `download_policy` is the vault's *current* keyholder download policy,
-    //    forwarded explicitly so a re-enrol / tier switch (Vault-only ↔
-    //    Full-Cube) preserves the owner's choice instead of letting an omitted
-    //    field reset it to the server default.
     let status = client
         .set_vault_monitoring(
             server_cube_id,
@@ -109,7 +104,6 @@ pub async fn enroll_escrow(
                 level: VaultMonitoringLevel::Heartbeat,
                 descriptor: None,
                 gap_limit: None,
-                crk_keyholder_download: Some(download_policy),
             },
         )
         .await?;
@@ -208,11 +202,7 @@ mod tests {
         let monitoring_mock = server.mock(|when, then| {
             when.method(Method::POST)
                 .path("/api/v1/connect/cubes/42/vault/monitoring")
-                // The current download policy must be forwarded (camelCase
-                // field, snake_case value) so a re-enrol doesn't reset it.
-                .json_body_partial(
-                    r#"{ "level": "heartbeat", "crkKeyholderDownload": "anytime" }"#,
-                );
+                .json_body_partial(r#"{ "level": "heartbeat" }"#);
             // Real API response shape: the level field is named
             // `monitoringLevel`, not `level` (see VaultMonitoringStatus's
             // explicit `rename`).
@@ -223,15 +213,9 @@ mod tests {
         });
 
         let client = CoincubeClient::for_test(server.base_url());
-        let status = enroll_escrow(
-            &client,
-            42,
-            b"wsh(desc)#ck".to_vec(),
-            None,
-            KeyholderDownloadPolicy::Anytime,
-        )
-        .await
-        .expect("enroll should succeed");
+        let status = enroll_escrow(&client, 42, b"wsh(desc)#ck".to_vec(), None)
+            .await
+            .expect("enroll should succeed");
 
         vault_mock.assert();
         escrow_mock.assert();
@@ -346,15 +330,9 @@ mod tests {
         });
         // No escrow PUT mock — it must NOT be called.
         let client = CoincubeClient::for_test(server.base_url());
-        let err = enroll_escrow(
-            &client,
-            42,
-            b"d".to_vec(),
-            None,
-            KeyholderDownloadPolicy::AtApproaching,
-        )
-        .await
-        .expect_err("no keyholders should error");
+        let err = enroll_escrow(&client, 42, b"d".to_vec(), None)
+            .await
+            .expect_err("no keyholders should error");
         vault_mock.assert();
         assert!(matches!(
             err,

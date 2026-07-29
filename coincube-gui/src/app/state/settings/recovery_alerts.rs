@@ -21,10 +21,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     app::{cache::Cache, message::Message, settings, view, wallet::Wallet},
-    services::coincube::{
-        CoincubeClient, CubeMember, KeyholderDownloadPolicy, VaultMonitoringLevel,
-        VaultMonitoringStatus,
-    },
+    services::coincube::{CoincubeClient, CubeMember, VaultMonitoringLevel, VaultMonitoringStatus},
     services::inheritance::{disable_escrow, enroll_escrow, EscrowTier},
     services::recovery::{SeedBlob, SeedBlobCube, SeedBlobMnemonic, BLOB_VERSION},
 };
@@ -120,24 +117,9 @@ impl RecoveryAlerts {
             .unwrap_or(VaultMonitoringLevel::Off)
     }
 
-    /// Current keyholder download policy (privacy-preserving default when
-    /// unloaded).
-    pub fn download_policy(&self) -> KeyholderDownloadPolicy {
-        self.status
-            .as_ref()
-            .map(|s| s.crk_keyholder_download)
-            .unwrap_or_default()
-    }
-
     /// Fold a change result into state.
     ///
-    /// **Ok:** apply the confirmed `tier_change` (if any) and cache `status`. On
-    /// a **disable** (`Some(Off)`), `status` is the synthetic Off status
-    /// [`disable_escrow`](crate::services::inheritance::disable_escrow) returns,
-    /// which carries the *default* download policy — so we carry the owner's
-    /// prior keyholder download choice forward instead, keeping it for a later
-    /// re-enrol (the policy is an independent vault setting, not reset by turning
-    /// escrow off).
+    /// **Ok:** apply the confirmed `tier_change` (if any) and cache `status`.
     ///
     /// **Err:** surface the (display-safe) error. A failed **Full-Cube** enrol
     /// also restores `awaiting_pin`: `ConfirmFullCube` clears it before the
@@ -151,14 +133,9 @@ impl RecoveryAlerts {
         tier_change: Option<EscrowTier>,
     ) {
         match res {
-            Ok(mut status) => {
+            Ok(status) => {
                 if let Some(t) = tier_change {
                     self.tier = t;
-                }
-                if matches!(tier_change, Some(EscrowTier::Off)) {
-                    if let Some(prev) = self.status.as_ref() {
-                        status.crk_keyholder_download = prev.crk_keyholder_download;
-                    }
                 }
                 self.status = Some(status);
                 self.error = None;
@@ -367,20 +344,11 @@ pub fn update(
                     };
                     ra.submitting = true;
                     ra.error = None;
-                    // Preserve the vault's current download policy across the
-                    // enrol (omitting it would reset to the server default).
-                    let download_policy = ra.download_policy();
                     Task::perform(
                         async move {
-                            enroll_escrow(
-                                &client,
-                                server_cube_id,
-                                descriptor_json,
-                                None,
-                                download_policy,
-                            )
-                            .await
-                            .map_err(|e| e.to_string())
+                            enroll_escrow(&client, server_cube_id, descriptor_json, None)
+                                .await
+                                .map_err(|e| e.to_string())
                         },
                         move |res| {
                             ra_msg(RecoveryAlertsMessage::ChangeResult(
@@ -462,9 +430,6 @@ pub fn update(
             ra.submitting = true;
             ra.awaiting_pin = false;
             ra.error = None;
-            // Preserve the vault's current download policy across the enrol
-            // (omitting it would reset to the server default).
-            let download_policy = ra.download_policy();
             Task::perform(
                 async move {
                     let seed_json = tokio::task::spawn_blocking(move || {
@@ -479,55 +444,15 @@ pub fn update(
                     })
                     .await
                     .map_err(|e| format!("PIN task failed: {}", e))??;
-                    enroll_escrow(
-                        &client,
-                        server_cube_id,
-                        descriptor_json,
-                        Some(seed_json),
-                        download_policy,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())
+                    enroll_escrow(&client, server_cube_id, descriptor_json, Some(seed_json))
+                        .await
+                        .map_err(|e| e.to_string())
                 },
                 move |res| {
                     ra_msg(RecoveryAlertsMessage::ChangeResult(
                         res,
                         session_generation,
                         Some(EscrowTier::FullCube),
-                    ))
-                },
-            )
-        }
-        RecoveryAlertsMessage::SetDownloadPolicy(policy) => {
-            if !entitled {
-                return Task::none();
-            }
-            if ra.download_policy() == policy {
-                return Task::none();
-            }
-            let (Some(client), Some(vault_id)) = (client, ra.vault_id) else {
-                ra.error = Some(
-                    "Couldn't find this Vault on Connect yet — try again in a moment.".to_string(),
-                );
-                return Task::none();
-            };
-            ra.submitting = true;
-            ra.error = None;
-            Task::perform(
-                async move {
-                    client
-                        .set_keyholder_download_policy(vault_id, policy)
-                        .await
-                        .map_err(|e| e.to_string())
-                },
-                // A policy save carries no tier change (`None`) so its result
-                // never touches the tracked escrow tier — even if it resolves
-                // while a tier change is still in flight.
-                move |res| {
-                    ra_msg(RecoveryAlertsMessage::ChangeResult(
-                        res,
-                        session_generation,
-                        None,
                     ))
                 },
             )
@@ -539,9 +464,9 @@ pub fn update(
                 return Task::none();
             }
             ra.submitting = false;
-            // Fold the result into state: caches the status (preserving the
-            // download policy across a disable) on success, or surfaces the
-            // error and re-shows the PIN entry on a failed Full-Cube enrol.
+            // Fold the result into state: caches the status on success, or
+            // surfaces the error and re-shows the PIN entry on a failed
+            // Full-Cube enrol.
             ra.apply_change(res, tier_change);
             Task::none()
         }
@@ -688,48 +613,21 @@ mod tests {
     }
 
     #[test]
-    fn disable_preserves_prior_download_policy() {
-        // Owner had escrow on with a non-default (Anytime) download policy.
-        let mut ra = RecoveryAlerts::new();
-        ra.status = Some(VaultMonitoringStatus {
-            level: VaultMonitoringLevel::Heartbeat,
-            crk_keyholder_download: KeyholderDownloadPolicy::Anytime,
-            ..VaultMonitoringStatus::default()
-        });
-        ra.tier = EscrowTier::VaultOnly;
-
-        // disable_escrow returns a synthetic Off status carrying the *default*
-        // (AtApproaching) policy.
-        let synthetic_off = VaultMonitoringStatus {
-            level: VaultMonitoringLevel::Off,
-            ..VaultMonitoringStatus::default()
-        };
-        ra.apply_change(Ok(synthetic_off), Some(EscrowTier::Off));
-
-        // Tier goes Off, but the owner's Anytime choice must survive so a later
-        // re-enrol forwards it — not silently revert to the default.
-        assert_eq!(ra.tier, EscrowTier::Off);
-        assert_eq!(ra.download_policy(), KeyholderDownloadPolicy::Anytime);
-    }
-
-    #[test]
-    fn enroll_caches_returned_download_policy_verbatim() {
+    fn enroll_caches_returned_status_verbatim() {
         // A (re-)enrol returns the real monitoring status; it is cached as-is
-        // (no disable-preservation override for non-Off changes).
+        // and the confirmed tier is tracked.
         let mut ra = RecoveryAlerts::new();
         ra.status = Some(VaultMonitoringStatus {
             level: VaultMonitoringLevel::Heartbeat,
-            crk_keyholder_download: KeyholderDownloadPolicy::Anytime,
             ..VaultMonitoringStatus::default()
         });
         let returned = VaultMonitoringStatus {
             level: VaultMonitoringLevel::Heartbeat,
-            crk_keyholder_download: KeyholderDownloadPolicy::AtApproaching,
             ..VaultMonitoringStatus::default()
         };
         ra.apply_change(Ok(returned), Some(EscrowTier::FullCube));
         assert_eq!(ra.tier, EscrowTier::FullCube);
-        assert_eq!(ra.download_policy(), KeyholderDownloadPolicy::AtApproaching);
+        assert_eq!(ra.level(), VaultMonitoringLevel::Heartbeat);
     }
 
     #[test]

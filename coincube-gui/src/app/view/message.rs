@@ -452,16 +452,13 @@ pub enum RecoveryAlertsMessage {
     ConfirmFullCube,
     /// Abandon the in-progress Full-Cube PIN entry.
     CancelFullCube,
-    /// User changed the keyholder recovery-kit download policy.
-    SetDownloadPolicy(crate::services::coincube::KeyholderDownloadPolicy),
-    /// Async result of a level / policy change — the updated status. The
-    /// `u64` is the spawn-time `session_generation` (see `StatusLoaded`); a
-    /// stale result is dropped rather than clobbering a newer session's state.
-    /// The trailing `Option<EscrowTier>` is the tier this operation enrolled /
-    /// disabled (`None` for a download-policy save): on success the handler
-    /// applies it to the tracked tier. Carrying it in the result — rather than
-    /// in shared state — keeps a policy save that resolves while a tier change
-    /// is in flight from applying the other operation's tier.
+    /// Async result of a level change — the updated status. The `u64` is the
+    /// spawn-time `session_generation` (see `StatusLoaded`); a stale result is
+    /// dropped rather than clobbering a newer session's state. The trailing
+    /// `Option<EscrowTier>` is the tier this operation enrolled / disabled: on
+    /// success the handler applies it to the tracked tier. Carrying it in the
+    /// result — rather than in shared state — keeps a change that resolves while
+    /// another is in flight from applying the wrong operation's tier.
     ChangeResult(
         Result<crate::services::coincube::VaultMonitoringStatus, String>,
         u64,

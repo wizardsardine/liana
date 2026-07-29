@@ -1437,27 +1437,6 @@ impl CoincubeClient {
         Ok(())
     }
 
-    /// `PUT /api/v1/connect/vaults/{id}/keyholder-download-policy`
-    /// (authenticated, Estate-gated). Sets the keyholder recovery-kit
-    /// download policy independently of the monitoring level.
-    pub async fn set_keyholder_download_policy(
-        &self,
-        vault_id: u64,
-        policy: super::KeyholderDownloadPolicy,
-    ) -> Result<super::VaultMonitoringStatus, CoincubeError> {
-        let url = format!(
-            "{}/api/v1/connect/vaults/{}/keyholder-download-policy",
-            self.base_url, vault_id
-        );
-        let req = super::SetKeyholderDownloadPolicyRequest {
-            crk_keyholder_download: policy,
-        };
-        let res = self.client.put(&url).json(&req).send().await?;
-        let res = res.check_success().await?;
-        let resp: ApiResponse<super::VaultMonitoringStatus> = res.json().await?;
-        Ok(resp.data)
-    }
-
     /// `POST /api/v1/connect/cubes/{cubeId}/vault/heartbeat` (authenticated,
     /// PR 5). Fire-and-forget timelock heartbeat sent after a vault sync for
     /// Heartbeat-tier (and Full, as a cross-check) vaults. Callers MUST NOT
