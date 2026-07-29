@@ -1,18 +1,27 @@
-//! Vault Recovery Alerts settings card (Estate Notifications — PR 2).
+//! Vault Recovery Alerts settings card (Estate Notifications — PR 2, cleaned up
+//! per `PLAN-recovery-alerts-cleanup.md`).
 //!
-//! Estate-only, per-vault opt-in for recovery-path monitoring. Modeled on
-//! the Cube Recovery Kit card (`recovery_kit.rs`): the state container lives
-//! on the outer `SettingsState` so `App::update` can inject the
-//! authenticated `CoincubeClient`, the Connect cube id, the live wallet
-//! descriptor, the keyholder list, and the entitlement — none of which are
-//! plumbed through `State::update`.
+//! Per-vault opt-in for recovery-path monitoring. Modeled on the Cube Recovery
+//! Kit card (`recovery_kit.rs`): the state container lives on the outer
+//! `SettingsState` so `App::update` can inject the authenticated
+//! `CoincubeClient`, the Connect cube id, the live wallet descriptor, the
+//! keyholder list, and the entitlements — none of which are plumbed through
+//! `State::update`.
 //!
-//! Three tiers (`VaultMonitoringLevel`): **Off** (true-delete any escrowed
-//! descriptor), **Alerts only / Heartbeat** (timelock heartbeat only — the
-//! server never sees addresses/balances), **Full** (a service-encrypted
-//! copy of the descriptor is escrowed so keyholders can recover without the
-//! owner's password). A separate keyholder download policy governs when
-//! keyholders may pull the encrypted recovery kit.
+//! The card exposes **two independent controls** backed by two server records:
+//!
+//! - **Recovery alerts** (the monitoring record) — a timelock heartbeat so
+//!   COINCUBE emails keyholders when the recovery window opens. The server only
+//!   ever learns one block height and that this desktop checked in — never
+//!   addresses or balances. Not Estate-gated.
+//! - **What keyholders can recover** (the ECIES escrow set) — **Nothing —
+//!   alerts only** / **Vault only** (descriptor sealed to each keyholder's key)
+//!   / **Full Cube** (seed + descriptor). Estate-gated (`inheritanceEscrow`).
+//!
+//! The escrow **tier is derived from the server**, not tracked per-session:
+//! `VaultMonitoringStatus::escrowed_artifacts` reports exactly which kinds are
+//! escrowed, so a reload or a restart shows the true selection. See
+//! [`RecoveryAlerts::escrow_tier`]. Invariant: escrow present ⟹ alerts on.
 
 use std::sync::Arc;
 
@@ -22,7 +31,7 @@ use zeroize::Zeroizing;
 use crate::{
     app::{cache::Cache, message::Message, settings, view, wallet::Wallet},
     services::coincube::{CoincubeClient, CubeMember, VaultMonitoringLevel, VaultMonitoringStatus},
-    services::inheritance::{disable_escrow, enroll_escrow, EscrowTier},
+    services::inheritance::{disable_alerts, disable_escrow, enable_alerts, enroll_escrow, EscrowTier},
     services::recovery::{SeedBlob, SeedBlobCube, SeedBlobMnemonic, BLOB_VERSION},
 };
 
@@ -32,9 +41,11 @@ use view::{EscrowPin, RecoveryAlertsMessage, SettingsMessage};
 #[derive(Debug)]
 pub struct RecoveryAlerts {
     /// Connect vault id, resolved from the cube on first load and cached so
-    /// level/policy changes don't re-resolve it.
+    /// alerts/escrow changes don't re-resolve it.
     pub vault_id: Option<u64>,
     /// Last-known monitoring status from Connect. `None` until first load.
+    /// Both the alerts state ([`Self::alerts_on`]) and the escrow tier
+    /// ([`Self::escrow_tier`]) are derived from this — no session-tracked guess.
     pub status: Option<VaultMonitoringStatus>,
     pub loading: bool,
     pub submitting: bool,
@@ -42,21 +53,23 @@ pub struct RecoveryAlerts {
     /// Keyholder emails (the cube members who'd be notified), snapshotted on
     /// each load so the card can show exactly who would receive alerts.
     pub keyholders: Vec<String>,
-    /// Whether the account carries the Estate `recovery_alerts` entitlement.
+    /// Whether the account carries the `recovery_alerts` entitlement (gates the
+    /// alerts toggle / unlocks the card). Universal after API PR 3; kept as a
+    /// defense-in-depth check.
     pub entitled: bool,
+    /// Whether the account carries the Estate `inheritanceEscrow` entitlement
+    /// (gates the escrow tier selector, separately from the alerts toggle).
+    pub escrow_entitled: bool,
     /// True once a load resolved that there's no Connect vault to monitor
     /// (no cube registered / no vault created yet).
     pub no_vault: bool,
     /// True once at least one load has been attempted — lets the card pick
     /// the right loading vs. empty copy.
     pub loaded_once: bool,
-    /// The escrow tier this session tracked from an enrol/disable we performed.
-    /// The owner monitoring status reports on/off, not which tier, so this is
-    /// the only tier signal we have — and it resets to `Off` on restart. `Off`
-    /// therefore means *either* escrow is off *or* it's on but untracked on this
-    /// device; use [`Self::tier`] (the method), which combines this with
-    /// [`Self::level`], to disambiguate (it returns `None` for the latter).
-    pub tier: EscrowTier,
+    /// True while the alerts-off confirm dialog is open. Turning alerts off is
+    /// never silent: when a recovery kit is escrowed the dialog discloses that
+    /// it will also be deleted (escrow can't outlive alerts).
+    pub confirming_alerts_off: bool,
     /// True while the card is collecting the owner's PIN to unlock the seed for
     /// a Full-Cube enrolment (the only tier that escrows the seed).
     pub awaiting_pin: bool,
@@ -83,30 +96,53 @@ impl RecoveryAlerts {
             error: None,
             keyholders: Vec::new(),
             entitled: false,
+            escrow_entitled: false,
             no_vault: false,
             loaded_once: false,
-            tier: EscrowTier::Off,
+            confirming_alerts_off: false,
             awaiting_pin: false,
             pin: EscrowPin::default(),
         }
     }
 
-    /// Current tier for the view and the no-op guards:
-    /// - `Some(Off)` when monitoring is off;
-    /// - `Some(tier)` when this session tracked the enrolled tier;
-    /// - `None` when escrow is on but this device doesn't know which tier —
-    ///   e.g. after a restart, since the owner monitoring status doesn't report
-    ///   it. We surface "on, tier unknown" rather than guess: guessing
-    ///   Vault-only for a Full-Cube vault would print a false claim (its copy
-    ///   says "the seed is never escrowed") for a seed that *is* escrowed.
-    pub fn tier(&self) -> Option<EscrowTier> {
-        if matches!(self.level(), VaultMonitoringLevel::Off) {
-            Some(EscrowTier::Off)
-        } else if self.tier == EscrowTier::Off {
-            None
-        } else {
-            Some(self.tier)
+    /// Whether recovery **alerts** (the monitoring record) are on — any non-Off
+    /// monitoring level. The alerts toggle and the heartbeat both key off this.
+    pub fn alerts_on(&self) -> bool {
+        !matches!(self.level(), VaultMonitoringLevel::Off)
+    }
+
+    /// The escrow tier keyholders can recover, **derived from the server's
+    /// reported escrowed-artifact kinds** rather than a session guess:
+    /// - `["…","seed"]` → `Some(FullCube)`;
+    /// - `["descriptor"]` → `Some(VaultOnly)`;
+    /// - `[]` (present, empty) → `Some(Off)` — nothing escrowed (alerts-only);
+    /// - field **absent** (older API that predates the report): `Some(Off)` when
+    ///   monitoring is off (nothing can be escrowed then — confident), else
+    ///   `None` ("on, tier unknown"). Returning `None` avoids asserting — and
+    ///   mis-stating — a tier the server didn't confirm (C2).
+    pub fn escrow_tier(&self) -> Option<EscrowTier> {
+        match self.status.as_ref().and_then(|s| s.escrowed_artifacts.as_ref()) {
+            Some(kinds) if kinds.iter().any(|k| k == "seed") => Some(EscrowTier::FullCube),
+            Some(kinds) if kinds.iter().any(|k| k == "descriptor") => Some(EscrowTier::VaultOnly),
+            Some(_) => Some(EscrowTier::Off),
+            None => {
+                if matches!(self.level(), VaultMonitoringLevel::Off) {
+                    Some(EscrowTier::Off)
+                } else {
+                    None
+                }
+            }
         }
+    }
+
+    /// Whether an escrow set is currently stored (Vault-only or Full-Cube). Used
+    /// to decide whether an alerts-off must also delete the kit, and whether the
+    /// confirm dialog discloses that deletion.
+    pub fn has_escrow(&self) -> bool {
+        matches!(
+            self.escrow_tier(),
+            Some(EscrowTier::VaultOnly | EscrowTier::FullCube)
+        )
     }
 
     /// Current monitoring level (Off when unloaded).
@@ -119,14 +155,18 @@ impl RecoveryAlerts {
 
     /// Fold a change result into state.
     ///
-    /// **Ok:** apply the confirmed `tier_change` (if any) and cache `status`.
+    /// **Ok:** cache the returned `status`. Each owner operation stamps the
+    /// resulting `escrowed_artifacts` onto that status, so caching it *is*
+    /// applying the confirmed tier immediately — the card reflects the change
+    /// without flicker while the next `LoadStatus` reconciles against the
+    /// server. Also closes the alerts-off dialog.
     ///
     /// **Err:** surface the (display-safe) error. A failed **Full-Cube** enrol
     /// also restores `awaiting_pin`: `ConfirmFullCube` clears it before the
     /// blocking verify, so a wrong PIN would otherwise hide the PIN entry and
     /// force the owner to re-pick Full Cube. Restoring it re-shows the (now
     /// empty — the buffer was taken) PIN field alongside the error for an inline
-    /// retry.
+    /// retry. `tier_change` is carried only to identify that Full-Cube case.
     fn apply_change(
         &mut self,
         res: Result<VaultMonitoringStatus, String>,
@@ -134,11 +174,9 @@ impl RecoveryAlerts {
     ) {
         match res {
             Ok(status) => {
-                if let Some(t) = tier_change {
-                    self.tier = t;
-                }
                 self.status = Some(status);
                 self.error = None;
+                self.confirming_alerts_off = false;
             }
             Err(e) => {
                 self.error = Some(e);
@@ -149,21 +187,15 @@ impl RecoveryAlerts {
         }
     }
 
-    /// Fold a successful `LoadStatus` into state.
-    ///
-    /// The monitoring status reports on/off (`level`) — **not** which escrow
-    /// tier. So we reset our session-tracked tier on every (re)load: the status
-    /// can't confirm it, and another device may have changed it (e.g. upgraded
-    /// Vault-only → Full-Cube) while monitoring stayed on. [`Self::tier`] then
-    /// reports an on vault as `None` ("on, tier unknown") until *this* device
-    /// performs an enrol/disable, so the card never re-asserts a stale tier (and
-    /// its false seed-escrow copy) it can't actually confirm.
+    /// Fold a successful `LoadStatus` into state. The status carries the
+    /// server-reported `escrowed_artifacts`, so caching it is enough — both the
+    /// alerts state and the escrow tier are derived from it. No session tier to
+    /// reset.
     fn apply_status_loaded(&mut self, vault_id: u64, status: VaultMonitoringStatus) {
         self.vault_id = Some(vault_id);
         self.status = Some(status);
         self.no_vault = false;
         self.error = None;
-        self.tier = EscrowTier::Off;
     }
 }
 
@@ -173,13 +205,13 @@ fn ra_msg(m: RecoveryAlertsMessage) -> Message {
 }
 
 /// App-level dispatcher. `client` / `server_cube_id` / `wallet` / `members`
-/// are injected by `App::update`; `entitled` is the account's
-/// `recovery_alerts` entitlement. `session_generation` is the connect
-/// account's current session counter (bumped on login / logout / reset):
-/// it's stamped into spawned async results so a load / change that lands
-/// after the session changed is dropped instead of writing a prior account's
-/// vault id + status into the reset state — the same guard the duress-contacts
-/// handlers use.
+/// are injected by `App::update`; `entitled` is the account's `recovery_alerts`
+/// entitlement (alerts toggle) and `escrow_entitled` the `inheritanceEscrow` one
+/// (escrow tier selector). `session_generation` is the connect account's current
+/// session counter (bumped on login / logout / reset): it's stamped into spawned
+/// async results so a load / change that lands after the session changed is
+/// dropped instead of writing a prior account's vault id + status into the reset
+/// state — the same guard the duress-contacts handlers use.
 #[allow(clippy::too_many_arguments)]
 pub fn update(
     ra: &mut RecoveryAlerts,
@@ -188,12 +220,14 @@ pub fn update(
     server_cube_id: Option<u64>,
     wallet: Option<Arc<Wallet>>,
     entitled: bool,
+    escrow_entitled: bool,
     members: &[CubeMember],
     session_generation: u64,
     cache: &Cache,
     local_cube_id: &str,
 ) -> Task<Message> {
     ra.entitled = entitled;
+    ra.escrow_entitled = escrow_entitled;
     match msg {
         RecoveryAlertsMessage::LoadStatus => {
             // Refresh the keyholder snapshot every load so the card reflects
@@ -260,9 +294,10 @@ pub fn update(
             ra.loaded_once = true;
             match res {
                 Ok((vid, status)) => {
-                    // Cache the freshly-loaded status and reset our tracked tier
-                    // (the status confirms on/off only, not the tier — so we
-                    // never re-assert a tier we can't confirm). See the method.
+                    // Cache the freshly-loaded status. Both the alerts state and
+                    // the escrow tier derive from its `escrowed_artifacts`, so
+                    // the reload reflects the true server selection (including
+                    // changes made on another device). See `escrow_tier`.
                     ra.apply_status_loaded(vid, status);
                 }
                 Err(e) => {
@@ -286,21 +321,111 @@ pub fn update(
             }
             Task::none()
         }
-        RecoveryAlertsMessage::SelectTier(tier) => {
-            ra.awaiting_pin = false;
-            ra.pin.clear();
+        RecoveryAlertsMessage::ToggleAlerts(on) => {
+            // The alerts toggle keys off the (universal after API PR 3)
+            // `recovery_alerts` entitlement — kept as defense-in-depth. The card
+            // only renders the toggle when entitled, so this guard is belt-and-braces.
             if !entitled {
-                ra.error = Some("Recovery alerts require an Estate plan.".to_string());
+                ra.error = Some("Recovery alerts aren't available on this plan.".to_string());
                 return Task::none();
             }
-            // Skip a no-op re-select of the *known* current tier. When the tier
-            // is unknown on this device (`None`), any selection proceeds so the
-            // owner can confirm/change it.
-            if ra.tier() == Some(tier) {
+            ra.error = None;
+            if on {
+                // Turning alerts ON alone: no escrow involved. No-op if already on.
+                if ra.alerts_on() {
+                    return Task::none();
+                }
+                let (Some(client), Some(_vault_id), Some(server_cube_id)) =
+                    (client, ra.vault_id, server_cube_id)
+                else {
+                    ra.error = Some(
+                        "Couldn't find this Vault on Connect yet — try again in a moment."
+                            .to_string(),
+                    );
+                    return Task::none();
+                };
+                ra.submitting = true;
+                Task::perform(
+                    async move {
+                        enable_alerts(&client, server_cube_id)
+                            .await
+                            .map_err(|e| e.to_string())
+                    },
+                    move |res| {
+                        // No escrow change → `None` (no PIN re-show on failure).
+                        ra_msg(RecoveryAlertsMessage::ChangeResult(res, session_generation, None))
+                    },
+                )
+            } else {
+                // Turning alerts OFF is destructive when a kit is escrowed, so
+                // open the confirm dialog rather than acting silently. No-op if
+                // already off.
+                if !ra.alerts_on() {
+                    return Task::none();
+                }
+                ra.confirming_alerts_off = true;
+                Task::none()
+            }
+        }
+        RecoveryAlertsMessage::CancelAlertsOff => {
+            ra.confirming_alerts_off = false;
+            Task::none()
+        }
+        RecoveryAlertsMessage::ConfirmAlertsOff => {
+            if !entitled || !ra.confirming_alerts_off {
+                return Task::none();
+            }
+            // Escrow can't outlive alerts (invariant: escrow present ⟹ alerts
+            // on), so turning alerts off deletes any kit too. Delete unless we're
+            // *certain* nothing is escrowed (`Some(Off)`): when the tier is
+            // unknown (older API that doesn't report it), delete anyway — the
+            // escrow DELETE is idempotent (404 = success), so this is free
+            // insurance against ever stranding escrow with monitoring off.
+            let also_delete_escrow = !matches!(ra.escrow_tier(), Some(EscrowTier::Off));
+            let (Some(client), Some(_vault_id), Some(server_cube_id)) =
+                (client, ra.vault_id, server_cube_id)
+            else {
+                ra.error = Some(
+                    "Couldn't find this Vault on Connect yet — try again in a moment.".to_string(),
+                );
+                return Task::none();
+            };
+            ra.submitting = true;
+            ra.confirming_alerts_off = false;
+            ra.error = None;
+            Task::perform(
+                async move {
+                    disable_alerts(&client, server_cube_id, also_delete_escrow)
+                        .await
+                        .map_err(|e| e.to_string())
+                },
+                move |res| {
+                    // Resulting escrow tier is Off; `Some(Off)` (not FullCube) so
+                    // a failure never spuriously re-shows the PIN entry.
+                    ra_msg(RecoveryAlertsMessage::ChangeResult(
+                        res,
+                        session_generation,
+                        Some(EscrowTier::Off),
+                    ))
+                },
+            )
+        }
+        RecoveryAlertsMessage::SelectEscrow(tier) => {
+            ra.awaiting_pin = false;
+            ra.pin.clear();
+            if !escrow_entitled {
+                ra.error =
+                    Some("An encrypted recovery kit is part of the Estate plan.".to_string());
+                return Task::none();
+            }
+            // Skip a no-op re-select of the *known* current tier. When it's
+            // unknown on this device (`None`, older API), any selection proceeds
+            // so the owner can confirm/change it.
+            if ra.escrow_tier() == Some(tier) {
                 return Task::none();
             }
             // `ra.vault_id` is checked (not used further) as the "does Connect
-            // know about a Vault for this cube yet" gate — monitoring/escrow
+            // know about a Vault for this cube yet" gate — escrow/monitoring
             // calls below are cube-scoped and never need the vault id itself.
             let (Some(client), Some(_vault_id), Some(server_cube_id)) =
                 (client, ra.vault_id, server_cube_id)
@@ -312,6 +437,7 @@ pub fn update(
             };
             match tier {
                 EscrowTier::Off => {
+                    // "Nothing — alerts only": delete the escrow set, keep alerts.
                     ra.submitting = true;
                     ra.error = None;
                     Task::perform(
@@ -331,7 +457,8 @@ pub fn update(
                 }
                 EscrowTier::VaultOnly => {
                     // Descriptor-only escrow needs no seed (no PIN). Build the
-                    // descriptor blob from the live wallet and enrol.
+                    // descriptor blob from the live wallet and enrol. `enroll_escrow`
+                    // turns alerts on too, so this auto-enables alerts when off.
                     let Some(descriptor_json) =
                         descriptor_blob_json(wallet.as_deref(), local_cube_id, cache.network)
                     else {
@@ -388,7 +515,8 @@ pub fn update(
             Task::none()
         }
         RecoveryAlertsMessage::ConfirmFullCube => {
-            if !entitled || !ra.awaiting_pin {
+            // Full-Cube is an escrow tier, so it's gated on `inheritanceEscrow`.
+            if !escrow_entitled || !ra.awaiting_pin {
                 return Task::none();
             }
             // We still require a resolved vault as a fast precondition, but
@@ -557,37 +685,62 @@ fn build_seed_blob_json(
 mod tests {
     use super::*;
 
-    fn monitoring_on() -> VaultMonitoringStatus {
+    /// Monitoring on with the given escrowed-artifact kinds reported (new API).
+    fn monitoring_on_with(artifacts: Option<Vec<&str>>) -> VaultMonitoringStatus {
         VaultMonitoringStatus {
             level: VaultMonitoringLevel::Heartbeat,
+            escrowed_artifacts: artifacts.map(|v| v.into_iter().map(String::from).collect()),
             ..VaultMonitoringStatus::default()
         }
     }
 
+    fn with_status(status: VaultMonitoringStatus) -> RecoveryAlerts {
+        let mut ra = RecoveryAlerts::new();
+        ra.status = Some(status);
+        ra
+    }
+
+    // ── Server-derived escrow tier: the PR-1 derivation matrix ──────────────
+
     #[test]
-    fn tier_is_off_when_monitoring_off() {
-        // No status loaded yet → level Off → tier is a confirmed Off.
-        assert_eq!(RecoveryAlerts::new().tier(), Some(EscrowTier::Off));
+    fn escrow_tier_off_when_monitoring_off() {
+        // No status loaded / monitoring off → Nothing escrowed, confident Off.
+        assert_eq!(RecoveryAlerts::new().escrow_tier(), Some(EscrowTier::Off));
+        assert!(!RecoveryAlerts::new().alerts_on());
     }
 
     #[test]
-    fn tier_is_unknown_when_on_but_untracked() {
-        // Monitoring on but `tier` still at its default (e.g. fresh after a
-        // restart): we must report `None` ("on, tier unknown"), NOT guess
-        // Vault-only — guessing would render the false "the seed is never
-        // escrowed" copy for a vault that may be Full-Cube.
-        let mut ra = RecoveryAlerts::new();
-        ra.status = Some(monitoring_on());
-        assert_eq!(ra.tier(), None);
+    fn escrow_tier_vault_only_from_descriptor_kind() {
+        let ra = with_status(monitoring_on_with(Some(vec!["descriptor"])));
+        assert_eq!(ra.escrow_tier(), Some(EscrowTier::VaultOnly));
+        assert!(ra.alerts_on());
+        assert!(ra.has_escrow());
     }
 
     #[test]
-    fn tier_is_reported_when_on_and_tracked() {
-        // A tier we applied this session is reported as-is while monitoring is on.
-        let mut ra = RecoveryAlerts::new();
-        ra.status = Some(monitoring_on());
-        ra.tier = EscrowTier::FullCube;
-        assert_eq!(ra.tier(), Some(EscrowTier::FullCube));
+    fn escrow_tier_full_cube_from_seed_kind() {
+        let ra = with_status(monitoring_on_with(Some(vec!["descriptor", "seed"])));
+        assert_eq!(ra.escrow_tier(), Some(EscrowTier::FullCube));
+        assert!(ra.has_escrow());
+    }
+
+    #[test]
+    fn escrow_tier_nothing_when_alerts_only() {
+        // Monitoring on, artifacts present but empty → alerts-only (Off/Nothing).
+        let ra = with_status(monitoring_on_with(Some(vec![])));
+        assert_eq!(ra.escrow_tier(), Some(EscrowTier::Off));
+        assert!(ra.alerts_on());
+        assert!(!ra.has_escrow());
+    }
+
+    #[test]
+    fn escrow_tier_unknown_when_field_absent_and_on() {
+        // Old API (no `escrowedArtifacts`) with monitoring on: we must report
+        // `None` ("on, tier unknown"), NOT guess — guessing Vault-only would
+        // render the false "seed is never escrowed" copy for a maybe-Full vault.
+        let ra = with_status(monitoring_on_with(None));
+        assert_eq!(ra.escrow_tier(), None);
+        assert!(ra.alerts_on());
     }
 
     #[test]
@@ -613,21 +766,32 @@ mod tests {
     }
 
     #[test]
-    fn enroll_caches_returned_status_verbatim() {
-        // A (re-)enrol returns the real monitoring status; it is cached as-is
-        // and the confirmed tier is tracked.
-        let mut ra = RecoveryAlerts::new();
-        ra.status = Some(VaultMonitoringStatus {
-            level: VaultMonitoringLevel::Heartbeat,
-            ..VaultMonitoringStatus::default()
-        });
-        let returned = VaultMonitoringStatus {
-            level: VaultMonitoringLevel::Heartbeat,
-            ..VaultMonitoringStatus::default()
-        };
+    fn enroll_caches_returned_status_and_derives_tier() {
+        // A (re-)enrol returns a status whose `escrowed_artifacts` the owner op
+        // stamped; caching it derives the confirmed tier immediately, no session
+        // state. Here a Full-Cube enrol returns descriptor+seed.
+        let mut ra = with_status(monitoring_on_with(Some(vec![])));
+        let returned = monitoring_on_with(Some(vec!["descriptor", "seed"]));
         ra.apply_change(Ok(returned), Some(EscrowTier::FullCube));
-        assert_eq!(ra.tier, EscrowTier::FullCube);
-        assert_eq!(ra.level(), VaultMonitoringLevel::Heartbeat);
+        assert_eq!(ra.escrow_tier(), Some(EscrowTier::FullCube));
+        assert!(ra.alerts_on());
+    }
+
+    #[test]
+    fn confirm_change_closes_alerts_off_dialog() {
+        // An Ok change result must also dismiss the alerts-off confirm dialog.
+        let mut ra = RecoveryAlerts::new();
+        ra.confirming_alerts_off = true;
+        ra.apply_change(
+            Ok(VaultMonitoringStatus {
+                level: VaultMonitoringLevel::Off,
+                escrowed_artifacts: Some(Vec::new()),
+                ..VaultMonitoringStatus::default()
+            }),
+            Some(EscrowTier::Off),
+        );
+        assert!(!ra.confirming_alerts_off);
+        assert!(!ra.alerts_on());
     }
 
     #[test]
@@ -663,30 +827,31 @@ mod tests {
     }
 
     #[test]
-    fn reload_clears_stale_session_tier_for_on_vault() {
-        // This device thinks it's Full-Cube from an earlier enrol...
-        let mut ra = RecoveryAlerts::new();
-        ra.tier = EscrowTier::FullCube;
-        // ...but a reload only confirms monitoring is *on* (level), not the tier
-        // — another device may have changed it. The card must NOT keep asserting
-        // Full-Cube ("seed is escrowed"); it must report "on, tier unknown".
-        ra.apply_status_loaded(
-            7,
-            VaultMonitoringStatus {
-                level: VaultMonitoringLevel::Heartbeat,
-                ..VaultMonitoringStatus::default()
-            },
-        );
-        assert_eq!(ra.tier(), None);
+    fn reload_reflects_server_reported_tier() {
+        // A device that just enrolled Full-Cube... then another device downgrades
+        // to Vault-only. A reload reports `["descriptor"]`, and the card derives
+        // Vault-only straight from the server — no stale Full-Cube assertion.
+        let mut ra = with_status(monitoring_on_with(Some(vec!["descriptor", "seed"])));
+        assert_eq!(ra.escrow_tier(), Some(EscrowTier::FullCube));
+        ra.apply_status_loaded(7, monitoring_on_with(Some(vec!["descriptor"])));
+        assert_eq!(ra.escrow_tier(), Some(EscrowTier::VaultOnly));
         assert_eq!(ra.vault_id, Some(7));
         assert!(!ra.no_vault);
     }
 
     #[test]
+    fn reload_against_old_api_reports_unknown_not_a_wrong_tier() {
+        // An older API omits `escrowedArtifacts`. A reload of an *on* vault must
+        // report `None` ("on, tier unknown") — the fallback banner — rather than
+        // asserting whatever this device last enrolled.
+        let mut ra = with_status(monitoring_on_with(Some(vec!["descriptor", "seed"])));
+        ra.apply_status_loaded(7, monitoring_on_with(None));
+        assert_eq!(ra.escrow_tier(), None);
+    }
+
+    #[test]
     fn reload_reports_off_when_monitoring_off() {
-        // A stale tracked tier must collapse to Off when the load says off.
-        let mut ra = RecoveryAlerts::new();
-        ra.tier = EscrowTier::FullCube;
+        let mut ra = with_status(monitoring_on_with(Some(vec!["descriptor", "seed"])));
         ra.apply_status_loaded(
             7,
             VaultMonitoringStatus {
@@ -694,6 +859,7 @@ mod tests {
                 ..VaultMonitoringStatus::default()
             },
         );
-        assert_eq!(ra.tier(), Some(EscrowTier::Off));
+        assert_eq!(ra.escrow_tier(), Some(EscrowTier::Off));
+        assert!(!ra.alerts_on());
     }
 }

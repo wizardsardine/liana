@@ -735,6 +735,12 @@ pub struct App {
     /// Global "payment received" celebration overlay — shown for incoming
     /// Liquid payments (e.g. LNURL) regardless of which panel is active.
     show_received_celebration: bool,
+    /// One-time "turn on recovery alerts?" consent prompt overlay
+    /// (PLAN-recovery-alerts-cleanup PR 3). Set once per session when a Vault
+    /// with keyholders has no monitoring and the prompt hasn't been answered for
+    /// this Cube; cleared on accept/decline. The durable "answered" record lives
+    /// in `CubeSettings::recovery_alerts_prompt_answered`.
+    show_recovery_alerts_prompt: bool,
     received_celebration_amount: String,
     received_celebration_context: String,
     received_celebration_quote: coincube_ui::component::quote_display::Quote,
@@ -1610,6 +1616,7 @@ impl App {
                 daemon_switch_in_progress: false,
                 auto_switch_suppressed: false,
                 show_received_celebration: false,
+                show_recovery_alerts_prompt: false,
                 received_celebration_amount: String::new(),
                 received_celebration_context: "transaction-received".to_string(),
                 received_celebration_quote: coincube_ui::component::quote_display::random_quote(
@@ -1728,6 +1735,7 @@ impl App {
                 daemon_switch_in_progress: false,
                 auto_switch_suppressed: false,
                 show_received_celebration: false,
+                show_recovery_alerts_prompt: false,
                 received_celebration_amount: String::new(),
                 received_celebration_context: "transaction-received".to_string(),
                 received_celebration_quote: coincube_ui::component::quote_display::random_quote(
@@ -1890,6 +1898,51 @@ impl App {
                     .map_err(|e| e.to_string())
             },
             Message::RecoveryHeartbeatSent,
+        )
+    }
+
+    /// Show the one-time recovery-alerts consent prompt (PR 3) when this Cube's
+    /// Vault has keyholders, a Connect session, and no monitoring yet — and the
+    /// prompt hasn't already been answered for this Cube. Idempotent within a
+    /// session (the overlay flag guards re-entry); the durable answer lives in
+    /// `CubeSettings::recovery_alerts_prompt_answered`. Called both at Vault
+    /// setup completion and after each monitoring-status load (the post-sync
+    /// hydration path), whichever reaches an eligible state first.
+    fn maybe_show_recovery_alerts_prompt(&mut self) {
+        if should_show_recovery_alerts_prompt(
+            self.show_recovery_alerts_prompt,
+            self.cube_settings.recovery_alerts_prompt_answered,
+            self.panels.connect.account.is_authenticated(),
+            self.panels.connect.cube.server_cube_id.is_some(),
+            self.panels.connect.account.is_recovery_alerts_entitled(),
+            !self.panels.connect.cube.members.members.is_empty(),
+            self.panels.global_settings.recovery_alerts.alerts_on(),
+        ) {
+            self.show_recovery_alerts_prompt = true;
+        }
+    }
+
+    /// Persist this Cube's "answered the consent prompt" flag to the settings
+    /// file (PR 3). The in-memory `cube_settings` copy is set by the caller; this
+    /// just makes it durable so the prompt never re-fires across restarts.
+    fn persist_recovery_alerts_answered(&self) -> Task<Message> {
+        let network_dir = self.cache.datadir_path.network_directory(self.cache.network);
+        let cube_id = self.cube_settings.id.clone();
+        Task::perform(
+            async move {
+                settings::update_settings_file(&network_dir, |mut s| {
+                    if let Some(cube) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
+                        cube.recovery_alerts_prompt_answered = true;
+                    }
+                    Some(s)
+                })
+                .await
+                .map_err(|e| format!("Failed to save recovery-alerts answer: {}", e))
+            },
+            |res: Result<(), String>| match res {
+                Ok(()) => Message::SettingsSaved,
+                Err(e) => Message::View(view::Message::ShowError(e)),
+            },
         )
     }
 
@@ -3501,6 +3554,44 @@ impl App {
                 // terminal message just closes the task. Nothing to do.
                 return Task::none();
             }
+            Message::View(view::Message::RecoveryAlertsConsent(accept)) => {
+                // Answer the one-time consent prompt (PR 3). Persist the answer
+                // (durably, so it never re-fires) and dismiss the overlay.
+                self.show_recovery_alerts_prompt = false;
+                self.cube_settings.recovery_alerts_prompt_answered = true;
+                let persist = self.persist_recovery_alerts_answered();
+                // On accept, turn alerts on now (cube-scoped POST). Route the
+                // result through the settings card's `ChangeResult` so the card
+                // reflects alerts-on and any failure surfaces there; the next
+                // post-sync hydration resolves the vault id for heartbeats.
+                // `enable_alerts` is idempotent, so a redundant accept is safe.
+                let enable = if accept {
+                    let gen = self.panels.connect.account.session_generation();
+                    match (
+                        self.authenticated_coincube_client(),
+                        self.panels.connect.cube.server_cube_id,
+                    ) {
+                        (Some(client), Some(cube_id)) => Task::perform(
+                            async move {
+                                crate::services::inheritance::enable_alerts(&client, cube_id)
+                                    .await
+                                    .map_err(|e| e.to_string())
+                            },
+                            move |res| {
+                                Message::View(view::Message::Settings(
+                                    view::SettingsMessage::RecoveryAlerts(
+                                        view::RecoveryAlertsMessage::ChangeResult(res, gen, None),
+                                    ),
+                                ))
+                            },
+                        ),
+                        _ => Task::none(),
+                    }
+                } else {
+                    Task::none()
+                };
+                return Task::batch([persist, enable]);
+            }
             Message::CacheUpdated => {
                 // Cube (Home) Settings lives on every cube, vault or not,
                 // so its cache update must fire independently of the
@@ -3749,6 +3840,11 @@ impl App {
                         Some(nudge) => Task::batch([report_task, nudge]),
                         None => report_task,
                     };
+
+                    // Vault-setup-completion trigger (PR 3): the new Vault has a
+                    // keyholder set and a Connect session — offer the one-time
+                    // recovery-alerts consent prompt (alerts pre-selected on).
+                    self.maybe_show_recovery_alerts_prompt();
                     // Forward to the current panel; batch the nudge and the
                     // has_vault re-report in when present.
                     if let (Some(daemon), Some(panel)) =
@@ -4528,21 +4624,52 @@ impl App {
                 let server_cube_id = self.panels.connect.cube.server_cube_id;
                 let wallet = self.wallet.clone();
                 let entitled = self.panels.connect.account.is_recovery_alerts_entitled();
+                let escrow_entitled = self.panels.connect.account.is_inheritance_escrow_entitled();
                 let members = self.panels.connect.cube.members.members.clone();
                 let session_generation = self.panels.connect.account.session_generation();
                 let local_cube_id = self.cube_settings.id.clone();
-                return crate::app::state::settings::recovery_alerts::update(
+                // A status load is the only message that reveals an eligible
+                // Vault for the one-time prompt; a *successful user change* means
+                // the owner has engaged with the alerts decision, so the prompt
+                // must never re-fire for this Cube (else turning alerts off would
+                // immediately re-nudge — the residual nudge is the banner, not
+                // the modal). Classify before `msg` is moved into `update`.
+                let is_status_load =
+                    matches!(msg, view::RecoveryAlertsMessage::StatusLoaded(..));
+                let is_ok_change = matches!(
+                    msg,
+                    view::RecoveryAlertsMessage::ChangeResult(Ok(_), _, _)
+                );
+                let task = crate::app::state::settings::recovery_alerts::update(
                     &mut self.panels.global_settings.recovery_alerts,
                     msg,
                     client,
                     server_cube_id,
                     wallet,
                     entitled,
+                    escrow_entitled,
                     &members,
                     session_generation,
                     &self.cache,
                     &local_cube_id,
                 );
+                // The owner engaged with the alerts decision via the card → mark
+                // the prompt answered (durably) so the modal never fires for this
+                // Cube again.
+                let engaged = if is_ok_change && !self.cube_settings.recovery_alerts_prompt_answered
+                {
+                    self.cube_settings.recovery_alerts_prompt_answered = true;
+                    self.persist_recovery_alerts_answered()
+                } else {
+                    Task::none()
+                };
+                // Existing-Vault trigger (PR 3): a just-resolved `StatusLoaded`
+                // may have revealed an eligible (keyholders, monitoring off,
+                // unanswered) Vault. Offer the one-time consent prompt now.
+                if is_status_load {
+                    self.maybe_show_recovery_alerts_prompt();
+                }
+                return Task::batch([task, engaged]);
             }
 
             // Route refundables updates directly to LiquidTransactions so that
@@ -4771,7 +4898,7 @@ impl App {
         };
 
         // Overlay toast at bottom if present
-        match self.errors.is_empty() {
+        let content: Element<'_, Message> = match self.errors.is_empty() {
             true => content,
             false => {
                 // Errors are already in chronological order (Vec is append-only)
@@ -4791,12 +4918,108 @@ impl App {
                     )
                     .into()
             }
+        };
+
+        // One-time recovery-alerts consent prompt overlays everything (PR 3).
+        if self.show_recovery_alerts_prompt {
+            iced::widget::Stack::new()
+                .push(content)
+                .push(recovery_alerts_consent_overlay().map(Message::View))
+                .into()
+        } else {
+            content
         }
     }
 
     pub fn datadir_path(&self) -> &CoincubeDirectory {
         &self.cache.datadir_path
     }
+}
+
+/// Pure gating rules for the one-time recovery-alerts consent prompt (PR 3),
+/// separated from `App::maybe_show_recovery_alerts_prompt` so they're unit-
+/// testable without a full `App`. The prompt shows exactly when: it isn't
+/// already up, it hasn't been answered for this Cube, there's an authenticated
+/// Connect session with a resolved cube, alerts are available on the plan
+/// (defense-in-depth; universal after API PR 3), the Cube has ≥1 keyholder
+/// (someone to alert), and this Vault isn't already monitored.
+#[allow(clippy::too_many_arguments)]
+fn should_show_recovery_alerts_prompt(
+    already_showing: bool,
+    answered: bool,
+    authenticated: bool,
+    has_server_cube: bool,
+    entitled: bool,
+    has_keyholders: bool,
+    alerts_on: bool,
+) -> bool {
+    !already_showing
+        && !answered
+        && authenticated
+        && has_server_cube
+        && entitled
+        && has_keyholders
+        && !alerts_on
+}
+
+/// The one-time recovery-alerts consent prompt (PR 3): a centered modal card
+/// over a dimmed backdrop, offering to turn on recovery alerts (pre-selected)
+/// or decline. Both buttons resolve `view::Message::RecoveryAlertsConsent`,
+/// which persists the answer so the prompt never re-fires. Copy is the C4
+/// disclosure plus one line of *why*; no escrow mention (that stays a
+/// settings-page choice). Returns a `view::Message` element so its buttons are
+/// `Clone` (the top-level `Message` isn't); the caller maps it to `Message::View`.
+fn recovery_alerts_consent_overlay<'a>() -> Element<'a, view::Message> {
+    use coincube_ui::component::text::*;
+    use coincube_ui::component::{button, card};
+    use coincube_ui::theme;
+    use iced::widget::{Column, Container, Row, Space};
+    use iced::Length;
+
+    let body = Column::new()
+        .spacing(14)
+        .max_width(460)
+        .push(text("Alert your keyholders?").size(20).bold())
+        .push(
+            text(
+                "Turn on recovery alerts so COINCUBE can email your keyholders when this Vault's \
+                 recovery window opens. Without this, your keyholders are never told when your \
+                 recovery window opens.",
+            )
+            .size(14),
+        )
+        .push(
+            text(
+                "COINCUBE learns only the block height at which the window opens and that this \
+                 desktop checked in — never your addresses or balances.",
+            )
+            .size(13)
+            .style(theme::text::secondary),
+        )
+        .push(Space::new().height(Length::Fixed(6.0)))
+        .push(
+            Row::new()
+                .spacing(10)
+                .push(
+                    button::primary(None, "Turn on recovery alerts")
+                        .on_press(view::Message::RecoveryAlertsConsent(true)),
+                )
+                .push(
+                    button::secondary(None, "Not now")
+                        .on_press(view::Message::RecoveryAlertsConsent(false)),
+                ),
+        );
+
+    Container::new(card::simple(body).max_width(520))
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(24)
+        .style(theme::container::custom(iced::Color::from_rgba(
+            0.0, 0.0, 0.0, 0.6,
+        )))
+        .into()
 }
 
 fn new_recovery_panel(
@@ -4944,6 +5167,72 @@ mod tests {
         app::settings::{CubeSettings, Settings, SETTINGS_FILE_NAME},
         services::duress::DuressLocalState,
     };
+
+    // Baseline: every gating precondition satisfied → prompt shows.
+    fn prompt_args_all_go() -> (bool, bool, bool, bool, bool, bool, bool) {
+        // (already_showing, answered, authenticated, has_server_cube, entitled,
+        //  has_keyholders, alerts_on)
+        (false, false, true, true, true, true, false)
+    }
+
+    #[test]
+    fn recovery_alerts_prompt_shows_when_all_conditions_met() {
+        let (a, b, c, d, e, f, g) = prompt_args_all_go();
+        assert!(should_show_recovery_alerts_prompt(a, b, c, d, e, f, g));
+    }
+
+    #[test]
+    fn recovery_alerts_prompt_suppressed_by_each_gate() {
+        // Already showing → don't stack a second prompt.
+        assert!(!should_show_recovery_alerts_prompt(
+            true, false, true, true, true, true, false
+        ));
+        // Already answered → durable, never re-prompt.
+        assert!(!should_show_recovery_alerts_prompt(
+            false, true, true, true, true, true, false
+        ));
+        // No Connect session.
+        assert!(!should_show_recovery_alerts_prompt(
+            false, false, false, true, true, true, false
+        ));
+        // No resolved Connect cube.
+        assert!(!should_show_recovery_alerts_prompt(
+            false, false, true, false, true, true, false
+        ));
+        // Not entitled (alerts unavailable on plan).
+        assert!(!should_show_recovery_alerts_prompt(
+            false, false, true, true, false, true, false
+        ));
+        // No keyholders → nobody to alert.
+        assert!(!should_show_recovery_alerts_prompt(
+            false, false, true, true, true, false, false
+        ));
+        // Already monitored → nothing to prompt for.
+        assert!(!should_show_recovery_alerts_prompt(
+            false, false, true, true, true, true, true
+        ));
+    }
+
+    #[test]
+    fn recovery_alerts_prompt_answered_flag_defaults_false_and_round_trips() {
+        // Old settings.json without the field parses as "not answered".
+        let cube: CubeSettings = serde_json::from_value(serde_json::json!({
+            "id": "cube-1",
+            "name": "Vault",
+            "network": "bitcoin",
+            "created_at": 0
+        }))
+        .unwrap();
+        assert!(!cube.recovery_alerts_prompt_answered);
+
+        // Once answered it survives a serialize/deserialize round-trip, so a
+        // decline persists across restarts (never re-prompt).
+        let mut answered = cube;
+        answered.recovery_alerts_prompt_answered = true;
+        let json = serde_json::to_string(&answered).unwrap();
+        let back: CubeSettings = serde_json::from_str(&json).unwrap();
+        assert!(back.recovery_alerts_prompt_answered);
+    }
 
     struct TempRoot(PathBuf);
 

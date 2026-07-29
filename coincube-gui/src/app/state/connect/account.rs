@@ -860,13 +860,28 @@ impl ConnectAccountPanel {
             .unwrap_or(false)
     }
 
-    /// True when the account carries the Estate-only `recovery_alerts`
-    /// entitlement. Gates the Vault Recovery Alerts settings card (Estate
-    /// Notifications — PR 2).
+    /// True when the account carries the `recovery_alerts` entitlement. Gates
+    /// the Vault Recovery Alerts card's **alerts toggle** and the heartbeat
+    /// reporting. After the recovery-alerts cleanup (API PR 3) the server
+    /// returns this on all plans, so it becomes universally true; the desktop
+    /// keeps the check as defense-in-depth. See `PLAN-recovery-alerts-cleanup.md`.
     pub fn is_recovery_alerts_entitled(&self) -> bool {
         self.plan
             .as_ref()
             .map(|p| p.entitlements.recovery_alerts)
+            .unwrap_or(false)
+    }
+
+    /// True when the account carries the Estate-only `inheritanceEscrow`
+    /// entitlement — the server-blind ECIES recovery kit sealed to keyholders.
+    /// Gates the "What keyholders can recover" tier selector on the Recovery
+    /// Alerts card, separately from the (universal) alerts toggle. Fails closed
+    /// against an older API that omits the field. See
+    /// `PLAN-recovery-alerts-cleanup.md` PR 2 + ADDENDUM.
+    pub fn is_inheritance_escrow_entitled(&self) -> bool {
+        self.plan
+            .as_ref()
+            .map(|p| p.entitlements.inheritance_escrow)
             .unwrap_or(false)
     }
 

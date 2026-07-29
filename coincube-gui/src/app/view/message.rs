@@ -233,6 +233,11 @@ pub enum Message {
     DuressLockRemote,
     ToggleTheme,
     DismissReceivedCelebration,
+    /// Answer to the one-time recovery-alerts consent prompt overlay
+    /// (PLAN-recovery-alerts-cleanup PR 3). `true` = accept (enable monitoring),
+    /// `false` = decline. Handled at the App level; the answer is persisted
+    /// per-cube so the prompt never re-fires.
+    RecoveryAlertsConsent(bool),
     DismissBackupWarning,
     /// Flip the global fiat-native ↔ bitcoin-native display preference
     /// and persist it. Emitted by the click-to-swap mouse_area on any
@@ -440,10 +445,22 @@ pub enum RecoveryAlertsMessage {
         Result<(u64, crate::services::coincube::VaultMonitoringStatus), String>,
         u64,
     ),
-    /// User picked an inheritance escrow tier (Off / Vault-only / Full-Cube).
-    /// Vault-only and Off apply immediately; Full-Cube first collects the PIN
-    /// (to unlock the seed) and applies on `ConfirmFullCube`.
-    SelectTier(crate::services::inheritance::EscrowTier),
+    /// Flip the standalone **Recovery alerts** toggle (monitoring on/off),
+    /// independent of escrow. `true` posts the monitoring opt-in immediately;
+    /// `false` opens the alerts-off confirm dialog (which discloses that it will
+    /// also delete any stored keyholder recovery kit) rather than acting silently.
+    ToggleAlerts(bool),
+    /// Confirm turning alerts off from the dialog. Deletes the monitoring record,
+    /// and — when a recovery kit is currently escrowed — deletes the envelope set
+    /// too (escrow can't outlive alerts). See the state handler for the ordering.
+    ConfirmAlertsOff,
+    /// Dismiss the alerts-off confirm dialog without changing anything.
+    CancelAlertsOff,
+    /// User picked what keyholders can recover (Nothing / Vault-only / Full-Cube).
+    /// Nothing deletes the escrow set only (alerts stay on); Vault-only enrols the
+    /// descriptor (auto-enabling alerts); Full-Cube first collects the PIN (to
+    /// unlock the seed) and enrols on `ConfirmFullCube`.
+    SelectEscrow(crate::services::inheritance::EscrowTier),
     /// PIN digit input while enrolling the Full-Cube tier (escrows the seed).
     /// Carried in a redacting, zeroizing [`EscrowPin`] so the PIN never lands
     /// in a `{:?}` dump or lingers un-wiped in a dropped message.
