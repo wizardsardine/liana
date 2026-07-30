@@ -222,28 +222,20 @@ impl Electrum {
             }
         };
 
-        let mut changes_iter = changeset.into_iter();
-        let reorg_common_ancestor = if let Some((height, _)) = changes_iter.next() {
-            // Either a new block has been added at this height or an existing block in our local
-            // chain has been invalidated.
-            // Since we iterate in ascending height order, we'll see the lowest block height first.
-            // If the lowest height is higher than our height before syncing, we're good.
-            // Else if it's adding/invalidating a block at height before syncing or lower,
-            // it's a reorg.
-            if height > local_chain_tip.height() {
-                None
-            } else {
-                log::info!("Block chain reorganization detected.");
-                // We can assume height is positive as genesis block will not have changed.
-                Some(
-                    self.bdk_wallet
-                        .find_block_before_height(height)
-                        .expect("height of first change is greater than 0"),
-                )
-            }
-        } else {
-            None
-        };
+        // Only a block of ours that this update invalidated is a reorg. Blocks it
+        // merely added below our tip are the ordinary result of a scan reaching
+        // further back than the last one did. See [`wallet::divergence_height`].
+        let reorg_common_ancestor =
+            wallet::divergence_height(&local_chain_tip, &changeset).map(|height| {
+                log::info!(
+                    "Block chain reorganization detected: our block at height {} was invalidated.",
+                    height
+                );
+                // The height is above genesis, which never changes.
+                self.bdk_wallet
+                    .find_block_before_height(height)
+                    .expect("a divergence is above genesis, which never changes")
+            });
 
         // Unconfirmed transactions have their last seen as 0, so we override to the `sync_count`
         // so that conflicts can be properly handled. We use `sync_count` instead of current time

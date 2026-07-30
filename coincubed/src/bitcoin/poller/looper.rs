@@ -238,6 +238,11 @@ enum TipUpdate {
     // the ancestor walk hits its limit we stop paying for round-trips, so past that point we
     // know only that the fork is at least this deep.
     ImplausibleReorg { min_depth: i32 },
+    // Our tip is not on the backend's chain, the backend reported no reorg to roll back
+    // to, and it is one of the backends that cannot be asked where the chains parted.
+    // Skip the poll and leave our state alone; see the `walks_common_ancestor` check
+    // below for how we get here and how we get out again.
+    Diverged { backend_tip: BlockChainTip },
     // We could not establish how the backend's chain relates to ours. Skip this poll rather
     // than update state from a backend we could not read.
     Unavailable,
@@ -268,6 +273,19 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
         // Either the new height is lower or the same but the block hash differs. There was a
         // block chain re-organisation. Find the common ancestor between our current chain and
         // the new chain and return that. The caller will take care of rewinding our state.
+
+        // Unless this is a backend that has no ancestor to give. Electrum and Esplora report
+        // a reorg the moment they see one, from `sync_wallet`, and keep nothing of our chain
+        // to walk back through afterwards — so reaching here on one of them does not mean a
+        // reorg just happened, it means our tip and theirs are still apart from an earlier
+        // one we refused to apply. Asking anyway used to hit an `unreachable!()` and, with
+        // `panic = "abort"`, take the whole app down on the very next poll after any refusal.
+        if !bit.walks_common_ancestor() {
+            return TipUpdate::Diverged {
+                backend_tip: bitcoin_tip,
+            };
+        }
+
         log::info!("Block chain reorganization detected. Looking for common ancestor.");
         // A repair we performed on the managed node publishes the block it rewound to.
         // Rollbacks reaching no deeper than that one are ours, not a backend
@@ -391,6 +409,43 @@ fn refuse_deep_reorg(
     reorg_alert.store(depth);
 }
 
+/// Report that our tip is off the backend's chain with no reorg outstanding to
+/// explain it, and that this backend cannot tell us where they parted.
+///
+/// This is the state a refused reorg leaves behind: we deliberately kept our tip, so
+/// it no longer matches theirs, and Electrum/Esplora only report a fork at the moment
+/// they observe it. Nothing here can be resolved safely — rolling back would mean
+/// guessing at a fork point, and moving forward would mean recording blocks from a
+/// chain our own tip isn't on — so the poll is skipped and wallet state left exactly
+/// as it is.
+///
+/// It resolves itself rather than needing a restart: the backend keeps syncing, and as
+/// soon as its chain contains our tip again (a provider that was serving a truncated
+/// or foreign chain recovers, or a rescan rebuilds ours) the next poll takes the
+/// ordinary forward-progress path.
+fn report_divergence(
+    reorg_alert: &ReorgAlertCache,
+    current_tip: &BlockChainTip,
+    backend_tip: &BlockChainTip,
+) {
+    log::warn!(
+        "Our tip '{}' is not on the backend's chain, which is at '{}', and the backend reports \
+         no reorganization to roll back to. This is what a refused reorganization leaves behind; \
+         this backend cannot be asked where the two chains parted. Skipping this poll with wallet \
+         state untouched. It will resume on its own once our tip is back on the backend's chain.",
+        current_tip,
+        backend_tip
+    );
+    // Publish it for `get_info` the same way a refused reorg is, but only when the
+    // backend's chain is actually *below* ours: that gap is the rollback we are
+    // declining, and the depth is what the alert means. A backend ahead of us that
+    // simply cannot vouch for our tip is not a rollback, and 0 reads as "no alert".
+    let depth = current_tip.height.saturating_sub(backend_tip.height);
+    if depth > 0 {
+        reorg_alert.store(depth);
+    }
+}
+
 fn updates(
     db_conn: &mut Box<dyn DatabaseConnection>,
     bit: &mut impl BitcoinInterface,
@@ -422,6 +477,10 @@ fn updates(
                 }
                 TipUpdate::ImplausibleReorg { min_depth } => {
                     refuse_deep_reorg(reorg_alert, &current_tip, RefusedDepth::AtLeast(min_depth));
+                    return;
+                }
+                TipUpdate::Diverged { backend_tip } => {
+                    report_divergence(reorg_alert, &current_tip, &backend_tip);
                     return;
                 }
                 TipUpdate::Unavailable => return,
@@ -844,6 +903,55 @@ mod tests {
         assert!(matches!(new_tip(&bit, &our_tip), TipUpdate::Unavailable));
     }
 
+    /// A backend that has forked away from our tip and cannot be asked where: the
+    /// shape an Esplora or Electrum Vault has on every poll after a refused reorg.
+    fn diverged_backend(our_tip: &BlockChainTip, backend_height: i32) -> DummyBitcoind {
+        let mut bit = forked_backend(our_tip, 0);
+        bit.tip = tip(backend_height, 0xbb);
+        bit.walks_ancestors = false;
+        // Whatever it might say, it is never consulted; a fixture that answers proves
+        // less than one that would be wrong if it were.
+        bit.ancestor = Some(tip(0, 0xcc));
+        bit
+    }
+
+    // The regression: our tip diverged from an Esplora backend's, which is exactly what
+    // refusing a reorg leaves behind. Asking it for the fork point hit an
+    // `unreachable!()`, and with `panic = "abort"` that killed the whole desktop app —
+    // observed in the field as a crash one second after the refusal, mid-transaction.
+    #[test]
+    fn diverged_backend_is_reported_not_asked() {
+        let _disarmed = Sanction::none();
+        let our_tip = tip(146_244, 0xaa);
+
+        // Rewound all the way to genesis: the depth that got refused in the field.
+        match new_tip(&diverged_backend(&our_tip, 0), &our_tip) {
+            TipUpdate::Diverged { backend_tip } => assert_eq!(backend_tip.height, 0),
+            other => panic!("expected the divergence to be reported, got {:?}", other),
+        }
+
+        // Same height, different block. Also a divergence, and one where the depth is
+        // not a rollback at all.
+        match new_tip(&diverged_backend(&our_tip, our_tip.height), &our_tip) {
+            TipUpdate::Diverged { .. } => {}
+            other => panic!("expected the divergence to be reported, got {:?}", other),
+        }
+
+        // A backend ahead of us that cannot vouch for our tip either. Not forward
+        // progress — we must not record blocks from a chain our own tip isn't on.
+        match new_tip(&diverged_backend(&our_tip, our_tip.height + 10), &our_tip) {
+            TipUpdate::Diverged { .. } => {}
+            other => panic!("expected the divergence to be reported, got {:?}", other),
+        }
+
+        // And a backend that *can* walk must still be asked, rather than every reorg
+        // being written off as a divergence.
+        assert!(matches!(
+            new_tip(&forked_backend(&our_tip, 3), &our_tip),
+            TipUpdate::Reorged(_)
+        ));
+    }
+
     #[test]
     fn unchanged_tip_is_still_reported_as_same() {
         let our_tip = tip(100, 0xaa);
@@ -956,6 +1064,53 @@ mod tests {
             alert.load(),
             Some(MAX_REORG_DEPTH + 1),
             "the refusal must be published for get_info"
+        );
+    }
+
+    /// The end-to-end shape of the crash: a Vault whose tip is off its Esplora
+    /// backend's chain must skip the poll with its state intact, not abort the process.
+    #[test]
+    fn diverged_backend_leaves_coins_and_tip_untouched() {
+        let _disarmed = Sanction::none();
+        let our_tip = tip(146_244, 0xaa);
+
+        let mut db = DummyDatabase::new();
+        db.connection().update_tip(&our_tip);
+        let outpoint = bitcoin::OutPoint::from_str(
+            "3d8ea3e05e4c1e2f4b2e9dbd4a2b4e0dd7f6b0f7c9e8d5a4b3c2d1e0f9a8b7c6:0",
+        )
+        .unwrap();
+        db.insert_coins(vec![Coin {
+            outpoint,
+            is_immature: false,
+            amount: bitcoin::Amount::from_sat(100_000),
+            derivation_index: bip32::ChildNumber::from_normal_idx(0).unwrap(),
+            is_change: false,
+            block_info: None,
+            spend_txid: None,
+            spend_block: None,
+            is_from_self: false,
+        }]);
+
+        let mut bit = diverged_backend(&our_tip, 0);
+        let descs = test_descs();
+        let secp = secp256k1::Secp256k1::verification_only();
+        let alert = ReorgAlertCache::default();
+        let mut db_conn = db.connection();
+
+        updates(&mut db_conn, &mut bit, &descs, &secp, &alert);
+
+        assert!(db.rollbacks().is_empty(), "our tip must not be rolled back");
+        assert_eq!(
+            db.coin_outpoints(),
+            vec![outpoint],
+            "no coin may be removed while we are diverged"
+        );
+        assert_eq!(db_conn.chain_tip(), Some(our_tip), "our tip must not move");
+        assert_eq!(
+            alert.load(),
+            Some(146_244),
+            "the divergence must be published for get_info"
         );
     }
 

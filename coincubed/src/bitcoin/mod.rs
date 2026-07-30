@@ -313,6 +313,24 @@ pub trait BitcoinInterface: Send {
     /// result. `TooDeep` lets the caller refuse without paying for the rest.
     fn common_ancestor(&self, tip: &BlockChainTip, max_depth: i32) -> AncestorSearch;
 
+    /// Whether [`Self::common_ancestor`] can answer at all for this backend.
+    ///
+    /// Backends that hand us the fork point straight from [`Self::sync_wallet`]
+    /// (Electrum, Esplora) cannot walk back for one: all they hold is a chain of
+    /// their own, with no record of the chain *we* were on to compare it against.
+    /// Callers MUST check this before reaching for `common_ancestor`.
+    ///
+    /// The invariant that used to make asking them unthinkable — `sync_wallet`
+    /// reports every reorg, so the poller's own reorg branch is dead code on those
+    /// backends — does not survive the poller *refusing* a reorg: our tip then stays
+    /// diverged from the backend's, and every later poll re-enters that branch with
+    /// no reorg being reported to explain it. Their `common_ancestor` was an
+    /// `unreachable!()` in a thread of a `panic = "abort"` binary, so the first poll
+    /// after a refusal took the whole app down with it.
+    fn walks_common_ancestor(&self) -> bool {
+        true
+    }
+
     /// Broadcast this transaction to the Bitcoin P2P network
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String>;
 
@@ -805,10 +823,20 @@ impl BitcoinInterface for electrum::Electrum {
         self.is_in_wallet_chain(*tip).unwrap_or_default()
     }
 
+    fn walks_common_ancestor(&self) -> bool {
+        false
+    }
+
+    /// The common ancestor is returned by `sync_wallet()`; this backend keeps no view
+    /// of our chain to walk back through, so it cannot answer. The poller checks
+    /// [`BitcoinInterface::walks_common_ancestor`] and never calls this — answering
+    /// `Failed` rather than panicking is so that a caller which forgets to check
+    /// degrades to a skipped poll instead of killing the process.
+    ///
     /// FIXME: make the Bitcoin backend interface higher level. See the comment in the poller next
     /// to the `sync_wallet()` call.
     fn common_ancestor(&self, _tip: &BlockChainTip, _max_depth: i32) -> AncestorSearch {
-        unreachable!("The common ancestor is returned in `sync_wallet()`. If no reorg was detected then, this method will never be called on an Electrum backend.")
+        AncestorSearch::Failed
     }
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
@@ -930,10 +958,20 @@ impl BitcoinInterface for esplora::Esplora {
         self.is_in_wallet_chain(*tip).unwrap_or_default()
     }
 
+    fn walks_common_ancestor(&self) -> bool {
+        false
+    }
+
+    /// The common ancestor is returned by `sync_wallet()`; this backend keeps no view
+    /// of our chain to walk back through, so it cannot answer. The poller checks
+    /// [`BitcoinInterface::walks_common_ancestor`] and never calls this — answering
+    /// `Failed` rather than panicking is so that a caller which forgets to check
+    /// degrades to a skipped poll instead of killing the process.
+    ///
     /// FIXME: make the Bitcoin backend interface higher level. See the comment in the poller next
     /// to the `sync_wallet()` call.
     fn common_ancestor(&self, _tip: &BlockChainTip, _max_depth: i32) -> AncestorSearch {
-        unreachable!("The common ancestor is returned in `sync_wallet()`. If no reorg was detected then, this method will never be called on an Esplora backend.")
+        AncestorSearch::Failed
     }
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
@@ -1051,6 +1089,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn common_ancestor(&self, tip: &BlockChainTip, max_depth: i32) -> AncestorSearch {
         self.lock().unwrap().common_ancestor(tip, max_depth)
+    }
+
+    fn walks_common_ancestor(&self) -> bool {
+        self.lock().unwrap().walks_common_ancestor()
     }
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {

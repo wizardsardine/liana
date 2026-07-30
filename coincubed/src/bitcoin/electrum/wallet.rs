@@ -337,3 +337,109 @@ impl BdkWallet {
         let _ = self.graph.index.reveal_to_target_multi(&keychain_update);
     }
 }
+
+/// The lowest height at which a chain update contradicted the chain we already had,
+/// or `None` if it only told us about blocks we didn't have — i.e. whether this
+/// update was a block chain reorganisation.
+///
+/// A [`ChainChangeSet`] mixes two very different things, as `bdk_chain`'s
+/// `merge_chains` builds it: `Some(hash)` at a height the update has and we did not
+/// is a plain insertion, whereas `Some(other_hash)` at a height we *did* have — or
+/// `None`, which drops one of ours — is a block of ours being invalidated. Only the
+/// second kind is a reorg.
+///
+/// Conflating the two is not cosmetic. These backends keep a *sparse* local chain:
+/// checkpoints for the blocks they fetched and the ones anchoring our transactions,
+/// not every header. So any scan that reaches further back than the last one —
+/// a full rescan, or a sync that first learns of an old transaction — inserts
+/// checkpoints far below our tip as a matter of course. Read as a reorg, the lowest
+/// of those is reported as a rollback to the highest checkpoint beneath it, which on
+/// a sparse chain is frequently the genesis block: a "reorg" as deep as the chain
+/// itself. The poller refuses a rollback that deep (rightly — see `MAX_REORG_DEPTH`),
+/// and our tip is then stranded off the backend's chain with no reorg outstanding to
+/// explain it.
+///
+/// `previous_tip` must be the chain tip captured *before* the update was applied.
+/// [`CheckPoint`]s are persistent and [`BdkWallet::apply_connected_chain_update`]
+/// builds a new chain rather than mutating the old one, so one held across that call
+/// remains a view of the chain as it was.
+pub fn divergence_height(previous_tip: &CheckPoint, changeset: &ChainChangeSet) -> Option<u32> {
+    // `ChainChangeSet` is a `BTreeMap`, so iterating ascending finds the lowest
+    // conflict first — the height at which the two chains parted company.
+    changeset
+        .iter()
+        .find(|(height, new_hash)| match previous_tip.get(**height) {
+            // A block we had: it diverges if the update replaced it with a different
+            // one, or removed it.
+            Some(ours) => Some(ours.hash()) != **new_hash,
+            // Nothing of ours at that height. An insertion, not an invalidation.
+            None => false,
+        })
+        .map(|(height, _)| *height)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bdk_electrum::bdk_chain::{bitcoin::hashes::Hash, BlockId};
+
+    fn hash(seed: u8) -> BlockHash {
+        BlockHash::from_byte_array([seed; 32])
+    }
+
+    /// A sparse chain, as these backends actually keep one: genesis, an old block
+    /// anchoring a transaction, and a recent tip. Nothing in between.
+    fn sparse_chain() -> CheckPoint {
+        CheckPoint::from_block_ids([0, 40_000, 146_244].map(|height| BlockId {
+            height,
+            hash: hash(height as u8),
+        }))
+        .expect("heights are ascending")
+    }
+
+    #[test]
+    fn inserting_blocks_below_our_tip_is_not_a_reorg() {
+        let chain = sparse_chain();
+
+        // A scan reaching further back than the last one fills in heights we never
+        // had. Read as a reorg — as it was — the lowest of these was reported as a
+        // rollback to the highest checkpoint beneath it, here genesis: a 146,244-block
+        // "reorg" that the poller then refused, stranding our tip off the chain.
+        let insertions = ChainChangeSet::from([
+            (1, Some(hash(0xee))),
+            (39_999, Some(hash(0xee))),
+            (100_000, Some(hash(0xee))),
+        ]);
+        assert_eq!(divergence_height(&chain, &insertions), None);
+
+        // Blocks above our tip are plain forward progress, as before.
+        let progress = ChainChangeSet::from([(146_245, Some(hash(0xdd)))]);
+        assert_eq!(divergence_height(&chain, &progress), None);
+    }
+
+    #[test]
+    fn replacing_or_removing_one_of_our_blocks_is_a_reorg() {
+        let chain = sparse_chain();
+
+        // A different block at a height we had.
+        let replaced = ChainChangeSet::from([(40_000, Some(hash(0xee)))]);
+        assert_eq!(divergence_height(&chain, &replaced), Some(40_000));
+
+        // One of ours dropped outright.
+        let removed = ChainChangeSet::from([(146_244, None)]);
+        assert_eq!(divergence_height(&chain, &removed), Some(146_244));
+
+        // The same block at the same height changes nothing.
+        let unchanged = ChainChangeSet::from([(40_000, Some(hash(40_000u32 as u8)))]);
+        assert_eq!(divergence_height(&chain, &unchanged), None);
+
+        // A real reorg arrives mixed in with insertions, and the lowest *conflict* is
+        // where the chains parted — not the lowest entry in the changeset.
+        let mixed = ChainChangeSet::from([
+            (1, Some(hash(0xee))),
+            (39_999, Some(hash(0xee))),
+            (146_244, Some(hash(0xff))),
+        ]);
+        assert_eq!(divergence_height(&chain, &mixed), Some(146_244));
+    }
+}

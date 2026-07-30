@@ -9,7 +9,10 @@ use bdk_electrum::bdk_chain::{
 
 pub mod client;
 
-use crate::bitcoin::electrum::{utils, wallet::BdkWallet};
+use crate::bitcoin::electrum::{
+    utils,
+    wallet::{self, BdkWallet},
+};
 use crate::bitcoin::{Block, BlockChainTip, Coin};
 
 /// An error in the Esplora interface.
@@ -355,21 +358,19 @@ impl Esplora {
             }
         };
 
-        let mut changes_iter = changeset.into_iter();
-        let reorg_common_ancestor = if let Some((height, _)) = changes_iter.next() {
-            if height > local_chain_tip.height() {
-                None
-            } else {
-                log::info!("Block chain reorganization detected.");
-                Some(
-                    self.bdk_wallet
-                        .find_block_before_height(height)
-                        .expect("height of first change is greater than 0"),
-                )
-            }
-        } else {
-            None
-        };
+        // Only a block of ours that this update invalidated is a reorg. Blocks it
+        // merely added below our tip are the ordinary result of a scan reaching
+        // further back than the last one did. See [`wallet::divergence_height`].
+        let reorg_common_ancestor =
+            wallet::divergence_height(&local_chain_tip, &changeset).map(|height| {
+                log::info!(
+                    "Block chain reorganization detected: our block at height {} was invalidated.",
+                    height
+                );
+                self.bdk_wallet
+                    .find_block_before_height(height)
+                    .expect("a divergence is above genesis, which never changes")
+            });
 
         for tx in &graph_update.initial_changeset().txs {
             let txid = tx.compute_txid();
