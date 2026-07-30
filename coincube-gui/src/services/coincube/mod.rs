@@ -1216,6 +1216,65 @@ impl Contact {
     }
 }
 
+/// How a [`CubeKeyRaw`]'s owner resolves relative to the authenticated viewer.
+///
+/// Produced by [`classify_cube_key_ownership`] — the single home for the
+/// self/contact classification shared by the Vault Builder key picker
+/// (`resolve_cube_keys`) and the sign-flow membership reconcile
+/// (`reconcile_vault_members`).
+#[derive(Debug)]
+pub enum CubeKeyOwnership<'a> {
+    /// The authenticated viewer owns this key.
+    SelfOwned { owner_id: u64 },
+    /// A contact of the viewer owns this key. `contact` is the matched row,
+    /// carrying the `contact_id` callers need to address the owner.
+    ContactOwned { owner_id: u64, contact: &'a Contact },
+    /// The owner is neither the viewer nor any of the viewer's contacts, so
+    /// there is no `contact_id` to address them with. Callers skip such keys:
+    /// the picker can't offer them and the reconcile can't attach them
+    /// (`AddVaultMember` would reject a contact-less non-own key).
+    Unresolved { owner_id: u64 },
+}
+
+/// Classifies a Cube key by ownership relative to `current_user_id`.
+///
+/// Ownership prefers the server's viewer-relative `is_own_key` flag when set,
+/// falling back to a local id comparison for pre-W3 backends where the field
+/// is always `false`.
+///
+/// A non-own key is matched to a contact by **identity alone** — deliberately
+/// never by [`ContactRole`]. The role is a property of the *contact
+/// relationship*, not of any Cube: the API's cube-invite handler instant-adds
+/// an already-existing contact as a cube member without re-stamping the role
+/// (`.../cube_member/handlers/cube_member.go`, the `contact != nil` branch),
+/// and the reciprocal row written on accept carries role `owner`
+/// (`.../invite/handlers/invite.go`, `contact2`). So a genuine Cube keyholder
+/// routinely has a non-keyholder contact role, and filtering on it silently
+/// hid their key. The authorisation that matters is enforced server-side:
+/// `AddVaultMember` re-validates that the contact belongs to the caller and
+/// that the key belongs to that contact's user — it does not check the role
+/// either. The lookup goes through [`Contact::effective_contact_user_id`]
+/// because the backend's lean `ContactResponse` omits the flat
+/// `contactUserId`, exposing the id only via the nested `contactUser`.
+pub fn classify_cube_key_ownership<'a>(
+    key: &CubeKeyRaw,
+    contacts: &'a [Contact],
+    current_user_id: u64,
+) -> CubeKeyOwnership<'a> {
+    let owner_id = key.effective_owner_user_id();
+    let is_own = key.is_own_key || owner_id == current_user_id;
+    if is_own {
+        return CubeKeyOwnership::SelfOwned { owner_id };
+    }
+    match contacts
+        .iter()
+        .find(|c| c.effective_contact_user_id() == Some(owner_id))
+    {
+        Some(contact) => CubeKeyOwnership::ContactOwned { owner_id, contact },
+        None => CubeKeyOwnership::Unresolved { owner_id },
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Invite {
