@@ -4246,13 +4246,14 @@ mod tests {
     /// A Pro plan carrying the paid `duress` entitlement.
     fn duress_entitled_plan() -> crate::services::coincube::ConnectPlan {
         use crate::services::coincube::{ConnectPlan, PlanEntitlements, PlanStatus, PlanTier};
-        let mut entitlements = PlanEntitlements::default();
-        entitlements.duress = true;
         ConnectPlan {
             plan: PlanTier::Pro,
             status: PlanStatus::Active,
             renewal_at: None,
-            entitlements,
+            entitlements: PlanEntitlements {
+                duress: true,
+                ..PlanEntitlements::default()
+            },
             billing_cycle: None,
             plan_provenance: None,
         }
