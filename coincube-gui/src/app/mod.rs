@@ -3567,26 +3567,25 @@ impl App {
                     return self.persist_recovery_alerts_answered();
                 }
                 // Accept: turn alerts on now (cube-scoped POST). Route the result
-                // through the settings card's `ChangeResult` so the card reflects
-                // alerts-on and any post-dispatch failure surfaces there; the next
-                // post-sync hydration resolves the vault id for heartbeats.
-                // `enable_alerts` is idempotent, so a redundant accept is safe.
+                // through the settings card's `ChangeResult`, which reflects
+                // alerts-on on the card AND — on `Ok` — marks + persists the prompt
+                // answered (the shared `is_ok_change` handler below). So the answer
+                // is recorded only after the enable actually succeeds: a
+                // post-dispatch API failure surfaces there and leaves the prompt
+                // un-answered, so it re-fires later. `enable_alerts` is idempotent,
+                // so a redundant accept is safe.
                 //
-                // Only mark the prompt answered once we can actually dispatch the
-                // enable. If the Connect session dropped while the overlay was up
-                // (token expiry / account switch), persisting "answered" here would
-                // suppress the prompt forever while having enabled nothing — a
-                // silent permanent failure. Instead, leave it un-answered (so it
-                // re-fires once Connect is back) and surface a visible error.
+                // If the Connect session dropped while the overlay was up (token
+                // expiry / account switch) there's nothing to dispatch: leave the
+                // prompt un-answered (it re-fires once Connect is back) and surface
+                // a visible error rather than failing silently.
                 let gen = self.panels.connect.account.session_generation();
                 match (
                     self.authenticated_coincube_client(),
                     self.panels.connect.cube.server_cube_id,
                 ) {
                     (Some(client), Some(cube_id)) => {
-                        self.cube_settings.recovery_alerts_prompt_answered = true;
-                        let persist = self.persist_recovery_alerts_answered();
-                        let enable = Task::perform(
+                        return Task::perform(
                             async move {
                                 crate::services::inheritance::enable_alerts(&client, cube_id)
                                     .await
@@ -3600,7 +3599,6 @@ impl App {
                                 ))
                             },
                         );
-                        return Task::batch([persist, enable]);
                     }
                     _ => {
                         return Task::done(Message::View(view::Message::ShowError(
