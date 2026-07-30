@@ -54,8 +54,8 @@ use crate::{
     daemon::{model::SpendTx, Daemon},
     services::{
         coincube::{
-            AddVaultMemberRequest, CoincubeClient, ConnectVaultResponse, ContactRole, CubeKeyRaw,
-            User, VaultMemberRole,
+            AddVaultMemberRequest, CoincubeClient, ConnectVaultResponse, CubeKeyRaw, User,
+            VaultMemberRole,
         },
         connect::{
             client::auth::AccessTokenResponse,
@@ -1921,20 +1921,30 @@ async fn reconcile_vault_members(
         let contact_id = if is_own {
             None
         } else {
-            match contacts.iter().find(|c| {
-                c.effective_contact_user_id() == Some(owner_id) && c.role == ContactRole::Keyholder
-            }) {
+            // Identity only — NOT `role == Keyholder`. `ConnectContact.role`
+            // describes the contact relationship, not this cube: the API
+            // instant-adds an existing contact to a cube without re-stamping
+            // the role, and the reciprocal row is written as `owner`. Matching
+            // on it skipped the attach for legitimate cube keyholders, which
+            // dead-ends the Keychain sign flow this function exists to rescue.
+            // `AddVaultMember` validates the pairing server-side (contact
+            // belongs to the caller, key belongs to that contact's user) and
+            // likewise does not check the role.
+            match contacts
+                .iter()
+                .find(|c| c.effective_contact_user_id() == Some(owner_id))
+            {
                 Some(c) => Some(c.id),
                 None => {
-                    // Owner isn't a keyholder contact we can address — sending
-                    // this without a contact_id would 400 ("Key does not belong
+                    // Owner isn't a contact we can address — sending this
+                    // without a contact_id would 400 ("Key does not belong
                     // to the specified user"), so skip and let classification
                     // surface it as Local.
                     tracing::warn!(
                         target: "coincube_gui::signing",
                         key_id = key.id,
                         owner_user_id = owner_id,
-                        "Reconcile: descriptor cube key has no keyholder-contact owner — skipping attach",
+                        "Reconcile: descriptor cube key owner is not a contact — skipping attach",
                     );
                     continue;
                 }
