@@ -1742,6 +1742,11 @@ impl Home {
                     HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
                 ) && !self.connect_account.show_duress()
                 {
+                    // Hiding the surface out from under an in-flight enrollment
+                    // wizard or step-up dialog: scrub its secrets the same way
+                    // Cancel would, so the flag flip can't strand duress
+                    // PINs/codes on the heap once the route is unreachable.
+                    self.connect_account.scrub_duress_dialogs();
                     self.active_section = HomeSection::Connect(app::menu::ConnectSubMenu::Overview);
                     self.connect_account.active_sub = app::menu::ConnectSubMenu::Overview;
                 }

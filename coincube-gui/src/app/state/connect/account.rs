@@ -2289,6 +2289,26 @@ impl ConnectAccountPanel {
         }
     }
 
+    /// Cancel-equivalent teardown for the in-flight duress dialogs, for when the
+    /// surface is hidden out from under the user — the launch kill-switch
+    /// (`show_duress`) flipped off mid-session and the route is redirecting
+    /// away. Runs the same scrubbing the Cancel buttons do, so a flag flip can't
+    /// strand duress PINs/codes on the heap once the surface is unreachable:
+    ///
+    /// - the enrollment wizard is discarded (secrets zeroized) only when it
+    ///   isn't mid-submit — a server `enroll_duress` in flight still needs its
+    ///   code to persist on success, exactly as `CancelEnrollment` guards;
+    /// - the step-up disable dialog is always taken and zeroized, matching
+    ///   `DisableCancel`.
+    pub fn scrub_duress_dialogs(&mut self) {
+        if self.duress_enroll.as_ref().is_none_or(|e| !e.submitting) {
+            self.clear_duress_enroll();
+        }
+        if let Some(mut d) = self.duress_disable.take() {
+            d.zeroize_secrets();
+        }
+    }
+
     /// Duress "Emergency contacts" dispatcher (Estate Notifications — PR 1).
     ///
     /// Every mutating path re-asserts the `duress_alerts` entitlement before
@@ -6588,6 +6608,40 @@ mod plan_lifecycle_tests {
         panel.features = None;
         assert!(!panel.duress_server_enabled());
         assert!(!panel.show_duress());
+    }
+
+    #[test]
+    fn scrub_duress_dialogs_zeroizes_and_drops_pending_dialogs() {
+        // The teardown the route backstop runs when the surface is hidden
+        // mid-flow: a non-submitting wizard and the step-up disable dialog are
+        // both discarded so their secrets don't linger once duress is off.
+        let mut panel = ConnectAccountPanel::new();
+        panel.open_enroll_wizard();
+        panel.duress_enroll.as_mut().unwrap().duress_pin = "1234".to_string();
+        panel.duress_disable = Some(DuressDisableState {
+            pin: "5678".to_string(),
+            submitting: false,
+            error: None,
+        });
+
+        panel.scrub_duress_dialogs();
+
+        assert!(panel.duress_enroll.is_none());
+        assert!(panel.duress_disable.is_none());
+    }
+
+    #[test]
+    fn scrub_duress_dialogs_preserves_a_submitting_wizard() {
+        // A server enroll_duress in flight must survive the scrub — else its
+        // code is zeroized before the success handler can persist it, leaving
+        // the server enrolled but this device un-armed (mirrors CancelEnrollment).
+        let mut panel = ConnectAccountPanel::new();
+        panel.open_enroll_wizard();
+        panel.duress_enroll.as_mut().unwrap().submitting = true;
+
+        panel.scrub_duress_dialogs();
+
+        assert!(panel.duress_enroll.is_some());
     }
 
     #[test]
