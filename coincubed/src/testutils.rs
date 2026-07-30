@@ -36,6 +36,10 @@ pub struct DummyBitcoind {
     /// Blocks this backend's chain contains regardless of [`Self::in_chain`], so a
     /// forked backend can still be asked about a block deeper than the fork point.
     pub also_in_chain: Vec<BlockChainTip>,
+    /// What `walks_common_ancestor` reports. Defaults to `true`, i.e. a bitcoind-like
+    /// backend. Set to `false` to model Electrum/Esplora, which report reorgs from
+    /// `sync_wallet` and cannot be asked for a fork point afterwards.
+    pub walks_ancestors: bool,
 }
 
 impl DummyBitcoind {
@@ -50,6 +54,7 @@ impl DummyBitcoind {
             in_chain: true,
             ancestor: None,
             also_in_chain: Vec::new(),
+            walks_ancestors: true,
         }
     }
 }
@@ -129,6 +134,10 @@ impl BitcoinInterface for DummyBitcoind {
             Some(ancestor) => AncestorSearch::Found(ancestor),
             None => AncestorSearch::Failed,
         }
+    }
+
+    fn walks_common_ancestor(&self) -> bool {
+        self.walks_ancestors
     }
 
     fn broadcast_tx(&self, _: &bitcoin::Transaction) -> Result<(), String> {

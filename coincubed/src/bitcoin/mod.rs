@@ -97,41 +97,76 @@ impl SyncProgressCache {
     }
 }
 
-/// Lock-free flag published by the poller when it refuses to apply a block chain
-/// reorganisation because it is implausibly deep, and read by `get_info` without
-/// taking the `BitcoinInterface` mutex (same rationale as [`SyncProgressCache`]).
-///
-/// A reorg deeper than `MAX_REORG_DEPTH` blocks almost certainly means the backend
-/// is misreporting rather than that Bitcoin genuinely undid that much history: a
-/// node rewound with `invalidateblock`, a datadir swapped underneath us, or a
-/// chainstate mid-rebuild. Applying it would clear the confirmation state of every
-/// coin above the ancestor and hard-delete any deposit no longer in the mempool, so
-/// the poller declines and publishes the observed depth here instead.
-///
-/// Stored as the depth in blocks; `0` means "no alert".
-#[derive(Debug, Default)]
-pub struct ReorgAlertCache {
-    depth: sync::atomic::AtomicI64,
+/// A chain-sync alert the poller raises when it deliberately stops updating our view
+/// of the chain from the backend. Two distinct conditions lead here, and they must not
+/// be conflated — see the variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainAlert {
+    /// No outstanding alert: our chain view is tracking the backend's.
+    None,
+    /// The backend reported a reorganisation deeper than `MAX_REORG_DEPTH` and we
+    /// refused to apply it. That almost certainly means the backend is misreporting
+    /// rather than that Bitcoin genuinely undid that much history (a node rewound with
+    /// `invalidateblock`, a datadir swapped underneath us, a chainstate mid-rebuild):
+    /// applying it would clear the confirmation state of every coin above the ancestor
+    /// and hard-delete any deposit no longer in the mempool. The value is the refused
+    /// depth in blocks — a *lower bound* when the ancestor walk stopped at its limit.
+    RefusedReorg(i32),
+    /// Our tip is off the backend's chain and this backend (Electrum/Esplora) cannot be
+    /// asked where the two chains parted. There is no known fork point and therefore no
+    /// rollback depth to report — the height gap between the tips is *not* one, and may
+    /// be zero or negative even though sync is genuinely paused. Wallet state is held
+    /// intact until the chains reconverge.
+    Diverged,
 }
 
+/// Lock-free cache of the poller's current [`ChainAlert`], read by `get_info` without
+/// taking the `BitcoinInterface` mutex (same rationale as [`SyncProgressCache`]).
+///
+/// A `Some(..)`-flavoured alert means our view of the chain is deliberately not being
+/// updated from the backend. The state is kept in a single atomic so a reader never
+/// observes a torn mix of the two conditions:
+///   * `0` — no alert;
+///   * `> 0` — a refused reorg, the value being its depth in blocks;
+///   * [`DIVERGED_SENTINEL`] — an unresolved chain divergence, which carries no depth.
+#[derive(Debug, Default)]
+pub struct ReorgAlertCache {
+    state: sync::atomic::AtomicI64,
+}
+
+/// Reserved slot value standing for [`ChainAlert::Diverged`]. Out of range of any real
+/// reorg depth (always a positive block count), so it can never collide with one.
+const DIVERGED_SENTINEL: i64 = i64::MIN;
+
 impl ReorgAlertCache {
-    /// Record that a reorg of `depth` blocks was refused.
-    pub fn store(&self, depth: i32) {
-        self.depth
+    /// Record that a reorg of `depth` blocks was refused as implausibly deep.
+    pub fn store_refused_reorg(&self, depth: i32) {
+        self.state
             .store(depth.into(), sync::atomic::Ordering::Relaxed);
     }
 
-    /// Clear the alert. Called on every poll that completes normally, so a
-    /// transient misreport resolves itself once the backend behaves again.
-    pub fn clear(&self) {
-        self.depth.store(0, sync::atomic::Ordering::Relaxed);
+    /// Record that our tip has diverged from a backend that cannot be asked where the
+    /// chains parted. Deliberately carries no depth: the fork point is unknown, and
+    /// publishing the tips' height gap here would misrepresent an unknown divergence as
+    /// an exact rollback depth.
+    pub fn store_divergence(&self) {
+        self.state
+            .store(DIVERGED_SENTINEL, sync::atomic::Ordering::Relaxed);
     }
 
-    /// The depth of the most recently refused reorg, if one is outstanding.
-    pub fn load(&self) -> Option<i32> {
-        match self.depth.load(sync::atomic::Ordering::Relaxed) {
-            0 => None,
-            depth => Some(depth as i32),
+    /// Clear the alert. Called on every poll that completes normally, so both a
+    /// transient deep-reorg misreport and a divergence resolve themselves once the
+    /// backend's chain contains our tip again.
+    pub fn clear(&self) {
+        self.state.store(0, sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The outstanding alert, if any.
+    pub fn load(&self) -> ChainAlert {
+        match self.state.load(sync::atomic::Ordering::Relaxed) {
+            0 => ChainAlert::None,
+            DIVERGED_SENTINEL => ChainAlert::Diverged,
+            depth => ChainAlert::RefusedReorg(depth as i32),
         }
     }
 }
@@ -312,6 +347,24 @@ pub trait BitcoinInterface: Send {
     /// sequential requests from us before the caller gets a chance to reject the
     /// result. `TooDeep` lets the caller refuse without paying for the rest.
     fn common_ancestor(&self, tip: &BlockChainTip, max_depth: i32) -> AncestorSearch;
+
+    /// Whether [`Self::common_ancestor`] can answer at all for this backend.
+    ///
+    /// Backends that hand us the fork point straight from [`Self::sync_wallet`]
+    /// (Electrum, Esplora) cannot walk back for one: all they hold is a chain of
+    /// their own, with no record of the chain *we* were on to compare it against.
+    /// Callers MUST check this before reaching for `common_ancestor`.
+    ///
+    /// The invariant that used to make asking them unthinkable — `sync_wallet`
+    /// reports every reorg, so the poller's own reorg branch is dead code on those
+    /// backends — does not survive the poller *refusing* a reorg: our tip then stays
+    /// diverged from the backend's, and every later poll re-enters that branch with
+    /// no reorg being reported to explain it. Their `common_ancestor` was an
+    /// `unreachable!()` in a thread of a `panic = "abort"` binary, so the first poll
+    /// after a refusal took the whole app down with it.
+    fn walks_common_ancestor(&self) -> bool {
+        true
+    }
 
     /// Broadcast this transaction to the Bitcoin P2P network
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String>;
@@ -805,10 +858,20 @@ impl BitcoinInterface for electrum::Electrum {
         self.is_in_wallet_chain(*tip).unwrap_or_default()
     }
 
+    fn walks_common_ancestor(&self) -> bool {
+        false
+    }
+
+    /// The common ancestor is returned by `sync_wallet()`; this backend keeps no view
+    /// of our chain to walk back through, so it cannot answer. The poller checks
+    /// [`BitcoinInterface::walks_common_ancestor`] and never calls this — answering
+    /// `Failed` rather than panicking is so that a caller which forgets to check
+    /// degrades to a skipped poll instead of killing the process.
+    ///
     /// FIXME: make the Bitcoin backend interface higher level. See the comment in the poller next
     /// to the `sync_wallet()` call.
     fn common_ancestor(&self, _tip: &BlockChainTip, _max_depth: i32) -> AncestorSearch {
-        unreachable!("The common ancestor is returned in `sync_wallet()`. If no reorg was detected then, this method will never be called on an Electrum backend.")
+        AncestorSearch::Failed
     }
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
@@ -930,10 +993,20 @@ impl BitcoinInterface for esplora::Esplora {
         self.is_in_wallet_chain(*tip).unwrap_or_default()
     }
 
+    fn walks_common_ancestor(&self) -> bool {
+        false
+    }
+
+    /// The common ancestor is returned by `sync_wallet()`; this backend keeps no view
+    /// of our chain to walk back through, so it cannot answer. The poller checks
+    /// [`BitcoinInterface::walks_common_ancestor`] and never calls this — answering
+    /// `Failed` rather than panicking is so that a caller which forgets to check
+    /// degrades to a skipped poll instead of killing the process.
+    ///
     /// FIXME: make the Bitcoin backend interface higher level. See the comment in the poller next
     /// to the `sync_wallet()` call.
     fn common_ancestor(&self, _tip: &BlockChainTip, _max_depth: i32) -> AncestorSearch {
-        unreachable!("The common ancestor is returned in `sync_wallet()`. If no reorg was detected then, this method will never be called on an Esplora backend.")
+        AncestorSearch::Failed
     }
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
@@ -1051,6 +1124,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn common_ancestor(&self, tip: &BlockChainTip, max_depth: i32) -> AncestorSearch {
         self.lock().unwrap().common_ancestor(tip, max_depth)
+    }
+
+    fn walks_common_ancestor(&self) -> bool {
+        self.lock().unwrap().walks_common_ancestor()
     }
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
