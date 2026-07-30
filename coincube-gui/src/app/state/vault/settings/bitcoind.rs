@@ -754,7 +754,10 @@ impl State for BitcoindSettingsState {
                         // `Bitcoind::maybe_start`. Idempotent and non-destructive:
                         // `reconsiderblock` only clears rejection flags and lets the
                         // node re-activate the most-work chain, so the worst case is
-                        // that it does nothing.
+                        // that it does nothing — with one exception, which
+                        // `clear_failure_flags` handles by claiming the node first: a
+                        // replay in progress is holding the chain down with an
+                        // `invalidateblock` mark that this would clear.
                         let Some(settings) = self.bitcoind_settings.as_ref() else {
                             return Task::none();
                         };
@@ -1220,6 +1223,16 @@ fn write_internal_bitcoind_config(
     conf.to_file(&config_path).map_err(|e| e.to_string())?;
 
     let cookie_path = internal_bitcoind_cookie_path(&bitcoind_datadir, &network);
+    // Stamp the datadir with an identity, if it does not already carry one. This is
+    // what lets a chain repair be scoped to the node it was performed on: the RPC port
+    // and the cookie path both survive the datadir being wiped and rebuilt underneath
+    // them, and a repair authorisation left over from the old one would then apply to
+    // the new. The marker lives inside the datadir, so it goes when the datadir goes.
+    if let Err(e) = crate::node::bitcoind::ensure_node_instance_marker(&cookie_path) {
+        // Not fatal: without it, identity falls back to the endpoint and cookie path,
+        // which is where it stood before the marker existed.
+        tracing::warn!("could not stamp the managed node's datadir with an identity: {e}");
+    }
     Ok(BitcoindConfig {
         rpc_auth: BitcoindRpcAuth::CookieFile(cookie_path),
         addr: internal_bitcoind_address(rpc_port),
@@ -1247,11 +1260,21 @@ fn repair_managed_node_chain(
     let anchor_height = crate::node::revalidate::rdts_anchor_height(network).ok_or_else(|| {
         "BIP-110 isn't deployed on this network, so there is nothing to repair.".to_string()
     })?;
-    let bitcoind = coincubed::BitcoinD::new(cfg, "repair_node_chain".to_string())
-        .map_err(|e| format!("Could not reach the managed node: {e}"))?;
-    crate::node::revalidate::execute(
+    // An unreadable state sidecar is set aside by `clear_failure_flags` itself, once it
+    // owns the node and knows the repair is going ahead — not here. Doing it before the
+    // identity is settled would discard the one record telling the next start that
+    // something may still be pending, in exactly the case where the repair is then
+    // refused.
+    //
+    // Re-attempt the identity here too, so a start that could not settle it does not
+    // leave the user with a button that can never work — this is the "explicit repair"
+    // retry. It still refuses rather than repairing under a provisional identity, and
+    // `clear_failure_flags` turns that into a message the user can act on.
+    let identity = crate::node::bitcoind::establish_node_identity(cfg);
+    crate::node::revalidate::clear_failure_flags(
         coincube_datadir,
-        &bitcoind,
+        cfg,
+        &identity,
         crate::node::revalidate::RevalidationPlan::ClearFailureFlags { anchor_height },
     )?;
     Ok("Asked the node to re-check its chain. This may take a few minutes.".to_string())

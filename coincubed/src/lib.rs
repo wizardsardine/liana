@@ -16,13 +16,13 @@ pub use miniscript;
 
 pub use crate::bitcoin::{
     d::{
-        BitcoinD, BitcoindError, ChainStatus, ChainTipEntry, DeploymentStatus, PruneState,
-        WalletError,
+        valid_node_instance, BitcoinD, BitcoindError, ChainStatus, ChainTipEntry, DeploymentStatus,
+        PruneState, WalletError, NODE_INSTANCE_FILE, NODE_INSTANCE_LEN,
     },
     electrum::{Electrum, ElectrumError},
     esplora::{Esplora, EsploraError},
     managed_node_maintenance, sanctioned_rollback, set_managed_node_maintenance,
-    set_sanctioned_rollback, BlockChainTip, MaintenanceGuard,
+    set_sanctioned_rollback, BackendId, BlockChainTip, MaintenanceGuard, SanctionedRollback,
 };
 
 use crate::jsonrpc::server;

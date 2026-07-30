@@ -11,7 +11,7 @@ use crate::bitcoin::d::{BitcoindError, CachedTxGetter, LSBlockEntry};
 use coincube_core::descriptors;
 pub use d::{MempoolEntry, MempoolEntryFees, SyncProgress};
 
-use std::{collections::HashMap, fmt, sync};
+use std::{collections::HashMap, fmt, net, sync};
 
 use miniscript::bitcoin::{self, address, bip32::ChildNumber};
 
@@ -250,23 +250,67 @@ impl Drop for MaintenanceGuard {
 /// block the poller will find — so pinning the exception to the floor would refuse
 /// every realistic outcome and authorise only the one where nothing replayed.
 ///
-/// The hash is still carried, and still checked: the poller confirms the backend's
-/// chain actually contains this block before honouring the floor, so a sanction
-/// left over from a different chain or a different datadir authorises nothing.
-static SANCTIONED_ROLLBACK: sync::Mutex<Option<BlockChainTip>> = sync::Mutex::new(None);
+/// The floor's hash is still carried and still checked, but it cannot carry the
+/// scoping on its own: the blocks a repair names are public, and every healthy node
+/// on the same chain contains them. So the exception is addressed to a specific
+/// node — see [`SanctionedRollback::node`].
+static SANCTIONED_ROLLBACK: sync::Mutex<Option<SanctionedRollback>> = sync::Mutex::new(None);
 
-/// Authorise (or withdraw) over-deep rollbacks reaching no deeper than `floor`.
-pub fn set_sanctioned_rollback(floor: Option<BlockChainTip>) {
-    *SANCTIONED_ROLLBACK
-        .lock()
-        .expect("sanctioned rollback lock poisoned") = floor;
+/// Which `bitcoind` a backend talks to.
+///
+/// The socket alone is a *location*, not an identity: a different node, or the same
+/// node rebuilt on a different datadir, can later occupy the same address. So the
+/// credential descriptor comes along with it — for the managed node that is the path
+/// to a cookie file living inside the node's own datadir, which moves when the
+/// datadir does. Fingerprinted rather than carried verbatim, because this ends up
+/// written to a state file on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackendId {
+    /// Where it listens.
+    pub addr: net::SocketAddr,
+    /// Hex SHA-256 of the credential descriptor — the cookie file's path, or the
+    /// RPC username. Never the password.
+    pub credentials: String,
 }
 
-/// The floor the poller is currently allowed to roll back to past its depth limit.
-pub fn sanctioned_rollback() -> Option<BlockChainTip> {
+impl BackendId {
+    /// Fingerprint a credential descriptor. Hashed so that neither a filesystem
+    /// layout nor a username is written to disk verbatim.
+    pub fn fingerprint(descriptor: &str) -> String {
+        use miniscript::bitcoin::hashes::{sha256, Hash};
+        sha256::Hash::hash(descriptor.as_bytes()).to_string()
+    }
+}
+
+/// An over-deep rollback the poller may apply, and the node it applies to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SanctionedRollback {
+    /// Deepest block a repair-induced rollback may reach. See
+    /// [`SANCTIONED_ROLLBACK`] for why this is a floor and not a fork point.
+    pub floor: BlockChainTip,
+    /// The node the repair was performed on.
+    ///
+    /// Load-bearing, because this slot is process-wide and the floor block is
+    /// public. Without it, a Vault pointed at an entirely different `bitcoind` —
+    /// an external one the user configured, which never underwent the repair —
+    /// would find the floor in its own chain, satisfy the exception, and lose the
+    /// depth guard for every rollback above it.
+    pub node: BackendId,
+}
+
+/// Authorise (or withdraw) over-deep rollbacks on one node.
+pub fn set_sanctioned_rollback(sanction: Option<SanctionedRollback>) {
     *SANCTIONED_ROLLBACK
         .lock()
+        .expect("sanctioned rollback lock poisoned") = sanction;
+}
+
+/// The rollback the poller is currently allowed to apply past its depth limit.
+pub fn sanctioned_rollback() -> Option<SanctionedRollback> {
+    SANCTIONED_ROLLBACK
+        .lock()
         .expect("sanctioned rollback lock poisoned")
+        .clone()
 }
 
 /// Our Bitcoin backend.
@@ -279,6 +323,15 @@ pub trait BitcoinInterface: Send {
     /// pauses too — conservative, and bounded by the rewind's duration.
     fn is_bitcoind(&self) -> bool {
         false
+    }
+
+    /// Which `bitcoind` this backend talks to, when it talks to one at all.
+    ///
+    /// Used to scope a sanctioned rollback to the node a repair was actually
+    /// performed on: the blocks a repair names are public, so a chain-level check
+    /// cannot tell the managed node from any other node following the same chain.
+    fn backend_id(&self) -> Option<BackendId> {
+        None
     }
 
     fn genesis_block_timestamp(&self) -> u32;
@@ -417,6 +470,10 @@ pub trait BitcoinInterface: Send {
 impl BitcoinInterface for d::BitcoinD {
     fn is_bitcoind(&self) -> bool {
         true
+    }
+
+    fn backend_id(&self) -> Option<BackendId> {
+        Some(self.backend_id())
     }
 
     fn genesis_block_timestamp(&self) -> u32 {
@@ -1061,6 +1118,10 @@ impl BitcoinInterface for esplora::Esplora {
 impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>> {
     fn is_bitcoind(&self) -> bool {
         self.lock().unwrap().is_bitcoind()
+    }
+
+    fn backend_id(&self) -> Option<BackendId> {
+        self.lock().unwrap().backend_id()
     }
 
     fn genesis_block_timestamp(&self) -> u32 {

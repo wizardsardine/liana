@@ -635,8 +635,15 @@ pub fn flavor_switch_confirm<'a>(target: NodeFlavor) -> Element<'a, NodeSettings
 /// otherwise keep following the chain Knots chose rather than the one with the
 /// most work. The app repairs that automatically whenever the node starts, so this
 /// button only matters when the state driving that check has been lost (a datadir
-/// carried between machines, a wiped sidecar). Safe to press at any time: the call
-/// is idempotent and clears flags rather than discarding anything.
+/// carried between machines, a wiped sidecar). The call is idempotent and clears
+/// flags rather than discarding anything.
+///
+/// Not, however, safe to fire *concurrently with a chain replay*: `reconsiderblock`
+/// at the anchor clears the `BLOCK_FAILED_*` marks on its descendants, and the
+/// replay's own `invalidateblock` mark is one of them, so it would release the chain
+/// the replay is holding down. The handler claims the node before issuing anything
+/// and reports a busy node back to the user instead — see
+/// `node::revalidate::clear_failure_flags`.
 pub fn chain_repair_section<'a>() -> Element<'a, NodeSettingsMessage> {
     card::simple(Container::new(
         Column::new()

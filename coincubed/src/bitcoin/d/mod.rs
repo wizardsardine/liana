@@ -38,6 +38,23 @@ use serde_json::Value as Json;
 // If bitcoind takes more than 3 minutes to answer one of our queries, fail.
 const RPC_SOCKET_TIMEOUT: u64 = 180;
 
+/// Name of the marker a managed node's datadir carries to identify *this* instance of
+/// it, written next to the cookie file. See [`BitcoinD::backend_id`].
+pub const NODE_INSTANCE_FILE: &str = ".coincube_node_instance";
+
+/// Length of a node-instance identity, in characters.
+pub const NODE_INSTANCE_LEN: usize = 32;
+
+/// Whether `value` is a complete, well-formed node identity.
+///
+/// Reader and writer have to agree on this exactly. A marker that is accepted while
+/// half-written yields an identity that differs from the one the finished file gives,
+/// and a repair recorded against the first would stop matching once the second is
+/// what everybody reads.
+pub fn valid_node_instance(value: &str) -> bool {
+    value.len() == NODE_INSTANCE_LEN && value.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
 // Number of retries the client is allowed to do in case of timeout or i/o error
 // while communicating with the bitcoin daemon.
 // A retry happens every 1 second, this makes us give up after one minute.
@@ -620,6 +637,19 @@ impl BitcoinD {
         self.make_request(ClientKind::Node, method, params)
     }
 
+    /// A node call whose timeout is meaningful, so it must not be retried.
+    ///
+    /// The retry path treats a timed-out request as transient and sends it again.
+    /// For a call we deliberately let run to the socket timeout — to learn whether
+    /// the node finished within it — that turns one bounded wait into several.
+    fn make_fallible_node_request_noretry(
+        &self,
+        method: &str,
+        params: Option<&serde_json::value::RawValue>,
+    ) -> Result<Json, BitcoindError> {
+        self.make_request_inner(ClientKind::Node, method, params, false)
+    }
+
     fn make_node_request(
         &self,
         method: &str,
@@ -644,6 +674,88 @@ impl BitcoinD {
         params: Option<&serde_json::value::RawValue>,
     ) -> Result<Json, BitcoindError> {
         self.make_request(ClientKind::Watchonly, method, params)
+    }
+
+    /// Which node these clients were built against: the RPC endpoint, plus a
+    /// fingerprint of everything else that distinguishes nodes sharing one.
+    ///
+    /// The instance marker, where the node has one, is what makes this an identity
+    /// rather than a description of our configuration. A cookie path separates two
+    /// *different* datadirs, but a datadir rebuilt at the same path keeps the same
+    /// path — and, for a user/password backend, two nodes on one endpoint with the
+    /// same username are indistinguishable. The marker lives inside the datadir, so
+    /// it goes when the datadir goes and the replacement gets a fresh one.
+    pub fn backend_id(&self) -> super::BackendId {
+        Self::backend_id_for(&self.config)
+    }
+
+    /// The identity a client built from `config` reports, derived fresh every time.
+    ///
+    /// Deliberately not cached. A client built while the datadir's marker was still on
+    /// its way would otherwise keep the markerless identity for the rest of its life —
+    /// and a repair authorised later, once the marker landed, would name the marker-based
+    /// identity that this long-lived client never agrees with. The poller would then go
+    /// on refusing the very rollback the repair performed, until the Vault was restarted.
+    ///
+    /// The cost is one small read, and only on the paths that ask: a poller consults this
+    /// when it has both detected a reorg and found an authorisation armed.
+    pub fn backend_id_for(config: &config::BitcoindConfig) -> super::BackendId {
+        Self::backend_id_from(
+            config,
+            Self::read_node_instance(&config.rpc_auth).as_deref(),
+        )
+    }
+
+    /// The identity this node had before datadir instance markers existed.
+    ///
+    /// Equal to [`Self::backend_id`] on a node with no marker. Exists so an
+    /// authorisation recorded under the old scheme can be recognised as this node's and
+    /// re-stamped, rather than silently stop matching the day a marker is introduced.
+    pub fn legacy_backend_id(&self) -> super::BackendId {
+        Self::legacy_backend_id_for(&self.config)
+    }
+
+    /// [`Self::legacy_backend_id`] for a config without a client.
+    pub fn legacy_backend_id_for(config: &config::BitcoindConfig) -> super::BackendId {
+        Self::backend_id_from(config, None)
+    }
+
+    fn backend_id_from(
+        config: &config::BitcoindConfig,
+        instance: Option<&str>,
+    ) -> super::BackendId {
+        let descriptor = match &config.rpc_auth {
+            config::BitcoindRpcAuth::CookieFile(path) => {
+                format!("cookie:{}", path.to_string_lossy())
+            }
+            config::BitcoindRpcAuth::UserPass(user, _) => format!("user:{user}"),
+        };
+        let descriptor = match instance {
+            Some(instance) => format!("{descriptor}|instance:{instance}"),
+            None => descriptor,
+        };
+        super::BackendId {
+            addr: config.addr,
+            credentials: super::BackendId::fingerprint(&descriptor),
+        }
+    }
+
+    /// Read the instance marker a managed node's datadir carries, if any.
+    ///
+    /// Sits beside the cookie file, i.e. inside the node's own datadir, which is what
+    /// ties it to this instance of it rather than to our configuration. Absent for an
+    /// external node, for a user/password backend, and for managed datadirs created
+    /// before the marker existed — in all of which cases identity falls back to the
+    /// endpoint and credentials alone, exactly as before.
+    fn read_node_instance(auth: &config::BitcoindRpcAuth) -> Option<String> {
+        let config::BitcoindRpcAuth::CookieFile(cookie_path) = auth else {
+            return None;
+        };
+        let marker = cookie_path.parent()?.join(NODE_INSTANCE_FILE);
+        let instance = fs::read_to_string(marker).ok()?.trim().to_string();
+        // Validated, not merely non-empty. A partially written marker must never
+        // become an identity of its own — see [`valid_node_instance`].
+        valid_node_instance(&instance).then_some(instance)
     }
 
     fn get_bitcoind_version(&self) -> u64 {
@@ -1420,6 +1532,52 @@ impl BitcoinD {
         self.make_noreply_node_request("reconsiderblock", params!(Json::String(hash.to_string())))
     }
 
+    /// Same as [`Self::reconsider_block_noreply`], but wait to see whether the node
+    /// finishes within [`RPC_SOCKET_TIMEOUT`].
+    ///
+    /// `reconsiderblock` re-activates the best chain before it replies, so a reply
+    /// means the node is *done* — which is the one authoritative completion signal
+    /// available for this operation. Watching the chain from outside cannot supply
+    /// it: a node that clears the flags and immediately re-rejects the same block
+    /// leaves the block index looking exactly as it did before the call, so an
+    /// observer cannot tell "already re-checked and refused" from "our request never
+    /// arrived".
+    ///
+    /// `Ok(false)` when the call timed out instead. That is not a failure — a
+    /// reconnect spanning many blocks legitimately outlasts the socket, and the node
+    /// carries on regardless — it only means completion has to be established some
+    /// other way.
+    pub fn reconsider_block(&self, hash: &bitcoin::BlockHash) -> Result<bool, BitcoindError> {
+        match self.make_fallible_node_request_noretry(
+            "reconsiderblock",
+            params!(Json::String(hash.to_string())),
+        ) {
+            Ok(_) => Ok(true),
+            Err(e) if e.is_timeout() => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Total work in the chain ending at `hash`, as bitcoind reports it: 64 lowercase
+    /// hex digits, zero-padded, so two of them compare correctly as strings.
+    ///
+    /// Height is not a stand-in for this. A longer branch can carry less work than a
+    /// shorter one, and "is the node on the best chain it knows of" is a question
+    /// about work.
+    pub fn block_chainwork(&self, hash: &bitcoin::BlockHash) -> Option<String> {
+        let work = self
+            .make_fallible_node_request("getblockheader", params!(Json::String(hash.to_string())))
+            .ok()?
+            .get("chainwork")
+            .and_then(Json::as_str)?
+            .to_lowercase();
+        if work.len() > 64 || !work.chars().all(|c| c.is_ascii_hexdigit()) {
+            log::warn!("Unreadable 'chainwork' in 'getblockheader' response: {work:?}");
+            return None;
+        }
+        Some(format!("{work:0>64}"))
+    }
+
     // Make sure the bitcoind has enough blocks to rescan up to this timestamp.
     fn check_prune_height(&self, timestamp: u32) -> Result<(), BitcoindError> {
         let chain_info = self.block_chain_info();
@@ -2046,6 +2204,77 @@ mod tests {
         assert!(!status("locked_in", false).has_failed());
         assert!(!status("active", true).has_failed());
         assert!(status("failed", false).has_failed());
+    }
+
+    // A client built while the datadir's marker was still on its way must not keep the
+    // markerless identity once it lands. If it did, a repair authorised afterwards would
+    // name an identity that long-lived client never agrees with, and its poller would go
+    // on refusing the very rollback the repair performed until the Vault was restarted.
+    // So the identity is derived from the config every time it is asked for, which is
+    // what this checks — `backend_id` is a one-line delegation to it.
+    #[test]
+    fn the_backend_identity_follows_a_marker_that_arrives_later() {
+        let dir = std::env::temp_dir().join(format!(
+            "coincubed-backend-id-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = config::BitcoindConfig {
+            rpc_auth: config::BitcoindRpcAuth::CookieFile(dir.join(".cookie")),
+            addr: "127.0.0.1:8332".parse().unwrap(),
+        };
+
+        // Before the marker exists — the state a client constructed during a failed
+        // establishment sees — identity is the markerless one.
+        let before = BitcoinD::backend_id_for(&config);
+        assert_eq!(before, BitcoinD::legacy_backend_id_for(&config));
+
+        // The marker lands later in the same process.
+        std::fs::write(
+            dir.join(NODE_INSTANCE_FILE),
+            "aB3xY7zQ1mN5pR9tK2vW4sD6gH8jL0cF",
+        )
+        .unwrap();
+
+        // The same config now reports the marker-based identity, without anything being
+        // rebuilt: a repair authorised under it is one an existing client can match.
+        let after = BitcoinD::backend_id_for(&config);
+        assert_ne!(after, before, "the identity did not follow the marker");
+        assert_ne!(after, BitcoinD::legacy_backend_id_for(&config));
+        // The pre-marker identity is still computable, which is what lets an
+        // authorisation recorded under it be recognised and re-stamped.
+        assert_eq!(BitcoinD::legacy_backend_id_for(&config), before);
+
+        // A marker that is present but malformed is not an identity of its own: it reads
+        // as "no marker yet", so a client cannot settle on a value the finished file will
+        // contradict.
+        std::fs::write(dir.join(NODE_INSTANCE_FILE), "partial").unwrap();
+        assert_eq!(BitcoinD::backend_id_for(&config), before);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Reader and writer of the datadir instance marker have to agree on this exactly.
+    // Anything the reader accepts while it is half-written becomes an identity of its
+    // own, and a repair recorded against it stops matching once the complete marker is
+    // what everybody sees.
+    #[test]
+    fn only_a_complete_node_instance_is_accepted() {
+        assert!(valid_node_instance(&"a".repeat(NODE_INSTANCE_LEN)));
+        assert!(valid_node_instance("aB3xY7zQ1mN5pR9tK2vW4sD6gH8jL0cF"));
+
+        // Empty, truncated, over-long, or carrying anything the generator never emits.
+        assert!(!valid_node_instance(""));
+        assert!(!valid_node_instance(&"a".repeat(NODE_INSTANCE_LEN - 1)));
+        assert!(!valid_node_instance(&"a".repeat(NODE_INSTANCE_LEN + 1)));
+        assert!(!valid_node_instance(&format!(
+            "{}!",
+            "a".repeat(NODE_INSTANCE_LEN - 1)
+        )));
+        // Multi-byte characters must not pass a length check done in bytes.
+        assert!(!valid_node_instance(&"é".repeat(NODE_INSTANCE_LEN / 2)));
     }
 
     // Bitcoin Knots 29.x shares Core's numeric `getnetworkinfo.version` scheme:
