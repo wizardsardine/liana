@@ -4649,13 +4649,24 @@ impl App {
                 let members = self.panels.connect.cube.members.members.clone();
                 let session_generation = self.panels.connect.account.session_generation();
                 let local_cube_id = self.cube_settings.id.clone();
-                // A status load is the only message that reveals an eligible
-                // Vault for the one-time prompt; a *successful user change* means
-                // the owner has engaged with the alerts decision, so the prompt
-                // must never re-fire for this Cube (else turning alerts off would
-                // immediately re-nudge — the residual nudge is the banner, not
-                // the modal). Classify before `msg` is moved into `update`.
-                let is_status_load = matches!(msg, view::RecoveryAlertsMessage::StatusLoaded(..));
+                // A *successful, current-session* status load is the only message
+                // that reveals an eligible Vault for the one-time prompt; a
+                // *successful user change* means the owner has engaged with the
+                // alerts decision, so the prompt must never re-fire for this Cube
+                // (else turning alerts off would immediately re-nudge — the
+                // residual nudge is the banner, not the modal). Classify before
+                // `msg` is moved into `update`.
+                //
+                // Gate the load on `Ok` + a matching generation: a failed load
+                // leaves the monitoring state unknown (or resets it to no-vault),
+                // and `update` drops a stale-generation load without hydrating
+                // anything (see its guard), so neither reveals a fresh eligible
+                // state to prompt off.
+                let is_status_load = matches!(
+                    msg,
+                    view::RecoveryAlertsMessage::StatusLoaded(Ok(_), gen)
+                        if gen == session_generation
+                );
                 // Only an *accepted* change counts as engagement. `update` drops
                 // a `ChangeResult` whose captured generation no longer matches the
                 // active session (see its stale-result guard), so gate on the same
