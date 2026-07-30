@@ -406,7 +406,7 @@ fn refuse_deep_reorg(
         current_tip,
         MAX_REORG_DEPTH
     );
-    reorg_alert.store(depth);
+    reorg_alert.store_refused_reorg(depth);
 }
 
 /// Report that our tip is off the backend's chain with no reorg outstanding to
@@ -422,7 +422,7 @@ fn refuse_deep_reorg(
 /// It resolves itself rather than needing a restart: the backend keeps syncing, and as
 /// soon as its chain contains our tip again (a provider that was serving a truncated
 /// or foreign chain recovers, or a rescan rebuilds ours) the next poll takes the
-/// ordinary forward-progress path.
+/// ordinary forward-progress path, which clears the alert.
 fn report_divergence(
     reorg_alert: &ReorgAlertCache,
     current_tip: &BlockChainTip,
@@ -436,14 +436,15 @@ fn report_divergence(
         current_tip,
         backend_tip
     );
-    // Publish it for `get_info` the same way a refused reorg is, but only when the
-    // backend's chain is actually *below* ours: that gap is the rollback we are
-    // declining, and the depth is what the alert means. A backend ahead of us that
-    // simply cannot vouch for our tip is not a rollback, and 0 reads as "no alert".
-    let depth = current_tip.height.saturating_sub(backend_tip.height);
-    if depth > 0 {
-        reorg_alert.store(depth);
-    }
+    // Publish it for `get_info` as an explicit divergence — a *distinct* status from a
+    // refused deep reorg. We must not fold it into `refused_reorg_depth`: this backend
+    // cannot tell us where the chains parted, so the true fork could be far deeper than
+    // the tips' height gap, and when the backend sits at or above our height there is no
+    // rollback at all. Recording a number here would misrepresent an unknown divergence
+    // as an exact rollback depth, and a zero gap would read as "no alert" — silently
+    // hiding a poll that is in fact paused, most visibly right after a daemon restart
+    // when no earlier alert survives in memory to paper over it.
+    reorg_alert.store_divergence();
 }
 
 fn updates(
@@ -550,8 +551,9 @@ fn updates(
         }
     };
 
-    // We got a coherent answer out of the backend, so any outstanding "implausible reorg"
-    // alert no longer reflects reality. Clear it before touching coins.
+    // We got a coherent answer out of the backend and its chain contains our tip, so any
+    // outstanding chain alert — a refused deep reorg or an unresolved divergence — no
+    // longer reflects reality: synchronization has resumed. Clear it before touching coins.
     reorg_alert.clear();
 
     // Then check the state of our coins. Do it even if the tip did not change since last poll, as
@@ -679,6 +681,7 @@ pub fn poll(
 mod tests {
     use super::*;
     use crate::{
+        bitcoin::ChainAlert,
         database::{Coin, DatabaseInterface},
         testutils::{DummyBitcoind, DummyDatabase},
     };
@@ -1062,20 +1065,16 @@ mod tests {
         // rather than paying for a round-trip per block just to report a number.
         assert_eq!(
             alert.load(),
-            Some(MAX_REORG_DEPTH + 1),
+            ChainAlert::RefusedReorg(MAX_REORG_DEPTH + 1),
             "the refusal must be published for get_info"
         );
     }
 
-    /// The end-to-end shape of the crash: a Vault whose tip is off its Esplora
-    /// backend's chain must skip the poll with its state intact, not abort the process.
-    #[test]
-    fn diverged_backend_leaves_coins_and_tip_untouched() {
-        let _disarmed = Sanction::none();
-        let our_tip = tip(146_244, 0xaa);
-
+    /// A wallet holding a single unconfirmed coin, its stored tip at `our_tip`. The
+    /// shared fixture for the divergence end-to-end tests below.
+    fn wallet_with_one_coin(our_tip: &BlockChainTip) -> (DummyDatabase, bitcoin::OutPoint) {
         let mut db = DummyDatabase::new();
-        db.connection().update_tip(&our_tip);
+        db.connection().update_tip(our_tip);
         let outpoint = bitcoin::OutPoint::from_str(
             "3d8ea3e05e4c1e2f4b2e9dbd4a2b4e0dd7f6b0f7c9e8d5a4b3c2d1e0f9a8b7c6:0",
         )
@@ -1091,8 +1090,17 @@ mod tests {
             spend_block: None,
             is_from_self: false,
         }]);
+        (db, outpoint)
+    }
 
-        let mut bit = diverged_backend(&our_tip, 0);
+    /// A full poll against a backend our tip has diverged from must skip with wallet
+    /// state intact and surface an *explicit* divergence for `get_info` — never a bogus
+    /// rollback depth. The alert cache is fresh, exactly as after a daemon restart: the
+    /// divergence has to be re-derived from the backend, not recovered from a surviving
+    /// in-memory alert.
+    fn assert_divergence_reported(our_tip: BlockChainTip, mut bit: DummyBitcoind) {
+        let _disarmed = Sanction::none();
+        let (db, outpoint) = wallet_with_one_coin(&our_tip);
         let descs = test_descs();
         let secp = secp256k1::Secp256k1::verification_only();
         let alert = ReorgAlertCache::default();
@@ -1100,17 +1108,137 @@ mod tests {
 
         updates(&mut db_conn, &mut bit, &descs, &secp, &alert);
 
-        assert!(db.rollbacks().is_empty(), "our tip must not be rolled back");
+        assert!(
+            db.rollbacks().is_empty(),
+            "our tip must not be rolled back while diverged"
+        );
         assert_eq!(
             db.coin_outpoints(),
             vec![outpoint],
-            "no coin may be removed while we are diverged"
+            "no coin may be removed while diverged"
         );
-        assert_eq!(db_conn.chain_tip(), Some(our_tip), "our tip must not move");
+        assert_eq!(
+            db_conn.chain_tip(),
+            Some(our_tip),
+            "our tip must not move while diverged"
+        );
         assert_eq!(
             alert.load(),
-            Some(146_244),
-            "the divergence must be published for get_info"
+            ChainAlert::Diverged,
+            "an unresolved divergence must be published for get_info as a divergence, not \
+             misreported as a refused-reorg depth"
+        );
+    }
+
+    /// The end-to-end shape of the crash: a Vault whose tip is off its Esplora backend's
+    /// chain, the backend rewound all the way below our tip (to genesis, the depth that
+    /// got refused in the field). It must skip the poll with its state intact, not abort
+    /// the process — and now report the divergence explicitly rather than dressing the
+    /// height gap up as an exact rollback depth.
+    #[test]
+    fn diverged_backend_leaves_coins_and_tip_untouched() {
+        let our_tip = tip(146_244, 0xaa);
+        assert_divergence_reported(our_tip, diverged_backend(&our_tip, 0));
+    }
+
+    /// Backend at the *same* height as us but on a different chain. The tips' height gap
+    /// is zero, so the old height-based heuristic stored nothing and `get_info` fell
+    /// silent even though sync was deliberately paused.
+    #[test]
+    fn diverged_backend_at_same_height_is_reported() {
+        let our_tip = tip(146_244, 0xaa);
+        assert_divergence_reported(our_tip, diverged_backend(&our_tip, our_tip.height));
+    }
+
+    /// Backend *ahead* of us but not containing our tip. Not forward progress — recording
+    /// its blocks would append to a chain our own tip isn't on — and, like the same-height
+    /// case, a negative height gap the old heuristic read as "no alert".
+    #[test]
+    fn diverged_backend_above_our_tip_is_reported() {
+        let our_tip = tip(146_244, 0xaa);
+        assert_divergence_reported(our_tip, diverged_backend(&our_tip, our_tip.height + 10));
+    }
+
+    /// A daemon restart drops the in-memory alert. The next poll must re-derive the
+    /// divergence from the backend rather than depend on a surviving alert — the exact
+    /// regression, since a restart mid-divergence against a same-height backend otherwise
+    /// left `get_info` reporting "no alert" for a poll that is in fact paused.
+    #[test]
+    fn divergence_surfaces_from_a_fresh_cache_after_restart() {
+        let _disarmed = Sanction::none();
+        let our_tip = tip(146_244, 0xaa);
+        let (db, _outpoint) = wallet_with_one_coin(&our_tip);
+        let descs = test_descs();
+        let secp = secp256k1::Secp256k1::verification_only();
+        // A just-restarted daemon holds no prior alert in memory.
+        let alert = ReorgAlertCache::default();
+        assert_eq!(
+            alert.load(),
+            ChainAlert::None,
+            "a fresh daemon starts with no alert"
+        );
+        let mut db_conn = db.connection();
+
+        // Backend at our height on a different chain: the zero-gap case the old heuristic
+        // recorded as "no alert".
+        let mut bit = diverged_backend(&our_tip, our_tip.height);
+        updates(&mut db_conn, &mut bit, &descs, &secp, &alert);
+
+        assert_eq!(
+            alert.load(),
+            ChainAlert::Diverged,
+            "divergence must resurface from the backend after a restart, not depend on an \
+             in-memory alert that a restart erased"
+        );
+        assert_eq!(
+            db_conn.chain_tip(),
+            Some(our_tip),
+            "our tip must not move while diverged"
+        );
+    }
+
+    /// The divergence status clears only once a poll succeeds and sync resumes — i.e.
+    /// when the backend's chain contains our tip again.
+    #[test]
+    fn divergence_clears_once_the_chains_converge() {
+        let _disarmed = Sanction::none();
+        let our_tip = tip(146_244, 0xaa);
+        let (db, outpoint) = wallet_with_one_coin(&our_tip);
+        let descs = test_descs();
+        let secp = secp256k1::Secp256k1::verification_only();
+        let alert = ReorgAlertCache::default();
+        let mut db_conn = db.connection();
+
+        // First poll: diverged. The status is published and wallet state is held.
+        let mut bit = diverged_backend(&our_tip, our_tip.height + 5);
+        updates(&mut db_conn, &mut bit, &descs, &secp, &alert);
+        assert_eq!(alert.load(), ChainAlert::Diverged);
+        assert_eq!(
+            db_conn.chain_tip(),
+            Some(our_tip),
+            "state is held while diverged"
+        );
+
+        // The provider recovers: its chain now contains our tip and simply extends it, so
+        // the next poll takes the ordinary forward-progress path and resumes syncing.
+        bit.in_chain = true;
+        bit.tip = tip(our_tip.height + 5, 0xaa);
+        updates(&mut db_conn, &mut bit, &descs, &secp, &alert);
+
+        assert_eq!(
+            alert.load(),
+            ChainAlert::None,
+            "the divergence status must clear once the chains converge and sync resumes"
+        );
+        assert_eq!(
+            db_conn.chain_tip(),
+            Some(tip(our_tip.height + 5, 0xaa)),
+            "sync resumes: our tip advances onto the reconverged chain"
+        );
+        assert_eq!(
+            db.coin_outpoints(),
+            vec![outpoint],
+            "the coin survives convergence"
         );
     }
 
@@ -1133,6 +1261,10 @@ mod tests {
         updates(&mut db_conn, &mut bit, &descs, &secp, &alert);
 
         assert_eq!(db.rollbacks(), vec![tip(20_000 - 3, 0xcc)]);
-        assert_eq!(alert.load(), None, "an applied reorg raises no alert");
+        assert_eq!(
+            alert.load(),
+            ChainAlert::None,
+            "an applied reorg raises no alert"
+        );
     }
 }

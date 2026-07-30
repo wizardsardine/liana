@@ -382,6 +382,14 @@ impl DaemonControl {
         let rescan_progress = wallet
             .rescan_timestamp
             .map(|_| self.bitcoin.rescan_progress().unwrap_or(1.0));
+        // Split the poller's single chain alert into the two distinct fields it drives.
+        // Read once so the two can never disagree, and keep an unknown divergence out of
+        // `refused_reorg_depth`: it is not a rollback of a known depth.
+        let (refused_reorg_depth, chain_divergence) = match self.reorg_alert_cache.load() {
+            crate::bitcoin::ChainAlert::None => (None, false),
+            crate::bitcoin::ChainAlert::RefusedReorg(depth) => (Some(depth), false),
+            crate::bitcoin::ChainAlert::Diverged => (None, true),
+        };
         GetInfoResult {
             version: VERSION.to_string(),
             network: self.config.bitcoin_config.network,
@@ -395,7 +403,8 @@ impl DaemonControl {
                 main: self.config.main_descriptor.clone(),
             },
             rescan_progress,
-            refused_reorg_depth: self.reorg_alert_cache.load(),
+            refused_reorg_depth,
+            chain_divergence,
             timestamp: wallet.timestamp,
             last_poll_timestamp: wallet.last_poll_timestamp,
             receive_index,
@@ -1420,10 +1429,22 @@ pub struct GetInfoResult {
     pub rescan_progress: Option<f64>,
     /// Depth, in blocks, of a block chain reorganization the poller refused to apply because
     /// it exceeded `MAX_REORG_DEPTH`. `Some` means our view of the chain is deliberately not
-    /// being updated from the backend, because the backend looks untrustworthy — see
-    /// [`crate::bitcoin::ReorgAlertCache`]. Absent from older daemons, hence `serde(default)`.
+    /// being updated from the backend, because a rollback that deep is far likelier a
+    /// misreporting backend than real history being undone — see
+    /// [`crate::bitcoin::ChainAlert::RefusedReorg`]. This reports *only* a refused deep reorg;
+    /// an unresolved chain divergence is reported separately by `chain_divergence` and must
+    /// not be conflated with it. Absent from older daemons, hence `serde(default)`.
     #[serde(default)]
     pub refused_reorg_depth: Option<i32>,
+    /// Whether the poller has paused synchronization because our tip is off the backend's chain
+    /// and that backend (Electrum/Esplora) cannot be asked where the two chains parted. This is
+    /// a *distinct* condition from `refused_reorg_depth`: there is no known fork point and hence
+    /// no rollback depth to report, so unlike a refused deep reorg it carries no number — the
+    /// tips' height gap is not one. `true` means wallet state is being held intact until the
+    /// chains reconverge; see [`crate::bitcoin::ChainAlert::Diverged`]. Defaults to `false` for
+    /// older daemons that don't report it.
+    #[serde(default)]
+    pub chain_divergence: bool,
     /// Timestamp at wallet creation date
     pub timestamp: u32,
     /// Timestamp of last poll, if any.
