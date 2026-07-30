@@ -1901,9 +1901,12 @@ impl App {
         )
     }
 
-    /// Show the one-time recovery-alerts consent prompt (PR 3) when this Cube's
-    /// Vault has keyholders, a Connect session, and no monitoring yet — and the
-    /// prompt hasn't already been answered for this Cube. Idempotent within a
+    /// Show the one-time recovery-alerts consent prompt (PR 3) when this device
+    /// holds the Vault and that Vault has keyholders, a Connect session, and no
+    /// monitoring yet — and the prompt hasn't already been answered for this
+    /// Cube. A walletless instance (`App::new_without_wallet`) can still have a
+    /// Connect cube with keyholders, so gate on the local wallet or it would
+    /// consent on behalf of a Vault it doesn't hold. Idempotent within a
     /// session (the overlay flag guards re-entry); the durable answer lives in
     /// `CubeSettings::recovery_alerts_prompt_answered`. Called both at Vault
     /// setup completion and after each monitoring-status load (the post-sync
@@ -1917,6 +1920,7 @@ impl App {
             self.panels.connect.account.is_recovery_alerts_entitled(),
             !self.panels.connect.cube.members.members.is_empty(),
             self.panels.global_settings.recovery_alerts.alerts_on(),
+            self.wallet.is_some(),
         ) {
             self.show_recovery_alerts_prompt = true;
         }
@@ -4645,15 +4649,34 @@ impl App {
                 let members = self.panels.connect.cube.members.members.clone();
                 let session_generation = self.panels.connect.account.session_generation();
                 let local_cube_id = self.cube_settings.id.clone();
-                // A status load is the only message that reveals an eligible
-                // Vault for the one-time prompt; a *successful user change* means
-                // the owner has engaged with the alerts decision, so the prompt
-                // must never re-fire for this Cube (else turning alerts off would
-                // immediately re-nudge — the residual nudge is the banner, not
-                // the modal). Classify before `msg` is moved into `update`.
-                let is_status_load = matches!(msg, view::RecoveryAlertsMessage::StatusLoaded(..));
-                let is_ok_change =
-                    matches!(msg, view::RecoveryAlertsMessage::ChangeResult(Ok(_), _, _));
+                // A *successful, current-session* status load is the only message
+                // that reveals an eligible Vault for the one-time prompt; a
+                // *successful user change* means the owner has engaged with the
+                // alerts decision, so the prompt must never re-fire for this Cube
+                // (else turning alerts off would immediately re-nudge — the
+                // residual nudge is the banner, not the modal). Classify before
+                // `msg` is moved into `update`.
+                //
+                // Gate the load on `Ok` + a matching generation: a failed load
+                // leaves the monitoring state unknown (or resets it to no-vault),
+                // and `update` drops a stale-generation load without hydrating
+                // anything (see its guard), so neither reveals a fresh eligible
+                // state to prompt off.
+                let is_status_load = matches!(
+                    msg,
+                    view::RecoveryAlertsMessage::StatusLoaded(Ok(_), gen)
+                        if gen == session_generation
+                );
+                // Only an *accepted* change counts as engagement. `update` drops
+                // a `ChangeResult` whose captured generation no longer matches the
+                // active session (see its stale-result guard), so gate on the same
+                // match here — otherwise a stale success that never touched state
+                // would still permanently mark the prompt answered.
+                let is_ok_change = matches!(
+                    msg,
+                    view::RecoveryAlertsMessage::ChangeResult(Ok(_), gen, _)
+                        if gen == session_generation
+                );
                 let task = crate::app::state::settings::recovery_alerts::update(
                     &mut self.panels.global_settings.recovery_alerts,
                     msg,
@@ -4957,11 +4980,13 @@ impl App {
 
 /// Pure gating rules for the one-time recovery-alerts consent prompt (PR 3),
 /// separated from `App::maybe_show_recovery_alerts_prompt` so they're unit-
-/// testable without a full `App`. The prompt shows exactly when: it isn't
-/// already up, it hasn't been answered for this Cube, there's an authenticated
-/// Connect session with a resolved cube, alerts are available on the plan
-/// (defense-in-depth; universal after API PR 3), the Cube has ≥1 keyholder
-/// (someone to alert), and this Vault isn't already monitored.
+/// testable without a full `App`. The prompt shows exactly when: this device
+/// actually holds the Vault (a walletless instance has nothing to monitor and
+/// must never consent on its behalf), it isn't already up, it hasn't been
+/// answered for this Cube, there's an authenticated Connect session with a
+/// resolved cube, alerts are available on the plan (defense-in-depth; universal
+/// after API PR 3), the Cube has ≥1 keyholder (someone to alert), and this
+/// Vault isn't already monitored.
 #[allow(clippy::too_many_arguments)]
 fn should_show_recovery_alerts_prompt(
     already_showing: bool,
@@ -4971,8 +4996,10 @@ fn should_show_recovery_alerts_prompt(
     entitled: bool,
     has_keyholders: bool,
     alerts_on: bool,
+    has_vault: bool,
 ) -> bool {
-    !already_showing
+    has_vault
+        && !already_showing
         && !answered
         && authenticated
         && has_server_cube
@@ -5188,47 +5215,52 @@ mod tests {
     };
 
     // Baseline: every gating precondition satisfied → prompt shows.
-    fn prompt_args_all_go() -> (bool, bool, bool, bool, bool, bool, bool) {
+    fn prompt_args_all_go() -> (bool, bool, bool, bool, bool, bool, bool, bool) {
         // (already_showing, answered, authenticated, has_server_cube, entitled,
-        //  has_keyholders, alerts_on)
-        (false, false, true, true, true, true, false)
+        //  has_keyholders, alerts_on, has_vault)
+        (false, false, true, true, true, true, false, true)
     }
 
     #[test]
     fn recovery_alerts_prompt_shows_when_all_conditions_met() {
-        let (a, b, c, d, e, f, g) = prompt_args_all_go();
-        assert!(should_show_recovery_alerts_prompt(a, b, c, d, e, f, g));
+        let (a, b, c, d, e, f, g, h) = prompt_args_all_go();
+        assert!(should_show_recovery_alerts_prompt(a, b, c, d, e, f, g, h));
     }
 
     #[test]
     fn recovery_alerts_prompt_suppressed_by_each_gate() {
         // Already showing → don't stack a second prompt.
         assert!(!should_show_recovery_alerts_prompt(
-            true, false, true, true, true, true, false
+            true, false, true, true, true, true, false, true
         ));
         // Already answered → durable, never re-prompt.
         assert!(!should_show_recovery_alerts_prompt(
-            false, true, true, true, true, true, false
+            false, true, true, true, true, true, false, true
         ));
         // No Connect session.
         assert!(!should_show_recovery_alerts_prompt(
-            false, false, false, true, true, true, false
+            false, false, false, true, true, true, false, true
         ));
         // No resolved Connect cube.
         assert!(!should_show_recovery_alerts_prompt(
-            false, false, true, false, true, true, false
+            false, false, true, false, true, true, false, true
         ));
         // Not entitled (alerts unavailable on plan).
         assert!(!should_show_recovery_alerts_prompt(
-            false, false, true, true, false, true, false
+            false, false, true, true, false, true, false, true
         ));
         // No keyholders → nobody to alert.
         assert!(!should_show_recovery_alerts_prompt(
-            false, false, true, true, true, false, false
+            false, false, true, true, true, false, false, true
         ));
         // Already monitored → nothing to prompt for.
         assert!(!should_show_recovery_alerts_prompt(
-            false, false, true, true, true, true, true
+            false, false, true, true, true, true, true, true
+        ));
+        // No local Vault (walletless instance) → nothing to consent for, even
+        // with a Connect cube and keyholders present.
+        assert!(!should_show_recovery_alerts_prompt(
+            false, false, true, true, true, true, false, false
         ));
     }
 
