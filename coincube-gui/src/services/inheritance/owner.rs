@@ -97,7 +97,7 @@ pub async fn enroll_escrow(
     // 3. Switch the server-blind heartbeat gate on. Monitoring is keyed on
     //    the same cube id as the escrow upload above — no vault id involved.
     //    No descriptor — under ECIES the server stores none.
-    let status = client
+    let mut status = client
         .set_vault_monitoring(
             server_cube_id,
             SetVaultMonitoringRequest {
@@ -107,31 +107,100 @@ pub async fn enroll_escrow(
             },
         )
         .await?;
+    // The desktop knows exactly which artifact kinds it just sealed, so stamp
+    // them onto the returned status. The settings card derives the escrow tier
+    // straight from `escrowed_artifacts` (server-derived model, no session-tracked
+    // guess), so this makes the card reflect the enrolment immediately and stays
+    // correct even against an API that doesn't yet echo the field on this
+    // response. The next `LoadStatus` reconciles against the server's own report.
+    status.escrowed_artifacts = Some(if seed_json.is_some() {
+        vec!["descriptor".to_string(), "seed".to_string()]
+    } else {
+        vec!["descriptor".to_string()]
+    });
     Ok(status)
 }
 
-/// Turns inheritance escrow off: true-delete the monitoring record and the
-/// stored envelope set. Idempotent (both deletes treat 404 as success).
+/// Turns **alerts** (monitoring) on without escrowing anything — the standalone
+/// "Recovery alerts" opt-in (PR 2). Posts the monitoring record so the server
+/// watches the timelock heartbeat and emails keyholders when the recovery window
+/// opens; no descriptor or seed is uploaded. Returns the new (alerts-on,
+/// nothing-escrowed) status.
 ///
-/// Order mirrors `enroll_escrow` in reverse to preserve its invariant — escrow
-/// is uploaded before monitoring is switched on, so "monitoring on" always
-/// implies "ciphertext present." Tearing down, we therefore switch monitoring
-/// **off first**, then delete the escrow set. If the second call fails the Vault
-/// is left un-monitored with a harmless leftover (opaque, server-blind)
-/// envelope set that a retry removes — never the inverse, a monitored Vault with
-/// no ciphertext, where a recovery window could open with nothing for heirs.
+/// Only ever called when alerts were off — and by the split-model invariant
+/// (*escrow present ⟹ monitoring on*) escrow was therefore off too — so nothing
+/// is escrowed on return. We stamp `escrowed_artifacts = []` to say so.
+pub async fn enable_alerts(
+    client: &CoincubeClient,
+    server_cube_id: u64,
+) -> Result<VaultMonitoringStatus, OwnerEscrowError> {
+    let mut status = client
+        .set_vault_monitoring(
+            server_cube_id,
+            SetVaultMonitoringRequest {
+                level: VaultMonitoringLevel::Heartbeat,
+                descriptor: None,
+                gap_limit: None,
+            },
+        )
+        .await?;
+    status.escrowed_artifacts = Some(Vec::new());
+    Ok(status)
+}
+
+/// Turns **alerts** (monitoring) off — the only path that deletes the monitoring
+/// record. When `also_delete_escrow` is set (an escrow set is currently stored),
+/// the envelope set is deleted **first**, then monitoring, so a partial failure
+/// can never strand the forbidden state *escrow present + monitoring off* — a
+/// recovery window that could open with a stored kit no keyholder is being
+/// watched for. This reverses the old fused order deliberately: under the split
+/// model the safe-to-linger leftover is a *monitored* Vault (alerts-only), not a
+/// stored-kit-without-monitoring one. Both deletes are idempotent (404 =
+/// success). Returns the fully-off status.
+pub async fn disable_alerts(
+    client: &CoincubeClient,
+    server_cube_id: u64,
+    also_delete_escrow: bool,
+) -> Result<VaultMonitoringStatus, OwnerEscrowError> {
+    if also_delete_escrow {
+        // Escrow first: once it's gone we're in the valid alerts-only state, so
+        // if the monitoring delete then fails a retry finishes the job and we
+        // were never in the forbidden escrow-without-monitoring state.
+        client.delete_vault_escrow(server_cube_id).await?;
+    }
+    client.delete_vault_monitoring(server_cube_id).await?;
+    Ok(VaultMonitoringStatus {
+        level: VaultMonitoringLevel::Off,
+        escrowed_artifacts: Some(Vec::new()),
+        ..VaultMonitoringStatus::default()
+    })
+}
+
+/// Turns inheritance **escrow** off while leaving alerts (the monitoring record)
+/// in place — the "Nothing — alerts only" escrow selection (PR 2). True-deletes
+/// the stored envelope set; monitoring keeps running so keyholders are still
+/// alerted when the recovery window opens (they simply have no escrowed kit to
+/// recover with). Idempotent (a 404 on the escrow delete is success).
 ///
-/// Monitoring and escrow are both **cube-scoped**, so unlike a vault-keyed
-/// design there is no separate id to keep in sync here — a rebuilt Vault
-/// (new vault id, same cube) doesn't strand either delete.
+/// This is the escrow half of the old fused teardown, split out so the card's
+/// two controls map to two operations. It preserves the split-model invariant
+/// *escrow present ⟹ monitoring on*: after this returns escrow is gone and
+/// monitoring survives — a valid state. The monitoring record is deleted **only**
+/// by [`disable_alerts`].
+///
+/// Escrow is **cube-scoped**, so a rebuilt Vault (new vault id, same cube)
+/// doesn't strand the delete.
 pub async fn disable_escrow(
     client: &CoincubeClient,
     server_cube_id: u64,
 ) -> Result<VaultMonitoringStatus, OwnerEscrowError> {
-    client.delete_vault_monitoring(server_cube_id).await?;
     client.delete_vault_escrow(server_cube_id).await?;
+    // Monitoring stays on; report alerts-on with nothing escrowed. The exact
+    // on-level (heartbeat vs full) is immaterial to the desktop — any non-Off
+    // level reads as "alerts on" — and the next LoadStatus reconciles it.
     Ok(VaultMonitoringStatus {
-        level: VaultMonitoringLevel::Off,
+        level: VaultMonitoringLevel::Heartbeat,
+        escrowed_artifacts: Some(Vec::new()),
         ..VaultMonitoringStatus::default()
     })
 }
@@ -224,7 +293,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disable_deletes_escrow_and_monitoring() {
+    async fn disable_escrow_deletes_escrow_only_keeping_alerts() {
+        // The "Nothing — alerts only" selection deletes the envelope set but
+        // NOT the monitoring record: keyholders still get the recovery-window
+        // alert. The monitoring DELETE mock is registered and must NOT be hit.
         let server = MockServer::start();
         let escrow_del = server.mock(|when, then| {
             when.method(Method::DELETE)
@@ -242,22 +314,49 @@ mod tests {
         let client = CoincubeClient::for_test(server.base_url());
         let status = disable_escrow(&client, 42).await.expect("disable ok");
         escrow_del.assert();
-        monitoring_del.assert();
-        assert_eq!(status.level, VaultMonitoringLevel::Off);
+        monitoring_del.assert_hits(0);
+        // Alerts stay on, nothing escrowed.
+        assert_ne!(status.level, VaultMonitoringLevel::Off);
+        assert_eq!(status.escrowed_artifacts.as_deref(), Some(&[][..]));
     }
 
     #[tokio::test]
-    async fn disable_removes_monitoring_before_escrow() {
-        // Safety ordering: monitoring is switched off first. If that fails we
-        // must bail *before* deleting the escrow set, so a partial failure never
-        // leaves a monitored Vault with no ciphertext (a recovery window could
-        // open with nothing for heirs). The escrow DELETE mock is registered but
-        // must NOT be hit.
+    async fn enable_alerts_posts_monitoring_without_escrow() {
+        // The standalone "Recovery alerts" opt-in posts the monitoring record
+        // and uploads nothing — no PUT escrow, no descriptor in the body.
+        let server = MockServer::start();
+        let monitoring_mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/cubes/42/vault/monitoring");
+            then.status(200).json_body(json!({
+                "success": true,
+                "data": { "monitoringLevel": "heartbeat" }
+            }));
+        });
+        // Escrow PUT must NOT be called.
+        let escrow_put = server.mock(|when, then| {
+            when.method(Method::PUT)
+                .path("/api/v1/connect/cubes/42/vault/escrow");
+            then.status(200)
+                .json_body(json!({ "success": true, "data": {} }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let status = enable_alerts(&client, 42).await.expect("enable ok");
+        monitoring_mock.assert();
+        escrow_put.assert_hits(0);
+        assert_ne!(status.level, VaultMonitoringLevel::Off);
+        assert_eq!(status.escrowed_artifacts.as_deref(), Some(&[][..]));
+    }
+
+    #[tokio::test]
+    async fn disable_alerts_without_escrow_deletes_monitoring_only() {
         let server = MockServer::start();
         let monitoring_del = server.mock(|when, then| {
             when.method(Method::DELETE)
                 .path("/api/v1/connect/cubes/42/vault/monitoring");
-            then.status(500).json_body(json!({ "success": false }));
+            then.status(200)
+                .json_body(json!({ "success": true, "data": {} }));
         });
         let escrow_del = server.mock(|when, then| {
             when.method(Method::DELETE)
@@ -267,13 +366,43 @@ mod tests {
         });
 
         let client = CoincubeClient::for_test(server.base_url());
-        let err = disable_escrow(&client, 42)
+        let status = disable_alerts(&client, 42, false)
             .await
-            .expect_err("monitoring delete failure should propagate");
-        assert!(matches!(err, OwnerEscrowError::Connect(_)));
+            .expect("disable ok");
         monitoring_del.assert();
-        // Escrow set is left intact (opaque, server-blind) for a retry to clear.
         escrow_del.assert_hits(0);
+        assert_eq!(status.level, VaultMonitoringLevel::Off);
+    }
+
+    #[tokio::test]
+    async fn disable_alerts_removes_escrow_before_monitoring() {
+        // Safety ordering under the split model: when both go, escrow is
+        // deleted FIRST. If that fails we must bail *before* deleting the
+        // monitoring record, so a partial failure never leaves the forbidden
+        // state escrow-present + monitoring-off (a recovery window could open
+        // with a stored kit no keyholder is being watched for). The monitoring
+        // DELETE mock is registered but must NOT be hit.
+        let server = MockServer::start();
+        let escrow_del = server.mock(|when, then| {
+            when.method(Method::DELETE)
+                .path("/api/v1/connect/cubes/42/vault/escrow");
+            then.status(500).json_body(json!({ "success": false }));
+        });
+        let monitoring_del = server.mock(|when, then| {
+            when.method(Method::DELETE)
+                .path("/api/v1/connect/cubes/42/vault/monitoring");
+            then.status(200)
+                .json_body(json!({ "success": true, "data": {} }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = disable_alerts(&client, 42, true)
+            .await
+            .expect_err("escrow delete failure should propagate");
+        assert!(matches!(err, OwnerEscrowError::Connect(_)));
+        escrow_del.assert();
+        // Monitoring record is left intact (alerts stay on) for a retry to clear.
+        monitoring_del.assert_hits(0);
     }
 
     #[tokio::test]

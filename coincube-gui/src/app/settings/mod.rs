@@ -450,6 +450,14 @@ pub struct CubeSettings {
     /// Remove-all. Back-compat is free — only the phone-seal path ever writes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_kit_last_backed_up_keychain_descriptor_fingerprint: Option<String>,
+    /// Whether the one-time "turn on recovery alerts?" consent prompt has been
+    /// answered for this Cube's Vault (PLAN-recovery-alerts-cleanup PR 3). Once
+    /// `true` — whether the user accepted or declined — the prompt never fires
+    /// again: a decline is durable, not nagging. `false`/absent = not yet asked.
+    /// The residual nudge (a banner on the Recovery settings card when keyholders
+    /// exist and alerts are off) is derived from live state, independent of this.
+    #[serde(default)]
+    pub recovery_alerts_prompt_answered: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -491,6 +499,7 @@ impl CubeSettings {
             balance_masked: false,
             recovery_kit_last_backed_up_descriptor_fingerprint: None,
             recovery_kit_last_backed_up_keychain_descriptor_fingerprint: None,
+            recovery_alerts_prompt_answered: false,
         }
     }
 

@@ -319,11 +319,24 @@ pub struct PlanEntitlements {
     /// fan-out when duress fires). See `PLAN-estate-notifications.md` PR 1.
     #[serde(default)]
     pub duress_alerts: bool,
-    /// Estate-only: vault recovery-path monitoring (descriptor escrow or
-    /// timelock heartbeat → keyholder emails). See
-    /// `PLAN-estate-notifications.md` PR 2.
+    /// Vault recovery-path monitoring (timelock heartbeat → keyholder emails).
+    /// After the recovery-alerts cleanup (API PR 3) the server returns this
+    /// `true` on **all** plans, so the alerts toggle is available to everyone;
+    /// the desktop keeps reading it as a defense-in-depth gate. See
+    /// `PLAN-estate-notifications.md` PR 2 and `PLAN-recovery-alerts-cleanup.md`.
     #[serde(default)]
     pub recovery_alerts: bool,
+    /// Estate-only: the server-blind ECIES **inheritance escrow** — the
+    /// encrypted recovery kit (descriptor, optionally seed) sealed to each
+    /// keyholder's key. Gates the "What keyholders can recover" tier selector on
+    /// the Recovery Alerts card, separately from the (universal) alerts toggle
+    /// above. `#[serde(default)]` means an older API that omits it fails
+    /// **closed** (the selector shows its locked affordance) — the safe
+    /// direction for a paid feature. Wire key `inheritanceEscrow` (the API's
+    /// canonical name in `entitlements.go`; via the struct-level camelCase). See
+    /// `PLAN-recovery-alerts-cleanup.md` PR 2 + ADDENDUM.
+    #[serde(default)]
+    pub inheritance_escrow: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -2243,6 +2256,21 @@ pub struct VaultMonitoringStatus {
     pub last_notified_state: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    /// Which ECIES artifact kinds the owner currently has escrowed for this
+    /// Vault's keyholders. Drives the desktop's server-derived escrow tier
+    /// (no session-tracked guess):
+    /// - `["descriptor"]` → Vault-only,
+    /// - `["descriptor","seed"]` → Full-Cube,
+    /// - `[]` (present but empty) → alerts-only (nothing escrowed).
+    ///
+    /// `None` when the field is **absent** — an older API that predates the
+    /// escrowed-artifacts report. The desktop then can't tell which tier is
+    /// enrolled and falls back to the "on, tier unknown" copy rather than
+    /// asserting a tier the server didn't confirm (C2). Wire key
+    /// `escrowedArtifacts` (struct-level camelCase); `#[serde(default)]` keeps
+    /// older payloads parsing.
+    #[serde(default)]
+    pub escrowed_artifacts: Option<Vec<String>>,
 }
 
 impl Default for VaultMonitoringStatus {
@@ -2251,6 +2279,7 @@ impl Default for VaultMonitoringStatus {
             level: VaultMonitoringLevel::Off,
             last_notified_state: None,
             updated_at: None,
+            escrowed_artifacts: None,
         }
     }
 }
@@ -2621,6 +2650,38 @@ pub struct PutRecoveryKitEnvelopeRequest {
 }
 
 #[cfg(test)]
+mod plan_entitlements_tests {
+    use super::*;
+
+    #[test]
+    fn escrow_entitlement_reads_canonical_inheritance_escrow_key() {
+        // Regression lock (PLAN-recovery-alerts-cleanup ADDENDUM): the escrow
+        // selector gates on the API's canonical `inheritanceEscrow` key — NOT
+        // the `recoveryEscrow` name the desktop first coined. A drift here silently
+        // fails the selector closed even for Estate, so pin the exact wire key.
+        let estate: PlanEntitlements = serde_json::from_value(serde_json::json!({
+            "recoveryAlerts": true,
+            "inheritanceEscrow": true
+        }))
+        .unwrap();
+        assert!(estate.inheritance_escrow);
+        assert!(estate.recovery_alerts);
+
+        // The old (wrong) key must NOT satisfy the gate — proves the rename stuck.
+        let wrong_key: PlanEntitlements =
+            serde_json::from_value(serde_json::json!({ "recoveryEscrow": true })).unwrap();
+        assert!(!wrong_key.inheritance_escrow);
+    }
+
+    #[test]
+    fn escrow_entitlement_fails_closed_when_absent() {
+        // Older API that omits the field → the selector fails closed (locked).
+        let entitlements = PlanEntitlements::default();
+        assert!(!entitlements.inheritance_escrow);
+    }
+}
+
+#[cfg(test)]
 mod vault_monitoring_tests {
     use super::*;
 
@@ -2713,6 +2774,48 @@ mod vault_monitoring_tests {
         let s: VaultMonitoringStatus = serde_json::from_value(v).unwrap();
         assert_eq!(s.level, VaultMonitoringLevel::Off);
         assert!(s.last_notified_state.is_none());
+    }
+
+    #[test]
+    fn monitoring_status_reads_escrowed_artifacts() {
+        // New API (API PR 1) reports the escrowed artifact kinds so the desktop
+        // derives the tier from the server instead of a session-tracked guess.
+        let vault_only: VaultMonitoringStatus = serde_json::from_value(serde_json::json!({
+            "monitoringLevel": "heartbeat",
+            "escrowedArtifacts": ["descriptor"]
+        }))
+        .unwrap();
+        assert_eq!(
+            vault_only.escrowed_artifacts.as_deref(),
+            Some(&["descriptor".to_string()][..])
+        );
+
+        let full_cube: VaultMonitoringStatus = serde_json::from_value(serde_json::json!({
+            "monitoringLevel": "heartbeat",
+            "escrowedArtifacts": ["descriptor", "seed"]
+        }))
+        .unwrap();
+        assert_eq!(
+            full_cube.escrowed_artifacts.as_deref(),
+            Some(&["descriptor".to_string(), "seed".to_string()][..])
+        );
+
+        // Present but empty → alerts-only (nothing escrowed) — distinct from absent.
+        let alerts_only: VaultMonitoringStatus = serde_json::from_value(serde_json::json!({
+            "monitoringLevel": "heartbeat",
+            "escrowedArtifacts": []
+        }))
+        .unwrap();
+        assert_eq!(alerts_only.escrowed_artifacts.as_deref(), Some(&[][..]));
+    }
+
+    #[test]
+    fn monitoring_status_tolerates_absent_escrowed_artifacts() {
+        // Old API (pre-PR-1) omits the field entirely → None, so the desktop
+        // can distinguish "on, tier unknown" from "on, nothing escrowed".
+        let s: VaultMonitoringStatus =
+            serde_json::from_value(serde_json::json!({ "monitoringLevel": "heartbeat" })).unwrap();
+        assert!(s.escrowed_artifacts.is_none());
     }
 
     #[test]

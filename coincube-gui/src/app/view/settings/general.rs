@@ -160,9 +160,11 @@ fn recovery_section<'a>(
     dashboard(menu, cache, col)
 }
 
-/// Vault Recovery Alerts card: three-tier monitoring selector + keyholder
-/// download policy + the keyholder list, with honest opt-in copy. Estate-
-/// gated; shows the locked affordance for non-Estate accounts.
+/// Vault Recovery Alerts card. Two independent controls backed by two server
+/// records: the **Recovery alerts** toggle (monitoring; not Estate-gated) and
+/// the **What keyholders can recover** escrow selector (Estate-gated). The
+/// keyholder list lives under the alerts toggle (it's who alerts notify). See
+/// `PLAN-recovery-alerts-cleanup.md` PR 2.
 fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
     let mut body = Column::new()
         .spacing(10)
@@ -175,13 +177,13 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
             .size(13),
         );
 
-    // Locked affordance for non-Estate accounts.
+    // Locked affordance when the account can't use recovery alerts at all.
     if !ra.entitled {
         body = body
             .push(
                 text(
-                    "Recovery alerts are part of the Estate plan. Upgrade your Connect plan to \
-                     enable chain monitoring and keyholder alerts.",
+                    "Recovery alerts aren't available on your current plan. Upgrade your Connect \
+                     plan to alert your keyholders when this Vault's recovery window opens.",
                 )
                 .size(13),
             )
@@ -207,102 +209,88 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
         return card::simple(body).width(Length::Fill).into();
     }
 
-    // `None` = escrow is on but this device doesn't know which tier (e.g. after
-    // a restart). Escrow is "on" for anything that isn't a confirmed Off.
-    let tier = ra.tier();
-    let is_on = !matches!(tier, Some(EscrowTier::Off));
+    let alerts_on = ra.alerts_on();
     let busy = ra.submitting;
 
-    // Inheritance escrow tier selector (ECIES pivot). Picking a tier turns the
-    // server-blind heartbeat gate on and uploads the per-keyholder ciphertext;
-    // Off tears the escrow down. The old plaintext-descriptor "Full" tier is
-    // gone — COINCUBE never sees the descriptor or seed.
-    let tier_row = Row::new()
-        .spacing(8)
-        .push(tier_button(
-            "Off",
-            EscrowTier::Off,
-            tier,
-            busy,
-            ra.awaiting_pin,
-        ))
-        .push(tier_button(
-            "Vault only",
-            EscrowTier::VaultOnly,
-            tier,
-            busy,
-            ra.awaiting_pin,
-        ))
-        .push(tier_button(
-            "Full Cube",
-            EscrowTier::FullCube,
-            tier,
-            busy,
-            ra.awaiting_pin,
-        ));
-    body = body.push(tier_row);
+    // ── Control 1: the Recovery alerts toggle (monitoring on/off) ──────────
+    body = body.push(Space::new().height(Length::Fixed(4.0)));
+    body = body.push(
+        Row::new()
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .push(text("Recovery alerts").bold())
+            .push(Space::new().width(Length::Fill))
+            .push(
+                Toggler::new(alerts_on)
+                    .on_toggle(|on| {
+                        SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::ToggleAlerts(on))
+                            .into()
+                    })
+                    .width(50)
+                    .style(theme::toggler::orange),
+            ),
+    );
+    // The C4 disclosure — stated plainly, no euphemisms.
+    body = body.push(
+        text(
+            "When on, COINCUBE learns only the block height at which this Vault's recovery window \
+             opens and that this desktop checked in — never your addresses or balances.",
+        )
+        .size(13),
+    );
 
-    // The honest trade-off copy for the selected tier. While the PIN is being
-    // collected for a Full-Cube enrolment, `ra.tier()` still reports the prior
-    // tier (it only advances on a confirmed change) but the Full Cube button is
-    // already highlighted — show its copy to match (same condition the button
-    // uses for its highlight).
-    let display_tier = if ra.awaiting_pin {
-        Some(EscrowTier::FullCube)
-    } else {
-        tier
-    };
-    body = body.push(text(tier_copy(display_tier)).size(13));
+    // Residual nudge (PR 3): with keyholders present but alerts off, they'd
+    // never be told when the recovery window opens. Not a re-prompt — the
+    // one-time consent card is durable — just a standing warning on the card.
+    if !alerts_on && !ra.keyholders.is_empty() {
+        body = body.push(
+            text(
+                "Your keyholders will NOT be alerted when this Vault's recovery window opens. \
+                 Turn on Recovery alerts to fix this.",
+            )
+            .size(13)
+            .style(theme::text::error),
+        );
+    }
 
-    // Full-Cube re-confirms the PIN before exporting the seed into escrow.
-    if ra.awaiting_pin {
+    // Inline confirm for turning alerts off. Never silent: when a recovery kit
+    // is escrowed, the confirm discloses that it will be deleted too (escrow
+    // can't outlive alerts).
+    if ra.confirming_alerts_off {
         body = body.push(Space::new().height(Length::Fixed(6.0)));
-        body = body.push(
-            text("Enter your PIN to include this Cube's seed in the encrypted escrow.").size(13),
-        );
-        body = body.push(
-            iced::widget::text_input("PIN", ra.pin.as_str())
-                .secure(true)
-                .padding(8)
-                .on_input(|s| {
-                    SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::EscrowPinChanged(
-                        s.into(),
-                    ))
-                    .into()
-                })
-                .on_submit(
-                    SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::ConfirmFullCube).into(),
-                ),
-        );
+        let warning = if ra.has_escrow() {
+            "Turn off recovery alerts? COINCUBE will stop watching for this Vault's recovery \
+             window. This also deletes the encrypted recovery kit currently stored for your \
+             keyholders — they'll no longer be able to recover this Vault."
+        } else {
+            "Turn off recovery alerts? COINCUBE will stop watching for this Vault's recovery \
+             window, so your keyholders won't be alerted when it opens."
+        };
+        body = body.push(text(warning).size(13));
         body = body.push(
             Row::new()
                 .spacing(8)
                 .push(
-                    button::primary(None, "Confirm")
+                    button::primary(None, "Turn off")
                         .padding([8, 14])
                         .on_press_maybe(
                             (!busy).then_some(
                                 SettingsMessage::RecoveryAlerts(
-                                    RecoveryAlertsMessage::ConfirmFullCube,
+                                    RecoveryAlertsMessage::ConfirmAlertsOff,
                                 )
                                 .into(),
                             ),
                         ),
                 )
-                .push(
-                    button::secondary(None, "Cancel")
-                        .padding([8, 14])
-                        .on_press_maybe(Some(
-                            SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::CancelFullCube)
-                                .into(),
-                        )),
-                ),
+                .push(button::secondary(None, "Cancel").padding([8, 14]).on_press(
+                    SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::CancelAlertsOff).into(),
+                )),
         );
     }
 
-    // The keyholder list only makes sense when escrow is on.
-    if is_on {
-        // Who would be notified.
+    // The keyholder list belongs to alerts (who'd be notified), so it shows
+    // whenever alerts are on.
+    if alerts_on {
         body = body.push(Space::new().height(Length::Fixed(4.0)));
         body = body.push(text("Keyholders who'd be notified").bold().size(14));
         if ra.keyholders.is_empty() {
@@ -319,6 +307,11 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
         }
     }
 
+    // ── Control 2: the escrow selector (what keyholders can recover) ───────
+    body = body.push(Space::new().height(Length::Fixed(10.0)));
+    body = body.push(text("What keyholders can recover").bold().size(14));
+    body = body.push(escrow_selector(ra, alerts_on, busy));
+
     if let Some(err) = ra.error.as_deref() {
         body = body.push(text(err).size(13).style(theme::text::error));
     }
@@ -326,21 +319,138 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
     card::simple(body).width(Length::Fill).into()
 }
 
+/// The "What keyholders can recover" escrow selector — Estate-gated (locked
+/// affordance when the account lacks the `inheritanceEscrow` entitlement). The
+/// tier is server-derived; picking Vault only / Full Cube auto-enables alerts.
+fn escrow_selector<'a>(
+    ra: &'a RecoveryAlerts,
+    alerts_on: bool,
+    busy: bool,
+) -> Element<'a, Message> {
+    // Locked affordance when the account can't escrow a recovery kit.
+    if !ra.escrow_entitled {
+        return Column::new()
+            .spacing(10)
+            .push(
+                text(
+                    "An encrypted recovery kit for your keyholders is part of the Estate plan. \
+                     Recovery alerts above still work on your current plan.",
+                )
+                .size(13),
+            )
+            .push(
+                button::primary(None, "View plans")
+                    .width(Length::Fixed(160.0))
+                    .on_press(Message::OpenPlanBilling),
+            )
+            .into();
+    }
+
+    // `None` = escrow is on but this device can't tell which tier (older API
+    // that doesn't report `escrowedArtifacts`). While collecting the PIN for a
+    // Full-Cube enrolment, highlight Full Cube to match the copy below.
+    let escrow_tier = ra.escrow_tier();
+    let display_tier = if ra.awaiting_pin {
+        Some(EscrowTier::FullCube)
+    } else {
+        escrow_tier
+    };
+
+    let selector = Row::new()
+        .spacing(8)
+        .push(escrow_button(
+            "Nothing",
+            EscrowTier::Off,
+            display_tier,
+            busy,
+        ))
+        .push(escrow_button(
+            "Vault only",
+            EscrowTier::VaultOnly,
+            display_tier,
+            busy,
+        ))
+        .push(escrow_button(
+            "Full Cube",
+            EscrowTier::FullCube,
+            display_tier,
+            busy,
+        ));
+
+    let mut col = Column::new()
+        .spacing(10)
+        .push(selector)
+        .push(text(escrow_copy(display_tier)).size(13));
+
+    // Auto-enable disclosure: picking a kit while alerts are off turns them on.
+    if !alerts_on {
+        col = col.push(
+            text("Choosing Vault only or Full Cube also turns Recovery alerts on.")
+                .size(13)
+                .style(theme::text::secondary),
+        );
+    }
+
+    // Full-Cube re-confirms the PIN before exporting the seed into escrow.
+    if ra.awaiting_pin {
+        col = col.push(Space::new().height(Length::Fixed(6.0)));
+        col = col.push(
+            text("Enter your PIN to include this Cube's seed in the encrypted recovery kit.")
+                .size(13),
+        );
+        col = col.push(
+            iced::widget::text_input("PIN", ra.pin.as_str())
+                .secure(true)
+                .padding(8)
+                .on_input(|s| {
+                    SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::EscrowPinChanged(
+                        s.into(),
+                    ))
+                    .into()
+                })
+                .on_submit(
+                    SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::ConfirmFullCube).into(),
+                ),
+        );
+        col = col.push(
+            Row::new()
+                .spacing(8)
+                .push(
+                    button::primary(None, "Confirm")
+                        .padding([8, 14])
+                        .on_press_maybe(
+                            (!busy).then_some(
+                                SettingsMessage::RecoveryAlerts(
+                                    RecoveryAlertsMessage::ConfirmFullCube,
+                                )
+                                .into(),
+                            ),
+                        ),
+                )
+                .push(button::secondary(None, "Cancel").padding([8, 14]).on_press(
+                    SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::CancelFullCube).into(),
+                )),
+        );
+    }
+
+    col.into()
+}
+
 /// An escrow-tier option button. Highlighted (primary) when it's the active
 /// tier (or while collecting the PIN for a Full-Cube enrolment); disabled while
 /// a change is in flight.
-fn tier_button<'a>(
+fn escrow_button<'a>(
     label: &'static str,
     this: EscrowTier,
     active: Option<EscrowTier>,
     busy: bool,
-    awaiting_pin: bool,
 ) -> Element<'a, Message> {
     // `active == None` (tier on but unknown on this device) highlights nothing,
     // leaving every tier pressable so the owner can confirm/change it.
-    let is_active = active == Some(this) || (awaiting_pin && this == EscrowTier::FullCube);
-    let on_press = (!busy && !is_active)
-        .then_some(SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::SelectTier(this)).into());
+    let is_active = active == Some(this);
+    let on_press = (!busy && !is_active).then_some(
+        SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::SelectEscrow(this)).into(),
+    );
     if is_active {
         button::primary(None, label)
             .padding([8, 14])
@@ -358,20 +468,19 @@ fn tier_button<'a>(
 /// self-custody trust model demands it; see the ECIES decision record).
 /// Everything is encrypted to the keyholders' own keys: COINCUBE can read
 /// neither the descriptor nor the seed.
-fn tier_copy(tier: Option<EscrowTier>) -> &'static str {
+fn escrow_copy(tier: Option<EscrowTier>) -> &'static str {
     match tier {
-        // Escrow is on, but this device didn't enrol it this session and the
-        // owner monitoring status doesn't report the tier — so we state that
+        // Escrow is on, but an older API doesn't report which tier — state that
         // honestly rather than assert (and possibly mis-state) descriptor-only
         // vs seed escrow.
         None => {
-            "Recovery escrow is on, but this device can't tell which tier is active (it isn't \
-             reported after a restart). Reselect Vault only or Full Cube to confirm or change it, \
-             or Off to turn recovery off."
+            "A recovery kit is stored, but this device can't tell which kind (this server doesn't \
+             report it). Reselect Vault only or Full Cube to confirm or change it, or Nothing to \
+             remove it."
         }
         Some(EscrowTier::Off) => {
-            "Off: heirs can't recover this Vault. No encrypted copy is kept and COINCUBE watches \
-             nothing."
+            "Nothing — alerts only: your keyholders are told when the recovery window opens, but \
+             no encrypted recovery kit is stored, so they can't recover this Vault themselves."
         }
         Some(EscrowTier::VaultOnly) => {
             "Vault only: an encrypted copy of this Vault's descriptor is sealed to each \
