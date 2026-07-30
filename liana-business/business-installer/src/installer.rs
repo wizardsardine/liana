@@ -23,8 +23,6 @@ use tracing::debug;
 
 /// BusinessInstaller implements the Installer trait from liana-gui.
 pub struct BusinessInstaller {
-    datadir: LianaDirectory,
-    network: bitcoin::Network,
     state: State,
 }
 
@@ -51,7 +49,7 @@ impl BusinessInstaller {
         }
 
         let mut state = State::new(network, datadir.clone());
-        state.backend.set_network(network, datadir.clone());
+        state.backend.set_network(network, datadir);
 
         // Validate cached tokens before showing UI
         let (valid_accounts, to_remove) = state.backend.validate_all_cached_tokens();
@@ -71,11 +69,7 @@ impl BusinessInstaller {
             liana_ui::widget::text_input::focus("login_email")
         };
 
-        let installer = Self {
-            datadir,
-            network,
-            state,
-        };
+        let installer = Self { state };
 
         (installer, focus_task)
     }
@@ -128,11 +122,11 @@ impl Installer<'_, Message> for BusinessInstaller {
     }
 
     fn datadir(&self) -> &LianaDirectory {
-        &self.datadir
+        &self.state.datadir
     }
 
     fn network(&self) -> bitcoin::Network {
-        self.network
+        self.state.network
     }
 
     fn skip_launcher() -> bool {
@@ -163,8 +157,8 @@ impl Installer<'_, Message> for BusinessInstaller {
             // Use RunLianaBusiness for direct transition to App
             // User is already authenticated, tokens are cached in connect.json
             return Some(NextState::RunLianaBusiness {
-                datadir: self.datadir.clone(),
-                network: self.network,
+                datadir: self.state.datadir.clone(),
+                network: self.state.network,
                 wallet_id,
                 // user_id will be populated lazily on the next connect via
                 // `backfill_local_link`, since the business installer flow
