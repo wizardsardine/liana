@@ -153,6 +153,62 @@ fn liquid_sunset() -> Availability {
     }
 }
 
+/// Whether the Duress Mode surface is shown at all — the third server-flag
+/// dimension, structurally the [`LiquidGate`] shape (two inputs OR'd) but with
+/// the Marketplace *hidden-not-greyed* kill-switch semantics.
+///
+/// Two independent inputs, OR'd:
+///
+/// - `server_enabled` — the per-user `duressEnabled` flag from
+///   `GET /connect/features`. Only meaningful on an *authenticated* call;
+///   pre-login the API silently reports `false`, so this stays `false` until
+///   features load for a signed-in user. Fails **closed** (absent / unloaded /
+///   unreachable = `false`): the launch build ships duress dark, and a stale or
+///   missing API response must never surface the untested setup wizard.
+/// - `enrolled` — this account has completed duress enrollment. The client
+///   mirror of the server's grandfather rule (master I4): an account enrolled
+///   during beta keeps every duress surface — manage, trigger, clear — even
+///   when prod later serves `duressEnabled: false` or Connect is unreachable.
+///
+/// Unlike [`LiquidGate`], the gated inputs both live in server / account state,
+/// not on disk: enrollment is the durable half and the enrolled client learns
+/// it (via account state) long before it could ever need the surface. So this
+/// gate is recomputed live from the account panel and is **not** mirrored into
+/// [`crate::app::cache::Cache`] or persisted to per-cube settings. An
+/// un-enrolled user is fail-closed, exactly like Marketplace: hiding a setup
+/// wizard costs them nothing.
+///
+/// This is only the launch/visibility half of the show-rule; the paid
+/// `duress` entitlement (`ConnectAccountPanel::is_duress_entitled`) is a
+/// separate, unchanged authority AND'd on top (see
+/// `ConnectAccountPanel::show_duress`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct DuressGate {
+    /// `duressEnabled` from `/connect/features` (authenticated). Defaults
+    /// `false`: fails closed until the server grants it for a signed-in user.
+    pub server_enabled: bool,
+    /// This account has completed duress enrollment. Never cleared by a
+    /// missing/`false` server flag — an enrolled account keeps duress forever.
+    pub enrolled: bool,
+}
+
+impl DuressGate {
+    /// Nothing granted, not enrolled — a fresh account before features load.
+    /// The starting value everywhere.
+    pub const OFF: Self = Self {
+        server_enabled: false,
+        enrolled: false,
+    };
+
+    /// The single source of truth for "should the duress surface exist" — the
+    /// launch flag OR'd with enrollment. Consulted by the nav row, the route
+    /// backstop, the duress view, and the enrollment-wizard backstop (each
+    /// after AND'ing the `duress` entitlement).
+    pub fn on(&self) -> bool {
+        self.server_enabled || self.enrolled
+    }
+}
+
 /// Display name for a network, used in popover text.
 fn net_label(n: Network) -> &'static str {
     match n {
@@ -525,6 +581,40 @@ mod tests {
             gate,
         )
         .is_available()
+    }
+
+    // ── Duress gate ─────────────────────────────────────────────────────
+    //
+    // The launch/visibility half of the duress show-rule (PLAN-feature-flags).
+    // The load-bearing rows are the grandfather ones: an enrolled account keeps
+    // the surface even when the server flag is off (master I4).
+
+    #[test]
+    fn duress_gate_off_is_fail_closed_and_matches_default() {
+        assert!(!DuressGate::OFF.on());
+        assert_eq!(DuressGate::default(), DuressGate::OFF);
+    }
+
+    #[test]
+    fn duress_gate_on_truth_table() {
+        // on() == server_enabled OR enrolled — the full 2×2.
+        let cases = [
+            (false, false, false), // fresh, un-enrolled, flag off → hidden
+            (true, false, true),   // server granted the flag → shown
+            (false, true, true),   // grandfathered: enrolled beats a flag-off
+            (true, true, true),    // both → shown
+        ];
+        for (server_enabled, enrolled, expected) in cases {
+            let gate = DuressGate {
+                server_enabled,
+                enrolled,
+            };
+            assert_eq!(
+                gate.on(),
+                expected,
+                "server_enabled={server_enabled} enrolled={enrolled}"
+            );
+        }
     }
 
     #[test]

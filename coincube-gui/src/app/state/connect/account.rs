@@ -919,6 +919,13 @@ impl ConnectAccountPanel {
     /// intro screen, so it can show the enabled state instead of the setup
     /// flow. No-op for accounts without the duress entitlement. Best-effort:
     /// a failed fetch leaves the state `None` and the setup flow is shown.
+    ///
+    /// Gated on the entitlement only — deliberately **not** on the full
+    /// [`Self::show_duress`] gate. This fetch is what *discovers* `enrolled`
+    /// for an account enrolled on another device, and `show_duress()` depends
+    /// on `enrolled`; gating it on the gate would be circular and would strand
+    /// a grandfathered account (flag off, enrolled elsewhere) with the surface
+    /// hidden forever. The surface itself is gated elsewhere.
     pub fn reload_duress_state(&mut self) -> iced::Task<Message> {
         if !self.is_duress_entitled() {
             return iced::Task::none();
@@ -2642,10 +2649,13 @@ impl ConnectAccountPanel {
 
             // ── Enrollment wizard (Phases 2 & 8) ──
             DuressMessage::StartEnrollment => {
-                // Duress is a paid (Pro/Estate) feature. The view hides the CTA
-                // for un-entitled accounts; re-check here as a defensive backstop
-                // so a stale view can never open the wizard without entitlement.
-                if !self.is_duress_entitled() {
+                // Duress is a paid (Pro/Estate) feature behind a launch
+                // kill-switch. The nav hides the surface and the CTA for anyone
+                // who fails the show-rule (entitlement AND the launch gate);
+                // re-check the full gate here as a defensive backstop so a stale
+                // view can never open the wizard while duress is dark. Fails
+                // closed for an un-enrolled account with the flag off.
+                if !self.show_duress() {
                     return iced::Task::none();
                 }
                 // The hard vault gate (PLAN-duress-vault-gate). The CTA is
@@ -3858,6 +3868,54 @@ impl ConnectAccountPanel {
             .as_ref()
             .and_then(|f| f.liquid_enabled)
             .unwrap_or(false)
+    }
+
+    /// The per-user duress launch flag from `GET /connect/features`
+    /// (`duressEnabled`) — the server half of [`Self::duress_gate`].
+    ///
+    /// Defaults `false` while features are unloaded (in flight after sign-in,
+    /// fetch failed, or never signed in) and when the flag is absent — fails
+    /// closed like [`Self::marketplace_server_flags`]: a launch build ships
+    /// duress dark and must not surface the untested setup on a stale, silent,
+    /// or unreachable API. Unlike Marketplace, a `false` here is **not** the
+    /// whole story — it cannot hide duress from an already-enrolled account
+    /// (see [`Self::duress_gate`]).
+    ///
+    /// Deliberately **not** mirrored into [`crate::app::cache::Cache`] or
+    /// persisted to per-cube settings: the durable half of the gate is
+    /// enrollment, which lives in server/account state, so the gate is
+    /// recomputed live rather than cached (contrast the Liquid grant, which is
+    /// persisted because *funds* must survive offline).
+    pub fn duress_server_enabled(&self) -> bool {
+        self.features
+            .as_ref()
+            .and_then(|f| f.duress_enabled)
+            .unwrap_or(false)
+    }
+
+    /// The launch/visibility gate for the duress surface: the server flag OR'd
+    /// with this account's enrollment. The `OR enrolled` half is the client
+    /// mirror of the server's grandfather rule (master I4) — an enrolled
+    /// account keeps duress even when prod later serves `duressEnabled: false`
+    /// or Connect is unreachable. See [`crate::app::features::DuressGate`].
+    pub fn duress_gate(&self) -> crate::app::features::DuressGate {
+        crate::app::features::DuressGate {
+            server_enabled: self.duress_server_enabled(),
+            enrolled: self.is_duress_enrolled(),
+        }
+    }
+
+    /// Whether any duress surface should be shown: the paid `duress`
+    /// entitlement AND the launch gate. The single source of truth consulted
+    /// by the nav row, the route backstop, the duress view, and the
+    /// enrollment-wizard backstop.
+    ///
+    /// A launch kill-switch like Marketplace — when this is `false` the surface
+    /// is *hidden*, not greyed. (The duress *unlock* path — a duress PIN at
+    /// unlock — is not a UI surface and is deliberately untouched by this gate;
+    /// it must keep working for enrolled accounts regardless. Master I4/I8.)
+    pub fn show_duress(&self) -> bool {
+        self.is_duress_entitled() && self.duress_gate().on()
     }
 
     /// Whether the pre-expiry renewal banner should render: the plan is
@@ -6059,6 +6117,7 @@ mod plan_lifecycle_tests {
             liquid_enabled: None,
             buy_sell_enabled: None,
             p2p_enabled: None,
+            duress_enabled: None,
         }
     }
 
@@ -6408,6 +6467,127 @@ mod plan_lifecycle_tests {
         assert!(flags.marketplace_enabled);
         assert!(flags.buy_sell_on());
         assert!(!flags.p2p_on());
+    }
+
+    // ── Duress launch gate (PLAN-feature-flags) ───────────────────────────
+    fn features_with_duress(duress: Option<bool>) -> FeaturesResponse {
+        let mut f = features_with_purchasing(None, None);
+        f.duress_enabled = duress;
+        f
+    }
+
+    /// A Pro plan carrying the paid `duress` entitlement.
+    fn duress_entitled_plan() -> ConnectPlan {
+        let mut p = plan(PlanTier::Pro, PlanStatus::Active, None, None);
+        p.entitlements.duress = true;
+        p
+    }
+
+    #[test]
+    fn duress_flag_fail_closed_until_features_load() {
+        let panel = ConnectAccountPanel::new();
+        // Unloaded (fetch in flight / failed / unreachable / never signed in)
+        // → the flag and the whole gate read off.
+        assert!(!panel.duress_server_enabled());
+        assert_eq!(panel.duress_gate(), crate::app::features::DuressGate::OFF);
+        assert!(!panel.show_duress());
+    }
+
+    #[test]
+    fn duress_flag_absent_reads_as_off() {
+        let mut panel = ConnectAccountPanel::new();
+        // Loaded but the flag is absent (older backend) → off, fail-closed.
+        panel.features = Some(features_with_duress(None));
+        assert!(!panel.duress_server_enabled());
+    }
+
+    #[test]
+    fn duress_flag_mirrors_the_response() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.features = Some(features_with_duress(Some(true)));
+        assert!(panel.duress_server_enabled());
+        panel.features = Some(features_with_duress(Some(false)));
+        assert!(!panel.duress_server_enabled());
+    }
+
+    #[test]
+    fn show_duress_full_matrix() {
+        // show_duress() == entitled AND (server_flag OR enrolled): all 8 cells
+        // of (entitled × flag × enrolled). Enrollment is supplied via the local
+        // arm signal here; the cross-device server-`enrolled` path is covered
+        // separately below.
+        let cases = [
+            // entitled, flag, enrolled, expected
+            (false, false, false, false),
+            (false, false, true, false),
+            (false, true, false, false),
+            (false, true, true, false),
+            (true, false, false, false), // fresh Pro on prod (flag off) → hidden
+            (true, false, true, true),   // grandfathered: enrolled beats flag-off
+            (true, true, false, true),   // server granted the flag → shown
+            (true, true, true, true),
+        ];
+        for (entitled, flag, enrolled, expected) in cases {
+            let mut panel = ConnectAccountPanel::new();
+            panel.plan = Some(if entitled {
+                duress_entitled_plan()
+            } else {
+                plan(PlanTier::Free, PlanStatus::Active, None, None)
+            });
+            panel.features = Some(features_with_duress(Some(flag)));
+            panel.duress_locally_armed = enrolled;
+            assert_eq!(
+                panel.show_duress(),
+                expected,
+                "entitled={entitled} flag={flag} enrolled={enrolled}"
+            );
+            // The gate half is entitlement-independent: it's the OR of inputs.
+            assert_eq!(panel.duress_gate().on(), flag || enrolled);
+        }
+    }
+
+    #[test]
+    fn show_duress_fail_closed_before_features_load_for_unenrolled() {
+        // Entitled Pro, features not yet loaded, never enrolled → hidden. This
+        // is the launch-critical row: a signed-in Pro must see nothing until a
+        // features fetch explicitly turns duress on.
+        let mut panel = ConnectAccountPanel::new();
+        panel.plan = Some(duress_entitled_plan());
+        assert!(!panel.show_duress());
+    }
+
+    #[test]
+    fn server_enrolled_state_grandfathers_with_flag_off() {
+        // The cross-device grandfather: `duressEnabled` is off and this device
+        // never armed, but the server reports the account enrolled (armed on
+        // another device). The surface must stay shown. `reload_duress_state`
+        // is what discovers this, which is why it is NOT gated on the gate.
+        let mut panel = ConnectAccountPanel::new();
+        panel.plan = Some(duress_entitled_plan());
+        panel.features = Some(features_with_duress(Some(false)));
+        assert!(!panel.duress_locally_armed);
+        panel.duress_state = Some(crate::services::coincube::DuressState {
+            active: false,
+            unlock_at: None,
+            enrolled: true,
+            this_device_registered: false,
+        });
+        assert!(panel.is_duress_enrolled());
+        assert!(panel.show_duress());
+    }
+
+    #[test]
+    fn duress_gate_reverts_to_off_when_features_cleared() {
+        // A flag granted mid-session must not survive logout: `features` is
+        // dropped on `clear_session`, so the accessor reverts to off (unless the
+        // account is still locally enrolled, which is the durable half).
+        let mut panel = ConnectAccountPanel::new();
+        panel.plan = Some(duress_entitled_plan());
+        panel.features = Some(features_with_duress(Some(true)));
+        assert!(panel.show_duress());
+        panel.features = None;
+        assert!(!panel.duress_server_enabled());
+        assert!(!panel.show_duress());
     }
 
     #[test]

@@ -1648,6 +1648,17 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
             .into();
     }
 
+    // Entitled but the launch gate is off (server flag off and this account
+    // hasn't enrolled): duress is a *hidden* kill-switch, not a greyed one. The
+    // nav hides the entry and both the navigation guard and the features-poll
+    // backstop redirect away, so this branch only guards a stale route for the
+    // instant before the redirect lands — render nothing rather than the
+    // upgrade CTA above, which would read wrong to an already-paid account. See
+    // `ConnectAccountPanel::show_duress`.
+    if !state.duress_gate().on() {
+        return Column::new().width(Length::Fill).into();
+    }
+
     // What duress activation does — stated plainly, no fine print. Shown in
     // both the enrolled and not-yet-enrolled states.
     col = col.push(
@@ -2685,6 +2696,7 @@ mod renewal_banner_tests {
             liquid_enabled: None,
             buy_sell_enabled: None,
             p2p_enabled: None,
+            duress_enabled: None,
         }
     }
 
@@ -2733,6 +2745,7 @@ mod renewal_banner_tests {
             liquid_enabled: Some(true),
             buy_sell_enabled: Some(true),
             p2p_enabled: Some(false),
+            duress_enabled: Some(true),
         }
     }
 
@@ -3066,6 +3079,19 @@ mod renewal_banner_tests {
             is_passkey: Some(false),
             local: true,
         }]);
+
+        // Entitled but the launch gate is off (features cleared → flag off, not
+        // enrolled): the hidden-placeholder branch. Normally unreachable (nav
+        // hides it + route backstop redirects); exercised here belt-and-suspenders.
+        account.features = None;
+        assert!(!account.show_duress());
+        let _ = duress_ux(&account);
+
+        // Launch flag on → gate opens, so the not-yet-enrolled setup flow (not
+        // the hidden placeholder) renders. `priced_features` carries
+        // `duressEnabled: true`.
+        account.features = Some(priced_features(None, None));
+        assert!(account.show_duress());
         let _ = duress_ux(&account);
 
         account.duress_locally_armed = true;

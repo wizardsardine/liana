@@ -1414,6 +1414,21 @@ impl Home {
             }
 
             Message::View(ViewMessage::GoToSection(section)) => {
+                // Duress launch kill-switch backstop: a deep-linked or otherwise
+                // programmatic navigation to the Duress section while it's gated
+                // off (the nav hides the entry, so a click can't produce this)
+                // redirects to Overview — fail-closed, hidden not greyed, the
+                // same shape as the Marketplace route guard. See
+                // `ConnectAccountPanel::show_duress`.
+                let section = if matches!(
+                    section,
+                    HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
+                ) && !self.connect_account.show_duress()
+                {
+                    HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
+                } else {
+                    section
+                };
                 // Update the account panel's active_sub when navigating to a Connect submenu
                 if let HomeSection::Connect(ref sub) = section {
                     self.connect_account.active_sub = sub.clone();
@@ -1714,6 +1729,22 @@ impl Home {
                 if !was_authenticated && now_authenticated {
                     self.connect_expanded = true;
                     self.active_section = HomeSection::Cubes;
+                }
+                // Duress launch kill-switch backstop for a mid-session flip: if
+                // the features refetch (or a duress-state change) that just flowed
+                // through `update_message` turned the gate off while the user is
+                // sitting on the Duress section, redirect to Overview. The surface
+                // is hidden, not greyed, so a stale route must not keep rendering
+                // it — a server flag flip propagates on the next `/connect/
+                // features` poll without a restart. See `show_duress`.
+                if matches!(
+                    self.active_section,
+                    HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
+                ) && !self.connect_account.show_duress()
+                {
+                    self.active_section =
+                        HomeSection::Connect(app::menu::ConnectSubMenu::Overview);
+                    self.connect_account.active_sub = app::menu::ConnectSubMenu::Overview;
                 }
                 // Sync account tier from the Connect plan data
                 let old_tier = self.account_tier;
@@ -2436,17 +2467,21 @@ fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
 
     if home.connect_expanded && is_authenticated {
         use app::menu::ConnectSubMenu;
-        let items: &[(&str, ConnectSubMenu)] = &[
+        let mut items: Vec<(&str, ConnectSubMenu)> = vec![
             ("Overview", ConnectSubMenu::Overview),
             ("Contacts", ConnectSubMenu::Contacts),
             ("Plan & Billing", ConnectSubMenu::PlanBilling),
             ("Security", ConnectSubMenu::Security),
-            // Duress (Phase 9). The duress_ux() panel gates on the `duress`
-            // entitlement and shows an upgrade prompt for Free, so the entry is
-            // safe to show for any authenticated user.
-            ("Duress", ConnectSubMenu::Duress),
         ];
-        for (label, sub) in items {
+        // Duress (Phase 9) is a launch kill-switch: shown only when the account
+        // is entitled AND the launch gate is on (server `duressEnabled`, or this
+        // account is already enrolled — the grandfather case). Hidden, not
+        // greyed, when off — like Marketplace. See
+        // `ConnectAccountPanel::show_duress`.
+        if home.connect_account.show_duress() {
+            items.push(("Duress", ConnectSubMenu::Duress));
+        }
+        for (label, sub) in &items {
             let is_active = matches!(
                 &home.active_section,
                 HomeSection::Connect(s) if *s == *sub
@@ -4205,6 +4240,81 @@ mod tests {
 
         signed_in.active_section = HomeSection::RecoverVault;
         signed_in.view();
+    }
+
+    // ── Duress launch kill-switch route backstop (PLAN-feature-flags PR 2) ──
+
+    /// A Pro plan carrying the paid `duress` entitlement.
+    fn duress_entitled_plan() -> crate::services::coincube::ConnectPlan {
+        use crate::services::coincube::{ConnectPlan, PlanEntitlements, PlanStatus, PlanTier};
+        let mut entitlements = PlanEntitlements::default();
+        entitlements.duress = true;
+        ConnectPlan {
+            plan: PlanTier::Pro,
+            status: PlanStatus::Active,
+            renewal_at: None,
+            entitlements,
+            billing_cycle: None,
+            plan_provenance: None,
+        }
+    }
+
+    /// A features payload with the duress launch flag explicitly off.
+    fn features_duress_off() -> crate::services::coincube::FeaturesResponse {
+        crate::services::coincube::FeaturesResponse {
+            plans: Vec::new(),
+            pricing_schema_version: None,
+            purchasing_enabled: None,
+            marketplace_enabled: None,
+            liquid_enabled: None,
+            buy_sell_enabled: None,
+            p2p_enabled: None,
+            duress_enabled: Some(false),
+        }
+    }
+
+    #[test]
+    fn duress_route_redirects_to_overview_when_gated_off() {
+        // Entitled Pro, launch flag off, not enrolled → the surface is hidden.
+        // A programmatic or restored navigation to it fails closed onto
+        // Overview rather than rendering the gated-off panel.
+        let mut home = signed_in_home();
+        home.connect_account.plan = Some(duress_entitled_plan());
+        home.connect_account.features = Some(features_duress_off());
+        assert!(!home.connect_account.show_duress());
+
+        let _ = home.update(Message::View(ViewMessage::GoToSection(HomeSection::Connect(
+            app::menu::ConnectSubMenu::Duress,
+        ))));
+
+        assert_eq!(
+            home.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
+        );
+        assert_eq!(
+            home.connect_account.active_sub,
+            app::menu::ConnectSubMenu::Overview
+        );
+    }
+
+    #[test]
+    fn duress_route_reachable_when_enrolled_with_flag_off() {
+        // Grandfathered: enrolled on this device, launch flag off → the surface
+        // stays fully reachable. Navigation to it sticks rather than redirecting.
+        let mut home = signed_in_home();
+        home.connect_account.plan = Some(duress_entitled_plan());
+        home.connect_account.features = Some(features_duress_off());
+        home.connect_account.duress_locally_armed = true;
+        assert!(home.connect_account.show_duress());
+
+        let _ = home.update(Message::View(ViewMessage::GoToSection(HomeSection::Connect(
+            app::menu::ConnectSubMenu::Duress,
+        ))));
+
+        assert_eq!(
+            home.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
+        );
     }
 
     #[test]

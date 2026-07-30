@@ -430,6 +430,25 @@ pub struct FeaturesResponse {
     /// [`crate::app::features::LiquidGate`], which OR's this with local state.
     #[serde(default, alias = "liquidEnabled", alias = "liquid_enabled")]
     pub liquid_enabled: Option<bool>,
+    /// Per-user launch flag for the Duress Mode surface (`duressEnabled`).
+    /// `Some(true)` means the server permits this account to see the duress
+    /// enrollment/management UI; absent/`Some(false)` means it doesn't.
+    ///
+    /// Fails **closed** like the Marketplace flags: absent, unloaded, or an
+    /// unreachable API all read as *off*, so the public launch build ships
+    /// duress dark and never surfaces the untested setup on a stale response.
+    ///
+    /// The same authenticated-only caveat as `liquid_enabled` applies — the
+    /// desktop only fetches features after `set_token` (see
+    /// `ConnectAccountPanel::post_login_tasks`), so this is only meaningful on
+    /// a signed-in call.
+    ///
+    /// A `false` here never hides duress from an *already-enrolled* account —
+    /// see [`crate::app::features::DuressGate`], which OR's this with the
+    /// account's enrollment state (the client mirror of the server's
+    /// grandfather rule).
+    #[serde(default, alias = "duressEnabled", alias = "duress_enabled")]
+    pub duress_enabled: Option<bool>,
 }
 
 // ── Checkout / Billing ──────────────────────────────────────────────────────
@@ -2862,6 +2881,51 @@ mod cube_has_vault_tests {
         });
         let resp: CubeResponse = serde_json::from_value(v).unwrap();
         assert_eq!(resp.has_vault, Some(true));
+    }
+}
+
+#[cfg(test)]
+mod features_response_duress_tests {
+    //! `duressEnabled` transport (PLAN-feature-flags PR 1). Mirrors the
+    //! `liquidEnabled`/`marketplaceEnabled` shape: absent → `None` (treated
+    //! false, fail-closed), and both the camelCase wire key and the snake_case
+    //! alias parse to the same field.
+    use super::FeaturesResponse;
+    use serde_json::json;
+
+    fn features_json(extra: serde_json::Value) -> serde_json::Value {
+        let mut base = json!({ "plans": [] });
+        if let (Some(obj), Some(add)) = (base.as_object_mut(), extra.as_object()) {
+            for (k, v) in add {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+        base
+    }
+
+    #[test]
+    fn duress_enabled_absent_is_none() {
+        // Older backend / field omitted → None, which the gate reads as off.
+        let resp: FeaturesResponse = serde_json::from_value(features_json(json!({}))).unwrap();
+        assert_eq!(resp.duress_enabled, None);
+    }
+
+    #[test]
+    fn duress_enabled_true_and_false_parse() {
+        let on: FeaturesResponse =
+            serde_json::from_value(features_json(json!({ "duressEnabled": true }))).unwrap();
+        assert_eq!(on.duress_enabled, Some(true));
+
+        let off: FeaturesResponse =
+            serde_json::from_value(features_json(json!({ "duressEnabled": false }))).unwrap();
+        assert_eq!(off.duress_enabled, Some(false));
+    }
+
+    #[test]
+    fn duress_enabled_snake_case_alias_parses() {
+        let resp: FeaturesResponse =
+            serde_json::from_value(features_json(json!({ "duress_enabled": true }))).unwrap();
+        assert_eq!(resp.duress_enabled, Some(true));
     }
 }
 
