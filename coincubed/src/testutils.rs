@@ -1,6 +1,7 @@
 use crate::{
     bitcoin::{
-        AncestorSearch, BitcoinInterface, Block, BlockChainTip, MempoolEntry, SyncProgress, UTxO,
+        AncestorSearch, BackendId, BitcoinInterface, Block, BlockChainTip, MempoolEntry,
+        SyncProgress, UTxO,
     },
     config::{BitcoinConfig, Config},
     database::{
@@ -36,6 +37,22 @@ pub struct DummyBitcoind {
     /// Blocks this backend's chain contains regardless of [`Self::in_chain`], so a
     /// forked backend can still be asked about a block deeper than the fork point.
     pub also_in_chain: Vec<BlockChainTip>,
+    /// Which node this backend claims to be, for scoping a sanctioned rollback.
+    pub backend_id: Option<BackendId>,
+}
+
+/// The endpoint [`DummyBitcoind`] reports by default.
+pub const DUMMY_RPC_ADDR: &str = "127.0.0.1:8332";
+
+/// The credential descriptor [`DummyBitcoind`] reports by default.
+pub const DUMMY_CREDENTIALS: &str = "cookie:/dummy/.cookie";
+
+/// The identity [`DummyBitcoind`] reports by default.
+pub fn dummy_backend_id(addr: &str, credentials: &str) -> BackendId {
+    BackendId {
+        addr: addr.parse().expect("valid socket address"),
+        credentials: BackendId::fingerprint(credentials),
+    }
 }
 
 impl DummyBitcoind {
@@ -50,6 +67,7 @@ impl DummyBitcoind {
             in_chain: true,
             ancestor: None,
             also_in_chain: Vec::new(),
+            backend_id: Some(dummy_backend_id(DUMMY_RPC_ADDR, DUMMY_CREDENTIALS)),
         }
     }
 }
@@ -77,6 +95,10 @@ impl BitcoinInterface for DummyBitcoind {
 
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool {
         self.in_chain || self.also_in_chain.contains(tip)
+    }
+
+    fn backend_id(&self) -> Option<BackendId> {
+        self.backend_id.clone()
     }
 
     fn sync_wallet(

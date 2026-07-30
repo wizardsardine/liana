@@ -274,17 +274,23 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
         // misreporting, so they are both walked for and applied past the limit —
         // otherwise the repaired node and our state stay permanently divorced. See
         // `crate::bitcoin::sanctioned_rollback`.
-        let sanctioned =
-            crate::bitcoin::sanctioned_rollback().filter(|floor| floor.height < current_tip.height);
+        // Addressed to one node, and this backend has to be it. The floor block is
+        // public — every node on the chain has it — so without matching the node an
+        // exception raised for the managed node would also disarm the guard for an
+        // external `bitcoind` that never underwent the repair.
+        let sanctioned = crate::bitcoin::sanctioned_rollback().filter(|sanction| {
+            sanction.floor.height < current_tip.height
+                && bit.backend_id().as_ref() == Some(&sanction.node)
+        });
         // Bounded at one past the limit: any fork we would accept is found inside it, and
         // anything deeper is refused without walking the rest of the way. Unbounded, a
         // backend claiming a 10k-block reorg would cost us 10k sequential round-trips before
         // we rejected the answer. A sanctioned rollback raises the bound just far enough to
         // reach its floor, and no further.
-        let max_depth = match sanctioned {
-            Some(floor) => current_tip
+        let max_depth = match &sanctioned {
+            Some(sanction) => current_tip
                 .height
-                .saturating_sub(floor.height)
+                .saturating_sub(sanction.floor.height)
                 .max(MAX_REORG_DEPTH),
             None => MAX_REORG_DEPTH,
         };
@@ -292,14 +298,14 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
             AncestorSearch::Found(common_ancestor) => {
                 let depth = current_tip.height.saturating_sub(common_ancestor.height);
                 if depth > MAX_REORG_DEPTH {
-                    // Two conditions, and the second is what keeps this from being a
-                    // blanket depth increase: the fork must be at or above the floor we
-                    // rewound to, *and* the backend's chain must actually contain that
-                    // floor block. A sanction left over from another chain, another
-                    // datadir, or a node that never underwent the repair authorises
-                    // nothing.
-                    let authorised = sanctioned.is_some_and(|floor| {
-                        common_ancestor.height >= floor.height && bit.is_in_chain(&floor)
+                    // Having already established this is the node the repair was
+                    // performed on: the fork must be at or above the floor it rewound
+                    // to, and that floor block must still be in the node's chain — a
+                    // sanction surviving a datadir replaced under the same RPC port
+                    // authorises nothing.
+                    let authorised = sanctioned.as_ref().is_some_and(|sanction| {
+                        common_ancestor.height >= sanction.floor.height
+                            && bit.is_in_chain(&sanction.floor)
                     });
                     if !authorised {
                         return TipUpdate::ImplausibleReorg { min_depth: depth };
@@ -669,9 +675,21 @@ mod tests {
     struct Sanction(#[allow(dead_code)] sync::MutexGuard<'static, ()>);
 
     impl Sanction {
-        fn arm(point: BlockChainTip) -> Self {
+        /// Armed for the node `DummyBitcoind` reports itself as.
+        fn arm(floor: BlockChainTip) -> Self {
+            Self::arm_for(
+                floor,
+                crate::testutils::DUMMY_RPC_ADDR,
+                crate::testutils::DUMMY_CREDENTIALS,
+            )
+        }
+
+        fn arm_for(floor: BlockChainTip, addr: &str, credentials: &str) -> Self {
             let guard = SANCTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            crate::bitcoin::set_sanctioned_rollback(Some(point));
+            crate::bitcoin::set_sanctioned_rollback(Some(crate::bitcoin::SanctionedRollback {
+                floor,
+                node: crate::testutils::dummy_backend_id(addr, credentials),
+            }));
             Self(guard)
         }
 
@@ -763,7 +781,7 @@ mod tests {
         drop(_armed);
 
         // Right depth, but this backend's chain never contained the block we rewound
-        // to — a sanction left over from another chain or another datadir.
+        // to — a datadir replaced under the same RPC port.
         let mut bit = forked_backend(&our_tip, 10_000);
         bit.also_in_chain = vec![tip(10_000, 0xee)];
         let _armed = Sanction::arm(floor);
@@ -771,6 +789,61 @@ mod tests {
             TipUpdate::ImplausibleReorg { .. } => {}
             other => panic!(
                 "expected a sanction from another chain to authorise nothing, got {:?}",
+                other
+            ),
+        }
+    }
+
+    // The floor block is public: every node on the chain has it, so a chain-level
+    // check cannot tell the repaired node from any other. Without the endpoint in the
+    // exception, a Vault pointed at an external `bitcoind` that never underwent the
+    // repair would lose its depth guard for everything above the floor.
+    #[test]
+    fn a_sanction_authorises_nothing_on_another_node() {
+        let our_tip = tip(20_000, 0xaa);
+        let floor = tip(10_000, 0xcc);
+        // Same chain, same floor block, different node.
+        let bit = repaired_backend(&our_tip, 10_000, floor);
+
+        let _armed = Sanction::arm_for(
+            floor,
+            "127.0.0.1:18332",
+            crate::testutils::DUMMY_CREDENTIALS,
+        );
+        match new_tip(&bit, &our_tip) {
+            TipUpdate::ImplausibleReorg { .. } => {}
+            other => panic!(
+                "expected a sanction for another node to authorise nothing, got {:?}",
+                other
+            ),
+        }
+        drop(_armed);
+
+        // Same address, different credentials — the shape a datadir replaced under
+        // the same port takes, since the cookie file lives inside the datadir.
+        let bit = repaired_backend(&our_tip, 10_000, floor);
+        let _armed = Sanction::arm_for(
+            floor,
+            crate::testutils::DUMMY_RPC_ADDR,
+            "cookie:/somewhere/else/.cookie",
+        );
+        match new_tip(&bit, &our_tip) {
+            TipUpdate::ImplausibleReorg { .. } => {}
+            other => panic!(
+                "expected a sanction for another datadir to authorise nothing, got {:?}",
+                other
+            ),
+        }
+        drop(_armed);
+
+        // And a backend that is not a bitcoind at all has no identity to match.
+        let mut bit = repaired_backend(&our_tip, 10_000, floor);
+        bit.backend_id = None;
+        let _armed = Sanction::arm(floor);
+        match new_tip(&bit, &our_tip) {
+            TipUpdate::ImplausibleReorg { .. } => {}
+            other => panic!(
+                "expected an unidentifiable backend to authorise nothing, got {:?}",
                 other
             ),
         }

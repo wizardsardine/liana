@@ -393,6 +393,247 @@ pub fn internal_bitcoind_cookie_path(bitcoind_datadir: &Path, network: &Network)
     cookie_path
 }
 
+/// Give the managed node's datadir an identity, unless it already has one.
+///
+/// Written beside the cookie file, i.e. inside the node's own network datadir, and
+/// read back by `coincubed` as part of [`coincubed::BackendId`]. That placement is the
+/// whole point: a chain repair authorises a deep rollback on one specific node, and
+/// the things that would otherwise identify it — the RPC port, the cookie path — both
+/// outlive the datadir being deleted and recreated beneath them. An authorisation from
+/// the old datadir would then be honoured against the new one. This marker goes with
+/// the datadir, so the replacement gets a fresh identity and the stale authorisation
+/// stops matching.
+///
+/// Generated once and never rewritten, so it is stable across restarts, node upgrades
+/// and flavour switches — all of which leave the datadir in place.
+///
+/// Installed atomically, and that matters more than it looks. Creating the final name
+/// and *then* writing into it leaves a window in which the marker exists but is empty:
+/// a second caller sees it, reports success, and connects — so a repair can be
+/// recorded against an identity derived from an empty marker while every later reader
+/// derives a different one from the finished file, and the authorisation stops
+/// matching for good. So the contents are staged under a private name, flushed, and
+/// linked into place in one step. A reader sees either no marker or a complete one.
+///
+/// Returns the identity now in force, which may be another caller's if it got there
+/// first. An incomplete marker — an empty file from a crash, or one left by an earlier
+/// version of this function — is discarded and replaced rather than trusted forever.
+/// How long to keep trying for the marker lock, as (attempts, delay between them).
+///
+/// Short in tests so the timeout path is exercisable without a two-second wait; the
+/// behaviour either side of it is what the tests are about, not the duration.
+fn lock_acquisition_bound() -> (u32, std::time::Duration) {
+    #[cfg(not(test))]
+    {
+        (40, std::time::Duration::from_millis(50))
+    }
+    #[cfg(test)]
+    (30, std::time::Duration::from_millis(10))
+}
+
+/// Whether the managed node's durable identity can be relied on yet.
+///
+/// A `BitcoinD` reads the datadir's instance marker once, at construction, and caches
+/// the identity it derives. That is fine when the marker is there, and fine when none is
+/// expected — but not when one is expected and merely *late*: everything built in the
+/// meantime reports the endpoint-and-cookie-path identity, and everything built after the
+/// marker lands reports a different one. A repair recorded in that window names an
+/// identity that no later client agrees with, and the authorisation it depends on stops
+/// matching — which is the failure the marker was introduced to prevent, reached by
+/// another route.
+///
+/// So the answer to a failed marker install is not "carry on with the weaker identity".
+/// It is to let the node start and sync, and to refuse anything that would write a repair
+/// down until the identity is settled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodeIdentity {
+    /// Settled: either the marker is installed and validated, or none is expected here,
+    /// so what a `BitcoinD` reports now is what it will keep reporting.
+    Stable,
+    /// A marker is expected and is not there. Any identity derived right now is
+    /// provisional, so no chain repair may be started or recorded against it.
+    Unstable,
+}
+
+impl NodeIdentity {
+    /// Whether a chain repair may be started or recorded.
+    pub fn permits_chain_repair(&self) -> bool {
+        matches!(self, Self::Stable)
+    }
+}
+
+/// Settle the managed node's identity, installing its marker if that has not happened
+/// yet.
+///
+/// Called before the first `BitcoinD` of a managed-node start, and again on an explicit
+/// repair — so a start that could not establish it does not poison later attempts, it
+/// just declines to repair until one of them succeeds.
+pub fn establish_node_identity(config: &BitcoindConfig) -> NodeIdentity {
+    match &config.rpc_auth {
+        coincubed::config::BitcoindRpcAuth::CookieFile(cookie_path) => {
+            match ensure_node_instance_marker(cookie_path) {
+                Ok(instance) => {
+                    tracing::debug!("managed node identity: {instance}");
+                    NodeIdentity::Stable
+                }
+                Err(e) => {
+                    warn!(
+                        "could not establish the managed node's identity ({e}); it will start \
+                         and sync as usual, but chain repairs are declined until this succeeds"
+                    );
+                    NodeIdentity::Unstable
+                }
+            }
+        }
+        // No cookie file for a marker to sit beside, so none is expected and none will
+        // ever appear. The endpoint-and-username identity such a node reports is already
+        // settled — weaker than a marker, but it does not change under us, which is what
+        // matters here. Repairs may proceed.
+        coincubed::config::BitcoindRpcAuth::UserPass(..) => NodeIdentity::Stable,
+    }
+}
+
+/// Installed under an advisory lock on a sibling file, because the whole
+/// read-validate-replace-install sequence has to be one transaction and not just its
+/// last step.
+///
+/// The atomic install alone is not enough once a *malformed* marker is in the way.
+/// Two callers both read it, both decide to replace it, and the second one's
+/// `remove_file` — decided on a read that is now stale — deletes the valid marker the
+/// first has just installed, after which they disagree about the identity forever.
+/// Holding the lock across the read means the file cannot change under a caller
+/// between validating it and replacing it.
+///
+/// An OS advisory lock rather than a lock *file*, deliberately: the kernel drops it
+/// when the holder's descriptor closes, including on a crash, so there is no stale lock
+/// to break and no timeout to guess. The lock file itself is left in place — it carries
+/// no state, and its existence is not what locks anything.
+pub fn ensure_node_instance_marker(cookie_path: &Path) -> std::io::Result<String> {
+    use fs4::fs_std::FileExt;
+
+    let dir = cookie_path.parent().ok_or_else(|| {
+        std::io::Error::other("the managed node's cookie path has no parent directory")
+    })?;
+    std::fs::create_dir_all(dir)?;
+
+    let lock_path = dir.join(format!("{}.lock", coincubed::NODE_INSTANCE_FILE));
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)?;
+    // Bounded rather than blocking. Real contention here is a handful of Vaults starting
+    // in the same instant, all of which finish in microseconds — but this sits on the
+    // startup path of every Vault, and a holder that is wedged rather than crashed would
+    // otherwise wedge startup with it.
+    //
+    // Giving up is *not* the same as "no marker is expected here": the identity a
+    // `BitcoinD` caches while a marker is still on its way will change once it lands. See
+    // [`establish_node_identity`], which is what turns that distinction into a refusal to
+    // repair rather than a repair recorded against an identity about to move.
+    let (lock_attempts, lock_retry) = lock_acquisition_bound();
+    let mut acquired = false;
+    for attempt in 0..lock_attempts {
+        if lock.try_lock_exclusive()? {
+            acquired = true;
+            break;
+        }
+        if attempt + 1 < lock_attempts {
+            std::thread::sleep(lock_retry);
+        }
+    }
+    if !acquired {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "another process is still establishing the managed node's identity",
+        ));
+    }
+    let established = establish_node_instance(dir);
+    // Explicit, so the unlock is not left to the order fields happen to drop in.
+    let _ = FileExt::unlock(&lock);
+    established
+}
+
+/// The locked part of [`ensure_node_instance_marker`]. Assumes exclusive access to
+/// `dir`'s marker.
+fn establish_node_instance(dir: &Path) -> std::io::Result<String> {
+    use rand::Rng;
+
+    /// Distinguishes concurrent stagers; only reachable by callers in different
+    /// processes holding the lock in turn, but the name still has to be unique.
+    static STAGING_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    let marker = dir.join(coincubed::NODE_INSTANCE_FILE);
+    match std::fs::read_to_string(&marker) {
+        Ok(existing) => {
+            let existing = existing.trim().to_string();
+            if coincubed::valid_node_instance(&existing) {
+                return Ok(existing);
+            }
+            // Empty or truncated — a crash between creating the file and filling it, or
+            // a marker from an older version of this code. Trusting it would hand out an
+            // identity that differs from whatever a complete marker later says, which is
+            // exactly the mismatch this function exists to prevent. Safe to replace only
+            // because the lock means no one has installed a valid marker since the read.
+            warn!("discarding a malformed managed-node identity at {marker:?}");
+            match std::fs::remove_file(&marker) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+
+    let instance: String = rand::thread_rng()
+        .sample_iter(rand::distributions::Alphanumeric)
+        .take(coincubed::NODE_INSTANCE_LEN)
+        .map(char::from)
+        .collect();
+    let staged = dir.join(format!(
+        "{}.{}.{}.tmp",
+        coincubed::NODE_INSTANCE_FILE,
+        std::process::id(),
+        STAGING_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let install = (|| -> std::io::Result<()> {
+        {
+            use std::io::Write;
+            let mut file = std::fs::File::create(&staged)?;
+            file.write_all(instance.as_bytes())?;
+            file.sync_all()?;
+        }
+        // Rename rather than link: under the lock there is nothing to lose a race
+        // against, and it leaves no second name to clean up. The final name therefore
+        // goes from absent to complete in one step — a concurrent *reader*, which takes
+        // no lock, never sees a half-written marker.
+        std::fs::rename(&staged, &marker)?;
+        // The contents are durable but the directory entry naming them may not be, and
+        // a lost entry is a marker that silently changes identity after a crash.
+        sync_directory(dir)
+    })();
+    // Nothing to remove on the success path — the rename consumed it — but a failure
+    // part-way must not leave staging files behind.
+    if install.is_err() {
+        let _ = std::fs::remove_file(&staged);
+    }
+    install.map(|()| instance)
+}
+
+/// Flush a directory entry, so a rename or link into it survives a crash.
+///
+/// Unix only: Windows cannot open a directory as a file without backup semantics, and
+/// NTFS metadata journalling makes the operation durable there anyway. Mirrors the
+/// managed-node state sidecar's own writes.
+fn sync_directory(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    std::fs::File::open(dir)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = dir;
+    Ok(())
+}
+
 /// Path of the cookie file used by internal bitcoind on a given network.
 pub fn internal_bitcoind_debug_log_path(
     coincubed_datadir: &CoincubeDirectory,
@@ -1150,6 +1391,18 @@ impl Bitcoind {
         coincube_datadir: &CoincubeDirectory,
     ) -> Result<Self, StartInternalBitcoindError> {
         let bitcoind_datadir = internal_bitcoind_datadir(coincube_datadir);
+        // Settle the datadir's identity before the first connection to it, not after.
+        // Every managed-node start comes through here — the loader with a config it read
+        // off disk, the installer with one it just wrote, the settings switch — and each
+        // goes on to build a `BitcoinD`, which reads the marker once at construction and
+        // caches what it derives. Establishing it later means a repair can be recorded
+        // against the endpoint-and-cookie-path identity and then stop matching the moment
+        // the marker appears.
+        //
+        // Not fatal if it fails: the node still starts and syncs, which is what the user
+        // is waiting for. What it does cost is chain reconciliation — every repair path
+        // declines while the answer is provisional, and the next start tries again.
+        let identity = establish_node_identity(&config);
         // Launch a binary consistent with the on-disk `bitcoin.conf`. A conf
         // carrying `consensusrules=rdts` *requires* a Knots binary — starting
         // Core against it makes Core reject the unknown option and exit — so we
@@ -1184,6 +1437,7 @@ impl Bitcoind {
                     coincube_datadir,
                     &running,
                     &config,
+                    &identity,
                     network,
                     running_flavor,
                 );
@@ -1292,6 +1546,7 @@ impl Bitcoind {
                         coincube_datadir,
                         &started,
                         &config,
+                        &identity,
                         network,
                         observed_flavor,
                     );
@@ -1493,6 +1748,374 @@ mod tests {
     use super::*;
     use coincube_core::miniscript::bitcoin::Network;
     use ini::Ini;
+
+    fn a_marker_datadir(name: &str) -> (std::path::PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "coincube-node-instance-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cookie_path = dir.join("signet").join(".cookie");
+        (dir, cookie_path)
+    }
+
+    // The marker is what turns "this endpoint with this cookie path" into "this node".
+    // It has to be stable while the datadir lives — restarts, upgrades and flavour
+    // switches all keep it — and gone once the datadir is, so a repair authorisation
+    // from the old datadir stops matching its replacement.
+    #[test]
+    fn the_node_instance_marker_is_stable_but_dies_with_its_datadir() {
+        let (dir, cookie_path) = a_marker_datadir("stable");
+        let marker = cookie_path
+            .parent()
+            .unwrap()
+            .join(coincubed::NODE_INSTANCE_FILE);
+
+        // The installer's shape: the network directory does not exist yet, and the
+        // marker has to be installable before anything connects.
+        assert!(!cookie_path.parent().unwrap().exists());
+        let first = ensure_node_instance_marker(&cookie_path).expect("stamped");
+        assert!(coincubed::valid_node_instance(&first));
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), first);
+
+        // Stable: stamping again is a no-op, so every later start of the same datadir
+        // sees the same identity.
+        assert_eq!(
+            ensure_node_instance_marker(&cookie_path).expect("idempotent"),
+            first
+        );
+
+        // Nothing but the marker and its (stateless) lock file.
+        assert_eq!(
+            marker_artifacts(&cookie_path),
+            vec![format!("{}.lock", coincubed::NODE_INSTANCE_FILE)],
+            "staging files were not cleaned up"
+        );
+
+        // Gone with the datadir, and the replacement is a different node.
+        let _ = std::fs::remove_dir_all(&dir);
+        let second = ensure_node_instance_marker(&cookie_path).expect("re-stamped");
+        assert_ne!(second, first);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // An empty or truncated marker is what the pre-atomic version of this function
+    // could leave behind, and what a crash between creating the file and filling it
+    // would leave. Trusting it hands out an identity that differs from the one the
+    // finished file would give, so a repair recorded against it stops matching for
+    // good. It has to be replaced, not adopted.
+    #[test]
+    fn an_incomplete_marker_is_replaced_rather_than_trusted() {
+        let (dir, cookie_path) = a_marker_datadir("incomplete");
+        let network_dir = cookie_path.parent().unwrap().to_path_buf();
+        let marker = network_dir.join(coincubed::NODE_INSTANCE_FILE);
+
+        for malformed in ["", "   ", "short", &"x".repeat(64), "not-alnum!!!"] {
+            std::fs::create_dir_all(&network_dir).unwrap();
+            std::fs::write(&marker, malformed).unwrap();
+            assert!(!coincubed::valid_node_instance(malformed.trim()));
+
+            let recovered = ensure_node_instance_marker(&cookie_path).expect("recovered");
+            assert!(
+                coincubed::valid_node_instance(&recovered),
+                "an incomplete marker ({:?}) must be replaced with a complete one",
+                malformed
+            );
+            assert_eq!(std::fs::read_to_string(&marker).unwrap(), recovered);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every marker-directory entry that is not the marker itself: staging files, lock
+    /// files, anything left behind.
+    fn marker_artifacts(cookie_path: &Path) -> Vec<String> {
+        std::fs::read_dir(cookie_path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name != coincubed::NODE_INSTANCE_FILE)
+            .collect()
+    }
+
+    // The hard case, and the one the fresh-datadir test below cannot reach: a *malformed*
+    // marker is already there when several callers arrive. Each of them decides to replace
+    // it, and without the whole read-validate-replace-install sequence being one
+    // transaction, the second one's delete — decided on a read that is now stale — removes
+    // the valid marker the first has just installed, leaving them permanently disagreeing.
+    #[test]
+    fn concurrent_recovery_from_a_malformed_marker_agrees_on_one_identity() {
+        let (dir, cookie_path) = a_marker_datadir("concurrent-malformed");
+        let network_dir = cookie_path.parent().unwrap().to_path_buf();
+        let marker = network_dir.join(coincubed::NODE_INSTANCE_FILE);
+
+        // The state a crash between creating the marker and filling it leaves behind.
+        std::fs::create_dir_all(&network_dir).unwrap();
+        std::fs::write(&marker, "").unwrap();
+
+        const CALLERS: usize = 8;
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(CALLERS));
+        let observed: Vec<String> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..CALLERS)
+                .map(|_| {
+                    let barrier = barrier.clone();
+                    let cookie_path = cookie_path.clone();
+                    scope.spawn(move || {
+                        // Every caller reads the malformed marker at as near the same
+                        // instant as we can arrange, which is what makes the stale-read
+                        // delete reachable.
+                        barrier.wait();
+                        ensure_node_instance_marker(&cookie_path).expect("recovered")
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+
+        let winner = &observed[0];
+        assert!(
+            coincubed::valid_node_instance(winner),
+            "recovery produced a malformed identity"
+        );
+        for instance in &observed {
+            assert_eq!(
+                instance, winner,
+                "concurrent recovery from a malformed marker disagreed about the identity"
+            );
+        }
+        // Exactly one identity won, and it is the one on disk — not a later caller's that
+        // deleted it.
+        assert_eq!(&std::fs::read_to_string(&marker).unwrap(), winner);
+
+        // The lock is expected to remain (it holds no state); nothing else may.
+        let artifacts = marker_artifacts(&cookie_path);
+        let expected_lock = format!("{}.lock", coincubed::NODE_INSTANCE_FILE);
+        assert_eq!(
+            artifacts,
+            vec![expected_lock],
+            "recovery left staging artifacts behind"
+        );
+
+        // And the settled marker is now stable: a further caller adopts it rather than
+        // replacing it.
+        assert_eq!(
+            &ensure_node_instance_marker(&cookie_path).expect("stable"),
+            winner
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The timeout path, which is the one the bounded lock introduced. A holder that is
+    // slow but not wedged makes a second caller give up — and a caller that then carried
+    // on would build a `BitcoinD` caching the endpoint-and-cookie-path identity, record a
+    // repair against it, and watch that authorisation stop matching the moment the marker
+    // finally landed. So giving up has to mean "no repair", not "repair under whatever
+    // identity we have".
+    #[test]
+    fn a_timed_out_caller_gets_an_unstable_identity_and_recovers_on_retry() {
+        use fs4::fs_std::FileExt;
+
+        let (dir, cookie_path) = a_marker_datadir("timeout");
+        let network_dir = cookie_path.parent().unwrap().to_path_buf();
+        let marker = network_dir.join(coincubed::NODE_INSTANCE_FILE);
+        std::fs::create_dir_all(&network_dir).unwrap();
+
+        let config = coincubed::config::BitcoindConfig {
+            rpc_auth: coincubed::config::BitcoindRpcAuth::CookieFile(cookie_path.clone()),
+            addr: "127.0.0.1:8332".parse().unwrap(),
+        };
+
+        // A holder takes the lock and keeps it for longer than the acquisition bound.
+        let lock_path = network_dir.join(format!("{}.lock", coincubed::NODE_INSTANCE_FILE));
+        let held = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        held.lock_exclusive().unwrap();
+
+        // The second caller exhausts its attempts and gives up. Joining takes exactly as
+        // long as the bound, so nothing here depends on a guessed sleep.
+        let timed_out = {
+            let config = config.clone();
+            std::thread::spawn(move || establish_node_identity(&config))
+                .join()
+                .unwrap()
+        };
+        assert_eq!(
+            timed_out,
+            NodeIdentity::Unstable,
+            "a timed-out caller must not report a settled identity"
+        );
+        assert!(!timed_out.permits_chain_repair());
+
+        // ...and with that, no chain operation can be claimed, so nothing can issue
+        // `invalidateblock` or `reconsiderblock`, record a rollback floor, or reconcile.
+        // The identity is checked before the maintenance guard is even reached, so this
+        // says nothing about whether some other test happens to hold it.
+        let (state_dir, datadir) = {
+            let d = dir.join("coincube");
+            (d.clone(), crate::dir::CoincubeDirectory::new(d))
+        };
+        assert!(matches!(
+            crate::node::revalidate::probe_chain_operation(&datadir, &timed_out),
+            Err(crate::node::revalidate::ClaimRefused::UnstableIdentity)
+        ));
+        // Nor can the manual "Re-check chain" repair, which surfaces it to the user.
+        let refusal = crate::node::revalidate::clear_failure_flags(
+            &datadir,
+            &config,
+            &timed_out,
+            crate::node::revalidate::RevalidationPlan::ClearFailureFlags {
+                anchor_height: crate::node::revalidate::RDTS_ANCHOR_MAINNET,
+            },
+        )
+        .expect_err("must refuse");
+        assert!(
+            refusal.contains("identity"),
+            "the refusal should say why: {}",
+            refusal
+        );
+        // Refused before anything was written down, so there is no half-recorded repair
+        // for a later start to trip over.
+        assert_eq!(
+            crate::node::revalidate::ManagedNodeState::load(&datadir).sanctioned_rollback,
+            None
+        );
+        let _ = std::fs::remove_dir_all(&state_dir);
+
+        // The original holder now finishes and releases, which is the "late successful
+        // installation" the timed-out caller has to pick up.
+        let installed = establish_node_instance(&network_dir).expect("installed");
+        let _ = FileExt::unlock(&held);
+
+        // A later start — or an explicit repair — settles on the marker that landed, and
+        // repairs are permitted again.
+        let retried = establish_node_identity(&config);
+        assert_eq!(retried, NodeIdentity::Stable);
+        assert!(retried.permits_chain_repair());
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), installed);
+        // Deliberately not asserting that a claim now succeeds: that also depends on the
+        // process-wide maintenance guard other tests take, and taking it here to look
+        // would make *their* assertions flaky in return. `permits_chain_repair` above is
+        // the identity-level property this test owns; that the gate then opens is
+        // asserted under the serialising lock in
+        // `revalidate::tests::an_unsettled_identity_permits_no_chain_operation`.
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The same property as the test above, established deterministically rather than by
+    // running threads at each other and hoping the bad interleaving shows up: hold the
+    // lock, prove a caller cannot proceed while it is held, install an identity underneath
+    // it, and require the caller to adopt that one once released. A caller that could
+    // delete a marker installed after its own validation read would return a different
+    // identity here, every time.
+    #[test]
+    fn a_caller_cannot_replace_a_marker_installed_while_it_waited() {
+        use fs4::fs_std::FileExt;
+
+        let (dir, cookie_path) = a_marker_datadir("locked-out");
+        let network_dir = cookie_path.parent().unwrap().to_path_buf();
+        let marker = network_dir.join(coincubed::NODE_INSTANCE_FILE);
+        std::fs::create_dir_all(&network_dir).unwrap();
+        // Malformed, so the waiting caller's plan is to replace it.
+        std::fs::write(&marker, "partial").unwrap();
+
+        let lock_path = network_dir.join(format!("{}.lock", coincubed::NODE_INSTANCE_FILE));
+        let held = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        held.lock_exclusive().unwrap();
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let waiter = {
+            let cookie_path = cookie_path.clone();
+            std::thread::spawn(move || {
+                let instance = ensure_node_instance_marker(&cookie_path).expect("stamped");
+                let _ = done_tx.send(());
+                instance
+            })
+        };
+
+        // It must not get past the lock. If it did, it would be reading the malformed
+        // marker right now and preparing to delete whatever replaces it. Comfortably
+        // inside the acquisition bound, so it is still waiting rather than giving up.
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(40))
+                .is_err(),
+            "a caller proceeded while the marker lock was held"
+        );
+
+        // Install the winning identity under the lock we are holding.
+        let winner = establish_node_instance(&network_dir).expect("installed");
+        assert!(coincubed::valid_node_instance(&winner));
+        let _ = FileExt::unlock(&held);
+
+        assert_eq!(
+            waiter.join().unwrap(),
+            winner,
+            "a caller replaced a marker that was installed while it waited"
+        );
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), winner);
+        assert_eq!(
+            marker_artifacts(&cookie_path),
+            vec![format!("{}.lock", coincubed::NODE_INSTANCE_FILE)]
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Several Vaults can attach to one fresh managed datadir in the same instant. Every
+    // one of them must come away with the *same* complete identity: if one of them
+    // records a repair against an identity another never sees, the authorisation stops
+    // matching and the repaired chain is refused indefinitely.
+    #[test]
+    fn concurrent_stamping_agrees_on_one_complete_identity() {
+        let (dir, cookie_path) = a_marker_datadir("concurrent");
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let observed: Vec<String> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    let barrier = barrier.clone();
+                    let cookie_path = cookie_path.clone();
+                    scope.spawn(move || {
+                        barrier.wait();
+                        ensure_node_instance_marker(&cookie_path).expect("stamped")
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+
+        let first = &observed[0];
+        assert!(coincubed::valid_node_instance(first));
+        for instance in &observed {
+            assert_eq!(
+                instance, first,
+                "racing callers disagreed about the node's identity"
+            );
+        }
+        // And what is on disk is what they all reported — never an empty or partial
+        // file that a reader could have picked up in between.
+        let marker = cookie_path
+            .parent()
+            .unwrap()
+            .join(coincubed::NODE_INSTANCE_FILE);
+        assert_eq!(&std::fs::read_to_string(&marker).unwrap(), first);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     // Test the format of the internal bitcoind configuration file.
     #[test]
