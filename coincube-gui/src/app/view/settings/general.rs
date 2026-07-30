@@ -273,19 +273,18 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
                 .push(
                     button::primary(None, "Turn off")
                         .padding([8, 14])
-                        .on_press_maybe((!busy).then_some(
-                            SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::ConfirmAlertsOff)
+                        .on_press_maybe(
+                            (!busy).then_some(
+                                SettingsMessage::RecoveryAlerts(
+                                    RecoveryAlertsMessage::ConfirmAlertsOff,
+                                )
                                 .into(),
-                        )),
-                )
-                .push(
-                    button::secondary(None, "Cancel")
-                        .padding([8, 14])
-                        .on_press(
-                            SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::CancelAlertsOff)
-                                .into(),
+                            ),
                         ),
-                ),
+                )
+                .push(button::secondary(None, "Cancel").padding([8, 14]).on_press(
+                    SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::CancelAlertsOff).into(),
+                )),
         );
     }
 
@@ -323,7 +322,11 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
 /// The "What keyholders can recover" escrow selector — Estate-gated (locked
 /// affordance when the account lacks the `inheritanceEscrow` entitlement). The
 /// tier is server-derived; picking Vault only / Full Cube auto-enables alerts.
-fn escrow_selector<'a>(ra: &'a RecoveryAlerts, alerts_on: bool, busy: bool) -> Element<'a, Message> {
+fn escrow_selector<'a>(
+    ra: &'a RecoveryAlerts,
+    alerts_on: bool,
+    busy: bool,
+) -> Element<'a, Message> {
     // Locked affordance when the account can't escrow a recovery kit.
     if !ra.escrow_entitled {
         return Column::new()
@@ -415,19 +418,18 @@ fn escrow_selector<'a>(ra: &'a RecoveryAlerts, alerts_on: bool, busy: bool) -> E
                 .push(
                     button::primary(None, "Confirm")
                         .padding([8, 14])
-                        .on_press_maybe((!busy).then_some(
-                            SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::ConfirmFullCube)
+                        .on_press_maybe(
+                            (!busy).then_some(
+                                SettingsMessage::RecoveryAlerts(
+                                    RecoveryAlertsMessage::ConfirmFullCube,
+                                )
                                 .into(),
-                        )),
-                )
-                .push(
-                    button::secondary(None, "Cancel")
-                        .padding([8, 14])
-                        .on_press(
-                            SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::CancelFullCube)
-                                .into(),
+                            ),
                         ),
-                ),
+                )
+                .push(button::secondary(None, "Cancel").padding([8, 14]).on_press(
+                    SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::CancelFullCube).into(),
+                )),
         );
     }
 

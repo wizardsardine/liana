@@ -31,7 +31,9 @@ use zeroize::Zeroizing;
 use crate::{
     app::{cache::Cache, message::Message, settings, view, wallet::Wallet},
     services::coincube::{CoincubeClient, CubeMember, VaultMonitoringLevel, VaultMonitoringStatus},
-    services::inheritance::{disable_alerts, disable_escrow, enable_alerts, enroll_escrow, EscrowTier},
+    services::inheritance::{
+        disable_alerts, disable_escrow, enable_alerts, enroll_escrow, EscrowTier,
+    },
     services::recovery::{SeedBlob, SeedBlobCube, SeedBlobMnemonic, BLOB_VERSION},
 };
 
@@ -121,7 +123,11 @@ impl RecoveryAlerts {
     ///   `None` ("on, tier unknown"). Returning `None` avoids asserting — and
     ///   mis-stating — a tier the server didn't confirm (C2).
     pub fn escrow_tier(&self) -> Option<EscrowTier> {
-        match self.status.as_ref().and_then(|s| s.escrowed_artifacts.as_ref()) {
+        match self
+            .status
+            .as_ref()
+            .and_then(|s| s.escrowed_artifacts.as_ref())
+        {
             Some(kinds) if kinds.iter().any(|k| k == "seed") => Some(EscrowTier::FullCube),
             Some(kinds) if kinds.iter().any(|k| k == "descriptor") => Some(EscrowTier::VaultOnly),
             Some(_) => Some(EscrowTier::Off),
@@ -353,7 +359,11 @@ pub fn update(
                     },
                     move |res| {
                         // No escrow change → `None` (no PIN re-show on failure).
-                        ra_msg(RecoveryAlertsMessage::ChangeResult(res, session_generation, None))
+                        ra_msg(RecoveryAlertsMessage::ChangeResult(
+                            res,
+                            session_generation,
+                            None,
+                        ))
                     },
                 )
             } else {

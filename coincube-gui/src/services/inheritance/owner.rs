@@ -337,7 +337,8 @@ mod tests {
         let escrow_put = server.mock(|when, then| {
             when.method(Method::PUT)
                 .path("/api/v1/connect/cubes/42/vault/escrow");
-            then.status(200).json_body(json!({ "success": true, "data": {} }));
+            then.status(200)
+                .json_body(json!({ "success": true, "data": {} }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());

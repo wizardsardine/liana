@@ -2707,7 +2707,10 @@ mod vault_monitoring_tests {
             "escrowedArtifacts": ["descriptor"]
         }))
         .unwrap();
-        assert_eq!(vault_only.escrowed_artifacts.as_deref(), Some(&["descriptor".to_string()][..]));
+        assert_eq!(
+            vault_only.escrowed_artifacts.as_deref(),
+            Some(&["descriptor".to_string()][..])
+        );
 
         let full_cube: VaultMonitoringStatus = serde_json::from_value(serde_json::json!({
             "monitoringLevel": "heartbeat",

@@ -1926,7 +1926,10 @@ impl App {
     /// file (PR 3). The in-memory `cube_settings` copy is set by the caller; this
     /// just makes it durable so the prompt never re-fires across restarts.
     fn persist_recovery_alerts_answered(&self) -> Task<Message> {
-        let network_dir = self.cache.datadir_path.network_directory(self.cache.network);
+        let network_dir = self
+            .cache
+            .datadir_path
+            .network_directory(self.cache.network);
         let cube_id = self.cube_settings.id.clone();
         Task::perform(
             async move {
@@ -3555,23 +3558,35 @@ impl App {
                 return Task::none();
             }
             Message::View(view::Message::RecoveryAlertsConsent(accept)) => {
-                // Answer the one-time consent prompt (PR 3). Persist the answer
-                // (durably, so it never re-fires) and dismiss the overlay.
+                // Answer the one-time consent prompt (PR 3). Dismiss the overlay
+                // either way.
                 self.show_recovery_alerts_prompt = false;
-                self.cube_settings.recovery_alerts_prompt_answered = true;
-                let persist = self.persist_recovery_alerts_answered();
-                // On accept, turn alerts on now (cube-scoped POST). Route the
-                // result through the settings card's `ChangeResult` so the card
-                // reflects alerts-on and any failure surfaces there; the next
+                if !accept {
+                    // Decline: record durably and move on — never re-prompt.
+                    self.cube_settings.recovery_alerts_prompt_answered = true;
+                    return self.persist_recovery_alerts_answered();
+                }
+                // Accept: turn alerts on now (cube-scoped POST). Route the result
+                // through the settings card's `ChangeResult` so the card reflects
+                // alerts-on and any post-dispatch failure surfaces there; the next
                 // post-sync hydration resolves the vault id for heartbeats.
                 // `enable_alerts` is idempotent, so a redundant accept is safe.
-                let enable = if accept {
-                    let gen = self.panels.connect.account.session_generation();
-                    match (
-                        self.authenticated_coincube_client(),
-                        self.panels.connect.cube.server_cube_id,
-                    ) {
-                        (Some(client), Some(cube_id)) => Task::perform(
+                //
+                // Only mark the prompt answered once we can actually dispatch the
+                // enable. If the Connect session dropped while the overlay was up
+                // (token expiry / account switch), persisting "answered" here would
+                // suppress the prompt forever while having enabled nothing — a
+                // silent permanent failure. Instead, leave it un-answered (so it
+                // re-fires once Connect is back) and surface a visible error.
+                let gen = self.panels.connect.account.session_generation();
+                match (
+                    self.authenticated_coincube_client(),
+                    self.panels.connect.cube.server_cube_id,
+                ) {
+                    (Some(client), Some(cube_id)) => {
+                        self.cube_settings.recovery_alerts_prompt_answered = true;
+                        let persist = self.persist_recovery_alerts_answered();
+                        let enable = Task::perform(
                             async move {
                                 crate::services::inheritance::enable_alerts(&client, cube_id)
                                     .await
@@ -3584,13 +3599,17 @@ impl App {
                                     ),
                                 ))
                             },
-                        ),
-                        _ => Task::none(),
+                        );
+                        return Task::batch([persist, enable]);
                     }
-                } else {
-                    Task::none()
-                };
-                return Task::batch([persist, enable]);
+                    _ => {
+                        return Task::done(Message::View(view::Message::ShowError(
+                            "Couldn't reach your Connect account — recovery alerts weren't turned \
+                             on. We'll ask again."
+                                .to_string(),
+                        )));
+                    }
+                }
             }
             Message::CacheUpdated => {
                 // Cube (Home) Settings lives on every cube, vault or not,
@@ -4634,12 +4653,9 @@ impl App {
                 // must never re-fire for this Cube (else turning alerts off would
                 // immediately re-nudge — the residual nudge is the banner, not
                 // the modal). Classify before `msg` is moved into `update`.
-                let is_status_load =
-                    matches!(msg, view::RecoveryAlertsMessage::StatusLoaded(..));
-                let is_ok_change = matches!(
-                    msg,
-                    view::RecoveryAlertsMessage::ChangeResult(Ok(_), _, _)
-                );
+                let is_status_load = matches!(msg, view::RecoveryAlertsMessage::StatusLoaded(..));
+                let is_ok_change =
+                    matches!(msg, view::RecoveryAlertsMessage::ChangeResult(Ok(_), _, _));
                 let task = crate::app::state::settings::recovery_alerts::update(
                     &mut self.panels.global_settings.recovery_alerts,
                     msg,
@@ -4921,10 +4937,15 @@ impl App {
         };
 
         // One-time recovery-alerts consent prompt overlays everything (PR 3).
+        // `opaque` makes the full-screen overlay capture mouse presses so a
+        // backdrop click can't fall through to (and actuate) the content layer
+        // beneath it in the Stack — a proper modal focus trap.
         if self.show_recovery_alerts_prompt {
             iced::widget::Stack::new()
                 .push(content)
-                .push(recovery_alerts_consent_overlay().map(Message::View))
+                .push(iced::widget::opaque(
+                    recovery_alerts_consent_overlay().map(Message::View),
+                ))
                 .into()
         } else {
             content
