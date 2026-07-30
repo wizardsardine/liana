@@ -56,6 +56,7 @@ pub fn previous_addresses_header<'a, M: Clone + 'static>(show: bool, toggle: M) 
 
     Button::new(header)
         .style(theme::button::transparent)
+        .padding(0)
         .on_press(toggle)
         .into()
 }
