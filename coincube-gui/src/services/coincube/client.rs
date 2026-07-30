@@ -1291,27 +1291,52 @@ impl CoincubeClient {
         Ok(resp.data)
     }
 
-    /// `GET /api/v1/cubes/{cube_id}/recovery-kit` (Approach C, dual-password).
+    /// `GET /api/v1/connect/cubes/{cube_id}/recovery-kit` (Approach C, dual-password).
     ///
     /// Distinct from [`get_recovery_kit`](Self::get_recovery_kit): the password
-    /// hash gates which envelope (regular vs. duress) the server returns, and a
-    /// duress password yields `423 DURESS_LOCKED` rather than a kit. The hash is
-    /// sent in the `X-CRK-Password-Hash` header rather than the query string so
-    /// it never lands in access logs.
+    /// gates which envelope (regular vs. duress) the server returns, and a
+    /// duress password yields `423 DURESS_LOCKED` rather than a kit.
+    ///
+    /// IMPORTANT: despite the `X-CRK-Password-Hash` header name (fixed by the
+    /// Connect API contract), the value carried here is the **raw** CRK
+    /// password, not a hash — hence the `crk_password` parameter name. The
+    /// server stores each candidate as an argon2id PHC string with a random
+    /// salt (see [`hash_duress_secret`](crate::services::duress::enroll::hash_duress_secret)),
+    /// so it can only tell a regular password from the duress one by running
+    /// `argon2::verify` on the plaintext. Pre-hashing here would produce a
+    /// fresh-salt digest that can never match the stored one, silently breaking
+    /// duress — do NOT "fix" this by hashing. The value rides in a header rather
+    /// than the query string so it never lands in access logs, and is marked
+    /// sensitive below so cooperating logging/tracing layers redact it and
+    /// HTTP/2 keeps it out of the HPACK compression table.
     ///
     /// NOTE: the exact transport is pinned by Connect API Phase 4; the header
     /// name here is provisional and revisited in Phase 7.
     pub async fn download_recovery_kit(
         &self,
         cube_id: u64,
-        crk_password_hash: &str,
+        crk_password: &str,
     ) -> Result<RecoveryKit, super::DownloadError> {
         use super::DownloadError;
-        let url = format!("{}/api/v1/cubes/{}/recovery-kit", self.base_url, cube_id);
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/recovery-kit",
+            self.base_url, cube_id
+        );
+        // Carry the raw password as a *sensitive* header value (see the note
+        // above): hyper omits sensitive headers from the HTTP/2 HPACK table,
+        // and any logging/tracing layer that honours `is_sensitive` redacts it.
+        let mut crk_header =
+            reqwest::header::HeaderValue::from_str(crk_password).map_err(|_| {
+                DownloadError::Other(CoincubeError::Api(
+                    "recovery kit password contains characters that cannot be sent in a header"
+                        .to_string(),
+                ))
+            })?;
+        crk_header.set_sensitive(true);
         let res = self
             .client
             .get(&url)
-            .header("X-CRK-Password-Hash", crk_password_hash)
+            .header("X-CRK-Password-Hash", crk_header)
             .send()
             .await
             .map_err(|e| DownloadError::Other(e.into()))?;
@@ -1328,7 +1353,11 @@ impl CoincubeClient {
                 let body = res.text().await.unwrap_or_default();
                 Err(DownloadError::from_locked_body(&body))
             }
-            400 | 401 | 403 | 404 | 422 => Err(DownloadError::Invalid),
+            404 => Err(DownloadError::NotFound),
+            429 => Err(DownloadError::RateLimited {
+                retry_after: parse_retry_after(res.headers()),
+            }),
+            400 | 401 | 403 | 422 => Err(DownloadError::Invalid),
             other => Err(DownloadError::Other(CoincubeError::Unsuccessful(
                 crate::services::http::NotSuccessResponseInfo {
                     status_code: other,
@@ -1343,22 +1372,24 @@ impl CoincubeClient {
 // Vault recovery monitoring (Estate Notifications — PR 2)
 // =============================================================================
 //
-// Per-vault, three-tier monitoring opt-in keyed by the Connect vault id.
-// Estate-gated server-side (`recovery_alerts` entitlement). See the DTO
-// block in `mod.rs`.
+// Per-cube, three-tier monitoring opt-in keyed by the Connect cube id (the
+// Vault is a 1:1 sub-resource of the Cube — `ConnectVault.CubeID` is
+// unique-indexed server-side — and the monitoring record itself is keyed on
+// CubeID, not VaultID, so every call here is cube-scoped). Estate-gated
+// server-side (`recovery_alerts` entitlement). See the DTO block in `mod.rs`.
 
 impl CoincubeClient {
-    /// `GET /api/v1/connect/vaults/{id}/monitoring` (authenticated). A vault
-    /// with no monitoring record yet (404) resolves to a default
+    /// `GET /api/v1/connect/cubes/{cubeId}/vault/monitoring` (authenticated).
+    /// A cube with no monitoring record yet (404) resolves to a default
     /// "off / at_approaching" status so the settings panel renders cleanly
     /// for a brand-new vault rather than erroring.
     pub async fn get_vault_monitoring(
         &self,
-        vault_id: u64,
+        cube_id: u64,
     ) -> Result<super::VaultMonitoringStatus, CoincubeError> {
         let url = format!(
-            "{}/api/v1/connect/vaults/{}/monitoring",
-            self.base_url, vault_id
+            "{}/api/v1/connect/cubes/{}/vault/monitoring",
+            self.base_url, cube_id
         );
         let res = self.client.get(&url).send().await?;
         let status = res.status();
@@ -1370,19 +1401,19 @@ impl CoincubeClient {
         Ok(resp.data)
     }
 
-    /// `POST /api/v1/connect/vaults/{id}/monitoring` (authenticated,
+    /// `POST /api/v1/connect/cubes/{cubeId}/vault/monitoring` (authenticated,
     /// Estate-gated). Sets the monitoring tier (and optionally the keyholder
     /// download policy). For `Full`, `req.descriptor` carries the descriptor
     /// to escrow; for `Heartbeat` it's omitted and any previously-escrowed
     /// descriptor is true-deleted server-side.
     pub async fn set_vault_monitoring(
         &self,
-        vault_id: u64,
+        cube_id: u64,
         req: super::SetVaultMonitoringRequest,
     ) -> Result<super::VaultMonitoringStatus, CoincubeError> {
         let url = format!(
-            "{}/api/v1/connect/vaults/{}/monitoring",
-            self.base_url, vault_id
+            "{}/api/v1/connect/cubes/{}/vault/monitoring",
+            self.base_url, cube_id
         );
         let res = self.client.post(&url).json(&req).send().await?;
         let res = res.check_success().await?;
@@ -1390,13 +1421,13 @@ impl CoincubeClient {
         Ok(resp.data)
     }
 
-    /// `DELETE /api/v1/connect/vaults/{id}/monitoring` (authenticated).
+    /// `DELETE /api/v1/connect/cubes/{cubeId}/vault/monitoring` (authenticated).
     /// Turns monitoring off with a true delete of any escrowed descriptor
     /// record. Idempotent: a 404 (nothing to delete) is treated as success.
-    pub async fn delete_vault_monitoring(&self, vault_id: u64) -> Result<(), CoincubeError> {
+    pub async fn delete_vault_monitoring(&self, cube_id: u64) -> Result<(), CoincubeError> {
         let url = format!(
-            "{}/api/v1/connect/vaults/{}/monitoring",
-            self.base_url, vault_id
+            "{}/api/v1/connect/cubes/{}/vault/monitoring",
+            self.base_url, cube_id
         );
         let res = self.client.delete(&url).send().await?;
         if res.status().as_u16() == 404 {
@@ -1406,41 +1437,20 @@ impl CoincubeClient {
         Ok(())
     }
 
-    /// `PUT /api/v1/connect/vaults/{id}/keyholder-download-policy`
-    /// (authenticated, Estate-gated). Sets the keyholder recovery-kit
-    /// download policy independently of the monitoring level.
-    pub async fn set_keyholder_download_policy(
-        &self,
-        vault_id: u64,
-        policy: super::KeyholderDownloadPolicy,
-    ) -> Result<super::VaultMonitoringStatus, CoincubeError> {
-        let url = format!(
-            "{}/api/v1/connect/vaults/{}/keyholder-download-policy",
-            self.base_url, vault_id
-        );
-        let req = super::SetKeyholderDownloadPolicyRequest {
-            crk_keyholder_download: policy,
-        };
-        let res = self.client.put(&url).json(&req).send().await?;
-        let res = res.check_success().await?;
-        let resp: ApiResponse<super::VaultMonitoringStatus> = res.json().await?;
-        Ok(resp.data)
-    }
-
-    /// `POST /api/v1/connect/vaults/{id}/heartbeat` (authenticated, PR 5).
-    /// Fire-and-forget timelock heartbeat sent after a vault sync for
+    /// `POST /api/v1/connect/cubes/{cubeId}/vault/heartbeat` (authenticated,
+    /// PR 5). Fire-and-forget timelock heartbeat sent after a vault sync for
     /// Heartbeat-tier (and Full, as a cross-check) vaults. Callers MUST NOT
     /// block sync on this — wrap it in a detached task and ignore the
     /// result (a newer report always wins server-side, so a dropped one is
     /// harmless).
     pub async fn post_vault_heartbeat(
         &self,
-        vault_id: u64,
+        cube_id: u64,
         req: super::VaultHeartbeatRequest,
     ) -> Result<(), CoincubeError> {
         let url = format!(
-            "{}/api/v1/connect/vaults/{}/heartbeat",
-            self.base_url, vault_id
+            "{}/api/v1/connect/cubes/{}/vault/heartbeat",
+            self.base_url, cube_id
         );
         let res = self.client.post(&url).json(&req).send().await?;
         res.check_success().await?;
@@ -3517,7 +3527,7 @@ mod duress_tests {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
             when.method(MockMethod::GET)
-                .path("/api/v1/cubes/42/recovery-kit")
+                .path("/api/v1/connect/cubes/42/recovery-kit")
                 .header("X-CRK-Password-Hash", "regular-hash");
             then.status(200)
                 .header("content-type", "application/json")
@@ -3550,7 +3560,7 @@ mod duress_tests {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(MockMethod::GET)
-                .path("/api/v1/cubes/42/recovery-kit");
+                .path("/api/v1/connect/cubes/42/recovery-kit");
             then.status(423)
                 .header("content-type", "application/json")
                 .json_body(json!({
@@ -3582,7 +3592,7 @@ mod duress_tests {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(MockMethod::GET)
-                .path("/api/v1/cubes/42/recovery-kit");
+                .path("/api/v1/connect/cubes/42/recovery-kit");
             then.status(423)
                 .header("content-type", "application/json")
                 .json_body(json!({
@@ -3614,7 +3624,7 @@ mod duress_tests {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(MockMethod::GET)
-                .path("/api/v1/cubes/42/recovery-kit");
+                .path("/api/v1/connect/cubes/42/recovery-kit");
             then.status(403)
                 .header("content-type", "application/json")
                 .json_body(json!({ "error": { "code": "WRONG_PASSWORD" } }));
@@ -3626,6 +3636,89 @@ mod duress_tests {
             .await
             .expect_err("expected invalid");
         assert!(matches!(err, DownloadError::Invalid), "got {:?}", err);
+    }
+
+    #[tokio::test]
+    async fn download_kit_429_parses_retry_after() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(429).header("Retry-After", "17");
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .download_recovery_kit(42, "regular-hash")
+            .await
+            .expect_err("expected rate limit");
+        match err {
+            DownloadError::RateLimited { retry_after } => {
+                assert_eq!(retry_after, std::time::Duration::from_secs(17));
+            }
+            other => panic!("expected RateLimited, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn download_kit_404_maps_to_not_found() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(404);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .download_recovery_kit(42, "regular-hash")
+            .await
+            .expect_err("expected not found");
+        assert!(matches!(err, DownloadError::NotFound), "got {:?}", err);
+    }
+
+    #[tokio::test]
+    async fn download_kit_429_missing_retry_after_defaults_to_60s() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(429);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .download_recovery_kit(42, "regular-hash")
+            .await
+            .expect_err("expected rate limit");
+        match err {
+            DownloadError::RateLimited { retry_after } => {
+                assert_eq!(retry_after, std::time::Duration::from_secs(60));
+            }
+            other => panic!("expected RateLimited, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn download_kit_429_malformed_retry_after_defaults_to_60s() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(429).header("Retry-After", "not-a-number");
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .download_recovery_kit(42, "regular-hash")
+            .await
+            .expect_err("expected rate limit");
+        match err {
+            DownloadError::RateLimited { retry_after } => {
+                assert_eq!(retry_after, std::time::Duration::from_secs(60));
+            }
+            other => panic!("expected RateLimited, got {:?}", other),
+        }
     }
 }
 

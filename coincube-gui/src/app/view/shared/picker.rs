@@ -5,6 +5,30 @@ use iced::{
     Alignment, Background, Length,
 };
 
+/// The shell every picker overlay sits on: a title above its rows, on an
+/// opaque card.
+///
+/// The card is load-bearing, not decoration. The modal widget only dims the
+/// page behind it, so a bare column of rows lets whatever is underneath — a QR
+/// code, a form, the two-card selector — read straight through the gaps between
+/// rows, and the picker looks broken. Wrapping the list gives it a surface of
+/// its own.
+pub fn picker_modal_card<'a, M>(title: &str, body: impl Into<Element<'a, M>>) -> Element<'a, M>
+where
+    M: Clone + 'a,
+{
+    Container::new(
+        Column::new()
+            .spacing(12)
+            .push(text(title.to_string()).size(16).bold())
+            .push(body.into()),
+    )
+    .padding(24)
+    .max_width(460)
+    .style(theme::card::modal)
+    .into()
+}
+
 /// A single row in a picker modal — an asset or wallet icon, a label with an optional
 /// balance subtitle, a right-aligned network badge, and a selection checkmark.
 ///

@@ -555,36 +555,12 @@ pub enum ConnectFlowStep {
     },
 }
 
-/// Which credentials the enrollment wizard collects, derived from the account's
-/// duress entitlement (and, for sovereign, the absence of Connect).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EnrollTier {
-    /// Connect + recovery kit: full flow incl. the account-level duress CRK
-    /// password (Approach C).
-    Tier1,
-    /// Connect, no recovery kit: same as Tier 1 minus the CRK password, with a
-    /// BIG warning that recovery depends on the seed-phrase backup.
-    Tier2,
-    /// No Connect: local-only wipe; the wizard opens with a Connect-
-    /// encouragement screen and a type-to-confirm friction step.
-    Sovereign,
-}
-
-/// Steps of the duress enrollment wizard. Sovereign opens at `Encourage`;
-/// Connect tiers skip straight to `SetDuressPin` (or `BackupAck` when the gate
-/// applies). `SetCrkPassword` is Tier 1 only.
+/// Steps of the duress enrollment wizard. Duress is a paid (Pro/Estate) feature,
+/// gated behind a complete, server-verified Recovery Kit for every Vault Cube
+/// (the hard gate — `duress_tier1_gate_blocked`), so there is a single
+/// enrollment path with no tier branching and no self-attestation step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DuressEnrollStep {
-    /// Sovereign Step 0 — Connect-encouragement (primary CTA "Sign up for
-    /// Connect", secondary "Continue without Connect").
-    Encourage,
-    /// Mandated backup-acknowledgement gate — type the exact, case-sensitive
-    /// [`BACKUP_ACK_PHRASE`] before duress can be armed. Shown when any Cube a
-    /// duress wipe would destroy lacks a Cube Recovery Kit, or when the user is
-    /// sovereign (no server-side recovery at all). Skipped when every protected
-    /// Cube is backed up (Tier 1). Was the sovereign-only "I have my seed-phrase
-    /// backup" friction step.
-    BackupAck,
     SetDuressPin,
     SetAllClear,
     SetCrkPassword,
@@ -592,19 +568,10 @@ pub enum DuressEnrollStep {
     Confirm,
 }
 
-/// The exact phrase a user must type, character-for-character, at the
-/// [`DuressEnrollStep::BackupAck`] gate before duress can be armed. Naming both
-/// destroyed artifacts — the Master Seed Phrase(s) and the Vault Wallet
-/// Descriptor(s) — and the funds consequence is deliberate (Robert, 2026-06-30):
-/// the match is strict, case-sensitive, with no whitespace normalization, so
-/// the user can't pass by paraphrase, a checkbox, or muscle memory.
-pub const BACKUP_ACK_PHRASE: &str = "I understand my Cubes will be permanently destroyed (along with access to any funds held within) if I activate duress without my own external backup of the Master Seed Phrases and Vault Wallet Descriptors.";
-
 /// In-flight enrollment wizard state (Phases 2 & 8). `None` on the panel when
 /// the wizard isn't open.
 #[derive(Debug)]
 pub struct DuressEnrollState {
-    pub tier: EnrollTier,
     pub step: DuressEnrollStep,
     pub duress_pin: String,
     /// Re-entry of `duress_pin` so a memorized typo is caught at enrollment.
@@ -612,34 +579,17 @@ pub struct DuressEnrollState {
     pub all_clear: String,
     pub crk_password: String,
     pub delay: crate::services::duress::enroll::DuressDelay,
-    /// Typed input for the mandated backup-acknowledgement gate
-    /// ([`DuressEnrollStep::BackupAck`]). Must exactly (case-sensitively) equal
-    /// [`BACKUP_ACK_PHRASE`] before enrollment can proceed.
-    pub backup_ack: String,
-    /// Whether this enrollment must pass the backup-acknowledgement gate. Set at
-    /// `open_enroll_wizard` time: always for sovereign and Tier 2, and for Tier 1
-    /// only when some protected Cube lacks a recovery kit (or the per-Cube state
-    /// is unknown — fail toward showing the warning).
-    pub require_backup_ack: bool,
     pub memorized: bool,
     pub submitting: bool,
     pub error: Option<String>,
     /// This device's generated duress code, held between SubmitEnrollment and a
-    /// successful server EnrollResult. For Connect tiers the code is NOT
-    /// persisted locally until the server confirms enrollment, so a server
-    /// failure can't leave a half-armed duress PIN on disk.
+    /// successful server EnrollResult. The code is NOT persisted locally until
+    /// the server confirms enrollment, so a server failure can't leave a
+    /// half-armed duress PIN on disk.
     pub pending_code: Option<String>,
 }
 
 impl DuressEnrollState {
-    /// Whether the backup-acknowledgement gate's typed input is an exact,
-    /// case-sensitive match for [`BACKUP_ACK_PHRASE`]. Drives the disabled state
-    /// of the wizard's advance button on the [`DuressEnrollStep::BackupAck`]
-    /// step, so it can't be cleared by a paraphrase or near-miss.
-    pub fn backup_ack_satisfied(&self) -> bool {
-        self.backup_ack == BACKUP_ACK_PHRASE
-    }
-
     /// Scrubs the in-memory secret fields (PINs, passphrases, and the generated
     /// duress code) so they don't linger on the heap after the wizard is torn
     /// down — e.g. on logout, where the rest of the session is reset.
@@ -649,7 +599,6 @@ impl DuressEnrollState {
         self.duress_pin_confirm.zeroize();
         self.all_clear.zeroize();
         self.crk_password.zeroize();
-        self.backup_ack.zeroize();
         if let Some(code) = self.pending_code.as_mut() {
             code.zeroize();
         }
@@ -889,6 +838,18 @@ impl ConnectAccountPanel {
                 .unwrap_or(false)
     }
 
+    /// True when the account's plan includes Duress Mode (the paid `duress`
+    /// entitlement, set by the server for Pro and Estate). Gates the entire
+    /// duress enrollment surface — the panel CTA, the checklist fetch, and the
+    /// server-state fetch — so a Free account never reaches enrollment. The
+    /// codebase gates on this entitlement bool, not a `PlanTier` name check.
+    pub fn is_duress_entitled(&self) -> bool {
+        self.plan
+            .as_ref()
+            .map(|p| p.entitlements.duress)
+            .unwrap_or(false)
+    }
+
     /// True when the account carries the Estate-only `duress_alerts`
     /// entitlement. Gates both the Emergency-contacts data load and the
     /// management UI (non-entitled accounts get the locked affordance).
@@ -899,13 +860,28 @@ impl ConnectAccountPanel {
             .unwrap_or(false)
     }
 
-    /// True when the account carries the Estate-only `recovery_alerts`
-    /// entitlement. Gates the Vault Recovery Alerts settings card (Estate
-    /// Notifications — PR 2).
+    /// True when the account carries the `recovery_alerts` entitlement. Gates
+    /// the Vault Recovery Alerts card's **alerts toggle** and the heartbeat
+    /// reporting. After the recovery-alerts cleanup (API PR 3) the server
+    /// returns this on all plans, so it becomes universally true; the desktop
+    /// keeps the check as defense-in-depth. See `PLAN-recovery-alerts-cleanup.md`.
     pub fn is_recovery_alerts_entitled(&self) -> bool {
         self.plan
             .as_ref()
             .map(|p| p.entitlements.recovery_alerts)
+            .unwrap_or(false)
+    }
+
+    /// True when the account carries the Estate-only `inheritanceEscrow`
+    /// entitlement — the server-blind ECIES recovery kit sealed to keyholders.
+    /// Gates the "What keyholders can recover" tier selector on the Recovery
+    /// Alerts card, separately from the (universal) alerts toggle. Fails closed
+    /// against an older API that omits the field. See
+    /// `PLAN-recovery-alerts-cleanup.md` PR 2 + ADDENDUM.
+    pub fn is_inheritance_escrow_entitled(&self) -> bool {
+        self.plan
+            .as_ref()
+            .map(|p| p.entitlements.inheritance_escrow)
             .unwrap_or(false)
     }
 
@@ -928,12 +904,7 @@ impl ConnectAccountPanel {
     /// them, so the fetch would be wasted). Best-effort: a failed fetch
     /// leaves the list empty and the screen falls back to generic copy.
     pub fn reload_duress_cubes(&mut self) -> iced::Task<Message> {
-        let entitled = self
-            .plan
-            .as_ref()
-            .map(|p| p.entitlements.duress)
-            .unwrap_or(false);
-        if !entitled {
+        if !self.is_duress_entitled() {
             return iced::Task::none();
         }
         // Bump the load token so any older in-flight fetch is discarded when it
@@ -963,13 +934,15 @@ impl ConnectAccountPanel {
     /// intro screen, so it can show the enabled state instead of the setup
     /// flow. No-op for accounts without the duress entitlement. Best-effort:
     /// a failed fetch leaves the state `None` and the setup flow is shown.
+    ///
+    /// Gated on the entitlement only — deliberately **not** on the full
+    /// [`Self::show_duress`] gate. This fetch is what *discovers* `enrolled`
+    /// for an account enrolled on another device, and `show_duress()` depends
+    /// on `enrolled`; gating it on the gate would be circular and would strand
+    /// a grandfathered account (flag off, enrolled elsewhere) with the surface
+    /// hidden forever. The surface itself is gated elsewhere.
     pub fn reload_duress_state(&mut self) -> iced::Task<Message> {
-        let entitled = self
-            .plan
-            .as_ref()
-            .map(|p| p.entitlements.duress)
-            .unwrap_or(false);
-        if !entitled {
+        if !self.is_duress_entitled() {
             return iced::Task::none();
         }
         // Refresh the authoritative LOCAL arm signal (whether THIS device wrote
@@ -2248,50 +2221,25 @@ impl ConnectAccountPanel {
         iced::Task::none()
     }
 
-    /// Opens the duress enrollment wizard for `tier`, resetting all inputs. The
-    /// starting step and whether the mandated backup-acknowledgement gate
-    /// applies are both derived here from `tier` and the per-Cube recovery-kit
-    /// state. Shared by the Tier 1 / Tier 2 / Sovereign entry points.
-    fn open_enroll_wizard(&mut self, tier: EnrollTier) {
+    /// Opens the duress enrollment wizard, resetting all inputs. Duress is a
+    /// paid feature behind a hard, server-verified Recovery-Kit gate, so there
+    /// is a single enrollment path and the wizard always opens at `SetDuressPin`.
+    fn open_enroll_wizard(&mut self) {
         // Scrub any wizard already in flight before replacing it, so re-opening
         // never drops its secrets unzeroized.
         self.clear_duress_enroll();
-        let require_backup_ack = self.compute_require_backup_ack(tier);
-        // The wizard opens at the first step of the tier's (gate-aware) sequence
-        // — `Encourage` for sovereign, `BackupAck` when a Connect tier gates, or
-        // `SetDuressPin` for a fully-backed-up Tier 1.
-        let step = enroll_steps(tier, require_backup_ack)[0];
         self.duress_enroll = Some(DuressEnrollState {
-            tier,
-            step,
+            step: ENROLL_STEPS[0],
             duress_pin: String::new(),
             duress_pin_confirm: String::new(),
             all_clear: String::new(),
             crk_password: String::new(),
             delay: crate::services::duress::enroll::DuressDelay::default(),
-            backup_ack: String::new(),
-            require_backup_ack,
             memorized: false,
             submitting: false,
             error: None,
             pending_code: None,
         });
-    }
-
-    /// Whether this enrollment must pass the mandated backup-acknowledgement
-    /// gate ([`DuressEnrollStep::BackupAck`]). Always for sovereign (no
-    /// server-side recovery) and Tier 2 (Connect, explicitly no recovery kit);
-    /// for Tier 1 only when some Cube a duress wipe would destroy still lacks a
-    /// recovery kit. When the per-Cube state hasn't loaded (`None`), fail toward
-    /// showing the gate — over-warning is safe, silently skipping it isn't.
-    fn compute_require_backup_ack(&self, tier: EnrollTier) -> bool {
-        match tier {
-            EnrollTier::Sovereign | EnrollTier::Tier2 => true,
-            EnrollTier::Tier1 => self
-                .duress_cubes
-                .as_ref()
-                .is_none_or(|cubes| cubes.iter().any(|c| !c.has_recovery_kit)),
-        }
     }
 
     /// Tears down all session state: bumps `session_generation` (so any
@@ -2353,6 +2301,26 @@ impl ConnectAccountPanel {
     fn clear_duress_enroll(&mut self) {
         if let Some(mut wizard) = self.duress_enroll.take() {
             wizard.zeroize_secrets();
+        }
+    }
+
+    /// Cancel-equivalent teardown for the in-flight duress dialogs, for when the
+    /// surface is hidden out from under the user — the launch kill-switch
+    /// (`show_duress`) flipped off mid-session and the route is redirecting
+    /// away. Runs the same scrubbing the Cancel buttons do, so a flag flip can't
+    /// strand duress PINs/codes on the heap once the surface is unreachable:
+    ///
+    /// - the enrollment wizard is discarded (secrets zeroized) only when it
+    ///   isn't mid-submit — a server `enroll_duress` in flight still needs its
+    ///   code to persist on success, exactly as `CancelEnrollment` guards;
+    /// - the step-up disable dialog is always taken and zeroized, matching
+    ///   `DisableCancel`.
+    pub fn scrub_duress_dialogs(&mut self) {
+        if self.duress_enroll.as_ref().is_none_or(|e| !e.submitting) {
+            self.clear_duress_enroll();
+        }
+        if let Some(mut d) = self.duress_disable.take() {
+            d.zeroize_secrets();
         }
     }
 
@@ -2716,62 +2684,43 @@ impl ConnectAccountPanel {
 
             // ── Enrollment wizard (Phases 2 & 8) ──
             DuressMessage::StartEnrollment => {
-                let entitled = self
-                    .plan
-                    .as_ref()
-                    .map(|p| p.entitlements.duress)
-                    .unwrap_or(false);
-                // Entitled (signed-in) users default to Tier 1, which collects
-                // the account-level duress recovery-kit password — that password
-                // covers current AND future Cubes, so it's safe to collect even
-                // before a CRK exists. A user who explicitly has no recovery kit
-                // takes the Tier 2 path via StartEnrollmentWithoutCrk. Non-
-                // Connect users get the sovereign encouragement flow.
-                // The hard vault gate (PLAN-duress-vault-gate PR 2). The CTA is
+                // Duress is a paid (Pro/Estate) feature behind a launch
+                // kill-switch. The nav hides the surface and the CTA for anyone
+                // who fails the show-rule (entitlement AND the launch gate);
+                // re-check the full gate here as a defensive backstop so a stale
+                // view can never open the wizard while duress is dark. Fails
+                // closed for an un-enrolled account with the flag off.
+                if !self.show_duress() {
+                    return iced::Task::none();
+                }
+                // The hard vault gate (PLAN-duress-vault-gate). The CTA is
                 // rendered disabled while blocked, but re-check here as a
                 // belt-and-suspenders backstop: a stale view (kit status that
-                // landed after the last paint) could still fire this. Only
-                // gates the Tier-1 (with-CRK) path — the Tier-2 bypass and the
-                // sovereign flow are deliberately never gated.
+                // landed after the last paint) could still fire this. With the
+                // Tier-2 bypass and the Sovereign path removed, this gate is the
+                // single hard requirement for enrollment.
                 //
                 // Fail closed when the checklist hasn't loaded (`None`): an
-                // unverified fleet must not open Tier-1 enrollment (master I7 /
-                // Resolved decision 4) — `duress_tier1_gate_blocked` returns
-                // true for `None`. Reload so the checklist (and any retry
-                // affordance) becomes current instead of silently proceeding.
-                if entitled {
-                    if duress_tier1_gate_blocked(self.duress_cubes.as_deref()) {
-                        // No-op: gate blocked (or fleet not yet verified). A
-                        // fresh reload keeps the checklist current.
-                        return self.reload_duress_cubes();
-                    }
-                    self.open_enroll_wizard(EnrollTier::Tier1);
-                    // Kick a fresh checklist fetch as the user commits to
-                    // enrolling. The cached list the gate just read could be
-                    // briefly stale (a routine reload keeps the prior list in
-                    // place while its refetch is in flight); firing one now
-                    // guarantees the `SubmitEnrollment` re-check runs against
-                    // current completeness by the time the wizard is finished.
+                // unverified fleet must not open enrollment (master I7 / Resolved
+                // decision 4) — `duress_tier1_gate_blocked` returns true for
+                // `None`. Reload so the checklist (and any retry affordance)
+                // becomes current instead of silently proceeding.
+                if duress_tier1_gate_blocked(self.duress_cubes.as_deref()) {
+                    // No-op: gate blocked (or fleet not yet verified). A fresh
+                    // reload keeps the checklist current.
                     return self.reload_duress_cubes();
-                } else {
-                    self.open_enroll_wizard(EnrollTier::Sovereign);
                 }
+                self.open_enroll_wizard();
+                // Kick a fresh checklist fetch as the user commits to enrolling.
+                // The cached list the gate just read could be briefly stale (a
+                // routine reload keeps the prior list in place while its refetch
+                // is in flight); firing one now guarantees the `SubmitEnrollment`
+                // re-check runs against current completeness by the time the
+                // wizard is finished.
+                return self.reload_duress_cubes();
             }
             DuressMessage::ReloadCubes => {
                 return self.reload_duress_cubes();
-            }
-            DuressMessage::StartEnrollmentWithoutCrk => {
-                // Tier 2 — Connect, no recovery kit: same as Tier 1 minus the
-                // CRK-password step (see `enroll_steps`), and always behind the
-                // backup-acknowledgement gate (no recovery kit by definition).
-                self.open_enroll_wizard(EnrollTier::Tier2);
-            }
-            DuressMessage::SignUpForConnect => {
-                self.clear_duress_enroll();
-                self.step = ConnectFlowStep::Register {
-                    email: String::new(),
-                    loading: false,
-                };
             }
             DuressMessage::CancelEnrollment => {
                 // Ignore cancel while a server enroll_duress is in flight:
@@ -2810,11 +2759,6 @@ impl ConnectAccountPanel {
                     e.delay = d;
                 }
             }
-            DuressMessage::BackupAckChanged(v) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.backup_ack = v;
-                }
-            }
             DuressMessage::MemorizedToggled(v) => {
                 if let Some(e) = &mut self.duress_enroll {
                     e.memorized = v;
@@ -2823,7 +2767,7 @@ impl ConnectAccountPanel {
             DuressMessage::EnrollBack => {
                 if let Some(e) = &mut self.duress_enroll {
                     e.error = None;
-                    e.step = prev_enroll_step(e.tier, e.require_backup_ack, e.step);
+                    e.step = prev_enroll_step(e.step);
                 }
             }
             DuressMessage::EnrollNext => {
@@ -2832,7 +2776,7 @@ impl ConnectAccountPanel {
                         e.error = Some(msg);
                     } else {
                         e.error = None;
-                        e.step = next_enroll_step(e.tier, e.require_backup_ack, e.step);
+                        e.step = next_enroll_step(e.step);
                     }
                 }
             }
@@ -2842,13 +2786,12 @@ impl ConnectAccountPanel {
                 // the wizard is open — a mid-session Vault creation calls
                 // `invalidate_duress_cubes` and expects the gate to stay closed
                 // until the new Vault's kit is complete. Re-check at the actual
-                // commit for Tier-1 (Tier-2 bypass and Sovereign are never
-                // gated), mirroring the PIN-collision pre-flight below: surface
-                // the block on the wizard and refresh the checklist, without
-                // firing the enroll. Fails closed on an invalidated/unloaded
-                // checklist (`None`), which is exactly the mid-wizard-Vault case.
-                let tier = self.duress_enroll.as_ref().map(|e| e.tier);
-                if tier == Some(EnrollTier::Tier1)
+                // commit (the single hard-gated path), mirroring the
+                // PIN-collision pre-flight below: surface the block on the wizard
+                // and refresh the checklist, without firing the enroll. Fails
+                // closed on an invalidated/unloaded checklist (`None`), which is
+                // exactly the mid-wizard-Vault case.
+                if self.duress_enroll.is_some()
                     && duress_tier1_gate_blocked(self.duress_cubes.as_deref())
                 {
                     if let Some(e) = &mut self.duress_enroll {
@@ -2903,45 +2846,27 @@ impl ConnectAccountPanel {
                 }
                 e.submitting = true;
                 e.error = None;
-                let tier = e.tier;
                 let gen = self.session_generation;
 
                 // Generate this device's duress code ONCE: its hash goes to the
                 // server, the same plaintext is persisted (encrypted) locally.
-                let code = enroll::generate_duress_code();
+                // Held in `Zeroizing` so the local plaintext is scrubbed on drop
+                // — on normal completion and on every early-return below.
+                let code = zeroize::Zeroizing::new(enroll::generate_duress_code());
 
-                if tier == EnrollTier::Sovereign {
-                    // No Connect call — local wipe + cryptic only. Persist now.
-                    // The cached state is flipped to "enrolled" only once persist
-                    // succeeds (via `EnrollmentPersisted`), so a failed persist
-                    // doesn't leave a false "enabled" view with no Cube armed.
-                    let duress_pin = e.duress_pin.clone();
-                    self.clear_duress_enroll();
-                    return iced::Task::done(Message::CompleteDuressEnrollment(
-                        crate::app::message::DuressEnrollmentPayload {
-                            duress_pin: zeroize::Zeroizing::new(duress_pin),
-                            duress_code: zeroize::Zeroizing::new(code),
-                            account_id: None,
-                            gen,
-                        },
-                    ));
-                }
-
-                // Connect tiers: enroll on the server FIRST. The duress PIN +
-                // code are persisted locally only after a successful
-                // EnrollResult, so a server failure can't leave a half-armed
-                // duress PIN on disk. Stash the code for that success handler.
-                // Zeroize any code stashed by a prior submit (retry) before
-                // replacing it, so the superseded plaintext doesn't linger.
-                if let Some(mut old) = e.pending_code.replace(code.clone()) {
+                // Enroll on the server FIRST. The duress PIN + code are persisted
+                // locally only after a successful EnrollResult, so a server
+                // failure can't leave a half-armed duress PIN on disk. Stash the
+                // code for that success handler. Zeroize any code stashed by a
+                // prior submit (retry) before replacing it, so the superseded
+                // plaintext doesn't linger.
+                if let Some(mut old) = e.pending_code.replace((*code).clone()) {
                     zeroize::Zeroize::zeroize(&mut old);
                 }
                 let all_clear_hash = enroll::hash_duress_secret(&e.all_clear);
-                let crk_hash = if tier == EnrollTier::Tier1 {
-                    Some(enroll::hash_duress_secret(&e.crk_password))
-                } else {
-                    None
-                };
+                // Single path always collects the account-level duress
+                // recovery-kit password (Approach C).
+                let crk_hash = enroll::hash_duress_secret(&e.crk_password);
                 let code_hash = enroll::hash_duress_secret(&code);
                 let delay_minutes = e.delay.minutes();
 
@@ -2954,13 +2879,12 @@ impl ConnectAccountPanel {
                     }
                 };
                 let crk_hash = match crk_hash {
-                    Some(Ok(h)) => Some(h),
-                    Some(Err(_)) => {
+                    Ok(h) => Some(h),
+                    Err(_) => {
                         e.error = Some("Failed to hash credentials.".to_string());
                         e.submitting = false;
                         return iced::Task::none();
                     }
-                    None => None,
                 };
                 // A stable device fingerprint is required so the server can
                 // recognise this desktop. If it can't be resolved, fail the
@@ -3007,7 +2931,7 @@ impl ConnectAccountPanel {
                         // Clone the forwarded secrets into the Zeroizing payload,
                         // then scrub the wizard via the shared helper — this path
                         // must not drop the leftover fields (all_clear, CRK
-                        // password, backup_ack) unzeroized.
+                        // password) unzeroized.
                         let payload = self.duress_enroll.as_ref().map(|e| {
                             crate::app::message::DuressEnrollmentPayload {
                                 duress_pin: zeroize::Zeroizing::new(e.duress_pin.clone()),
@@ -3981,6 +3905,54 @@ impl ConnectAccountPanel {
             .unwrap_or(false)
     }
 
+    /// The per-user duress launch flag from `GET /connect/features`
+    /// (`duressEnabled`) — the server half of [`Self::duress_gate`].
+    ///
+    /// Defaults `false` while features are unloaded (in flight after sign-in,
+    /// fetch failed, or never signed in) and when the flag is absent — fails
+    /// closed like [`Self::marketplace_server_flags`]: a launch build ships
+    /// duress dark and must not surface the untested setup on a stale, silent,
+    /// or unreachable API. Unlike Marketplace, a `false` here is **not** the
+    /// whole story — it cannot hide duress from an already-enrolled account
+    /// (see [`Self::duress_gate`]).
+    ///
+    /// Deliberately **not** mirrored into [`crate::app::cache::Cache`] or
+    /// persisted to per-cube settings: the durable half of the gate is
+    /// enrollment, which lives in server/account state, so the gate is
+    /// recomputed live rather than cached (contrast the Liquid grant, which is
+    /// persisted because *funds* must survive offline).
+    pub fn duress_server_enabled(&self) -> bool {
+        self.features
+            .as_ref()
+            .and_then(|f| f.duress_enabled)
+            .unwrap_or(false)
+    }
+
+    /// The launch/visibility gate for the duress surface: the server flag OR'd
+    /// with this account's enrollment. The `OR enrolled` half is the client
+    /// mirror of the server's grandfather rule (master I4) — an enrolled
+    /// account keeps duress even when prod later serves `duressEnabled: false`
+    /// or Connect is unreachable. See [`crate::app::features::DuressGate`].
+    pub fn duress_gate(&self) -> crate::app::features::DuressGate {
+        crate::app::features::DuressGate {
+            server_enabled: self.duress_server_enabled(),
+            enrolled: self.is_duress_enrolled(),
+        }
+    }
+
+    /// Whether any duress surface should be shown: the paid `duress`
+    /// entitlement AND the launch gate. The single source of truth consulted
+    /// by the nav row, the route backstop, the duress view, and the
+    /// enrollment-wizard backstop.
+    ///
+    /// A launch kill-switch like Marketplace — when this is `false` the surface
+    /// is *hidden*, not greyed. (The duress *unlock* path — a duress PIN at
+    /// unlock — is not a UI surface and is deliberately untouched by this gate;
+    /// it must keep working for enrolled accounts regardless. Master I4/I8.)
+    pub fn show_duress(&self) -> bool {
+        self.is_duress_entitled() && self.duress_gate().on()
+    }
+
     /// Whether the pre-expiry renewal banner should render: the plan is
     /// within its renewal window AND the user hasn't dismissed it this
     /// session. The expired state has its own dedicated UX (D3), so the
@@ -4200,7 +4172,10 @@ fn load_duress_cubes(client: &CoincubeClient, generation: u64, seq: u64) -> iced
                 }
             }))
             .await;
-            Some(rows)
+            // Fold in local mainnet Cubes the server list omits (unregistered /
+            // `remote_synced == false`): armed by duress but invisible to the
+            // server-driven gate. Fail closed on them (`append_local_only_rows`).
+            Some(append_local_only_rows(rows, &local))
         },
         move |cubes| {
             Message::View(view::Message::ConnectAccount(
@@ -4219,6 +4194,9 @@ fn load_duress_cubes(client: &CoincubeClient, generation: u64, seq: u64) -> iced
 struct LocalCubeShape {
     /// Local `CubeSettings.id`, which equals the server Cube `uuid`.
     uuid: String,
+    /// Local `CubeSettings.name`, used to label a local-only Cube in the
+    /// checklist when it has no server row to borrow a name from.
+    name: String,
     has_vault: bool,
     is_passkey: bool,
 }
@@ -4254,10 +4232,49 @@ fn load_local_cube_shapes() -> Vec<LocalCubeShape> {
         .iter()
         .map(|c| LocalCubeShape {
             uuid: c.id.clone(),
+            name: c.name.clone(),
             has_vault: c.vault_wallet_id.is_some(),
             is_passkey: c.is_passkey_cube(),
         })
         .collect()
+}
+
+/// Append synthetic checklist rows for local mainnet Cubes that are **not**
+/// present in the server-derived `rows` — e.g. a Cube created on this device but
+/// not yet registered with Connect (`remote_synced == false`), which
+/// `list_cubes` therefore omits. Duress arming iterates local `settings.cubes`
+/// (all Cubes, all networks — see `persist_duress_enrollment`), so such a Cube
+/// **is** wiped, yet the server-driven gate never sees it: a fail-open hole.
+///
+/// Each synthetic row carries `halves: None` → completeness `Unknown`, so
+/// [`DuressCube::blocks_gate`] fails **closed** for any local-only Vault Cube
+/// (vaultless Cubes stay non-blocking per master invariant I2). The Cube also
+/// surfaces in the checklist so the user can see what to finish. Pure (no I/O)
+/// so it is unit-testable independently of the async `load_duress_cubes`.
+fn append_local_only_rows(mut rows: Vec<DuressCube>, local: &[LocalCubeShape]) -> Vec<DuressCube> {
+    for l in local {
+        let already_listed = rows
+            .iter()
+            .any(|r| r.uuid.as_deref() == Some(l.uuid.as_str()));
+        if already_listed {
+            continue;
+        }
+        rows.push(DuressCube {
+            // Sentinel: no server record exists for this Cube, so there is no
+            // server id and no per-cube kit-status fetch. `halves` is already
+            // `None`, so `server_id` is never used to address the server here.
+            server_id: 0,
+            uuid: Some(l.uuid.clone()),
+            name: l.name.clone(),
+            has_recovery_kit: false,
+            // Status unknowable (not on Connect) → fails the gate closed.
+            halves: None,
+            has_vault: Some(l.has_vault),
+            is_passkey: Some(l.is_passkey),
+            local: true,
+        });
+    }
+    rows
 }
 
 /// Fetch server-side duress state (enrolled / active) for the Duress intro
@@ -4595,53 +4612,28 @@ fn device_fingerprint() -> Result<String, String> {
         .map_err(|e| format!("device fingerprint unavailable: {e}"))
 }
 
-/// The ordered steps for a tier. Sovereign opens with the Connect
-/// encouragement + friction confirm; Connect tiers skip those. `SetCrkPassword`
-/// is Tier 1 only.
-/// The ordered steps for `tier`, with the mandated backup-acknowledgement gate
-/// spliced in when `require_backup_ack` is set. The gate sits right after the
-/// sovereign `Encourage` screen, or at the very front for Connect tiers (which
-/// have no `Encourage` screen).
-fn enroll_steps(tier: EnrollTier, require_backup_ack: bool) -> Vec<DuressEnrollStep> {
-    use DuressEnrollStep::*;
-    let mut steps = match tier {
-        EnrollTier::Tier1 => vec![
-            SetDuressPin,
-            SetAllClear,
-            SetCrkPassword,
-            PickDelay,
-            Confirm,
-        ],
-        EnrollTier::Tier2 => vec![SetDuressPin, SetAllClear, PickDelay, Confirm],
-        EnrollTier::Sovereign => vec![Encourage, SetDuressPin, Confirm],
-    };
-    if require_backup_ack {
-        let pos = usize::from(matches!(tier, EnrollTier::Sovereign));
-        steps.insert(pos, BackupAck);
-    }
-    steps
-}
+/// The single ordered enrollment sequence: duress PIN → all-clear passphrase →
+/// account-level duress recovery-kit password → unlock delay → confirm. Duress
+/// is paid + behind the hard Recovery-Kit gate, so there is no tier branching
+/// and no self-attestation step.
+const ENROLL_STEPS: [DuressEnrollStep; 5] = [
+    DuressEnrollStep::SetDuressPin,
+    DuressEnrollStep::SetAllClear,
+    DuressEnrollStep::SetCrkPassword,
+    DuressEnrollStep::PickDelay,
+    DuressEnrollStep::Confirm,
+];
 
-fn next_enroll_step(
-    tier: EnrollTier,
-    require_backup_ack: bool,
-    cur: DuressEnrollStep,
-) -> DuressEnrollStep {
-    let steps = enroll_steps(tier, require_backup_ack);
-    match steps.iter().position(|s| *s == cur) {
-        Some(i) if i + 1 < steps.len() => steps[i + 1],
+fn next_enroll_step(cur: DuressEnrollStep) -> DuressEnrollStep {
+    match ENROLL_STEPS.iter().position(|s| *s == cur) {
+        Some(i) if i + 1 < ENROLL_STEPS.len() => ENROLL_STEPS[i + 1],
         _ => cur,
     }
 }
 
-fn prev_enroll_step(
-    tier: EnrollTier,
-    require_backup_ack: bool,
-    cur: DuressEnrollStep,
-) -> DuressEnrollStep {
-    let steps = enroll_steps(tier, require_backup_ack);
-    match steps.iter().position(|s| *s == cur) {
-        Some(i) if i > 0 => steps[i - 1],
+fn prev_enroll_step(cur: DuressEnrollStep) -> DuressEnrollStep {
+    match ENROLL_STEPS.iter().position(|s| *s == cur) {
+        Some(i) if i > 0 => ENROLL_STEPS[i - 1],
         _ => cur,
     }
 }
@@ -4651,16 +4643,6 @@ fn prev_enroll_step(
 fn validate_enroll_step(e: &DuressEnrollState) -> Result<(), String> {
     use crate::services::duress::enroll;
     match e.step {
-        DuressEnrollStep::Encourage => Ok(()),
-        DuressEnrollStep::BackupAck => {
-            // Strict, case-sensitive, no whitespace normalization — the gate
-            // can't be passed by paraphrase or a near-miss.
-            if e.backup_ack == BACKUP_ACK_PHRASE {
-                Ok(())
-            } else {
-                Err("Type the confirmation phrase exactly to continue.".to_string())
-            }
-        }
         DuressEnrollStep::SetDuressPin => {
             enroll::validate_duress_pin(&e.duress_pin, &e.duress_pin_confirm)
         }
@@ -4684,19 +4666,14 @@ mod duress_enroll_tests {
     use super::*;
     use crate::services::coincube::OwnerSelfRecoverySummary;
 
-    fn state(tier: EnrollTier, step: DuressEnrollStep) -> DuressEnrollState {
+    fn state(step: DuressEnrollStep) -> DuressEnrollState {
         DuressEnrollState {
-            tier,
             step,
             duress_pin: String::new(),
             duress_pin_confirm: String::new(),
             all_clear: String::new(),
             crk_password: String::new(),
             delay: crate::services::duress::enroll::DuressDelay::default(),
-            backup_ack: String::new(),
-            // Default the tests to "gate on" so a `BackupAck` step is always
-            // reachable; individual gate-inclusion tests set this explicitly.
-            require_backup_ack: true,
             memorized: false,
             submitting: false,
             error: None,
@@ -4706,11 +4683,10 @@ mod duress_enroll_tests {
 
     #[test]
     fn zeroize_secrets_clears_all_sensitive_fields() {
-        let mut s = state(EnrollTier::Tier1, DuressEnrollStep::Confirm);
+        let mut s = state(DuressEnrollStep::Confirm);
         s.duress_pin = "8765".to_string();
         s.all_clear = "correct horse battery".to_string();
         s.crk_password = "a-long-crk-password".to_string();
-        s.backup_ack = BACKUP_ACK_PHRASE.to_string();
         s.pending_code = Some("deadbeefcafebabe".to_string());
 
         s.zeroize_secrets();
@@ -4718,14 +4694,27 @@ mod duress_enroll_tests {
         assert!(s.duress_pin.is_empty());
         assert!(s.all_clear.is_empty());
         assert!(s.crk_password.is_empty());
-        assert!(s.backup_ack.is_empty());
         assert!(s.pending_code.as_deref().unwrap_or("").is_empty());
     }
 
     #[test]
-    fn tier1_step_order_no_gate() {
-        // Fully-backed-up Tier 1 (gate skipped) keeps the original sequence.
-        let mut s = DuressEnrollStep::SetDuressPin;
+    fn enroll_is_a_single_fixed_sequence() {
+        // Duress is paid + behind the hard Recovery-Kit gate, so there is one
+        // path: no tier branching, no self-attestation step.
+        assert_eq!(
+            ENROLL_STEPS,
+            [
+                DuressEnrollStep::SetDuressPin,
+                DuressEnrollStep::SetAllClear,
+                DuressEnrollStep::SetCrkPassword,
+                DuressEnrollStep::PickDelay,
+                DuressEnrollStep::Confirm,
+            ]
+        );
+    }
+
+    #[test]
+    fn enroll_step_order_walks_the_sequence_and_saturates() {
         let order = [
             DuressEnrollStep::SetDuressPin,
             DuressEnrollStep::SetAllClear,
@@ -4733,55 +4722,24 @@ mod duress_enroll_tests {
             DuressEnrollStep::PickDelay,
             DuressEnrollStep::Confirm,
         ];
+        let mut s = DuressEnrollStep::SetDuressPin;
         for expected in &order[1..] {
-            s = next_enroll_step(EnrollTier::Tier1, false, s);
+            s = next_enroll_step(s);
             assert_eq!(s, *expected);
         }
-        // Saturates at the end.
+        // Saturates at both ends.
         assert_eq!(
-            next_enroll_step(EnrollTier::Tier1, false, DuressEnrollStep::Confirm),
+            next_enroll_step(DuressEnrollStep::Confirm),
             DuressEnrollStep::Confirm
         );
-    }
-
-    #[test]
-    fn tier1_gate_prepends_backup_ack() {
-        // A Tier 1 with a Cube lacking a recovery kit opens at the gate, then
-        // flows into the normal sequence.
-        let steps = enroll_steps(EnrollTier::Tier1, true);
-        assert_eq!(steps[0], DuressEnrollStep::BackupAck);
         assert_eq!(
-            next_enroll_step(EnrollTier::Tier1, true, DuressEnrollStep::BackupAck),
+            prev_enroll_step(DuressEnrollStep::SetDuressPin),
             DuressEnrollStep::SetDuressPin
         );
-        // Back from the gate saturates (it's the first step).
+        // Backward step.
         assert_eq!(
-            prev_enroll_step(EnrollTier::Tier1, true, DuressEnrollStep::BackupAck),
-            DuressEnrollStep::BackupAck
-        );
-    }
-
-    #[test]
-    fn tier2_always_gates_and_skips_crk_password() {
-        let steps = enroll_steps(EnrollTier::Tier2, true);
-        assert_eq!(steps[0], DuressEnrollStep::BackupAck);
-        assert!(!steps.contains(&DuressEnrollStep::SetCrkPassword));
-        assert_eq!(
-            next_enroll_step(EnrollTier::Tier2, true, DuressEnrollStep::SetAllClear),
+            prev_enroll_step(DuressEnrollStep::Confirm),
             DuressEnrollStep::PickDelay
-        );
-    }
-
-    #[test]
-    fn sovereign_opens_with_encourage_then_gate() {
-        // Sovereign always gates; the gate sits right after the Encourage screen.
-        assert_eq!(
-            enroll_steps(EnrollTier::Sovereign, true)[0],
-            DuressEnrollStep::Encourage
-        );
-        assert_eq!(
-            next_enroll_step(EnrollTier::Sovereign, true, DuressEnrollStep::Encourage),
-            DuressEnrollStep::BackupAck
         );
     }
 
@@ -4850,25 +4808,61 @@ mod duress_enroll_tests {
         );
     }
 
+    fn local_shape(uuid: &str, has_vault: bool) -> LocalCubeShape {
+        LocalCubeShape {
+            uuid: uuid.to_string(),
+            name: uuid.to_string(),
+            has_vault,
+            is_passkey: false,
+        }
+    }
+
     #[test]
-    fn require_backup_ack_gating() {
-        let mut panel = ConnectAccountPanel::new();
+    fn append_local_only_rows_fails_closed_on_unregistered_vault_cube() {
+        // A local mainnet Vault Cube absent from the server list (unregistered /
+        // remote_synced == false) is armed by duress but invisible to the
+        // server-driven gate. It must be folded in as an Unknown row so the gate
+        // fails closed.
+        let server = vec![duress_cube("on-server", true)];
+        let rows = append_local_only_rows(server, &[local_shape("local-only", true)]);
+        assert_eq!(rows.len(), 2);
+        let added = rows
+            .iter()
+            .find(|r| r.uuid.as_deref() == Some("local-only"))
+            .expect("local-only cube folded in");
+        assert!(added.local);
+        assert_eq!(added.halves, None, "unknown status → fails closed");
+        assert!(added.blocks_gate(), "unregistered Vault Cube must block");
+        assert!(duress_gate_blocked(&rows));
+    }
 
-        // Sovereign and Tier 2 always gate, regardless of cube state.
-        assert!(panel.compute_require_backup_ack(EnrollTier::Sovereign));
-        assert!(panel.compute_require_backup_ack(EnrollTier::Tier2));
+    #[test]
+    fn append_local_only_rows_leaves_vaultless_cube_non_blocking() {
+        // A vaultless local-only Cube never blocks (master invariant I2).
+        let rows = append_local_only_rows(Vec::new(), &[local_shape("seed-only", false)]);
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].blocks_gate());
+        assert!(!duress_gate_blocked(&rows));
+    }
 
-        // Tier 1 with unknown cube state (not yet loaded) → fail toward the gate.
-        panel.duress_cubes = None;
-        assert!(panel.compute_require_backup_ack(EnrollTier::Tier1));
+    #[test]
+    fn append_local_only_rows_does_not_duplicate_a_server_cube() {
+        // A local Cube already present on the server (matched by uuid) is not
+        // re-added — the server row, with its real kit status, wins.
+        let server = vec![duress_cube("dup", true)];
+        let rows = append_local_only_rows(server, &[local_shape("dup", false)]);
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].halves.is_some(),
+            "kept the server row, not a synthetic Unknown"
+        );
+    }
 
-        // Tier 1 with every cube backed up → skip the gate.
-        panel.duress_cubes = Some(vec![duress_cube("A", true), duress_cube("B", true)]);
-        assert!(!panel.compute_require_backup_ack(EnrollTier::Tier1));
-
-        // Tier 1 with any cube lacking a recovery kit → gate.
-        panel.duress_cubes = Some(vec![duress_cube("A", true), duress_cube("B", false)]);
-        assert!(panel.compute_require_backup_ack(EnrollTier::Tier1));
+    #[test]
+    fn append_local_only_rows_noop_on_empty_local() {
+        let server = vec![duress_cube("a", true), duress_cube("b", true)];
+        let rows = append_local_only_rows(server, &[]);
+        assert_eq!(rows.len(), 2);
     }
 
     #[test]
@@ -5058,11 +5052,13 @@ mod duress_enroll_tests {
     fn merge_vault_shape_precedence_local_over_server() {
         let local_vault = LocalCubeShape {
             uuid: "u".into(),
+            name: "u".into(),
             has_vault: true,
             is_passkey: false,
         };
         let local_vaultless = LocalCubeShape {
             uuid: "u".into(),
+            name: "u".into(),
             has_vault: false,
             is_passkey: true,
         };
@@ -5249,12 +5245,13 @@ mod duress_enroll_tests {
     }
 
     #[test]
-    fn submit_enrollment_rechecks_the_vault_gate_for_tier1() {
+    fn submit_enrollment_rechecks_the_vault_gate() {
         // The gate is enforced at StartEnrollment, but state can change while
         // the wizard is open (a mid-wizard Vault creation invalidates the
-        // checklist). SubmitEnrollment must re-check for Tier-1 and refuse.
+        // checklist). SubmitEnrollment must re-check the single gated path and
+        // refuse.
         let mut panel = ConnectAccountPanel::new();
-        panel.duress_enroll = Some(state(EnrollTier::Tier1, DuressEnrollStep::Confirm));
+        panel.duress_enroll = Some(state(DuressEnrollStep::Confirm));
 
         // A Vault Cube with an incomplete kit is now in the checklist.
         panel.duress_cubes = Some(vec![DuressCube {
@@ -5273,7 +5270,7 @@ mod duress_enroll_tests {
 
         // Fail-closed on an invalidated (None) checklist too — the exact
         // mid-wizard-Vault-creation case.
-        panel.duress_enroll = Some(state(EnrollTier::Tier1, DuressEnrollStep::Confirm));
+        panel.duress_enroll = Some(state(DuressEnrollStep::Confirm));
         panel.invalidate_duress_cubes();
         let _ = panel.update_duress(DuressMessage::SubmitEnrollment);
         let e = panel.duress_enroll.as_ref().expect("wizard stays open");
@@ -5326,7 +5323,7 @@ mod duress_enroll_tests {
         // PIN entered twice passes the step. Collision with a real Cube PIN is
         // enforced at persist time (`persist_duress_enrollment`), where Cube
         // PIN hashes are available.
-        let mut s = state(EnrollTier::Tier1, DuressEnrollStep::SetDuressPin);
+        let mut s = state(DuressEnrollStep::SetDuressPin);
         assert!(validate_enroll_step(&s).is_err());
         s.duress_pin = "1235".to_string();
         // Confirmation still empty → mismatch.
@@ -5336,46 +5333,8 @@ mod duress_enroll_tests {
     }
 
     #[test]
-    fn backup_ack_requires_exact_case_sensitive_phrase() {
-        let mut s = state(EnrollTier::Sovereign, DuressEnrollStep::BackupAck);
-        // Near-misses keep the gate closed: empty, a paraphrase, the old phrase,
-        // a case change, and trailing/leading whitespace (no normalization).
-        for near_miss in [
-            "",
-            "nope",
-            "I have my seed-phrase backup",
-            &BACKUP_ACK_PHRASE.to_lowercase(),
-            &format!("{BACKUP_ACK_PHRASE} "),
-            &format!(" {BACKUP_ACK_PHRASE}"),
-            &BACKUP_ACK_PHRASE.replace('.', ""),
-        ] {
-            s.backup_ack = near_miss.to_string();
-            assert!(
-                validate_enroll_step(&s).is_err(),
-                "near-miss should keep the gate closed: {:?}",
-                near_miss
-            );
-            assert!(!s.backup_ack_satisfied());
-        }
-        // The exact, character-for-character phrase passes.
-        s.backup_ack = BACKUP_ACK_PHRASE.to_string();
-        assert!(validate_enroll_step(&s).is_ok());
-        assert!(s.backup_ack_satisfied());
-    }
-
-    #[test]
-    fn backup_ack_phrase_names_both_artifacts() {
-        // The mandated phrase must name both destroyed artifacts and the funds
-        // consequence (snapshot of the spec wording).
-        assert!(BACKUP_ACK_PHRASE.contains("Master Seed Phrases"));
-        assert!(BACKUP_ACK_PHRASE.contains("Vault Wallet Descriptors"));
-        assert!(BACKUP_ACK_PHRASE.contains("permanently destroyed"));
-        assert!(BACKUP_ACK_PHRASE.contains("funds"));
-    }
-
-    #[test]
     fn confirm_requires_memorized_checkbox() {
-        let mut s = state(EnrollTier::Tier1, DuressEnrollStep::Confirm);
+        let mut s = state(DuressEnrollStep::Confirm);
         assert!(validate_enroll_step(&s).is_err());
         s.memorized = true;
         assert!(validate_enroll_step(&s).is_ok());
@@ -6193,6 +6152,7 @@ mod plan_lifecycle_tests {
             liquid_enabled: None,
             buy_sell_enabled: None,
             p2p_enabled: None,
+            duress_enabled: None,
         }
     }
 
@@ -6542,6 +6502,161 @@ mod plan_lifecycle_tests {
         assert!(flags.marketplace_enabled);
         assert!(flags.buy_sell_on());
         assert!(!flags.p2p_on());
+    }
+
+    // ── Duress launch gate (PLAN-feature-flags) ───────────────────────────
+    fn features_with_duress(duress: Option<bool>) -> FeaturesResponse {
+        let mut f = features_with_purchasing(None, None);
+        f.duress_enabled = duress;
+        f
+    }
+
+    /// A Pro plan carrying the paid `duress` entitlement.
+    fn duress_entitled_plan() -> ConnectPlan {
+        let mut p = plan(PlanTier::Pro, PlanStatus::Active, None, None);
+        p.entitlements.duress = true;
+        p
+    }
+
+    #[test]
+    fn duress_flag_fail_closed_until_features_load() {
+        let panel = ConnectAccountPanel::new();
+        // Unloaded (fetch in flight / failed / unreachable / never signed in)
+        // → the flag and the whole gate read off.
+        assert!(!panel.duress_server_enabled());
+        assert_eq!(panel.duress_gate(), crate::app::features::DuressGate::OFF);
+        assert!(!panel.show_duress());
+    }
+
+    #[test]
+    fn duress_flag_absent_reads_as_off() {
+        let mut panel = ConnectAccountPanel::new();
+        // Loaded but the flag is absent (older backend) → off, fail-closed.
+        panel.features = Some(features_with_duress(None));
+        assert!(!panel.duress_server_enabled());
+    }
+
+    #[test]
+    fn duress_flag_mirrors_the_response() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.features = Some(features_with_duress(Some(true)));
+        assert!(panel.duress_server_enabled());
+        panel.features = Some(features_with_duress(Some(false)));
+        assert!(!panel.duress_server_enabled());
+    }
+
+    #[test]
+    fn show_duress_full_matrix() {
+        // show_duress() == entitled AND (server_flag OR enrolled): all 8 cells
+        // of (entitled × flag × enrolled). Enrollment is supplied via the local
+        // arm signal here; the cross-device server-`enrolled` path is covered
+        // separately below.
+        let cases = [
+            // entitled, flag, enrolled, expected
+            (false, false, false, false),
+            (false, false, true, false),
+            (false, true, false, false),
+            (false, true, true, false),
+            (true, false, false, false), // fresh Pro on prod (flag off) → hidden
+            (true, false, true, true),   // grandfathered: enrolled beats flag-off
+            (true, true, false, true),   // server granted the flag → shown
+            (true, true, true, true),
+        ];
+        for (entitled, flag, enrolled, expected) in cases {
+            let mut panel = ConnectAccountPanel::new();
+            panel.plan = Some(if entitled {
+                duress_entitled_plan()
+            } else {
+                plan(PlanTier::Free, PlanStatus::Active, None, None)
+            });
+            panel.features = Some(features_with_duress(Some(flag)));
+            panel.duress_locally_armed = enrolled;
+            assert_eq!(
+                panel.show_duress(),
+                expected,
+                "entitled={entitled} flag={flag} enrolled={enrolled}"
+            );
+            // The gate half is entitlement-independent: it's the OR of inputs.
+            assert_eq!(panel.duress_gate().on(), flag || enrolled);
+        }
+    }
+
+    #[test]
+    fn show_duress_fail_closed_before_features_load_for_unenrolled() {
+        // Entitled Pro, features not yet loaded, never enrolled → hidden. This
+        // is the launch-critical row: a signed-in Pro must see nothing until a
+        // features fetch explicitly turns duress on.
+        let mut panel = ConnectAccountPanel::new();
+        panel.plan = Some(duress_entitled_plan());
+        assert!(!panel.show_duress());
+    }
+
+    #[test]
+    fn server_enrolled_state_grandfathers_with_flag_off() {
+        // The cross-device grandfather: `duressEnabled` is off and this device
+        // never armed, but the server reports the account enrolled (armed on
+        // another device). The surface must stay shown. `reload_duress_state`
+        // is what discovers this, which is why it is NOT gated on the gate.
+        let mut panel = ConnectAccountPanel::new();
+        panel.plan = Some(duress_entitled_plan());
+        panel.features = Some(features_with_duress(Some(false)));
+        assert!(!panel.duress_locally_armed);
+        panel.duress_state = Some(crate::services::coincube::DuressState {
+            active: false,
+            unlock_at: None,
+            enrolled: true,
+            this_device_registered: false,
+        });
+        assert!(panel.is_duress_enrolled());
+        assert!(panel.show_duress());
+    }
+
+    #[test]
+    fn duress_gate_reverts_to_off_when_features_cleared() {
+        // A flag granted mid-session must not survive logout: `features` is
+        // dropped on `clear_session`, so the accessor reverts to off (unless the
+        // account is still locally enrolled, which is the durable half).
+        let mut panel = ConnectAccountPanel::new();
+        panel.plan = Some(duress_entitled_plan());
+        panel.features = Some(features_with_duress(Some(true)));
+        assert!(panel.show_duress());
+        panel.features = None;
+        assert!(!panel.duress_server_enabled());
+        assert!(!panel.show_duress());
+    }
+
+    #[test]
+    fn scrub_duress_dialogs_zeroizes_and_drops_pending_dialogs() {
+        // The teardown the route backstop runs when the surface is hidden
+        // mid-flow: a non-submitting wizard and the step-up disable dialog are
+        // both discarded so their secrets don't linger once duress is off.
+        let mut panel = ConnectAccountPanel::new();
+        panel.open_enroll_wizard();
+        panel.duress_enroll.as_mut().unwrap().duress_pin = "1234".to_string();
+        panel.duress_disable = Some(DuressDisableState {
+            pin: "5678".to_string(),
+            submitting: false,
+            error: None,
+        });
+
+        panel.scrub_duress_dialogs();
+
+        assert!(panel.duress_enroll.is_none());
+        assert!(panel.duress_disable.is_none());
+    }
+
+    #[test]
+    fn scrub_duress_dialogs_preserves_a_submitting_wizard() {
+        // A server enroll_duress in flight must survive the scrub — else its
+        // code is zeroized before the success handler can persist it, leaving
+        // the server enrolled but this device un-armed (mirrors CancelEnrollment).
+        let mut panel = ConnectAccountPanel::new();
+        panel.open_enroll_wizard();
+        panel.duress_enroll.as_mut().unwrap().submitting = true;
+
+        panel.scrub_duress_dialogs();
+
+        assert!(panel.duress_enroll.is_some());
     }
 
     #[test]

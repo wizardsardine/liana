@@ -64,6 +64,8 @@ This command does not take any parameter for now.
 | `sync`                | float           | The synchronization progress as percentage (`0 < sync < 1`)                      |
 | `descriptors`         | object          | Object with the name of the descriptor as key and the descriptor string as value |
 | `rescan_progress`     | float or null   | Progress of an ongoing rescan as a percentage (between 0 and 1) if there is any  |
+| `refused_reorg_depth` | integer or null | Depth, in blocks, of a chain reorganization the poller **refused** to apply because it was deeper than its safety limit (a rollback that deep is likelier a misreporting backend than real history being undone). `null` unless such a refusal is outstanding. This reports **only** a refused deep reorg — an unresolved chain divergence is reported separately by `chain_divergence`. |
+| `chain_divergence`    | boolean         | `true` when the poller has **paused** synchronization because our tip is off the backend's chain and that backend cannot be asked where the two chains parted. Unlike `refused_reorg_depth` there is no known fork point, so no depth is reported — the two conditions are distinct and must not be conflated. Wallet state is held intact until the chains reconverge, at which point this returns to `false`. |
 | `timestamp`           | integer         | Unix timestamp of wallet creation date                                           |
 | `last_poll_timestamp` | integer or null | Unix timestamp of last poll (if any) of the blockchain                           |
 | `receive_index`       | integer         | Last index used to generate a receive address                                    |

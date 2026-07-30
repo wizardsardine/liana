@@ -221,6 +221,11 @@ pub enum Message {
     /// prompt. The Pane intercepts it and focuses the Home tab on its
     /// Connect section.
     OpenConnectSignIn,
+    /// Bubbles up from a paid-feature locked card outside the Connect page
+    /// (e.g. Settings → Vault Recovery Alerts) when the user clicks "View
+    /// plans". The Pane intercepts it and focuses the Home tab on its
+    /// Connect → Plan & Billing section. Mirrors [`OpenConnectSignIn`].
+    OpenPlanBilling,
     /// Remote duress activation arrived over the gRPC stream (Phase 7b). The
     /// tab shell intercepts this and locks the running app into the cryptic
     /// "Duress Mode Activated" screen — WITHOUT wiping (remote activation can
@@ -228,6 +233,11 @@ pub enum Message {
     DuressLockRemote,
     ToggleTheme,
     DismissReceivedCelebration,
+    /// Answer to the one-time recovery-alerts consent prompt overlay
+    /// (PLAN-recovery-alerts-cleanup PR 3). `true` = accept (enable monitoring),
+    /// `false` = decline. Handled at the App level; the answer is persisted
+    /// per-cube so the prompt never re-fires.
+    RecoveryAlertsConsent(bool),
     DismissBackupWarning,
     /// Flip the global fiat-native ↔ bitcoin-native display preference
     /// and persist it. Emitted by the click-to-swap mouse_area on any
@@ -435,10 +445,22 @@ pub enum RecoveryAlertsMessage {
         Result<(u64, crate::services::coincube::VaultMonitoringStatus), String>,
         u64,
     ),
-    /// User picked an inheritance escrow tier (Off / Vault-only / Full-Cube).
-    /// Vault-only and Off apply immediately; Full-Cube first collects the PIN
-    /// (to unlock the seed) and applies on `ConfirmFullCube`.
-    SelectTier(crate::services::inheritance::EscrowTier),
+    /// Flip the standalone **Recovery alerts** toggle (monitoring on/off),
+    /// independent of escrow. `true` posts the monitoring opt-in immediately;
+    /// `false` opens the alerts-off confirm dialog (which discloses that it will
+    /// also delete any stored keyholder recovery kit) rather than acting silently.
+    ToggleAlerts(bool),
+    /// Confirm turning alerts off from the dialog. Deletes the monitoring record,
+    /// and — when a recovery kit is currently escrowed — deletes the envelope set
+    /// too (escrow can't outlive alerts). See the state handler for the ordering.
+    ConfirmAlertsOff,
+    /// Dismiss the alerts-off confirm dialog without changing anything.
+    CancelAlertsOff,
+    /// User picked what keyholders can recover (Nothing / Vault-only / Full-Cube).
+    /// Nothing deletes the escrow set only (alerts stay on); Vault-only enrols the
+    /// descriptor (auto-enabling alerts); Full-Cube first collects the PIN (to
+    /// unlock the seed) and enrols on `ConfirmFullCube`.
+    SelectEscrow(crate::services::inheritance::EscrowTier),
     /// PIN digit input while enrolling the Full-Cube tier (escrows the seed).
     /// Carried in a redacting, zeroizing [`EscrowPin`] so the PIN never lands
     /// in a `{:?}` dump or lingers un-wiped in a dropped message.
@@ -447,16 +469,13 @@ pub enum RecoveryAlertsMessage {
     ConfirmFullCube,
     /// Abandon the in-progress Full-Cube PIN entry.
     CancelFullCube,
-    /// User changed the keyholder recovery-kit download policy.
-    SetDownloadPolicy(crate::services::coincube::KeyholderDownloadPolicy),
-    /// Async result of a level / policy change — the updated status. The
-    /// `u64` is the spawn-time `session_generation` (see `StatusLoaded`); a
-    /// stale result is dropped rather than clobbering a newer session's state.
-    /// The trailing `Option<EscrowTier>` is the tier this operation enrolled /
-    /// disabled (`None` for a download-policy save): on success the handler
-    /// applies it to the tracked tier. Carrying it in the result — rather than
-    /// in shared state — keeps a policy save that resolves while a tier change
-    /// is in flight from applying the other operation's tier.
+    /// Async result of a level change — the updated status. The `u64` is the
+    /// spawn-time `session_generation` (see `StatusLoaded`); a stale result is
+    /// dropped rather than clobbering a newer session's state. The trailing
+    /// `Option<EscrowTier>` is the tier this operation enrolled / disabled: on
+    /// success the handler applies it to the tracked tier. Carrying it in the
+    /// result — rather than in shared state — keeps a change that resolves while
+    /// another is in flight from applying the wrong operation's tier.
     ChangeResult(
         Result<crate::services::coincube::VaultMonitoringStatus, String>,
         u64,
@@ -1558,16 +1577,9 @@ pub enum DuressMessage {
     FinishRecovery,
 
     // ── Enrollment wizard (Phases 2 & 8) ──
-    /// Begin enrollment. Entitled users start at Tier 1 (with the account-level
-    /// duress recovery-kit password); non-Connect users get the sovereign flow.
+    /// Begin enrollment. Duress is a paid (Pro/Estate) feature behind a hard,
+    /// server-verified Recovery-Kit gate — a single enrollment path, no tiers.
     StartEnrollment,
-    /// Begin enrollment WITHOUT a recovery kit (Tier 2 — the plan's Task 2.1
-    /// "Continue without recovery kit (advanced)"). Skips the CRK-password step.
-    /// Only offered to entitled users, since the panel can't see per-Cube CRK
-    /// state to auto-select the tier.
-    StartEnrollmentWithoutCrk,
-    /// Sovereign "Sign up for Connect" CTA → the Register flow.
-    SignUpForConnect,
     CancelEnrollment,
     EnrollBack,
     EnrollNext,
@@ -1576,11 +1588,6 @@ pub enum DuressMessage {
     AllClearChanged(String),
     CrkPasswordChanged(String),
     DelaySelected(crate::services::duress::enroll::DuressDelay),
-    /// The mandated backup-acknowledgement gate's typed-confirmation input
-    /// (formerly `SovereignConfirmChanged`). The gate now covers the Tier-2
-    /// (Connect, no CRK) and any-Cube-without-a-recovery-kit paths too, not
-    /// just sovereign — see [`crate::app::state::connect::DuressEnrollStep`].
-    BackupAckChanged(String),
     MemorizedToggled(bool),
     SubmitEnrollment,
     EnrollResult(Result<(), String>, u64),
@@ -1653,7 +1660,6 @@ impl std::fmt::Debug for DuressMessage {
             DuressPinConfirmChanged(_) => write!(f, "DuressPinConfirmChanged(<redacted>)"),
             AllClearChanged(_) => write!(f, "AllClearChanged(<redacted>)"),
             CrkPasswordChanged(_) => write!(f, "CrkPasswordChanged(<redacted>)"),
-            BackupAckChanged(_) => write!(f, "BackupAckChanged(<redacted>)"),
             DisablePinChanged(_) => write!(f, "DisablePinChanged(<redacted>)"),
             // Non-sensitive — `ClearResult`/`EnrollResult` carry only an error
             // string (no secret), so they format normally.
@@ -1662,8 +1668,6 @@ impl std::fmt::Debug for DuressMessage {
             ForgotAllClear => write!(f, "ForgotAllClear"),
             FinishRecovery => write!(f, "FinishRecovery"),
             StartEnrollment => write!(f, "StartEnrollment"),
-            StartEnrollmentWithoutCrk => write!(f, "StartEnrollmentWithoutCrk"),
-            SignUpForConnect => write!(f, "SignUpForConnect"),
             CancelEnrollment => write!(f, "CancelEnrollment"),
             EnrollBack => write!(f, "EnrollBack"),
             EnrollNext => write!(f, "EnrollNext"),
@@ -2368,7 +2372,6 @@ mod duress_message_debug_tests {
             DuressMessage::DuressPinConfirmChanged(CANARY.to_string()),
             DuressMessage::AllClearChanged(CANARY.to_string()),
             DuressMessage::CrkPasswordChanged(CANARY.to_string()),
-            DuressMessage::BackupAckChanged(CANARY.to_string()),
             DuressMessage::DisablePinChanged(CANARY.to_string()),
         ];
         for msg in &sensitive {

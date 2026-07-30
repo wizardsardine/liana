@@ -590,9 +590,10 @@ impl Daemon for BackendWalletClient {
             },
             sync: 1.0,
             rescan_progress: None,
-            // Only the local poller can refuse a reorg; the remote backend owns its own
-            // chain view and never reports this.
+            // Only the local poller can refuse a reorg or diverge from a backend; the remote
+            // backend owns its own chain view and never reports either of these.
             refused_reorg_depth: None,
+            chain_divergence: false,
             timestamp: wallet.created_at as u32,
             // We can ignore this field for remote backend as the wallet should remain synced.
             last_poll_timestamp: None,

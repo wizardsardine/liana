@@ -27,6 +27,7 @@
 use std::convert::TryInto;
 use std::sync::Arc;
 
+use coincube_core::miniscript::bitcoin::bech32;
 use coincube_spark_protocol::{
     CrossChainAddress, CrossChainRoute, ParseInputKind, PrepareSendOk, SendPaymentOk,
 };
@@ -216,6 +217,12 @@ pub struct SparkSend {
     pub destination_input: String,
     /// Amount override for amountless invoices / on-chain sends, in sats.
     pub amount_input: String,
+    /// The amount the pasted destination already commits to, when it's a BOLT11
+    /// invoice that carries one. It's filled into `amount_input` so the user can
+    /// see what they're about to pay without decoding the invoice by eye, and
+    /// the field goes read-only for as long as it's set — the invoice, not the
+    /// form, decides this amount, and prepare deliberately doesn't pass it on.
+    invoice_amount_sat: Option<u64>,
     phase: SparkSendPhase,
     /// The send method from the last `PrepareSucceeded` — used to pick the
     /// correct celebration image ("Bolt11Invoice", "BitcoinAddress", etc.).
@@ -283,6 +290,7 @@ impl SparkSend {
             balance_sats: 0,
             destination_input: String::new(),
             amount_input: String::new(),
+            invoice_amount_sat: None,
             phase: SparkSendPhase::Idle,
             last_send_method: String::new(),
             sent_amount_display: String::new(),
@@ -485,6 +493,7 @@ impl State for SparkSend {
                 backend_available,
                 destination_input: &self.destination_input,
                 amount_input: &self.amount_input,
+                amount_set_by_invoice: self.invoice_amount_sat.is_some(),
                 phase: &self.phase,
                 sent_amount_display: &self.sent_amount_display,
                 sent_celebration_context: &self.sent_celebration_context,
@@ -560,6 +569,18 @@ impl State for SparkSend {
         match msg {
             SparkSendMessage::DestinationInputChanged(value) => {
                 self.destination_input = value;
+                // A BOLT11 invoice that names its own amount fills the amount
+                // field in, so the user sees what the invoice asks for rather
+                // than an empty box. Clearing on the way out matters as much as
+                // filling in: swapping one invoice for another must not leave
+                // the previous invoice's amount sitting there.
+                let carried = bolt11_amount_sat(&self.destination_input);
+                if carried.is_some() || self.invoice_amount_sat.is_some() {
+                    self.amount_input = carried
+                        .map(|sats| format_amount_for_input(sats, cache.bitcoin_unit))
+                        .unwrap_or_default();
+                }
+                self.invoice_amount_sat = carried;
                 // Editing the destination invalidates any in-flight
                 // preview — drop back to Idle so the user can re-prepare.
                 self.phase = SparkSendPhase::Idle;
@@ -592,6 +613,7 @@ impl State for SparkSend {
                 self.phase = SparkSendPhase::Idle;
                 self.destination_input.clear();
                 self.amount_input.clear();
+                self.invoice_amount_sat = None;
                 self.abandon_payment_intent();
                 self.cross_chain = None;
                 Task::none()
@@ -606,17 +628,23 @@ impl State for SparkSend {
                     self.phase = SparkSendPhase::Error("Enter a destination first.".to_string());
                     return Task::none();
                 }
-                let amount_sat = if self.amount_input.trim().is_empty() {
-                    None
-                } else {
-                    match parse_amount_to_sats(&self.amount_input, cache.bitcoin_unit) {
-                        Ok(n) => Some(n),
-                        Err(e) => {
-                            self.phase = SparkSendPhase::Error(e);
-                            return Task::none();
+                // An amount read *out of* the invoice must not be handed back to
+                // the SDK: `prepare_send` treats an explicit amount as an
+                // override for an amountless invoice, and passing one alongside
+                // an invoice that already commits to an amount is rejected. The
+                // field is display-only in that case.
+                let amount_sat =
+                    if self.invoice_amount_sat.is_some() || self.amount_input.trim().is_empty() {
+                        None
+                    } else {
+                        match parse_amount_to_sats(&self.amount_input, cache.bitcoin_unit) {
+                            Ok(n) => Some(n),
+                            Err(e) => {
+                                self.phase = SparkSendPhase::Error(e);
+                                return Task::none();
+                            }
                         }
-                    }
-                };
+                    };
                 let input = self.destination_input.trim().to_string();
                 self.phase = SparkSendPhase::Preparing;
 
@@ -814,6 +842,7 @@ impl State for SparkSend {
                 // Clear the inputs so a follow-up send doesn't re-use them.
                 self.destination_input.clear();
                 self.amount_input.clear();
+                self.invoice_amount_sat = None;
                 // Retire the idempotency key with the send it belonged to. A
                 // *new* send must never reuse it, or the SDK would dedup it
                 // against this one and silently drop a payment the user meant
@@ -853,6 +882,7 @@ impl State for SparkSend {
             SparkSendMessage::Reset => {
                 self.destination_input.clear();
                 self.amount_input.clear();
+                self.invoice_amount_sat = None;
                 self.phase = SparkSendPhase::Idle;
                 // Reset abandons the send, so its key must go too — the next
                 // send is a different payment and needs a fresh one.
@@ -912,6 +942,110 @@ fn amount_unit_word(unit: BitcoinDisplayUnit) -> &'static str {
     match unit {
         BitcoinDisplayUnit::BTC => "BTC",
         BitcoinDisplayUnit::Sats => "sats",
+    }
+}
+
+/// BOLT11's bech32 variant: the bech32 checksum, with the 90-character limit
+/// waived (BOLT11 §"Encoding Overview" — an invoice with a description or a few
+/// route hints runs well past it, and past bech32's own 1023-character code
+/// length too).
+enum Bolt11Bech32 {}
+
+impl bech32::Checksum for Bolt11Bech32 {
+    type MidstateRepr = <bech32::Bech32 as bech32::Checksum>::MidstateRepr;
+    const CODE_LENGTH: usize = usize::MAX;
+    const CHECKSUM_LENGTH: usize = <bech32::Bech32 as bech32::Checksum>::CHECKSUM_LENGTH;
+    const GENERATOR_SH: [Self::MidstateRepr; 5] =
+        <bech32::Bech32 as bech32::Checksum>::GENERATOR_SH;
+    const TARGET_RESIDUE: Self::MidstateRepr = <bech32::Bech32 as bech32::Checksum>::TARGET_RESIDUE;
+}
+
+/// The amount a BOLT11 invoice commits to, in sats, or `None` when the input
+/// isn't a well-formed invoice or is amountless.
+///
+/// Read straight out of the invoice's human-readable part (`lnbc65m1…`), which
+/// is plain text ahead of the bech32 separator — no signature check, no SDK
+/// round-trip, so the amount lands the instant the user pastes. It's used for
+/// display only: the amount that actually gets paid still comes from the
+/// invoice itself at prepare time, so a mis-read here can't send the wrong
+/// number of sats.
+///
+/// The bech32 checksum is verified all the same, because the prefilled amount
+/// is only as trustworthy as the invoice it was read off. A mangled paste — a
+/// character dropped by a line wrap, a truncated copy — still carries an intact
+/// human-readable part, so without the checksum it would quote a confident
+/// amount for something that can never be paid, and lock the field on it.
+///
+/// Grammar (BOLT11 §"Human-Readable Part"): `ln` + a currency prefix (`bc`,
+/// `tb`, `bcrt`, …) + an optional amount, which is a decimal followed by an
+/// optional multiplier — `m`/`u`/`n`/`p` for milli/micro/nano/pico-bitcoin.
+fn bolt11_amount_sat(input: &str) -> Option<u64> {
+    let s = input.trim().to_ascii_lowercase();
+    // Wallets and QR codes hand out `lightning:`-scheme URIs as often as bare
+    // invoices; anything after a `?` is BIP21-style parameters, not the invoice.
+    let s = s.strip_prefix("lightning:").unwrap_or(&s);
+    let s = s.split('?').next()?;
+    s.strip_prefix("ln")?;
+
+    // The bech32 separator is the *last* `1` — the data charset excludes `1`,
+    // while the amount in the prefix may well contain one (`lnbc1500n1…`).
+    let sep = s.rfind('1')?;
+    let (hrp, data) = (&s[..sep], &s[sep + 1..]);
+    // A signature alone is 104 bech32 characters, plus a 7-character timestamp:
+    // anything shorter is a partial paste, not an invoice we should read. The
+    // checksum can't stand in for this — a short string can checksum cleanly.
+    if data.len() < 104 {
+        return None;
+    }
+    // Charset, separator placement and checksum, in one pass over the string.
+    bech32::primitives::decode::CheckedHrpstring::new::<Bolt11Bech32>(s).ok()?;
+
+    // The currency prefix is alphabetic, so the amount starts at the first
+    // digit. No digits at all means an amountless invoice — a perfectly normal
+    // one, it just leaves the amount up to the payer.
+    let after_ln = &hrp[2..];
+    let digit_at = after_ln.find(|c: char| c.is_ascii_digit())?;
+    let (currency, amount) = after_ln.split_at(digit_at);
+    if currency.is_empty() || !currency.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+
+    // Trailing multiplier, if any, then the decimal it scales. Each multiplier
+    // is a fraction of a bitcoin, i.e. of 100_000_000_000 msat.
+    let (digits, msat_per_unit) = match amount.chars().last()? {
+        'm' => (&amount[..amount.len() - 1], 100_000_000),
+        'u' => (&amount[..amount.len() - 1], 100_000),
+        'n' => (&amount[..amount.len() - 1], 100),
+        // Pico-bitcoin is finer than a msat, so the spec requires a multiple of
+        // 10; anything else is malformed and we'd rather show nothing.
+        'p' => (&amount[..amount.len() - 1], 0),
+        _ => (amount, 100_000_000_000),
+    };
+    let value: u128 = digits.parse().ok()?;
+    let msat = if msat_per_unit == 0 {
+        if !value.is_multiple_of(10) {
+            return None;
+        }
+        value / 10
+    } else {
+        value.checked_mul(msat_per_unit)?
+    };
+
+    // Sub-sat precision can't be shown in a sats field and can't be typed back
+    // in, so round up to the sat the payer will actually part with.
+    let sats: u64 = msat.div_ceil(1000).try_into().ok()?;
+    (sats > 0).then_some(sats)
+}
+
+/// Render a sats amount into the send form's amount field, in the wallet's
+/// display unit. Deliberately ungrouped — the field is parsed back by
+/// [`parse_amount_to_sats`], which wants a plain number, not `1,000`.
+fn format_amount_for_input(sats: u64, unit: BitcoinDisplayUnit) -> String {
+    match unit {
+        BitcoinDisplayUnit::Sats => sats.to_string(),
+        BitcoinDisplayUnit::BTC => coincube_core::miniscript::bitcoin::Amount::from_sat(sats)
+            .to_btc()
+            .to_string(),
     }
 }
 
@@ -1315,6 +1449,172 @@ mod tests {
         assert!(SparkSendTarget::Lightning.accepts_parsed(&K::Other));
         assert!(SparkSendTarget::OnChain.accepts_parsed(&K::Other));
         assert!(SparkSendTarget::Spark.accepts_parsed(&K::Other));
+    }
+
+    /// A BOLT11 invoice with `hrp` as its human-readable part, carrying a valid
+    /// bech32 checksum over a realistically-sized payload (a signature alone is
+    /// 104 characters). The fields inside aren't a real payment request — the
+    /// amount comes from the HRP and nothing here verifies a signature — but the
+    /// checksum is genuine, which is what `bolt11_amount_sat` insists on.
+    fn invoice(hrp: &str) -> String {
+        bech32::encode_lower::<Bolt11Bech32>(
+            bech32::Hrp::parse(hrp).expect("test HRPs are valid"),
+            &[0x42; 70],
+        )
+        .expect("test payloads encode")
+    }
+
+    /// Flip one character of an otherwise valid invoice's data part, the way a
+    /// line wrap or a truncated copy would.
+    fn corrupt(invoice: &str) -> String {
+        let last = invoice.len() - 1;
+        let flipped = if invoice.ends_with('q') { 'p' } else { 'q' };
+        format!("{}{flipped}", &invoice[..last])
+    }
+
+    /// A real, signed BOLT11 invoice — the spec's own 0.025 BTC test vector.
+    ///
+    /// The synthetic fixtures above are checksummed by the same code that
+    /// verifies them, so on their own they'd pass even if `Bolt11Bech32`'s
+    /// constants were wrong. This one was checksummed by somebody else.
+    const SPEC_VECTOR_25M: &str = "lnbc25m1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rq\
+                                   wzqfqypqdq5vdhkven9v5sxyetpdeessp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3\
+                                   zyg3zyg3zyg3zyg3zyg3zygs9q5sqqqqqqqqqqqqqqqpqsq67gye39hfg3zd8r\
+                                   gc80k32tvy9xk2xunwm5lzexnvpx6fd77en8qaq424dxgt56cag2dpt359k3ss\
+                                   yhetktkpqh24jqnjyw6uqd08sgptq44qu";
+
+    #[test]
+    fn bolt11_amount_reads_a_real_signed_invoice() {
+        assert_eq!(bolt11_amount_sat(SPEC_VECTOR_25M), Some(2_500_000));
+        // …and rejects it once a character is mangled.
+        assert_eq!(bolt11_amount_sat(&corrupt(SPEC_VECTOR_25M)), None);
+    }
+
+    #[test]
+    fn bolt11_amount_reads_each_multiplier() {
+        // The BOLT11 spec's own test vectors.
+        assert_eq!(bolt11_amount_sat(&invoice("lnbc2500u")), Some(250_000));
+        assert_eq!(bolt11_amount_sat(&invoice("lnbc20m")), Some(2_000_000));
+        assert_eq!(
+            bolt11_amount_sat(&invoice("lnbc25000000n")),
+            Some(2_500_000)
+        );
+        // 0.00967878534 BTC — sub-sat precision, rounded up to the sat the
+        // payer actually parts with.
+        assert_eq!(
+            bolt11_amount_sat(&invoice("lnbc9678785340p")),
+            Some(967_879)
+        );
+        // No multiplier: a whole bitcoin.
+        assert_eq!(bolt11_amount_sat(&invoice("lnbc1")), Some(100_000_000));
+    }
+
+    #[test]
+    fn bolt11_amount_handles_testnet_prefixes_and_uri_wrappers() {
+        assert_eq!(bolt11_amount_sat(&invoice("lntb20m")), Some(2_000_000));
+        assert_eq!(bolt11_amount_sat(&invoice("lnbcrt500u")), Some(50_000));
+        // QR payloads arrive uppercase, and wallets hand out `lightning:` URIs.
+        assert_eq!(
+            bolt11_amount_sat(&invoice("lnbc2500u").to_uppercase()),
+            Some(250_000)
+        );
+        assert_eq!(
+            bolt11_amount_sat(&format!("lightning:{}?label=x", invoice("lnbc2500u"))),
+            Some(250_000)
+        );
+        assert_eq!(
+            bolt11_amount_sat(&format!("  {}  ", invoice("lnbc20m"))),
+            Some(2_000_000)
+        );
+    }
+
+    #[test]
+    fn bolt11_amount_is_none_when_there_is_nothing_to_read() {
+        // Amountless invoice — the payer chooses, so the field stays editable.
+        assert_eq!(bolt11_amount_sat(&invoice("lnbc")), None);
+        // Not an invoice at all.
+        assert_eq!(bolt11_amount_sat(""), None);
+        assert_eq!(
+            bolt11_amount_sat("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"),
+            None
+        );
+        assert_eq!(bolt11_amount_sat("satoshi@example.com"), None);
+        // Half-pasted: too short to be a signed invoice, so reading an amount
+        // off it would show a number for something that can't be paid.
+        assert_eq!(bolt11_amount_sat("lnbc20m1pvjluezpp5"), None);
+        // Right shape, right length, no valid checksum — the case a
+        // length-only guard waves through.
+        assert_eq!(
+            bolt11_amount_sat(&format!("lnbc20m1{}", "q".repeat(110))),
+            None
+        );
+        // A single mangled character in an otherwise valid invoice.
+        assert_eq!(bolt11_amount_sat(&corrupt(&invoice("lnbc20m"))), None);
+        // A character outside the bech32 data charset (`1`, `b`, `i`, `o`).
+        let inv = invoice("lnbc20m");
+        assert_eq!(
+            bolt11_amount_sat(&format!("{}b", &inv[..inv.len() - 1])),
+            None
+        );
+        // Malformed amounts.
+        assert_eq!(bolt11_amount_sat(&invoice("lnbc20x")), None);
+        assert_eq!(bolt11_amount_sat(&invoice("lnbc0m")), None);
+        // Pico-bitcoin that isn't a whole msat is invalid per the spec.
+        assert_eq!(bolt11_amount_sat(&invoice("lnbc9678785341p")), None);
+    }
+
+    #[test]
+    fn pasting_an_invoice_fills_the_amount_field_and_dropping_it_clears_it() {
+        let mut panel = SparkSend::new(None);
+
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::DestinationInputChanged(invoice("lnbc2500u")),
+        );
+        assert_eq!(panel.invoice_amount_sat, Some(250_000));
+        assert_eq!(panel.amount_input, "250000");
+
+        // An amountless invoice takes the previous invoice's amount away with
+        // it, rather than leaving a stale number the user might send.
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::DestinationInputChanged(invoice("lnbc")),
+        );
+        assert!(panel.invoice_amount_sat.is_none());
+        assert!(panel.amount_input.is_empty());
+    }
+
+    #[test]
+    fn an_invoice_amount_round_trips_through_the_field_in_either_unit() {
+        // Whatever the field is filled with has to parse back out of it, or a
+        // user who edits the destination away is left holding a value the form
+        // rejects.
+        for unit in [BitcoinDisplayUnit::Sats, BitcoinDisplayUnit::BTC] {
+            for sats in [1, 250_000, 100_000_000] {
+                let rendered = format_amount_for_input(sats, unit);
+                assert_eq!(parse_amount_to_sats(&rendered, unit), Ok(sats));
+            }
+        }
+        assert_eq!(
+            format_amount_for_input(250_000, BitcoinDisplayUnit::BTC),
+            "0.0025"
+        );
+    }
+
+    #[test]
+    fn a_typed_amount_survives_a_destination_that_carries_none() {
+        let mut panel = SparkSend::new(None);
+        panel.amount_input = "1000".to_string();
+
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::DestinationInputChanged(
+                "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4".to_string(),
+            ),
+        );
+
+        assert!(panel.invoice_amount_sat.is_none());
+        assert_eq!(panel.amount_input, "1000");
     }
 
     #[test]

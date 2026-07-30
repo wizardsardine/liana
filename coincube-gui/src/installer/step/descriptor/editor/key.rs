@@ -43,7 +43,7 @@ use crate::{
     },
     services::{
         self,
-        coincube::CubeKeyRaw,
+        coincube::{classify_cube_key_ownership, Contact, CubeKeyOwnership, CubeKeyRaw},
         keys::{self, api::KeyKind},
     },
     signer::Signer,
@@ -63,6 +63,69 @@ pub struct ResolvedCubeKey {
 pub struct ResolvedCubeKeys {
     pub my_keys: Vec<ResolvedCubeKey>,
     pub contact_keys: Vec<ResolvedCubeKey>,
+}
+
+/// Splits a Cube's key list into the viewer's own keys and its contacts' keys.
+///
+/// Pure so the classification is unit-testable independently of the API calls
+/// in [`SelectKeySource::on_fetch_cube_keys`], which is its only caller.
+fn resolve_cube_keys(
+    raw_keys: Vec<CubeKeyRaw>,
+    contacts: &[Contact],
+    current_user_id: u64,
+) -> ResolvedCubeKeys {
+    let mut my_keys = Vec::new();
+    let mut contact_keys = Vec::new();
+
+    for key in raw_keys {
+        // Shared classification (identity-only contact match, never on
+        // `ContactRole`) lives in `services::coincube` so this picker and the
+        // sign-flow reconcile can't drift apart. See
+        // [`classify_cube_key_ownership`] for the full rationale.
+        let ownership = classify_cube_key_ownership(&key, contacts, current_user_id);
+        match ownership {
+            CubeKeyOwnership::SelfOwned { owner_id } => {
+                my_keys.push(ResolvedCubeKey {
+                    raw: key,
+                    owner: KeychainKeyOwner::SelfUser {
+                        primary_owner_id: owner_id,
+                    },
+                });
+            }
+            CubeKeyOwnership::ContactOwned { owner_id, contact } => {
+                // Prefer the server-supplied `ownerEmail` when the W3 backend
+                // populated it; the contact match still ran because we need
+                // `contact_id` for the keychain-key `KeySource` enum.
+                let contact_email = if !key.owner_email.is_empty() {
+                    key.owner_email.clone()
+                } else if let Some(user) = contact.contact_user.as_ref() {
+                    user.email.clone()
+                } else {
+                    // Contact with no linked user — render a placeholder rather
+                    // than failing.
+                    "unknown contact".to_string()
+                };
+                contact_keys.push(ResolvedCubeKey {
+                    raw: key,
+                    owner: KeychainKeyOwner::Contact {
+                        primary_owner_id: owner_id,
+                        contact_id: contact.id,
+                        contact_email,
+                    },
+                });
+            }
+            // Owner is neither us nor any contact of ours: we'd have no
+            // `contact_id` to address them with and `AddVaultMember` would
+            // reject the key. Only reachable for a viewer who is not the Cube
+            // owner, and only the owner builds a Vault.
+            CubeKeyOwnership::Unresolved { .. } => continue,
+        }
+    }
+
+    ResolvedCubeKeys {
+        my_keys,
+        contact_keys,
+    }
 }
 
 pub fn new_multixkey_from_xpub(
@@ -224,7 +287,7 @@ pub struct SelectKeySource {
     coincube_client: Option<crate::services::coincube::CoincubeClient>,
     /// Resolved Keychain keys owned by the current user.
     my_keychain_keys: Vec<ResolvedCubeKey>,
-    /// Resolved Keychain keys owned by contacts (Keyholder role only).
+    /// Resolved Keychain keys owned by contacts.
     contact_keychain_keys: Vec<ResolvedCubeKey>,
     /// Whether we are currently loading Keychain keys from the API.
     keychain_keys_loading: bool,
@@ -996,58 +1059,7 @@ impl SelectKeySource {
                 let user = client.get_user().await.map_err(|e| e.to_string())?;
                 let current_user_id: u64 = user.id.into();
 
-                let mut my_keys = Vec::new();
-                let mut contact_keys = Vec::new();
-
-                for key in raw_keys {
-                    let owner_id = key.effective_owner_user_id();
-                    // Prefer the server's viewer-relative `is_own_key` when
-                    // it's set; fall back to a local id comparison for
-                    // pre-W3 backends where the field is always false.
-                    let is_own = key.is_own_key || owner_id == current_user_id;
-                    if is_own {
-                        my_keys.push(ResolvedCubeKey {
-                            raw: key,
-                            owner: KeychainKeyOwner::SelfUser {
-                                primary_owner_id: owner_id,
-                            },
-                        });
-                    } else if let Some(contact) = contacts.iter().find(|c| {
-                        // Backend's lean `ContactResponse` doesn't include
-                        // a flat `contact_user_id` — fall back to the
-                        // nested `contact_user.id` via the helper.
-                        c.effective_contact_user_id() == Some(owner_id)
-                            && c.role == crate::services::coincube::ContactRole::Keyholder
-                    }) {
-                        // Prefer the server-supplied `ownerEmail` when the
-                        // W3 backend populated it; the contact-list lookup
-                        // still runs because we need `contact_id` for the
-                        // keychain-key `KeySource` enum.
-                        let contact_email = if !key.owner_email.is_empty() {
-                            key.owner_email.clone()
-                        } else if let Some(user) = contact.contact_user.as_ref() {
-                            user.email.clone()
-                        } else {
-                            // Contact with no linked user — render a
-                            // placeholder rather than failing.
-                            "unknown contact".to_string()
-                        };
-                        contact_keys.push(ResolvedCubeKey {
-                            raw: key,
-                            owner: KeychainKeyOwner::Contact {
-                                primary_owner_id: owner_id,
-                                contact_id: contact.id,
-                                contact_email,
-                            },
-                        });
-                    }
-                    // Keys from non-Keyholder contacts are silently discarded.
-                }
-
-                Ok(ResolvedCubeKeys {
-                    my_keys,
-                    contact_keys,
-                })
+                Ok(resolve_cube_keys(raw_keys, &contacts, current_user_id))
             },
             |result| Self::route(SelectKeySourceMessage::CubeKeysLoaded(result)),
         )
@@ -1349,9 +1361,10 @@ impl SelectKeySource {
         for keys in seen_contacts.values() {
             if let Some(first) = keys.first() {
                 let contact_label = match &first.owner {
-                    KeychainKeyOwner::Contact { contact_email, .. } => {
-                        format!("{} [Keyholder]", contact_email)
-                    }
+                    // No "[Keyholder]" suffix: the contact row's role is not a
+                    // per-cube fact (see `on_fetch_cube_keys`), so labelling
+                    // every contact key with it was misleading.
+                    KeychainKeyOwner::Contact { contact_email, .. } => contact_email.clone(),
                     _ => "Contact".to_string(),
                 };
                 col = col.push(p1_bold(contact_label));
@@ -2975,5 +2988,121 @@ mod tests {
         let _ = ok_picker.on_select_keychain_key(resolved_key(1, "8a550171", 7));
         assert!(matches!(ok_picker.selected_key, SelectedKey::New(_)));
         assert_eq!(ok_picker.step, Step::Details);
+    }
+
+    // ── resolve_cube_keys: self/contact classification ───────────────
+    //
+    // The picker used to require `contact.role == Keyholder` before it would
+    // surface a contact's Cube key. That role belongs to the contact
+    // *relationship*, not to the Cube — the API instant-adds an existing
+    // contact to a Cube without re-stamping it, and writes `owner` on the
+    // reciprocal row — so a real Cube keyholder's key was silently dropped
+    // and the picker showed "None of your contacts have shared keys yet."
+    // while the Flutter app, which does no contact join, listed it.
+
+    use crate::services::coincube::{Contact, ContactRole, ContactUser};
+
+    /// A key owned by someone other than the viewer, as the W3 backend
+    /// serves it (`isOwnKey: false`, `ownerUserId`/`ownerEmail` populated).
+    fn contact_owned_raw_key(id: u64, owner_id: u64) -> CubeKeyRaw {
+        let mut key = raw_key(id, "c658b283", owner_id);
+        key.is_own_key = false;
+        key
+    }
+
+    fn contact_with_role(contact_id: u64, contact_user_id: u64, role: ContactRole) -> Contact {
+        Contact {
+            id: contact_id,
+            user_id: 0,
+            contact_user_id: 0,
+            invite_id: None,
+            role,
+            contact_user: Some(ContactUser {
+                id: contact_user_id,
+                email: format!("contact{contact_user_id}@example.com"),
+                email_verified: None,
+            }),
+            created_at: "2026-07-20T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn contact_cube_key_resolves_whatever_the_contact_role_is() {
+        for role in [
+            ContactRole::Keyholder,
+            ContactRole::Beneficiary,
+            ContactRole::Observer,
+            ContactRole::Owner,
+            ContactRole::Unknown,
+        ] {
+            let contacts = vec![contact_with_role(11, 42, role)];
+            let resolved = resolve_cube_keys(vec![contact_owned_raw_key(5, 42)], &contacts, 7);
+
+            assert!(
+                resolved.my_keys.is_empty(),
+                "{}: a contact's key is not the viewer's own",
+                role
+            );
+            assert_eq!(
+                resolved.contact_keys.len(),
+                1,
+                "{}: contact key must be offered regardless of contact role",
+                role
+            );
+            assert_eq!(
+                resolved.contact_keys[0].owner,
+                KeychainKeyOwner::Contact {
+                    primary_owner_id: 42,
+                    contact_id: 11,
+                    // Server-supplied `ownerEmail` wins over the contact row.
+                    contact_email: "owner42@example.com".to_string(),
+                },
+                "{}: owner must resolve to the addressable contact id",
+                role
+            );
+        }
+    }
+
+    #[test]
+    fn contact_email_falls_back_to_the_contact_row_when_server_omits_it() {
+        // Pre-W3 backend: `ownerEmail` empty, so the contact row supplies it.
+        let mut key = contact_owned_raw_key(5, 42);
+        key.owner_email = String::new();
+        let contacts = vec![contact_with_role(11, 42, ContactRole::Owner)];
+
+        let resolved = resolve_cube_keys(vec![key], &contacts, 7);
+
+        let KeychainKeyOwner::Contact { contact_email, .. } = &resolved.contact_keys[0].owner
+        else {
+            panic!("expected a contact-owned key");
+        };
+        assert_eq!(contact_email, "contact42@example.com");
+    }
+
+    #[test]
+    fn own_keys_are_classified_by_id_when_the_server_flag_is_unset() {
+        // Pre-W3 backend: `isOwnKey` always false, so the id comparison
+        // against the authenticated user has to carry the classification.
+        let resolved = resolve_cube_keys(vec![contact_owned_raw_key(5, 7)], &[], 7);
+
+        assert_eq!(resolved.my_keys.len(), 1);
+        assert!(resolved.contact_keys.is_empty());
+        assert_eq!(
+            resolved.my_keys[0].owner,
+            KeychainKeyOwner::SelfUser {
+                primary_owner_id: 7
+            }
+        );
+    }
+
+    #[test]
+    fn a_key_whose_owner_is_not_a_contact_is_dropped() {
+        // No contact row means no `contact_id` to send to `AddVaultMember`,
+        // so the key is unusable and must not be offered.
+        let contacts = vec![contact_with_role(11, 99, ContactRole::Keyholder)];
+        let resolved = resolve_cube_keys(vec![contact_owned_raw_key(5, 42)], &contacts, 7);
+
+        assert!(resolved.my_keys.is_empty());
+        assert!(resolved.contact_keys.is_empty());
     }
 }

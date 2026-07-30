@@ -25,6 +25,7 @@ use coincube_spark_protocol::DepositInfo;
 use crate::app::state::spark::cross_chain::supported_on;
 use crate::app::state::spark::esplora::DEPOSIT_MATURITY_CONFIRMATIONS;
 use crate::app::state::spark::receive::{SparkReceiveMethod, SparkReceivePhase};
+use crate::app::view::shared::picker::picker_modal_card;
 use crate::app::view::spark::{last_tx::last_transactions_section, SparkRecentTransaction};
 use crate::app::view::{Message, SparkReceiveMessage};
 use crate::services::sideshift::{deposit_options, DepositOption};
@@ -624,8 +625,13 @@ fn picker_row_selected(theme: &theme::Theme) -> container::Style {
 
 /// The "THEY SEND" picker modal: Bitcoin rails, then (mainnet only) the
 /// cross-network deposit assets. Overlaid by the state's `view()`.
+///
+/// `cross` is the cross-network asset a running SideShift flow is set to. While
+/// one is up it — not the Bitcoin rail underneath — is what the panel is
+/// actually set to receive, so it carries the checkmark.
 pub fn sender_picker_modal<'a>(
     current: SparkReceiveMethod,
+    cross: Option<DepositOption>,
     network: Network,
 ) -> Element<'a, Message> {
     let is_mainnet = supported_on(network);
@@ -644,7 +650,7 @@ pub fn sender_picker_modal<'a>(
             asset_network_logo("btc", net_slug, 36.0),
             "Bitcoin",
             badge,
-            current == method,
+            cross.is_none() && current == method,
             Message::SparkReceive(SparkReceiveMessage::SelectSenderRail(method)),
         ));
     }
@@ -660,7 +666,7 @@ pub fn sender_picker_modal<'a>(
                 cross_network_logo(option, 36.0),
                 asset_display_name(option.coin),
                 option.network.network_name(),
-                false,
+                cross == Some(*option),
                 Message::SparkReceive(SparkReceiveMessage::SelectSenderCrossNetwork(option.key())),
             ));
         }
@@ -668,19 +674,20 @@ pub fn sender_picker_modal<'a>(
 
     // Off mainnet there are only the three rails (no scroll needed); on mainnet
     // the cross-network assets push the list past a screenful, so cap + scroll.
+    // The right padding is the scrollbar's gutter — without it the scroller
+    // draws on top of the rows' right edge.
     let body: Element<'a, Message> = if is_mainnet {
-        scrollable(list).height(Length::Fixed(500.0)).into()
+        scrollable(list.padding(iced::Padding {
+            right: 10.0,
+            ..iced::Padding::ZERO
+        }))
+        .height(Length::Fixed(420.0))
+        .into()
     } else {
         list.into()
     };
 
-    Column::new()
-        .spacing(12)
-        .padding(24)
-        .max_width(460)
-        .push(text("THEY SEND").size(16).bold())
-        .push(body)
-        .into()
+    picker_modal_card("THEY SEND", body)
 }
 
 fn phase_body<'a>(

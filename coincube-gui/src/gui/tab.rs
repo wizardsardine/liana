@@ -418,6 +418,11 @@ pub enum Message {
     /// (Spark → Settings → Lightning Address, Cube → Settings →
     /// Avatar / Members).
     OpenConnectSignIn,
+    /// Bubbles up to the pane so it can focus the Home tab on its Connect →
+    /// Plan & Billing section — fired when the user clicks "View plans" on a
+    /// paid-feature locked card outside the Connect page (Settings → Vault
+    /// Recovery Alerts).
+    OpenPlanBilling,
     /// Bubbles up to the pane on a Home-tab login edge so it can
     /// broadcast a session re-check to every open Cube tab.
     ConnectSignedIn,
@@ -1303,6 +1308,12 @@ impl Tab {
                         } else {
                             init_task
                         }
+                    }
+                    app::Message::View(app::view::Message::OpenPlanBilling) => {
+                        // Pure navigation: bubble to the pane so it focuses the
+                        // Home tab on Connect → Plan & Billing (the "View plans"
+                        // CTA on a paid-feature locked card outside Connect).
+                        Task::done(Message::OpenPlanBilling)
                     }
                     m => app.update(m).map(Message::Run),
                 }

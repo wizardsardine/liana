@@ -1620,25 +1620,25 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
         return duress_contacts::form_ux(state);
     }
 
-    let entitled = state
-        .plan
-        .as_ref()
-        .map(|p| p.entitlements.duress)
-        .unwrap_or(false);
-
     let mut col = Column::new()
         .push(text::h4_bold("Duress Mode").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
 
-    if !entitled {
+    if !state.is_duress_entitled() {
         return col
             .push(
                 container(
                     Column::new()
+                        .spacing(12)
                         .push(text::p1_regular(
                             "Duress mode is available on Pro and Estate plans. Upgrade your \
                              Connect plan to enable it.",
                         ))
+                        .push(
+                            button::primary(None, "View plans")
+                                .width(Length::Fixed(160.0))
+                                .on_press(ConnectAccountMessage::OpenPlanBilling),
+                        )
                         .padding(20),
                 )
                 .style(card_style)
@@ -1646,6 +1646,17 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
             )
             .width(Length::Fill)
             .into();
+    }
+
+    // Entitled but the launch gate is off (server flag off and this account
+    // hasn't enrolled): duress is a *hidden* kill-switch, not a greyed one. The
+    // nav hides the entry and both the navigation guard and the features-poll
+    // backstop redirect away, so this branch only guards a stale route for the
+    // instant before the redirect lands — render nothing rather than the
+    // upgrade CTA above, which would read wrong to an already-paid account. See
+    // `ConnectAccountPanel::show_duress`.
+    if !state.duress_gate().on() {
+        return Column::new().width(Length::Fill).into();
     }
 
     // What duress activation does — stated plainly, no fine print. Shown in
@@ -1895,18 +1906,18 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
         });
 
         col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
-        // The hard vault gate (PLAN-duress-vault-gate PR 2): Tier-1 enrollment
-        // is blocked while any Vault Cube in the checklist has an incomplete
-        // (or unverifiable) Recovery Kit — a duress wipe of such a Cube would
-        // be irreversible. The Tier-2 bypass below is deliberately never gated.
+        // The hard vault gate (PLAN-duress-vault-gate): enrollment is blocked
+        // while any Vault Cube in the checklist has an incomplete (or
+        // unverifiable) Recovery Kit — a duress wipe of such a Cube would be
+        // irreversible. This is now the single hard requirement: there is no
+        // "advanced" bypass and no sovereign path.
         //
         // Fail closed on an unloaded checklist (`None`): until the cube list +
         // kit statuses land we can't confirm every Vault Cube is safe, so the
         // CTA stays disabled rather than opening a fail-open window before the
         // fetch completes (master I7 / Resolved decision 4). A failed fetch
-        // also leaves `None`, so it stays blocked with the bypass as the
-        // offline escape hatch. An empty (loaded) list is `Some([])` → not
-        // blocked.
+        // also leaves `None`, so it stays blocked. An empty (loaded) list is
+        // `Some([])` → not blocked.
         let cubes_loaded = state.duress_cubes.is_some();
         let gate_blocked = duress_tier1_gate_blocked(state.duress_cubes.as_deref());
         if gate_blocked {
@@ -1933,15 +1944,6 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
                     )),
             );
         }
-        // Tier 2 (Connect, no recovery kit) — the plan's Task 2.1 secondary
-        // path. The panel can't see per-Cube CRK state, so the user picks:
-        // this skips the duress recovery-kit password step. Deliberately
-        // reachable in every blocked state — the vault gate never hides it.
-        col = col.push(
-            button::transparent(None, "Continue without a recovery kit (advanced)").on_press(
-                ConnectAccountMessage::Duress(DuressMessage::StartEnrollmentWithoutCrk),
-            ),
-        );
     }
 
     // Emergency contacts (Estate Notifications — PR 1). Rendered below the
@@ -2694,6 +2696,7 @@ mod renewal_banner_tests {
             liquid_enabled: None,
             buy_sell_enabled: None,
             p2p_enabled: None,
+            duress_enabled: None,
         }
     }
 
@@ -2742,6 +2745,7 @@ mod renewal_banner_tests {
             liquid_enabled: Some(true),
             buy_sell_enabled: Some(true),
             p2p_enabled: Some(false),
+            duress_enabled: Some(true),
         }
     }
 
@@ -3075,6 +3079,19 @@ mod renewal_banner_tests {
             is_passkey: Some(false),
             local: true,
         }]);
+
+        // Entitled but the launch gate is off (features cleared → flag off, not
+        // enrolled): the hidden-placeholder branch. Normally unreachable (nav
+        // hides it + route backstop redirects); exercised here belt-and-suspenders.
+        account.features = None;
+        assert!(!account.show_duress());
+        let _ = duress_ux(&account);
+
+        // Launch flag on → gate opens, so the not-yet-enrolled setup flow (not
+        // the hidden placeholder) renders. `priced_features` carries
+        // `duressEnabled: true`.
+        account.features = Some(priced_features(None, None));
+        assert!(account.show_duress());
         let _ = duress_ux(&account);
 
         account.duress_locally_armed = true;

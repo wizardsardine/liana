@@ -39,6 +39,10 @@ pub struct DummyBitcoind {
     pub also_in_chain: Vec<BlockChainTip>,
     /// Which node this backend claims to be, for scoping a sanctioned rollback.
     pub backend_id: Option<BackendId>,
+    /// What `walks_common_ancestor` reports. Defaults to `true`, i.e. a bitcoind-like
+    /// backend. Set to `false` to model Electrum/Esplora, which report reorgs from
+    /// `sync_wallet` and cannot be asked for a fork point afterwards.
+    pub walks_ancestors: bool,
 }
 
 /// The endpoint [`DummyBitcoind`] reports by default.
@@ -68,6 +72,7 @@ impl DummyBitcoind {
             ancestor: None,
             also_in_chain: Vec::new(),
             backend_id: Some(dummy_backend_id(DUMMY_RPC_ADDR, DUMMY_CREDENTIALS)),
+            walks_ancestors: true,
         }
     }
 }
@@ -151,6 +156,10 @@ impl BitcoinInterface for DummyBitcoind {
             Some(ancestor) => AncestorSearch::Found(ancestor),
             None => AncestorSearch::Failed,
         }
+    }
+
+    fn walks_common_ancestor(&self) -> bool {
+        self.walks_ancestors
     }
 
     fn broadcast_tx(&self, _: &bitcoin::Transaction) -> Result<(), String> {

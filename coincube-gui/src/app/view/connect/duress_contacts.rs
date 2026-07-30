@@ -111,6 +111,12 @@ fn locked_card<'a>() -> Element<'a, ConnectAccountMessage> {
                 )
                 .color(color::GREY_3),
             )
+            .push(iced::widget::Space::new().height(Length::Fixed(14.0)))
+            .push(
+                button::primary(None, "View plans")
+                    .width(Length::Fixed(160.0))
+                    .on_press(ConnectAccountMessage::OpenPlanBilling),
+            )
             .padding(20)
             .spacing(0),
     )

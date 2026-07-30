@@ -319,11 +319,24 @@ pub struct PlanEntitlements {
     /// fan-out when duress fires). See `PLAN-estate-notifications.md` PR 1.
     #[serde(default)]
     pub duress_alerts: bool,
-    /// Estate-only: vault recovery-path monitoring (descriptor escrow or
-    /// timelock heartbeat → keyholder emails). See
-    /// `PLAN-estate-notifications.md` PR 2.
+    /// Vault recovery-path monitoring (timelock heartbeat → keyholder emails).
+    /// After the recovery-alerts cleanup (API PR 3) the server returns this
+    /// `true` on **all** plans, so the alerts toggle is available to everyone;
+    /// the desktop keeps reading it as a defense-in-depth gate. See
+    /// `PLAN-estate-notifications.md` PR 2 and `PLAN-recovery-alerts-cleanup.md`.
     #[serde(default)]
     pub recovery_alerts: bool,
+    /// Estate-only: the server-blind ECIES **inheritance escrow** — the
+    /// encrypted recovery kit (descriptor, optionally seed) sealed to each
+    /// keyholder's key. Gates the "What keyholders can recover" tier selector on
+    /// the Recovery Alerts card, separately from the (universal) alerts toggle
+    /// above. `#[serde(default)]` means an older API that omits it fails
+    /// **closed** (the selector shows its locked affordance) — the safe
+    /// direction for a paid feature. Wire key `inheritanceEscrow` (the API's
+    /// canonical name in `entitlements.go`; via the struct-level camelCase). See
+    /// `PLAN-recovery-alerts-cleanup.md` PR 2 + ADDENDUM.
+    #[serde(default)]
+    pub inheritance_escrow: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -430,6 +443,25 @@ pub struct FeaturesResponse {
     /// [`crate::app::features::LiquidGate`], which OR's this with local state.
     #[serde(default, alias = "liquidEnabled", alias = "liquid_enabled")]
     pub liquid_enabled: Option<bool>,
+    /// Per-user launch flag for the Duress Mode surface (`duressEnabled`).
+    /// `Some(true)` means the server permits this account to see the duress
+    /// enrollment/management UI; absent/`Some(false)` means it doesn't.
+    ///
+    /// Fails **closed** like the Marketplace flags: absent, unloaded, or an
+    /// unreachable API all read as *off*, so the public launch build ships
+    /// duress dark and never surfaces the untested setup on a stale response.
+    ///
+    /// The same authenticated-only caveat as `liquid_enabled` applies — the
+    /// desktop only fetches features after `set_token` (see
+    /// `ConnectAccountPanel::post_login_tasks`), so this is only meaningful on
+    /// a signed-in call.
+    ///
+    /// A `false` here never hides duress from an *already-enrolled* account —
+    /// see [`crate::app::features::DuressGate`], which OR's this with the
+    /// account's enrollment state (the client mirror of the server's
+    /// grandfather rule).
+    #[serde(default, alias = "duressEnabled", alias = "duress_enabled")]
+    pub duress_enabled: Option<bool>,
 }
 
 // ── Checkout / Billing ──────────────────────────────────────────────────────
@@ -1197,6 +1229,65 @@ impl Contact {
     }
 }
 
+/// How a [`CubeKeyRaw`]'s owner resolves relative to the authenticated viewer.
+///
+/// Produced by [`classify_cube_key_ownership`] — the single home for the
+/// self/contact classification shared by the Vault Builder key picker
+/// (`resolve_cube_keys`) and the sign-flow membership reconcile
+/// (`reconcile_vault_members`).
+#[derive(Debug)]
+pub enum CubeKeyOwnership<'a> {
+    /// The authenticated viewer owns this key.
+    SelfOwned { owner_id: u64 },
+    /// A contact of the viewer owns this key. `contact` is the matched row,
+    /// carrying the `contact_id` callers need to address the owner.
+    ContactOwned { owner_id: u64, contact: &'a Contact },
+    /// The owner is neither the viewer nor any of the viewer's contacts, so
+    /// there is no `contact_id` to address them with. Callers skip such keys:
+    /// the picker can't offer them and the reconcile can't attach them
+    /// (`AddVaultMember` would reject a contact-less non-own key).
+    Unresolved { owner_id: u64 },
+}
+
+/// Classifies a Cube key by ownership relative to `current_user_id`.
+///
+/// Ownership prefers the server's viewer-relative `is_own_key` flag when set,
+/// falling back to a local id comparison for pre-W3 backends where the field
+/// is always `false`.
+///
+/// A non-own key is matched to a contact by **identity alone** — deliberately
+/// never by [`ContactRole`]. The role is a property of the *contact
+/// relationship*, not of any Cube: the API's cube-invite handler instant-adds
+/// an already-existing contact as a cube member without re-stamping the role
+/// (`.../cube_member/handlers/cube_member.go`, the `contact != nil` branch),
+/// and the reciprocal row written on accept carries role `owner`
+/// (`.../invite/handlers/invite.go`, `contact2`). So a genuine Cube keyholder
+/// routinely has a non-keyholder contact role, and filtering on it silently
+/// hid their key. The authorisation that matters is enforced server-side:
+/// `AddVaultMember` re-validates that the contact belongs to the caller and
+/// that the key belongs to that contact's user — it does not check the role
+/// either. The lookup goes through [`Contact::effective_contact_user_id`]
+/// because the backend's lean `ContactResponse` omits the flat
+/// `contactUserId`, exposing the id only via the nested `contactUser`.
+pub fn classify_cube_key_ownership<'a>(
+    key: &CubeKeyRaw,
+    contacts: &'a [Contact],
+    current_user_id: u64,
+) -> CubeKeyOwnership<'a> {
+    let owner_id = key.effective_owner_user_id();
+    let is_own = key.is_own_key || owner_id == current_user_id;
+    if is_own {
+        return CubeKeyOwnership::SelfOwned { owner_id };
+    }
+    match contacts
+        .iter()
+        .find(|c| c.effective_contact_user_id() == Some(owner_id))
+    {
+        Some(contact) => CubeKeyOwnership::ContactOwned { owner_id, contact },
+        None => CubeKeyOwnership::Unresolved { owner_id },
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Invite {
@@ -1835,8 +1926,14 @@ pub enum DownloadError {
     TrustedDeviceDelay {
         available_at: Option<chrono::DateTime<chrono::Utc>>,
     },
-    /// Wrong password / malformed request (4xx other than 423).
+    /// Wrong password / malformed request (`400`, `401`, `403`, or `422`).
     Invalid,
+    /// `404 Not Found` — no kit exists for this cube.
+    NotFound,
+    /// `429 Too Many Requests` — the caller should back off. `retry_after`
+    /// is the parsed `Retry-After` duration (defaults to 60s when the header
+    /// is missing or malformed).
+    RateLimited { retry_after: std::time::Duration },
     /// Network, 5xx, or parse failure.
     Other(CoincubeError),
 }
@@ -1851,6 +1948,10 @@ impl std::fmt::Display for DownloadError {
                 write!(f, "Recovery kit download is delayed on new devices.")
             }
             DownloadError::Invalid => write!(f, "Incorrect recovery kit password."),
+            DownloadError::NotFound => write!(f, "Recovery kit not found."),
+            DownloadError::RateLimited { retry_after } => {
+                write!(f, "Rate limited — try again in {}s.", retry_after.as_secs())
+            }
             DownloadError::Other(e) => write!(f, "{}", e),
         }
     }
@@ -2138,64 +2239,55 @@ impl VaultMonitoringLevel {
     }
 }
 
-/// Per-vault owner policy for when keyholders may download the encrypted
-/// recovery kit. Wire values `anytime` / `at_approaching` match the
-/// coincube-api `crk_keyholder_download` column (PR 3). Default is the
-/// privacy-preserving `at_approaching`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum KeyholderDownloadPolicy {
-    /// Keyholders can download anytime — lets family prepare/verify early,
-    /// but with the pre-shared password that also means balance visibility.
-    Anytime,
-    /// Keyholders can only download once recovery is approaching/open —
-    /// keeps balances private until the recovery window nears.
-    #[default]
-    AtApproaching,
-}
-
-impl KeyholderDownloadPolicy {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Anytime => "anytime",
-            Self::AtApproaching => "at_approaching",
-        }
-    }
-}
-
-/// Status returned by `GET /api/v1/connect/vaults/{id}/monitoring`.
+/// Status returned by `GET /api/v1/connect/cubes/{cubeId}/vault/monitoring`.
+///
+/// The API's `MonitoringStatusResponse` names these `monitoringLevel` and
+/// `state` (not `level` / `lastNotifiedState`) — explicit `rename`s below
+/// override the struct-level `camelCase` for those two fields.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultMonitoringStatus {
-    #[serde(default)]
+    #[serde(rename = "monitoringLevel", default)]
     pub level: VaultMonitoringLevel,
-    #[serde(default)]
-    pub crk_keyholder_download: KeyholderDownloadPolicy,
     /// Server's per-vault recovery state machine value, when the sweep has
     /// run: `none` / `approaching` / `available` / `reminding`. `None` when
     /// the API doesn't expose it (nice-to-have; the UI degrades silently).
-    #[serde(default)]
+    #[serde(rename = "state", default)]
     pub last_notified_state: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    /// Which ECIES artifact kinds the owner currently has escrowed for this
+    /// Vault's keyholders. Drives the desktop's server-derived escrow tier
+    /// (no session-tracked guess):
+    /// - `["descriptor"]` → Vault-only,
+    /// - `["descriptor","seed"]` → Full-Cube,
+    /// - `[]` (present but empty) → alerts-only (nothing escrowed).
+    ///
+    /// `None` when the field is **absent** — an older API that predates the
+    /// escrowed-artifacts report. The desktop then can't tell which tier is
+    /// enrolled and falls back to the "on, tier unknown" copy rather than
+    /// asserting a tier the server didn't confirm (C2). Wire key
+    /// `escrowedArtifacts` (struct-level camelCase); `#[serde(default)]` keeps
+    /// older payloads parsing.
+    #[serde(default)]
+    pub escrowed_artifacts: Option<Vec<String>>,
 }
 
 impl Default for VaultMonitoringStatus {
     fn default() -> Self {
         Self {
             level: VaultMonitoringLevel::Off,
-            crk_keyholder_download: KeyholderDownloadPolicy::AtApproaching,
             last_notified_state: None,
             updated_at: None,
+            escrowed_artifacts: None,
         }
     }
 }
 
-/// Body for `POST /api/v1/connect/vaults/{id}/monitoring` (Estate-gated).
-/// Sets the monitoring tier. `descriptor` is required for
+/// Body for `POST /api/v1/connect/cubes/{cubeId}/vault/monitoring`
+/// (Estate-gated). Sets the monitoring tier. `descriptor` is required for
 /// [`VaultMonitoringLevel::Full`] (the escrowed copy) and omitted for
-/// `Heartbeat`. `crk_keyholder_download` is included when the owner changes
-/// the download policy alongside the level.
+/// `Heartbeat`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetVaultMonitoringRequest {
@@ -2205,31 +2297,25 @@ pub struct SetVaultMonitoringRequest {
     /// Gap-limit hint so the server's sweep derives enough addresses.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gap_limit: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub crk_keyholder_download: Option<KeyholderDownloadPolicy>,
 }
 
-/// Body for `PUT /api/v1/connect/vaults/{id}/keyholder-download-policy`
-/// (Estate-gated). Sets the keyholder recovery-kit download policy
-/// independently of the monitoring level — the policy governs the existing
-/// recovery-kit GET for keyholder callers, so it's meaningful even when
-/// chain monitoring is off.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SetKeyholderDownloadPolicyRequest {
-    pub crk_keyholder_download: KeyholderDownloadPolicy,
-}
-
-/// Body for `POST /api/v1/connect/vaults/{id}/heartbeat` (Estate-gated,
-/// PR 5). Fire-and-forget after each vault sync for Heartbeat-tier (and
-/// Full, as a cross-check) vaults. `earliest_recovery_height` is the block
-/// height at which this vault's earliest recovery branch opens; a newer
-/// report always wins server-side (monotonic-staleness rule).
+/// Body for `POST /api/v1/connect/cubes/{cubeId}/vault/heartbeat`
+/// (Estate-gated, PR 5). Fire-and-forget after each vault sync for
+/// Heartbeat-tier (and Full, as a cross-check) vaults.
+/// `earliest_recovery_height` is the block height at which this vault's
+/// earliest recovery branch opens; a newer report always wins server-side
+/// (monotonic-staleness rule).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultHeartbeatRequest {
     pub earliest_recovery_height: u32,
     pub computed_at: chrono::DateTime<chrono::Utc>,
+    /// Chain whose tip the server's sweep compares the reported height against,
+    /// in the Esplora-proxy id form the API expects (`bitcoin-mainnet` /
+    /// `bitcoin-testnet`). REQUIRED: an omitted/empty value makes the server
+    /// assume mainnet, which would key a testnet vault's recovery height against
+    /// the wrong tip and fire (or suppress) alerts incorrectly.
+    pub network: String,
 }
 
 // =============================================================================
@@ -2564,6 +2650,38 @@ pub struct PutRecoveryKitEnvelopeRequest {
 }
 
 #[cfg(test)]
+mod plan_entitlements_tests {
+    use super::*;
+
+    #[test]
+    fn escrow_entitlement_reads_canonical_inheritance_escrow_key() {
+        // Regression lock (PLAN-recovery-alerts-cleanup ADDENDUM): the escrow
+        // selector gates on the API's canonical `inheritanceEscrow` key — NOT
+        // the `recoveryEscrow` name the desktop first coined. A drift here silently
+        // fails the selector closed even for Estate, so pin the exact wire key.
+        let estate: PlanEntitlements = serde_json::from_value(serde_json::json!({
+            "recoveryAlerts": true,
+            "inheritanceEscrow": true
+        }))
+        .unwrap();
+        assert!(estate.inheritance_escrow);
+        assert!(estate.recovery_alerts);
+
+        // The old (wrong) key must NOT satisfy the gate — proves the rename stuck.
+        let wrong_key: PlanEntitlements =
+            serde_json::from_value(serde_json::json!({ "recoveryEscrow": true })).unwrap();
+        assert!(!wrong_key.inheritance_escrow);
+    }
+
+    #[test]
+    fn escrow_entitlement_fails_closed_when_absent() {
+        // Older API that omits the field → the selector fails closed (locked).
+        let entitlements = PlanEntitlements::default();
+        assert!(!entitlements.inheritance_escrow);
+    }
+}
+
+#[cfg(test)]
 mod vault_monitoring_tests {
     use super::*;
 
@@ -2582,23 +2700,6 @@ mod vault_monitoring_tests {
             "\"off\""
         );
         assert_eq!(VaultMonitoringLevel::default(), VaultMonitoringLevel::Off);
-    }
-
-    #[test]
-    fn download_policy_wire_values() {
-        assert_eq!(
-            serde_json::to_string(&KeyholderDownloadPolicy::AtApproaching).unwrap(),
-            "\"at_approaching\""
-        );
-        assert_eq!(
-            serde_json::to_string(&KeyholderDownloadPolicy::Anytime).unwrap(),
-            "\"anytime\""
-        );
-        // Default is the privacy-preserving option.
-        assert_eq!(
-            KeyholderDownloadPolicy::default(),
-            KeyholderDownloadPolicy::AtApproaching
-        );
     }
 
     #[test]
@@ -2666,15 +2767,67 @@ mod vault_monitoring_tests {
 
     #[test]
     fn monitoring_status_tolerates_minimal_body() {
-        // A vault with no monitoring record: server may send just the level.
-        let v = serde_json::json!({ "level": "off" });
+        // A vault with no monitoring record: server may send just the level,
+        // under its real field name `monitoringLevel` (not `level` — see the
+        // explicit `rename` on `VaultMonitoringStatus::level`).
+        let v = serde_json::json!({ "monitoringLevel": "off" });
         let s: VaultMonitoringStatus = serde_json::from_value(v).unwrap();
         assert_eq!(s.level, VaultMonitoringLevel::Off);
-        // Absent download policy defaults to at_approaching.
+        assert!(s.last_notified_state.is_none());
+    }
+
+    #[test]
+    fn monitoring_status_reads_escrowed_artifacts() {
+        // New API (API PR 1) reports the escrowed artifact kinds so the desktop
+        // derives the tier from the server instead of a session-tracked guess.
+        let vault_only: VaultMonitoringStatus = serde_json::from_value(serde_json::json!({
+            "monitoringLevel": "heartbeat",
+            "escrowedArtifacts": ["descriptor"]
+        }))
+        .unwrap();
         assert_eq!(
-            s.crk_keyholder_download,
-            KeyholderDownloadPolicy::AtApproaching
+            vault_only.escrowed_artifacts.as_deref(),
+            Some(&["descriptor".to_string()][..])
         );
+
+        let full_cube: VaultMonitoringStatus = serde_json::from_value(serde_json::json!({
+            "monitoringLevel": "heartbeat",
+            "escrowedArtifacts": ["descriptor", "seed"]
+        }))
+        .unwrap();
+        assert_eq!(
+            full_cube.escrowed_artifacts.as_deref(),
+            Some(&["descriptor".to_string(), "seed".to_string()][..])
+        );
+
+        // Present but empty → alerts-only (nothing escrowed) — distinct from absent.
+        let alerts_only: VaultMonitoringStatus = serde_json::from_value(serde_json::json!({
+            "monitoringLevel": "heartbeat",
+            "escrowedArtifacts": []
+        }))
+        .unwrap();
+        assert_eq!(alerts_only.escrowed_artifacts.as_deref(), Some(&[][..]));
+    }
+
+    #[test]
+    fn monitoring_status_tolerates_absent_escrowed_artifacts() {
+        // Old API (pre-PR-1) omits the field entirely → None, so the desktop
+        // can distinguish "on, tier unknown" from "on, nothing escrowed".
+        let s: VaultMonitoringStatus =
+            serde_json::from_value(serde_json::json!({ "monitoringLevel": "heartbeat" })).unwrap();
+        assert!(s.escrowed_artifacts.is_none());
+    }
+
+    #[test]
+    fn monitoring_status_ignores_unrenamed_field_name() {
+        // Regression guard: before the explicit `rename`, a body keyed on the
+        // wrong field name (`level`/`lastNotifiedState` instead of the API's
+        // real `monitoringLevel`/`state`) silently deserialized to the
+        // defaults rather than erroring, which is exactly how a successful
+        // enable could still render "Off" on the settings card.
+        let v = serde_json::json!({ "level": "full", "lastNotifiedState": "approaching" });
+        let s: VaultMonitoringStatus = serde_json::from_value(v).unwrap();
+        assert_eq!(s.level, VaultMonitoringLevel::Off);
         assert!(s.last_notified_state.is_none());
     }
 
@@ -2684,13 +2837,11 @@ mod vault_monitoring_tests {
             level: VaultMonitoringLevel::Heartbeat,
             descriptor: None,
             gap_limit: Some(20),
-            crk_keyholder_download: None,
         };
         let body = serde_json::to_value(&req).unwrap();
         assert_eq!(body["level"], "heartbeat");
         assert!(body.get("descriptor").is_none());
         assert_eq!(body["gapLimit"], 20);
-        assert!(body.get("crkKeyholderDownload").is_none());
     }
 
     #[test]
@@ -2699,12 +2850,26 @@ mod vault_monitoring_tests {
             level: VaultMonitoringLevel::Full,
             descriptor: Some("wsh(...)".into()),
             gap_limit: None,
-            crk_keyholder_download: Some(KeyholderDownloadPolicy::Anytime),
         };
         let body = serde_json::to_value(&req).unwrap();
         assert_eq!(body["level"], "full");
         assert_eq!(body["descriptor"], "wsh(...)");
-        assert_eq!(body["crkKeyholderDownload"], "anytime");
+    }
+
+    #[test]
+    fn heartbeat_request_carries_network_id() {
+        // The server requires the Esplora-proxy network id and rejects any value
+        // outside `bitcoin-mainnet` / `bitcoin-testnet`; a missing field would
+        // silently default it to mainnet server-side. Lock the wire field name
+        // (`network`) and a representative value.
+        let req = VaultHeartbeatRequest {
+            earliest_recovery_height: 850_000,
+            computed_at: chrono::Utc::now(),
+            network: "bitcoin-testnet".to_string(),
+        };
+        let body = serde_json::to_value(&req).unwrap();
+        assert_eq!(body["earliestRecoveryHeight"], 850_000);
+        assert_eq!(body["network"], "bitcoin-testnet");
     }
 }
 
@@ -2878,6 +3043,51 @@ mod cube_has_vault_tests {
         });
         let resp: CubeResponse = serde_json::from_value(v).unwrap();
         assert_eq!(resp.has_vault, Some(true));
+    }
+}
+
+#[cfg(test)]
+mod features_response_duress_tests {
+    //! `duressEnabled` transport (PLAN-feature-flags PR 1). Mirrors the
+    //! `liquidEnabled`/`marketplaceEnabled` shape: absent → `None` (treated
+    //! false, fail-closed), and both the camelCase wire key and the snake_case
+    //! alias parse to the same field.
+    use super::FeaturesResponse;
+    use serde_json::json;
+
+    fn features_json(extra: serde_json::Value) -> serde_json::Value {
+        let mut base = json!({ "plans": [] });
+        if let (Some(obj), Some(add)) = (base.as_object_mut(), extra.as_object()) {
+            for (k, v) in add {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+        base
+    }
+
+    #[test]
+    fn duress_enabled_absent_is_none() {
+        // Older backend / field omitted → None, which the gate reads as off.
+        let resp: FeaturesResponse = serde_json::from_value(features_json(json!({}))).unwrap();
+        assert_eq!(resp.duress_enabled, None);
+    }
+
+    #[test]
+    fn duress_enabled_true_and_false_parse() {
+        let on: FeaturesResponse =
+            serde_json::from_value(features_json(json!({ "duressEnabled": true }))).unwrap();
+        assert_eq!(on.duress_enabled, Some(true));
+
+        let off: FeaturesResponse =
+            serde_json::from_value(features_json(json!({ "duressEnabled": false }))).unwrap();
+        assert_eq!(off.duress_enabled, Some(false));
+    }
+
+    #[test]
+    fn duress_enabled_snake_case_alias_parses() {
+        let resp: FeaturesResponse =
+            serde_json::from_value(features_json(json!({ "duress_enabled": true }))).unwrap();
+        assert_eq!(resp.duress_enabled, Some(true));
     }
 }
 
