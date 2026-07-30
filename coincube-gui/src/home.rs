@@ -1742,8 +1742,7 @@ impl Home {
                     HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
                 ) && !self.connect_account.show_duress()
                 {
-                    self.active_section =
-                        HomeSection::Connect(app::menu::ConnectSubMenu::Overview);
+                    self.active_section = HomeSection::Connect(app::menu::ConnectSubMenu::Overview);
                     self.connect_account.active_sub = app::menu::ConnectSubMenu::Overview;
                 }
                 // Sync account tier from the Connect plan data
@@ -4283,9 +4282,9 @@ mod tests {
         home.connect_account.features = Some(features_duress_off());
         assert!(!home.connect_account.show_duress());
 
-        let _ = home.update(Message::View(ViewMessage::GoToSection(HomeSection::Connect(
-            app::menu::ConnectSubMenu::Duress,
-        ))));
+        let _ = home.update(Message::View(ViewMessage::GoToSection(
+            HomeSection::Connect(app::menu::ConnectSubMenu::Duress),
+        )));
 
         assert_eq!(
             home.active_section,
@@ -4307,9 +4306,9 @@ mod tests {
         home.connect_account.duress_locally_armed = true;
         assert!(home.connect_account.show_duress());
 
-        let _ = home.update(Message::View(ViewMessage::GoToSection(HomeSection::Connect(
-            app::menu::ConnectSubMenu::Duress,
-        ))));
+        let _ = home.update(Message::View(ViewMessage::GoToSection(
+            HomeSection::Connect(app::menu::ConnectSubMenu::Duress),
+        )));
 
         assert_eq!(
             home.active_section,
