@@ -1,4 +1,5 @@
 pub mod payment_details;
+
 use iced::widget::column;
 pub use payment_details::payment_details_view;
 
@@ -85,7 +86,8 @@ pub fn home_view<'a>(
         if event.kind != PaymentKind::SendToSelf {
             col.push(payment_card(
                 UIPayment {
-                    label: event.label.as_deref().or(event.address_label.as_deref()),
+                    label: event.label.as_deref(),
+                    address_label: event.address_label.as_deref(),
                     kind: event.kind,
                     time: event.time,
                     amount: event.amount,
