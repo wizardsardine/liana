@@ -93,6 +93,7 @@ pub struct FiatPrice {
 #[derive(Debug, Clone)]
 pub struct UIPayment<'a> {
     pub label: Option<&'a str>,
+    pub address_label: Option<&'a str>,
     pub kind: PaymentKind,
     pub time: Option<chrono::DateTime<chrono::Utc>>,
     pub amount: bitcoin::Amount,
@@ -107,19 +108,35 @@ pub fn format_date(time: chrono::DateTime<chrono::Utc>) -> String {
 pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment<'a>, msg: Option<M>) -> Element<'a, M> {
     let UIPayment {
         label,
+        address_label,
         kind,
         time,
         amount,
         fiat_price,
     } = payment;
-    let label: Element<'a, M> = match label {
-        None => h2("(No label)").style(theme::text::primary).into(),
-        Some(label) if label.chars().count() > MAX_LABEL_LENGTH => {
-            let short = truncate(label, MAX_LABEL_LENGTH);
-            let short = h2(short).style(theme::text::primary);
-            tooltip_custom(label, short, Position::Top).into()
+    let label: Element<'a, M> = match (label, address_label) {
+        (None, None) => h2("(No label)").style(theme::text::primary).into(),
+        (Some(label), _) => {
+            if label.chars().count() > MAX_LABEL_LENGTH {
+                let short = truncate(label, MAX_LABEL_LENGTH);
+                let short = h2(short).style(theme::text::primary);
+                tooltip_custom(label, short, Position::Top).into()
+            } else {
+                h2(label).style(theme::text::primary).into()
+            }
         }
-        Some(label) => h2(label).style(theme::text::primary).into(),
+        (None, Some(label)) => {
+            let prefix = "address label: ";
+            if label.chars().count() > (MAX_LABEL_LENGTH - prefix.len()) {
+                let short = truncate(label, MAX_LABEL_LENGTH - prefix.len());
+                let short = h2(format!("{prefix}{short}")).style(theme::text::primary);
+                tooltip_custom(label, short, Position::Top).into()
+            } else {
+                h2(format!("{prefix}{label}"))
+                    .style(theme::text::primary)
+                    .into()
+            }
+        }
     };
 
     let time: Element<'a, M> = if let Some(time) = time {
