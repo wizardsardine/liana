@@ -173,19 +173,19 @@ impl Palette {
                     active: ButtonPalette {
                         background: BTN_TERTIARY_BG,
                         text: BTN_TERTIARY_FG,
-                        border: BTN_TERTIARY_BG.into(),
+                        border: BTN_TERTIARY_FG.into(),
                         shadow: Default::default(),
                     },
                     hovered: ButtonPalette {
                         background: BTN_TERTIARY_BG,
                         text: BTN_TERTIARY_FG,
-                        border: BTN_TERTIARY_BG.into(),
+                        border: BTN_TERTIARY_FG.into(),
                         shadow: BTN_SHADOW,
                     },
                     pressed: Some(ButtonPalette {
                         background: BTN_TERTIARY_PRESSED,
                         text: color::WHITE,
-                        border: BTN_TERTIARY_PRESSED.into(),
+                        border: BTN_TERTIARY_FG.into(),
                         shadow: BTN_SHADOW,
                     }),
                     disabled: btn_disabled(),
