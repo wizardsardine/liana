@@ -35,7 +35,6 @@ button_styles!(
     secondary,
     feerate,
     feerate_unselected,
-    tertiary,
     destructive,
     container,
     container_border,
@@ -49,6 +48,10 @@ button_styles!(
     signing_devices,
     optional_section,
 );
+
+pub fn tertiary(theme: &Theme, status: Status) -> Style {
+    button(&theme.colors.buttons.tertiary, status, 1.0)
+}
 
 pub fn auxiliary(theme: &Theme, status: Status) -> Style {
     let mut style = button(&theme.colors.buttons.auxiliary, status, 1.0);
