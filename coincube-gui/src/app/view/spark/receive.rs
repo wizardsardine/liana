@@ -748,7 +748,9 @@ fn phase_body<'a>(
                             .spacing(10)
                             .push(
                                 button::primary(None, "Copy")
-                                    .on_press(Message::Clipboard(payment_request))
+                                    .on_press(Message::SparkReceive(
+                                        SparkReceiveMessage::CopyPaymentRequest(payment_request),
+                                    ))
                                     .width(Length::Fixed(120.0)),
                             )
                             .push(
