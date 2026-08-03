@@ -136,6 +136,7 @@ pub async fn load_breez_client(
     network: Network,
     master_signer_fingerprint: Fingerprint,
     password: &str,
+    cube_id: &str,
     liquid_granted: bool,
 ) -> Result<Arc<BreezClient>, BreezError> {
     let liquid_supported = crate::app::features::liquid(network).is_available();
@@ -146,6 +147,7 @@ pub async fn load_breez_client(
         network,
         master_signer_fingerprint,
         Some(password),
+        cube_id,
     ) {
         Ok(signer) => Arc::new(Mutex::new(signer)),
         Err(e) => {

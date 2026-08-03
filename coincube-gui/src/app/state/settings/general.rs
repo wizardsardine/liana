@@ -223,7 +223,7 @@ mod tests {
             backup_msg(view::BackupWalletMessage::PinVerified(Ok(words()))),
         );
 
-        assert_eq!(state.backup_pin.value(), "");
+        assert_eq!(state.backup_pin.value().as_str(), "");
         assert!(matches!(state.backup_state, BackupSeedState::Intro(false)));
         assert_eq!(
             state.backup_mnemonic.as_ref().map(|words| words.len()),
@@ -250,7 +250,7 @@ mod tests {
             ))),
         );
 
-        assert_eq!(state.backup_pin.value(), "");
+        assert_eq!(state.backup_pin.value().as_str(), "");
         assert!(matches!(
             &state.backup_state,
             BackupSeedState::PinEntry { error: Some(error) } if error == "Incorrect PIN"
@@ -495,7 +495,7 @@ mod tests {
         );
 
         assert_eq!(state.backup_state, BackupSeedState::Completed);
-        assert_eq!(state.backup_pin.value(), "");
+        assert_eq!(state.backup_pin.value().as_str(), "");
         assert!(state.backup_mnemonic.is_none());
 
         let _ = state.update(
@@ -807,13 +807,18 @@ impl GeneralSettingsState {
 
                 // Run Argon2id PIN verification + mnemonic decryption off
                 // the UI thread to avoid blocking the event loop.
+                let cube_id = cube.id.clone();
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            if !cube.verify_pin(&pin) {
-                                return Err("Incorrect PIN. Please try again.".to_string());
-                            }
-                            load_mnemonic_words(&datadir, network, fingerprint, &pin)
+                            // The decryption *is* the PIN check — a wrong PIN
+                            // fails the seed file's GCM tag. The
+                            // `verify_pin` call that used to gate this was the
+                            // cheap Argon2 oracle (m=19 MiB vs the seed file's
+                            // 256 MiB) and is gone; see
+                            // PLAN-cube-unlock-hardening I1.
+                            load_mnemonic_words(&datadir, network, fingerprint, &pin, &cube_id)
+                                .map_err(|_| "Incorrect PIN. Please try again.".to_string())
                         })
                         .await
                         .map_err(|e| format!("PIN verification task failed: {}", e))?
@@ -1044,9 +1049,10 @@ pub(super) fn load_mnemonic_words(
     network: Network,
     fingerprint: Fingerprint,
     pin: &str,
+    cube_id: &str,
 ) -> Result<Vec<String>, String> {
     let signer =
-        MasterSigner::from_datadir_by_fingerprint(datadir, network, fingerprint, Some(pin))
+        MasterSigner::from_datadir_by_fingerprint(datadir, network, fingerprint, Some(pin), cube_id)
             .map_err(|e| e.to_string())?;
     Ok(signer.words().iter().map(|w| (*w).to_string()).collect())
 }

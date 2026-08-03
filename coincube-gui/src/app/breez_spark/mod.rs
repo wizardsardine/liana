@@ -49,6 +49,7 @@ pub async fn load_spark_client(
     network: Network,
     spark_signer_fingerprint: Fingerprint,
     password: &str,
+    cube_id: &str,
 ) -> Result<Arc<SparkClient>, SparkLoadError> {
     // Only mainnet and regtest are supported — reject unsupported
     // networks early rather than waiting for the bridge handshake
@@ -65,6 +66,7 @@ pub async fn load_spark_client(
         network,
         spark_signer_fingerprint,
         Some(password),
+        cube_id,
     )
     .map_err(|e| match e {
         coincube_core::signer::SignerError::MnemonicStorage(io_err)
@@ -77,7 +79,7 @@ pub async fn load_spark_client(
 
     // Extract the mnemonic as a Zeroizing<String> so the buffer is
     // scrubbed after the bridge has accepted it.
-    let mnemonic: Zeroizing<String> = Zeroizing::new(signer.mnemonic_str());
+    let mnemonic: Zeroizing<String> = signer.mnemonic_str();
 
     // Namespace the Spark SDK storage by fingerprint so multiple cubes
     // on the same install each get their own database. Without this,
@@ -150,7 +152,7 @@ mod tests {
         let datadir = std::path::Path::new("/this/path/should/not/be/read");
 
         for network in [Network::Testnet, Network::Signet] {
-            let err = load_spark_client(datadir, network, fingerprint, "pin")
+            let err = load_spark_client(datadir, network, fingerprint, "pin", "cube-a")
                 .await
                 .unwrap_err();
             assert!(matches!(

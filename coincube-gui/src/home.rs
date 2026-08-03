@@ -22,6 +22,7 @@ use crate::services::coincube::{
 };
 #[cfg(not(target_os = "macos"))]
 use crate::services::passkey::CeremonyMode;
+use crate::services::unlock;
 use crate::services::passkey::{self as passkey_svc, CeremonyOutcome, PasskeyCeremony};
 use crate::{
     app::{
@@ -472,7 +473,7 @@ impl Home {
                 let network = self.network;
                 let cube_name = self.create_cube_name.value.trim().to_string();
                 let pin = if passkey_mode {
-                    String::new()
+                    zeroize::Zeroizing::new(String::new())
                 } else {
                     self.create_cube_pin.value()
                 };
@@ -522,6 +523,29 @@ impl Home {
                     // PIN-based Cube creation
                     Task::perform(
                         async move {
+                            // Mint this Cube's device secret in the OS keystore
+                            // BEFORE anything is written to disk.
+                            //
+                            // The seed file is sealed under PIN + device secret
+                            // (`ENCRYPTED_V3`), which is what makes a copied
+                            // datadir useless. If the keystore is unusable — the
+                            // common case on headless Linux and minimal WMs —
+                            // this **refuses** rather than silently falling back
+                            // to PIN-only. A user who believes they have
+                            // two-factor protection and has one factor is worse
+                            // off than a user who was told the truth (I7).
+                            let device_secret = match unlock::device_secret::capability() {
+                                unlock::device_secret::Capability::Available => {
+                                    Some(unlock::device_secret::get_or_create(
+                                        &cube_id.to_string(),
+                                    )
+                                    .map_err(|e| e.to_string())?)
+                                }
+                                unlock::device_secret::Capability::Unavailable(why) => {
+                                    return Err(why)
+                                }
+                            };
+
                             // Generate MasterSigner
                             let master_signer = MasterSigner::generate(network).map_err(|e| {
                                 format!("Failed to generate master seed signer: {}", e)
@@ -549,7 +573,9 @@ impl Home {
                                     network,
                                     &secp,
                                     Some((master_checksum, timestamp)),
-                                    Some(&pin),
+                                    &pin,
+                                    &cube_id.to_string(),
+                                    device_secret.as_ref(),
                                 )
                                 .map_err(|e| {
                                     format!("Failed to store master seed mnemonic: {}", e)
@@ -561,11 +587,19 @@ impl Home {
                                 master_fingerprint
                             );
 
-                            // Build Cube settings
-                            let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
-                                .with_master_signer(master_fingerprint)
-                                .with_pin(&pin)
-                                .map_err(|e| format!("Failed to hash PIN: {}", e))?;
+                            // Build Cube settings. No PIN hash is stored: the
+                            // Cube's PIN is the one the seed file above was
+                            // encrypted under, and it is verified by decrypting
+                            // that file. A second, cheaper verifier next to it
+                            // is the bug this whole change removes (I1).
+                            let mut cube = CubeSettings::new_with_id(cube_id, cube_name, network)
+                                .with_master_signer(master_fingerprint);
+                            // Held to the mandatory-backup gate. The seed file
+                            // above is sealed to this machine's keystore, so a
+                            // copied folder will not open it — see
+                            // `creation_gate::NOT_A_BACKUP_COPY`.
+                            cube.creation_backup_required = true;
+                            let cube = cube;
 
                             // Save Cube settings
                             settings::update_settings_file(&network_dir, |mut settings| {
@@ -1055,6 +1089,7 @@ impl Home {
                         self.delete_cube_modal = Some(DeleteCubeModal::new(
                             cube.clone(),
                             wallet_datadir,
+                            self.datadir_path.path().to_path_buf(),
                             wallet_settings,
                             internal_bitcoind,
                             self.connect_account.is_authenticated(),
@@ -1330,6 +1365,20 @@ impl Home {
 
                         Task::perform(
                             async move {
+                                // Same device-secret mint + refusal as the
+                                // non-recovery path above.
+                                let device_secret = match unlock::device_secret::capability() {
+                                    unlock::device_secret::Capability::Available => {
+                                        Some(unlock::device_secret::get_or_create(
+                                            &cube_id.to_string(),
+                                        )
+                                        .map_err(|e| e.to_string())?)
+                                    }
+                                    unlock::device_secret::Capability::Unavailable(why) => {
+                                        return Err(why)
+                                    }
+                                };
+
                                 // Restore MasterSigner from recovery mnemonic
                                 let master_signer = MasterSigner::from_mnemonic(network, mnemonic)
                                     .map_err(|e| {
@@ -1358,7 +1407,9 @@ impl Home {
                                         network,
                                         &secp,
                                         Some((master_checksum, timestamp)),
-                                        Some(&pin),
+                                        &pin,
+                                        &cube_id.to_string(),
+                                        device_secret.as_ref(),
                                     )
                                     .map_err(|e| {
                                         format!("Failed to store master seed mnemonic: {}", e)
@@ -1366,11 +1417,14 @@ impl Home {
 
                                 tracing::info!("Master signer created and stored (encrypted with PIN) with fingerprint: {}", master_fingerprint);
 
-                                // Build Cube settings using the pre-generated, stable UUID.
-                                let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
-                                    .with_master_signer(master_fingerprint)
-                                    .with_pin(&pin)
-                                    .map_err(|e| format!("Failed to hash PIN: {}", e))?;
+                                // Build Cube settings using the pre-generated,
+                                // stable UUID. No PIN hash — see the note on
+                                // the non-recovery path above.
+                                let mut cube =
+                                    CubeSettings::new_with_id(cube_id, cube_name, network)
+                                        .with_master_signer(master_fingerprint);
+                                cube.creation_backup_required = true;
+                                let cube = cube;
 
                                 // Save Cube settings to settings file.
                                 // Idempotency: skip insert if UUID already exists.
@@ -3363,6 +3417,10 @@ struct DeleteCubeModal {
     user_role: Option<UserRole>,
     // `None` means we were not able to determine whether wallet uses internal bitcoind.
     internal_bitcoind: Option<bool>,
+    /// Data root. The PIN is verified by decrypting this Cube's seed file, so
+    /// the modal needs to reach `<root>/<network>/mnemonics/` — the
+    /// `network_directory` above is already one level in.
+    datadir_root: std::path::PathBuf,
     pin_input: pin_input::PinInput,
     pin_error: Option<String>,
 }
@@ -3485,6 +3543,7 @@ impl DeleteCubeModal {
     fn new(
         cube: CubeSettings,
         network_directory: NetworkDirectory,
+        datadir_root: std::path::PathBuf,
         wallet_settings: Option<WalletSettings>,
         internal_bitcoind: Option<bool>,
         is_authenticated: bool,
@@ -3494,6 +3553,7 @@ impl DeleteCubeModal {
             cube: cube.clone(),
             wallet_settings: wallet_settings.clone(),
             network_directory,
+            datadir_root,
             warning: None,
             deleted: false,
             delete_liana_connect: false,
@@ -3530,13 +3590,38 @@ impl DeleteCubeModal {
                     return Task::none();
                 }
 
-                // Verify PIN before proceeding with deletion
-                if self.cube.has_pin() {
+                // Verify the PIN before proceeding with deletion. There is no
+                // stored PIN hash any more: the check is a trial decryption of
+                // this Cube's seed file, which costs ~831 ms. That is a
+                // blocking call on the UI thread, consistent with the
+                // `block_on(delete_wallet(...))` immediately below — this modal
+                // has always been synchronous. A confirm dialog that takes a
+                // beat to answer is acceptable; a cheap verifier next to an
+                // expensive one is not (I1).
+                if self.cube.has_pin(&self.datadir_root) {
                     let pin = self.pin_input.value();
-                    if !self.cube.verify_pin(&pin) {
-                        self.pin_error = Some("Incorrect PIN. Please try again.".to_string());
-                        self.pin_input.clear();
-                        return Task::none();
+                    let loc = crate::services::unlock::CubeLocation::new(
+                        &self.datadir_root,
+                        &self.cube,
+                    );
+                    match crate::services::unlock::unlock_blocking(&loc, &pin) {
+                        Ok(crate::services::unlock::PinOutcome::Unlock(_)) => {}
+                        // A duress PIN must not delete the Cube here — that
+                        // would be a quieter, unlogged wipe than the duress
+                        // path itself, and would confirm to an observer that
+                        // the PIN meant something. Treat it as a wrong PIN.
+                        Ok(_) => {
+                            self.pin_error =
+                                Some("Incorrect PIN. Please try again.".to_string());
+                            self.pin_input.clear();
+                            return Task::none();
+                        }
+                        Err(e) => {
+                            // Keystore failures are not wrong PINs (I7).
+                            self.pin_error = Some(e.to_string());
+                            self.pin_input.clear();
+                            return Task::none();
+                        }
                     }
                 }
 
@@ -3600,7 +3685,7 @@ impl DeleteCubeModal {
     }
 
     fn view(&self) -> Element<Message> {
-        let pin_ready = !self.cube.has_pin() || self.pin_input.is_complete();
+        let pin_ready = !self.cube.has_pin(&self.datadir_root) || self.pin_input.is_complete();
         let can_delete = pin_ready && self.warning.is_none();
         let mut confirm_button = button::secondary(None, "Delete Cube")
             .width(Length::Fixed(200.0))
@@ -3677,7 +3762,7 @@ impl DeleteCubeModal {
         }
 
         // PIN entry section
-        if self.cube.has_pin() {
+        if self.cube.has_pin(&self.datadir_root) {
             col = col
                 .push(Space::new().height(Length::Fixed(5.0)))
                 .push(p1_regular("Enter your PIN to confirm:").style(theme::text::secondary))
@@ -3969,8 +4054,8 @@ mod tests {
             }
         ));
         assert!(home.create_cube_name.value.is_empty());
-        assert_eq!(home.create_cube_pin.value(), "");
-        assert_eq!(home.create_cube_pin_confirm.value(), "");
+        assert_eq!(home.create_cube_pin.value().as_str(), "");
+        assert_eq!(home.create_cube_pin_confirm.value().as_str(), "");
         assert!(home.recovery_words.iter().all(String::is_empty));
         assert!(home.recovery_active_index.is_none());
         assert_eq!(home.passkey_mode, feature_flags::PASSKEY_ENABLED);
@@ -4378,7 +4463,14 @@ mod tests {
         let cube = cube("local-a", "Local A", Network::Bitcoin);
         let network_dir = test_datadir().network_directory(Network::Bitcoin);
         let mut delete_modal =
-            DeleteCubeModal::new(cube.clone(), network_dir, None, Some(true), true);
+            DeleteCubeModal::new(
+                cube.clone(),
+                network_dir,
+                test_datadir().path().to_path_buf(),
+                None,
+                Some(true),
+                true,
+            );
 
         let _ = delete_modal.view();
         let _ = delete_modal.update(Message::View(ViewMessage::DeleteCube(

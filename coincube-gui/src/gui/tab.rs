@@ -99,7 +99,9 @@ impl State {
 /// - `data/` — wallet databases (BDK, plus breez/spark per-Cube working data
 ///   under `data/<wallet_id>/`),
 /// - `mnemonics/` — the master seed phrases (the crown jewels),
-/// - `settings.json` — `security_pin_hash`, `duress_pin_hash`, Cube metadata.
+/// - `settings.json` — Cube metadata. (The PIN and duress-PIN hashes that used
+///   to live here are gone; the duress *marker* now lives in `mnemonics/`, so
+///   it is wiped by that entry.)
 ///
 /// `connect.json` (the cached Connect auth the cryptic screen needs to check
 /// duress state) is deliberately NOT listed, so it survives — as do the
@@ -426,6 +428,15 @@ pub enum Message {
     /// Bubbles up to the pane on a Home-tab login edge so it can
     /// broadcast a session re-check to every open Cube tab.
     ConnectSignedIn,
+    /// Re-lock the open Cube: drop the `App` (and with it the decrypted signer,
+    /// the Liquid client and the Spark bridge subprocess), zeroize the session
+    /// PIN, and return to the PIN screen for the same Cube.
+    ///
+    /// Fired by the idle timer and by the explicit "Lock" control. Before this
+    /// existed, the only route out of `App` was back to `Home`, which left the
+    /// seed resident until the process exited, and there was no idle re-lock at
+    /// all.
+    LockCube,
 }
 
 pub struct Tab {
@@ -501,9 +512,25 @@ impl Tab {
         }
     }
 
+    /// How long an open Cube may sit idle before it re-locks.
+    ///
+    /// Long enough not to interrupt someone reading their transaction history,
+    /// short enough that a laptop left on a café table doesn't stay unlocked
+    /// for the afternoon.
+    const IDLE_LOCK_AFTER: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
     pub fn on_tick(&mut self) -> Task<Message> {
         // currently the Tick is only used by the app
         if let State::App(app) = &mut self.state {
+            // Idle re-lock. `session::touch()` is called from `update()` on
+            // every user-driven message, so this only fires when nothing has
+            // come in for the whole window.
+            if crate::app::session::idle_for()
+                .map(|d| d >= Self::IDLE_LOCK_AFTER)
+                .unwrap_or(false)
+            {
+                return Task::done(Message::LockCube);
+            }
             app.on_tick().map(Message::Run)
         } else {
             Task::none()
@@ -512,7 +539,75 @@ impl Tab {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         use crate::app::settings::global::GlobalSettings;
+
+        // Any message that isn't the periodic tick counts as activity and
+        // defers the auto-lock. `Tick` is excluded on purpose — it fires whether
+        // or not anyone is at the keyboard, so counting it would mean the Cube
+        // never locks.
+        if !matches!(message, Message::Run(app::Message::Tick)) {
+            crate::app::session::touch();
+        }
+
         let result = match (&mut self.state, message) {
+            (State::App(app), Message::LockCube) => {
+                // Order matters. Zeroize the session PIN first, then drop the
+                // `App`: dropping it takes the decrypted `MasterSigner` (which
+                // now scrubs itself), the Liquid client, and the Spark backend —
+                // whose `Drop` sends `Method::Shutdown` to the bridge
+                // subprocess, so the child process holding the plaintext
+                // mnemonic exits too.
+                let cube = app.cube_settings().clone();
+                let datadir = app.datadir().clone();
+                let network = app.cache().network;
+                crate::app::session::close();
+
+                let config = app::Config::from_file(
+                    &datadir
+                        .network_directory(network)
+                        .path()
+                        .join(app::config::DEFAULT_FILE_NAME),
+                );
+
+                let Ok(config) = config else {
+                    // No readable gui config to hand the PIN screen. Fall all
+                    // the way back to the launcher rather than staying open.
+                    let (home, command) = Home::new(datadir, Some(network));
+                    self.state = State::Home(home);
+                    return command.map(Message::Launch);
+                };
+
+                let wallet_settings = cube.vault_wallet_id.as_ref().and_then(|vault_id| {
+                    let network_dir = datadir.network_directory(network);
+                    app::settings::Settings::from_file(&network_dir)
+                        .ok()
+                        .and_then(|s| {
+                            s.wallets
+                                .iter()
+                                .find(|w| w.wallet_id() == *vault_id)
+                                .cloned()
+                        })
+                });
+                let duress_account_id =
+                    crate::services::duress::DuressLocalState::load(datadir.path())
+                        .map(|st| st.account_id)
+                        .unwrap_or(None);
+                let datadir_root = datadir.path().to_path_buf();
+                let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
+                    datadir,
+                    config,
+                    network,
+                    internal_bitcoind: None,
+                    backup: None,
+                    wallet_settings,
+                };
+                self.state = State::PinEntry(crate::pin_entry::PinEntry::new(
+                    cube,
+                    datadir_root,
+                    on_success,
+                    duress_account_id,
+                ));
+                Task::none()
+            }
             (State::Home(l), Message::Launch(msg)) => match msg {
                 home::Message::Install(datadir, network, init, coincube_client) => {
                     if !datadir.exists() {
@@ -549,6 +644,23 @@ impl Tab {
                     command.map(Message::Install)
                 }
                 home::Message::Run(datadir_path, cfg, network, cube) => {
+                    // Mandatory-backup gate (PLAN-cube-unlock-hardening PR 7).
+                    // A Cube created under the gate is not usable until its
+                    // backup is demonstrated or explicitly bypassed: its seed is
+                    // sealed to this machine's keystore, so losing the machine
+                    // without a backup loses the funds outright. Cubes that
+                    // predate the gate are never blocked — see
+                    // `CubeSettings::creation_backup_required`.
+                    if let crate::services::unlock::creation_gate::CreationGate::Blocked(reason) =
+                        crate::services::unlock::creation_gate::evaluate_for_cube(&cube, None)
+                    {
+                        l.set_error(format!(
+                            "{reason}\n\n{}",
+                            crate::services::unlock::creation_gate::NOT_A_BACKUP_COPY
+                        ));
+                        return Task::none();
+                    }
+
                     if cube.is_passkey_cube() {
                         // Passkey Cubes don't have an encrypted mnemonic on
                         // disk — their master seed is re-derived from the
@@ -568,8 +680,29 @@ impl Tab {
                             cube.name
                         );
                         let msg = if crate::feature_flags::PASSKEY_ENABLED {
-                            "This Cube was created with a passkey. Passkey authentication \
-                             on Cube open is not yet implemented. Restore from your mnemonic \
+                            // The macOS assertion ceremony now exists
+                            // (`services::passkey::macos::authenticate`), but two
+                            // things still stand between it and a working unlock,
+                            // and both are worse to get wrong than to wait for:
+                            //
+                            // 1. The loaders (`load_breez_client`,
+                            //    `load_spark_client`) read the seed from a file
+                            //    by fingerprint. A passkey Cube has no seed file
+                            //    — the seed is re-derived from the PRF output —
+                            //    so an in-memory signer has to be threaded
+                            //    through them first. Opening the Cube today lands
+                            //    in the app with no Liquid or Spark wallet.
+                            // 2. The device-bound property has not been verified
+                            //    on hardware (the acceptance check is "the
+                            //    credential does not appear on a second Mac on
+                            //    the same Apple ID"), and the decision that
+                            //    requires it is explicit that this must be
+                            //    confirmed before shipping.
+                            //
+                            // Refusing with an accurate message beats opening a
+                            // half-working Cube.
+                            "This Cube was created with a passkey. Opening a Cube with a \
+                             passkey isn't available yet. Restore from your mnemonic \
                              backup to access this Cube."
                                 .to_string()
                         } else {
@@ -607,6 +740,10 @@ impl Tab {
                             .map(|st| st.account_id)
                             .unwrap_or(None);
 
+                    // Captured before `datadir_path` is moved into `on_success`.
+                    // PIN entry needs it to reach the seed file it verifies against.
+                    let datadir_root = datadir_path.path().to_path_buf();
+
                     let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
                         datadir: datadir_path,
                         config: cfg,
@@ -618,6 +755,7 @@ impl Tab {
 
                     self.state = State::PinEntry(crate::pin_entry::PinEntry::new(
                         cube,
+                        datadir_root,
                         on_success,
                         duress_account_id,
                     ));
@@ -780,6 +918,7 @@ impl Tab {
                                     network,
                                     seed.master_signer_fingerprint,
                                     seed.pin.as_str(),
+                                    &cube.id,
                                     // Restore-from-seed: there is no persisted
                                     // grant yet (the cube is being created right
                                     // now), so let the on-chain scan decide.
@@ -838,6 +977,7 @@ impl Tab {
                                     network,
                                     seed.master_signer_fingerprint,
                                     seed.pin.as_str(),
+                                    &cube.id,
                                 )
                                 .await
                                 {
@@ -1344,6 +1484,41 @@ impl Tab {
                             Task::perform(
                                 async move {
                                     let mut cube = cube;
+
+                                    // The PIN stays available for the lifetime
+                                    // of the open Cube. The Vault installer
+                                    // (launched later, from inside the app) has
+                                    // to encrypt the hot signer it generates,
+                                    // and there is no plaintext branch left for
+                                    // it to fall back on. See `app::session`.
+                                    app::session::open(cube.id.clone(), pin.clone());
+
+                                    // Bring any legacy seed files up to the
+                                    // current wire version now that the PIN is
+                                    // in hand: plaintext files written by the
+                                    // pre-hardening installer, `ENCRYPTED_V1`
+                                    // files with unauthenticated headers, and
+                                    // `ENCRYPTED_V2` files on a machine that now
+                                    // has a device secret. Never eager — this
+                                    // only runs after an unlock has already
+                                    // succeeded. Logs a count, never content.
+                                    {
+                                        let root = datadir_clone.path().to_path_buf();
+                                        let cube_for_migration = cube.clone();
+                                        let pin_for_migration = pin.clone();
+                                        let _ = tokio::task::spawn_blocking(move || {
+                                            let loc = crate::services::unlock::CubeLocation::new(
+                                                &root,
+                                                &cube_for_migration,
+                                            );
+                                            crate::services::unlock::migrate_seed_files(
+                                                &loc,
+                                                &pin_for_migration,
+                                            )
+                                        })
+                                        .await;
+                                    }
+
                                     // Backfill `master_signer_fingerprint` for
                                     // Cubes minted before the field existed —
                                     // without it, the Liquid + Spark loaders
@@ -1358,6 +1533,7 @@ impl Tab {
                                                 datadir_clone.path(),
                                                 network_val,
                                                 &pin,
+                                                &cube.id,
                                                 cube.created_at,
                                             )
                                         {
@@ -1406,6 +1582,7 @@ impl Tab {
                                                 network_val,
                                                 fingerprint,
                                                 &pin,
+                                                &cube.id,
                                                 // Last-seen `liquidEnabled` grant.
                                                 // Connect hasn't signed in yet at
                                                 // this point (and may never), so
@@ -1436,6 +1613,7 @@ impl Tab {
                                                 network_val,
                                                 fingerprint,
                                                 &pin,
+                                                &cube.id,
                                             )
                                             .await
                                             {
@@ -1884,10 +2062,10 @@ async fn find_or_create_cube(
     let decorate_new =
         |mut cube: app::settings::CubeSettings| -> Result<app::settings::CubeSettings, String> {
             if let Some(seed) = restore_seed {
+                // No PIN hash is recorded. The restored Cube's seed file was
+                // just written encrypted under `seed.pin`, and decrypting it is
+                // what verifies that PIN from now on (I1).
                 cube = cube.with_master_signer(seed.master_signer_fingerprint);
-                cube = cube
-                    .with_pin(seed.pin.as_str())
-                    .map_err(|e| format!("Failed to set PIN on restored cube: {}", e))?;
             }
             Ok(cube)
         };
@@ -2695,7 +2873,8 @@ mod find_or_create_cube_tests {
         assert_eq!(cube.id, shell_id);
         assert_eq!(cube.vault_wallet_id.as_ref(), Some(&wid));
         assert_eq!(cube.master_signer_fingerprint, Some(fp));
-        assert!(cube.verify_pin("135790"));
+        // No PIN hash is recorded any more — the restored Cube's PIN is
+        // whatever its (already-written) seed file decrypts under.
     }
 
     #[tokio::test]
@@ -2895,18 +3074,15 @@ mod find_or_create_cube_tests {
             Some(fp),
             "restore fingerprint applied"
         );
-        assert!(
-            cube.verify_pin("246810"),
-            "restore PIN hash applied and verifies"
-        );
+        // No `security_pin_hash` to assert on: the restore PIN is proved by
+        // the seed file it encrypted, not by a second stored verifier.
     }
 
     /// Non-restore install with `wallet_id: None` and no originating cube and no
     /// restored identity: this must not error, and — critically — must not
     /// steal an unrelated existing vault-less Cube's identity in a way that
     /// clobbers its credentials. With `restore_seed = None`, `decorate_new` is a
-    /// no-op, so the reused empty Cube keeps whatever PIN hash / fingerprint it
-    /// already had.
+    /// no-op, so the reused empty Cube keeps whatever fingerprint it already had.
     #[tokio::test]
     async fn seed_only_non_restore_does_not_clobber_existing_cube_credentials() {
         let nd = temp_network_dir("seed-only-guard");
@@ -2915,9 +3091,7 @@ mod find_or_create_cube_tests {
         let mut settings = app::settings::Settings::default();
         let existing =
             app::settings::CubeSettings::new("Existing".to_string(), bitcoin::Network::Bitcoin)
-                .with_master_signer(bitcoin::bip32::Fingerprint::from([1, 2, 3, 4]))
-                .with_pin("111111")
-                .expect("hash pin");
+                .with_master_signer(bitcoin::bip32::Fingerprint::from([1, 2, 3, 4]));
         let existing_id = existing.id.clone();
         settings.cubes.push(existing);
         update_settings_file(&nd, |_| Some(settings)).await.unwrap();
@@ -2941,10 +3115,6 @@ mod find_or_create_cube_tests {
             cube.master_signer_fingerprint,
             Some(bitcoin::bip32::Fingerprint::from([1, 2, 3, 4])),
             "existing fingerprint is preserved, not clobbered"
-        );
-        assert!(
-            cube.verify_pin("111111"),
-            "existing PIN hash is preserved, not clobbered"
         );
         assert_eq!(cube.vault_wallet_id, None);
     }

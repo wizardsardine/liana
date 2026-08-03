@@ -335,6 +335,19 @@ impl Installer {
             cube_settings.as_ref(),
             coincube_client,
         );
+        // Inherit the open Cube's PIN when the installer was launched from
+        // inside one (`SetupVault` from the app or the loader). Every seed the
+        // installer writes is encrypted, so without this there is nothing to
+        // encrypt under — see `Context::cube_pin`. Scoped by Cube id so a stale
+        // session can't supply credentials for a different Cube; the restore
+        // flows have no Cube yet and get their PIN from `RestorePinSetupStep`
+        // instead.
+        let mut context = context;
+        context.cube_pin = cube_settings
+            .as_ref()
+            .and_then(|cs| crate::app::session::pin_for(&cs.id));
+        let context = context;
+
         let mut installer = Installer {
             network,
             datadir: destination_path.clone(),
@@ -693,6 +706,8 @@ impl Installer {
                                 &ctx.coincube_directory,
                                 ctx.bitcoin_config.network,
                                 password.as_str(),
+                                ctx.seed_cube_id(),
+                                seed_device_secret(&ctx)?.as_ref(),
                             )
                         },
                         |res| match res {
@@ -795,6 +810,44 @@ where
     (wallet_id, res.await)
 }
 
+/// User-facing message when the installer has no PIN to encrypt a seed under.
+///
+/// This should be unreachable: every flow that reaches a seed write either ran
+/// `RestorePinSetupStep` or was launched from an unlocked Cube. It fails loudly
+/// rather than falling back, because the fallback it replaces was writing the
+/// mnemonic to disk in the clear (I5).
+const NO_SEED_PASSWORD_MSG: &str =
+    "Can't save this wallet's seed: the Cube's PIN isn't available in this session. \
+     Close and re-open the Cube, then try again.";
+
+fn seed_password(ctx: &Context) -> Result<zeroize::Zeroizing<String>, Error> {
+    ctx.seed_password()
+        .cloned()
+        .ok_or_else(|| Error::Unexpected(NO_SEED_PASSWORD_MSG.to_string()))
+}
+
+/// This Cube's device secret, so an installer-written seed file is sealed at
+/// the same wire version as the Cube's master seed.
+///
+/// `None` where the Cube has no entry (a pre-v3 Cube, or one being created on a
+/// platform without a keystore) — those Cubes stay on v2 and the startup
+/// migration upgrades them once a secret exists. A keystore that is present but
+/// *unreachable* is a hard error: writing a v2 file next to a v3 one would
+/// silently downgrade this Cube's protection.
+fn seed_device_secret(
+    ctx: &Context,
+) -> Result<Option<coincube_core::seed_crypt::DeviceSecret>, Error> {
+    let cube_id = ctx.seed_cube_id();
+    if cube_id.is_empty() {
+        return Ok(None);
+    }
+    crate::services::unlock::device_secret::load_optional(cube_id).map_err(|e| {
+        Error::Unexpected(format!(
+            "Couldn't reach your system keychain to save this wallet's seed: {e}"
+        ))
+    })
+}
+
 pub async fn install_local_wallet(
     ctx: Context,
     wallet_id: WalletId,
@@ -859,57 +912,53 @@ pub async fn install_local_wallet(
         .to_string()
         .contains(&signer.lock().unwrap().fingerprint().to_string())
     {
+        // In developer mode this signer is a *clone of the Cube master signer*
+        // (see `Installer::new`), so the pre-hardening `store(...)` here was
+        // writing the master seed itself to disk in the clear. It gets the same
+        // treatment as every other seed, not an exemption.
+        let password = seed_password(&ctx)?;
         signer
             .lock()
             .unwrap()
-            .store(
+            .store_encrypted(
                 &ctx.coincube_directory,
                 cfg.bitcoin_config.network,
                 &wallet_id.descriptor_checksum,
                 wallet_id
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
+                password.as_str(),
+                ctx.seed_cube_id(),
+                seed_device_secret(&ctx)?.as_ref(),
             )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
-        info!("Master signer mnemonic stored");
+        info!("Master signer mnemonic stored (encrypted)");
     }
 
     if let Some(signer) = &ctx.recovered_signer {
         let timestamp = wallet_id
             .timestamp
             .expect("Every new wallet have now a timestamp");
-        // Recovery Kit restore: encrypt the mnemonic with the PIN the
-        // user chose in `RestorePinSetupStep` so the on-disk layout
-        // matches what a fresh-install Cube produces. If `restore_pin`
-        // is absent (e.g. `RestoreVaultFromRecoveryKit` or an older
-        // flow) fall back to the unencrypted path — that path keeps
-        // the legacy AddWallet recovery behaviour working, where the
-        // user's existing Cube already holds its PIN-encrypted seed.
-        if let Some(pin) = ctx.restore_pin.as_ref() {
-            signer
-                .store_encrypted(
-                    &ctx.coincube_directory,
-                    cfg.bitcoin_config.network,
-                    &wallet_id.descriptor_checksum,
-                    timestamp,
-                    pin.as_str(),
-                )
-                .map_err(|e| {
-                    Error::Unexpected(format!("Failed to store encrypted mnemonic: {}", e))
-                })?;
-            info!("Recovered signer mnemonic stored (PIN-encrypted)");
-        } else {
-            signer
-                .store(
-                    &ctx.coincube_directory,
-                    cfg.bitcoin_config.network,
-                    &wallet_id.descriptor_checksum,
-                    timestamp,
-                )
-                .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
-            info!("Recovered signer mnemonic stored");
-        }
+        // Recovery Kit restore: encrypt with the PIN the user chose in
+        // `RestorePinSetupStep` so the on-disk layout matches what a
+        // fresh-install Cube produces. The `RestoreVaultFromRecoveryKit` /
+        // legacy AddWallet flows have no `restore_pin` but do run inside an
+        // already-open Cube, so they fall through to the session PIN — which is
+        // the same PIN that Cube's other seed files already use.
+        let password = seed_password(&ctx)?;
+        signer
+            .store_encrypted(
+                &ctx.coincube_directory,
+                cfg.bitcoin_config.network,
+                &wallet_id.descriptor_checksum,
+                timestamp,
+                password.as_str(),
+                ctx.seed_cube_id(),
+                seed_device_secret(&ctx)?.as_ref(),
+            )
+            .map_err(|e| Error::Unexpected(format!("Failed to store encrypted mnemonic: {}", e)))?;
+        info!("Recovered signer mnemonic stored (PIN-encrypted)");
     }
 
     // create coincube GUI configuration file
@@ -949,35 +998,43 @@ pub async fn create_remote_wallet(
         .to_string()
         .contains(&signer.lock().unwrap().fingerprint().to_string())
     {
+        let password = seed_password(&ctx)?;
         signer
             .lock()
             .unwrap()
-            .store(
+            .store_encrypted(
                 &ctx.coincube_directory,
                 ctx.network,
                 &wallet_id.descriptor_checksum,
                 wallet_id
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
+                password.as_str(),
+                ctx.seed_cube_id(),
+                seed_device_secret(&ctx)?.as_ref(),
             )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
-        info!("Master signer mnemonic stored");
+        info!("Master signer mnemonic stored (encrypted)");
     }
 
     if let Some(signer) = &ctx.recovered_signer {
+        let password = seed_password(&ctx)?;
         signer
-            .store(
+            .store_encrypted(
                 &ctx.coincube_directory,
                 ctx.network,
                 &wallet_id.descriptor_checksum,
                 wallet_id
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
+                password.as_str(),
+                ctx.seed_cube_id(),
+                seed_device_secret(&ctx)?.as_ref(),
             )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
-        info!("Recovered signer mnemonic stored");
+        info!("Recovered signer mnemonic stored (encrypted)");
     }
 
     // create coincube GUI configuration file
@@ -1084,18 +1141,22 @@ pub async fn import_remote_wallet(
     tracing::info!("Importing wallet from remote backend");
 
     if let Some(signer) = &ctx.recovered_signer {
+        let password = seed_password(&ctx)?;
         signer
-            .store(
+            .store_encrypted(
                 &ctx.coincube_directory,
                 ctx.network,
                 &wallet_id.descriptor_checksum,
                 wallet_id
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
+                password.as_str(),
+                ctx.seed_cube_id(),
+                seed_device_secret(&ctx)?.as_ref(),
             )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
-        info!("Recovered signer mnemonic stored");
+        info!("Recovered signer mnemonic stored (encrypted)");
     }
 
     let network_datadir = ctx.coincube_directory.network_directory(ctx.network);
@@ -1177,9 +1238,16 @@ fn persist_seed_only_install(
     coincube_directory: &CoincubeDirectory,
     network: Network,
     password: &str,
+    cube_id: &str,
+    device_secret: Option<&coincube_core::seed_crypt::DeviceSecret>,
 ) -> Result<(), Error> {
-    if let Err(e) = recovered.store_encrypted_seed_only(coincube_directory, network, Some(password))
-    {
+    if let Err(e) = recovered.store_encrypted_seed_only(
+        coincube_directory,
+        network,
+        password,
+        cube_id,
+        device_secret,
+    ) {
         match e {
             coincube_core::signer::SignerError::MnemonicStorage(ref io_err)
                 if io_err.kind() == std::io::ErrorKind::AlreadyExists =>
@@ -1190,6 +1258,7 @@ fn persist_seed_only_install(
                         network,
                         recovered.fingerprint(),
                         Some(password),
+                        cube_id,
                     )
                 {
                     return Err(Error::Unexpected(format!(
@@ -1432,7 +1501,7 @@ mod seed_only_install_tests {
         let dir = temp_coincube_dir("persist");
         let signer = Signer::generate(Network::Bitcoin).unwrap();
 
-        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810")
+        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810", "cube-a", None)
             .expect("seed-only persistence should succeed on a fresh datadir");
 
         let nd = dir.network_directory(Network::Bitcoin);
@@ -1446,6 +1515,7 @@ mod seed_only_install_tests {
             Network::Bitcoin,
             signer.fingerprint(),
             Some("246810"),
+            "cube-a",
         )
         .expect("stored seed decrypts under the restore PIN");
     }
@@ -1458,8 +1528,8 @@ mod seed_only_install_tests {
         // First attempt stores the seed; a retry (same signer + PIN, e.g. after
         // a mid-flow kill) hits `AlreadyExists` and must succeed because the
         // on-disk seed verifies against the recovery fingerprint.
-        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810").unwrap();
-        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810")
+        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810", "cube-a", None).unwrap();
+        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810", "cube-a", None)
             .expect("retry with the matching PIN continues past AlreadyExists");
     }
 
@@ -1471,8 +1541,8 @@ mod seed_only_install_tests {
         // Seed stored under one PIN; retry under a *different* PIN hits
         // `AlreadyExists`, the fingerprint verification fails to decrypt, and we
         // surface an actionable conflict error rather than continuing.
-        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810").unwrap();
-        let err = persist_seed_only_install(&signer, &dir, Network::Bitcoin, "999999")
+        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810", "cube-a", None).unwrap();
+        let err = persist_seed_only_install(&signer, &dir, Network::Bitcoin, "999999", "cube-a", None)
             .expect_err("a conflicting recovery PIN must error");
         match err {
             Error::Unexpected(msg) => assert!(

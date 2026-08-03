@@ -877,6 +877,7 @@ fn verify_pin(rk: &mut RecoveryKit, cache: &Cache, local_cube_id: &str) -> Task<
     };
     let datadir = cache.datadir_path.path().to_path_buf();
     let network = cache.network;
+    let cube_id = cube.id.clone();
 
     Task::perform(
         async move {
@@ -891,11 +892,11 @@ fn verify_pin(rk: &mut RecoveryKit, cache: &Cache, local_cube_id: &str) -> Task<
             // state field); here we promote at the earliest
             // reachable point.
             tokio::task::spawn_blocking(move || {
-                if !cube.verify_pin(&pin) {
-                    return Err("Incorrect PIN. Please try again.".to_string());
-                }
-                super::general::load_mnemonic_words(&datadir, network, fingerprint, &pin)
+                // Decrypting the seed file *is* the PIN check (I1); the cheap
+                // `verify_pin` hash that used to gate this is gone.
+                super::general::load_mnemonic_words(&datadir, network, fingerprint, &pin, &cube_id)
                     .map(Zeroizing::new)
+                    .map_err(|_| "Incorrect PIN. Please try again.".to_string())
             })
             .await
             .map_err(|e| format!("PIN verification task failed: {}", e))?

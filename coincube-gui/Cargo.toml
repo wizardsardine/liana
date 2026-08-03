@@ -115,6 +115,11 @@ encrypted_backup = { version = "=0.0.2", default-features = false, features = [
 	"rand",
 ], package = "bitcoin-encrypted-backup" }
 
+# CTAP2 over HID, for the FIDO2 security-key backend. This is what makes Linux
+# acceptable — it has no platform authenticator — and it is also the fallback
+# for Windows machines below the Windows Hello PRF floor (11 25H2).
+ctap-hid-fido2 = "3.5"
+
 zeroize = { version = "1", features = ["derive"] }
 chacha20poly1305 = "0.10.1"
 aes-gcm = { version = "0.10", features = ["aes"] }
@@ -154,6 +159,15 @@ hostname = "0.4.2"
 zip = { version = "0.6", default-features = false, features = [
 	"bzip2",
 	"deflate",
+] }
+# `webauthn.dll` bindings for the native Windows passkey backend, replacing the
+# iced_wry webview. PRF is available from WebAuthn API version 6
+# (make-credential) and version 8 (`pPRFGlobalEval` on get-assertion), probed at
+# runtime rather than assumed.
+windows = { version = "0.61", features = [
+	"Win32_Foundation",
+	"Win32_Networking_WindowsWebServices",
+	"Win32_UI_WindowsAndMessaging",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

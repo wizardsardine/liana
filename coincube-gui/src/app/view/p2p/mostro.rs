@@ -1025,7 +1025,7 @@ pub struct OrderFormData {
     pub premium: i64,
     pub payment_method: String,
     pub cube_name: String,
-    pub mnemonic: String,
+    pub mnemonic: zeroize::Zeroizing<String>,
     pub buyer_invoice: Option<String>,
     pub expiry_days: u32,
     pub mostro_pubkey_hex: String,
@@ -1193,7 +1193,7 @@ pub struct TakeOrderData {
     pub order_id: String,
     pub order_type: OrderType,
     pub cube_name: String,
-    pub mnemonic: String,
+    pub mnemonic: zeroize::Zeroizing<String>,
     pub amount: Option<i64>,
     pub lightning_invoice: Option<String>,
     pub mostro_pubkey_hex: String,
@@ -1408,7 +1408,7 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
 pub struct TradeActionData {
     pub order_id: String,
     pub cube_name: String,
-    pub mnemonic: String,
+    pub mnemonic: zeroize::Zeroizing<String>,
     pub invoice: Option<String>,
     pub mostro_pubkey_hex: String,
     pub relay_urls: Vec<String>,
@@ -2192,7 +2192,7 @@ pub async fn download_and_save_file(
     filename: String,
     order_id: String,
     cube_name: String,
-    mnemonic: String,
+    mnemonic: zeroize::Zeroizing<String>,
 ) -> Result<(), String> {
     // Get encryption key
     let sessions = load_data(&cube_name).unwrap_or_default().trades;
@@ -2237,7 +2237,7 @@ pub struct AttachmentData {
     pub file_path: std::path::PathBuf,
     pub order_id: String,
     pub cube_name: String,
-    pub mnemonic: String,
+    pub mnemonic: zeroize::Zeroizing<String>,
     pub mostro_pubkey_hex: String,
     pub relay_urls: Vec<String>,
 }
@@ -2479,7 +2479,7 @@ pub async fn download_and_decrypt_image(
     blossom_url: String,
     order_id: String,
     cube_name: String,
-    mnemonic: String,
+    mnemonic: zeroize::Zeroizing<String>,
 ) -> Result<(String, String, Vec<u8>), String> {
     // Get encryption key from session
     let sessions = load_data(&cube_name).unwrap_or_default().trades;
@@ -2873,22 +2873,49 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
     }
 }
 
+/// A `Zeroizing<String>` that can sit in a subscription-identity tuple.
+///
+/// `Subscription::run_with` requires `Hash` on the whole tuple so iced can tell
+/// when the inputs changed and restart the stream. `Zeroizing` deliberately
+/// does not implement `Hash`, so wrap it here rather than dropping the seed
+/// back to a bare `String` for the subscription's lifetime — the point of the
+/// zeroizing type is that no long-lived plain copy exists.
+///
+/// Hashing the phrase itself is what the previous bare-`String` tuple already
+/// did, and it is what makes "the mnemonic changed" restart the subscription.
+#[derive(Clone)]
+pub struct SubscriptionSecret(pub zeroize::Zeroizing<String>);
+
+impl std::hash::Hash for SubscriptionSecret {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.as_bytes().hash(state);
+    }
+}
+
 /// Iced subscription that periodically fetches orders and trades from the Mostro relay.
 /// When any of the three values change, iced detects a hash change and restarts the subscription.
 pub fn mostro_subscription(
     cube_name: String,
-    mnemonic: String,
+    mnemonic: zeroize::Zeroizing<String>,
     active_pubkey: String,
     relays: Vec<String>,
 ) -> Subscription<Message> {
-    Subscription::run_with((cube_name, mnemonic, active_pubkey, relays), mostro_stream)
+    Subscription::run_with(
+        (
+            cube_name,
+            SubscriptionSecret(mnemonic),
+            active_pubkey,
+            relays,
+        ),
+        mostro_stream,
+    )
 }
 
 fn mostro_stream(
-    params: &(String, String, String, Vec<String>),
+    params: &(String, SubscriptionSecret, String, Vec<String>),
 ) -> impl iced::futures::Stream<Item = Message> + 'static {
     let cube_name = params.0.clone();
-    let mnemonic = params.1.clone();
+    let mnemonic = params.1 .0.clone();
     let pubkey_hex = params.2.clone();
     let relay_urls = params.3.clone();
     iced::stream::channel(

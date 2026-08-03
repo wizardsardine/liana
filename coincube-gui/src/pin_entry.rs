@@ -13,9 +13,13 @@ use coincube_ui::{
 
 use crate::app::settings::CubeSettings;
 use crate::pin_input;
+use crate::services::unlock::{self, PinOutcome, UnlockError};
 
 pub struct PinEntry {
     cube: CubeSettings,
+    /// Data root, needed to reach this Cube's seed file — the PIN is verified
+    /// by decrypting it, not by checking a stored hash.
+    datadir_root: std::path::PathBuf,
     pin_input: pin_input::PinInput,
     error: Option<String>,
     loading: bool,
@@ -59,10 +63,17 @@ pub enum Message {
     DuressDetected {
         account_id: Option<String>,
     },
+    /// The (blocking, ~831 ms) trial decryption finished off the UI thread.
+    ///
+    /// Carries only a classification, never the decrypted seed. Key material
+    /// must not enter the message queue — iced clones messages, and every clone
+    /// would be another copy of the mnemonic on the heap.
+    Classified(Result<Verdict, String>),
 }
 
-/// Classification of a submitted PIN at Cube unlock.
-enum PinOutcome {
+/// What [`Message::Classified`] reports back to the UI thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdict {
     Unlock,
     Duress,
     Wrong,
@@ -71,6 +82,7 @@ enum PinOutcome {
 impl PinEntry {
     pub fn new(
         cube: CubeSettings,
+        datadir_root: std::path::PathBuf,
         on_success: PinEntrySuccess,
         duress_account_id: Option<String>,
     ) -> Self {
@@ -78,6 +90,7 @@ impl PinEntry {
         let loading_image_handle = quote_display::image_handle_for_context("loading");
         Self {
             cube,
+            datadir_root,
             pin_input: pin_input::PinInput::new(),
             error: None,
             loading: false,
@@ -92,7 +105,7 @@ impl PinEntry {
         &self.cube
     }
 
-    pub fn pin(&self) -> String {
+    pub fn pin(&self) -> zeroize::Zeroizing<String> {
         self.pin_input.value()
     }
 
@@ -116,52 +129,105 @@ impl PinEntry {
                     return Task::none();
                 }
 
+                // Escalating lockout on repeated wrong PINs. Not load-bearing
+                // — an offline attacker skips the UI entirely — but a laptop
+                // thief shouldn't get unlimited free guesses through the front
+                // door. See `services::unlock::throttle`.
+                let throttle = unlock::throttle::ThrottleState::load(&self.datadir_root);
+                let remaining = throttle.remaining_lockout(&self.cube.id);
+                if !remaining.is_zero() {
+                    self.error = Some(unlock::throttle::lockout_message(remaining));
+                    self.pin_input.clear();
+                    return Task::none();
+                }
+
                 let pin = self.pin_input.value();
 
-                // A Cube without a regular PIN has a permissive `verify_pin`
-                // (returns true for ANY input), which would swallow the duress
-                // PIN before `verify_duress_pin` ran. So when there's no regular
-                // PIN, check duress FIRST. When there IS a regular PIN, check it
-                // first (the happy path is never shadowed, and duress vs. wrong
-                // both take two argon2 verifies so they're timing-indistinct).
-                let outcome = if self.cube.has_pin() {
-                    if self.cube.verify_pin(&pin) {
-                        PinOutcome::Unlock
-                    } else if self.cube.verify_duress_pin(&pin) {
-                        PinOutcome::Duress
-                    } else {
-                        PinOutcome::Wrong
-                    }
-                } else if self.cube.verify_duress_pin(&pin) {
-                    PinOutcome::Duress
-                } else {
-                    // No regular PIN → any non-duress input unlocks.
-                    PinOutcome::Unlock
-                };
+                // Classification costs ~831 ms on the happy path and ~1.7 s on
+                // a wrong PIN with duress enrolled: the PIN is now checked by
+                // decrypting the seed file, not against a 27 ms hash. That MUST
+                // NOT run inline in `update()` — it would freeze the window for
+                // the whole derivation. Put up the loading screen (which
+                // already exists for the Breez load that follows) and do the
+                // work on the blocking pool.
+                self.loading = true;
+                self.error = None;
 
-                match outcome {
-                    PinOutcome::Unlock => {
-                        self.loading = true;
-                        Task::perform(async {}, |_| Message::PinVerified)
-                    }
-                    PinOutcome::Duress => {
-                        // Clear the buffer and bubble up the enrolled account id
-                        // so the parent can drive the orchestrator. Show the
-                        // neutral loading screen during the brief async
-                        // activation gap: it's identical to a normal unlock (so
-                        // it reveals nothing to an onlooker) and blocks further
-                        // input until we lock into the cryptic screen.
-                        self.pin_input.clear();
-                        self.loading = true;
-                        let account_id = self.duress_account_id.clone();
-                        Task::done(Message::DuressDetected { account_id })
-                    }
-                    PinOutcome::Wrong => {
-                        self.error = Some("Incorrect PIN. Please try again.".to_string());
-                        self.pin_input.clear();
-                        Task::none()
-                    }
-                }
+                let cube = self.cube.clone();
+                let root = self.datadir_root.clone();
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let loc = unlock::CubeLocation::new(&root, &cube);
+                            match unlock::unlock_blocking(&loc, &pin) {
+                                // The signer this produced is deliberately
+                                // dropped here rather than carried in the
+                                // message; the loader re-opens it once, on the
+                                // blocking pool, alongside the Breez/Spark
+                                // load that needs it anyway.
+                                Ok(PinOutcome::Unlock(_)) => Ok(Verdict::Unlock),
+                                Ok(PinOutcome::Duress) => Ok(Verdict::Duress),
+                                Ok(PinOutcome::Wrong) => Ok(Verdict::Wrong),
+                                // A Cube with no PIN-protected seed never shows
+                                // this screen, so reaching here means its seed
+                                // went missing between the launcher and now.
+                                // Reject rather than let arbitrary input
+                                // through — the old code returned success here
+                                // (PR 4 / I1).
+                                Err(UnlockError::NoPinConfigured) => Ok(Verdict::Wrong),
+                                // Keystore problems are NOT wrong PINs (I7).
+                                Err(e) => Err(e.to_string()),
+                            }
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(format!("PIN check failed to run: {e}")))
+                    },
+                    Message::Classified,
+                )
+            }
+            Message::Classified(Ok(Verdict::Unlock)) => {
+                unlock::throttle::ThrottleState::load(&self.datadir_root)
+                    .record_success(&self.datadir_root, &self.cube.id);
+                // Stay in `loading` — the Breez/Spark load runs next and the
+                // screen must not flash back to the keypad in between.
+                Task::done(Message::PinVerified)
+            }
+            Message::Classified(Ok(Verdict::Duress)) => {
+                // Clear the counter too: it must not survive as evidence that
+                // someone was guessing, and this Cube is about to be wiped.
+                unlock::throttle::ThrottleState::load(&self.datadir_root)
+                    .record_success(&self.datadir_root, &self.cube.id);
+                // Clear the buffer and bubble up the enrolled account id so the
+                // parent can drive the orchestrator. The neutral loading screen
+                // stays up during the brief async activation gap: it is
+                // identical to a normal unlock, so it reveals nothing to an
+                // onlooker, and it blocks further input until we lock into the
+                // cryptic screen.
+                self.pin_input.clear();
+                let account_id = self.duress_account_id.clone();
+                Task::done(Message::DuressDetected { account_id })
+            }
+            Message::Classified(Ok(Verdict::Wrong)) => {
+                self.loading = false;
+                let penalty = unlock::throttle::ThrottleState::load(&self.datadir_root)
+                    .record_failure(&self.datadir_root, &self.cube.id);
+                self.error = Some(if penalty.is_zero() {
+                    "Incorrect PIN. Please try again.".to_string()
+                } else {
+                    unlock::throttle::lockout_message(penalty)
+                });
+                self.pin_input.clear();
+                Task::none()
+            }
+            Message::Classified(Err(e)) => {
+                // Deliberately NOT "Incorrect PIN". This is a locked keychain, a
+                // missing keyring entry, or unreadable files — telling a user
+                // their PIN is wrong in that situation is how they conclude
+                // their wallet is gone (invariant I7).
+                self.loading = false;
+                self.error = Some(e);
+                self.pin_input.clear();
+                Task::none()
             }
             // `DuressDetected` is intercepted by the parent (tab state machine);
             // if it ever reaches here it's a no-op.
