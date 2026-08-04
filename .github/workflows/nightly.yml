@@ -190,6 +190,21 @@ jobs:
         run: |
           unzip contrib/release/macos/_coincube.zip
           sed -i '' "s/VERSION_PLACEHOLDER/${{ env.COINCUBE_VERSION }}/g" Tenshu.app/Contents/Info.plist
+
+          # Guard the checked-in bundle template before anything is copied
+          # into it. A wrong CFBundleIdentifier desyncs the keychain access
+          # group in coincube.entitlements (<TeamID>.<bundleID>) and strands
+          # device secrets; missing Bonjour keys break the LAN signer only
+          # once the build is on a user's machine.
+          plist=Tenshu.app/Contents/Info.plist
+          bundle_id=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$plist")
+          [ "$bundle_id" = "io.coincube.tenshu" ] \
+            || { echo "unexpected CFBundleIdentifier: $bundle_id"; exit 1; }
+          /usr/libexec/PlistBuddy -c "Print :NSLocalNetworkUsageDescription" "$plist" > /dev/null \
+            || { echo "NSLocalNetworkUsageDescription missing from Info.plist"; exit 1; }
+          /usr/libexec/PlistBuddy -c "Print :NSBonjourServices:0" "$plist" | grep -qx '_coincube-signer._tcp' \
+            || { echo "_coincube-signer._tcp missing from NSBonjourServices"; exit 1; }
+
           mv target/${{ matrix.target }}/minimal/coincube Tenshu.app/Contents/MacOS/Coincube
           mv contrib/release/macos/Coincube.icns Tenshu.app/Contents/Resources/Coincube.icns
 
@@ -203,6 +218,21 @@ jobs:
         # runtime. See contrib/release/macos/README.md and
         # contrib/release/macos/coincube.entitlements.
         run: rcodesign sign --for-notarization --entitlements-xml-path contrib/release/macos/coincube.entitlements --p12-file cert.p12 --p12-password-file cert.pass Tenshu.app
+
+      # The pipeline otherwise only proves the app is signed and notarized,
+      # not that the signature carries what the app needs. Without
+      # keychain-access-groups the device secret can't be written and Cube
+      # creation fails on every user's machine with -34018. Runs before
+      # notarization so a bad signature fails in seconds, not 30 minutes.
+      - name: Verify signature carries the keychain entitlement
+        if: matrix.platform == 'macos'
+        run: |
+          entitlements=$(codesign -d --entitlements - Tenshu.app 2>&1)
+          echo "$entitlements"
+          echo "$entitlements" | grep -q 'keychain-access-groups' \
+            || { echo "entitlement missing from signature"; exit 1; }
+          echo "$entitlements" | grep -q '8UVR249AD5.io.coincube.tenshu' \
+            || { echo "keychain access group is not 8UVR249AD5.io.coincube.tenshu"; exit 1; }
 
       - name: Notarize and staple app
         if: matrix.platform == 'macos'
