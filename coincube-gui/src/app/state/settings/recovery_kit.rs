@@ -921,6 +921,10 @@ fn verify_pin(rk: &mut RecoveryKit, cache: &Cache, local_cube_id: &str) -> Task<
                         throttle.record_success(&throttle_root, &cube_id);
                         Ok(Zeroizing::new(words))
                     }
+                    // Same split as the Backup-Master-Seed flow: a locked
+                    // keychain or a missing seed file is not a guess, so it
+                    // keeps its own message and spends no throttle budget.
+                    Err(e) if !super::general::is_wrong_pin(&e) => Err(e.to_string()),
                     Err(_) => {
                         let penalty = throttle.record_failure(&throttle_root, &cube_id);
                         Err(if penalty.is_zero() {

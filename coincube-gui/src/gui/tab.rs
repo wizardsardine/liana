@@ -449,6 +449,11 @@ pub struct Tab {
     /// Persisted theme mode — carried across state transitions so new App
     /// caches inherit the correct mode immediately.
     pub theme_mode: coincube_ui::theme::palette::ThemeMode,
+    /// A seed-migration warning waiting for a surface to show it on.
+    ///
+    /// Held rather than dispatched because only `State::App` handles
+    /// `Message::Run`; see [`Tab::flush_migration_warning`].
+    pending_migration_warning: Option<String>,
 }
 
 impl Tab {
@@ -457,6 +462,7 @@ impl Tab {
             id,
             state,
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
+            pending_migration_warning: None,
         }
     }
 
@@ -523,14 +529,26 @@ impl Tab {
     /// for the afternoon.
     const IDLE_LOCK_AFTER: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
-    /// Append the migration warning, if any, to whatever the load path returned.
+    /// Emit the pending migration warning once the tab is actually in `App`.
     ///
-    /// The toast is queued *behind* the state transition so it lands once the
-    /// Cube is up and there is a surface to show it on.
-    fn with_migration_toast(command: Task<Message>, toast: Option<Task<Message>>) -> Task<Message> {
-        match toast {
-            Some(t) => Task::batch([command, t]),
-            None => command,
+    /// The toast rides on `Message::Run`, and the only arm that handles that is
+    /// `(State::App(app), Message::Run(..))` — everything else falls through to
+    /// `_ => Task::none()`. Queuing it behind the transition to `Loader` or
+    /// `Login` therefore did not delay the warning, it discarded it: those
+    /// states run for as long as a daemon start or a sign-in takes, and the
+    /// message is consumed and dropped long before `App` exists. "Your seed
+    /// files were not upgraded" going silent is the one outcome this warning
+    /// exists to prevent, so hold it on the tab and flush it from the state
+    /// that can render it.
+    fn flush_migration_warning(&mut self) -> Task<Message> {
+        if !matches!(self.state, State::App(_)) {
+            return Task::none();
+        }
+        match self.pending_migration_warning.take() {
+            Some(msg) => Task::done(Message::Run(app::Message::View(
+                app::view::Message::ShowToast(log::Level::Warn, msg),
+            ))),
+            None => Task::none(),
         }
     }
 
@@ -1688,6 +1706,31 @@ impl Tab {
                                                         if st.enrolled || st.arming {
                                                             st.disarm();
                                                             let _ = st.save(&root);
+                                                            // Only here, inside the
+                                                            // enrolled check: the slot
+                                                            // is rewritten whenever its
+                                                            // wire version is stale, so
+                                                            // `duress_was_cleared` is
+                                                            // true for most Cubes and
+                                                            // says nothing on its own
+                                                            // about whether there was an
+                                                            // enrolment to lose. This
+                                                            // branch is where one
+                                                            // demonstrably was.
+                                                            //
+                                                            // A log line is not telling
+                                                            // the user: they believe a
+                                                            // PIN still wipes this
+                                                            // device, and it no longer
+                                                            // does.
+                                                            migration_error = Some(
+                                                                "Upgrading this Cube's files \
+                                                                 turned duress mode off — your \
+                                                                 duress PIN no longer erases \
+                                                                 this device. Turn duress mode \
+                                                                 on again to set it up."
+                                                                    .to_string(),
+                                                            );
                                                         }
                                                     }
                                                 }
@@ -2107,11 +2150,11 @@ impl Tab {
                 // up. Deliberately not fatal: the seed files were left exactly
                 // as they were, so the Cube opens — but a silent "your files
                 // were not upgraded" is what this whole PR exists to stop.
-                let migration_toast = migration_error.map(|msg| {
-                    Task::done(Message::Run(app::Message::View(
-                        app::view::Message::ShowToast(log::Level::Warn, msg),
-                    )))
-                });
+                //
+                // Two of the three branches below land in `Loader` or `Login`,
+                // which cannot show a toast, so park it and let
+                // `flush_migration_warning` deliver it when `App` arrives.
+                self.pending_migration_warning = migration_error;
                 // The Vault is independent of Liquid: any Breez load failure
                 // (NetworkNotSupported, transient connection errors, SDK
                 // throttling, etc.) should fall back to a disconnected client
@@ -2140,7 +2183,7 @@ impl Tab {
                             spark_backend,
                         );
                         self.state = State::Login(login);
-                        Self::with_migration_toast(command.map(Message::Login), migration_toast)
+                        command.map(Message::Login)
                     } else {
                         let (loader, command) = Loader::new(
                             datadir.clone(),
@@ -2154,7 +2197,7 @@ impl Tab {
                             spark_backend,
                         );
                         self.state = State::Loader(loader);
-                        Self::with_migration_toast(command.map(Message::Load), migration_toast)
+                        command.map(Message::Load)
                     }
                 } else {
                     let (app, command) = App::new_without_wallet(
@@ -2166,13 +2209,17 @@ impl Tab {
                         cube,
                     );
                     self.state = State::App(app);
-                    Self::with_migration_toast(command.map(Message::Run), migration_toast)
+                    command.map(Message::Run)
                 }
             }
             _ => Task::none(),
         };
         self.sync_theme_mode();
-        result
+        // After the transition, not before: this is the point where the arm
+        // above has already decided which state the tab is in, so a warning
+        // parked on the way to `Loader` is released by whichever later update
+        // finally reaches `App`.
+        Task::batch([result, self.flush_migration_warning()])
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -2825,6 +2872,56 @@ mod duress_wipe_target_tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod migration_warning_tests {
+    use super::*;
+
+    /// A state that is not `App` — the shape the warning has to survive.
+    ///
+    /// The datadir gets its own directory rather than the shared temp root:
+    /// `Home::new` only reads, but handing any code a datadir that *is*
+    /// `$TMPDIR` is how a later change starts writing into every other test's
+    /// scratch space.
+    fn non_app_tab() -> Tab {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "coincube-tab-migration-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::create_dir_all(&dir).expect("create test datadir");
+        let (home, _) = Home::new(CoincubeDirectory::new(dir), None);
+        Tab::new(1, State::Home(home))
+    }
+
+    /// Flushing while the tab is still loading would hand the toast to a state
+    /// that drops `Message::Run` on the floor, which is how "your seed files
+    /// were not upgraded" went silent for every Cube that routed through
+    /// `Loader` or `Login`.
+    #[test]
+    fn the_warning_is_held_while_no_state_can_show_it() {
+        let mut tab = non_app_tab();
+        tab.pending_migration_warning = Some("seed files were not upgraded".to_string());
+
+        let _ = tab.flush_migration_warning();
+
+        assert_eq!(
+            tab.pending_migration_warning.as_deref(),
+            Some("seed files were not upgraded"),
+            "the warning was consumed by a state that cannot display it"
+        );
+    }
+
+    /// Nothing pending must not manufacture a toast.
+    #[test]
+    fn flushing_without_a_warning_keeps_it_empty() {
+        let mut tab = non_app_tab();
+        let _ = tab.flush_migration_warning();
+        assert!(tab.pending_migration_warning.is_none());
     }
 }
 

@@ -983,6 +983,16 @@ mod tests {
                 "throttle::lockout_message",
                 throttle::lockout_message(std::time::Duration::from_secs(4)),
             ),
+            // Both optional clauses at once — every `\`-continued literal in
+            // that function is in this one string.
+            (
+                "app::describe_rollback",
+                crate::app::describe_rollback(
+                    "Couldn't arm.".to_string(),
+                    vec!["Primary".to_string()],
+                    vec!["Backup".to_string()],
+                ),
+            ),
         ];
 
         // NB: positional args, not inline captures. This crate is edition 2018,

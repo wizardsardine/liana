@@ -21,7 +21,7 @@
 //!
 //! # Verification, and its limit
 //!
-//! [`store`] sets both attributes and [`verify_attributes`] reads them back
+//! [`add_if_absent`] sets both attributes and [`verify_attributes`] reads them back
 //! from the stored item, so a silently-ignored attribute is caught locally and
 //! is covered by a test that runs on any Mac.
 //!

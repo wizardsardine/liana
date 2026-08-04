@@ -384,25 +384,22 @@ pub fn remove(
 ///
 /// # Timing
 ///
-/// When a marker exists this costs exactly one Argon2id derivation at the seed
-/// file's parameters, which is what keeps **wrong-vs-duress** indistinguishable
-/// on a duress-armed Cube (I2).
+/// Every Cube carries a second slot from creation — [`write_decoy`] when duress
+/// is not armed, [`write()`] when it is (unit 6b) — so this costs exactly one
+/// Argon2id derivation at the seed file's parameters either way.
 ///
-/// When no marker exists it returns immediately, costing nothing. So a wrong
-/// PIN takes ~831 ms on an unarmed Cube and ~1.7 s on an armed one, and that
-/// difference reveals **whether duress is armed** — a different property from
-/// I2, and one this does not protect.
+/// That is what keeps **wrong-vs-duress** indistinguishable on an armed Cube
+/// (I2), and it is also what closed the older **armed-vs-unarmed** oracle: an
+/// unarmed Cube pays the same derivation on a mistyped PIN, and `mnemonics/`
+/// holds the same number of blobs, so neither channel separates the two. Unit
+/// 6a had already made the name random and recorded rather than derivable, so
+/// there is nothing left to `stat` for either.
 ///
-/// That remains a deliberate call, and unit 6a narrowed what it costs. The
-/// filename is no longer derivable — it is random and recorded — so an
-/// attacker can no longer compute it and `stat` it. What is still visible is
-/// that `mnemonics/` holds one blob more than the Cube needs, and this timing
-/// difference agrees with that count.
-///
-/// Closing it properly is the fixed-size decoy slot written for **every** Cube
-/// at creation, armed or not (plan unit 6b). Only then is there nothing for
-/// either channel to agree about, and only then is padding this call with a
-/// synthetic decryption worth ~831 ms on every mistyped PIN.
+/// One case is left, and it is transitional. A Cube with **no recorded slot** —
+/// minted before 6b, or restored from a Recovery Kit — returns immediately
+/// here, which marks it out as a Cube that cannot be armed. That lasts until
+/// [`super::ensure_second_slot`] backfills it, which runs on the Cube's next
+/// successful unlock.
 pub fn verify(
     datadir_root: &Path,
     network: Network,

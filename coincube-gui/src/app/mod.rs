@@ -858,17 +858,37 @@ fn is_daemon_unreachable(e: &Error) -> bool {
 /// Every per-network directory under the datadir root that holds a
 /// `settings.json` (i.e. has Cubes). A duress enrollment verifies + writes the
 /// duress PIN across all of these, matching the all-networks scope of the wipe.
-fn duress_enroll_network_dirs(root: &std::path::Path) -> Vec<crate::dir::NetworkDirectory> {
+///
+/// # Why this returns a `Result`
+///
+/// It used to swallow every I/O error — `if let Ok(entries)`, plus `.flatten()`
+/// on the entries — and hand back an empty list. Every caller reads an empty
+/// list as "this device has no Cubes", so a directory that could not be read
+/// became the claim that the user owns nothing:
+///
+/// - enrollment refuses with "Couldn't find any Cubes on this device", which is
+///   false and unactionable for someone looking at their Cubes on screen;
+/// - **disable reports success having disarmed nothing.** That is the dangerous
+///   one. `clear_duress_enrollment` iterates these directories to overwrite
+///   each armed marker; over an empty list it clears no markers, then resets the
+///   local state and returns `Ok`. The user is told duress is off while every
+///   Cube still holds a live wipe trigger.
+///
+/// An unreadable datadir is not evidence of anything. Say so and let each
+/// caller refuse.
+fn duress_enroll_network_dirs(
+    root: &std::path::Path,
+) -> Result<Vec<crate::dir::NetworkDirectory>, String> {
+    let describe =
+        |e: std::io::Error| format!("Couldn't read your data directory to find your Cubes ({e}).");
     let mut dirs = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(root) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() && p.join(crate::app::settings::SETTINGS_FILE_NAME).is_file() {
-                dirs.push(crate::dir::NetworkDirectory::new(p));
-            }
+    for entry in std::fs::read_dir(root).map_err(describe)? {
+        let p = entry.map_err(describe)?.path();
+        if p.is_dir() && p.join(crate::app::settings::SETTINGS_FILE_NAME).is_file() {
+            dirs.push(crate::dir::NetworkDirectory::new(p));
         }
     }
-    dirs
+    Ok(dirs)
 }
 
 /// User-facing message when the candidate duress PIN equals a Cube's real
@@ -915,7 +935,7 @@ pub(crate) fn duress_pin_collision_check_blocking(
 ) -> Result<(), String> {
     use crate::services::unlock::{self, PinOutcome};
 
-    let network_dirs = duress_enroll_network_dirs(root);
+    let network_dirs = duress_enroll_network_dirs(root)?;
     if network_dirs.is_empty() {
         return Err(DURESS_NO_CUBES_MSG.to_string());
     }
@@ -965,6 +985,12 @@ struct ArmedMarker {
     /// The marker's file name. Random, so rollback cannot recompute it — it
     /// has to be carried from the write that minted it.
     file_name: String,
+    /// Whether the write landed on a slot this Cube already had, rather than
+    /// minting a new one. On a device that was **already enrolled** that slot
+    /// held the previous duress PIN's marker, and overwriting it destroyed it —
+    /// a fact rollback cannot undo, since it has no way to reconstruct a marker
+    /// for a PIN it was never given. See [`prior_pin_deactivated`].
+    reused_slot: bool,
 }
 
 /// Remove the markers an aborted enrollment already wrote, returning the names
@@ -1034,17 +1060,64 @@ fn rollback_duress_markers(armed: &[ArmedMarker]) -> Vec<String> {
     still_armed
 }
 
+/// The Cubes whose *previous* duress PIN this attempt already destroyed.
+///
+/// Re-enrolment writes the new marker over the slot the Cube already had, so by
+/// the time a later step fails the old marker is gone. Rollback restores a
+/// decoy, not the old marker — it never saw the old PIN — so on those Cubes the
+/// previously enrolled duress PIN is now inert. "No changes were kept" would be
+/// a false statement about exactly the property the user relies on.
+///
+/// Gated on `was_enrolled`: since unit 6b every Cube carries a slot from
+/// creation, so a reused slot on a device that was never enrolled held a decoy
+/// and overwriting it cost nothing. Without that gate this would warn about a
+/// lost duress PIN that never existed.
+///
+/// Within an enrolled device it can still over-report — a Cube created *after*
+/// the last enrolment also has a decoy in its slot, and telling those two apart
+/// would take the old PIN, which we don't have. Over-reporting is the safe
+/// direction: the remedy (re-enroll) is the same and costs nothing.
+fn prior_pin_deactivated(was_enrolled: bool, armed: &[ArmedMarker]) -> Vec<String> {
+    if !was_enrolled {
+        return Vec::new();
+    }
+    armed
+        .iter()
+        .filter(|m| m.reused_slot)
+        .map(|m| m.cube_name.clone())
+        .collect()
+}
+
 /// Finish an enrollment-failure message, telling the truth about what was left
 /// behind.
-fn describe_rollback(base: String, still_armed: Vec<String>) -> String {
-    if still_armed.is_empty() {
-        return format!("{base} No changes were kept.");
+pub(crate) fn describe_rollback(
+    base: String,
+    still_armed: Vec<String>,
+    prior_pin_lost: Vec<String>,
+) -> String {
+    let mut msg = if still_armed.is_empty() {
+        // Only honest when the previous enrolment also survived.
+        if prior_pin_lost.is_empty() {
+            return format!("{base} No changes were kept.");
+        }
+        base
+    } else {
+        format!(
+            "{base} WARNING: the duress PIN could not be removed from {}. \
+             Entering that PIN on {} will still erase this device. Turn duress mode \
+             off and on again, or contact support before using that PIN.",
+            still_armed.join(", "),
+            if still_armed.len() == 1 { "it" } else { "them" },
+        )
+    };
+    if !prior_pin_lost.is_empty() {
+        msg.push_str(&format!(
+            " Your previous duress PIN no longer works on {} and must be set up \
+             again — turn duress mode on to re-enroll.",
+            prior_pin_lost.join(", "),
+        ));
     }
-    format!(
-        "{base} WARNING: the duress PIN could not be removed from {}.          Entering that PIN on {} will still erase this device. Turn duress mode          off and on again, or contact support before using that PIN.",
-        still_armed.join(", "),
-        if still_armed.len() == 1 { "it" } else { "them" },
-    )
+    msg
 }
 
 pub(crate) async fn persist_duress_enrollment(
@@ -1057,7 +1130,7 @@ pub(crate) async fn persist_duress_enrollment(
     // duress PIN must trip from any of them — set it (and verify against it) on
     // all per-network settings, not just the active one.
     let root = datadir.path().to_path_buf();
-    let network_dirs = duress_enroll_network_dirs(&root);
+    let network_dirs = duress_enroll_network_dirs(&root)?;
     // No per-network settings.json found — there are no Cubes to arm (or the
     // data directory couldn't be read). Fail loud instead of marking duress
     // "enabled" with no duress PIN written anywhere.
@@ -1105,14 +1178,21 @@ pub(crate) async fn persist_duress_enrollment(
     //    unit 6b no scan of the datadir can detect that — every Cube carries a
     //    second slot, and a marker is indistinguishable from a decoy on
     //    purpose. The breadcrumb is what `reconcile_duress_*` reads instead.
-    if let Err(e) = (|| -> Result<(), String> {
+    //
+    //    The pre-existing `enrolled` flag comes back from that same read: it is
+    //    what turns "this Cube's slot was overwritten" into "a live duress PIN
+    //    was overwritten", which a rollback message has to admit to.
+    let was_enrolled = match (|| -> Result<bool, String> {
         let mut st = crate::services::duress::DuressLocalState::load(&root)
             .map_err(|e| format!("Couldn't read existing duress state: {e}"))?;
+        let was_enrolled = st.enrolled;
         st.arming = true;
-        st.save(&root).map_err(|e| e.to_string())
+        st.save(&root).map_err(|e| e.to_string())?;
+        Ok(was_enrolled)
     })() {
-        return Err(format!("{e} No changes were kept."));
-    }
+        Ok(v) => v,
+        Err(e) => return Err(format!("{e} No changes were kept.")),
+    };
 
     let mut armed_cubes: Vec<ArmedMarker> = Vec::new();
     let mut arm_failure: Option<String> = None;
@@ -1134,6 +1214,7 @@ pub(crate) async fn persist_duress_enrollment(
             // leaving the first one orphaned and unfindable. Otherwise mint a
             // fresh unpredictable name stamped with this Cube's *seed file's*
             // timestamp, so the two files agree (X7).
+            let reused_slot = cube.duress_slot_file.is_some();
             let file_name = cube.duress_slot_file.clone().unwrap_or_else(|| {
                 crate::services::unlock::marker::new_file_name(
                     crate::services::unlock::marker::seed_timestamp(
@@ -1166,14 +1247,16 @@ pub(crate) async fn persist_duress_enrollment(
                 cube_name: cube.name.clone(),
                 network: cube.network,
                 file_name,
+                reused_slot,
             });
         }
         let _ = network_dir;
     }
 
     if let Some(msg) = arm_failure {
+        let lost = prior_pin_deactivated(was_enrolled, &armed_cubes);
         let still_armed = rollback_duress_markers(&armed_cubes);
-        return Err(describe_rollback(msg, still_armed));
+        return Err(describe_rollback(msg, still_armed, lost));
     }
 
     // Settings files were present but held no Cubes — no marker was written
@@ -1212,10 +1295,12 @@ pub(crate) async fn persist_duress_enrollment(
         })
         .await;
         if let Err(e) = written {
+            let lost = prior_pin_deactivated(was_enrolled, &armed_cubes);
             let still_armed = rollback_duress_markers(&armed_cubes);
             return Err(describe_rollback(
                 format!("Couldn't save the duress settings for your Cubes ({e})."),
                 still_armed,
+                lost,
             ));
         }
     }
@@ -1250,8 +1335,9 @@ pub(crate) async fn persist_duress_enrollment(
         st.save(&root).map_err(|e| e.to_string())
     })();
     if let Err(e) = local {
+        let lost = prior_pin_deactivated(was_enrolled, &armed_cubes);
         let still_armed = rollback_duress_markers(&armed_cubes);
-        return Err(describe_rollback(e, still_armed));
+        return Err(describe_rollback(e, still_armed, lost));
     }
     Ok(())
 }
@@ -1287,7 +1373,7 @@ pub(crate) fn verify_regular_cube_pin_blocking(
     if pin.is_empty() {
         return Err("Enter your Cube unlock PIN to continue.".to_string());
     }
-    let network_dirs = duress_enroll_network_dirs(root);
+    let network_dirs = duress_enroll_network_dirs(root)?;
     if network_dirs.is_empty() {
         return Err(DURESS_NO_CUBES_MSG.to_string());
     }
@@ -1346,7 +1432,7 @@ pub(crate) async fn clear_duress_enrollment(datadir: CoincubeDirectory) -> Resul
     // 1. Clear the duress PIN hash on every Cube on every network — ALWAYS,
     //    whatever DuressLocalState records. Setting it to None is idempotent;
     //    stop at the first failure so a retry re-clears the rest.
-    let network_dirs = duress_enroll_network_dirs(&root);
+    let network_dirs = duress_enroll_network_dirs(&root)?;
     for network_dir in &network_dirs {
         let settings = crate::app::settings::Settings::from_file(network_dir)
             .map_err(|e| format!("Couldn't read your Cube settings to disarm duress: {e}"))?;
@@ -5642,6 +5728,7 @@ mod tests {
         fs::write(root.path().join("loose-file"), "").expect("write ignored file");
 
         let mut names = duress_enroll_network_dirs(root.path())
+            .expect("readable datadir")
             .into_iter()
             .map(|dir| {
                 dir.path()
@@ -5654,6 +5741,65 @@ mod tests {
         names.sort();
 
         assert_eq!(names, vec!["bitcoin".to_string(), "regtest".to_string()]);
+    }
+
+    /// An unreadable datadir is not "this device has no Cubes".
+    ///
+    /// The lookup used to swallow the I/O error and return an empty list, and
+    /// every caller reads empty as "no Cubes". Enrollment then refused with a
+    /// message that is false, and — the dangerous half — `clear_duress_enrollment`
+    /// disarmed nothing, reset the local state, and reported success while every
+    /// Cube kept a live wipe trigger.
+    #[test]
+    fn an_unreadable_datadir_is_an_error_not_an_empty_cube_list() {
+        let root = TempRoot::new("duress-unreadable");
+        let missing = root.path().join("not-a-directory");
+
+        let err = duress_enroll_network_dirs(&missing).expect_err("a missing datadir must error");
+        assert!(
+            err.contains("Couldn't read your data directory"),
+            "the message must name the real problem: {}",
+            err
+        );
+
+        // Every duress entry point refuses rather than reporting no Cubes.
+        for (label, got) in [
+            (
+                "collision check",
+                duress_pin_collision_check_blocking(&missing, "1234").unwrap_err(),
+            ),
+            (
+                "step-up",
+                verify_regular_cube_pin_blocking(&missing, "1234").unwrap_err(),
+            ),
+        ] {
+            assert_ne!(
+                got, DURESS_NO_CUBES_MSG,
+                "{} still claims the device has no Cubes",
+                label
+            );
+            assert_eq!(
+                got, err,
+                "{} should surface the read failure verbatim",
+                label
+            );
+        }
+
+        // The disable path is the one that must not succeed quietly: reporting
+        // "duress is off" after clearing nothing is the false statement that
+        // leaves a live wipe trigger behind.
+        let cleared = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(clear_duress_enrollment(CoincubeDirectory::new(
+                missing.clone(),
+            )));
+        assert_eq!(
+            cleared.unwrap_err(),
+            err,
+            "disable reported success without reading a single Cube"
+        );
     }
 
     /// Write an encrypted master seed for `cube`, so the trial-decrypt PIN
@@ -5814,6 +5960,7 @@ mod tests {
             cube_name: cube.name.clone(),
             network: Network::Bitcoin,
             file_name: marker_name.clone(),
+            reused_slot: false,
         }];
 
         // Happy path: the marker comes off, and the message says so.
@@ -5841,18 +5988,72 @@ mod tests {
             ),
             "the duress PIN still opens the slot after rollback — the wipe trigger is live"
         );
-        let msg = describe_rollback("Couldn't arm.".to_string(), still_armed);
+        let msg = describe_rollback("Couldn't arm.".to_string(), still_armed, Vec::new());
         assert!(msg.contains("No changes were kept"), "{}", msg);
         assert!(!msg.contains("WARNING"), "{}", msg);
 
         // Failure path: whatever the cause, the user is told which Cube is still
         // armed and what that PIN will now do.
-        let msg = describe_rollback("Couldn't arm.".to_string(), vec!["Primary".to_string()]);
+        let msg = describe_rollback(
+            "Couldn't arm.".to_string(),
+            vec!["Primary".to_string()],
+            Vec::new(),
+        );
         assert!(msg.contains("Primary"), "the Cube must be named: {}", msg);
         assert!(msg.contains("erase this device"), "{}", msg);
         assert!(
             !msg.contains("No changes were kept"),
             "the message still claims nothing was kept: {}",
+            msg
+        );
+    }
+
+    /// A failed **re-**enrolment has already overwritten the old marker, so the
+    /// previously enrolled duress PIN is dead and rollback cannot bring it back.
+    /// Saying "no changes were kept" there would leave the owner believing a PIN
+    /// still wipes their device when it does not.
+    #[test]
+    fn a_failed_reenrolment_admits_the_old_duress_pin_is_gone() {
+        let marker = |name: &str, reused: bool| ArmedMarker {
+            root: std::path::PathBuf::from("/nonexistent"),
+            cube_id: format!("id-{name}"),
+            cube_name: name.to_string(),
+            network: Network::Bitcoin,
+            file_name: "slot".to_string(),
+            reused_slot: reused,
+        };
+
+        // Never enrolled: since 6b the reused slot held a decoy, so overwriting
+        // it cost nothing. Warning here would invent a lost PIN.
+        assert!(prior_pin_deactivated(false, &[marker("Primary", true)]).is_empty());
+        // Enrolled, but this Cube's slot was minted by this attempt — its old
+        // state is whatever a fresh rollback decoy is.
+        assert!(prior_pin_deactivated(true, &[marker("Primary", false)]).is_empty());
+
+        let lost = prior_pin_deactivated(true, &[marker("Primary", true)]);
+        assert_eq!(lost, vec!["Primary".to_string()]);
+
+        // Markers all rolled back cleanly — but "no changes were kept" is still
+        // false, because the old duress PIN went with them.
+        let msg = describe_rollback("Couldn't arm.".to_string(), Vec::new(), lost.clone());
+        assert!(
+            !msg.contains("No changes were kept"),
+            "the old duress PIN is gone, so nothing-was-kept is a lie: {}",
+            msg
+        );
+        assert!(msg.contains("Primary"), "the Cube must be named: {}", msg);
+        assert!(
+            msg.contains("previous duress PIN no longer works"),
+            "{}",
+            msg
+        );
+
+        // Both failures at once: the live trigger and the dead old PIN.
+        let msg = describe_rollback("Couldn't arm.".to_string(), vec!["Other".to_string()], lost);
+        assert!(msg.contains("erase this device"), "{}", msg);
+        assert!(
+            msg.contains("previous duress PIN no longer works"),
+            "{}",
             msg
         );
     }
