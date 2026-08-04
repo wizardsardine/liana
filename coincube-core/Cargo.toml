@@ -24,10 +24,19 @@ log = "0.4"
 getrandom = "0.3.1"
 
 # Used for the master signer
-bip39 = "2.0"
+# `zeroize` makes `Mnemonic` scrub its own words on drop. Without it, every
+# `MasterSigner` left its seed on the residual heap when it was dropped.
+bip39 = { version = "2.0", features = ["zeroize"] }
 argon2 = "0.5.3"
 aes-gcm = "0.10.3"
 zeroize = "1.8.2"
+# HKDF-SHA256, used two places that both need extract-and-expand rather than
+# a memory-hard KDF: WebAuthn-PRF → BIP39 entropy (the PRF output is already
+# 256 uniform bits — Argon2 would add cost and no strength), and the seed
+# file's v3 file-key combine (Argon2 hardens the low-entropy PIN half; HKDF
+# just mixes it with the device secret).
+hkdf = "0.12"
+sha2 = "0.10"
 
 [lints.clippy]
 uninlined_format_args = "allow"

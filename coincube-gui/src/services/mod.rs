@@ -13,6 +13,7 @@ pub mod meld;
 pub mod passkey;
 pub mod recovery;
 pub mod sideshift;
+pub mod unlock;
 
 /// Resolves the Coincube API base URL with this precedence:
 /// 1. Runtime `std::env::var("COINCUBE_API_URL")` — picked up from the shell or

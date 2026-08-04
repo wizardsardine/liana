@@ -20,6 +20,21 @@
 ///
 /// When `true`, the existing passkey code path re-activates (webview on
 /// non-macOS, native AuthenticationServices on macOS).
+///
+/// # DANGER: enabling this flag can create a Cube that cannot be opened
+///
+/// Passkey *creation* works; passkey *unlock* does not exist yet on any
+/// platform. A Cube created with this flag on is openable only if its owner
+/// wrote down the mnemonic — otherwise it is **permanently lost**, and no
+/// amount of support intervention recovers it. Concretely:
+///
+/// - `services::passkey::macos::NativePasskeyCeremony::authenticate` is a stub
+///   that returns `Err("Native passkey authentication not yet implemented")`.
+/// - `gui::tab` refuses to open a Cube whose settings carry `passkey_metadata`.
+///
+/// Do not flip this on for any build a real user might touch until the
+/// assertion flow lands (PLAN-cube-unlock-hardening PR 10) **and** the
+/// device-bound property is verified per platform.
 pub const PASSKEY_ENABLED: bool = is_truthy(option_env!("COINCUBE_ENABLE_PASSKEY"));
 
 /// Whether the cube-scoped Members UI (W8 / PLAN-cube-membership-desktop) is

@@ -93,15 +93,116 @@ impl DuressDelay {
     }
 }
 
+/// Minimum edit distance between any two duress-related credentials.
+///
+/// Invariant I3. A duress PIN one keystroke away from the real one is worse
+/// than no duress PIN at all: the user fat-fingers their own unlock and wipes
+/// the device. `1234` / `1235` is the canonical case.
+pub const MIN_CREDENTIAL_DISTANCE: usize = 2;
+
+/// Levenshtein edit distance.
+///
+/// Two rows rather than a full matrix — the inputs here are a 4-digit PIN and a
+/// passphrase, so this is not hot, but the full matrix buys nothing.
+pub fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// Whether `candidate` is too close to `existing` to be a safe duress credential.
+///
+/// Distance covers substitutions, insertions and deletions. Two extra patterns
+/// the duress decision names explicitly are **not** caught by distance on short
+/// strings and are checked separately:
+///
+/// - **reversed** — `1234` / `4321` is distance 4 but is the same secret to a
+///   user recalling it under stress.
+/// - **off-by-one digits** — `1234` / `2345`, every digit shifted. This is
+///   distance **2**, so it sits exactly on the ≥2 boundary and the distance rule
+///   alone would *accept* it. It is the "I'll just add one" pattern people
+///   actually reach for, which is what makes the separate check load-bearing
+///   rather than belt-and-braces.
+pub fn too_similar(candidate: &str, existing: &str) -> bool {
+    if candidate == existing {
+        return true;
+    }
+    if levenshtein(candidate, existing) < MIN_CREDENTIAL_DISTANCE {
+        return true;
+    }
+    if candidate.chars().rev().collect::<String>() == existing {
+        return true;
+    }
+    off_by_one_digits(candidate, existing)
+}
+
+/// Same length, all digits, and every digit differs by the same ±1 step.
+fn off_by_one_digits(a: &str, b: &str) -> bool {
+    if a.len() != b.len() || a.is_empty() {
+        return false;
+    }
+    let (da, db): (Vec<_>, Vec<_>) = (
+        a.chars().map(|c| c.to_digit(10)).collect(),
+        b.chars().map(|c| c.to_digit(10)).collect(),
+    );
+    if da.iter().chain(db.iter()).any(|d| d.is_none()) {
+        return false;
+    }
+    let deltas: Vec<i64> = da
+        .iter()
+        .zip(db.iter())
+        .map(|(x, y)| i64::from(x.unwrap()) - i64::from(y.unwrap()))
+        .collect();
+    matches!(deltas.first(), Some(&d) if (d == 1 || d == -1))
+        && deltas.iter().all(|&d| d == deltas[0])
+}
+
 /// Validates a candidate duress PIN, client-side, before enrollment.
 ///
-/// There is no longer a "distance from your regular PIN" rule: each Cube can
-/// have its own PIN, so there's no single regular PIN to compare against. The
-/// only hard requirement — that the duress PIN not collide with any Cube's
-/// real unlock PIN — is enforced where the Cube PIN hashes are available, in
-/// `persist_duress_enrollment`. Here we require a non-empty value entered
-/// identically twice (the confirmation guards against memorizing a typo).
-pub fn validate_duress_pin(duress_pin: &str, confirm: &str) -> Result<(), String> {
+/// # What the distance rule covers, and what it does not
+///
+/// Invariant I3 asks for edit distance ≥2 between the duress PIN and the
+/// regular PIN. Post-Tier-0 there are **no stored PIN hashes** — a PIN is
+/// verified by decrypting the seed file — so "the regular PIN" is only
+/// available in plaintext for the Cube the user currently has open, via
+/// `app::session`.
+///
+/// So the rule is applied in the **narrowed form** decision D1(a) settles on,
+/// and the narrowing is deliberate rather than an oversight:
+///
+/// - **≥2 against the Cube being enrolled from** — the plaintext is in hand, so
+///   the full rule applies. This is the Cube whose PIN the user actually has in
+///   muscle memory, and the one they would mistype.
+/// - **exact-collision only against every other Cube** — enforced by
+///   `duress_pin_collision_check_blocking`, which trial-decrypts each Cube's
+///   seed. Distance cannot be computed there without the plaintext, and
+///   enumerating the ~36 same-length neighbours per Cube would cost ~30 s each.
+///
+/// `regular_pin` is `None` when the session has no PIN. Enrollment then
+/// **refuses**: silently skipping a security rule because a value was missing is
+/// how the rule stops existing.
+pub fn validate_duress_pin(
+    duress_pin: &str,
+    confirm: &str,
+    regular_pin: Option<&str>,
+) -> Result<(), String> {
     if duress_pin.is_empty() {
         return Err("Enter a duress PIN.".to_string());
     }
@@ -113,6 +214,24 @@ pub fn validate_duress_pin(duress_pin: &str, confirm: &str) -> Result<(), String
     }
     if duress_pin != confirm {
         return Err("The duress PINs don't match.".to_string());
+    }
+
+    let Some(regular) = regular_pin else {
+        // Fail closed. The wizard runs inside an open Cube, so an absent
+        // session PIN means something is wrong — not that the check is optional.
+        return Err(
+            "Coincube can't check your duress PIN against this Cube's unlock PIN right \
+             now. Close and re-open the Cube, then try again."
+                .to_string(),
+        );
+    };
+    if too_similar(duress_pin, regular) {
+        return Err(
+            "That duress PIN is too close to this Cube's unlock PIN. Under pressure you \
+             could type one meaning the other, and the duress PIN erases this device. \
+             Choose something clearly different."
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -126,9 +245,9 @@ pub fn validate_all_clear(passphrase: &str, duress_pin: &str) -> Result<(), Stri
             MIN_ALL_CLEAR_LEN
         ));
     }
-    if passphrase == duress_pin {
+    if too_similar(passphrase, duress_pin) {
         return Err(
-            "Your all-clear passphrase must be different from your duress PIN.".to_string(),
+            "Your all-clear passphrase must be clearly different from your duress PIN.".to_string(),
         );
     }
     Ok(())
@@ -148,9 +267,10 @@ pub fn validate_duress_crk_password(
             MIN_ALL_CLEAR_LEN
         ));
     }
-    if password == duress_pin || password == all_clear {
+    if too_similar(password, duress_pin) || too_similar(password, all_clear) {
         return Err(
-            "Your duress recovery password must be different from your other credentials."
+            "Your duress recovery password must be clearly different from your other \
+             credentials."
                 .to_string(),
         );
     }
@@ -207,24 +327,82 @@ pub fn hash_duress_secret(secret: &str) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    /// The regular PIN of the Cube the wizard is running inside.
+    const REGULAR: Option<&str> = Some("1234");
+
     #[test]
     fn duress_pin_requires_non_empty_and_matching_confirm() {
-        assert!(validate_duress_pin("", "").is_err());
+        assert!(validate_duress_pin("", "", REGULAR).is_err());
         // Mismatched confirmation is rejected.
-        assert!(validate_duress_pin("1234", "1235").is_err());
-        // Any non-empty PIN entered twice passes here — collision with a real
-        // Cube PIN is enforced later, in `persist_duress_enrollment`.
-        assert!(validate_duress_pin("1234", "1234").is_ok());
-        assert!(validate_duress_pin("1235", "1235").is_ok());
+        assert!(validate_duress_pin("1234", "1235", REGULAR).is_err());
+        // A PIN clearly different from the regular one passes.
+        assert!(validate_duress_pin("8765", "8765", REGULAR).is_ok());
+    }
+
+    /// **The canonical I3 regression.** Regular `1234`, duress `1235`.
+    ///
+    /// One keystroke apart. Under pressure the user types their own unlock PIN
+    /// wrong and erases the device — the failure the distance rule exists for,
+    /// and the one the exact-equality check let straight through.
+    #[test]
+    fn a_duress_pin_one_keystroke_from_the_real_one_is_rejected() {
+        let err = validate_duress_pin("1235", "1235", REGULAR).unwrap_err();
+        assert!(err.contains("too close"), "{}", err);
+
+        // Exact collision, still rejected.
+        assert!(validate_duress_pin("1234", "1234", REGULAR).is_err());
+
+        // Distance 2 is the boundary and is accepted.
+        assert_eq!(levenshtein("1234", "1256"), 2);
+        assert!(validate_duress_pin("1256", "1256", REGULAR).is_ok());
+    }
+
+    #[test]
+    fn reversed_and_off_by_one_are_rejected() {
+        // Distance 4 by edit distance, but the same secret to a stressed user.
+        assert_eq!(levenshtein("1234", "4321"), 4);
+        assert!(validate_duress_pin("4321", "4321", REGULAR).is_err());
+
+        // Every digit shifted by one. Distance 2 — it *passes* the ≥2 rule, so
+        // only the explicit off-by-one check rejects it. Verified against a
+        // reference implementation; an earlier version of this test asserted 4
+        // and was simply wrong about the metric.
+        assert_eq!(levenshtein("1234", "2345"), 2);
+        assert!(validate_duress_pin("2345", "2345", REGULAR).is_err());
+        assert!(validate_duress_pin("0123", "0123", REGULAR).is_err());
+
+        // A genuinely unrelated PIN of the same shape is fine.
+        assert!(validate_duress_pin("8092", "8092", REGULAR).is_ok());
+    }
+
+    /// Fail closed. A missing session PIN must refuse enrollment, not skip the
+    /// rule — silently skipping is how a security rule stops existing.
+    #[test]
+    fn enrollment_refuses_when_the_regular_pin_is_unavailable() {
+        let err = validate_duress_pin("8765", "8765", None).unwrap_err();
+        assert!(err.contains("re-open the Cube"), "{}", err);
+    }
+
+    #[test]
+    fn levenshtein_is_correct() {
+        assert_eq!(levenshtein("", ""), 0);
+        assert_eq!(levenshtein("1234", "1234"), 0);
+        assert_eq!(levenshtein("1234", "1235"), 1);
+        assert_eq!(levenshtein("1234", "123"), 1);
+        assert_eq!(levenshtein("1234", "12345"), 1);
+        assert_eq!(levenshtein("kitten", "sitting"), 3);
+        assert_eq!(levenshtein("1234", "4321"), 4);
+        assert_eq!(levenshtein("1234", "2345"), 2);
+        assert_eq!(levenshtein("", "abc"), 3);
     }
 
     #[test]
     fn all_clear_length_and_distinctness() {
         assert!(validate_all_clear("short", "5678").is_err());
         assert!(validate_all_clear("correct horse battery", "5678").is_ok());
-        // Must differ from the duress PIN (edge: a 12+ char string equal to a
-        // PIN can't happen with short PINs, but the rule still holds).
         assert!(validate_all_clear("1234", "1234").is_err());
+        // Held to the same distance rule as the PIN, not just inequality.
+        assert!(validate_all_clear("correct horse batter", "correct horse battery").is_err());
     }
 
     #[test]
@@ -235,6 +413,13 @@ mod tests {
         );
         assert!(validate_duress_crk_password(
             "all clear phrase here",
+            "5678",
+            "all clear phrase here"
+        )
+        .is_err());
+        // And to the distance rule, not only equality.
+        assert!(validate_duress_crk_password(
+            "all clear phrase her",
             "5678",
             "all clear phrase here"
         )

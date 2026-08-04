@@ -136,17 +136,28 @@ pub async fn load_breez_client(
     network: Network,
     master_signer_fingerprint: Fingerprint,
     password: &str,
+    cube_id: &str,
     liquid_granted: bool,
 ) -> Result<Arc<BreezClient>, BreezError> {
     let liquid_supported = crate::app::features::liquid(network).is_available();
 
-    // Load only the specific signer by fingerprint (more efficient and secure).
-    let liquid_signer = match MasterSigner::from_datadir_by_fingerprint(
-        datadir,
-        network,
-        master_signer_fingerprint,
-        Some(password),
-    ) {
+    // Prefer the signer the unlock already decrypted. Verifying the PIN is a
+    // full Argon2id pass over the seed file, so re-reading it here would pay
+    // ~831 ms for a result we are already holding. Falls back to disk whenever
+    // the session has nothing for this Cube+fingerprint — every other entry
+    // point (restore, login, tests) takes that path unchanged.
+    let cached = crate::app::session::unlocked_signer(cube_id, master_signer_fingerprint);
+    let loaded = match cached {
+        Some(signer) => Ok(signer),
+        None => MasterSigner::from_datadir_by_fingerprint(
+            datadir,
+            network,
+            master_signer_fingerprint,
+            Some(password),
+            cube_id,
+        ),
+    };
+    let liquid_signer = match loaded {
         Ok(signer) => Arc::new(Mutex::new(signer)),
         Err(e) => {
             let mapped = match e {
