@@ -98,7 +98,8 @@ impl fmt::Display for SignerError {
             Self::NotEncryptedFile => write!(f, "Not an encrypted mnemonic file"),
             Self::DeviceSecretRequired => write!(
                 f,
-                "This Cube's seed is sealed to this device's system keychain,                  which wasn't available"
+                "This Cube's seed is sealed to this device's system keychain, \
+                 which wasn't available"
             ),
             Self::InvalidFileFormat => write!(f, "Invalid encrypted file format"),
             Self::DecryptionFailed(e) => write!(f, "Failed to decrypt mnemonic: {}", e),
@@ -130,17 +131,29 @@ pub struct MasterSigner {
     network: bitcoin::Network,
 }
 
+/// Overwrite an extended private key in place.
+///
+/// Split out of [`Drop`] so it can be tested: the effect of a `Drop` impl is by
+/// definition unobservable afterwards, and the bug this replaced was invisible
+/// for exactly that reason.
+///
+/// `SecretKey::non_secure_erase` overwrites the key through
+/// `ptr::write_volatile` followed by a `SeqCst` compiler fence — the same
+/// technique `zeroize` uses, so the write survives optimisation. It is called
+/// "non-secure" because it cannot undo copies the compiler may already have
+/// made elsewhere, which is inherent and not something any API can fix.
+fn scrub_xpriv(xpriv: &mut bip32::Xpriv) {
+    xpriv.private_key.non_secure_erase();
+    // The chain code is not secret on its own — it is half of the *xpub* — so
+    // this is tidiness rather than a control, and a plain assignment is enough.
+    // The private key above is the part that matters.
+    xpriv.chain_code = bip32::ChainCode::from([0u8; 32]);
+}
+
 impl Drop for MasterSigner {
     fn drop(&mut self) {
-        use zeroize::Zeroize;
-        // `Xpriv` has no `Zeroize` impl and its `private_key` field is a
-        // `secp256k1::SecretKey` we can't overwrite in place through the public
-        // API. Scrub what we can reach: the chain code, and the key bytes via a
-        // byte-wise view of the struct's own copy.
-        self.master_xpriv.chain_code = bip32::ChainCode::from([0u8; 32]);
-        let mut secret = self.master_xpriv.private_key.secret_bytes();
-        secret.zeroize();
-        // `bip39::Mnemonic` scrubs itself (the `zeroize` feature above).
+        scrub_xpriv(&mut self.master_xpriv);
+        // `bip39::Mnemonic` scrubs itself (the crate's `zeroize` feature).
     }
 }
 
@@ -261,8 +274,8 @@ impl MasterSigner {
         prf_output: &[u8; 32],
     ) -> Result<Self, SignerError> {
         let entropy = Self::prf_entropy(prf_output)?;
-        let mnemonic = bip39::Mnemonic::from_entropy(entropy.as_ref())
-            .map_err(SignerError::Mnemonic)?;
+        let mnemonic =
+            bip39::Mnemonic::from_entropy(entropy.as_ref()).map_err(SignerError::Mnemonic)?;
         Self::from_mnemonic(network, mnemonic)
     }
 
@@ -547,49 +560,6 @@ impl MasterSigner {
         restrict_permissions(&file_path).map_err(SignerError::MnemonicStorage)?;
 
         Ok(())
-    }
-
-    /// Re-encrypt an existing on-disk mnemonic file in place at the current
-    /// wire version, returning `true` when the file was actually rewritten.
-    ///
-    /// Used by the startup migration: after a successful unlock the PIN is in
-    /// hand, so any plaintext or `ENCRYPTED_V1` file found in the mnemonics
-    /// folder can be upgraded. A file already at the current version is left
-    /// untouched, which makes the migration idempotent.
-    ///
-    /// The rewrite is not atomic — `create_file` refuses to clobber, so the old
-    /// file is removed first. A crash in that window loses the file, which is
-    /// why the Recovery Kit gate exists and why the migration only ever runs
-    /// against a Cube that just unlocked successfully.
-    pub fn migrate_file(
-        path: &path::Path,
-        password: &str,
-        cube_id: &str,
-        device_secret: Option<&seed_crypt::DeviceSecret>,
-    ) -> Result<bool, SignerError> {
-        let data = fs::read(path).map_err(SignerError::MnemonicStorage)?;
-        let target = match device_secret {
-            Some(_) => seed_crypt::SEED_FILE_VERSION_V3,
-            None => seed_crypt::SEED_FILE_VERSION_V2,
-        };
-        if seed_crypt::format_version(&data) == Some(target) {
-            return Ok(false);
-        }
-
-        // Recover the plaintext through whichever path currently applies, then
-        // re-seal it. Anything that fails to open here is left strictly alone:
-        // it may belong to another Cube, or be the duress marker.
-        let mnemonic = Self::read_mnemonic_bytes(data, Some(password), cube_id)?;
-        let sealed =
-            seed_crypt::encrypt(mnemonic.as_bytes(), password, cube_id, device_secret)?;
-
-        fs::remove_file(path).map_err(SignerError::MnemonicStorage)?;
-        let mut file = create_file(path).map_err(SignerError::MnemonicStorage)?;
-        file.write_all(&sealed)
-            .map_err(SignerError::MnemonicStorage)?;
-        drop(file);
-        restrict_permissions(path).map_err(SignerError::MnemonicStorage)?;
-        Ok(true)
     }
 
     pub fn xpriv_at(
@@ -1065,6 +1035,34 @@ mod tests {
         );
     }
 
+    /// The private key must actually be overwritten, not merely *appear* to be.
+    ///
+    /// This previously read the key out with `secret_bytes()` — which returns
+    /// `[u8; 32]` **by value** — and zeroized that. It scrubbed a stack copy
+    /// that was about to be dropped anyway, left the real key untouched, and
+    /// created one more copy of the secret in the process. The `Drop` impl read
+    /// as if it worked and did nothing.
+    #[test]
+    fn scrubbing_an_xpriv_overwrites_the_private_key() {
+        let network = bitcoin::Network::Bitcoin;
+        let signer = MasterSigner::generate(network).unwrap();
+        let mut xpriv = signer.master_xpriv;
+
+        let key_before = xpriv.private_key.secret_bytes();
+        let chain_before = xpriv.chain_code;
+
+        scrub_xpriv(&mut xpriv);
+
+        assert_ne!(
+            xpriv.private_key.secret_bytes(),
+            key_before,
+            "the private key survived the scrub — `secret_bytes()` returns a copy, \
+             so zeroizing its result does nothing to the key itself"
+        );
+        assert_ne!(xpriv.chain_code, chain_before);
+        assert_eq!(xpriv.chain_code, bip32::ChainCode::from([0u8; 32]));
+    }
+
     #[test]
     fn master_signer_storage() {
         let secp = secp256k1::Secp256k1::signing_only();
@@ -1124,46 +1122,6 @@ mod tests {
             checked += 1;
         }
         assert_eq!(checked, 1);
-
-        fs::remove_dir_all(tmp_dir).unwrap();
-    }
-
-    #[test]
-    fn migration_upgrades_plaintext_and_v1_and_is_idempotent() {
-        let secp = secp256k1::Secp256k1::signing_only();
-        let tmp_dir = tmp_dir();
-        fs::create_dir_all(&tmp_dir).unwrap();
-        let network = bitcoin::Network::Bitcoin;
-        let folder = MasterSigner::mnemonics_folder(&tmp_dir, network);
-        fs::create_dir_all(&folder).unwrap();
-
-        let signer = MasterSigner::generate(network).unwrap();
-        let words = signer.words();
-
-        // A plaintext file, exactly as the pre-hardening installer wrote it.
-        let plain_path = folder.join(format!("mnemonic-{}.txt", signer.fingerprint(&secp)));
-        fs::write(&plain_path, signer.mnemonic_str().as_bytes()).unwrap();
-        assert_eq!(crate::seed_crypt::format_version(&fs::read(&plain_path).unwrap()), None);
-
-        assert!(MasterSigner::migrate_file(&plain_path, "1234", "cube-a", None).unwrap());
-        assert_eq!(
-            crate::seed_crypt::format_version(&fs::read(&plain_path).unwrap()),
-            Some(2)
-        );
-
-        // Idempotent: a second run is a no-op and reports it.
-        assert!(!MasterSigner::migrate_file(&plain_path, "1234", "cube-a", None).unwrap());
-
-        // And the seed survived the round trip.
-        let reloaded = MasterSigner::from_datadir_by_fingerprint(
-            &tmp_dir,
-            network,
-            signer.fingerprint(&secp),
-            Some("1234"),
-            "cube-a",
-        )
-        .unwrap();
-        assert_eq!(reloaded.words(), words);
 
         fs::remove_dir_all(tmp_dir).unwrap();
     }

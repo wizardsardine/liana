@@ -100,8 +100,7 @@ pub fn evaluate(
                 .to_string(),
         ),
         Some(CubeBackupCompleteness::MissingSeed) => CreationGate::Blocked(
-            "This Cube's Vault descriptor is backed up, but its seed phrase isn't."
-                .to_string(),
+            "This Cube's Vault descriptor is backed up, but its seed phrase isn't.".to_string(),
         ),
         Some(CubeBackupCompleteness::NoKit) | None => CreationGate::Blocked(
             "Back up this Cube before you finish setting it up. Write down your seed \
@@ -146,20 +145,115 @@ mod tests {
         }
     }
 
+    /// A Cube that has just been created must be openable.
+    ///
+    /// The regression guard for a bricking bug: creation armed the gate while
+    /// no backup step ran, so every new Cube was `Blocked` at open — and the
+    /// only way to satisfy the gate (Settings → Backup Master Seed) is behind
+    /// the Cube being open. Create a Cube, lose it forever.
+    #[test]
+    fn a_cube_straight_out_of_creation_can_be_opened() {
+        use crate::app::settings::CubeSettings;
+        use coincube_core::miniscript::bitcoin::Network;
+
+        // Exactly what `home.rs::finalize_cube_creation` persists now that the
+        // gate is armed: master signer set, gate armed, and the backup the
+        // wizard just demonstrated. No kit — a local Cube need not have one.
+        let mut cube = CubeSettings::new("Fresh".to_string(), Network::Bitcoin);
+        cube.creation_backup_required = true;
+        cube.backed_up = true;
+        assert_eq!(
+            evaluate_for_cube(&cube, None),
+            CreationGate::Satisfied,
+            "a newly created Cube cannot be opened — it is bricked at birth"
+        );
+
+        // …and the restore paths, which reconstruct through `new_*` and are
+        // never gated.
+        let restored = CubeSettings::new("Restored".to_string(), Network::Bitcoin);
+        assert!(!restored.creation_backup_required);
+        assert_eq!(evaluate_for_cube(&restored, None), CreationGate::Satisfied);
+    }
+
+    /// The creation-time backup step exists, which is what makes arming the
+    /// gate safe.
+    ///
+    /// **This test used to be its own inverse.** As
+    /// `arming_the_gate_without_a_creation_backup_step_would_brick_new_cubes`
+    /// it asserted `Blocked` and said *"if this no longer blocks, a
+    /// creation-time backup path exists and `home.rs` should arm the flag"* —
+    /// the deadlock written down so nobody armed the flag before there was a
+    /// way to satisfy it. Unit 3a built that path and 3b armed the flag, so it
+    /// is **inverted here, not deleted**: it now pins the property that made
+    /// arming safe.
+    ///
+    /// That property is not "the flag is set". It is that
+    /// `home.rs::finalize_cube_creation` sets the flag and one of the two
+    /// pieces of evidence in the **same** write, so no Cube can reach disk
+    /// armed-but-unsatisfiable. Both exits from the backup step are checked
+    /// below, and so is the shape that would brick — which stays `Blocked`,
+    /// because that is precisely what creation must never write.
+    #[test]
+    fn arming_the_gate_is_safe_because_creation_always_produces_evidence() {
+        use crate::app::settings::CubeSettings;
+        use coincube_core::miniscript::bitcoin::Network;
+
+        // Exit 1: the user typed the challenge words back correctly.
+        let mut verified = CubeSettings::new("Verified".to_string(), Network::Bitcoin);
+        verified.creation_backup_required = true;
+        verified.backed_up = true;
+        assert_eq!(
+            evaluate_for_cube(&verified, None),
+            CreationGate::Satisfied,
+            "a Cube that completed the creation backup step must open"
+        );
+
+        // Exit 2: the user accepted the bypass acknowledgement.
+        let mut bypassed = CubeSettings::new("Bypassed".to_string(), Network::Bitcoin);
+        bypassed.creation_backup_required = true;
+        bypassed.creation_backup_bypass = Some(bypass());
+        assert_eq!(
+            evaluate_for_cube(&bypassed, None),
+            CreationGate::Bypassed,
+            "a Cube whose owner accepted the bypass must still open"
+        );
+
+        // The shape creation must never write: armed, with neither piece of
+        // evidence. Still blocked — arming alone is not what makes a Cube
+        // openable, and if this ever stops blocking the gate has become
+        // decorative.
+        let mut armed_only = CubeSettings::new("Armed only".to_string(), Network::Bitcoin);
+        armed_only.creation_backup_required = true;
+        assert!(
+            matches!(
+                evaluate_for_cube(&armed_only, None),
+                CreationGate::Blocked(_)
+            ),
+            "the gate must still block a Cube with no backup evidence — \
+             `finalize_cube_creation` is what guarantees this shape is never persisted"
+        );
+    }
+
     #[test]
     fn creation_cannot_complete_without_a_kit() {
         assert!(matches!(
             evaluate(false, Some(C::NoKit), None),
             CreationGate::Blocked(_)
         ));
-        assert!(matches!(evaluate(false, None, None), CreationGate::Blocked(_)));
+        assert!(matches!(
+            evaluate(false, None, None),
+            CreationGate::Blocked(_)
+        ));
     }
 
     #[test]
     fn a_written_seed_phrase_is_a_backup() {
         // The gate must not require a Connect account to create a local wallet.
         assert_eq!(evaluate(true, None, None), CreationGate::Satisfied);
-        assert_eq!(evaluate(true, Some(C::NoKit), None), CreationGate::Satisfied);
+        assert_eq!(
+            evaluate(true, Some(C::NoKit), None),
+            CreationGate::Satisfied
+        );
     }
 
     #[test]
@@ -169,7 +263,10 @@ mod tests {
         // gate must not second-guess it.
         let verdict = cube_backup_completeness(Some(false), false, Some((true, false)));
         assert_eq!(verdict, C::Complete);
-        assert_eq!(evaluate(false, Some(verdict), None), CreationGate::Satisfied);
+        assert_eq!(
+            evaluate(false, Some(verdict), None),
+            CreationGate::Satisfied
+        );
     }
 
     #[test]
@@ -184,7 +281,10 @@ mod tests {
     #[test]
     fn a_bypass_is_recorded_and_lets_creation_through() {
         let b = bypass();
-        assert_eq!(evaluate(false, Some(C::NoKit), Some(&b)), CreationGate::Bypassed);
+        assert_eq!(
+            evaluate(false, Some(C::NoKit), Some(&b)),
+            CreationGate::Bypassed
+        );
         // What support needs: the acknowledgement is stored verbatim.
         assert_eq!(b.acknowledged, BYPASS_ACKNOWLEDGEMENT);
     }
@@ -228,8 +328,8 @@ mod tests {
         // incomplete-kit row, it does not block the Cube. Once the seed is
         // backed up, the gate stays satisfied.
         use crate::app::settings::CubeSettings;
-        use coincube_core::miniscript::bitcoin::Network;
         use crate::app::settings::WalletId;
+        use coincube_core::miniscript::bitcoin::Network;
 
         let mut cube = CubeSettings::new("With Vault".to_string(), Network::Bitcoin);
         cube.creation_backup_required = true;

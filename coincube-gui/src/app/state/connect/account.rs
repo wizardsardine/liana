@@ -2880,15 +2880,10 @@ impl ConnectAccountPanel {
                 return iced::Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            crate::app::duress_pin_collision_check_blocking(
-                                dir.path(),
-                                &duress_pin,
-                            )
+                            crate::app::duress_pin_collision_check_blocking(dir.path(), &duress_pin)
                         })
                         .await
-                        .unwrap_or_else(|err| {
-                            Err(format!("Couldn't verify the duress PIN: {err}"))
-                        })
+                        .unwrap_or_else(|err| Err(format!("Couldn't verify the duress PIN: {err}")))
                     },
                     move |res| {
                         Message::View(view::Message::ConnectAccount(
@@ -4738,7 +4733,17 @@ fn validate_enroll_step(e: &DuressEnrollState) -> Result<(), String> {
     use crate::services::duress::enroll;
     match e.step {
         DuressEnrollStep::SetDuressPin => {
-            enroll::validate_duress_pin(&e.duress_pin, &e.duress_pin_confirm)
+            // The open Cube's real unlock PIN, in plaintext, from the session
+            // that unlocked it. This is the *only* regular PIN available as a
+            // plaintext — there are no stored PIN hashes any more — and it is
+            // the one the user could mistype. `None` makes the validator refuse
+            // rather than skip the rule; see `validate_duress_pin`.
+            let regular = crate::app::session::current_pin();
+            enroll::validate_duress_pin(
+                &e.duress_pin,
+                &e.duress_pin_confirm,
+                regular.as_ref().map(|p| p.as_str()),
+            )
         }
         DuressEnrollStep::SetAllClear => enroll::validate_all_clear(&e.all_clear, &e.duress_pin),
         DuressEnrollStep::SetCrkPassword => {
@@ -5423,7 +5428,23 @@ mod duress_enroll_tests {
         // Confirmation still empty → mismatch.
         assert!(validate_enroll_step(&s).is_err());
         s.duress_pin_confirm = "1235".to_string();
+
+        // With no Cube open there is no regular PIN to measure against, and the
+        // I3 distance rule now **fails closed** rather than skipping — so this
+        // step refuses here. Silently accepting would be the rule not existing.
+        let err = validate_enroll_step(&s).unwrap_err();
+        assert!(err.contains("re-open the Cube"), "{}", err);
+
+        // With a session open, the same PIN is judged on its distance from that
+        // Cube's real one.
+        crate::app::session::open("cube-a", zeroize::Zeroizing::new("8888".to_string()));
         assert!(validate_enroll_step(&s).is_ok());
+        crate::app::session::open("cube-a", zeroize::Zeroizing::new("1234".to_string()));
+        assert!(
+            validate_enroll_step(&s).is_err(),
+            "1235 is one keystroke from 1234 and must be refused"
+        );
+        crate::app::session::close();
     }
 
     #[test]

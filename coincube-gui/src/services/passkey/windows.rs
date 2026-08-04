@@ -21,16 +21,22 @@
 //! 25H2 — this returns a clear [`Capability::Unavailable`] and the caller falls
 //! back to PIN + device secret. It must never guess and produce a wrong seed.
 //!
-//! # Unverified on hardware
+//! # Unverified — and not even compiled
 //!
-//! This module has not been run against a real 25H2 machine. The version gate
-//! is written so that a machine below the floor gets a capability error rather
-//! than a crash, but the register/assert round trip above the floor is
-//! documentation-faith until someone runs it. Do not enable
+//! This module is `#[cfg(windows)]`, so nothing in the macOS/Linux build ever
+//! type-checks it. **A Windows CI job (`cargo check --target
+//! x86_64-pc-windows-msvc`) is the first thing this needs** — until one exists,
+//! every change here is unchecked by anything but review, and a dangling-pointer
+//! bug already got through that way once (see the note in [`register`]).
+//!
+//! Beyond compilation: it has not been run against a real 25H2 machine. The
+//! version gate is written so that a machine below the floor gets a capability
+//! error rather than a crash, but the register/assert round trip above the floor
+//! is documentation-faith until someone runs it. Do not enable
 //! `COINCUBE_ENABLE_PASSKEY` on Windows before that happens.
 
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, NTE_NOT_SUPPORTED, NTE_USER_CANCELLED};
 use windows::Win32::Networking::WindowsWebServices::*;
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 use zeroize::Zeroizing;
@@ -113,10 +119,13 @@ fn parent_window() -> HWND {
 /// Register a new device-bound passkey and return its PRF output.
 ///
 /// Device-bound is requested explicitly via
-/// `WEBAUTHN_AUTHENTICATOR_ATTACHMENT_PLATFORM` plus
-/// `bPreferResidentKey`. On Windows, platform credentials are Hello-resident
-/// and do not sync — which is the property the design needs — but that is
-/// still a claim to verify on real hardware, not to assert from docs.
+/// `WEBAUTHN_AUTHENTICATOR_ATTACHMENT_PLATFORM` plus `bRequireResidentKey`. On
+/// Windows, platform credentials are Hello-resident and do not sync — which is
+/// the property the design needs — but that is still a claim to verify on real
+/// hardware, not to assert from docs.
+///
+/// PRF is requested via `bEnablePrf` and **confirmed** from the attestation's
+/// `bPrfEnabled` before the credential is accepted.
 pub fn register(rp_id: &str, rp_name: &str, user_id: &[u8], user_name: &str) -> NativeOutcome {
     match capability() {
         Capability::Available { .. } => {}
@@ -126,9 +135,16 @@ pub fn register(rp_id: &str, rp_name: &str, user_id: &[u8], user_name: &str) -> 
         return NativeOutcome::Error("Missing user id for passkey registration".to_string());
     }
 
+    // Every wide string handed to the API must outlive the call. `wide` returns
+    // an owned `Vec<u16>`, so writing `PCWSTR(wide("…").as_ptr())` inline stores
+    // a pointer into a buffer that is freed at the end of that same statement —
+    // the struct then carries a dangling pointer into the Windows API. Bind them
+    // all here, where they live to the end of the function.
     let rp_id_w = wide(rp_id);
     let rp_name_w = wide(rp_name);
     let user_name_w = wide(user_name);
+    let credential_type_w = wide("public-key");
+    let hash_alg_w = wide("SHA-256");
 
     let mut challenge = [0u8; 32];
     {
@@ -158,7 +174,7 @@ pub fn register(rp_id: &str, rp_name: &str, user_id: &[u8], user_name: &str) -> 
         // authenticator from picking something exotic.
         let mut cose_params = [WEBAUTHN_COSE_CREDENTIAL_PARAMETER {
             dwVersion: WEBAUTHN_COSE_CREDENTIAL_PARAMETER_CURRENT_VERSION,
-            pwszCredentialType: PCWSTR(wide("public-key").as_ptr()),
+            pwszCredentialType: PCWSTR(credential_type_w.as_ptr()),
             lAlg: WEBAUTHN_COSE_ALGORITHM_ECDSA_P256_WITH_SHA256,
         }];
         let cose = WEBAUTHN_COSE_CREDENTIAL_PARAMETERS {
@@ -171,17 +187,8 @@ pub fn register(rp_id: &str, rp_name: &str, user_id: &[u8], user_name: &str) -> 
             dwVersion: WEBAUTHN_CLIENT_DATA_CURRENT_VERSION,
             cbClientDataJSON: client_data_json.len() as u32,
             pbClientDataJSON: client_data_json.as_ptr() as *mut u8,
-            pwszHashAlgId: PCWSTR(wide("SHA-256").as_ptr()),
+            pwszHashAlgId: PCWSTR(hash_alg_w.as_ptr()),
         };
-
-        // The "Enable PRF" make-credential extension (API ≥ 6). Registration
-        // only turns PRF *on*; the salt is evaluated at assertion time.
-        let mut enable_prf: u8 = 1;
-        let mut extensions = [WEBAUTHN_EXTENSION {
-            pwszExtensionIdentifier: PCWSTR(wide(WEBAUTHN_EXTENSIONS_IDENTIFIER_PRF).as_ptr()),
-            cbExtension: std::mem::size_of::<u8>() as u32,
-            pvExtension: &mut enable_prf as *mut u8 as *mut core::ffi::c_void,
-        }];
 
         let mut options = WEBAUTHN_AUTHENTICATOR_MAKE_CREDENTIAL_OPTIONS {
             dwVersion: WEBAUTHN_AUTHENTICATOR_MAKE_CREDENTIAL_OPTIONS_CURRENT_VERSION,
@@ -191,12 +198,17 @@ pub fn register(rp_id: &str, rp_name: &str, user_id: &[u8], user_name: &str) -> 
             // different device.
             dwAuthenticatorAttachment: WEBAUTHN_AUTHENTICATOR_ATTACHMENT_PLATFORM,
             bRequireResidentKey: windows::Win32::Foundation::TRUE,
-            dwUserVerificationRequirement:
-                WEBAUTHN_USER_VERIFICATION_REQUIREMENT_REQUIRED,
-            Extensions: WEBAUTHN_EXTENSIONS {
-                cExtensions: extensions.len() as u32,
-                pExtensions: extensions.as_mut_ptr(),
-            },
+            dwUserVerificationRequirement: WEBAUTHN_USER_VERIFICATION_REQUIREMENT_REQUIRED,
+            // PRF is a **dedicated field** on this struct, not an extension.
+            //
+            // This previously built a `WEBAUTHN_EXTENSIONS` array keyed by
+            // `WEBAUTHN_EXTENSIONS_IDENTIFIER_PRF` — a constant that does not
+            // exist in `windows` 0.61 (only `…_HMAC_SECRET`, `…_CRED_BLOB`,
+            // `…_CRED_PROTECT` and `…_MIN_PIN_LENGTH` do), so the file did not
+            // compile on Windows at all. The correct API is `bEnablePrf`,
+            // added alongside `WEBAUTHN_AUTHENTICATOR_MAKE_CREDENTIAL_OPTIONS`
+            // version 7.
+            bEnablePrf: windows::Win32::Foundation::TRUE,
             ..Default::default()
         };
 
@@ -220,8 +232,23 @@ pub fn register(rp_id: &str, rp_name: &str, user_id: &[u8], user_name: &str) -> 
             attestation.cbCredentialId as usize,
         )
         .to_vec();
+        // The attestation reports whether the authenticator actually turned PRF
+        // on — asking for it is not the same as getting it. Refuse here rather
+        // than at first unlock: a credential without PRF cannot derive the seed,
+        // and discovering that later means the user already has a Cube they
+        // cannot open. Same principle as the FIDO2 backend's `hmac-secret`
+        // check at enrolment.
+        let prf_enabled = attestation.bPrfEnabled.as_bool();
 
         WebAuthNFreeCredentialAttestation(Some(credential));
+
+        if !prf_enabled {
+            return NativeOutcome::Error(
+                "Windows Hello created the passkey but didn't enable the key material \
+                 Coincube needs (PRF). This Cube was not created."
+                    .to_string(),
+            );
+        }
 
         // Registration does not return PRF output — only "PRF is enabled". Run
         // an assertion immediately to obtain it, exactly as the credential's
@@ -250,7 +277,10 @@ pub fn assert(rp_id: &str, credential_id: &[u8]) -> NativeOutcome {
         Capability::Unavailable(why) => return NativeOutcome::Error(why),
     }
 
+    // Same lifetime requirement as `register` — see the note there.
     let rp_id_w = wide(rp_id);
+    let credential_type_w = wide("public-key");
+    let hash_alg_w = wide("SHA-256");
     let mut challenge = [0u8; 32];
     {
         use rand::RngCore;
@@ -263,25 +293,25 @@ pub fn assert(rp_id: &str, credential_id: &[u8]) -> NativeOutcome {
             dwVersion: WEBAUTHN_CLIENT_DATA_CURRENT_VERSION,
             cbClientDataJSON: client_data_json.len() as u32,
             pbClientDataJSON: client_data_json.as_ptr() as *mut u8,
-            pwszHashAlgId: PCWSTR(wide("SHA-256").as_ptr()),
+            pwszHashAlgId: PCWSTR(hash_alg_w.as_ptr()),
         };
 
         let mut allow_entry = WEBAUTHN_CREDENTIAL_EX {
             dwVersion: WEBAUTHN_CREDENTIAL_EX_CURRENT_VERSION,
             cbId: credential_id.len() as u32,
             pbId: credential_id.as_ptr() as *mut u8,
-            pwszCredentialType: PCWSTR(wide("public-key").as_ptr()),
+            pwszCredentialType: PCWSTR(credential_type_w.as_ptr()),
             dwTransports: WEBAUTHN_CTAP_TRANSPORT_INTERNAL,
         };
         let mut allow_ptrs = [&mut allow_entry as *mut WEBAUTHN_CREDENTIAL_EX];
-        let allow_list = WEBAUTHN_CREDENTIAL_LIST {
+        let mut allow_list = WEBAUTHN_CREDENTIAL_LIST {
             cCredentials: allow_ptrs.len() as u32,
             ppCredentials: allow_ptrs.as_mut_ptr(),
         };
 
-        // `pPRFGlobalEval` (API ≥ 8): one salt, applied to whichever credential
-        // answers. `second` is deliberately unused — the PRF domain registry
-        // specifies `first` only.
+        // The global PRF salt (API ≥ 8): one salt, applied to whichever
+        // credential answers. `second` is deliberately unused — the PRF domain
+        // registry specifies `first` only.
         let mut global_eval = WEBAUTHN_HMAC_SECRET_SALT {
             cbFirst: super::PRF_SALT.len() as u32,
             pbFirst: super::PRF_SALT.as_ptr() as *mut u8,
@@ -289,14 +319,30 @@ pub fn assert(rp_id: &str, credential_id: &[u8]) -> NativeOutcome {
             pbSecond: std::ptr::null_mut(),
         };
 
+        // `pHmacSecretSaltValues` takes a `WEBAUTHN_HMAC_SECRET_SALT_VALUES`,
+        // which *wraps* the salt in `pGlobalHmacSalt` — it is not the salt
+        // struct itself. Passing the salt directly (behind an untyped
+        // `as *mut _`) meant the API read `cbFirst`/`pbFirst` as if they were
+        // `pGlobalHmacSalt`/`cCredWithHmacSecretSaltList` and dereferenced a
+        // garbage pointer.
+        //
+        // The double `as *mut _ as *mut _` cast is what hid it: it makes the
+        // field accept any pointer, so even a Windows build would have compiled
+        // this happily. Every pointer here is now typed, and the compiler
+        // checks the shape.
+        let mut salt_values = WEBAUTHN_HMAC_SECRET_SALT_VALUES {
+            pGlobalHmacSalt: &mut global_eval,
+            cCredWithHmacSecretSaltList: 0,
+            pCredWithHmacSecretSaltList: std::ptr::null_mut(),
+        };
+
         let mut options = WEBAUTHN_AUTHENTICATOR_GET_ASSERTION_OPTIONS {
             dwVersion: WEBAUTHN_AUTHENTICATOR_GET_ASSERTION_OPTIONS_CURRENT_VERSION,
             dwTimeoutMilliseconds: 120_000,
             dwAuthenticatorAttachment: WEBAUTHN_AUTHENTICATOR_ATTACHMENT_PLATFORM,
-            dwUserVerificationRequirement:
-                WEBAUTHN_USER_VERIFICATION_REQUIREMENT_REQUIRED,
-            pAllowCredentialList: &allow_list as *const _ as *mut _,
-            pHmacSecretSaltValues: &mut global_eval as *mut _ as *mut _,
+            dwUserVerificationRequirement: WEBAUTHN_USER_VERIFICATION_REQUIREMENT_REQUIRED,
+            pAllowCredentialList: &mut allow_list,
+            pHmacSecretSaltValues: &mut salt_values,
             ..Default::default()
         };
 
@@ -349,14 +395,20 @@ fn client_data_json(challenge: &[u8; 32], rp_id: &str, ty: &str) -> Vec<u8> {
 /// distinct from "it failed" — a cancel is not an error the user should be
 /// told to report.
 fn describe_hresult(hr: windows::core::HRESULT) -> String {
-    const NTE_USER_CANCELLED: i32 = 0x8009_0035_u32 as i32;
-    const NTE_NOT_SUPPORTED: i32 = 0x8009_002D_u32 as i32;
-    match hr.0 {
-        NTE_USER_CANCELLED => "Passkey prompt cancelled.".to_string(),
-        NTE_NOT_SUPPORTED => {
-            "Windows Hello on this system doesn't support what Coincube needs.".to_string()
-        }
-        other => format!("Windows Hello returned an error (0x{other:08X})."),
+    // Use the crate's constants, not transcribed hex.
+    //
+    // These were hardcoded, and both were wrong — `0x80090035` for
+    // `NTE_USER_CANCELLED` (really `0x80090036`) and `0x8009002D` for
+    // `NTE_NOT_SUPPORTED` (really `0x80090029`). Neither arm ever matched, so a
+    // user who simply dismissed the Windows Hello prompt was shown
+    // "Windows Hello returned an error (0x80090036)" — a scary hex code for a
+    // deliberate action, and unactionable telemetry for everyone else.
+    if hr == NTE_USER_CANCELLED {
+        "Passkey prompt cancelled.".to_string()
+    } else if hr == NTE_NOT_SUPPORTED {
+        "Windows Hello on this system doesn't support what Coincube needs.".to_string()
+    } else {
+        format!("Windows Hello returned an error (0x{:08X}).", hr.0)
     }
 }
 

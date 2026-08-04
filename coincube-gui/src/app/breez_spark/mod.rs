@@ -59,23 +59,28 @@ pub async fn load_spark_client(
         _ => return Err(SparkLoadError::NetworkNotSupported(network)),
     }
 
-    // Load the specific signer by fingerprint, decrypting the mnemonic
-    // with the PIN.
-    let signer = MasterSigner::from_datadir_by_fingerprint(
-        datadir,
-        network,
-        spark_signer_fingerprint,
-        Some(password),
-        cube_id,
-    )
-    .map_err(|e| match e {
-        coincube_core::signer::SignerError::MnemonicStorage(io_err)
-            if io_err.kind() == std::io::ErrorKind::NotFound =>
-        {
-            SparkLoadError::SignerNotFound(spark_signer_fingerprint)
-        }
-        _ => SparkLoadError::SignerError(e.to_string()),
-    })?;
+    // Prefer the signer the unlock already decrypted — same reasoning as the
+    // Liquid loader. Spark runs immediately after it, so without this a single
+    // unlock paid three full Argon2id derivations instead of one.
+    let cached = crate::app::session::unlocked_signer(cube_id, spark_signer_fingerprint);
+    let signer = match cached {
+        Some(signer) => signer,
+        None => MasterSigner::from_datadir_by_fingerprint(
+            datadir,
+            network,
+            spark_signer_fingerprint,
+            Some(password),
+            cube_id,
+        )
+        .map_err(|e| match e {
+            coincube_core::signer::SignerError::MnemonicStorage(io_err)
+                if io_err.kind() == std::io::ErrorKind::NotFound =>
+            {
+                SparkLoadError::SignerNotFound(spark_signer_fingerprint)
+            }
+            _ => SparkLoadError::SignerError(e.to_string()),
+        })?,
+    };
 
     // Extract the mnemonic as a Zeroizing<String> so the buffer is
     // scrubbed after the bridge has accepted it.

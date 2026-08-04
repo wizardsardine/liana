@@ -13,7 +13,7 @@ use coincube_ui::{
 
 use crate::app::settings::CubeSettings;
 use crate::pin_input;
-use crate::services::unlock::{self, PinOutcome, UnlockError};
+use crate::services::unlock::{self, PinOutcome};
 
 pub struct PinEntry {
     cube: CubeSettings,
@@ -160,22 +160,42 @@ impl PinEntry {
                         tokio::task::spawn_blocking(move || {
                             let loc = unlock::CubeLocation::new(&root, &cube);
                             match unlock::unlock_blocking(&loc, &pin) {
-                                // The signer this produced is deliberately
-                                // dropped here rather than carried in the
-                                // message; the loader re-opens it once, on the
-                                // blocking pool, alongside the Breez/Spark
-                                // load that needs it anyway.
-                                Ok(PinOutcome::Unlock(_)) => Ok(Verdict::Unlock),
+                                Ok(PinOutcome::Unlock(signer)) => {
+                                    // Verifying the PIN *was* the decryption, so
+                                    // the signer is already in hand. Hand it to
+                                    // the session rather than dropping it: the
+                                    // Liquid and Spark loaders run next and
+                                    // would otherwise each re-run Argon2id at
+                                    // 256 MiB, turning one ~831 ms derivation
+                                    // into three.
+                                    //
+                                    // It goes via the session, not the message,
+                                    // because iced messages must be `Clone` and
+                                    // get cloned freely — each copy would be
+                                    // another master seed on the heap.
+                                    let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
+                                    let fingerprint = signer.fingerprint(&secp);
+                                    crate::app::session::store_unlocked_signer(
+                                        &cube.id,
+                                        fingerprint,
+                                        *signer,
+                                    );
+                                    Ok(Verdict::Unlock)
+                                }
                                 Ok(PinOutcome::Duress) => Ok(Verdict::Duress),
                                 Ok(PinOutcome::Wrong) => Ok(Verdict::Wrong),
-                                // A Cube with no PIN-protected seed never shows
-                                // this screen, so reaching here means its seed
-                                // went missing between the launcher and now.
-                                // Reject rather than let arbitrary input
-                                // through — the old code returned success here
-                                // (PR 4 / I1).
-                                Err(UnlockError::NoPinConfigured) => Ok(Verdict::Wrong),
-                                // Keystore problems are NOT wrong PINs (I7).
+                                // Everything else — a missing seed, a missing
+                                // keyring entry, an unreachable keychain — is an
+                                // operational failure, not a wrong PIN (I7).
+                                //
+                                // `NoPinConfigured` in particular used to be
+                                // reported as `Wrong`, which told the user their
+                                // (correct) PIN was incorrect *and* charged them
+                                // a throttle penalty for a Cube whose seed
+                                // simply is not on this device. The input is
+                                // still rejected — it is never treated as a
+                                // successful unlock (PR 4 / I1) — but it is not
+                                // a PIN attempt and must not be counted as one.
                                 Err(e) => Err(e.to_string()),
                             }
                         })

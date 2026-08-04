@@ -1528,7 +1528,8 @@ mod seed_only_install_tests {
         // First attempt stores the seed; a retry (same signer + PIN, e.g. after
         // a mid-flow kill) hits `AlreadyExists` and must succeed because the
         // on-disk seed verifies against the recovery fingerprint.
-        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810", "cube-a", None).unwrap();
+        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810", "cube-a", None)
+            .unwrap();
         persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810", "cube-a", None)
             .expect("retry with the matching PIN continues past AlreadyExists");
     }
@@ -1541,9 +1542,11 @@ mod seed_only_install_tests {
         // Seed stored under one PIN; retry under a *different* PIN hits
         // `AlreadyExists`, the fingerprint verification fails to decrypt, and we
         // surface an actionable conflict error rather than continuing.
-        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810", "cube-a", None).unwrap();
-        let err = persist_seed_only_install(&signer, &dir, Network::Bitcoin, "999999", "cube-a", None)
-            .expect_err("a conflicting recovery PIN must error");
+        persist_seed_only_install(&signer, &dir, Network::Bitcoin, "246810", "cube-a", None)
+            .unwrap();
+        let err =
+            persist_seed_only_install(&signer, &dir, Network::Bitcoin, "999999", "cube-a", None)
+                .expect_err("a conflicting recovery PIN must error");
         match err {
             Error::Unexpected(msg) => assert!(
                 msg.contains("Existing seed file conflicted"),

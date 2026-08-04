@@ -209,6 +209,40 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// Guesses must accumulate across *every* surface that checks the PIN, not
+    /// just the unlock screen.
+    ///
+    /// The Settings → Backup Master Seed and Recovery Kit flows also decrypt the
+    /// seed with a user-supplied PIN. They sit behind an unlocked Cube, so they
+    /// are not the laptop-thief case — but they are the route to the
+    /// *permanent* secret, and leaving either unthrottled would mean the
+    /// counter could be sidestepped by guessing at a different door.
+    #[test]
+    fn the_counter_is_shared_across_pin_surfaces() {
+        let root = tmp("shared");
+
+        // Three failures anywhere put the Cube into lockout...
+        let mut st = ThrottleState::load(&root);
+        for _ in 0..3 {
+            st.record_failure(&root, "cube-a");
+        }
+
+        // ...and a *different* surface, loading the state fresh, sees it.
+        let seen_elsewhere = ThrottleState::load(&root).remaining_lockout("cube-a");
+        assert!(
+            seen_elsewhere > Duration::ZERO,
+            "a second PIN surface would have offered unlimited fresh guesses"
+        );
+
+        // A success anywhere clears it for everyone.
+        ThrottleState::load(&root).record_success(&root, "cube-a");
+        assert_eq!(
+            ThrottleState::load(&root).remaining_lockout("cube-a"),
+            Duration::ZERO
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn cubes_are_throttled_independently() {
         let root = tmp("independent");

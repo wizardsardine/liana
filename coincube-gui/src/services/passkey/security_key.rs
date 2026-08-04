@@ -37,8 +37,11 @@
 
 use ctap_hid_fido2::fidokey::{
     get_assertion::get_assertion_params::Extension as AssertionExtension,
-    make_credential::make_credential_params::Extension as CredentialExtension,
+    make_credential::make_credential_params::{
+        Extension as CredentialExtension, MakeCredentialArgsBuilder,
+    },
 };
+use ctap_hid_fido2::public_key_credential_user_entity::PublicKeyCredentialUserEntity;
 use ctap_hid_fido2::{Cfg, FidoKeyHidFactory};
 use zeroize::Zeroizing;
 
@@ -48,7 +51,19 @@ use zeroize::Zeroizing;
 /// string, and nothing here does a web request. It is stable because changing
 /// it makes the token refuse to produce the same credential.
 pub const RP_ID: &str = "coincube.io";
+/// Human-readable relying-party name. Recorded for parity with the platform
+/// backends; `ctap-hid-fido2`'s make-credential builder takes only an RP *id*,
+/// so there is nowhere to pass this at the CTAP2 layer.
 pub const RP_NAME: &str = "COINCUBE";
+
+/// The `user` sent with make-credential.
+///
+/// Split out so the mapping is testable: passing `None` here is invisible at
+/// compile time and only shows up as an unlabelled prompt on real hardware,
+/// which is the one place this code cannot be exercised.
+fn user_entity(user_id: &[u8], user_name: &str) -> PublicKeyCredentialUserEntity {
+    PublicKeyCredentialUserEntity::new(Some(user_id), Some(user_name), Some(user_name))
+}
 
 /// What a connected key can do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,8 +107,10 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::KeyAbsent(detail) =>
-                write!(f, "Couldn't find your security key ({detail}). Plug it in and try again."),
+            Self::KeyAbsent(detail) => write!(
+                f,
+                "Couldn't find your security key ({detail}). Plug it in and try again."
+            ),
             Self::NoHmacSecret => write!(
                 f,
                 "This security key doesn't support the hmac-secret extension, which \
@@ -134,9 +151,9 @@ fn classify(detail: &str) -> Error {
 pub fn capability() -> Capability {
     let cfg = Cfg::init();
     match FidoKeyHidFactory::create(&cfg) {
-        Ok(device) => match device.enable_info_option(
-            &ctap_hid_fido2::fidokey::get_info::InfoOption::CredMgmt,
-        ) {
+        Ok(device) => match device
+            .enable_info_option(&ctap_hid_fido2::fidokey::get_info::InfoOption::CredMgmt)
+        {
             // We only need the device to answer; `hmac-secret` presence is
             // checked against the reported extension list below.
             Ok(_) | Err(_) => match device.get_info() {
@@ -179,8 +196,27 @@ pub fn register(pin: Option<&str>, user_id: &[u8], user_name: &str) -> Result<Ou
     let challenge = random_challenge();
     let extensions = vec![CredentialExtension::HmacSecret(Some(true))];
 
+    // Build the args explicitly rather than using
+    // `make_credential_with_extensions`, which has no parameter for the user
+    // entity and therefore leaves it `None`.
+    //
+    // CTAP2 requires a `user` on make-credential, so an absent one is sent as
+    // empty — and empty is what the key and the OS then have to show. A user
+    // with two Cubes enrolled on one security key would get two identical,
+    // unlabelled prompts and no way to tell which Cube is asking.
+    let user = user_entity(user_id, user_name);
+    let mut builder = MakeCredentialArgsBuilder::new(RP_ID, &challenge)
+        .user_entity(&user)
+        .extensions(&extensions);
+    if let Some(pin) = pin {
+        builder = builder.pin(pin);
+    }
+    // Deliberately *not* `.resident_key()`. A discoverable credential would let
+    // the key enumerate Cubes without an allow-list, which we never need — the
+    // credential id is stored in `passkey_metadata` and passed at assertion —
+    // and resident slots are a scarce hardware resource (some keys hold ~25).
     let att = device
-        .make_credential_with_extensions(RP_ID, &challenge, pin, Some(&extensions))
+        .make_credential_with_args(&builder.build())
         .map_err(|e| classify(&e.to_string()))?;
 
     let credential_id = att.credential_descriptor.id.clone();
@@ -189,7 +225,6 @@ pub fn register(pin: Option<&str>, user_id: &[u8], user_name: &str) -> Result<Ou
             "The security key returned an empty credential id.".to_string(),
         ));
     }
-    let _ = (RP_NAME, user_id, user_name);
 
     // Evaluate immediately: registration proves the credential exists, an
     // assertion proves we can actually derive from it. Doing both here means a
@@ -223,6 +258,14 @@ fn evaluate(
     salt.copy_from_slice(super::PRF_SALT);
     let extensions = vec![AssertionExtension::HmacSecret(Some(salt))];
 
+    // `extensios` is not a typo here — it is a typo in `ctap-hid-fido2`, and it
+    // is the only spelling the crate exposes (3.5.10,
+    // `src/fidokey/get_assertion/mod.rs:85`). Correcting it does not compile.
+    //
+    // The trap is that `make_credential_with_extensions` above *is* spelled
+    // correctly, so the two calls disagree by one letter and the wrong one looks
+    // like the mistake. If a future release fixes the name, this call moves with
+    // it; until then, leave it.
     let assertion = device
         .get_assertion_with_extensios(
             RP_ID,
@@ -268,9 +311,15 @@ mod tests {
             classify("no FIDO device found"),
             Error::KeyAbsent(_)
         ));
-        assert_eq!(classify("unsupported extension: hmac-secret"), Error::NoHmacSecret);
+        assert_eq!(
+            classify("unsupported extension: hmac-secret"),
+            Error::NoHmacSecret
+        );
         assert_eq!(classify("CTAP2_ERR_KEEPALIVE_CANCEL"), Error::Cancelled);
-        assert!(matches!(classify("something else went wrong"), Error::Failed(_)));
+        assert!(matches!(
+            classify("something else went wrong"),
+            Error::Failed(_)
+        ));
     }
 
     #[test]
@@ -283,8 +332,37 @@ mod tests {
 
     #[test]
     fn error_copy_tells_the_user_what_to_do() {
-        assert!(Error::KeyAbsent("x".into()).to_string().contains("Plug it in"));
+        assert!(Error::KeyAbsent("x".into())
+            .to_string()
+            .contains("Plug it in"));
         assert!(Error::NoHmacSecret.to_string().contains("FIDO2 key"));
+    }
+
+    /// The credential must carry a real user, not an empty one.
+    ///
+    /// `make_credential_with_extensions` has no user-entity parameter, so it
+    /// left the field `None` and CTAP2 sent an empty `user`. Nothing failed —
+    /// the credential worked — but the key and the OS had nothing to display,
+    /// so two Cubes enrolled on one security key produced two identical,
+    /// unlabelled prompts with no way to tell which was which. The only place
+    /// that is visible is real hardware, which is exactly where this code
+    /// cannot be exercised, so it is asserted here instead.
+    #[test]
+    fn the_credential_carries_the_cube_as_its_user() {
+        let id = b"cube-uuid-bytes";
+        let user = user_entity(id, "My Cube");
+
+        assert_eq!(user.id, id.to_vec(), "an empty user id is unlabelled");
+        assert_eq!(user.name, "My Cube");
+        assert_eq!(
+            user.display_name, "My Cube",
+            "display_name is what the authenticator prompt shows"
+        );
+        assert_ne!(
+            user,
+            PublicKeyCredentialUserEntity::default(),
+            "the default is the empty entity this exists to avoid"
+        );
     }
 
     #[test]

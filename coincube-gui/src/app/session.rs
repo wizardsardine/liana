@@ -1,7 +1,20 @@
 //! Secrets that live for exactly as long as a Cube is unlocked.
 //!
-//! Today that is one thing: the unlock PIN. It is needed after unlock, not
-//! just during it —
+//! Two things: the unlock **PIN**, and the **master signer** that verifying it
+//! produced.
+//!
+//! The signer is here because verifying a PIN *is* decrypting the seed file, so
+//! by the time unlock succeeds the plaintext is already in hand. Dropping it
+//! meant the Liquid and Spark loaders each re-ran Argon2id at 256 MiB
+//! immediately afterwards — three ~831 ms derivations per unlock where one will
+//! do. Caching it is what makes `services::unlock`'s "we do not pay 831 ms
+//! twice" true rather than aspirational.
+//!
+//! It is a cache and never the source of truth: every consumer falls back to
+//! reading the seed file, and two guards (`cube_id` and the signer's
+//! fingerprint) mean it can never answer for a key the caller did not ask for.
+//!
+//! The PIN is needed after unlock, not just during it —
 //!
 //! - the Vault installer has to encrypt the hot signer it generates, and it is
 //!   launched from inside an already-open Cube (`SetupVault`), long after the
@@ -21,16 +34,19 @@
 //!
 //! It is not a widening of the secret's exposure. The decrypted mnemonic
 //! already sits in process memory for the whole session — inside the
-//! `BreezClient`'s signer and inside the Spark bridge subprocess. A 4-digit PIN
-//! alongside it does not change the threat model, and this module is what makes
-//! it possible to *drop* both deterministically on lock.
+//! `BreezClient`'s signer and inside the Spark bridge subprocess — so holding
+//! one more copy here does not change the threat model. What it does change is
+//! that there is now a single place that drops *all* of it deterministically:
+//! [`close`], called on lock, on idle auto-lock, and on duress activation.
 //!
-//! Every accessor returns a `Zeroizing` clone, so callers cannot hold a
-//! reference across a lock.
+//! Accessors hand out owned copies (`Zeroizing` for the PIN, a re-derived
+//! signer), so no caller can hold a reference across a lock.
 
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
+use coincube_core::signer::MasterSigner;
 use zeroize::Zeroizing;
 
 struct Session {
@@ -38,6 +54,19 @@ struct Session {
     /// previously-open Cube can never hand its PIN to a different one.
     cube_id: String,
     pin: Zeroizing<String>,
+    /// The master signer the unlock already decrypted, and the fingerprint it
+    /// belongs to.
+    ///
+    /// Verifying the PIN *is* decrypting the seed file, so by the time unlock
+    /// succeeds the signer is in hand. Throwing it away meant the Liquid and
+    /// Spark loaders each re-ran Argon2id at 256 MiB — three full derivations
+    /// per unlock (~2.5 s) where one will do. Keeping it here is what makes the
+    /// "we don't pay 831 ms twice" claim in `services::unlock` true.
+    ///
+    /// The fingerprint is recorded at store time so a lookup is a comparison
+    /// rather than a fresh secp context, and so a signer can never be handed to
+    /// a caller asking for a different key.
+    signer: Option<(Fingerprint, MasterSigner)>,
     /// Last time the user did something. Drives idle auto-lock.
     last_activity: Instant,
 }
@@ -58,11 +87,66 @@ fn lock_session() -> std::sync::MutexGuard<'static, Option<Session>> {
 /// second Cube without closing the first is not a thing the UI can do, but if
 /// it ever becomes one, the newest wins and the old PIN is zeroized here.
 pub fn open(cube_id: impl Into<String>, pin: Zeroizing<String>) {
-    *lock_session() = Some(Session {
-        cube_id: cube_id.into(),
+    let cube_id = cube_id.into();
+    let mut guard = lock_session();
+    // Re-opening the *same* Cube keeps the signer the unlock already decrypted.
+    // The PIN screen stores it before this runs, and clobbering it here would
+    // silently reinstate the extra 831 ms derivation this exists to avoid.
+    let signer = guard
+        .take()
+        .filter(|s| s.cube_id == cube_id)
+        .and_then(|s| s.signer);
+    *guard = Some(Session {
+        cube_id,
         pin,
+        signer,
         last_activity: Instant::now(),
     });
+}
+
+/// Hand the session the signer that verifying the PIN just produced.
+///
+/// Called from the unlock's blocking task. It goes here rather than through an
+/// iced message because messages must be `Clone` and are cloned freely — every
+/// copy would be another master seed on the heap.
+pub fn store_unlocked_signer(cube_id: &str, fingerprint: Fingerprint, signer: MasterSigner) {
+    let mut guard = lock_session();
+    match guard.as_mut() {
+        // Only ever attach to the session for the Cube it belongs to.
+        Some(s) if s.cube_id == cube_id => s.signer = Some((fingerprint, signer)),
+        // No session yet (the PIN screen stores before `open`): stand one up
+        // holding just the signer. `open` will fill in the PIN and preserve it.
+        _ => {
+            *guard = Some(Session {
+                cube_id: cube_id.to_string(),
+                pin: Zeroizing::new(String::new()),
+                signer: Some((fingerprint, signer)),
+                last_activity: Instant::now(),
+            })
+        }
+    }
+}
+
+/// The already-decrypted signer for `cube_id`, if it is the open Cube *and*
+/// the stored signer is the one the caller is asking for.
+///
+/// Returns an independent copy each call — `try_clone` re-derives from the
+/// mnemonic, which is a BIP-39 seed stretch and a BIP-32 master derivation
+/// (~1 ms), not another Argon2id pass (~831 ms). Callers must fall back to
+/// reading the seed file when this is `None`; it is a cache, never the source
+/// of truth.
+///
+/// The fingerprint check is what makes this safe: a Cube can hold more than one
+/// signer (the master seed and a Vault hot signer), and handing a caller the
+/// wrong one would produce a valid-looking wallet that is not the one it asked
+/// for.
+pub fn unlocked_signer(cube_id: &str, fingerprint: Fingerprint) -> Option<MasterSigner> {
+    lock_session()
+        .as_ref()
+        .filter(|s| s.cube_id == cube_id)
+        .and_then(|s| s.signer.as_ref())
+        .filter(|(fp, _)| *fp == fingerprint)
+        .and_then(|(_, signer)| signer.try_clone().ok())
 }
 
 /// The open Cube's PIN, if `cube_id` is the Cube that is actually open.
@@ -94,9 +178,7 @@ pub fn touch() {
 
 /// How long the open Cube has been idle. `None` when nothing is open.
 pub fn idle_for() -> Option<Duration> {
-    lock_session()
-        .as_ref()
-        .map(|s| s.last_activity.elapsed())
+    lock_session().as_ref().map(|s| s.last_activity.elapsed())
 }
 
 /// Whether a Cube is currently open.
@@ -160,6 +242,101 @@ mod tests {
         open("cube-b", Zeroizing::new("9876".to_string()));
         assert_eq!(pin_for("cube-a"), None);
         assert_eq!(pin_for("cube-b").as_deref(), Some(&"9876".to_string()));
+        close();
+    }
+
+    fn signer() -> (Fingerprint, MasterSigner) {
+        use coincube_core::miniscript::bitcoin::{secp256k1::Secp256k1, Network};
+        let secp = Secp256k1::signing_only();
+        let s = MasterSigner::generate(Network::Bitcoin).unwrap();
+        (s.fingerprint(&secp), s)
+    }
+
+    #[test]
+    fn the_unlocked_signer_round_trips() {
+        let _g = guard();
+        close();
+        let (fp, s) = signer();
+        let words = s.words();
+
+        open("cube-a", Zeroizing::new("1234".to_string()));
+        store_unlocked_signer("cube-a", fp, s);
+
+        let got = unlocked_signer("cube-a", fp).expect("the unlock's signer is reusable");
+        assert_eq!(got.words(), words);
+        // And again — it is a cache, not a one-shot handoff. Liquid and Spark
+        // both need one.
+        assert_eq!(unlocked_signer("cube-a", fp).unwrap().words(), words);
+        close();
+    }
+
+    #[test]
+    fn a_cached_signer_is_never_handed_to_the_wrong_cube_or_key() {
+        // The two guards that make caching a decrypted seed acceptable. Getting
+        // either wrong hands a caller a valid-looking wallet that is not the
+        // one it asked for.
+        let _g = guard();
+        close();
+        let (fp, s) = signer();
+        let (other_fp, _other) = signer();
+
+        open("cube-a", Zeroizing::new("1234".to_string()));
+        store_unlocked_signer("cube-a", fp, s);
+
+        assert!(unlocked_signer("cube-b", fp).is_none(), "wrong Cube");
+        assert!(
+            unlocked_signer("cube-a", other_fp).is_none(),
+            "wrong fingerprint — a Cube can hold a master seed and a Vault hot signer"
+        );
+        close();
+    }
+
+    #[test]
+    fn locking_drops_the_cached_signer() {
+        // Otherwise a locked Cube could be reloaded from cache without anyone
+        // re-entering a PIN, which would make the auto-lock decorative.
+        let _g = guard();
+        close();
+        let (fp, s) = signer();
+        open("cube-a", Zeroizing::new("1234".to_string()));
+        store_unlocked_signer("cube-a", fp, s);
+        assert!(unlocked_signer("cube-a", fp).is_some());
+
+        close();
+        assert!(unlocked_signer("cube-a", fp).is_none());
+    }
+
+    #[test]
+    fn opening_a_different_cube_drops_the_previous_signer() {
+        let _g = guard();
+        close();
+        let (fp, s) = signer();
+        store_unlocked_signer("cube-a", fp, s);
+        open("cube-b", Zeroizing::new("9876".to_string()));
+        assert!(unlocked_signer("cube-a", fp).is_none());
+        close();
+    }
+
+    #[test]
+    fn store_before_open_survives_the_open() {
+        // This is the real ordering: the PIN screen stores the signer from its
+        // blocking task, and `gui::tab` calls `open` afterwards. If `open`
+        // clobbered the signer, the whole optimisation would silently do
+        // nothing — and nothing would fail.
+        let _g = guard();
+        close();
+        let (fp, s) = signer();
+        let words = s.words();
+
+        store_unlocked_signer("cube-a", fp, s);
+        open("cube-a", Zeroizing::new("1234".to_string()));
+
+        assert_eq!(
+            unlocked_signer("cube-a", fp).map(|s| s.words()),
+            Some(words),
+            "`open` dropped the signer the unlock had already decrypted"
+        );
+        assert_eq!(pin_for("cube-a").as_deref(), Some(&"1234".to_string()));
         close();
     }
 

@@ -93,6 +93,84 @@ const KEY_LEN: usize = 32;
 const MIN_V1_LEN: usize = MARKER_LEN + SALT_LEN + NONCE_LEN + TAG_LEN;
 const MIN_V2_LEN: usize = MARKER_LEN + HEADER_LEN + SALT_LEN + NONCE_LEN + TAG_LEN;
 
+/// Every plaintext is padded to this before sealing, so the file's length says
+/// nothing about what is inside it.
+///
+/// # Why
+///
+/// AES-GCM ciphertext is exactly plaintext-length plus a 16-byte tag, and every
+/// other field in the envelope is fixed-size. So without padding `ls -l` reads
+/// out the plaintext length: a 12-word mnemonic (~80–95 bytes), a 24-word
+/// passkey-derived one (~150–215) and the duress marker were each identifiable
+/// on sight. The marker used to compensate with a hand-tuned 93-byte constant
+/// that matched *a common 12-word mnemonic* and nothing else — it was still
+/// distinguishable from a 24-word Cube, and from 12-word Cubes whose words
+/// happened to be shorter or longer.
+///
+/// 256 covers the longest possible 24-word English mnemonic (24 × 8 letters +
+/// 23 spaces = 215) with room for the 10-byte frame, and is far enough from
+/// every real payload that no future mnemonic length pokes back out.
+pub const PADDED_PLAINTEXT_LEN: usize = 256;
+
+/// Frame tag for a padded plaintext.
+///
+/// It sits *inside* the AEAD, so it is unforgeable without the key — the check
+/// on the way out is a format discriminator, not a security boundary. Its job
+/// is to distinguish a padded plaintext from a legacy unpadded one written
+/// before this existed. The non-ASCII bytes guarantee it can never collide with
+/// one: legacy plaintexts are BIP39 mnemonics (lowercase ASCII and spaces) or
+/// the duress marker's ASCII sentence.
+const PAD_MAGIC: &[u8; 8] = b"CCPAD\x00\x01\x00";
+
+/// Magic + a 2-byte big-endian payload length.
+const PAD_PREFIX_LEN: usize = PAD_MAGIC.len() + 2;
+
+/// The largest plaintext that fits one envelope. A 24-word mnemonic — the
+/// longest thing this format carries — needs at most 215.
+pub const MAX_PADDED_PAYLOAD: usize = PADDED_PLAINTEXT_LEN - PAD_PREFIX_LEN;
+
+/// Frame `plaintext` into a fixed-size padded plaintext.
+///
+/// Oversized input is a hard error rather than a silent unpadded fallback. A
+/// fallback would be worse than no padding at all: the one payload that did
+/// not fit would be the one whose length leaked, and nothing would say so. All
+/// three callers today carry a mnemonic or the marker, so this cannot trigger;
+/// if a future caller brings something larger, it fails loudly and whoever
+/// added it gets to decide what the right envelope is.
+fn pad(plaintext: &[u8]) -> Result<Zeroizing<Vec<u8>>, SignerError> {
+    if plaintext.len() > MAX_PADDED_PAYLOAD {
+        return Err(SignerError::EncryptionFailed(format!(
+            "plaintext of {} bytes exceeds the {}-byte padded envelope",
+            plaintext.len(),
+            MAX_PADDED_PAYLOAD
+        )));
+    }
+    let mut out = Zeroizing::new(vec![0u8; PADDED_PLAINTEXT_LEN]);
+    out[..PAD_MAGIC.len()].copy_from_slice(PAD_MAGIC);
+    // `MAX_PADDED_PAYLOAD` is 246, so the cast cannot truncate.
+    out[PAD_MAGIC.len()..PAD_PREFIX_LEN].copy_from_slice(&(plaintext.len() as u16).to_be_bytes());
+    out[PAD_PREFIX_LEN..PAD_PREFIX_LEN + plaintext.len()].copy_from_slice(plaintext);
+    Ok(out)
+}
+
+/// Reverse [`pad`], passing through anything that was not padded.
+///
+/// Legacy v1/v2/v3 files predate the padding and hold a bare mnemonic; they
+/// must keep opening unchanged, which is why an unrecognised frame is returned
+/// as-is rather than rejected. A frame that claims a length running past the
+/// buffer is treated the same way — it cannot be a plaintext this code wrote.
+fn unpad(plaintext: Zeroizing<Vec<u8>>) -> Zeroizing<Vec<u8>> {
+    if plaintext.len() != PADDED_PLAINTEXT_LEN || !plaintext.starts_with(PAD_MAGIC) {
+        return plaintext;
+    }
+    let len =
+        u16::from_be_bytes([plaintext[PAD_MAGIC.len()], plaintext[PAD_MAGIC.len() + 1]]) as usize;
+    if len > MAX_PADDED_PAYLOAD {
+        return plaintext;
+    }
+    Zeroizing::new(plaintext[PAD_PREFIX_LEN..PAD_PREFIX_LEN + len].to_vec())
+}
+
 /// Sanity bounds on the *wire* parameters. A header is attacker-writable
 /// input: without a ceiling, `memory_kib = u32::MAX` asks Argon2 for 4 TiB and
 /// takes the process down. Without a floor, a rewritten header could ask for a
@@ -331,17 +409,21 @@ fn encrypt_with(
     let header = header_bytes(version, KDF_ID_ARGON2ID, params);
     let aad = aad_bytes(&header, cube_id);
 
+    // Seal the padded frame, never the caller's plaintext directly: the
+    // envelope must be one size for every Cube shape. See [`pad`].
+    let padded = pad(plaintext)?;
+
     let ct = cipher
         .encrypt(
             Nonce::from_slice(nonce),
             Payload {
-                msg: plaintext,
+                msg: padded.as_slice(),
                 aad: &aad,
             },
         )
         .map_err(|e| SignerError::EncryptionFailed(e.to_string()))?;
 
-    let mut out = Vec::with_capacity(MIN_V2_LEN + plaintext.len());
+    let mut out = Vec::with_capacity(MIN_V2_LEN + padded.len());
     out.extend_from_slice(marker);
     out.extend_from_slice(&header);
     out.extend_from_slice(salt);
@@ -434,19 +516,25 @@ fn decrypt_v2_or_v3(
     };
 
     if let Ok(pt) = attempt(&aad_bytes(&header, cube_id)) {
-        return Ok(Zeroizing::new(pt));
+        return Ok(unpad(Zeroizing::new(pt)));
     }
 
-    // Fall back to the *unbound* AAD (empty cube_id) and nothing else.
+    // Fall back to the *unbound* AAD (empty cube_id) — **v2 only**.
     //
-    // Some writers legitimately have no Cube id yet — the Vault installer runs
-    // before `find_or_create_cube` mints one — and those files must stay
-    // readable once the Cube exists. This fallback admits exactly those, and
-    // is not a hole: a file sealed to Cube A still fails under Cube B, because
-    // B tries only `B` and `""`, never `A`.
-    if !cube_id.is_empty() {
+    // The fallback exists for one historical reason: the Vault installer could
+    // write a seed before `find_or_create_cube` minted a Cube id, so some v2
+    // files on disk are sealed with an empty binding and must stay readable
+    // once the Cube exists.
+    //
+    // v3 has no such files. It is written only by code that already knows the
+    // Cube id (creation and the post-unlock migration), so an unbound v3 file
+    // cannot legitimately exist. Allowing the fallback there would mean a v3
+    // blob whose AAD binding was stripped still opened — turning a
+    // cube-bound-by-construction format back into an unbound one for anyone who
+    // could re-seal it. Gate it on the version, not on the caller's intent.
+    if version == SEED_FILE_VERSION_V2 && !cube_id.is_empty() {
         if let Ok(pt) = attempt(&aad_bytes(&header, "")) {
-            return Ok(Zeroizing::new(pt));
+            return Ok(unpad(Zeroizing::new(pt)));
         }
     }
 
@@ -497,13 +585,15 @@ fn decrypt_v1(data: &[u8], password: &str) -> Result<Zeroizing<Vec<u8>>, SignerE
         hash_bytes[..KEY_LEN].to_vec()
     });
 
-    let cipher =
-        Aes256Gcm::new_from_slice(&key_bytes).map_err(|_| SignerError::InvalidPassword)?;
+    let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|_| SignerError::InvalidPassword)?;
     let pt = cipher
         .decrypt(Nonce::from_slice(nonce_bytes), ciphertext)
         .map_err(|_| SignerError::InvalidPassword)?;
 
-    Ok(Zeroizing::new(pt))
+    // v1 is decrypt-only and every v1 file on disk predates the padded frame,
+    // so this is a pass-through today. It goes through `unpad` anyway so the
+    // codec has exactly one exit shape and a future re-seal cannot forget it.
+    Ok(unpad(Zeroizing::new(pt)))
 }
 
 #[cfg(test)]
@@ -762,7 +852,11 @@ mod tests {
                 ..MARKER_LEN + HEADER_LEN + SALT_LEN + NONCE_LEN],
             &nonce
         );
-        assert_eq!(blob.len(), MIN_V2_LEN + 3);
+        // The envelope is a constant size regardless of the plaintext — the
+        // 3-byte `b"KAT"` above seals to exactly the same length a 24-word
+        // mnemonic does. This used to be `MIN_V2_LEN + 3`, i.e. the file
+        // length was the plaintext length.
+        assert_eq!(blob.len(), MIN_V2_LEN + PADDED_PLAINTEXT_LEN);
     }
 
     fn secret(byte: u8) -> DeviceSecret {
@@ -811,6 +905,53 @@ mod tests {
         assert!(matches!(missing, SignerError::DeviceSecretRequired));
         assert!(matches!(wrong_pin, SignerError::InvalidPassword));
         assert_ne!(missing.to_string(), wrong_pin.to_string());
+    }
+
+    /// The unbound-AAD fallback must never fire for v3.
+    ///
+    /// v2 has legitimately-unbound files on disk (the installer could write
+    /// before a Cube id existed), so it keeps the fallback. v3 is only ever
+    /// written by code that knows the Cube id, so an unbound v3 file cannot
+    /// legitimately exist — and accepting one would mean an attacker who could
+    /// re-seal a blob with an empty binding gets it opened under any Cube.
+    #[test]
+    fn v3_never_accepts_an_unbound_aad() {
+        let s = secret(0xAB);
+
+        // Forge exactly what the fallback would admit: a v3 file sealed with an
+        // empty cube_id. This is not reachable through `encrypt`, which is the
+        // point — it is the shape a stripped binding would produce.
+        let salt = [0x33u8; SALT_LEN];
+        let nonce = [0x44u8; NONCE_LEN];
+        let params = KdfParams::TEST;
+        let key = derive_key_v3("1234", &salt, params, &s, "").unwrap();
+        let cipher = Aes256Gcm::new_from_slice(key.as_ref()).unwrap();
+        let header = header_bytes(SEED_FILE_VERSION_V3, KDF_ID_ARGON2ID, params);
+        let ct = cipher
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: MNEMONIC.as_bytes(),
+                    aad: &aad_bytes(&header, ""),
+                },
+            )
+            .unwrap();
+        let mut forged = Vec::new();
+        forged.extend_from_slice(ENCRYPTED_V3_MARKER);
+        forged.extend_from_slice(&header);
+        forged.extend_from_slice(&salt);
+        forged.extend_from_slice(&nonce);
+        forged.extend_from_slice(&ct);
+
+        // A caller naming a Cube must not get it open via the fallback.
+        assert!(matches!(
+            decrypt_with(&forged, "1234", "cube-a", Some(&s)),
+            Err(SignerError::InvalidPassword)
+        ));
+
+        // The equivalent v2 file *does* open — that path is retained on purpose.
+        let v2 = encrypt_v2(MNEMONIC.as_bytes(), "1234", "").unwrap();
+        assert!(decrypt_with(&v2, "1234", "cube-a", None).is_ok());
     }
 
     #[test]
@@ -868,5 +1009,102 @@ mod tests {
         let a = encrypt_v2(MNEMONIC.as_bytes(), "1234", "cube-a").unwrap();
         let b = encrypt_v2(MNEMONIC.as_bytes(), "1234", "cube-a").unwrap();
         assert_ne!(a, b, "two sealings collided — RNG not feeding salt/nonce");
+    }
+
+    /// **The length-oracle property.**
+    ///
+    /// Every payload this codec carries seals to exactly one size, so a file's
+    /// length says nothing about whether it holds a 12-word mnemonic, a
+    /// 24-word one, or the duress marker. The 24-word case is the one the old
+    /// hand-tuned 93-byte marker constant could never match.
+    #[test]
+    fn every_payload_seals_to_one_length() {
+        // Longest realistic 24-word mnemonic: eight-letter words throughout.
+        let words_24 = vec!["shoulder"; 24].join(" ");
+        assert_eq!(words_24.len(), 215, "24-word worst case changed");
+
+        let payloads: [&[u8]; 5] = [
+            MNEMONIC.as_bytes(),
+            words_24.as_bytes(),
+            b"coincube/duress-marker/v1 -- this file is not a seed phrase",
+            b"",
+            &[0u8; MAX_PADDED_PAYLOAD],
+        ];
+
+        let mut lengths = std::collections::BTreeSet::new();
+        for payload in payloads {
+            let v2 = encrypt_v2(payload, "1234", "cube-a").unwrap();
+            let v3 = encrypt(payload, "1234", "cube-a", Some(&secret(0x11))).unwrap();
+            assert_eq!(
+                v2.len(),
+                v3.len(),
+                "v2 and v3 must be the same size for the same payload"
+            );
+            lengths.insert(v2.len());
+
+            // …and it still round-trips.
+            let out = decrypt_with(&v2, "1234", "cube-a", None).unwrap();
+            assert_eq!(
+                out.as_slice(),
+                payload,
+                "padding must be transparent to the caller"
+            );
+        }
+        assert_eq!(
+            lengths.len(),
+            1,
+            "sealed length still varies with the plaintext: {:?}",
+            lengths
+        );
+    }
+
+    /// Oversized input fails loudly rather than silently seal unpadded — a
+    /// silent fallback would leak the length of exactly the payload that did
+    /// not fit.
+    #[test]
+    fn oversized_plaintext_is_refused() {
+        let too_big = vec![0u8; MAX_PADDED_PAYLOAD + 1];
+        assert!(
+            matches!(
+                encrypt_v2(&too_big, "1234", "cube-a"),
+                Err(SignerError::EncryptionFailed(_))
+            ),
+            "a payload that does not fit the envelope must be refused"
+        );
+    }
+
+    /// A legacy file written before padding existed still opens, and its
+    /// plaintext comes back untouched.
+    #[test]
+    fn unpadded_legacy_plaintext_passes_through() {
+        // `unpad` is what sees legacy content; exercise it directly with the
+        // shapes that actually exist on disk.
+        let bare = Zeroizing::new(MNEMONIC.as_bytes().to_vec());
+        assert_eq!(unpad(bare).as_slice(), MNEMONIC.as_bytes());
+
+        // Right length, wrong magic — a mnemonic that happens to be 256 bytes.
+        let coincidence = Zeroizing::new(vec![b'a'; PADDED_PLAINTEXT_LEN]);
+        assert_eq!(unpad(coincidence).len(), PADDED_PLAINTEXT_LEN);
+
+        // Right magic, but a length field running off the end: not something
+        // `pad` can produce, so it is passed through rather than trusted.
+        let mut lying = vec![0u8; PADDED_PLAINTEXT_LEN];
+        lying[..PAD_MAGIC.len()].copy_from_slice(PAD_MAGIC);
+        lying[PAD_MAGIC.len()..PAD_PREFIX_LEN].copy_from_slice(&u16::MAX.to_be_bytes());
+        assert_eq!(unpad(Zeroizing::new(lying)).len(), PADDED_PLAINTEXT_LEN);
+    }
+
+    /// The frame tag cannot collide with a real legacy plaintext.
+    #[test]
+    fn pad_magic_cannot_appear_in_a_legacy_plaintext() {
+        // Legacy plaintexts are BIP39 mnemonics and the marker sentence — all
+        // printable ASCII. The magic is not.
+        assert!(
+            PAD_MAGIC
+                .iter()
+                .any(|b| !b.is_ascii_graphic() && *b != b' '),
+            "the frame tag must contain a byte no ASCII plaintext can hold"
+        );
+        assert!(!MNEMONIC.as_bytes().starts_with(PAD_MAGIC));
     }
 }

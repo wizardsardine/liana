@@ -220,9 +220,7 @@ unsafe fn extract_outcome(authorization: &ASAuthorization) -> NativeOutcome {
         let credential_id = unsafe { reg.credentialID() }.to_vec();
 
         let Some(prf) = (unsafe { reg.prf() }) else {
-            return NativeOutcome::Error(
-                "PRF extension not supported by this passkey".to_string(),
-            );
+            return NativeOutcome::Error("PRF extension not supported by this passkey".to_string());
         };
         let Some(first) = (unsafe { prf.first() }) else {
             return NativeOutcome::Error("PRF output missing first value".to_string());
@@ -245,7 +243,9 @@ unsafe fn extract_outcome(authorization: &ASAuthorization) -> NativeOutcome {
             // never a silently different seed — deriving from anything else
             // here would produce a valid-looking wallet that is not the user's.
             return NativeOutcome::Error(
-                "This passkey can't produce the key material Coincube needs (the PRF                  extension is unavailable). Restore this Cube from your Recovery Kit or                  written seed phrase."
+                "This passkey can't produce the key material Coincube needs (the PRF \
+                 extension is unavailable). Restore this Cube from your Recovery Kit \
+                 or written seed phrase."
                     .to_string(),
             );
         };
@@ -367,7 +367,8 @@ impl NativePasskeyCeremony {
             .ok_or_else(|| "Passkey ceremony must be started on the main thread".to_string())?;
         if credential_id.is_empty() {
             return Err(
-                "This Cube's passkey credential ID is missing, so its passkey can't be                  offered. Restore from your Recovery Kit or written seed phrase."
+                "This Cube's passkey credential ID is missing, so its passkey can't be \
+                 offered. Restore from your Recovery Kit or written seed phrase."
                     .to_string(),
             );
         }
@@ -388,8 +389,7 @@ impl NativePasskeyCeremony {
             rand::thread_rng().fill_bytes(&mut challenge_bytes);
             let challenge = NSData::with_bytes(&challenge_bytes);
 
-            let request =
-                provider.createCredentialAssertionRequestWithChallenge(&challenge);
+            let request = provider.createCredentialAssertionRequestWithChallenge(&challenge);
 
             // Restrict to this Cube's credential.
             let cred_data = NSData::with_bytes(credential_id);

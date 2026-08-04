@@ -518,6 +518,28 @@ pub struct CubeSettings {
     /// happily. Only Cubes created from now on are held to it.
     #[serde(default)]
     pub creation_backup_required: bool,
+    /// File name of this Cube's **second slot** in `mnemonics/`.
+    ///
+    /// Every Cube written since unit 6b has one, from creation. It holds a
+    /// duress marker when duress is armed and a decoy when it is not, and the
+    /// two are indistinguishable — see `services::unlock::marker`. So the
+    /// presence of this field says only "this Cube has a slot", never "duress
+    /// is armed on this Cube"; enrolment lives in `DuressLocalState`.
+    ///
+    /// It is *named* for duress because that is what the slot is for, not
+    /// because a populated field implies one. Reading it as an armed flag is
+    /// the mistake the decoy exists to make impossible — and a mistake that
+    /// would not show up until someone imaged a datadir.
+    ///
+    /// The name is random and drawn when the slot is first written, so this is
+    /// the only way to find the file. Recording it is not a leak: it replaced
+    /// a name derived from `id` + `created_at`, which any reader of this file
+    /// could simply compute.
+    ///
+    /// `None` is a Cube written before the field existed, or one whose slot
+    /// has yet to be backfilled by migration.
+    #[serde(default, alias = "duress_marker_file")]
+    pub duress_slot_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -562,6 +584,7 @@ impl CubeSettings {
             // Set explicitly by the creation flow; `new_*` is also used to
             // reconstruct Cubes in restore paths, which must not be gated.
             creation_backup_required: false,
+            duress_slot_file: None,
         }
     }
 
@@ -647,9 +670,10 @@ impl CubeSettings {
         &self,
         datadir_root: &std::path::Path,
     ) -> crate::services::unlock::PinRequirement {
-        crate::services::unlock::pin_requirement(
-            &crate::services::unlock::CubeLocation::new(datadir_root, self),
-        )
+        crate::services::unlock::pin_requirement(&crate::services::unlock::CubeLocation::new(
+            datadir_root,
+            self,
+        ))
     }
 
     /// Whether a PIN is required to open this Cube.
@@ -657,13 +681,20 @@ impl CubeSettings {
         self.pin_requirement(datadir_root) == crate::services::unlock::PinRequirement::Required
     }
 
-    /// Whether duress is armed on this Cube (i.e. its duress marker exists).
-    pub fn has_duress_pin(&self, datadir_root: &std::path::Path) -> bool {
+    /// Whether this Cube has its second `mnemonics/` slot on disk.
+    ///
+    /// Renamed from `has_duress_pin`, which is what it used to mean and no
+    /// longer can. Since unit 6b every Cube carries a slot whether or not
+    /// duress is enrolled, and a marker is indistinguishable from a decoy by
+    /// design — so no filesystem check can answer "is duress armed". That
+    /// question is `DuressLocalState::enrolled`.
+    ///
+    /// What this answers is whether the slot needs backfilling.
+    pub fn has_duress_slot(&self, datadir_root: &std::path::Path) -> bool {
         crate::services::unlock::marker::exists(
             datadir_root,
             self.network,
-            &self.id,
-            self.created_at,
+            self.duress_slot_file.as_deref(),
         )
     }
 
@@ -1486,9 +1517,6 @@ mod test {
         .unwrap()
     }
 
-
-
-
     #[test]
     fn test_cube_settings_alias_backward_compat() {
         use super::CubeSettings;
@@ -1575,7 +1603,6 @@ mod test {
         assert!(restored.has_recovery_kit());
         assert_eq!(restored.connect_state(), CubeConnectState::BackedUp);
     }
-
 
     #[test]
     fn backed_up_flag_is_not_recovery_kit() {

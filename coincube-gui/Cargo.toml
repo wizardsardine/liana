@@ -171,6 +171,17 @@ windows = { version = "0.61", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# The device secret's keychain item is written through `SecItem` directly, not
+# through `keyring`: keyring 3.3's macOS backend uses the legacy `SecKeychain`
+# API and can set neither `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` nor
+# `kSecAttrSynchronizable = false`. Both are required — an item that syncs to
+# iCloud uploads the second factor and defeats the design.
+# See `services/unlock/device_secret/apple.rs`.
+security-framework = "2.10"
+security-framework-sys = "2.10"
+core-foundation = "0.9"
+core-foundation-sys = "0.8"
+
 # objc2 0.6 has the PRF extension bindings (added with macOS 14 support).
 # This coexists with the 0.5 version pulled in by iced/winit/wry — we're
 # careful not to pass types between the two versions.

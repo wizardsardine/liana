@@ -396,6 +396,10 @@ pub enum Message {
         spark_backend: Option<Arc<app::wallets::SparkBackend>>,
     },
     BreezClientLoadedAfterPin {
+        /// Set when the post-unlock seed-file migration aborted. The Cube still
+        /// opens and its files are untouched, but the upgrade did not happen and
+        /// the user is told rather than only the log.
+        migration_error: Option<String>,
         breez_client: Result<Arc<app::breez_liquid::BreezClient>, app::breez_liquid::BreezError>,
         /// Spark backend loaded in the same task as the Liquid client.
         /// `None` if the cube has no Spark signer configured; `Some(Err(..))`
@@ -519,34 +523,62 @@ impl Tab {
     /// for the afternoon.
     const IDLE_LOCK_AFTER: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
+    /// Append the migration warning, if any, to whatever the load path returned.
+    ///
+    /// The toast is queued *behind* the state transition so it lands once the
+    /// Cube is up and there is a surface to show it on.
+    fn with_migration_toast(command: Task<Message>, toast: Option<Task<Message>>) -> Task<Message> {
+        match toast {
+            Some(t) => Task::batch([command, t]),
+            None => command,
+        }
+    }
+
     pub fn on_tick(&mut self) -> Task<Message> {
-        // currently the Tick is only used by the app
-        if let State::App(app) = &mut self.state {
-            // Idle re-lock. `session::touch()` is called from `update()` on
-            // every user-driven message, so this only fires when nothing has
-            // come in for the whole window.
-            if crate::app::session::idle_for()
-                .map(|d| d >= Self::IDLE_LOCK_AFTER)
-                .unwrap_or(false)
-            {
-                return Task::done(Message::LockCube);
+        // Idle auto-lock.
+        //
+        // Activity is recorded from the real keyboard/mouse/touch listener in
+        // `gui::subscription`, **not** from message traffic. Treating any
+        // non-`Tick` message as activity did not work: this very tick spawns
+        // `UpdateDaemonCache` and `BitcoindNetStats` every second, and their
+        // results arrive back as non-`Tick` messages, so the timer reset once a
+        // second and the lock never fired at all.
+        let idle_expired = crate::app::session::idle_for()
+            .map(|d| d >= Self::IDLE_LOCK_AFTER)
+            .unwrap_or(false);
+
+        match &mut self.state {
+            State::App(app) => {
+                if idle_expired {
+                    return Task::done(Message::LockCube);
+                }
+                app.on_tick().map(Message::Run)
             }
-            app.on_tick().map(Message::Run)
-        } else {
-            Task::none()
+            // `Loader` and `Login` hold an open session too — the PIN and the
+            // decrypted signer — and a hung daemon start can leave the app
+            // sitting in `Loader` indefinitely.
+            //
+            // Drop the secrets rather than tearing the state down. Dropping a
+            // `Loader` would kill an in-progress daemon start or full chain
+            // scan that the user may be deliberately waiting on, and it is the
+            // in-memory secret that matters, not which screen is showing. The
+            // cost is that a Vault set up later in this session has no PIN to
+            // encrypt with and fails with a clear "re-open the Cube" message.
+            //
+            // Once closed, `idle_for()` is `None`, so this does not repeat.
+            State::Loader(_) | State::Login(_) => {
+                if idle_expired {
+                    tracing::info!("idle: dropping session secrets held during load / sign-in");
+                    crate::app::session::close();
+                }
+                Task::none()
+            }
+            _ => Task::none(),
         }
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         use crate::app::settings::global::GlobalSettings;
-
-        // Any message that isn't the periodic tick counts as activity and
-        // defers the auto-lock. `Tick` is excluded on purpose — it fires whether
-        // or not anyone is at the keyboard, so counting it would mean the Cube
-        // never locks.
-        if !matches!(message, Message::Run(app::Message::Tick)) {
-            crate::app::session::touch();
-        }
 
         let result = match (&mut self.state, message) {
             (State::App(app), Message::LockCube) => {
@@ -651,6 +683,42 @@ impl Tab {
                     // without a backup loses the funds outright. Cubes that
                     // predate the gate are never blocked — see
                     // `CubeSettings::creation_backup_required`.
+                    //
+                    // # Why `None` for the kit halves (X4)
+                    //
+                    // Passing `None` means `cube_backup_completeness` answers
+                    // `Unknown`, which `evaluate` fails **closed**. Read alone
+                    // that says a Cube backed up only by a server Recovery Kit
+                    // would be blocked here. It cannot be, and fetching the
+                    // halves would be worse than not:
+                    //
+                    // 1. **The shape is unreachable.** `home.rs` arms the flag
+                    //    and writes `backed_up` (or a `CreationBackupBypass`)
+                    //    in the *same* settings update — see
+                    //    `finalize_cube_creation` and the recovery path beside
+                    //    it. An armed Cube with neither piece of local evidence
+                    //    is never persisted, so `evaluate` returns
+                    //    `Satisfied`/`Bypassed` before it ever consults the
+                    //    kit. Pinned by
+                    //    `creation_never_persists_an_armed_cube_without_evidence`.
+                    // 2. **`backed_up` is monotone.** Nothing in the codebase
+                    //    clears it; the only writers set it to `true`. A Cube
+                    //    that satisfies the gate once satisfies it forever.
+                    // 3. **Fetching would put the network on the unlock path.**
+                    //    Failing closed on `Unknown` is right for a *creation*
+                    //    decision the user can retry. At open it would mean an
+                    //    offline user, an expired Connect session or a
+                    //    five-second API timeout locks a wallet whose seed is
+                    //    sitting decryptable on this machine. That converts an
+                    //    outage into a lost Cube — the exact class of failure
+                    //    this gate exists to prevent.
+                    //
+                    // Local evidence is therefore not a weaker check here, it
+                    // is the only one that can be made without introducing a
+                    // worse failure. The gate's own doc makes the same call for
+                    // creation: a written seed phrase alone satisfies it,
+                    // because "demanding a Connect account to create a local
+                    // wallet would be wrong".
                     if let crate::services::unlock::creation_gate::CreationGate::Blocked(reason) =
                         crate::services::unlock::creation_gate::evaluate_for_cube(&cube, None)
                     {
@@ -1484,6 +1552,10 @@ impl Tab {
                             Task::perform(
                                 async move {
                                     let mut cube = cube;
+                                    // Carried out of the migration block so the
+                                    // failure reaches the user rather than only
+                                    // the log file.
+                                    let mut migration_error: Option<String> = None;
 
                                     // The PIN stays available for the lifetime
                                     // of the open Cube. The Vault installer
@@ -1506,17 +1578,145 @@ impl Tab {
                                         let root = datadir_clone.path().to_path_buf();
                                         let cube_for_migration = cube.clone();
                                         let pin_for_migration = pin.clone();
-                                        let _ = tokio::task::spawn_blocking(move || {
+                                        let joined = tokio::task::spawn_blocking(move || {
                                             let loc = crate::services::unlock::CubeLocation::new(
                                                 &root,
                                                 &cube_for_migration,
                                             );
-                                            crate::services::unlock::migrate_seed_files(
-                                                &loc,
-                                                &pin_for_migration,
-                                            )
+                                            let outcome =
+                                                crate::services::unlock::migrate_seed_files(
+                                                    &loc,
+                                                    &pin_for_migration,
+                                                )?;
+                                            // Give this Cube its second slot if
+                                            // it arrived without one — restored
+                                            // from a Recovery Kit, or minted
+                                            // before unit 6b. Same blocking
+                                            // task: it costs one Argon2 pass and
+                                            // must not run on the UI thread.
+                                            let slot =
+                                                crate::services::unlock::ensure_second_slot(&loc)?;
+                                            Ok::<_, crate::services::unlock::UnlockError>((
+                                                outcome, slot,
+                                            ))
                                         })
                                         .await;
+
+                                        // Do not discard this. `let _ = …` threw
+                                        // away the count *and* the `JoinError`,
+                                        // so a panic inside migration — in code
+                                        // that rewrites seed files — left no
+                                        // trace at all.
+                                        match joined {
+                                            Ok(Ok((outcome, new_slot))) => {
+                                                // Persist the backfilled slot
+                                                // name. Without this the decoy
+                                                // just written is unreachable
+                                                // and the next unlock mints
+                                                // another one.
+                                                if let Some(name) = new_slot {
+                                                    cube.duress_slot_file = Some(name.clone());
+                                                    let cube_id = cube.id.clone();
+                                                    let network_dir = datadir_clone
+                                                        .network_directory(network_val);
+                                                    if let Err(e) =
+                                                        app::settings::update_settings_file(
+                                                            &network_dir,
+                                                            |mut s| {
+                                                                if let Some(c) = s
+                                                                    .cubes
+                                                                    .iter_mut()
+                                                                    .find(|c| c.id == cube_id)
+                                                                {
+                                                                    c.duress_slot_file = Some(name);
+                                                                }
+                                                                Some(s)
+                                                            },
+                                                        )
+                                                        .await
+                                                    {
+                                                        error!(
+                                                            "could not record the second slot for \
+                                                             cube {}: {e}",
+                                                            cube.id
+                                                        );
+                                                    }
+                                                }
+                                                if outcome.did_work() {
+                                                    info!(
+                                                        "migration: {} seed file(s) upgraded for cube {}",
+                                                        outcome.migrated, cube.id
+                                                    );
+                                                }
+                                                if outcome.skipped_no_backup {
+                                                    info!(
+                                                        "migration: cube {} stays at v2 until it \
+                                                         has a backup",
+                                                        cube.id
+                                                    );
+                                                }
+                                                // Migration cannot re-seal a
+                                                // duress marker — that needs
+                                                // the duress PIN, and this
+                                                // path holds the regular one —
+                                                // so it replaces the slot with
+                                                // a decoy and the enrolment is
+                                                // gone. Say so, and make the
+                                                // device's own state agree
+                                                // rather than keep claiming an
+                                                // enrolment whose trigger no
+                                                // longer exists.
+                                                //
+                                                // Acceptable only because
+                                                // duress is feature-gated and
+                                                // unreleased. Revisit before
+                                                // it ships.
+                                                if outcome.duress_was_cleared() {
+                                                    log::warn!(
+                                                        "migration: duress enrolment on cube {} was \
+                                                         cleared — its marker could not be carried \
+                                                         across the upgrade. Re-enroll to arm it \
+                                                         again.",
+                                                        cube.id
+                                                    );
+                                                    let root = datadir_clone.path().to_path_buf();
+                                                    if let Ok(mut st) =
+                                                        crate::services::duress::DuressLocalState::load(
+                                                            &root,
+                                                        )
+                                                    {
+                                                        if st.enrolled || st.arming {
+                                                            st.disarm();
+                                                            let _ = st.save(&root);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            // The keystore was reachable-but-broken.
+                                            // The Cube still opens — the seed files
+                                            // were left exactly as they were — but
+                                            // the user has to know the upgrade did
+                                            // not happen.
+                                            Ok(Err(e)) => {
+                                                error!(
+                                                    "migration aborted for cube {}: {e}",
+                                                    cube.id
+                                                );
+                                                migration_error = Some(e.to_string());
+                                            }
+                                            Err(e) => {
+                                                error!(
+                                                    "migration task failed for cube {}: {e}",
+                                                    cube.id
+                                                );
+                                                migration_error = Some(
+                                                    "Coincube couldn't finish upgrading this \
+                                                     Cube's files. Your Cube is unchanged and \
+                                                     still opens."
+                                                        .to_string(),
+                                                );
+                                            }
+                                        }
                                     }
 
                                     // Backfill `master_signer_fingerprint` for
@@ -1643,6 +1843,7 @@ impl Tab {
                                         wallet_settings_clone,
                                         internal_bitcoind_clone,
                                         backup_clone,
+                                        migration_error,
                                     )
                                 },
                                 |(
@@ -1655,6 +1856,7 @@ impl Tab {
                                     wallet_settings,
                                     internal_bitcoind,
                                     backup,
+                                    migration_error,
                                 )| {
                                     Message::BreezClientLoadedAfterPin {
                                         breez_client: breez_result,
@@ -1666,6 +1868,7 @@ impl Tab {
                                         wallet_settings,
                                         internal_bitcoind,
                                         backup,
+                                        migration_error,
                                     }
                                 },
                             )
@@ -1705,6 +1908,15 @@ impl Tab {
                             datadir.clone()
                         }
                     };
+                    // Drop every in-memory secret before the wipe runs. A duress
+                    // wipe destroys the seed on disk; leaving a decrypted copy
+                    // resident would undo that for the rest of the process's
+                    // life. This matters more than it looks: the session holds
+                    // the *decrypted master signer* now, not just a 4-digit PIN.
+                    //
+                    // No Cube was ever opened on this path, so the only thing
+                    // being cleared is whatever a previous unlock left behind.
+                    crate::app::session::close();
                     Task::perform(
                         async move {
                             let root = datadir.path().to_path_buf();
@@ -1888,8 +2100,18 @@ impl Tab {
                     wallet_settings,
                     internal_bitcoind,
                     backup,
+                    migration_error,
                 },
             ) => {
+                // Surfaced through the app's normal toast path once the Cube is
+                // up. Deliberately not fatal: the seed files were left exactly
+                // as they were, so the Cube opens — but a silent "your files
+                // were not upgraded" is what this whole PR exists to stop.
+                let migration_toast = migration_error.map(|msg| {
+                    Task::done(Message::Run(app::Message::View(
+                        app::view::Message::ShowToast(log::Level::Warn, msg),
+                    )))
+                });
                 // The Vault is independent of Liquid: any Breez load failure
                 // (NetworkNotSupported, transient connection errors, SDK
                 // throttling, etc.) should fall back to a disconnected client
@@ -1918,7 +2140,7 @@ impl Tab {
                             spark_backend,
                         );
                         self.state = State::Login(login);
-                        command.map(Message::Login)
+                        Self::with_migration_toast(command.map(Message::Login), migration_toast)
                     } else {
                         let (loader, command) = Loader::new(
                             datadir.clone(),
@@ -1932,7 +2154,7 @@ impl Tab {
                             spark_backend,
                         );
                         self.state = State::Loader(loader);
-                        command.map(Message::Load)
+                        Self::with_migration_toast(command.map(Message::Load), migration_toast)
                     }
                 } else {
                     let (app, command) = App::new_without_wallet(
@@ -1944,7 +2166,7 @@ impl Tab {
                         cube,
                     );
                     self.state = State::App(app);
-                    command.map(Message::Run)
+                    Self::with_migration_toast(command.map(Message::Run), migration_toast)
                 }
             }
             _ => Task::none(),

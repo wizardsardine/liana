@@ -110,6 +110,19 @@ async fn ctrl_c() -> Result<(), ()> {
     Ok(())
 }
 
+/// Whether an event means a human did something.
+///
+/// This is the idle auto-lock's only source of truth for "someone is at the
+/// machine". Window events are deliberately excluded: a resize or a focus
+/// change can be produced by the OS, another application, or a display
+/// reconfiguration with nobody present.
+fn is_user_input(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Keyboard(_) | Event::Mouse(_) | Event::Touch(_)
+    )
+}
+
 impl GUI {
     pub fn title(&self) -> String {
         match cfg!(debug_assertions) {
@@ -611,23 +624,36 @@ impl GUI {
     pub fn subscription(&self) -> Subscription<Message> {
         let mut vec = vec![
             iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick),
-            iced::event::listen_with(|event, status, _| match (&event, status) {
-                (
-                    Event::Keyboard(keyboard::Event::KeyPressed {
-                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
-                        modifiers,
-                        ..
-                    }),
-                    event::Status::Ignored,
-                ) => Some(Message::KeyPressed(Key::Tab(modifiers.shift()))),
-                (
-                    iced::Event::Window(iced::window::Event::CloseRequested),
-                    event::Status::Ignored,
-                ) => Some(Message::Event(event)),
-                (iced::Event::Window(iced::window::Event::Resized(size)), _) => {
-                    Some(Message::WindowSize(*size))
+            iced::event::listen_with(|event, status, _| {
+                // The idle auto-lock's only source of truth for "someone is at
+                // the machine". It must come from real input: message traffic
+                // does not work, because the 1 Hz tick spawns follow-up
+                // messages continuously and would defer the lock forever.
+                //
+                // Done as a side effect rather than by emitting a message —
+                // cursor movement alone would flood the queue at hundreds of
+                // messages a second for a value nothing else reads.
+                if is_user_input(&event) {
+                    crate::app::session::touch();
                 }
-                _ => None,
+                match (&event, status) {
+                    (
+                        Event::Keyboard(keyboard::Event::KeyPressed {
+                            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
+                            modifiers,
+                            ..
+                        }),
+                        event::Status::Ignored,
+                    ) => Some(Message::KeyPressed(Key::Tab(modifiers.shift()))),
+                    (
+                        iced::Event::Window(iced::window::Event::CloseRequested),
+                        event::Status::Ignored,
+                    ) => Some(Message::Event(event)),
+                    (iced::Event::Window(iced::window::Event::Resized(size)), _) => {
+                        Some(Message::WindowSize(*size))
+                    }
+                    _ => None,
+                }
             }),
         ];
         for (id, pane) in self.panes.iter() {
@@ -695,5 +721,45 @@ impl Config {
             coincube_directory,
             network,
         }
+    }
+}
+
+#[cfg(test)]
+mod idle_activity_tests {
+    use super::*;
+
+    /// The idle auto-lock is only as good as its definition of "activity".
+    ///
+    /// This previously counted *every non-`Tick` message* as user activity,
+    /// which meant it never fired: the 1 Hz tick spawns `UpdateDaemonCache` and
+    /// `BitcoindNetStats`, whose results arrive as non-`Tick` messages, so the
+    /// timer reset once a second forever. The bug was invisible — the code read
+    /// correctly, compiled, and shipped a security control that did nothing.
+    #[test]
+    fn only_real_input_counts_as_activity() {
+        use iced::keyboard;
+        use iced::mouse;
+
+        assert!(is_user_input(&Event::Keyboard(
+            keyboard::Event::KeyReleased {
+                key: keyboard::Key::Named(keyboard::key::Named::Enter),
+                modified_key: keyboard::Key::Named(keyboard::key::Named::Enter),
+                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Enter),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+            }
+        )));
+        assert!(is_user_input(&Event::Mouse(mouse::Event::ButtonPressed(
+            mouse::Button::Left
+        ))));
+        assert!(is_user_input(&Event::Mouse(mouse::Event::CursorEntered)));
+
+        // Window events are not a person. A resize or a focus change can come
+        // from the OS, another app, or a monitor being plugged in — counting
+        // them would let an unattended machine defer the lock indefinitely.
+        assert!(!is_user_input(&Event::Window(iced::window::Event::Focused)));
+        assert!(!is_user_input(&Event::Window(
+            iced::window::Event::CloseRequested
+        )));
     }
 }

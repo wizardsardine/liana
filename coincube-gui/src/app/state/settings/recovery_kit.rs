@@ -879,6 +879,20 @@ fn verify_pin(rk: &mut RecoveryKit, cache: &Cache, local_cube_id: &str) -> Task<
     let network = cache.network;
     let cube_id = cube.id.clone();
 
+    // Same reasoning as the Backup-Master-Seed flow in `general.rs`: this is a
+    // second route to the same permanent secret, so guesses accumulate against
+    // the shared per-Cube unlock counter rather than starting fresh here.
+    let throttle_root = datadir.clone();
+    let remaining = crate::services::unlock::throttle::ThrottleState::load(&throttle_root)
+        .remaining_lockout(&cube_id);
+    if !remaining.is_zero() {
+        return Task::done(Message::View(view::Message::Settings(
+            view::SettingsMessage::RecoveryKit(RecoveryKitMessage::PinVerified(Err(
+                crate::services::unlock::throttle::lockout_message(remaining),
+            ))),
+        )));
+    }
+
     Task::perform(
         async move {
             // Wrap the decrypted mnemonic in `Zeroizing` at the
@@ -894,9 +908,28 @@ fn verify_pin(rk: &mut RecoveryKit, cache: &Cache, local_cube_id: &str) -> Task<
             tokio::task::spawn_blocking(move || {
                 // Decrypting the seed file *is* the PIN check (I1); the cheap
                 // `verify_pin` hash that used to gate this is gone.
-                super::general::load_mnemonic_words(&datadir, network, fingerprint, &pin, &cube_id)
-                    .map(Zeroizing::new)
-                    .map_err(|_| "Incorrect PIN. Please try again.".to_string())
+                let mut throttle =
+                    crate::services::unlock::throttle::ThrottleState::load(&throttle_root);
+                match super::general::load_mnemonic_words(
+                    &datadir,
+                    network,
+                    fingerprint,
+                    &pin,
+                    &cube_id,
+                ) {
+                    Ok(words) => {
+                        throttle.record_success(&throttle_root, &cube_id);
+                        Ok(Zeroizing::new(words))
+                    }
+                    Err(_) => {
+                        let penalty = throttle.record_failure(&throttle_root, &cube_id);
+                        Err(if penalty.is_zero() {
+                            "Incorrect PIN. Please try again.".to_string()
+                        } else {
+                            crate::services::unlock::throttle::lockout_message(penalty)
+                        })
+                    }
+                }
             })
             .await
             .map_err(|e| format!("PIN verification task failed: {}", e))?

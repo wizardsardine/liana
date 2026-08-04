@@ -675,8 +675,9 @@ fn build_seed_blob_json(
         .ok_or("This Cube has no master signer.")?;
     // Decrypting the seed file *is* the PIN check (I1) — the cheap
     // `verify_pin` hash that used to gate this is gone.
-    let words = super::general::load_mnemonic_words(datadir, network, fingerprint, pin, local_cube_id)
-        .map_err(|_| "Incorrect PIN. Please try again.".to_string())?;
+    let words =
+        super::general::load_mnemonic_words(datadir, network, fingerprint, pin, local_cube_id)
+            .map_err(|_| "Incorrect PIN. Please try again.".to_string())?;
     let phrase = Zeroizing::new(words.join(" "));
     let blob = SeedBlob {
         version: BLOB_VERSION,

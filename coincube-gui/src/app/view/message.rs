@@ -1100,7 +1100,12 @@ pub enum BackupWalletMessage {
     /// User submits the PIN to unlock the mnemonic.
     VerifyPin,
     /// Async result of PIN verification + mnemonic decryption.
-    PinVerified(Result<Vec<String>, String>),
+    /// The decrypted seed phrase, wrapped **before** it enters the message
+    /// queue. iced clones messages, so a bare `Vec<String>` here meant every
+    /// in-flight copy of the seed dropped without being scrubbed — only the
+    /// final one stashed in state was `Zeroizing`. Matches
+    /// `RecoveryKitMessage::PinVerified`, which already did this.
+    PinVerified(Result<zeroize::Zeroizing<Vec<String>>, String>),
     /// Async result of persisting `backed_up = true` to settings.json after
     /// the user successfully completed the verification step.
     BackupSaveResult(Result<(), String>),
