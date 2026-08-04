@@ -986,13 +986,30 @@ fn rollback_duress_markers(armed: &[ArmedMarker]) -> Vec<String> {
         // the Cube as the one where something went wrong, which is precisely
         // the shape the decoy exists to prevent. A decoy opens for no PIN, so
         // it disarms just as completely as a delete.
-        let secret = crate::services::unlock::device_secret::load_optional(&m.cube_id).ok();
+        //
+        // A keystore that can't be reached is not "this Cube has no secret". A
+        // v3 Cube's decoy written without its secret lands at the wrong wire
+        // version, which singles the Cube out — and doing it while reporting
+        // the Cube as disarmed would be the false statement this function
+        // exists to avoid. Leave the marker and say so instead.
+        let secret = match crate::services::unlock::device_secret::load_optional(&m.cube_id) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!(
+                    "duress: rollback of marker for cube {} ({}) skipped, keystore unreachable: {e}",
+                    m.cube_name,
+                    m.cube_id
+                );
+                still_armed.push(m.cube_name.clone());
+                continue;
+            }
+        };
         if let Err(e) = crate::services::unlock::marker::write_decoy(
             &m.root,
             m.network,
             &m.cube_id,
             &m.file_name,
-            secret.flatten().as_ref(),
+            secret.as_ref(),
         ) {
             log::error!(
                 "duress: rollback of marker for cube {} ({}) failed: {e}",
