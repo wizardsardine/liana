@@ -760,12 +760,15 @@ impl Tab {
                             //    so an in-memory signer has to be threaded
                             //    through them first. Opening the Cube today lands
                             //    in the app with no Liquid or Spark wallet.
-                            // 2. The device-bound property has not been verified
-                            //    on hardware (the acceptance check is "the
-                            //    credential does not appear on a second Mac on
-                            //    the same Apple ID"), and the decision that
-                            //    requires it is explicit that this must be
-                            //    confirmed before shipping.
+                            // 2. The two-machine acceptance check is unrun. Per
+                            //    the 2026-08-04 decision the passkey is
+                            //    Apple-ID-bound, so what has to be proved is
+                            //    that the credential *does* reach a second Mac
+                            //    on the same Apple ID and derives the same
+                            //    seed — the opposite of what the superseded
+                            //    2026-08-01 decision asked for, and a property
+                            //    this code already has rather than one it
+                            //    still needs to implement.
                             //
                             // Refusing with an accurate message beats opening a
                             // half-working Cube.

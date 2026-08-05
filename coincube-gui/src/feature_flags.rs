@@ -23,18 +23,49 @@
 ///
 /// # DANGER: enabling this flag can create a Cube that cannot be opened
 ///
-/// Passkey *creation* works; passkey *unlock* does not exist yet on any
-/// platform. A Cube created with this flag on is openable only if its owner
-/// wrote down the mnemonic — otherwise it is **permanently lost**, and no
-/// amount of support intervention recovers it. Concretely:
+/// Passkey *creation* works; passkey *unlock* does not. A Cube created with
+/// this flag on is openable only if its owner wrote down the mnemonic —
+/// otherwise it is **permanently lost**, and no amount of support intervention
+/// recovers it.
 ///
-/// - `services::passkey::macos::NativePasskeyCeremony::authenticate` is a stub
-///   that returns `Err("Native passkey authentication not yet implemented")`.
-/// - `gui::tab` refuses to open a Cube whose settings carry `passkey_metadata`.
+/// What is done, as of 2026-08-04:
 ///
-/// Do not flip this on for any build a real user might touch until the
-/// assertion flow lands (PLAN-cube-unlock-hardening PR 10) **and** the
-/// device-bound property is verified per platform.
+/// - `services::passkey::macos::NativePasskeyCeremony::authenticate` is fully
+///   implemented — the assertion ceremony with the registration PRF salt.
+/// - The macOS signing prerequisites are met: `io.coincube.tenshu` is signed
+///   with `keychain-access-groups` and `com.apple.developer.associated-domains`,
+///   authorised by the embedded provisioning profile, and the AASA at
+///   coincube.io lists the app under `webcredentials`.
+///
+/// What still blocks it:
+///
+/// - `gui::tab` refuses to open a Cube carrying `passkey_metadata`, because
+///   `load_breez_client` / `load_spark_client` read the seed from a file by
+///   fingerprint and a passkey Cube has none — its seed is re-derived from the
+///   PRF output. An in-memory signer has to be threaded through them first, or
+///   the Cube opens with no Liquid and no Spark wallet. See the comment at the
+///   refusal site for the full reasoning.
+/// - `COINCUBE_PASSKEY_RP_ID` still defaults to `"localhost"`; a real build
+///   must set it to `coincube.io` to match the AASA.
+/// - The Recovery Kit is still descriptor-only for passkey Cubes, so a passkey
+///   user's only recovery is a written mnemonic. Per the 2026-08-04 decision
+///   the Kit must carry the seed — which needs the same re-derivation as the
+///   point above, so the two land together.
+/// - The **two-machine acceptance check is unrun**. Per that decision the
+///   passkey is Apple-ID-bound, so what must be proved is that the credential
+///   *does* reach a second Mac on the same Apple ID and derives the *same*
+///   seed (compare xpubs, never mnemonics), and separately that a Kit alone
+///   restores the Cube on a machine with no access to that Apple ID.
+///
+/// Do not flip this on for any build a real user might touch until all three
+/// are closed.
+///
+/// Note the acceptance check inverted on 2026-08-04. An earlier decision made
+/// the passkey device-bound and asked for proof the credential did *not*
+/// travel; that decision is superseded, and the code never implemented it —
+/// `ASAuthorizationPlatformPublicKeyCredentialProvider` produces a synced
+/// credential and nothing pins otherwise. Device-binding is the PIN path's
+/// property, delivered by the `ENCRYPTED_V3` device secret.
 pub const PASSKEY_ENABLED: bool = is_truthy(option_env!("COINCUBE_ENABLE_PASSKEY"));
 
 /// Whether the cube-scoped Members UI (W8 / PLAN-cube-membership-desktop) is

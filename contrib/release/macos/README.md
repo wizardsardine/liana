@@ -10,8 +10,19 @@ We distribute the application as a zipped [MacOS app bundle](https://developer.a
 | Team ID | `8UVR249AD5` |
 | Keychain access group | `8UVR249AD5.io.coincube.tenshu` (`<TeamID>.<bundleID>`) |
 | Entitlements | [`coincube.entitlements`](coincube.entitlements) |
+| Provisioning profile | [`embedded.provisionprofile`](embedded.provisionprofile), copied to `Tenshu.app/Contents/` before signing. Expires 2044-07-30 |
 
-Three things about this that are easy to get wrong:
+Four things about this that are easy to get wrong:
+
+- **The profile is mandatory, and omitting it does not degrade gracefully.**
+  `keychain-access-groups` is a restricted entitlement, so AMFI validates it
+  against the embedded profile at exec time. With the entitlement and no
+  profile the app does not launch at all — SIGKILL, no window, no message —
+  while `codesign -v`, `spctl` and notarization all still pass. See
+  [`docs/MACOS_KEYCHAIN_ENTITLEMENT.md`](../../../docs/MACOS_KEYCHAIN_ENTITLEMENT.md)
+  §4. The profile contains no secrets (public certificate, team ID, app ID and
+  granted entitlements), which is why it is committed rather than held as a
+  CI secret.
 
 - **The access group is part of a keychain item's identity.** Change the bundle identifier after a
   signed, entitled build has reached users and every device secret written under the old group

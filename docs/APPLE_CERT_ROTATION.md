@@ -78,14 +78,36 @@ base64 coincube_dev_id_app_NEW.p12 | pbcopy
 
 ---
 
-### 4. Verify in CI
-Create a test tag and push it.
-Confirm build, signing, notarization, and DMG upload succeed.
+### 4. Regenerate the macOS provisioning profile
+**Do not skip this — the profile embeds the certificate you just replaced.**
+
+`contrib/release/macos/embedded.provisionprofile` authorises the restricted
+`keychain-access-groups` entitlement. Its own expiry is 2044, so it will not
+lapse on its own, but it is bound to the Developer ID certificate: rotate the
+cert without regenerating the profile and the next release builds, signs and
+notarizes cleanly, then **fails to launch on every user's Mac** with no error
+message. See `docs/MACOS_KEYCHAIN_ENTITLEMENT.md` §4.
+
+- Apple Developer Portal → Profiles → Distribution → **Developer ID**
+- App ID `io.coincube.tenshu`, new certificate
+- Download and replace `contrib/release/macos/embedded.provisionprofile` in the
+  repo (it holds no secrets — it is committed, not a CI secret)
 
 ---
 
-### 5. Revoke Old Certificate
-After successful verification, revoke the old cert in Apple Developer Portal.
+### 5. Verify in CI
+Create a test tag and push it.
+Confirm build, signing, notarization, and DMG upload succeed. The macOS job
+asserts the entitlement is in the signature and that the embedded profile
+grants the access group and has not expired — but CI cannot prove the app
+launches. **Install the resulting DMG on a Mac and create a Cube** before
+revoking the old certificate.
+
+---
+
+### 6. Revoke Old Certificate
+After successful verification — including the manual launch-and-create-a-Cube
+check in step 5 — revoke the old cert in Apple Developer Portal.
 
 ---
 

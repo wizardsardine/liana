@@ -106,43 +106,73 @@ Then, **only if the §4 test shows a profile is required**: Profiles → create 
 
 No Rust changes needed. `apple.rs` doesn't set `kSecAttrAccessGroup` explicitly, so items land in the first group in the entitlement. The service name (`io.coincube.tenshu.device-secret.v1`) is independent of the access group.
 
-## 4. Settle the provisioning-profile question empirically, not by reading
+## 4. The provisioning-profile question — SETTLED, a profile is required
 
-Apple splits entitlements into **unrestricted** (usable by just signing them in) and **restricted** (must additionally be authorised by an embedded provisioning profile) — see [TN3125](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles). Apple's own forum guidance on which side `keychain-access-groups` falls on for Developer ID macOS apps is genuinely inconsistent: [one DTS answer](https://developer.apple.com/forums/thread/721649) says Developer ID apps don't use profiles and the entitlement is enough, while [another thread](https://developer.apple.com/forums/thread/733449) points at a *macOS* provisioning profile being relevant.
+> **Answered empirically 2026-08-04 on a Developer ID-signed local build.** `keychain-access-groups` is **restricted** for Developer ID macOS apps. A profile is mandatory. The rest of this section is kept as the method, not an open question — re-run it only if Apple changes the rules.
 
-Don't try to resolve this from documentation. It is a binary question with a 20-minute test, and you already have every input:
+**The failure mode is worse than "the keychain refuses".** Without an embedded profile the binary does not execute at all: AMFI rejects the signature at exec, the process dies on SIGKILL with no window and no message, and the shell reports only `zsh: killed`. `codesign -v` reports the bundle valid, `spctl` passes, notarization would succeed. The evidence is only in the unified log:
+
+```
+taskgated-helper: Disallowing io.coincube.tenshu because no eligible provisioning profiles found
+amfid: not valid: AppleMobileFileIntegrityError Code=-413 "No matching profile found"
+kernel: AMFI: Code has restricted entitlements, but the validation of its code signature failed.
+```
+
+Retrieve it with `log show --last 15m --info --predicate 'eventMessage CONTAINS[c] "coincube"'`. **Shipping §3's entitlement without §4's profile produces a DMG that cannot launch for anybody** — strictly worse than shipping neither, and invisible to every check in the pipeline. The two land together or not at all.
+
+**What worked:** a **Developer ID** distribution profile for App ID `io.coincube.tenshu`, generated in the portal (Profiles → Distribution → Developer ID), committed at `contrib/release/macos/embedded.provisionprofile`, copied to `Tenshu.app/Contents/embedded.provisionprofile` before signing. Its entitlements grant `keychain-access-groups = 8UVR249AD5.*`, which covers our group, and `com.apple.developer.associated-domains = *`, which macOS passkey will need later. It carries no `ProvisionedDevices` key, confirming it is a distribution rather than development profile, and expires **2044-07-30**.
+
+`com.apple.application-identifier` in the entitlements turned out **not** to be needed — AMFI resolves the identifier from `CFBundleIdentifier`. It is left out rather than added speculatively; the profile grants it if a future need appears.
+
+### The method, for re-running it
+
+Apple splits entitlements into **unrestricted** (usable by just signing them in) and **restricted** (must additionally be authorised by an embedded provisioning profile) — see [TN3125](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles). Apple's own forum guidance on which side `keychain-access-groups` falls on for Developer ID macOS apps is genuinely inconsistent: [one DTS answer](https://developer.apple.com/forums/thread/721649) says Developer ID apps don't use profiles and the entitlement is enough, while [another thread](https://developer.apple.com/forums/thread/733449) points at a *macOS* provisioning profile being relevant. The test settles it in 20 minutes; the reading never does.
+
+Two notes from running it, both of which cost time:
+
+- **A debug build is fine.** The test is about the signature, not the optimisation level — `make all` output signs identically and saves a release rebuild.
+- **Native `codesign` is stricter than `rcodesign` about the entitlements XML.** It parses through AMFI, which rejects a double hyphen inside an XML comment — illegal per the XML spec but accepted by `plutil` and by rcodesign, so the file can be malformed for years without CI noticing. Both workflows now ad-hoc-sign a throwaway binary to catch that before it reaches anyone signing locally.
 
 ```bash
 # 1. Add the entitlement (§3), then build locally
 cargo build --release -p coincube-gui
 
-# 2. Assemble the bundle the way CI does
+# 2. Assemble the bundle the way CI does, profile included. The profile is
+#    sealed by the signature, so it must be in place before step 3.
 unzip contrib/release/macos/_coincube.zip
 cp target/release/coincube Tenshu.app/Contents/MacOS/Coincube
+cp contrib/release/macos/embedded.provisionprofile Tenshu.app/Contents/embedded.provisionprofile
 
-# 3. Sign with the real Developer ID cert (same p12 as CI)
-rcodesign sign \
-  --entitlements-xml-path contrib/release/macos/coincube.entitlements \
-  --p12-file cert.p12 --p12-password-file cert.pass \
+# 3. Sign with the real Developer ID cert. On a Mac with the cert in the login
+#    keychain, native codesign is enough — no rcodesign install needed.
+codesign -f -s "Developer ID Application: COINCUBE TECHNOLOGY LLC" \
+  --options runtime \
+  --entitlements contrib/release/macos/coincube.entitlements \
   Tenshu.app
 
-# 4. Confirm the entitlement actually landed in the signature
+# 4. Confirm the entitlement landed, and that the runtime flag is set
 codesign -d --entitlements - Tenshu.app
+codesign -dv --verbose=4 Tenshu.app 2>&1 | grep -E 'Authority|flags'
 
-# 5. The real test — run the app and create a Cube.
-./Tenshu.app/Contents/MacOS/Coincube
+# 5. The real test — run the app and create a Cube. Use a throwaway datadir so
+#    a half-created test Cube never lands in ~/.coincube.
+./Tenshu.app/Contents/MacOS/Coincube --datadir /tmp/tenshu-entitlement-test
 ```
 
 **Reading the result:**
 
-- **Cube creation succeeds** → unrestricted, no profile needed. Done; commit the entitlement and move on.
-- **Still −34018** → restricted. Use the App ID registered in §2.2, download a **Developer ID provisioning profile**, add it to the bundle as `Tenshu.app/Contents/embedded.provisionprofile`, and add a step to both workflows to place it before signing. Also add `com.apple.application-identifier` = `8UVR249AD5.io.coincube.tenshu` to the entitlements.
+- **Killed at launch (`zsh: killed`, no window)** → restricted, profile required. This is what happened on 2026-08-04; check the log lines above to confirm it is AMFI and not a crash.
+- **Launches but Cube creation fails with −34018** → the profile is present but does not authorise the group; compare the group in the profile's entitlements against the one in `coincube.entitlements`.
+- **Cube creation succeeds** → the signature, the entitlement and the profile all line up. Done.
 
 Either way, finish by running the tests that assert the property the entitlement exists for:
 
 ```bash
-cargo test -p coincube-gui --lib device_secret -- --ignored
+SIGN_IDENTITY="Developer ID Application: COINCUBE TECHNOLOGY LLC" \
+  contrib/release/macos/run-signed-device-secret-tests.sh
 ```
+
+**Do not run `cargo test -p coincube-gui --lib device_secret -- --ignored` directly** — it cannot work, and it fails in the least legible way available. `cargo test` produces a *bare executable*, and a provisioning profile can only be embedded in a bundle, so AMFI kills it on exec: no output, no test names, exit 137. Signing the bare binary does not help. The script above wraps the test binary in a minimal `.app` whose `CFBundleIdentifier` is `io.coincube.tenshu`, signs that, and runs the executable from inside it. Verified green on 2026-08-04.
 
 Those three tests (`the_item_is_device_only_and_not_synchronizable`, `concurrent_provisioning_yields_one_secret`, `provisioning_is_idempotent`) are `#[ignore]`d precisely because they cannot pass unsigned. A signed build that passes them is the proof the entitlement took — `codesign -d` only proves it was *requested*.
 

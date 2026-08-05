@@ -6,8 +6,14 @@
 //! anywhere with the PIN. That was bad security and a decent accidental
 //! backup. Sealing the seed to an OS-keystore device secret (`ENCRYPTED_V3`)
 //! removes the accidental backup along with the weakness — **a copied datadir
-//! no longer opens**. Same for a device-bound passkey Cube, whose credential
-//! never leaves the machine by design.
+//! no longer opens**. Same for a passkey Cube, which has no seed file at all:
+//! its seed is re-derived from the credential's PRF output, so the datadir
+//! alone is inert without the credential.
+//!
+//! The passkey credential itself is Apple-ID-bound, not machine-bound
+//! (decision 2026-08-04), so a passkey user's other Macs can re-derive the
+//! seed. That widens recovery but does not soften this gate: iCloud Keychain
+//! can be off, and the user is not asked.
 //!
 //! So the Recovery Kit stops being advisory. A user who creates a Cube, skips
 //! the backup, and then loses the machine has lost the funds, and no support
@@ -55,8 +61,8 @@ pub const BYPASS_ACKNOWLEDGEMENT: &str =
 pub const NOT_A_BACKUP_COPY: &str =
     "Copying the Coincube folder is not a backup. Part of this Cube's encryption key \
      is stored in this computer's system keychain and never leaves it, so the folder \
-     will not open on another machine. Your Recovery Kit — or your written seed \
-     phrase — is the only way back in.";
+     will not open on another machine. Your Recovery Kit and written seed phrase are \
+     the only way to regain access to this Cube on another computer.";
 
 /// Verdict for the creation gate.
 #[derive(Debug, Clone, PartialEq, Eq)]

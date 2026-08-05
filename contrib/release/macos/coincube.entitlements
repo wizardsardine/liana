@@ -4,9 +4,18 @@
 <dict>
     <!--
         Hardened-runtime entitlements for Coincube. Applied at codesign
-        time via `rcodesign sign --entitlements-xml-path coincube.entitlements`
-        (or equivalent). See contrib/release/macos/README.md for the full
-        codesign + notarize workflow.
+        time by `rcodesign sign`, pointed here with its entitlements XML
+        path flag (or by `codesign` with its entitlements flag). See
+        contrib/release/macos/README.md for the full codesign and
+        notarize workflow.
+
+        NEVER write a double hyphen inside these comments, not even inside
+        a flag name. XML forbids it, and while `plutil` and rcodesign's
+        parser both accept it, Apple's AMFI parser does not: `codesign`
+        rejects the whole file with "AMFIUnserializeXML: syntax error"
+        and signs nothing. A flag name written out in full cost us
+        exactly that, and the failure names a line number in a comment,
+        which reads like a corrupt file rather than a prose typo.
 
         Network entitlements are required for the local LAN signer
         (`phone_signer` module): we open a TCP listener during pairing,
@@ -41,6 +50,26 @@
     <key>keychain-access-groups</key>
     <array>
         <string>8UVR249AD5.io.coincube.tenshu</string>
+    </array>
+
+    <!--
+        WebAuthn relying party for macOS passkey unlock. Also restricted, and
+        also authorised by the embedded provisioning profile (which grants
+        `com.apple.developer.associated-domains` as a wildcard).
+
+        The domain must match the AASA served from coincube.io, whose
+        `webcredentials.apps` array already lists
+        8UVR249AD5.io.coincube.tenshu, and the RP ID the app passes to
+        AuthenticationServices (`COINCUBE_PASSKEY_RP_ID`, which still defaults
+        to "localhost" — see services/passkey/mod.rs).
+
+        Inert until COINCUBE_ENABLE_PASSKEY is on: nothing requests a passkey
+        ceremony today, so this only makes the capability available to a build
+        that does.
+    -->
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+        <string>webcredentials:coincube.io</string>
     </array>
 </dict>
 </plist>
