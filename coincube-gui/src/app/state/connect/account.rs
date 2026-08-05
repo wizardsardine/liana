@@ -570,7 +570,6 @@ pub enum DuressEnrollStep {
 
 /// In-flight enrollment wizard state (Phases 2 & 8). `None` on the panel when
 /// the wizard isn't open.
-#[derive(Debug)]
 pub struct DuressEnrollState {
     pub step: DuressEnrollStep,
     pub duress_pin: String,
@@ -587,6 +586,39 @@ pub struct DuressEnrollState {
     /// the server confirms enrollment, so a server failure can't leave a
     /// half-armed duress PIN on disk.
     pub pending_code: Option<String>,
+}
+
+// Hand-written so the duress PIN, all-clear passphrase, recovery-kit password
+// and generated duress code cannot reach a log file through a `{:?}` on any
+// enclosing struct. The derived impl printed all five in the clear.
+impl std::fmt::Debug for DuressEnrollState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DuressEnrollState")
+            .field("step", &self.step)
+            .field("duress_pin", &"<redacted>")
+            .field("duress_pin_confirm", &"<redacted>")
+            .field("all_clear", &"<redacted>")
+            .field("crk_password", &"<redacted>")
+            .field("delay", &self.delay)
+            .field("memorized", &self.memorized)
+            .field("submitting", &self.submitting)
+            .field("error", &self.error)
+            .field(
+                "pending_code",
+                &self.pending_code.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for DuressDisableState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DuressDisableState")
+            .field("pin", &"<redacted>")
+            .field("submitting", &self.submitting)
+            .field("error", &self.error)
+            .finish()
+    }
 }
 
 impl DuressEnrollState {
@@ -608,7 +640,7 @@ impl DuressEnrollState {
 /// Step-up re-auth dialog for the "Disable Duress Mode" control (Issue 2).
 /// `None` when the dialog is closed. The user must re-enter their regular Cube
 /// unlock PIN — NOT the duress PIN — to authorize turning duress off.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct DuressDisableState {
     /// The regular Cube unlock PIN re-entered to authorize the disable.
     pub pin: String,
@@ -2824,28 +2856,56 @@ impl ConnectAccountPanel {
                 // real unlock PIN BEFORE anything irreversible. Connect tiers
                 // enroll on the server first, so catching the collision only in
                 // the later local persist would leave the account
-                // server-enrolled with no Cube armed. The collision is
-                // deterministic from the entered PIN, so we can check it up
-                // front against the local Cube set. (Persist re-checks as the
+                // server-enrolled with no Cube armed. (Persist re-checks as the
                 // authoritative guard.)
-                match crate::dir::CoincubeDirectory::active() {
-                    Ok(dir) => {
-                        if let Err(msg) =
-                            crate::app::duress_pin_collision_check(dir.path(), &e.duress_pin)
-                        {
-                            e.error = Some(msg);
-                            return iced::Task::none();
-                        }
-                    }
+                //
+                // The check is a trial decryption of every Cube's seed file now
+                // that there is no stored PIN hash to compare against — ~831 ms
+                // per Cube — so it runs on the blocking pool and comes back as
+                // `EnrollPreflightDone`. `submitting` is set here so the button
+                // stays disabled for the whole round trip.
+                let dir = match crate::dir::CoincubeDirectory::active() {
+                    Ok(dir) => dir,
                     Err(err) => {
                         e.error = Some(format!(
                             "Couldn't access your Cube data to verify the duress PIN: {err}"
                         ));
                         return iced::Task::none();
                     }
-                }
+                };
                 e.submitting = true;
                 e.error = None;
+                let gen = self.session_generation;
+                let duress_pin = zeroize::Zeroizing::new(e.duress_pin.clone());
+                return iced::Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            crate::app::duress_pin_collision_check_blocking(dir.path(), &duress_pin)
+                        })
+                        .await
+                        .unwrap_or_else(|err| Err(format!("Couldn't verify the duress PIN: {err}")))
+                    },
+                    move |res| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Duress(DuressMessage::EnrollPreflightDone(
+                                res, gen,
+                            )),
+                        ))
+                    },
+                );
+            }
+            DuressMessage::EnrollPreflightDone(res, gen) => {
+                if gen != self.session_generation {
+                    return iced::Task::none();
+                }
+                let Some(e) = &mut self.duress_enroll else {
+                    return iced::Task::none();
+                };
+                if let Err(msg) = res {
+                    e.submitting = false;
+                    e.error = Some(msg);
+                    return iced::Task::none();
+                }
                 let gen = self.session_generation;
 
                 // Generate this device's duress code ONCE: its hash goes to the
@@ -3090,22 +3150,51 @@ impl ConnectAccountPanel {
                 // Step-up: the entered PIN must match a Cube's REAL unlock PIN
                 // (never the duress PIN). Verify BEFORE any server call — a wrong
                 // PIN makes no call at all.
-                match crate::dir::CoincubeDirectory::active() {
-                    Ok(dir) => {
-                        if let Err(msg) = crate::app::verify_regular_cube_pin(dir.path(), &d.pin) {
-                            d.error = Some(msg);
-                            return iced::Task::none();
-                        }
-                    }
+                //
+                // Verification is a trial decryption of the seed file, so it
+                // runs on the blocking pool and resumes at `DisableStepUpDone`.
+                let dir = match crate::dir::CoincubeDirectory::active() {
+                    Ok(dir) => dir,
                     Err(err) => {
                         d.error = Some(format!(
                             "Couldn't access your Cube data to verify your PIN: {err}"
                         ));
                         return iced::Task::none();
                     }
-                }
+                };
                 d.submitting = true;
                 d.error = None;
+                let gen = self.session_generation;
+                let pin = zeroize::Zeroizing::new(d.pin.clone());
+                return iced::Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            crate::app::verify_regular_cube_pin_blocking(dir.path(), &pin)
+                        })
+                        .await
+                        .unwrap_or_else(|err| Err(format!("Couldn't verify your PIN: {err}")))
+                    },
+                    move |res| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Duress(DuressMessage::DisableStepUpDone(
+                                res, gen,
+                            )),
+                        ))
+                    },
+                );
+            }
+            DuressMessage::DisableStepUpDone(res, gen) => {
+                if gen != self.session_generation {
+                    return iced::Task::none();
+                }
+                let Some(d) = &mut self.duress_disable else {
+                    return iced::Task::none();
+                };
+                if let Err(msg) = res {
+                    d.submitting = false;
+                    d.error = Some(msg);
+                    return iced::Task::none();
+                }
                 let gen = self.session_generation;
                 let client = self.client.clone();
                 return iced::Task::perform(
@@ -4644,7 +4733,17 @@ fn validate_enroll_step(e: &DuressEnrollState) -> Result<(), String> {
     use crate::services::duress::enroll;
     match e.step {
         DuressEnrollStep::SetDuressPin => {
-            enroll::validate_duress_pin(&e.duress_pin, &e.duress_pin_confirm)
+            // The open Cube's real unlock PIN, in plaintext, from the session
+            // that unlocked it. This is the *only* regular PIN available as a
+            // plaintext — there are no stored PIN hashes any more — and it is
+            // the one the user could mistype. `None` makes the validator refuse
+            // rather than skip the rule; see `validate_duress_pin`.
+            let regular = crate::app::session::current_pin();
+            enroll::validate_duress_pin(
+                &e.duress_pin,
+                &e.duress_pin_confirm,
+                regular.as_ref().map(|p| p.as_str()),
+            )
         }
         DuressEnrollStep::SetAllClear => enroll::validate_all_clear(&e.all_clear, &e.duress_pin),
         DuressEnrollStep::SetCrkPassword => {
@@ -5329,7 +5428,23 @@ mod duress_enroll_tests {
         // Confirmation still empty → mismatch.
         assert!(validate_enroll_step(&s).is_err());
         s.duress_pin_confirm = "1235".to_string();
+
+        // With no Cube open there is no regular PIN to measure against, and the
+        // I3 distance rule now **fails closed** rather than skipping — so this
+        // step refuses here. Silently accepting would be the rule not existing.
+        let err = validate_enroll_step(&s).unwrap_err();
+        assert!(err.contains("re-open the Cube"), "{}", err);
+
+        // With a session open, the same PIN is judged on its distance from that
+        // Cube's real one.
+        crate::app::session::open("cube-a", zeroize::Zeroizing::new("8888".to_string()));
         assert!(validate_enroll_step(&s).is_ok());
+        crate::app::session::open("cube-a", zeroize::Zeroizing::new("1234".to_string()));
+        assert!(
+            validate_enroll_step(&s).is_err(),
+            "1235 is one keystroke from 1234 and must be refused"
+        );
+        crate::app::session::close();
     }
 
     #[test]

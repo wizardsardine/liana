@@ -190,8 +190,45 @@ jobs:
         run: |
           unzip contrib/release/macos/_coincube.zip
           sed -i '' "s/VERSION_PLACEHOLDER/${{ env.COINCUBE_VERSION }}/g" Tenshu.app/Contents/Info.plist
+
+          # Guard the checked-in bundle template before anything is copied
+          # into it. A wrong CFBundleIdentifier desyncs the keychain access
+          # group in coincube.entitlements (<TeamID>.<bundleID>) and strands
+          # device secrets; missing Bonjour keys break the LAN signer only
+          # once the build is on a user's machine.
+          plist=Tenshu.app/Contents/Info.plist
+          bundle_id=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$plist")
+          [ "$bundle_id" = "io.coincube.tenshu" ] \
+            || { echo "unexpected CFBundleIdentifier: $bundle_id"; exit 1; }
+          /usr/libexec/PlistBuddy -c "Print :NSLocalNetworkUsageDescription" "$plist" > /dev/null \
+            || { echo "NSLocalNetworkUsageDescription missing from Info.plist"; exit 1; }
+          /usr/libexec/PlistBuddy -c "Print :NSBonjourServices:0" "$plist" | grep -qx '_coincube-signer._tcp' \
+            || { echo "_coincube-signer._tcp missing from NSBonjourServices"; exit 1; }
+
           mv target/${{ matrix.target }}/minimal/coincube Tenshu.app/Contents/MacOS/Coincube
           mv contrib/release/macos/Coincube.icns Tenshu.app/Contents/Resources/Coincube.icns
+
+          # keychain-access-groups is a *restricted* entitlement: AMFI validates
+          # it against an embedded provisioning profile at exec time. Without
+          # one the kernel refuses to launch the binary at all — no window, no
+          # message, just SIGKILL, while codesign, spctl and notarization all
+          # still pass. Determined empirically 2026-08-04; see
+          # docs/MACOS_KEYCHAIN_ENTITLEMENT.md §4. The profile is sealed by the
+          # signature, so it has to be in place before the signing step.
+          cp contrib/release/macos/embedded.provisionprofile Tenshu.app/Contents/embedded.provisionprofile
+
+      # rcodesign's XML parser accepts things Apple's AMFI parser rejects —
+      # most easily a double hyphen inside a comment, which XML forbids. CI
+      # would sign happily while `codesign` refuses the identical file, so the
+      # breakage lands on whoever next signs locally, reported as a syntax
+      # error on a comment line. Ad-hoc signing parses the entitlements
+      # through AMFI and needs no signing identity.
+      - name: Check entitlements parse under Apple's parser
+        if: matrix.platform == 'macos'
+        run: |
+          cp /usr/bin/true entitlements-parse-check
+          codesign -f -s - --entitlements contrib/release/macos/coincube.entitlements entitlements-parse-check
+          rm -f entitlements-parse-check
 
       - name: Sign macOS app
         if: matrix.platform == 'macos'
@@ -203,6 +240,51 @@ jobs:
         # runtime. See contrib/release/macos/README.md and
         # contrib/release/macos/coincube.entitlements.
         run: rcodesign sign --for-notarization --entitlements-xml-path contrib/release/macos/coincube.entitlements --p12-file cert.p12 --p12-password-file cert.pass Tenshu.app
+
+      # The pipeline otherwise only proves the app is signed and notarized,
+      # not that the signature carries what the app needs. Without
+      # keychain-access-groups the device secret can't be written and Cube
+      # creation fails on every user's machine with -34018. Runs before
+      # notarization so a bad signature fails in seconds, not 30 minutes.
+      - name: Verify signature, entitlement and provisioning profile
+        if: matrix.platform == 'macos'
+        run: |
+          entitlements=$(codesign -d --entitlements - Tenshu.app 2>&1)
+          echo "$entitlements"
+          echo "$entitlements" | grep -q 'keychain-access-groups' \
+            || { echo "entitlement missing from signature"; exit 1; }
+          echo "$entitlements" | grep -q '8UVR249AD5.io.coincube.tenshu' \
+            || { echo "keychain access group is not 8UVR249AD5.io.coincube.tenshu"; exit 1; }
+
+          # The entitlement is worse than useless without a profile authorising
+          # it — the app won't launch. An expired profile fails identically, and
+          # neither failure is visible at sign, notarize or spctl time, so it
+          # has to be checked here or discovered by a user.
+          profile=Tenshu.app/Contents/embedded.provisionprofile
+          test -f "$profile" || { echo "provisioning profile missing from bundle"; exit 1; }
+          security cms -D -i "$profile" > profile.plist 2>/dev/null
+          plutil -extract Entitlements.keychain-access-groups.0 raw -o - profile.plist \
+            | grep -q '^8UVR249AD5' \
+            || { echo "profile does not grant the 8UVR249AD5 keychain access group"; exit 1; }
+          expiry=$(plutil -extract ExpirationDate raw -o - profile.plist)
+          days=$(( ( $(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$expiry" +%s) - $(date +%s) ) / 86400 ))
+          echo "provisioning profile valid for $days more days (expires $expiry)"
+          [ "$days" -gt 0 ] || { echo "the embedded provisioning profile has expired"; exit 1; }
+          rm -f profile.plist
+
+      # The D4 item: the only proof the entitlement *took*. `codesign -d` shows
+      # it was requested; these three tests write to the data-protection
+      # keychain and read the attributes back off the stored item, which is
+      # impossible without a working entitlement. Runs on arm64 only — the
+      # property is not architecture-dependent, and a second run would just buy
+      # another test-profile compile. Nightly rather than releases.yml so a
+      # keychain hiccup on a runner cannot block shipping.
+      - name: Run signed device_secret tests
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        env:
+          P12_FILE: cert.p12
+          P12_PASSWORD_FILE: cert.pass
+        run: contrib/release/macos/run-signed-device-secret-tests.sh
 
       - name: Notarize and staple app
         if: matrix.platform == 'macos'

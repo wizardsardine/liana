@@ -4,21 +4,11 @@
 //! only contains a master signer.
 
 use crate::random;
-
-use aes_gcm::{
-    aead::{rand_core::RngCore, Aead, KeyInit, OsRng},
-    Aes256Gcm, Nonce,
-};
-
-use argon2::{
-    password_hash::{PasswordHasher, SaltString},
-    Algorithm, Argon2, Params, Version,
-};
+use crate::seed_crypt;
 
 use zeroize::Zeroizing;
 
 use std::{
-    convert::TryInto,
     error, fmt, fs,
     io::{self, Write},
     path,
@@ -35,10 +25,21 @@ use miniscript::bitcoin::{
     secp256k1, sighash,
 };
 
-const NONCE_LEN: usize = 12; // AES-GCM standard nonce
-const SALT_LEN: usize = 16;
-const ENCRYPTED_FILE_MARKER: &[u8] = b"ENCRYPTED_V1"; // 12 bytes
-const ENCRYPTED_FILE_MARKER_LEN: usize = 12;
+// The seed file's wire format, AEAD, and KDF live in [`crate::seed_crypt`].
+// Both the seed file and the duress marker go through that one codec so they
+// cost exactly the same to try — see PLAN-cube-unlock-hardening, invariant I2.
+
+/// HKDF salt for WebAuthn-PRF-derived master seeds.
+///
+/// **Treat as stable.** This is a wire constant: every passkey Cube's master
+/// key depends on it, so changing it silently orphans every such Cube. It is
+/// registered in the PRF domain registry alongside Keychain's, and the two are
+/// deliberately different — see [`MasterSigner::from_prf_output`].
+pub const PRF_HKDF_SALT: &[u8] = b"coincube-tenshu/v1";
+
+/// HKDF info string for WebAuthn-PRF-derived master seeds. **Treat as stable**
+/// for the same reason as [`PRF_HKDF_SALT`].
+pub const PRF_HKDF_INFO: &[u8] = b"master-seed-entropy/v1";
 
 /// An error related to using a signer.
 #[derive(Debug)]
@@ -60,6 +61,11 @@ pub enum SignerError {
 
     //Decryption specific errors
     NotEncryptedFile,
+    /// The file is `ENCRYPTED_V3` but no device secret was supplied. This is
+    /// **not** a wrong PIN, and must never be reported as one — a user whose
+    /// system keychain is locked, or whose keyring entry has been removed, has
+    /// a very different problem and a very different remedy (invariant I7).
+    DeviceSecretRequired,
     InvalidFileFormat,
     DecryptionFailed(String),
     InvalidPassword,
@@ -90,6 +96,11 @@ impl fmt::Display for SignerError {
 
             // Decryption errors
             Self::NotEncryptedFile => write!(f, "Not an encrypted mnemonic file"),
+            Self::DeviceSecretRequired => write!(
+                f,
+                "This Cube's seed is sealed to this device's system keychain, \
+                 which wasn't available"
+            ),
             Self::InvalidFileFormat => write!(f, "Invalid encrypted file format"),
             Self::DecryptionFailed(e) => write!(f, "Failed to decrypt mnemonic: {}", e),
             Self::InvalidPassword => write!(f, "Invalid password for encrypted mnemonic"),
@@ -108,10 +119,42 @@ pub const MASTER_SEED_LABEL: &str = "master_";
 pub const LEGACY_LIQUID_SEED_LABEL: &str = "liquid_";
 
 /// A signer that keeps the key on the laptop. Based on BIP39.
+///
+/// Both secrets it holds are scrubbed on drop: `bip39::Mnemonic` via the crate's
+/// `zeroize` feature, and the derived `Xpriv` by the [`Drop`] impl below.
+/// Neither happened before — a dropped signer left a full seed phrase and a
+/// master private key on the residual heap for the rest of the process's life,
+/// and the app constructs signers on every Cube open.
 pub struct MasterSigner {
     mnemonic: bip39::Mnemonic,
     master_xpriv: bip32::Xpriv,
     network: bitcoin::Network,
+}
+
+/// Overwrite an extended private key in place.
+///
+/// Split out of [`Drop`] so it can be tested: the effect of a `Drop` impl is by
+/// definition unobservable afterwards, and the bug this replaced was invisible
+/// for exactly that reason.
+///
+/// `SecretKey::non_secure_erase` overwrites the key through
+/// `ptr::write_volatile` followed by a `SeqCst` compiler fence — the same
+/// technique `zeroize` uses, so the write survives optimisation. It is called
+/// "non-secure" because it cannot undo copies the compiler may already have
+/// made elsewhere, which is inherent and not something any API can fix.
+fn scrub_xpriv(xpriv: &mut bip32::Xpriv) {
+    xpriv.private_key.non_secure_erase();
+    // The chain code is not secret on its own — it is half of the *xpub* — so
+    // this is tidiness rather than a control, and a plain assignment is enough.
+    // The private key above is the part that matters.
+    xpriv.chain_code = bip32::ChainCode::from([0u8; 32]);
+}
+
+impl Drop for MasterSigner {
+    fn drop(&mut self) {
+        scrub_xpriv(&mut self.master_xpriv);
+        // `bip39::Mnemonic` scrubs itself (the crate's `zeroize` feature).
+    }
 }
 
 // TODO: instead of copying them here we could have a util module with those helpers.
@@ -144,11 +187,41 @@ fn create_file(path: &path::Path) -> Result<fs::File, std::io::Error> {
         options.mode(0o400).open(path)
     };
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     return {
-        // TODO: permissions for Windows...
+        // Windows has no mode bits. The datadir already lives under the user's
+        // profile, whose ACL is owner-only by default, so the meaningful thing
+        // left is to mark the file read-only: it stops an in-place edit of the
+        // seed file (the AAD binding would reject a tampered one anyway, but a
+        // rewrite that destroys it is still a way to lose a wallet).
+        //
+        // Setting the attribute has to happen *after* creation — a read-only
+        // file cannot be opened for writing — so the caller writes first and
+        // the attribute is applied by `restrict_permissions` afterwards. This
+        // arm therefore just creates the file.
         options.open(path)
     };
+
+    #[cfg(not(any(unix, windows)))]
+    return options.open(path);
+}
+
+/// Tighten permissions on a file that already exists and has been written.
+///
+/// Unix files are created 0o400 by [`create_file`] and need nothing more; this
+/// is where Windows gets its read-only attribute, which cannot be applied at
+/// creation time without making the file unwritable.
+pub fn restrict_permissions(path: &path::Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        let meta = fs::metadata(path)?;
+        let mut perms = meta.permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(path, perms)?;
+    }
+    #[cfg(not(windows))]
+    let _ = path;
+    Ok(())
 }
 
 impl MasterSigner {
@@ -176,17 +249,46 @@ impl MasterSigner {
 
     /// Create a MasterSigner from a 32-byte WebAuthn PRF extension output.
     ///
-    /// The first 16 bytes of the PRF output are used directly as BIP39 entropy,
-    /// producing a deterministic 12-word mnemonic. This mirrors [`Self::generate`],
-    /// which also takes the first 16 bytes of 32 random bytes. The same PRF
-    /// output always yields the same mnemonic and master key.
+    /// The PRF output is run through HKDF-SHA256 with a Coincube-specific salt
+    /// and info string, and the full 32-byte result becomes BIP39 entropy — a
+    /// deterministic 24-word mnemonic. The same PRF output always yields the
+    /// same mnemonic and master key.
+    ///
+    /// # Why not `from_entropy(&prf_output[..16])`
+    ///
+    /// That was the original implementation and it was wrong twice over. It
+    /// **discarded 128 bits** of a 256-bit secret for no reason, and it applied
+    /// **no domain separation**, so the same authenticator PRF output fed to
+    /// two different Coincube-family apps would derive the *same* master key.
+    /// Keychain derives from the same PRF extension; two related keys landing
+    /// in one Vault descriptor is exactly the failure that makes a multisig
+    /// quorum a single point of failure.
+    ///
+    /// The salt and info strings below are **load-bearing wire constants**.
+    /// Changing either changes every key derived from every passkey — treat
+    /// them as stable, exactly as `keychain-app` treats its own
+    /// (`passkey_prf_entropy_source.dart`). The two must never match; there is
+    /// a cross-app negative-vector test asserting they don't.
     pub fn from_prf_output(
         network: bitcoin::Network,
         prf_output: &[u8; 32],
     ) -> Result<Self, SignerError> {
+        let entropy = Self::prf_entropy(prf_output)?;
         let mnemonic =
-            bip39::Mnemonic::from_entropy(&prf_output[..16]).map_err(SignerError::Mnemonic)?;
+            bip39::Mnemonic::from_entropy(entropy.as_ref()).map_err(SignerError::Mnemonic)?;
         Self::from_mnemonic(network, mnemonic)
+    }
+
+    /// HKDF-SHA256 extract-and-expand over a WebAuthn PRF output. Split out so
+    /// the domain constants can be pinned by a known-answer test without
+    /// building a whole signer.
+    pub fn prf_entropy(prf_output: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>, SignerError> {
+        let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(PRF_HKDF_SALT), prf_output);
+        let mut entropy = Zeroizing::new([0u8; 32]);
+        // Only fails for an output longer than 255*32 bytes; 32 is fine.
+        hk.expand(PRF_HKDF_INFO, entropy.as_mut())
+            .map_err(|_| SignerError::KeyDerivationFailed)?;
+        Ok(entropy)
     }
 
     pub fn from_str(network: bitcoin::Network, s: &str) -> Result<Self, SignerError> {
@@ -194,12 +296,12 @@ impl MasterSigner {
         Self::from_mnemonic(network, mnemonic)
     }
 
-    /// Check if a file contains an encrypted mnemonic
-    fn is_encrypted(data: &[u8]) -> bool {
-        data.starts_with(ENCRYPTED_FILE_MARKER)
+    /// Check if a file contains an encrypted mnemonic (any wire version).
+    pub fn is_encrypted(data: &[u8]) -> bool {
+        seed_crypt::is_encrypted(data)
     }
 
-    fn mnemonics_folder(datadir_root: &path::Path, network: bitcoin::Network) -> path::PathBuf {
+    pub fn mnemonics_folder(datadir_root: &path::Path, network: bitcoin::Network) -> path::PathBuf {
         [
             datadir_root,
             path::Path::new(&network.to_string()),
@@ -209,14 +311,45 @@ impl MasterSigner {
         .collect()
     }
 
+    /// Decode one mnemonic file's bytes. `cube_id` is the Cube the caller
+    /// believes owns the file — it forms part of the v2 AAD (see
+    /// [`crate::seed_crypt`]); pass `""` when there is no Cube context.
+    fn read_mnemonic_bytes(
+        data: Vec<u8>,
+        password: Option<&str>,
+        cube_id: &str,
+    ) -> Result<Zeroizing<String>, SignerError> {
+        if Self::is_encrypted(&data) {
+            let pwd = password.ok_or(SignerError::PasswordRequired)?;
+            // No device secret here: `coincube-core` has no keystore access.
+            // A v3 file therefore surfaces `DeviceSecretRequired`, and the GUI
+            // (`services::unlock`) is the layer that supplies the secret.
+            let plaintext = seed_crypt::decrypt(&data, pwd, cube_id)?;
+            Ok(Zeroizing::new(
+                String::from_utf8(plaintext.to_vec()).map_err(|e| {
+                    SignerError::MnemonicStorage(io::Error::new(io::ErrorKind::InvalidData, e))
+                })?,
+            ))
+        } else {
+            // Unencrypted file. Reading these is retained for one release so a
+            // datadir written by a pre-hardening build still opens; the write
+            // path is gone (see `store_encrypted`) and the startup migration
+            // re-encrypts anything it finds.
+            Ok(Zeroizing::new(String::from_utf8(data).map_err(|e| {
+                SignerError::MnemonicStorage(io::Error::new(io::ErrorKind::InvalidData, e))
+            })?))
+        }
+    }
+
     /// Read mnemonics from datadir (with optional password for encrypted files).
     /// To exclude Liquid/master-seed files, use [`Self::from_datadir_with_password_filtered`].
     pub fn from_datadir_with_password(
         datadir_root: &path::Path,
         network: bitcoin::Network,
         password: Option<&str>,
+        cube_id: &str,
     ) -> Result<Vec<Self>, SignerError> {
-        Self::from_datadir_with_password_filtered(datadir_root, network, password, false)
+        Self::from_datadir_with_password_filtered(datadir_root, network, password, cube_id, false)
     }
 
     /// Read mnemonics from datadir, optionally filtering out Liquid-wallet and master-seed mnemonics.
@@ -224,6 +357,7 @@ impl MasterSigner {
         datadir_root: &path::Path,
         network: bitcoin::Network,
         password: Option<&str>,
+        cube_id: &str,
         vault_only: bool,
     ) -> Result<Vec<Self>, SignerError> {
         let mut signers = Vec::new();
@@ -248,17 +382,10 @@ impl MasterSigner {
 
             let data = fs::read(&path).map_err(SignerError::MnemonicStorage)?;
 
-            let mnemonic_str = if Self::is_encrypted(&data) {
-                let Some(pwd) = password else {
-                    continue;
-                };
-                Self::decrypt_mnemonic(&data, pwd)?.as_str().to_string()
-            } else {
-                // Unencrypted file (backward compatibility)
-                String::from_utf8(data).map_err(|e| {
-                    SignerError::MnemonicStorage(io::Error::new(io::ErrorKind::InvalidData, e))
-                })?
-            };
+            if Self::is_encrypted(&data) && password.is_none() {
+                continue;
+            }
+            let mnemonic_str = Self::read_mnemonic_bytes(data, password, cube_id)?;
 
             signers.push(Self::from_str(network, &mnemonic_str)?);
         }
@@ -272,6 +399,7 @@ impl MasterSigner {
         network: bitcoin::Network,
         target_fingerprint: Fingerprint,
         password: Option<&str>,
+        cube_id: &str,
     ) -> Result<Self, SignerError> {
         let mnemonics_folder = Self::mnemonics_folder(datadir_root, network);
         let mnemonic_paths =
@@ -287,22 +415,7 @@ impl MasterSigner {
                 if filename.contains(&fingerprint_str) {
                     // Found a potential match, try to load it
                     let data = fs::read(&path).map_err(SignerError::MnemonicStorage)?;
-
-                    let mnemonic_str: Zeroizing<String> = if Self::is_encrypted(&data) {
-                        let pwd = password.ok_or(SignerError::DecryptionFailed(
-                            "Password required for encrypted mnemonic".to_string(),
-                        ))?;
-                        Self::decrypt_mnemonic(&data, pwd)?
-                    } else {
-                        // Unencrypted file (backward compatibility)
-                        Zeroizing::new(String::from_utf8(data).map_err(|e| {
-                            SignerError::MnemonicStorage(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                e,
-                            ))
-                        })?)
-                    };
-
+                    let mnemonic_str = Self::read_mnemonic_bytes(data, password, cube_id)?;
                     let signer = Self::from_str(network, &mnemonic_str)?;
 
                     // Verify the fingerprint matches
@@ -322,7 +435,7 @@ impl MasterSigner {
         datadir_root: &path::Path,
         network: bitcoin::Network,
     ) -> Result<Vec<Self>, SignerError> {
-        Self::from_datadir_with_password_filtered(datadir_root, network, None, false)
+        Self::from_datadir_with_password_filtered(datadir_root, network, None, "", false)
     }
 
     /// Load only Vault mnemonics (skip Liquid wallet mnemonics)
@@ -330,24 +443,28 @@ impl MasterSigner {
         datadir_root: &path::Path,
         network: bitcoin::Network,
     ) -> Result<Vec<Self>, SignerError> {
-        Self::from_datadir_with_password_filtered(datadir_root, network, None, true)
+        Self::from_datadir_with_password_filtered(datadir_root, network, None, "", true)
     }
 
     /// The BIP39 mnemonics from which the master key of this signer is derived.
-    pub fn words(&self) -> [&'static str; 12] {
-        let words: Vec<&'static str> = self.mnemonic.words().collect();
-        words.try_into().expect("Always 12 words")
+    ///
+    /// Length is 12 for a generated or user-entered seed and 24 for a
+    /// passkey-derived one (`from_prf_output` feeds BIP39 the full 32 bytes of
+    /// HKDF output). It used to return `[&str; 12]` with an `.expect("Always
+    /// 12 words")`; that would now panic on a passkey Cube.
+    pub fn words(&self) -> Vec<&'static str> {
+        self.mnemonic.words().collect()
     }
 
     /// The BIP39 mnemonic words as a string.
-    pub fn mnemonic_str(&self) -> String {
-        let mut mnemonic_str = String::with_capacity(12 * 7);
+    pub fn mnemonic_str(&self) -> Zeroizing<String> {
         let words = self.words();
+        let mut mnemonic_str = Zeroizing::new(String::with_capacity(words.len() * 9));
 
         for (i, word) in words.iter().enumerate() {
-            mnemonic_str += word;
+            *mnemonic_str += word;
             if i < words.len() - 1 {
-                mnemonic_str += " ";
+                *mnemonic_str += " ";
             }
         }
 
@@ -397,15 +514,29 @@ impl MasterSigner {
     }
 
     /// Store the mnemonic in a file within the given "data directory".
-    /// The file is stored within a "mnemonics" folder, with the filename set to the fingerprint of
-    /// the master xpub corresponding to this mnemonic. Encrypted when `password` is provided.
+    ///
+    /// The file is stored within a "mnemonics" folder, with the filename set to
+    /// the fingerprint of the master xpub corresponding to this mnemonic. It is
+    /// **always** encrypted: `password` is a `&str`, not an `Option`, so there
+    /// is no reachable code path that writes a seed to disk in the clear. That
+    /// is enforced by the type rather than by convention — the previous
+    /// signature took `Option<&str>` and four production call sites passed
+    /// `None`, one of them writing the Cube's *master* seed in the clear in
+    /// developer mode.
+    ///
+    /// `cube_id` binds the file to its owning Cube through the AEAD's AAD. Pass
+    /// `""` only where no Cube exists yet (the Vault installer runs before
+    /// `find_or_create_cube` mints one); such a file stays readable afterwards.
+    #[allow(clippy::too_many_arguments)]
     pub fn store_encrypted(
         &self,
         datadir_root: &path::Path,
         network: bitcoin::Network,
         secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
         descriptor_info: Option<(String, i64)>,
-        password: Option<&str>,
+        password: &str,
+        cube_id: &str,
+        device_secret: Option<&seed_crypt::DeviceSecret>,
     ) -> Result<(), SignerError> {
         let mnemonics_folder = Self::mnemonics_folder(datadir_root, network);
         if !mnemonics_folder.exists() {
@@ -418,162 +549,17 @@ impl MasterSigner {
         };
         let file_path = mnemonics_folder.join(filename.to_string());
 
-        let data = if let Some(pwd) = password {
-            // Encrypt the mnemonic
-            self.encrypt_mnemonic(pwd)?
-        } else {
-            // Store unencrypted (backward compatibility)
-            self.mnemonic_str().as_bytes().to_vec()
-        };
+        let plaintext = self.mnemonic_str();
+        let data = seed_crypt::encrypt(plaintext.as_bytes(), password, cube_id, device_secret)?;
 
         let mut mnemonic_file = create_file(&file_path).map_err(SignerError::MnemonicStorage)?;
         mnemonic_file
             .write_all(&data)
             .map_err(SignerError::MnemonicStorage)?;
+        drop(mnemonic_file);
+        restrict_permissions(&file_path).map_err(SignerError::MnemonicStorage)?;
 
         Ok(())
-    }
-
-    /// Legacy store method (unencrypted) for backward compatibility
-    pub fn store(
-        &self,
-        datadir_root: &path::Path,
-        network: bitcoin::Network,
-        secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
-        descriptor_info: Option<(String, i64)>,
-    ) -> Result<(), SignerError> {
-        self.store_encrypted(datadir_root, network, secp, descriptor_info, None)
-    }
-
-    /// Encrypt the mnemonic using Argon2 + AES-256-GCM
-    fn encrypt_mnemonic(&self, password: &str) -> Result<Vec<u8>, SignerError> {
-        // Generate random salt bytes
-        let mut salt_bytes = [0u8; SALT_LEN];
-        OsRng.fill_bytes(&mut salt_bytes);
-
-        // Create SaltString from the raw bytes for password hashing
-        let salt = SaltString::encode_b64(&salt_bytes)
-            .map_err(|e| SignerError::SaltEncodingError(e.to_string()))?;
-
-        let params = Params::new(
-            262144,   // 256 MiB memory (in KiB)
-            3,        // 3 iterations
-            4,        // 4 parallel lanes
-            Some(32), // 32-byte output for AES-256 key
-        )
-        .map_err(|e| SignerError::EncryptionFailed(e.to_string()))?;
-
-        // Derive key from password using Argon2
-        let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-        let password_hash = argon2
-            .hash_password(password.as_bytes(), &salt)
-            .map_err(|e| SignerError::PasswordHashError(e.to_string()))?;
-
-        let hash_output = password_hash
-            .hash
-            .ok_or_else(|| SignerError::EncryptionFailed("Failed to derive key".to_string()))?;
-
-        // Use Zeroizing to automatically clear key_bytes when dropped
-        // Take the first 32 bytes for AES-256 (hash output is typically longer)
-        let key_bytes = Zeroizing::new({
-            let hash_bytes = hash_output.as_bytes();
-            if hash_bytes.len() < 32 {
-                return Err(SignerError::KeyDerivationFailed);
-            }
-            hash_bytes[..32].to_vec()
-        });
-
-        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
-            .map_err(|e| SignerError::CipherCreationError(e.to_string()))?;
-
-        // Generate nonce
-        let mut nonce_bytes = [0u8; NONCE_LEN];
-        OsRng.fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
-
-        // Encrypt mnemonic - use Zeroizing for the plaintext
-        let plaintext = Zeroizing::new(self.mnemonic_str());
-        let ciphertext = cipher
-            .encrypt(nonce, plaintext.as_bytes())
-            .map_err(|e| SignerError::EncryptionFailed(e.to_string()))?;
-
-        // Format: MARKER + SALT + NONCE + CIPHERTEXT
-        let mut result = Vec::new();
-        result.extend_from_slice(ENCRYPTED_FILE_MARKER);
-        result.extend_from_slice(&salt_bytes); // Use raw salt bytes
-        result.extend_from_slice(&nonce_bytes);
-        result.extend_from_slice(&ciphertext);
-
-        Ok(result)
-        // key_bytes and plaintext are automatically zeroized when dropped here
-    }
-
-    /// Decrypt a mnemonic
-    fn decrypt_mnemonic(data: &[u8], password: &str) -> Result<Zeroizing<String>, SignerError> {
-        // Check marker
-        if !data.starts_with(ENCRYPTED_FILE_MARKER) {
-            return Err(SignerError::DecryptionFailed(
-                "Not an encrypted mnemonic file".to_string(),
-            ));
-        }
-
-        let data = &data[ENCRYPTED_FILE_MARKER_LEN..];
-
-        if data.len() < SALT_LEN + NONCE_LEN {
-            return Err(SignerError::InvalidFileFormat);
-        }
-
-        let salt_bytes = &data[..SALT_LEN];
-        let nonce_bytes = &data[SALT_LEN..SALT_LEN + NONCE_LEN];
-        let ciphertext = &data[SALT_LEN + NONCE_LEN..];
-
-        // Derive key from password
-        let salt = SaltString::encode_b64(salt_bytes)
-            .map_err(|e| SignerError::DecryptionFailed(e.to_string()))?;
-
-        // Must use same params as encrypt_mnemonic
-        let params = Params::new(
-            262144,   // 256 MiB memory (in KiB)
-            3,        // 3 iterations
-            4,        // 4 parallel lanes
-            Some(32), // 32-byte output for AES-256 key
-        )
-        .map_err(|e| SignerError::DecryptionFailed(e.to_string()))?;
-
-        let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-        let password_hash = argon2
-            .hash_password(password.as_bytes(), &salt)
-            .map_err(|_| SignerError::InvalidPassword)?;
-
-        let hash_output = password_hash.hash.ok_or(SignerError::InvalidPassword)?;
-
-        // Use Zeroizing to automatically clear key_bytes when dropped
-        // Take the first 32 bytes for AES-256
-        let key_bytes = Zeroizing::new({
-            let hash_bytes = hash_output.as_bytes();
-            if hash_bytes.len() < 32 {
-                return Err(SignerError::InvalidPassword);
-            }
-            hash_bytes[..32].to_vec()
-        });
-
-        let cipher =
-            Aes256Gcm::new_from_slice(&key_bytes).map_err(|_| SignerError::InvalidPassword)?;
-
-        // Decrypt - use Zeroizing for the plaintext bytes
-        let plaintext_bytes = Zeroizing::new(
-            cipher
-                .decrypt(Nonce::from_slice(nonce_bytes), ciphertext)
-                .map_err(|_| SignerError::InvalidPassword)?,
-        );
-
-        let result = Zeroizing::new(
-            String::from_utf8(plaintext_bytes.to_vec())
-                .map_err(|e| SignerError::DecryptionFailed(e.to_string()))?,
-        );
-
-        Ok(result)
-        // key_bytes and plaintext_bytes are automatically zeroized when dropped here
     }
 
     pub fn xpriv_at(
@@ -917,31 +903,164 @@ mod tests {
         );
     }
 
+    /// The registered PRF eval input for Tenshu's Cube master seed:
+    /// `SHA-256("coincube-tenshu/v1/master-seed")`. Pinned here as a literal so
+    /// the value can be checked against the PRF domain registry by eye, and so
+    /// a change to the domain string cannot pass silently. Mirrors
+    /// `keychain-app/test/services/key_manager/passkey_prf_entropy_source_test.dart:40`.
+    const TENSHU_PRF_SALT_HEX: &str =
+        "4168dc1cd488a37de30cdfca8742130242cdee47283242feabcb9811f2399c72";
+
+    const FIXED_PRF_OUTPUT: [u8; 32] = [
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e,
+        0x1f, 0x20,
+    ];
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn tenshu_prf_salt_matches_the_domain_registry() {
+        use sha2::Digest;
+        let computed = sha2::Sha256::digest(b"coincube-tenshu/v1/master-seed");
+        assert_eq!(
+            hex(&computed),
+            TENSHU_PRF_SALT_HEX,
+            "the registered PRF eval input changed — every passkey Cube's master \
+             key depends on it; update the domain registry deliberately or revert"
+        );
+    }
+
     #[test]
     fn master_signer_from_prf_output_deterministic() {
-        let prf_output: [u8; 32] = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
-            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
-            0x1d, 0x1e, 0x1f, 0x20,
-        ];
-
         let signer1 =
-            MasterSigner::from_prf_output(bitcoin::Network::Bitcoin, &prf_output).unwrap();
+            MasterSigner::from_prf_output(bitcoin::Network::Bitcoin, &FIXED_PRF_OUTPUT).unwrap();
         let signer2 =
-            MasterSigner::from_prf_output(bitcoin::Network::Bitcoin, &prf_output).unwrap();
+            MasterSigner::from_prf_output(bitcoin::Network::Bitcoin, &FIXED_PRF_OUTPUT).unwrap();
 
         // Same PRF output must produce the same mnemonic and fingerprint.
         assert_eq!(signer1.words(), signer2.words());
         let secp = secp256k1::Secp256k1::signing_only();
         assert_eq!(signer1.fingerprint(&secp), signer2.fingerprint(&secp));
 
-        // Must produce a valid 12-word mnemonic.
-        assert_eq!(signer1.words().len(), 12);
+        // 32 bytes of HKDF output → 24 words. The old implementation truncated
+        // to 16 bytes and produced 12, discarding half the PRF secret.
+        assert_eq!(signer1.words().len(), 24);
 
         // Different PRF output must produce a different mnemonic.
         let other_prf: [u8; 32] = [0xff; 32];
         let signer3 = MasterSigner::from_prf_output(bitcoin::Network::Bitcoin, &other_prf).unwrap();
         assert_ne!(signer1.words(), signer3.words());
+    }
+
+    #[test]
+    fn changing_the_hkdf_domain_changes_the_mnemonic() {
+        // Domain separation is only real if the domain is actually mixed in.
+        // Derive with a deliberately different salt/info and require a
+        // different result — this is what fails if someone "simplifies"
+        // `prf_entropy` into a plain hash of the PRF output.
+        let ours = MasterSigner::prf_entropy(&FIXED_PRF_OUTPUT).unwrap();
+
+        let mut other = [0u8; 32];
+        hkdf::Hkdf::<sha2::Sha256>::new(Some(b"coincube-tenshu/v2"), &FIXED_PRF_OUTPUT)
+            .expand(PRF_HKDF_INFO, &mut other)
+            .unwrap();
+        assert_ne!(&ours[..], &other[..], "HKDF salt is not being mixed in");
+
+        let mut other = [0u8; 32];
+        hkdf::Hkdf::<sha2::Sha256>::new(Some(PRF_HKDF_SALT), &FIXED_PRF_OUTPUT)
+            .expand(b"some-other-purpose/v1", &mut other)
+            .unwrap();
+        assert_ne!(&ours[..], &other[..], "HKDF info is not being mixed in");
+    }
+
+    /// Invariant I9: no two keys in one Vault descriptor may share a
+    /// cryptographic root.
+    ///
+    /// Keychain and Tenshu are registered under one WebAuthn relying party, so
+    /// **the same credential can be evaluated by both apps** — an iCloud-synced
+    /// passkey minted on the user's iPhone is offerable to Tenshu on their Mac.
+    /// The only thing keeping the two derived keys independent is the domain
+    /// separation in the PRF registry. A Keychain key is a cosigner in the
+    /// Vault descriptor and the Tenshu seed derives the Vault hot key; if these
+    /// ever collide, an n-of-m multisig quietly becomes 1-of-1.
+    ///
+    /// This test is the guard that survives a future "unify our PRF handling"
+    /// refactor — which is exactly the refactor that would cause the collision.
+    /// Keychain's side is reimplemented here from the frozen constants in
+    /// `passkey_prf_entropy_source.dart` rather than imported, because the
+    /// point is to detect Tenshu drifting *towards* it.
+    ///
+    /// **If this test fails, do not "fix" it by making the two agree.**
+    #[test]
+    fn tenshu_and_keychain_derive_different_mnemonics_from_one_prf_output() {
+        // Keychain, frozen (I8): HKDF-SHA256(salt="coincube-keychain/v1",
+        // info="master-mnemonic-entropy/v1", L=16) → 12 words.
+        let mut keychain_entropy = [0u8; 16];
+        hkdf::Hkdf::<sha2::Sha256>::new(Some(b"coincube-keychain/v1"), &FIXED_PRF_OUTPUT)
+            .expand(b"master-mnemonic-entropy/v1", &mut keychain_entropy)
+            .unwrap();
+        let keychain_mnemonic = bip39::Mnemonic::from_entropy(&keychain_entropy).unwrap();
+
+        // Tenshu, this crate.
+        let tenshu =
+            MasterSigner::from_prf_output(bitcoin::Network::Bitcoin, &FIXED_PRF_OUTPUT).unwrap();
+
+        assert_ne!(
+            keychain_mnemonic.to_string(),
+            tenshu.mnemonic_str().to_string(),
+            "Tenshu and Keychain derived the SAME mnemonic from one PRF output — \
+             a Vault cosigner and the Vault hot key now share a root (I9)"
+        );
+
+        // Also assert the entropy differs, not just the word count, so the
+        // assertion still means something if Keychain ever moves to L=32.
+        let tenshu_entropy = MasterSigner::prf_entropy(&FIXED_PRF_OUTPUT).unwrap();
+        assert_ne!(&tenshu_entropy[..16], &keychain_entropy[..]);
+
+        // The checked-in expected value for Keychain's side. It is here so that
+        // someone "fixing" a drift has to consciously edit a constant that says
+        // it must not match, rather than silently re-record a golden file.
+        assert_eq!(
+            hex(&keychain_entropy),
+            "4364b33331fd6c7d4a632ba3ae91c88b",
+            "Keychain's frozen derivation changed — it has live cosigner keys (I8)"
+        );
+        assert_eq!(
+            hex(&tenshu_entropy[..]),
+            "c3f9338a02357e3ebca6185fe158dee87cf6c5c38ff0f7066a010d53bbee1750",
+            "Tenshu's derivation changed — every passkey Cube is re-keyed"
+        );
+    }
+
+    /// The private key must actually be overwritten, not merely *appear* to be.
+    ///
+    /// This previously read the key out with `secret_bytes()` — which returns
+    /// `[u8; 32]` **by value** — and zeroized that. It scrubbed a stack copy
+    /// that was about to be dropped anyway, left the real key untouched, and
+    /// created one more copy of the secret in the process. The `Drop` impl read
+    /// as if it worked and did nothing.
+    #[test]
+    fn scrubbing_an_xpriv_overwrites_the_private_key() {
+        let network = bitcoin::Network::Bitcoin;
+        let signer = MasterSigner::generate(network).unwrap();
+        let mut xpriv = signer.master_xpriv;
+
+        let key_before = xpriv.private_key.secret_bytes();
+        let chain_before = xpriv.chain_code;
+
+        scrub_xpriv(&mut xpriv);
+
+        assert_ne!(
+            xpriv.private_key.secret_bytes(),
+            key_before,
+            "the private key survived the scrub — `secret_bytes()` returns a copy, \
+             so zeroizing its result does nothing to the key itself"
+        );
+        assert_ne!(xpriv.chain_code, chain_before);
+        assert_eq!(xpriv.chain_code, bip32::ChainCode::from([0u8; 32]));
     }
 
     #[test]
@@ -954,16 +1073,55 @@ mod tests {
         let words_set: HashSet<_> = (0..10)
             .map(|_| {
                 let signer = MasterSigner::generate(network).unwrap();
-                signer.store(&tmp_dir, network, &secp, None).unwrap();
+                signer
+                    .store_encrypted(&tmp_dir, network, &secp, None, "1234", "cube-a", None)
+                    .unwrap();
                 signer.words()
             })
             .collect();
-        let words_read: HashSet<_> = MasterSigner::from_datadir(&tmp_dir, network)
-            .unwrap()
-            .into_iter()
-            .map(|signer| signer.words())
-            .collect();
+        let words_read: HashSet<_> =
+            MasterSigner::from_datadir_with_password(&tmp_dir, network, Some("1234"), "cube-a")
+                .unwrap()
+                .into_iter()
+                .map(|signer| signer.words())
+                .collect();
         assert_eq!(words_set, words_read);
+
+        fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    /// I5: there is no reachable code path that writes a seed in the clear.
+    /// `store_encrypted` takes `&str`, so this is a compile-time property — the
+    /// test asserts the resulting bytes, which is the part a type can't state.
+    #[test]
+    fn stored_seed_files_are_always_encrypted() {
+        let secp = secp256k1::Secp256k1::signing_only();
+        let tmp_dir = tmp_dir();
+        fs::create_dir_all(&tmp_dir).unwrap();
+        let network = bitcoin::Network::Bitcoin;
+
+        let signer = MasterSigner::generate(network).unwrap();
+        signer
+            .store_encrypted(&tmp_dir, network, &secp, None, "1234", "cube-a", None)
+            .unwrap();
+
+        let folder = MasterSigner::mnemonics_folder(&tmp_dir, network);
+        let mut checked = 0;
+        for entry in fs::read_dir(&folder).unwrap() {
+            let data = fs::read(entry.unwrap().path()).unwrap();
+            assert_eq!(
+                crate::seed_crypt::format_version(&data),
+                Some(2),
+                "a seed file was written at the wrong version (or in the clear)"
+            );
+            // Belt and braces: the words must not appear anywhere in the file.
+            let words = signer.words();
+            assert!(!data
+                .windows(words[0].len())
+                .any(|w| w == words[0].as_bytes()));
+            checked += 1;
+        }
+        assert_eq!(checked, 1);
 
         fs::remove_dir_all(tmp_dir).unwrap();
     }

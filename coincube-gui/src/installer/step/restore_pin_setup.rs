@@ -29,7 +29,6 @@
 //! persist, we skip ahead.
 
 use iced::Task;
-use zeroize::Zeroizing;
 
 use coincube_ui::widget::*;
 
@@ -146,7 +145,7 @@ impl Step for RestorePinSetupStep {
         // use it as the encryption password for the restored mnemonic
         // and the tab-level `CubeSaved` handler can mint
         // `CubeSettings.security_pin_hash`.
-        ctx.restore_pin = Some(Zeroizing::new(self.entry.value()));
+        ctx.restore_pin = Some(self.entry.value());
         true
     }
 

@@ -271,7 +271,7 @@ pub enum Method {
     Shutdown,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct InitParams {
     pub api_key: String,
     pub network: Network,
@@ -279,6 +279,26 @@ pub struct InitParams {
     pub mnemonic: String,
     pub mnemonic_passphrase: Option<String>,
     pub storage_dir: String,
+}
+
+// Hand-written so a `debug!("{:?}", params)` anywhere in the bridge handshake
+// cannot write a seed phrase (or the API key) into `<datadir>/logs/`. The
+// derived impl printed both in full. Nothing does that today; this is one
+// stray log line away from being a disclosure, and the log file outlives the
+// process.
+impl std::fmt::Debug for InitParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InitParams")
+            .field("api_key", &"<redacted>")
+            .field("network", &self.network)
+            .field("mnemonic", &"<redacted>")
+            .field(
+                "mnemonic_passphrase",
+                &self.mnemonic_passphrase.as_ref().map(|_| "<redacted>"),
+            )
+            .field("storage_dir", &self.storage_dir)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

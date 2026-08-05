@@ -6,7 +6,7 @@ use iced::{
     widget::{operation::focus_next, operation::focus_previous},
     Alignment, Length, Task,
 };
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 /// Reusable 4-digit PIN input component.
 ///
@@ -24,11 +24,24 @@ pub struct PinInput {
     pub hidden: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Message {
     DigitChanged(usize, String),
     ToggleShow,
     Submit,
+}
+
+// Hand-written: `DigitChanged` carries a PIN digit, and iced messages get
+// `{:?}`-logged in plenty of places. One digit is not a PIN, but four
+// consecutive log lines are.
+impl std::fmt::Debug for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DigitChanged(i, _) => write!(f, "DigitChanged({}, <redacted>)", i),
+            Self::ToggleShow => write!(f, "ToggleShow"),
+            Self::Submit => write!(f, "Submit"),
+        }
+    }
 }
 
 impl PinInput {
@@ -40,8 +53,13 @@ impl PinInput {
     }
 
     /// The joined 4-digit PIN value.
-    pub fn value(&self) -> String {
-        self.digits.join("")
+    ///
+    /// Returns `Zeroizing<String>`, not a bare `String`. The widget's own
+    /// `Drop`/`clear()` scrub the per-digit buffers carefully, and returning an
+    /// un-zeroized join undid all of it the moment a caller moved the value
+    /// into a long-lived async block — which `gui::tab` does on every unlock.
+    pub fn value(&self) -> Zeroizing<String> {
+        Zeroizing::new(self.digits.join(""))
     }
 
     /// Whether all 4 digits have been entered.
@@ -204,12 +222,12 @@ mod tests {
             "3".to_string(),
             "4".to_string(),
         ];
-        assert_eq!(pin.value(), "1234");
+        assert_eq!(pin.value().as_str(), "1234");
         pin.clear();
         for d in &pin.digits {
             assert!(d.is_empty(), "clear() left a digit non-empty: {:?}", d);
         }
-        assert_eq!(pin.value(), "");
+        assert_eq!(pin.value().as_str(), "");
     }
 
     #[test]
@@ -234,7 +252,7 @@ mod tests {
         // clears length before we drop the old allocation, so by the
         // time `replace_digit` returns no plaintext "7" is reachable
         // through `self.digits` — the only digit accessible is "3".
-        assert_eq!(pin.value(), "3");
+        assert_eq!(pin.value().as_str(), "3");
     }
 
     #[test]

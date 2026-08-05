@@ -39,7 +39,9 @@ impl Signer {
         self.key.set_network(network)
     }
 
-    pub fn mnemonic(&self) -> [&'static str; 12] {
+    /// 12 words for a generated or user-entered seed, 24 for a
+    /// passkey-derived one.
+    pub fn mnemonic(&self) -> Vec<&'static str> {
         self.key.words()
     }
 
@@ -69,33 +71,25 @@ impl Signer {
         self.key.sign_psbt(psbt, &self.curve)
     }
 
-    pub fn store(
-        &self,
-        datadir_root: &CoincubeDirectory,
-        network: Network,
-        checksum: &str,
-        timestamp: i64,
-    ) -> Result<(), SignerError> {
-        self.key.store(
-            datadir_root.path(),
-            network,
-            &self.curve,
-            Some((checksum.to_string(), timestamp)),
-        )
-    }
-
-    /// AES-encrypted variant of [`Signer::store`] — writes the
-    /// mnemonic file protected by `password` (Argon2id-derived key).
+    /// Write the mnemonic file, encrypted under `password` (Argon2id-derived
+    /// key, AES-256-GCM).
     ///
-    /// Used by the Recovery Kit restore flow so the stored mnemonic
-    /// matches the layout a fresh-install Cube produces: the Liquid /
-    /// Spark BreezClient decrypts via the Cube's PIN on every open.
-    /// Without encryption, `MasterSigner::from_datadir_by_fingerprint`
-    /// still succeeds (it handles both shapes) but `load_breez_client`
-    /// refuses to decrypt an unencrypted blob with a password and the
-    /// app hangs on "Starting daemon…". Keeping the PIN-encrypted
-    /// layout uniform across fresh-install and restored Cubes avoids
-    /// that branch.
+    /// Every stored mnemonic takes this path — the unencrypted `store()` that
+    /// used to sit alongside it is gone, along with the four installer call
+    /// sites that used it (one of which wrote the Cube's *master* seed in the
+    /// clear in developer mode). `password` is not optional, so plaintext is no
+    /// longer expressible.
+    ///
+    /// The PIN-encrypted layout is also what the rest of the app expects: the
+    /// Liquid / Spark BreezClient decrypts via the Cube's PIN on every open,
+    /// and `load_breez_client` refuses to decrypt an unencrypted blob with a
+    /// password — a restored Cube written in the clear used to hang the app on
+    /// "Starting daemon…".
+    ///
+    /// `cube_id` binds the file to its Cube through the AEAD's AAD; pass `""`
+    /// where the Cube does not exist yet (see
+    /// [`coincube_core::seed_crypt`]).
+    #[allow(clippy::too_many_arguments)]
     pub fn store_encrypted(
         &self,
         datadir_root: &CoincubeDirectory,
@@ -103,13 +97,17 @@ impl Signer {
         checksum: &str,
         timestamp: i64,
         password: &str,
+        cube_id: &str,
+        device_secret: Option<&coincube_core::seed_crypt::DeviceSecret>,
     ) -> Result<(), SignerError> {
         self.key.store_encrypted(
             datadir_root.path(),
             network,
             &self.curve,
             Some((checksum.to_string(), timestamp)),
-            Some(password),
+            password,
+            cube_id,
+            device_secret,
         )
     }
 
@@ -120,10 +118,19 @@ impl Signer {
         &self,
         datadir_root: &CoincubeDirectory,
         network: Network,
-        password: Option<&str>,
+        password: &str,
+        cube_id: &str,
+        device_secret: Option<&coincube_core::seed_crypt::DeviceSecret>,
     ) -> Result<(), SignerError> {
-        self.key
-            .store_encrypted(datadir_root.path(), network, &self.curve, None, password)
+        self.key.store_encrypted(
+            datadir_root.path(),
+            network,
+            &self.curve,
+            None,
+            password,
+            cube_id,
+            device_secret,
+        )
     }
 }
 

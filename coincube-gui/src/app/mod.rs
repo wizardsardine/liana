@@ -6,6 +6,7 @@ pub mod error;
 pub mod features;
 pub mod menu;
 pub mod message;
+pub mod session;
 pub mod settings;
 pub mod state;
 pub mod view;
@@ -885,19 +886,35 @@ pub(crate) const DURESS_NO_CUBES_MSG: &str =
 /// PIN across every network under `root`. `Err` on a collision, when there are
 /// no Cubes to arm, or when settings can't be read.
 ///
-/// The same duress PIN hash is armed on every Cube, and at unlock a Cube checks
-/// its real PIN first and the duress PIN second — so a duress PIN equal to any
+/// The same duress PIN is armed on every Cube, and at unlock a Cube checks its
+/// real PIN first and the duress marker second — so a duress PIN equal to any
 /// Cube's unlock PIN either can't trip duress on that Cube or trips a wipe on a
 /// *different* one. Each Cube can have its own PIN, hence the per-Cube check.
+///
+/// # How the check works now
+///
+/// It used to compare against each Cube's stored `security_pin_hash`. There is
+/// no such hash any more, so the check does the exact thing instead: it
+/// **trial-decrypts each Cube's seed file with the candidate duress PIN**. If
+/// one opens, that PIN is that Cube's real unlock PIN.
+///
+/// This is strictly more correct than the hash compare it replaces, which could
+/// only see Cubes whose hash happened to be recorded and would silently pass a
+/// Cube whose settings had drifted. It is also slower — one ~831 ms Argon2 pass
+/// per Cube — which is why this is **blocking** and callers must run it on a
+/// blocking pool. Enrollment is a wizard step behind a spinner; paying a second
+/// or two once, to be certain, is the right trade.
 ///
 /// Run this BEFORE any server enrollment: Connect tiers enroll server-side
 /// first, so checking the (deterministic, user-entered) collision only in the
 /// later local persist would let a bad PIN enroll on the server and then fail
 /// locally — leaving the account server-enrolled with no Cube armed.
-pub(crate) fn duress_pin_collision_check(
+pub(crate) fn duress_pin_collision_check_blocking(
     root: &std::path::Path,
     duress_pin: &str,
 ) -> Result<(), String> {
+    use crate::services::unlock::{self, PinOutcome};
+
     let network_dirs = duress_enroll_network_dirs(root);
     if network_dirs.is_empty() {
         return Err(DURESS_NO_CUBES_MSG.to_string());
@@ -908,10 +925,24 @@ pub(crate) fn duress_pin_collision_check(
             .map_err(|e| format!("Couldn't read your Cube settings to verify your PIN: {e}"))?;
         for cube in &settings.cubes {
             total_cubes += 1;
-            // `verify_pin` returns true for a Cube with no PIN, so gate on
-            // `has_pin()` first — a PIN-less Cube can't collide.
-            if cube.has_pin() && cube.verify_pin(duress_pin) {
-                return Err(DURESS_PIN_COLLIDES_MSG.to_string());
+            let loc = unlock::CubeLocation::new(root, cube);
+            match unlock::unlock_blocking(&loc, duress_pin) {
+                Ok(PinOutcome::Unlock(_)) => return Err(DURESS_PIN_COLLIDES_MSG.to_string()),
+                // Already this Cube's duress PIN (a re-enrolment with the same
+                // value), or simply wrong. Neither is a collision with a real
+                // unlock PIN.
+                Ok(PinOutcome::Duress) | Ok(PinOutcome::Wrong) => {}
+                // A Cube with no local seed can't collide. A keystore problem
+                // means we can't be sure — and "can't be sure" must not become
+                // "probably fine" on a path whose failure mode is an
+                // unintended wipe.
+                Err(unlock::UnlockError::NoPinConfigured) => {}
+                Err(e) => {
+                    return Err(format!(
+                        "Couldn't check the duress PIN against Cube '{}': {e}",
+                        cube.name
+                    ))
+                }
             }
         }
     }
@@ -926,20 +957,94 @@ pub(crate) fn duress_pin_collision_check(
 /// Used when a later step (another network, or the local-state save) fails, so
 /// the device never ends up with Cubes armed but the matching enrollment state
 /// missing.
-async fn rollback_duress_pin_writes(
-    network_dirs: &[crate::dir::NetworkDirectory],
-    prior_settings: &[crate::app::settings::Settings],
-    count: usize,
-) {
-    for j in 0..count {
-        let restore = prior_settings[j].clone();
-        if let Err(re) =
-            crate::app::settings::update_settings_file(&network_dirs[j], move |_| Some(restore))
-                .await
-        {
-            log::error!("duress: rollback of network {j} settings failed: {re}");
+struct ArmedMarker {
+    root: std::path::PathBuf,
+    cube_id: String,
+    cube_name: String,
+    network: bitcoin::Network,
+    /// The marker's file name. Random, so rollback cannot recompute it — it
+    /// has to be carried from the write that minted it.
+    file_name: String,
+}
+
+/// Remove the markers an aborted enrollment already wrote, returning the names
+/// of any Cube it could **not** disarm.
+///
+/// The return value is the point. A marker left behind is a live wipe trigger
+/// on a Cube whose owner believes enrollment failed and nothing happened —
+/// entering that PIN later destroys the device with no enrollment record to
+/// explain it. Logging that to `<datadir>/logs/` and telling the user "no
+/// changes were kept" would be a false statement about the one thing they most
+/// need to be true.
+#[must_use = "a marker that could not be removed leaves a live duress wipe trigger"]
+fn rollback_duress_markers(armed: &[ArmedMarker]) -> Vec<String> {
+    let mut still_armed = Vec::new();
+    for m in armed {
+        // Overwrite with a decoy rather than delete. Since unit 6b every Cube
+        // carries a second slot from creation, so removing the file would take
+        // this Cube from two blobs to one — undoing the arming *and* marking
+        // the Cube as the one where something went wrong, which is precisely
+        // the shape the decoy exists to prevent. A decoy opens for no PIN, so
+        // it disarms just as completely as a delete.
+        //
+        // A keystore that can't be reached is not "this Cube has no secret". A
+        // v3 Cube's decoy written without its secret lands at the wrong wire
+        // version, which singles the Cube out — and doing it while reporting
+        // the Cube as disarmed would be the false statement this function
+        // exists to avoid. Leave the marker and say so instead.
+        let secret = match crate::services::unlock::device_secret::load_optional(&m.cube_id) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!(
+                    "duress: rollback of marker for cube {} ({}) skipped, keystore unreachable: {e}",
+                    m.cube_name,
+                    m.cube_id
+                );
+                still_armed.push(m.cube_name.clone());
+                continue;
+            }
+        };
+        if let Err(e) = crate::services::unlock::marker::write_decoy(
+            &m.root,
+            m.network,
+            &m.cube_id,
+            &m.file_name,
+            secret.as_ref(),
+        ) {
+            log::error!(
+                "duress: rollback of marker for cube {} ({}) failed: {e}",
+                m.cube_name,
+                m.cube_id
+            );
+            still_armed.push(m.cube_name.clone());
         }
     }
+    // The markers are back to decoys, so the orphan breadcrumb has nothing
+    // left to point at. Best-effort: a stale `arming` flag only costs a
+    // redundant disarm on the next launch, whereas failing here would replace
+    // an accurate rollback message with a state-write error.
+    if still_armed.is_empty() {
+        if let Some(m) = armed.first() {
+            if let Ok(mut st) = crate::services::duress::DuressLocalState::load(&m.root) {
+                st.arming = false;
+                let _ = st.save(&m.root);
+            }
+        }
+    }
+    still_armed
+}
+
+/// Finish an enrollment-failure message, telling the truth about what was left
+/// behind.
+fn describe_rollback(base: String, still_armed: Vec<String>) -> String {
+    if still_armed.is_empty() {
+        return format!("{base} No changes were kept.");
+    }
+    format!(
+        "{base} WARNING: the duress PIN could not be removed from {}.          Entering that PIN on {} will still erase this device. Turn duress mode          off and on again, or contact support before using that PIN.",
+        still_armed.join(", "),
+        if still_armed.len() == 1 { "it" } else { "them" },
+    )
 }
 
 pub(crate) async fn persist_duress_enrollment(
@@ -965,7 +1070,7 @@ pub(crate) async fn persist_duress_enrollment(
     //    the wizard's pre-flight check (which runs before any server enroll);
     //    re-running it here is the authoritative guard against an on-disk Cube
     //    set that changed since the pre-flight.
-    duress_pin_collision_check(&root, &duress_pin)?;
+    duress_pin_collision_check_blocking(&root, &duress_pin)?;
 
     // Snapshot the pre-write state of every network so a later step can roll
     // back. (The collision / no-Cubes guards above already validated the set.)
@@ -980,48 +1085,139 @@ pub(crate) async fn persist_duress_enrollment(
         prior_settings.push(settings);
     }
 
-    // 1. Duress PIN hash → every Cube on every network. Sequential file writes
-    //    have no cross-file transaction, so if a later network fails, roll back
-    //    the networks already written to their snapshot — the device must never
-    //    end up with some networks armed and others not.
-    let hash = crate::services::duress::enroll::hash_duress_secret(&duress_pin)?;
-    let mut written = 0usize;
-    // Count the Cubes that actually had a duress_pin_hash written, at write
-    // time. update_settings_file re-reads each settings file under its lock, so
-    // this is authoritative even if the on-disk Cube set changed since the
-    // step-0 snapshot — we never mark enrolled when zero hashes were written.
-    let armed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    for (i, network_dir) in network_dirs.iter().enumerate() {
-        let h = hash.clone();
-        let armed = armed.clone();
-        let write = crate::app::settings::update_settings_file(network_dir, move |mut s| {
-            let mut n = 0usize;
-            for cube in s.cubes.iter_mut() {
-                cube.duress_pin_hash = Some(h.clone());
-                n += 1;
-            }
-            armed.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
-            Some(s)
-        })
-        .await;
-        match write {
-            Ok(()) => written = i + 1,
-            Err(e) => {
-                rollback_duress_pin_writes(&network_dirs, &prior_settings, written).await;
-                return Err(format!(
-                    "Couldn't arm the duress PIN on all your Cubes ({e}); no changes were kept."
-                ));
-            }
-        }
+    // 1. A duress marker → every Cube on every network.
+    //
+    //    The marker replaces the old per-Cube `duress_pin_hash`. That hash was
+    //    Argon2id at m=19 MiB (27 ms a guess) sitting next to a seed file at
+    //    m=256 MiB (831 ms a guess), so an attacker with the datadir cracked
+    //    the duress PIN in seconds and learned that duress was armed at all.
+    //    The marker is sealed by the same codec at the same parameters, so
+    //    there is no cheap oracle and no tell (invariant I2). See
+    //    `services::unlock::marker`.
+    //
+    //    Sequential writes have no cross-file transaction, so a later failure
+    //    rolls back the markers already written — the device must never end up
+    //    with some Cubes armed and others not.
+    //
+    //    Before the first write, drop an `arming` breadcrumb in
+    //    `DuressLocalState`. A crash between here and the state write in step 2
+    //    leaves live markers with no enrollment to explain them, and since
+    //    unit 6b no scan of the datadir can detect that — every Cube carries a
+    //    second slot, and a marker is indistinguishable from a decoy on
+    //    purpose. The breadcrumb is what `reconcile_duress_*` reads instead.
+    if let Err(e) = (|| -> Result<(), String> {
+        let mut st = crate::services::duress::DuressLocalState::load(&root)
+            .map_err(|e| format!("Couldn't read existing duress state: {e}"))?;
+        st.arming = true;
+        st.save(&root).map_err(|e| e.to_string())
+    })() {
+        return Err(format!("{e} No changes were kept."));
     }
-    // Settings files were present but held no Cubes at write time — no
-    // duress_pin_hash was set anywhere. Roll the (content-unchanged) writes back
-    // and abort rather than mark duress enabled with no PIN that can trip a wipe.
-    if armed.load(std::sync::atomic::Ordering::Relaxed) == 0 {
-        rollback_duress_pin_writes(&network_dirs, &prior_settings, written).await;
+
+    let mut armed_cubes: Vec<ArmedMarker> = Vec::new();
+    let mut arm_failure: Option<String> = None;
+
+    'arming: for (i, network_dir) in network_dirs.iter().enumerate() {
+        for cube in &prior_settings[i].cubes {
+            let secret = match crate::services::unlock::device_secret::load_optional(&cube.id) {
+                Ok(s) => s,
+                Err(e) => {
+                    arm_failure = Some(format!(
+                        "Couldn't reach your system keychain to arm duress on Cube '{}': {e}",
+                        cube.name
+                    ));
+                    break 'arming;
+                }
+            };
+            // Reuse the name already recorded for this Cube when re-enrolling,
+            // so a second enrolment replaces the marker in place instead of
+            // leaving the first one orphaned and unfindable. Otherwise mint a
+            // fresh unpredictable name stamped with this Cube's *seed file's*
+            // timestamp, so the two files agree (X7).
+            let file_name = cube.duress_slot_file.clone().unwrap_or_else(|| {
+                crate::services::unlock::marker::new_file_name(
+                    crate::services::unlock::marker::seed_timestamp(
+                        &root,
+                        cube.network,
+                        cube.master_signer_fingerprint,
+                        cube.created_at,
+                    ),
+                )
+            });
+            // The marker must use the *same* wire version and key material as
+            // this Cube's seed file, or the pair stops being indistinguishable.
+            if let Err(e) = crate::services::unlock::marker::write(
+                &root,
+                cube.network,
+                &cube.id,
+                &file_name,
+                &duress_pin,
+                secret.as_ref(),
+            ) {
+                arm_failure = Some(format!(
+                    "Couldn't arm the duress PIN on Cube '{}' ({e}).",
+                    cube.name
+                ));
+                break 'arming;
+            }
+            armed_cubes.push(ArmedMarker {
+                root: root.clone(),
+                cube_id: cube.id.clone(),
+                cube_name: cube.name.clone(),
+                network: cube.network,
+                file_name,
+            });
+        }
+        let _ = network_dir;
+    }
+
+    if let Some(msg) = arm_failure {
+        let still_armed = rollback_duress_markers(&armed_cubes);
+        return Err(describe_rollback(msg, still_armed));
+    }
+
+    // Settings files were present but held no Cubes — no marker was written
+    // anywhere. Abort rather than mark duress enabled with nothing that can
+    // trip a wipe.
+    if armed_cubes.is_empty() {
         return Err(
             "Couldn't find any Cubes on this device to protect with duress mode.".to_string(),
         );
+    }
+
+    // 1b. Record each marker's file name.
+    //
+    //     The name is random, so this is the **only** way to find the file
+    //     again — a marker whose name was never written down is an
+    //     unreferenced blob that no PIN can reach, and the Cube would report
+    //     duress as unarmed while the file sat there. Persist before declaring
+    //     success, and roll the markers back if it fails, exactly as step 2
+    //     does.
+    for (i, network_dir) in network_dirs.iter().enumerate() {
+        let names: Vec<(String, String)> = armed_cubes
+            .iter()
+            .filter(|m| prior_settings[i].cubes.iter().any(|c| c.id == m.cube_id))
+            .map(|m| (m.cube_id.clone(), m.file_name.clone()))
+            .collect();
+        if names.is_empty() {
+            continue;
+        }
+        let written = crate::app::settings::update_settings_file(network_dir, |mut s| {
+            for cube in s.cubes.iter_mut() {
+                if let Some((_, name)) = names.iter().find(|(id, _)| *id == cube.id) {
+                    cube.duress_slot_file = Some(name.clone());
+                }
+            }
+            Some(s)
+        })
+        .await;
+        if let Err(e) = written {
+            let still_armed = rollback_duress_markers(&armed_cubes);
+            return Err(describe_rollback(
+                format!("Couldn't save the duress settings for your Cubes ({e})."),
+                still_armed,
+            ));
+        }
     }
 
     // 2. Encrypted device code + account id → DuressLocalState. The encrypted
@@ -1041,6 +1237,10 @@ pub(crate) async fn persist_duress_enrollment(
         let mut st = crate::services::duress::DuressLocalState::load(&root)
             .map_err(|e| format!("Couldn't read existing duress state: {e}"))?;
         st.enrolled = true;
+        // Enrollment is now fully recorded, so the orphan breadcrumb has done
+        // its job. Cleared in the same write that sets `enrolled`, so the two
+        // can never disagree.
+        st.arming = false;
         st.account_id = account_id;
         if !duress_code.is_empty() {
             let key = crate::services::duress::cipher::DeviceKey::load_or_create(&root)
@@ -1050,8 +1250,8 @@ pub(crate) async fn persist_duress_enrollment(
         st.save(&root).map_err(|e| e.to_string())
     })();
     if let Err(e) = local {
-        rollback_duress_pin_writes(&network_dirs, &prior_settings, network_dirs.len()).await;
-        return Err(e);
+        let still_armed = rollback_duress_markers(&armed_cubes);
+        return Err(describe_rollback(e, still_armed));
     }
     Ok(())
 }
@@ -1064,14 +1264,26 @@ pub(crate) const DURESS_STEP_UP_BAD_PIN_MSG: &str =
     "That PIN doesn't match any of your Cubes' unlock PINs.";
 
 /// Step-up re-auth for the duress *disable* flow: verify `pin` is the REAL
-/// unlock PIN of at least one Cube. Because `verify_pin` checks the regular-PIN
-/// hash (never the duress one), entering the duress PIN here is rejected —
-/// exactly the plan's "do not accept the duress PIN at step-up".
+/// unlock PIN of at least one Cube.
 ///
-/// `Ok` when a Cube's regular PIN matches, or when no Cube has a regular PIN at
-/// all (no second factor to demand). `Err` on an empty PIN, a mismatch, no
-/// Cubes, or when settings can't be read.
-pub(crate) fn verify_regular_cube_pin(root: &std::path::Path, pin: &str) -> Result<(), String> {
+/// Verification is a trial decryption of that Cube's seed file, so entering the
+/// **duress** PIN here is rejected — it opens the marker, never the seed, and
+/// `PinOutcome::Duress` is not a match. That is exactly the plan's "do not
+/// accept the duress PIN at step-up", and it now holds by construction rather
+/// than by the two hashes happening to differ.
+///
+/// **Blocking** — one Argon2id pass per Cube until a match. Callers must run it
+/// on a blocking pool.
+///
+/// `Ok` when a Cube's regular PIN matches, or when no Cube has a PIN-protected
+/// seed at all (no second factor to demand). `Err` on an empty PIN, a mismatch,
+/// no Cubes, or when settings can't be read.
+pub(crate) fn verify_regular_cube_pin_blocking(
+    root: &std::path::Path,
+    pin: &str,
+) -> Result<(), String> {
+    use crate::services::unlock::{self, PinOutcome};
+
     if pin.is_empty() {
         return Err("Enter your Cube unlock PIN to continue.".to_string());
     }
@@ -1084,19 +1296,28 @@ pub(crate) fn verify_regular_cube_pin(root: &std::path::Path, pin: &str) -> Resu
         let settings = crate::app::settings::Settings::from_file(network_dir)
             .map_err(|e| format!("Couldn't read your Cube settings to verify your PIN: {e}"))?;
         for cube in &settings.cubes {
-            // `verify_pin` returns true for a PIN-less Cube, so gate on
-            // `has_pin()` — a Cube with no PIN can't anchor the step-up.
-            if cube.has_pin() {
-                any_pin = true;
-                if cube.verify_pin(pin) {
-                    return Ok(());
-                }
+            let loc = unlock::CubeLocation::new(root, cube);
+            if unlock::pin_requirement(&loc) != unlock::PinRequirement::Required {
+                // No PIN-protected seed on this device — this Cube can't
+                // anchor the step-up.
+                continue;
+            }
+            any_pin = true;
+            match unlock::unlock_blocking(&loc, pin) {
+                Ok(PinOutcome::Unlock(_)) => return Ok(()),
+                // The duress PIN must not satisfy a step-up, and must not
+                // reveal that it was recognised either.
+                Ok(PinOutcome::Duress) | Ok(PinOutcome::Wrong) => {}
+                Err(unlock::UnlockError::NoPinConfigured) => {}
+                // A keystore failure is not a wrong PIN (I7); surface it as
+                // itself rather than letting it read as a bad entry.
+                Err(e) => return Err(e.to_string()),
             }
         }
     }
     if !any_pin {
-        // No regular PIN on any Cube — there's no second factor to demand, so
-        // let the disable proceed.
+        // No PIN-protected Cube on this device — there's no second factor to
+        // demand, so let the disable proceed.
         return Ok(());
     }
     Err(DURESS_STEP_UP_BAD_PIN_MSG.to_string())
@@ -1127,14 +1348,49 @@ pub(crate) async fn clear_duress_enrollment(datadir: CoincubeDirectory) -> Resul
     //    stop at the first failure so a retry re-clears the rest.
     let network_dirs = duress_enroll_network_dirs(&root);
     for network_dir in &network_dirs {
-        crate::app::settings::update_settings_file(network_dir, move |mut s| {
-            for cube in s.cubes.iter_mut() {
-                cube.duress_pin_hash = None;
-            }
-            Some(s)
-        })
-        .await
-        .map_err(|e| format!("Couldn't clear the duress PIN on all your Cubes ({e})."))?;
+        let settings = crate::app::settings::Settings::from_file(network_dir)
+            .map_err(|e| format!("Couldn't read your Cube settings to disarm duress: {e}"))?;
+        for cube in &settings.cubes {
+            // Overwrite the slot with a decoy — never delete it. Deleting
+            // would take the Cube from two blobs to one, which is both a
+            // regression of the 6b shape and a durable record that duress was
+            // once armed here. A decoy opens for no PIN, so the wipe trigger
+            // is just as dead.
+            //
+            // A Cube with no recorded slot has nothing to overwrite. That is a
+            // pre-6b Cube awaiting backfill, not a failure — skip it.
+            let Some(slot) = cube.duress_slot_file.as_deref() else {
+                continue;
+            };
+            let secret =
+                crate::services::unlock::device_secret::load_optional(&cube.id).map_err(|e| {
+                    format!(
+                        "Couldn't reach your system keychain to clear duress on Cube '{}' ({e}).",
+                        cube.name
+                    )
+                })?;
+            crate::services::unlock::marker::write_decoy(
+                &root,
+                cube.network,
+                &cube.id,
+                slot,
+                secret.as_ref(),
+            )
+            .map_err(|e| {
+                format!(
+                    "Couldn't clear the duress PIN on Cube '{}' ({e}).",
+                    cube.name
+                )
+            })?;
+        }
+
+        // The recorded names are deliberately **kept**. They name the slot,
+        // not a marker, and the slot outlives any particular enrolment — see
+        // `CubeSettings::duress_slot_file`. Clearing them here would strand
+        // the decoy just written (nothing could find it again) and would
+        // reintroduce exactly the tell 6b removes: a settings field that is
+        // populated only on Cubes where duress happens to be armed.
+        let _ = network_dir;
     }
 
     // 2. Reset DuressLocalState to the un-enrolled baseline (zeroizes the
@@ -1162,14 +1418,24 @@ pub(crate) async fn clear_duress_enrollment(datadir: CoincubeDirectory) -> Resul
 /// half-armed. A settings read error is surfaced rather than papered over (a
 /// false "nothing armed" could leave a live wipe trigger in place).
 fn any_cube_duress_armed(root: &std::path::Path) -> Result<bool, String> {
-    for network_dir in &duress_enroll_network_dirs(root) {
-        let settings = crate::app::settings::Settings::from_file(network_dir)
-            .map_err(|e| format!("Couldn't read your Cube settings: {e}"))?;
-        if settings.cubes.iter().any(|c| c.has_duress_pin()) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    // Reads the `arming` breadcrumb, not the datadir.
+    //
+    // This used to scan every Cube for a duress marker. Since unit 6b that
+    // scan cannot work and must not be attempted: every Cube carries a second
+    // slot from creation, and a marker is byte-indistinguishable from a decoy
+    // by design, so "a marker exists" is either always true (if it means "the
+    // slot exists") or unanswerable (if it means "the slot is real"). A scan
+    // that appeared to work would be reading decoys and reporting every device
+    // as armed.
+    //
+    // `DuressLocalState::arming` records the same fact directly: it is written
+    // before enrollment arms the first Cube and cleared in the same write that
+    // records `enrolled`. So `arming && !enrolled` is exactly the orphan the
+    // scan was looking for, and it also catches the partially-armed crash the
+    // scan never could.
+    let st = crate::services::duress::DuressLocalState::load(root)
+        .map_err(|e| format!("Couldn't read existing duress state: {e}"))?;
+    Ok(st.arming && !st.enrolled)
 }
 
 /// Reconcile a possibly remote/offline duress *disable* against this device's
@@ -5390,20 +5656,42 @@ mod tests {
         assert_eq!(names, vec!["bitcoin".to_string(), "regtest".to_string()]);
     }
 
+    /// Write an encrypted master seed for `cube`, so the trial-decrypt PIN
+    /// checks below have something real to verify against.
+    fn store_seed(root: &std::path::Path, cube: &crate::app::settings::CubeSettings, pin: &str) {
+        use coincube_core::miniscript::bitcoin::secp256k1::Secp256k1;
+        use coincube_core::signer::{MasterSigner, MASTER_SEED_LABEL};
+        let secp = Secp256k1::signing_only();
+        let signer = MasterSigner::generate(cube.network).unwrap();
+        signer
+            .store_encrypted(
+                root,
+                cube.network,
+                &secp,
+                Some((
+                    format!("{}{}", MASTER_SEED_LABEL, cube.created_at),
+                    cube.created_at,
+                )),
+                pin,
+                &cube.id,
+                None,
+            )
+            .unwrap();
+    }
+
     #[test]
     fn duress_pin_collision_check_rejects_empty_and_real_cube_pin() {
         let root = TempRoot::new("duress-collision");
         assert_eq!(
-            duress_pin_collision_check(root.path(), "1234").unwrap_err(),
+            duress_pin_collision_check_blocking(root.path(), "1234").unwrap_err(),
             DURESS_NO_CUBES_MSG
         );
 
-        let protected_cube = cube("cube-a", "Primary", Network::Bitcoin)
-            .with_pin("1234")
-            .expect("pin hash");
-        let secondary_cube = cube("cube-b", "Secondary", Network::Regtest)
-            .with_pin("9999")
-            .expect("pin hash");
+        let protected_cube = cube("cube-a", "Primary", Network::Bitcoin);
+        let secondary_cube = cube("cube-b", "Secondary", Network::Regtest);
+        // The collision check now decrypts these, so they have to exist.
+        store_seed(root.path(), &protected_cube, "1234");
+        store_seed(root.path(), &secondary_cube, "9999");
 
         write_settings_dir(
             root.path(),
@@ -5422,21 +5710,52 @@ mod tests {
             },
         );
 
+        // Collides with cube-a's real unlock PIN...
         assert_eq!(
-            duress_pin_collision_check(root.path(), "1234").unwrap_err(),
+            duress_pin_collision_check_blocking(root.path(), "1234").unwrap_err(),
             DURESS_PIN_COLLIDES_MSG
         );
-        assert!(duress_pin_collision_check(root.path(), "5555").is_ok());
+        // ...and with cube-b's, even though it's on a different network. The
+        // hash-based predecessor could only catch a Cube whose hash happened to
+        // be recorded; this one opens the file.
+        assert_eq!(
+            duress_pin_collision_check_blocking(root.path(), "9999").unwrap_err(),
+            DURESS_PIN_COLLIDES_MSG
+        );
+        assert!(duress_pin_collision_check_blocking(root.path(), "5555").is_ok());
+    }
+
+    /// Arm duress on `cube` exactly as enrollment does: mint an unpredictable
+    /// marker name, write the marker under it, and record it on the Cube.
+    /// Recording is not optional — the name is random, so a marker whose name
+    /// was not written down cannot be found again.
+    fn arm_duress(root: &std::path::Path, cube: &mut CubeSettings, duress_pin: &str) {
+        let name = crate::services::unlock::marker::new_file_name(
+            crate::services::unlock::marker::seed_timestamp(
+                root,
+                cube.network,
+                cube.master_signer_fingerprint,
+                cube.created_at,
+            ),
+        );
+        crate::services::unlock::marker::write(
+            root,
+            cube.network,
+            &cube.id,
+            &name,
+            duress_pin,
+            None,
+        )
+        .expect("arm duress");
+        cube.duress_slot_file = Some(name);
     }
 
     #[test]
     fn verify_regular_cube_pin_accepts_real_pin_and_rejects_duress_pin() {
         let root = TempRoot::new("regular-pin");
-        let cube = cube("cube-a", "Primary", Network::Bitcoin)
-            .with_pin("1234")
-            .expect("pin hash")
-            .with_duress_pin("8765")
-            .expect("duress hash");
+        let mut cube = cube("cube-a", "Primary", Network::Bitcoin);
+        store_seed(root.path(), &cube, "1234");
+        arm_duress(root.path(), &mut cube, "8765");
 
         write_settings_dir(
             root.path(),
@@ -5448,12 +5767,18 @@ mod tests {
         );
 
         assert_eq!(
-            verify_regular_cube_pin(root.path(), "").unwrap_err(),
+            verify_regular_cube_pin_blocking(root.path(), "").unwrap_err(),
             "Enter your Cube unlock PIN to continue."
         );
-        assert!(verify_regular_cube_pin(root.path(), "1234").is_ok());
+        assert!(verify_regular_cube_pin_blocking(root.path(), "1234").is_ok());
+        // The duress PIN must not satisfy a step-up — and the rejection must
+        // look identical to any other wrong PIN.
         assert_eq!(
-            verify_regular_cube_pin(root.path(), "8765").unwrap_err(),
+            verify_regular_cube_pin_blocking(root.path(), "8765").unwrap_err(),
+            DURESS_STEP_UP_BAD_PIN_MSG
+        );
+        assert_eq!(
+            verify_regular_cube_pin_blocking(root.path(), "0000").unwrap_err(),
             DURESS_STEP_UP_BAD_PIN_MSG
         );
     }
@@ -5470,24 +5795,79 @@ mod tests {
             },
         );
 
-        assert!(verify_regular_cube_pin(root.path(), "any pin").is_ok());
+        assert!(verify_regular_cube_pin_blocking(root.path(), "any pin").is_ok());
     }
 
+    /// A failed enrollment must not claim "no changes were kept" when a marker
+    /// survived the rollback. That marker is a live wipe trigger on a Cube whose
+    /// owner has been told nothing happened.
     #[test]
-    fn any_cube_duress_armed_scans_all_network_settings() {
-        let root = TempRoot::new("duress-armed");
-        write_settings_dir(
-            root.path(),
-            "bitcoin",
-            Settings {
-                cubes: vec![cube("cube-a", "Plain", Network::Bitcoin)],
-                ..Settings::default()
-            },
-        );
-        assert!(!any_cube_duress_armed(root.path()).expect("scan plain cube"));
+    fn a_failed_rollback_is_reported_not_swallowed() {
+        let root = TempRoot::new("rollback-report");
+        let mut cube = cube("cube-a", "Primary", Network::Bitcoin);
+        arm_duress(root.path(), &mut cube, "8765");
+        let marker_name = cube.duress_slot_file.clone().expect("recorded name");
 
+        let armed = vec![ArmedMarker {
+            root: root.path().to_path_buf(),
+            cube_id: cube.id.clone(),
+            cube_name: cube.name.clone(),
+            network: Network::Bitcoin,
+            file_name: marker_name.clone(),
+        }];
+
+        // Happy path: the marker comes off, and the message says so.
+        let still_armed = rollback_duress_markers(&armed);
+        assert!(still_armed.is_empty());
+        // The slot survives as a decoy — rollback must not take this Cube
+        // from two blobs to one, which would both undo 6b's shape and flag
+        // the Cube where enrolment failed.
+        assert!(
+            crate::services::unlock::marker::exists(
+                root.path(),
+                Network::Bitcoin,
+                Some(marker_name.as_str())
+            ),
+            "rollback deleted the slot instead of overwriting it with a decoy"
+        );
+        assert!(
+            !crate::services::unlock::marker::verify(
+                root.path(),
+                Network::Bitcoin,
+                &cube.id,
+                Some(marker_name.as_str()),
+                "8765",
+                None,
+            ),
+            "the duress PIN still opens the slot after rollback — the wipe trigger is live"
+        );
+        let msg = describe_rollback("Couldn't arm.".to_string(), still_armed);
+        assert!(msg.contains("No changes were kept"), "{}", msg);
+        assert!(!msg.contains("WARNING"), "{}", msg);
+
+        // Failure path: whatever the cause, the user is told which Cube is still
+        // armed and what that PIN will now do.
+        let msg = describe_rollback("Couldn't arm.".to_string(), vec!["Primary".to_string()]);
+        assert!(msg.contains("Primary"), "the Cube must be named: {}", msg);
+        assert!(msg.contains("erase this device"), "{}", msg);
+        assert!(
+            !msg.contains("No changes were kept"),
+            "the message still claims nothing was kept: {}",
+            msg
+        );
+    }
+
+    /// Orphan detection reads the `arming` breadcrumb, not the datadir.
+    ///
+    /// It used to scan Cubes for a duress marker. Unit 6b makes that
+    /// impossible on purpose — every Cube carries a second slot and a marker
+    /// is indistinguishable from a decoy — so a surviving scan would report
+    /// every device as armed. These cases pin the replacement.
+    #[test]
+    fn orphan_detection_reads_the_arming_breadcrumb_not_the_marker_files() {
+        let root = TempRoot::new("duress-armed");
         let mut armed_cube = cube("cube-b", "Armed", Network::Regtest);
-        armed_cube.duress_pin_hash = Some("stored-duress-hash".to_string());
+        arm_duress(root.path(), &mut armed_cube, "8765");
         write_settings_dir(
             root.path(),
             "regtest",
@@ -5497,14 +5877,45 @@ mod tests {
             },
         );
 
-        assert!(any_cube_duress_armed(root.path()).expect("scan armed cube"));
+        // A real marker on disk is NOT an orphan on its own — a healthy
+        // enrolment looks exactly like this.
+        assert!(
+            !any_cube_duress_armed(root.path()).expect("no breadcrumb"),
+            "a marker on disk must not by itself read as an orphan"
+        );
+
+        // Crash between arming and recording the enrolment: breadcrumb set,
+        // `enrolled` never written. That is the orphan.
+        DuressLocalState {
+            arming: true,
+            ..DuressLocalState::default()
+        }
+        .save(root.path())
+        .expect("save arming breadcrumb");
+        assert!(
+            any_cube_duress_armed(root.path()).expect("orphan"),
+            "arming-without-enrolled is the crash this must catch"
+        );
+
+        // A completed enrolment clears the breadcrumb and is never an orphan.
+        DuressLocalState {
+            arming: false,
+            enrolled: true,
+            ..DuressLocalState::default()
+        }
+        .save(root.path())
+        .expect("save enrolled state");
+        assert!(
+            !any_cube_duress_armed(root.path()).expect("healthy"),
+            "a fully-recorded enrolment must never be treated as an orphan"
+        );
     }
 
     #[tokio::test]
     async fn clear_duress_enrollment_clears_cube_hashes_and_local_state() {
         let root = TempRoot::new("duress-clear");
         let mut armed_cube = cube("cube-a", "Armed", Network::Bitcoin);
-        armed_cube.duress_pin_hash = Some("stored-duress-hash".to_string());
+        arm_duress(root.path(), &mut armed_cube, "8765");
         let network_dir = write_settings_dir(
             root.path(),
             "bitcoin",
@@ -5529,7 +5940,29 @@ mod tests {
 
         let settings =
             Settings::from_file(&crate::dir::NetworkDirectory::new(network_dir)).unwrap();
-        assert!(settings.cubes.iter().all(|cube| !cube.has_duress_pin()));
+        // The slot is still there — disarming overwrites it with a decoy
+        // rather than deleting it, so the Cube's on-disk shape is unchanged.
+        // What must be gone is the duress PIN's ability to open it.
+        for cube in &settings.cubes {
+            assert!(
+                cube.has_duress_slot(root.path()),
+                "disarming deleted the second slot for Cube '{}' — the Cube now \
+                 has one blob where every other Cube has two",
+                cube.name
+            );
+            assert!(
+                !crate::services::unlock::marker::verify(
+                    root.path(),
+                    cube.network,
+                    &cube.id,
+                    cube.duress_slot_file.as_deref(),
+                    "8765",
+                    None,
+                ),
+                "the duress PIN still opens Cube '{}' after a disarm",
+                cube.name
+            );
+        }
         assert_eq!(
             DuressLocalState::load(root.path()).expect("load cleared state"),
             DuressLocalState::default()

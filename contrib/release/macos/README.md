@@ -2,6 +2,44 @@
 
 We distribute the application as a zipped [MacOS app bundle](https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFBundles/BundleTypes/BundleTypes.html#//apple_ref/doc/uid/10000123i-CH101-SW5).
 
+## Bundle identity and entitlements
+
+| | |
+|---|---|
+| App ID | `io.coincube.tenshu` — the `CFBundleIdentifier` baked into [`_coincube.zip`](_coincube.zip); must also exist in the Apple Developer portal under Identifiers, with Associated Domains enabled |
+| Team ID | `8UVR249AD5` |
+| Keychain access group | `8UVR249AD5.io.coincube.tenshu` (`<TeamID>.<bundleID>`) |
+| Entitlements | [`coincube.entitlements`](coincube.entitlements) |
+| Provisioning profile | [`embedded.provisionprofile`](embedded.provisionprofile), copied to `Tenshu.app/Contents/` before signing. Expires 2044-07-30 |
+
+Four things about this that are easy to get wrong:
+
+- **The profile is mandatory, and omitting it does not degrade gracefully.**
+  `keychain-access-groups` is a restricted entitlement, so AMFI validates it
+  against the embedded profile at exec time. With the entitlement and no
+  profile the app does not launch at all — SIGKILL, no window, no message —
+  while `codesign -v`, `spctl` and notarization all still pass. See
+  [`docs/MACOS_KEYCHAIN_ENTITLEMENT.md`](../../../docs/MACOS_KEYCHAIN_ENTITLEMENT.md)
+  §4. The profile contains no secrets (public certificate, team ID, app ID and
+  granted entitlements), which is why it is committed rather than held as a
+  CI secret.
+
+- **The access group is part of a keychain item's identity.** Change the bundle identifier after a
+  signed, entitled build has reached users and every device secret written under the old group
+  becomes unreachable, which makes their `ENCRYPTED_V3` Cubes undecryptable. Treat the identifier as
+  frozen.
+- **The Team ID is written literally** in the entitlements file. `$(AppIdentifierPrefix)` and
+  `$(TeamIdentifierPrefix)` are Xcode build-setting substitutions; `rcodesign` signs the XML
+  verbatim and expands nothing, so a signature carrying the raw variable string fails at runtime
+  looking exactly like a keychain bug.
+- **A different bundle identifier is a different app to macOS.** A build carrying a new identifier
+  installs alongside the old one rather than replacing it.
+
+The release workflows assert both halves of this: `releases.yml` and `nightly.yml` check the
+identifier and the Bonjour keys in the unzipped template before the binary is copied in, and check
+that `codesign -d --entitlements -` reports `keychain-access-groups` after signing and before
+notarization.
+
 ## Notes on codesigning and notarization
 
 Running a binary on a Mac that was not both codesigned **and** notarized by Apple is a pain. The
@@ -60,13 +98,14 @@ Sign the packaged application using the `sign` command (mind `--code-signature-f
 
 The `--entitlements-xml-path` flag is required so the hardened
 runtime allows the local LAN signer (`phone_signer` module) to open
-its pairing listener and to dial paired phones. The entitlements file
-itself is at
-[`contrib/release/macos/coincube.entitlements`](coincube.entitlements);
-see [`Info.plist.local-signer.md`](Info.plist.local-signer.md) for
-the matching Info.plist keys (Bonjour usage description + service
-list) that need to be spliced into the bundle's Info.plist on macOS
-14+ until the `_coincube.zip` template is regenerated.
+its pairing listener and to dial paired phones, and so the app can
+write the device secret to its keychain access group. The
+entitlements file itself is at
+[`contrib/release/macos/coincube.entitlements`](coincube.entitlements).
+The matching Info.plist keys that macOS 14+ requires for Bonjour
+(`NSLocalNetworkUsageDescription` and `NSBonjourServices`) are baked
+into the [`_coincube.zip`](_coincube.zip) template — they no longer
+need to be spliced in by hand after unzipping.
 
 You can see the chain of certificates was applied using the `diff-signatures` command against
 another bundle. The best way to verify the signature is by using the `codesign` command on a Mac.

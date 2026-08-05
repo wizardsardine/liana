@@ -23,6 +23,7 @@ use crate::services::coincube::{
 #[cfg(not(target_os = "macos"))]
 use crate::services::passkey::CeremonyMode;
 use crate::services::passkey::{self as passkey_svc, CeremonyOutcome, PasskeyCeremony};
+use crate::services::unlock::{self, creation_gate};
 use crate::{
     app::{
         self,
@@ -31,8 +32,8 @@ use crate::{
             global::{AccountTier, GlobalSettings},
             AuthConfig, CubeConnectState, CubeSettings, WalletSettings,
         },
-        state::connect::ConnectAccountPanel,
-        view::ConnectAccountMessage,
+        state::{connect::ConnectAccountPanel, settings::general},
+        view::{BackupWalletMessage, ConnectAccountMessage},
     },
     delete::{delete_wallet, DeleteError},
     dir::{CoincubeDirectory, NetworkDirectory},
@@ -61,6 +62,49 @@ pub enum State {
     },
     NoCube,
     RecoveryInput,
+    /// The creation-time backup step, between "Create Cube" and the Cube
+    /// actually existing. See [`CreationBackupStep`].
+    CreationBackup(CreationBackupStep),
+}
+
+/// Where the user is inside the creation-time backup step.
+///
+/// # Why creation has to ask
+///
+/// Sealing the seed file to an OS-keystore device secret (`ENCRYPTED_V3`)
+/// means a copied datadir no longer opens — see
+/// [`crate::services::unlock::creation_gate`]. That removed the accidental
+/// backup users used to have, so the Recovery Kit stopped being advisory. A
+/// user who creates a Cube, skips the backup and loses the machine has lost
+/// the funds, and no support action gets them back.
+///
+/// # Nothing is on disk while this runs
+///
+/// The seed is generated into memory only. The seed file, the settings entry
+/// and the OS-keystore device secret are all written by
+/// [`Home::finalize_cube_creation`] *after* this step resolves, so abandoning
+/// it leaves no half-created Cube behind — see
+/// `abandoning_the_backup_step_leaves_no_half_created_cube`.
+///
+/// The screens themselves are the Settings backup wizard's, reused verbatim
+/// via [`app::view::settings::backup`]'s message-generic views, so the two
+/// places a user is shown their seed phrase cannot drift apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreationBackupStep {
+    /// Intro + security warning; the bool is the "I understand" checkbox.
+    Intro(bool),
+    /// The seed phrase itself, in a grid.
+    Phrase,
+    /// Type back three of the words to prove they were written down.
+    Verification {
+        word_indices: [usize; 3],
+        word_inputs: [String; 3],
+        error: Option<String>,
+    },
+    /// "I'll do this later". The bool is active acceptance of
+    /// [`creation_gate::BYPASS_ACKNOWLEDGEMENT`], which is what gets persisted
+    /// to the Cube as a [`creation_gate::CreationBackupBypass`].
+    Bypass { acknowledged: bool },
 }
 
 fn bip39_suggestions(prefix: &str, limit: usize) -> Vec<String> {
@@ -135,6 +179,11 @@ pub struct Home {
     pending_cube_id: Option<uuid::Uuid>,
     recovery_words: [String; 12],
     recovery_active_index: Option<usize>,
+    /// The seed phrase of the Cube currently being created, held in memory
+    /// only for the duration of [`State::CreationBackup`]. `Zeroizing` because
+    /// this is the whole wallet; cleared on every exit from the step —
+    /// completion, bypass, abandonment and failure alike.
+    creation_backup_words: Option<zeroize::Zeroizing<Vec<String>>>,
     developer_mode: bool,
     /// Connect account tier — controls how many Cubes can be created per network.
     account_tier: AccountTier,
@@ -211,6 +260,7 @@ impl Home {
                 pending_cube_id: None,
                 recovery_words: Default::default(),
                 recovery_active_index: None,
+                creation_backup_words: None,
                 developer_mode,
                 account_tier: GlobalSettings::load_account_tier(&GlobalSettings::path(
                     &datadir_path,
@@ -469,17 +519,12 @@ impl Home {
                 }
 
                 self.creating_cube = true;
-                let network = self.network;
                 let cube_name = self.create_cube_name.value.trim().to_string();
-                let pin = if passkey_mode {
-                    String::new()
-                } else {
-                    self.create_cube_pin.value()
-                };
-                let datadir_path = self.datadir_path.clone();
 
                 // Pre-generate the UUID before the async task so that retries
-                // reuse the same identifier (idempotent creation).
+                // reuse the same identifier (idempotent creation). The
+                // PIN-based path re-reads it in `finalize_cube_creation`, which
+                // is what actually persists the Cube.
                 let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
 
                 let without_recovery = if passkey_mode {
@@ -519,68 +564,49 @@ impl Home {
                         iced_wry::extract_window_id(None).map(Message::PasskeyWindowId)
                     }
                 } else {
-                    // PIN-based Cube creation
-                    Task::perform(
-                        async move {
-                            // Generate MasterSigner
-                            let master_signer = MasterSigner::generate(network).map_err(|e| {
-                                format!("Failed to generate master seed signer: {}", e)
-                            })?;
-
-                            // Create secp context for fingerprint calculation
-                            let secp =
-                                coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                            let master_fingerprint = master_signer.fingerprint(&secp);
-
-                            // Store master seed mnemonic (encrypted with PIN)
-                            let network_dir = datadir_path.network_directory(network);
-                            network_dir.init().map_err(|e| {
-                                format!("Failed to create network directory: {}", e)
-                            })?;
-
-                            // Use a timestamp for the master seed storage
-                            let timestamp = chrono::Utc::now().timestamp();
-                            let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
-
-                            // Store master seed mnemonic encrypted with PIN
-                            master_signer
-                                .store_encrypted(
-                                    datadir_path.path(),
-                                    network,
-                                    &secp,
-                                    Some((master_checksum, timestamp)),
-                                    Some(&pin),
-                                )
-                                .map_err(|e| {
-                                    format!("Failed to store master seed mnemonic: {}", e)
-                                })?;
-
-                            tracing::info!(
-                                "Master signer created and stored (encrypted with PIN) \
-                                 with fingerprint: {}",
-                                master_fingerprint
-                            );
-
-                            // Build Cube settings
-                            let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
-                                .with_master_signer(master_fingerprint)
-                                .with_pin(&pin)
-                                .map_err(|e| format!("Failed to hash PIN: {}", e))?;
-
-                            // Save Cube settings
-                            settings::update_settings_file(&network_dir, |mut settings| {
-                                if settings.cubes.iter().any(|c| c.id == cube.id) {
-                                    return Some(settings);
-                                }
-                                settings.cubes.push(cube.clone());
-                                Some(settings)
-                            })
-                            .await
-                            .map(|_| cube)
-                            .map_err(|e| e.to_string())
-                        },
-                        Message::CubeCreated,
-                    )
+                    // PIN-based Cube creation, phase 1: generate the seed into
+                    // memory and hand it to the backup step.
+                    //
+                    // Nothing is written to disk here — not the seed file, not
+                    // the settings entry, not the OS-keystore device secret.
+                    // All of that is `finalize_cube_creation`, which runs only
+                    // once the user has demonstrated a backup or explicitly
+                    // bypassed. Abandoning the step therefore leaves no
+                    // half-created Cube and no orphaned keystore entry.
+                    //
+                    // Probe the keystore **here**, before a single word is
+                    // shown. `finalize_cube_creation` mints the real secret,
+                    // and if the keystore is unusable it refuses (I7) — but
+                    // refusing there means the user has already written down
+                    // twelve words and verified three of them, for a Cube that
+                    // will never exist. Probe early, mint late: `capability()`
+                    // writes and deletes a throwaway item, so it stakes no
+                    // claim on this Cube and leaves 3a's
+                    // no-writes-until-committed property intact.
+                    if let unlock::device_secret::Capability::Unavailable(why) =
+                        unlock::device_secret::capability()
+                    {
+                        self.creating_cube = false;
+                        self.error = Some(why);
+                        return Task::none();
+                    }
+                    match MasterSigner::generate(self.network) {
+                        Ok(signer) => {
+                            self.creating_cube = false;
+                            self.error = None;
+                            self.creation_backup_words = Some(zeroize::Zeroizing::new(
+                                signer.words().iter().map(|w| w.to_string()).collect(),
+                            ));
+                            self.state = State::CreationBackup(CreationBackupStep::Intro(false));
+                            Task::none()
+                        }
+                        Err(e) => {
+                            self.creating_cube = false;
+                            self.error =
+                                Some(format!("Failed to generate master seed signer: {}", e));
+                            Task::none()
+                        }
+                    }
                 };
 
                 without_recovery
@@ -588,6 +614,45 @@ impl Home {
             Message::StartRecovery => {
                 self.state = State::RecoveryInput;
                 self.recovery_active_index = None;
+                Task::none()
+            }
+            Message::View(ViewMessage::CreationBackup(msg)) => self.update_creation_backup(msg),
+            Message::View(ViewMessage::CreationBackupBypassRequested) => {
+                if matches!(self.state, State::CreationBackup(_)) {
+                    self.state = State::CreationBackup(CreationBackupStep::Bypass {
+                        acknowledged: false,
+                    });
+                    self.error = None;
+                }
+                Task::none()
+            }
+            Message::View(ViewMessage::CreationBackupAcknowledgeBypass(acknowledged)) => {
+                if let State::CreationBackup(CreationBackupStep::Bypass { .. }) = &self.state {
+                    self.state = State::CreationBackup(CreationBackupStep::Bypass { acknowledged });
+                }
+                Task::none()
+            }
+            Message::View(ViewMessage::CreationBackupBypassConfirmed) => {
+                // Only an *acknowledged* bypass proceeds. Reaching this message
+                // with the box unticked means the view let a click through, and
+                // the safe answer is to do nothing rather than create an
+                // unbacked-up Cube the user never agreed to.
+                if !matches!(
+                    self.state,
+                    State::CreationBackup(CreationBackupStep::Bypass { acknowledged: true })
+                ) {
+                    return Task::none();
+                }
+                let bypass = creation_gate::CreationBackupBypass {
+                    at: chrono::Utc::now().timestamp(),
+                    // Verbatim, so a later support conversation is about the
+                    // same words the user actually agreed to.
+                    acknowledged: creation_gate::BYPASS_ACKNOWLEDGEMENT.to_string(),
+                };
+                self.finalize_cube_creation(false, Some(bypass))
+            }
+            Message::View(ViewMessage::CancelCreationBackup) => {
+                self.abandon_creation_backup();
                 Task::none()
             }
             Message::CubeCreated(res) => {
@@ -603,6 +668,10 @@ impl Home {
                         self.create_cube_name = coincube_ui::component::form::Value::default();
                         self.create_cube_pin = pin_input::PinInput::new();
                         self.create_cube_pin_confirm = pin_input::PinInput::new();
+                        // The creation-time backup step's copy of the seed has
+                        // done its job — scrub it. `reload()` below replaces
+                        // `State::CreationBackup` with the Cube list.
+                        self.scrub_creation_seed();
                         // Explicitly clear recovery words to prevent mnemonic from lingering in memory
                         for word in &mut self.recovery_words {
                             word.clear();
@@ -649,6 +718,15 @@ impl Home {
                             word.shrink_to_fit();
                         }
                         self.recovery_active_index = None;
+                        // A failed write means no Cube exists, so the seed the
+                        // user was just shown is worthless — scrub it and send
+                        // them back to the create form, where the error below
+                        // is visible and a retry generates a fresh seed.
+                        if matches!(self.state, State::CreationBackup(_)) {
+                            self.abandon_creation_backup();
+                        } else {
+                            self.scrub_creation_seed();
+                        }
                         self.error = Some(format!("Failed to create Cube: {}", e));
                         Task::none()
                     }
@@ -1055,6 +1133,7 @@ impl Home {
                         self.delete_cube_modal = Some(DeleteCubeModal::new(
                             cube.clone(),
                             wallet_datadir,
+                            self.datadir_path.path().to_path_buf(),
                             wallet_settings,
                             internal_bitcoind,
                             self.connect_account.is_authenticated(),
@@ -1330,6 +1409,21 @@ impl Home {
 
                         Task::perform(
                             async move {
+                                // Same device-secret mint + refusal as the
+                                // non-recovery path above.
+                                let device_secret = match unlock::device_secret::capability() {
+                                    unlock::device_secret::Capability::Available => Some(
+                                        unlock::device_secret::get_or_create(
+                                            datadir_path.path(),
+                                            &cube_id.to_string(),
+                                        )
+                                        .map_err(|e| e.to_string())?,
+                                    ),
+                                    unlock::device_secret::Capability::Unavailable(why) => {
+                                        return Err(why)
+                                    }
+                                };
+
                                 // Restore MasterSigner from recovery mnemonic
                                 let master_signer = MasterSigner::from_mnemonic(network, mnemonic)
                                     .map_err(|e| {
@@ -1347,7 +1441,8 @@ impl Home {
                                     format!("Failed to create network directory: {}", e)
                                 })?;
 
-                                // Use a timestamp for the master seed storage
+                                // One timestamp for the seed file and the Cube
+                                // — see the note on the non-recovery path (X7).
                                 let timestamp = chrono::Utc::now().timestamp();
                                 let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
 
@@ -1358,7 +1453,9 @@ impl Home {
                                         network,
                                         &secp,
                                         Some((master_checksum, timestamp)),
-                                        Some(&pin),
+                                        &pin,
+                                        &cube_id.to_string(),
+                                        device_secret.as_ref(),
                                     )
                                     .map_err(|e| {
                                         format!("Failed to store master seed mnemonic: {}", e)
@@ -1366,11 +1463,45 @@ impl Home {
 
                                 tracing::info!("Master signer created and stored (encrypted with PIN) with fingerprint: {}", master_fingerprint);
 
-                                // Build Cube settings using the pre-generated, stable UUID.
-                                let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
-                                    .with_master_signer(master_fingerprint)
-                                    .with_pin(&pin)
-                                    .map_err(|e| format!("Failed to hash PIN: {}", e))?;
+                                // Build Cube settings using the pre-generated,
+                                // stable UUID. No PIN hash — see the note on
+                                // the non-recovery path above.
+                                let mut cube =
+                                    CubeSettings::new_with_id(cube_id, cube_name, network)
+                                        .with_master_signer(master_fingerprint);
+                                // Same instant the seed file carries (X7).
+                                cube.created_at = timestamp;
+                                // The Cube's second slot, written at creation —
+                                // see the note on the non-recovery path (6b).
+                                let slot_name = unlock::marker::new_file_name(timestamp);
+                                match unlock::marker::write_decoy(
+                                    datadir_path.path(),
+                                    network,
+                                    &cube_id.to_string(),
+                                    &slot_name,
+                                    device_secret.as_ref(),
+                                ) {
+                                    Ok(()) => cube.duress_slot_file = Some(slot_name),
+                                    Err(e) => tracing::warn!(
+                                        "could not write the Cube's second slot: {}",
+                                        e
+                                    ),
+                                }
+                                // Reaching here means the user typed all twelve
+                                // words of this seed back into the app and they
+                                // passed the BIP39 checksum. That *is* the
+                                // backup demonstration — a stricter one than
+                                // the creation flow's three-word challenge, and
+                                // it is the same claim `backed_up` makes
+                                // everywhere else ("the user wrote the seed
+                                // phrase down and confirmed it").
+                                //
+                                // Recording it is what makes arming the gate
+                                // below safe: a restored Cube satisfies
+                                // `creation_gate::evaluate` on its own local
+                                // evidence and opens immediately.
+                                cube.backed_up = true;
+                                cube.creation_backup_required = true;
 
                                 // Save Cube settings to settings file.
                                 // Idempotency: skip insert if UUID already exists.
@@ -2016,6 +2147,356 @@ impl Home {
         }
     }
 
+    /// Drive the creation-time backup step.
+    ///
+    /// The payload is the Settings backup wizard's message type because the
+    /// screens are the Settings wizard's screens. The variants that only make
+    /// sense there are inert: `PinEntry`/`VerifyPin`/`PinVerified` exist to
+    /// decrypt a seed file the user already owns, and at creation the seed has
+    /// not been written yet and the PIN was typed seconds ago.
+    fn update_creation_backup(&mut self, msg: BackupWalletMessage) -> Task<Message> {
+        let State::CreationBackup(step) = &self.state else {
+            return Task::none();
+        };
+
+        match (step, msg) {
+            (CreationBackupStep::Intro(_), BackupWalletMessage::ToggleBackupIntroCheck) => {
+                let State::CreationBackup(CreationBackupStep::Intro(checked)) = &self.state else {
+                    return Task::none();
+                };
+                let flipped = !*checked;
+                self.state = State::CreationBackup(CreationBackupStep::Intro(flipped));
+                Task::none()
+            }
+            (CreationBackupStep::Intro(true), BackupWalletMessage::NextStep) => {
+                self.state = State::CreationBackup(CreationBackupStep::Phrase);
+                Task::none()
+            }
+            (CreationBackupStep::Phrase, BackupWalletMessage::NextStep) => {
+                let Some(words) = self.creation_backup_words.as_ref() else {
+                    return self.lose_creation_seed();
+                };
+                match general::generate_random_word_indices(words.len()) {
+                    Some(word_indices) => {
+                        self.state = State::CreationBackup(CreationBackupStep::Verification {
+                            word_indices,
+                            word_inputs: Default::default(),
+                            error: None,
+                        });
+                        Task::none()
+                    }
+                    None => self.lose_creation_seed(),
+                }
+            }
+            (CreationBackupStep::Phrase, BackupWalletMessage::PreviousStep) => {
+                self.state = State::CreationBackup(CreationBackupStep::Intro(true));
+                Task::none()
+            }
+            (CreationBackupStep::Verification { .. }, BackupWalletMessage::PreviousStep) => {
+                self.state = State::CreationBackup(CreationBackupStep::Phrase);
+                Task::none()
+            }
+            // "Back up now" from the bypass screen — return to the wizard with
+            // the intro already acknowledged, since they read it to get here.
+            (CreationBackupStep::Bypass { .. }, BackupWalletMessage::PreviousStep) => {
+                self.state = State::CreationBackup(CreationBackupStep::Intro(true));
+                Task::none()
+            }
+            // Back out of the first screen: nothing has been written, so this
+            // is a plain abandonment.
+            (CreationBackupStep::Intro(_), BackupWalletMessage::PreviousStep) => {
+                self.abandon_creation_backup();
+                Task::none()
+            }
+            (
+                CreationBackupStep::Verification {
+                    word_indices,
+                    word_inputs,
+                    ..
+                },
+                BackupWalletMessage::WordInput { index, input },
+            ) => {
+                let Some(pos) = word_indices.iter().position(|&i| i == index as usize) else {
+                    return Task::none();
+                };
+                let mut word_inputs = word_inputs.clone();
+                word_inputs[pos] = input;
+                self.state = State::CreationBackup(CreationBackupStep::Verification {
+                    word_indices: *word_indices,
+                    word_inputs,
+                    error: None,
+                });
+                Task::none()
+            }
+            (
+                CreationBackupStep::Verification {
+                    word_indices,
+                    word_inputs,
+                    ..
+                },
+                BackupWalletMessage::VerifyPhrase,
+            ) => {
+                let Some(words) = self.creation_backup_words.as_ref() else {
+                    return self.lose_creation_seed();
+                };
+                // `word_indices` are 1-based, matching what the user is shown.
+                let all_correct = word_indices.iter().enumerate().all(|(i, &word_idx)| {
+                    words
+                        .get(word_idx - 1)
+                        .is_some_and(|expected| word_inputs[i].trim() == expected)
+                });
+
+                if all_correct {
+                    self.finalize_cube_creation(true, None)
+                } else {
+                    self.state = State::CreationBackup(CreationBackupStep::Verification {
+                        word_indices: *word_indices,
+                        word_inputs: word_inputs.clone(),
+                        error: Some(
+                            "The words you entered don't match. Please try again.".to_string(),
+                        ),
+                    });
+                    Task::none()
+                }
+            }
+            _ => Task::none(),
+        }
+    }
+
+    /// The seed vanished from memory between screens — only reachable via a
+    /// bug. Throw the half-finished creation away rather than persisting a
+    /// Cube whose seed phrase nobody has.
+    fn lose_creation_seed(&mut self) -> Task<Message> {
+        self.abandon_creation_backup();
+        self.error = Some(
+            "Lost this Cube's seed phrase before it was saved. Nothing was written to disk — \
+             please start again."
+                .to_string(),
+        );
+        Task::none()
+    }
+
+    /// Scrub the in-memory seed of the Cube being created.
+    ///
+    /// `Zeroizing` already wipes the `Vec`'s own buffer on drop, but not the
+    /// heap allocations of the `String`s inside it — the words themselves.
+    /// Clearing each one first is what actually removes the phrase from
+    /// memory, matching the treatment of `recovery_words`.
+    fn scrub_creation_seed(&mut self) {
+        if let Some(words) = &mut self.creation_backup_words {
+            for word in words.iter_mut() {
+                word.clear();
+                word.shrink_to_fit();
+            }
+        }
+        self.creation_backup_words = None;
+    }
+
+    /// Leave the backup step without creating anything, scrubbing the seed.
+    fn abandon_creation_backup(&mut self) {
+        self.scrub_creation_seed();
+        self.creating_cube = false;
+        self.error = None;
+        // Back to the create form the user came from. `pending_cube_id` is
+        // deliberately kept: a retry reuses the same UUID, matching the
+        // existing failure path.
+        self.state = State::Cubes {
+            cubes: Vec::new(),
+            create_cube: true,
+        };
+    }
+
+    /// Phase 2 of PIN-based creation: everything that touches disk.
+    ///
+    /// Mints the device secret, writes the sealed seed file and inserts the
+    /// Cube into `settings.json` — in that order, and only now, so that a user
+    /// who walked away during the backup step left nothing behind.
+    ///
+    /// `backed_up` is set when the user typed the challenge words back
+    /// correctly; `bypass` is set when they explicitly accepted
+    /// [`creation_gate::BYPASS_ACKNOWLEDGEMENT`] instead. Exactly one of the
+    /// two is meaningful, and both are recorded on the Cube.
+    fn finalize_cube_creation(
+        &mut self,
+        backed_up: bool,
+        bypass: Option<creation_gate::CreationBackupBypass>,
+    ) -> Task<Message> {
+        let Some(words) = self.creation_backup_words.clone() else {
+            return self.lose_creation_seed();
+        };
+        let mnemonic = match bip39::Mnemonic::parse_in(bip39::Language::English, words.join(" ")) {
+            Ok(mnemonic) => mnemonic,
+            Err(e) => {
+                self.abandon_creation_backup();
+                self.error = Some(format!(
+                    "The generated seed phrase failed its own checksum ({}). Nothing was \
+                     written to disk — please start again.",
+                    e
+                ));
+                return Task::none();
+            }
+        };
+
+        self.creating_cube = true;
+        self.error = None;
+        let network = self.network;
+        let cube_name = self.create_cube_name.value.trim().to_string();
+        let pin = self.create_cube_pin.value();
+        let datadir_path = self.datadir_path.clone();
+        let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
+
+        Task::perform(
+            async move {
+                // Mint this Cube's device secret in the OS keystore
+                // BEFORE anything is written to disk.
+                //
+                // The seed file is sealed under PIN + device secret
+                // (`ENCRYPTED_V3`), which is what makes a copied
+                // datadir useless. If the keystore is unusable — the
+                // common case on headless Linux and minimal WMs —
+                // this **refuses** rather than silently falling back
+                // to PIN-only. A user who believes they have
+                // two-factor protection and has one factor is worse
+                // off than a user who was told the truth (I7).
+                let device_secret = match unlock::device_secret::capability() {
+                    unlock::device_secret::Capability::Available => Some(
+                        unlock::device_secret::get_or_create(
+                            datadir_path.path(),
+                            &cube_id.to_string(),
+                        )
+                        .map_err(|e| e.to_string())?,
+                    ),
+                    unlock::device_secret::Capability::Unavailable(why) => return Err(why),
+                };
+
+                // Rebuild the signer from the phrase the user was just shown.
+                // Same call the recovery path makes, so "what the user wrote
+                // down" and "what gets sealed" are the same words by
+                // construction.
+                let master_signer = MasterSigner::from_mnemonic(network, mnemonic)
+                    .map_err(|e| format!("Failed to build master seed signer: {}", e))?;
+
+                // Create secp context for fingerprint calculation
+                let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+                let master_fingerprint = master_signer.fingerprint(&secp);
+
+                // Store master seed mnemonic (encrypted with PIN)
+                let network_dir = datadir_path.network_directory(network);
+                network_dir
+                    .init()
+                    .map_err(|e| format!("Failed to create network directory: {}", e))?;
+
+                // **One** timestamp for the seed file and the Cube (X7).
+                //
+                // This used to be read here and again inside
+                // `CubeSettings::new_with_id`, with the ~831 ms Argon2
+                // derivation of `store_encrypted` in between. Two consequences,
+                // both real:
+                //
+                // 1. The duress marker stamps itself with the Cube's
+                //    `created_at`, so on any machine slow enough for the two
+                //    reads to differ, the file whose timestamps match
+                //    `settings.json` exactly is the marker. A distinguisher for
+                //    free.
+                // 2. `settings::derive_master_signer_fingerprint` only
+                //    considers seed files within
+                //    `MASTER_SEED_CREATION_WINDOW_SECS` (2) of `created_at`. A
+                //    creation slower than that made the Cube's *own* seed file
+                //    invisible to the backfill.
+                //
+                // Taking it once removes both. `cube.created_at` is overwritten
+                // with this value below.
+                let timestamp = chrono::Utc::now().timestamp();
+                let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
+
+                // Store master seed mnemonic encrypted with PIN
+                master_signer
+                    .store_encrypted(
+                        datadir_path.path(),
+                        network,
+                        &secp,
+                        Some((master_checksum, timestamp)),
+                        &pin,
+                        &cube_id.to_string(),
+                        device_secret.as_ref(),
+                    )
+                    .map_err(|e| format!("Failed to store master seed mnemonic: {}", e))?;
+
+                tracing::info!(
+                    "Master signer created and stored (encrypted with PIN) \
+                     with fingerprint: {}",
+                    master_fingerprint
+                );
+
+                // Build Cube settings. No PIN hash is stored: the
+                // Cube's PIN is the one the seed file above was
+                // encrypted under, and it is verified by decrypting
+                // that file. A second, cheaper verifier next to it
+                // is the bug this whole change removes (I1).
+                let mut cube = CubeSettings::new_with_id(cube_id, cube_name, network)
+                    .with_master_signer(master_fingerprint);
+                // Same instant the seed file carries — see the note above.
+                cube.created_at = timestamp;
+
+                // The Cube's second `mnemonics/` slot, written **now** rather
+                // than at duress enrolment (plan unit 6b).
+                //
+                // It holds a decoy until duress is armed, and arming simply
+                // overwrites it. Creating it at enrolment instead would make
+                // mtime the oracle the decoy exists to remove — a slot whose
+                // timestamp is months newer than its Cube's seed file announces
+                // the day duress was turned on. Written with the same device
+                // secret as the seed file above so its wire version matches.
+                //
+                // Best-effort: a Cube that opens is worth more than a Cube with
+                // a perfect on-disk shape, and migration backfills a missing
+                // slot on the next unlock. The failure is logged, never
+                // surfaced — telling the user "the duress decoy failed" on a
+                // machine with no duress enrolled would leak more than the
+                // missing file does.
+                let slot_name = unlock::marker::new_file_name(timestamp);
+                match unlock::marker::write_decoy(
+                    datadir_path.path(),
+                    network,
+                    &cube_id.to_string(),
+                    &slot_name,
+                    device_secret.as_ref(),
+                ) {
+                    Ok(()) => cube.duress_slot_file = Some(slot_name),
+                    Err(e) => tracing::warn!("could not write the Cube's second slot: {}", e),
+                }
+                // The outcome of the backup step above. `backed_up` is the
+                // same flag Settings → Backup Master Seed sets, and it is what
+                // satisfies `creation_gate::evaluate`.
+                cube.backed_up = backed_up;
+                cube.creation_backup_bypass = bypass;
+                // Arm the gate. Reaching this line means one of the two
+                // fields above is set: the user either typed the challenge
+                // words back correctly or accepted
+                // `BYPASS_ACKNOWLEDGEMENT`. `creation_gate::evaluate` is
+                // satisfied by either, so a Cube written here always opens.
+                //
+                // The flag is per-Cube rather than global precisely so that
+                // Cubes predating the backup step are never retroactively
+                // held to it — see `cubes_that_predate_the_gate_are_never_blocked`.
+                cube.creation_backup_required = true;
+
+                // Save Cube settings
+                settings::update_settings_file(&network_dir, |mut settings| {
+                    if settings.cubes.iter().any(|c| c.id == cube.id) {
+                        return Some(settings);
+                    }
+                    settings.cubes.push(cube.clone());
+                    Some(settings)
+                })
+                .await
+                .map(|_| cube)
+                .map_err(|e| e.to_string())
+            },
+            Message::CubeCreated,
+        )
+    }
+
     pub fn view(&self) -> Element<Message> {
         let content = Into::<Element<ViewMessage>>::into(scrollable(
             Column::new()
@@ -2097,6 +2578,11 @@ impl Home {
                                 State::RecoveryInput => recovery_input_view(
                                     &self.recovery_words,
                                     self.recovery_active_index,
+                                ),
+                                State::CreationBackup(step) => creation_backup_view(
+                                    step,
+                                    self.creation_backup_words.as_ref().map(|w| w.as_slice()),
+                                    self.creating_cube,
                                 ),
                                 State::Cubes { cubes, create_cube } => {
                                     if *create_cube {
@@ -2987,6 +3473,128 @@ fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
     Container::new(row).into()
 }
 
+/// The creation-time backup step.
+///
+/// The three wizard screens are the Settings ones, reused verbatim through
+/// `app::view::settings::backup`'s message-generic views with
+/// [`ViewMessage::CreationBackup`] as the mapper. What is added around them is
+/// creation-specific and belongs here:
+///
+/// - [`creation_gate::NOT_A_BACKUP_COPY`], because the mistake this step
+///   exists to prevent is a user believing the datadir folder is their backup.
+/// - The "I'll do this later" escape and its acknowledgement screen. Settings
+///   has no equivalent — there, declining just closes a panel.
+fn creation_backup_view<'a>(
+    step: &'a CreationBackupStep,
+    words: Option<&'a [String]>,
+    saving: bool,
+) -> Element<'a, ViewMessage> {
+    use crate::app::view::settings::backup;
+
+    // "I'll do this later", offered on every screen of the step. The gate is
+    // not armed yet (unit 3b), so this is currently the difference between a
+    // Cube that records a bypass and one that does not — but it is written as
+    // the real escape hatch it will be.
+    let bypass_link = || {
+        button::transparent(None, "I'll do this later")
+            .on_press_maybe((!saving).then_some(ViewMessage::CreationBackupBypassRequested))
+    };
+
+    let with_bypass = |inner: Element<'a, ViewMessage>| -> Element<'a, ViewMessage> {
+        Column::new()
+            .align_x(Alignment::Center)
+            .spacing(20)
+            .push(inner)
+            .push(bypass_link())
+            .into()
+    };
+
+    match step {
+        CreationBackupStep::Intro(checked) => Column::new()
+            .align_x(Alignment::Center)
+            .spacing(20)
+            .push(backup::intro_view(*checked, ViewMessage::CreationBackup))
+            .push(
+                Container::new(
+                    p1_regular(creation_gate::NOT_A_BACKUP_COPY).style(theme::text::secondary),
+                )
+                .max_width(500),
+            )
+            .push(bypass_link())
+            .into(),
+        CreationBackupStep::Phrase => match words {
+            Some(words) => with_bypass(backup::recovery_phrase_view(
+                words,
+                ViewMessage::CreationBackup,
+            )),
+            // Only reachable if the seed was scrubbed underneath the view;
+            // `update_creation_backup` turns the same condition into an error
+            // and abandons. Render nothing rather than an empty word grid.
+            None => Column::new().into(),
+        },
+        CreationBackupStep::Verification {
+            word_indices,
+            word_inputs,
+            error,
+        } => with_bypass(backup::verification_view(
+            word_indices,
+            word_inputs,
+            error.as_deref(),
+            saving,
+            ViewMessage::CreationBackup,
+        )),
+        CreationBackupStep::Bypass { acknowledged } => creation_backup_bypass_view(*acknowledged),
+    }
+}
+
+/// The bypass screen: the acknowledgement, a checkbox that must be actively
+/// ticked, and no way past it that does not go through the checkbox.
+fn creation_backup_bypass_view(acknowledged: bool) -> Element<'static, ViewMessage> {
+    Container::new(
+        Column::new()
+            .align_x(Alignment::Center)
+            .spacing(20)
+            .push(text("Create this Cube without a backup?").size(24).bold())
+            .push(
+                Container::new(
+                    p1_regular(creation_gate::NOT_A_BACKUP_COPY).style(theme::text::secondary),
+                )
+                .max_width(500),
+            )
+            .push(
+                Container::new(
+                    CheckBox::new(acknowledged)
+                        .label(creation_gate::BYPASS_ACKNOWLEDGEMENT)
+                        .on_toggle(ViewMessage::CreationBackupAcknowledgeBypass)
+                        .style(theme::checkbox::primary)
+                        .size(20),
+                )
+                .max_width(500),
+            )
+            .push(
+                Row::new()
+                    .spacing(20)
+                    .push(
+                        button::secondary(Some(icon::previous_icon()), "Back up now")
+                            .on_press(ViewMessage::CreationBackup(
+                                BackupWalletMessage::PreviousStep,
+                            ))
+                            .width(Length::Fixed(240.0)),
+                    )
+                    .push(
+                        button::primary(None, "Create without a backup")
+                            .on_press_maybe(
+                                acknowledged.then_some(ViewMessage::CreationBackupBypassConfirmed),
+                            )
+                            .width(Length::Fixed(240.0)),
+                    ),
+            )
+            .push(button::transparent(None, "Cancel").on_press(ViewMessage::CancelCreationBackup)),
+    )
+    .center_x(Length::Fill)
+    .into()
+}
+
 fn recovery_input_view(
     recovery_words: &[String; 12],
     active_index: Option<usize>,
@@ -3267,6 +3875,25 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub enum ViewMessage {
+    /// A message from the creation-time backup step. The payload is the
+    /// Settings backup wizard's own message type: `State::CreationBackup`
+    /// renders that wizard's views, and this variant is the `fn` mapper they
+    /// are parameterised over. Variants that belong to the Settings flow only
+    /// (the PIN re-entry gate, `Start`) are inert here — at creation the PIN
+    /// was just typed and the seed is already in hand, so there is nothing to
+    /// re-authenticate and nothing to decrypt.
+    CreationBackup(BackupWalletMessage),
+    /// "I'll do this later" — open the bypass screen.
+    CreationBackupBypassRequested,
+    /// The bypass acknowledgement checkbox. Bypassing requires an active
+    /// acceptance, not a dismissal.
+    CreationBackupAcknowledgeBypass(bool),
+    /// Accept the acknowledgement and finish creation with no backup. Records
+    /// a `CreationBackupBypass` on the Cube so support can answer "did this
+    /// user skip the backup?" from the datadir.
+    CreationBackupBypassConfirmed,
+    /// Leave the backup step without creating anything.
+    CancelCreationBackup,
     ImportWallet,
     CreateWallet,
     /// W13 — launch the installer in "restore from Cube Recovery Kit"
@@ -3363,6 +3990,10 @@ struct DeleteCubeModal {
     user_role: Option<UserRole>,
     // `None` means we were not able to determine whether wallet uses internal bitcoind.
     internal_bitcoind: Option<bool>,
+    /// Data root. The PIN is verified by decrypting this Cube's seed file, so
+    /// the modal needs to reach `<root>/<network>/mnemonics/` — the
+    /// `network_directory` above is already one level in.
+    datadir_root: std::path::PathBuf,
     pin_input: pin_input::PinInput,
     pin_error: Option<String>,
 }
@@ -3485,6 +4116,7 @@ impl DeleteCubeModal {
     fn new(
         cube: CubeSettings,
         network_directory: NetworkDirectory,
+        datadir_root: std::path::PathBuf,
         wallet_settings: Option<WalletSettings>,
         internal_bitcoind: Option<bool>,
         is_authenticated: bool,
@@ -3494,6 +4126,7 @@ impl DeleteCubeModal {
             cube: cube.clone(),
             wallet_settings: wallet_settings.clone(),
             network_directory,
+            datadir_root,
             warning: None,
             deleted: false,
             delete_liana_connect: false,
@@ -3530,13 +4163,35 @@ impl DeleteCubeModal {
                     return Task::none();
                 }
 
-                // Verify PIN before proceeding with deletion
-                if self.cube.has_pin() {
+                // Verify the PIN before proceeding with deletion. There is no
+                // stored PIN hash any more: the check is a trial decryption of
+                // this Cube's seed file, which costs ~831 ms. That is a
+                // blocking call on the UI thread, consistent with the
+                // `block_on(delete_wallet(...))` immediately below — this modal
+                // has always been synchronous. A confirm dialog that takes a
+                // beat to answer is acceptable; a cheap verifier next to an
+                // expensive one is not (I1).
+                if self.cube.has_pin(&self.datadir_root) {
                     let pin = self.pin_input.value();
-                    if !self.cube.verify_pin(&pin) {
-                        self.pin_error = Some("Incorrect PIN. Please try again.".to_string());
-                        self.pin_input.clear();
-                        return Task::none();
+                    let loc =
+                        crate::services::unlock::CubeLocation::new(&self.datadir_root, &self.cube);
+                    match crate::services::unlock::unlock_blocking(&loc, &pin) {
+                        Ok(crate::services::unlock::PinOutcome::Unlock(_)) => {}
+                        // A duress PIN must not delete the Cube here — that
+                        // would be a quieter, unlogged wipe than the duress
+                        // path itself, and would confirm to an observer that
+                        // the PIN meant something. Treat it as a wrong PIN.
+                        Ok(_) => {
+                            self.pin_error = Some("Incorrect PIN. Please try again.".to_string());
+                            self.pin_input.clear();
+                            return Task::none();
+                        }
+                        Err(e) => {
+                            // Keystore failures are not wrong PINs (I7).
+                            self.pin_error = Some(e.to_string());
+                            self.pin_input.clear();
+                            return Task::none();
+                        }
                     }
                 }
 
@@ -3600,7 +4255,7 @@ impl DeleteCubeModal {
     }
 
     fn view(&self) -> Element<Message> {
-        let pin_ready = !self.cube.has_pin() || self.pin_input.is_complete();
+        let pin_ready = !self.cube.has_pin(&self.datadir_root) || self.pin_input.is_complete();
         let can_delete = pin_ready && self.warning.is_none();
         let mut confirm_button = button::secondary(None, "Delete Cube")
             .width(Length::Fixed(200.0))
@@ -3677,7 +4332,7 @@ impl DeleteCubeModal {
         }
 
         // PIN entry section
-        if self.cube.has_pin() {
+        if self.cube.has_pin(&self.datadir_root) {
             col = col
                 .push(Space::new().height(Length::Fixed(5.0)))
                 .push(p1_regular("Enter your PIN to confirm:").style(theme::text::secondary))
@@ -3969,8 +4624,8 @@ mod tests {
             }
         ));
         assert!(home.create_cube_name.value.is_empty());
-        assert_eq!(home.create_cube_pin.value(), "");
-        assert_eq!(home.create_cube_pin_confirm.value(), "");
+        assert_eq!(home.create_cube_pin.value().as_str(), "");
+        assert_eq!(home.create_cube_pin_confirm.value().as_str(), "");
         assert!(home.recovery_words.iter().all(String::is_empty));
         assert!(home.recovery_active_index.is_none());
         assert_eq!(home.passkey_mode, feature_flags::PASSKEY_ENABLED);
@@ -4377,8 +5032,14 @@ mod tests {
     fn modal_views_and_non_destructive_modal_updates_build() {
         let cube = cube("local-a", "Local A", Network::Bitcoin);
         let network_dir = test_datadir().network_directory(Network::Bitcoin);
-        let mut delete_modal =
-            DeleteCubeModal::new(cube.clone(), network_dir, None, Some(true), true);
+        let mut delete_modal = DeleteCubeModal::new(
+            cube.clone(),
+            network_dir,
+            test_datadir().path().to_path_buf(),
+            None,
+            Some(true),
+            true,
+        );
 
         let _ = delete_modal.view();
         let _ = delete_modal.update(Message::View(ViewMessage::DeleteCube(
@@ -4425,5 +5086,805 @@ mod tests {
             cube: remote_cube("remote-c", "Remote C", Network::Bitcoin),
         });
         home.view();
+    }
+
+    // ---------------------------------------------------------------------
+    // Creation-time backup step
+    // ---------------------------------------------------------------------
+
+    /// A `Home` pointed at a real, empty datadir.
+    fn home_with_datadir(dir: &std::path::Path) -> Home {
+        let mut home = Home::new(
+            CoincubeDirectory::new(dir.to_path_buf()),
+            Some(Network::Bitcoin),
+        )
+        .0;
+        home.state = State::Cubes {
+            cubes: Vec::new(),
+            create_cube: true,
+        };
+        home
+    }
+
+    fn tmp_datadir(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "coincube-creation-{}-{}-{}",
+            tag,
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Run a `Task` to completion and collect the messages it emitted.
+    ///
+    /// This is what makes the tests below end-to-end rather than helper-only:
+    /// the async work `Home::update` hands back is actually executed and its
+    /// output fed straight back into `update`, exactly as the iced runtime
+    /// does in the running application.
+    fn drain(task: Task<Message>) -> Vec<Message> {
+        use iced_runtime::futures::futures::StreamExt;
+
+        let Some(stream) = iced_runtime::task::into_stream(task) else {
+            return Vec::new();
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            stream
+                .filter_map(|action| async move {
+                    match action {
+                        iced_runtime::Action::Output(msg) => Some(msg),
+                        _ => None,
+                    }
+                })
+                .collect::<Vec<_>>()
+                .await
+        })
+    }
+
+    /// Type a 4-digit PIN into a `PinInput` the way the keypad does.
+    fn type_pin(input: &mut pin_input::PinInput, pin: &str) {
+        for (i, digit) in pin.chars().enumerate() {
+            let _ = input.update(pin_input::Message::DigitChanged(i, digit.to_string()));
+        }
+    }
+
+    /// Fill in the create form and click "Create Cube".
+    ///
+    /// On a machine whose keystore is unusable this refuses at phase 1 by
+    /// design (3b: probe early, mint late), so it does not always land in the
+    /// backup step. Tests that need the wizard regardless of the machine use
+    /// [`enter_backup_step`].
+    fn start_creation(home: &mut Home, name: &str, pin: &str) -> Task<Message> {
+        home.create_cube_name = coincube_ui::component::form::Value {
+            value: name.to_string(),
+            ..Default::default()
+        };
+        type_pin(&mut home.create_cube_pin, pin);
+        type_pin(&mut home.create_cube_pin_confirm, pin);
+        home.update(Message::View(ViewMessage::CreateCube))
+    }
+
+    /// Put `home` into the backup step without going through the keystore
+    /// probe, reproducing exactly the state phase 1 leaves behind.
+    ///
+    /// This is a fixture for testing the wizard's **state machine**, not a
+    /// shortcut around production behaviour. Entry into the step is a real
+    /// property of the machine and is covered separately at both ends:
+    /// `an_unusable_keystore_refuses_before_any_seed_word_is_shown` for the
+    /// refusal, `creating_a_cube_walks_the_backup_step_and_the_cube_opens` for
+    /// the full production walk. Without this, every wizard test would silently
+    /// stop running on an unsigned macOS build — the machines this is developed
+    /// on — and the state machine would go untested exactly where it is
+    /// hardest to notice.
+    fn enter_backup_step(home: &mut Home, name: &str, pin: &str) {
+        home.create_cube_name = coincube_ui::component::form::Value {
+            value: name.to_string(),
+            ..Default::default()
+        };
+        type_pin(&mut home.create_cube_pin, pin);
+        type_pin(&mut home.create_cube_pin_confirm, pin);
+        let signer = MasterSigner::generate(home.network).expect("seed generation");
+        home.creation_backup_words = Some(zeroize::Zeroizing::new(
+            signer.words().iter().map(|w| w.to_string()).collect(),
+        ));
+        home.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
+        home.creating_cube = false;
+        home.error = None;
+        home.state = State::CreationBackup(CreationBackupStep::Intro(false));
+    }
+
+    /// The backup step the flow is currently on. Panics if it left the step —
+    /// which is the assertion every caller actually wants.
+    fn step(home: &Home) -> CreationBackupStep {
+        match &home.state {
+            State::CreationBackup(step) => step.clone(),
+            other => panic!("expected the creation backup step, got {:?}", other),
+        }
+    }
+
+    fn backup(msg: BackupWalletMessage) -> Message {
+        Message::View(ViewMessage::CreationBackup(msg))
+    }
+
+    /// The words the step is currently showing, copied out for the test to
+    /// answer the verification challenge with.
+    fn shown_words(home: &Home) -> Vec<String> {
+        home.creation_backup_words
+            .as_ref()
+            .expect("the backup step must be holding the new Cube's seed phrase")
+            .to_vec()
+    }
+
+    /// Walk intro → phrase → verification and answer the challenge correctly.
+    /// Returns the task `VerifyPhrase` produced.
+    fn walk_backup_to_verified(home: &mut Home) -> Task<Message> {
+        let _ = home.update(backup(BackupWalletMessage::ToggleBackupIntroCheck));
+        assert_eq!(
+            step(home),
+            CreationBackupStep::Intro(true),
+            "ticking the intro checkbox must be what unlocks the phrase screen"
+        );
+        let _ = home.update(backup(BackupWalletMessage::NextStep));
+        assert_eq!(step(home), CreationBackupStep::Phrase);
+
+        let words = shown_words(home);
+        let _ = home.update(backup(BackupWalletMessage::NextStep));
+        let State::CreationBackup(CreationBackupStep::Verification { word_indices, .. }) =
+            home.state.clone()
+        else {
+            panic!("expected the verification screen, got {:?}", home.state);
+        };
+
+        for &index in &word_indices {
+            let _ = home.update(backup(BackupWalletMessage::WordInput {
+                index: index as u8,
+                input: words[index - 1].clone(),
+            }));
+        }
+        home.update(backup(BackupWalletMessage::VerifyPhrase))
+    }
+
+    /// Read back what actually landed in `settings.json`.
+    fn cubes_on_disk(dir: &std::path::Path) -> Vec<CubeSettings> {
+        let network_dir =
+            CoincubeDirectory::new(dir.to_path_buf()).network_directory(Network::Bitcoin);
+        match settings::Settings::from_file(&network_dir) {
+            Ok(s) => s.cubes,
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// **The end-to-end creation test.**
+    ///
+    /// Drives the production message sequence — create form → intro → phrase →
+    /// verification → the real async write — and then asserts the Cube that
+    /// landed on disk is one the creation gate will open. No helper shortcuts:
+    /// every step goes through `Home::update`, and the task it returns is
+    /// actually run.
+    #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "needs a code-signed binary (data-protection keychain returns -34018 unsigned)"
+    )]
+    fn creating_a_cube_walks_the_backup_step_and_the_cube_opens() {
+        let dir = tmp_datadir("e2e");
+        let mut home = home_with_datadir(&dir);
+
+        let task = start_creation(&mut home, "Fresh", "1234");
+        assert!(
+            drain(task).is_empty(),
+            "clicking Create must not create anything on its own — the backup step comes first"
+        );
+        assert_eq!(
+            step(&home),
+            CreationBackupStep::Intro(false),
+            "creation must land on the backup step, not on a finished Cube"
+        );
+        assert!(
+            cubes_on_disk(&dir).is_empty(),
+            "no Cube may exist on disk while the backup step is still running"
+        );
+
+        let words = shown_words(&home);
+        assert_eq!(words.len(), 12, "a generated Cube gets a 12-word phrase");
+
+        let finalize = walk_backup_to_verified(&mut home);
+        let out = drain(finalize);
+        let [Message::CubeCreated(result)] = out.as_slice() else {
+            panic!("expected exactly one CubeCreated, got {:?}", out);
+        };
+        let created = result
+            .as_ref()
+            .unwrap_or_else(|e| panic!("creation failed after a completed backup: {}", e));
+
+        // Feed the result back in, as the runtime would.
+        let _ = home.update(Message::CubeCreated(Ok(created.clone())));
+        assert!(
+            home.creation_backup_words.is_none(),
+            "the seed phrase must not outlive the creation flow"
+        );
+
+        let on_disk = cubes_on_disk(&dir);
+        assert_eq!(
+            on_disk.len(),
+            1,
+            "expected exactly one Cube, got {:?}",
+            on_disk
+        );
+        let cube = &on_disk[0];
+        assert!(
+            cube.backed_up,
+            "a completed verification must be recorded as a backup"
+        );
+        assert!(
+            cube.creation_backup_bypass.is_none(),
+            "a Cube that was backed up must not also record a bypass"
+        );
+        assert_eq!(
+            creation_gate::evaluate_for_cube(cube, None),
+            creation_gate::CreationGate::Satisfied,
+            "a Cube created through the backup step must open"
+        );
+
+        // …and it opens for real: the production unlock path, the PIN the user
+        // typed into the create form, and the seed file that was actually
+        // sealed. This is the assertion the bricking bug would have failed.
+        let loc = unlock::CubeLocation::new(&dir, cube);
+        match unlock::unlock_blocking(&loc, "1234") {
+            Ok(unlock::PinOutcome::Unlock(signer)) => assert_eq!(
+                signer.words(),
+                words,
+                "the phrase the user wrote down must be the phrase that got sealed"
+            ),
+            other => panic!("a freshly created Cube did not unlock: {:?}", other),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The bypass completes creation and leaves the evidence support needs.
+    #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "needs a code-signed binary (data-protection keychain returns -34018 unsigned)"
+    )]
+    fn the_bypass_path_completes_and_records_the_bypass() {
+        let dir = tmp_datadir("bypass");
+        let mut home = home_with_datadir(&dir);
+        let _ = drain(start_creation(&mut home, "Skipped", "4321"));
+
+        let _ = home.update(Message::View(ViewMessage::CreationBackupBypassRequested));
+        assert_eq!(
+            step(&home),
+            CreationBackupStep::Bypass {
+                acknowledged: false
+            }
+        );
+
+        // Confirming without acknowledging must do nothing at all.
+        let out = drain(home.update(Message::View(ViewMessage::CreationBackupBypassConfirmed)));
+        assert!(
+            out.is_empty(),
+            "an unacknowledged bypass must not create a Cube, got {:?}",
+            out
+        );
+        assert!(cubes_on_disk(&dir).is_empty());
+
+        let _ = home.update(Message::View(ViewMessage::CreationBackupAcknowledgeBypass(
+            true,
+        )));
+        let out = drain(home.update(Message::View(ViewMessage::CreationBackupBypassConfirmed)));
+        let [Message::CubeCreated(result)] = out.as_slice() else {
+            panic!("expected exactly one CubeCreated, got {:?}", out);
+        };
+        result
+            .as_ref()
+            .unwrap_or_else(|e| panic!("bypassed creation failed: {}", e));
+
+        let on_disk = cubes_on_disk(&dir);
+        assert_eq!(
+            on_disk.len(),
+            1,
+            "expected exactly one Cube, got {:?}",
+            on_disk
+        );
+        let cube = &on_disk[0];
+        assert!(
+            !cube.backed_up,
+            "a bypass is not a backup and must not be recorded as one"
+        );
+        let bypass = cube
+            .creation_backup_bypass
+            .as_ref()
+            .expect("the bypass must be persisted so support can identify these Cubes");
+        assert_eq!(
+            bypass.acknowledged,
+            creation_gate::BYPASS_ACKNOWLEDGEMENT,
+            "the acknowledgement must be stored verbatim"
+        );
+        assert!(bypass.at > 0, "the bypass must be timestamped");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Walking away mid-backup must leave nothing behind — not a settings
+    /// entry, not a seed file, not a keystore item.
+    ///
+    /// This is why nothing is written until the step resolves. Needs no
+    /// keychain precisely because the abandoned path never reaches one.
+    #[test]
+    fn abandoning_the_backup_step_leaves_no_half_created_cube() {
+        let dir = tmp_datadir("abandon");
+        let mut home = home_with_datadir(&dir);
+        enter_backup_step(&mut home, "Abandoned", "1111");
+
+        // Get as deep as the flow allows before walking away.
+        let _ = home.update(backup(BackupWalletMessage::ToggleBackupIntroCheck));
+        let _ = home.update(backup(BackupWalletMessage::NextStep));
+        let _ = home.update(backup(BackupWalletMessage::NextStep));
+        assert!(matches!(
+            home.state,
+            State::CreationBackup(CreationBackupStep::Verification { .. })
+        ));
+
+        let out = drain(home.update(Message::View(ViewMessage::CancelCreationBackup)));
+        assert!(
+            out.is_empty(),
+            "abandoning must not create a Cube: {:?}",
+            out
+        );
+
+        assert!(
+            cubes_on_disk(&dir).is_empty(),
+            "an abandoned creation must leave no Cube in settings.json"
+        );
+        assert!(
+            home.creation_backup_words.is_none(),
+            "an abandoned creation must scrub the seed phrase"
+        );
+        assert!(!home.creating_cube);
+        assert!(
+            matches!(
+                home.state,
+                State::Cubes {
+                    create_cube: true,
+                    ..
+                }
+            ),
+            "abandoning returns to the create form, got {:?}",
+            home.state
+        );
+
+        // Nothing at all was written under the datadir — no seed file, no
+        // network directory, no marker.
+        let stray: Vec<_> = walk_files(&dir);
+        assert!(
+            stray.is_empty(),
+            "an abandoned creation left files behind: {:?}",
+            stray
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn walk_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return out;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(walk_files(&path));
+            } else {
+                out.push(path);
+            }
+        }
+        out
+    }
+
+    /// The same walk as the strict test above, asserting the invariant that
+    /// holds on **every** platform: what is on disk agrees with what
+    /// `CubeCreated` reported, and a creation that failed leaves nothing.
+    ///
+    /// This is the locally-runnable half of the end-to-end coverage. It enters
+    /// the wizard through [`enter_backup_step`] so the state machine and the
+    /// real async write are exercised even where the keystore refuses; the
+    /// write itself then fails there, and the `Err` arm asserts the refusal is
+    /// clean — which is the property that actually protects the user. The
+    /// strict version above starts from the create form and asserts the
+    /// success branch unconditionally.
+    #[test]
+    fn what_lands_on_disk_always_agrees_with_the_creation_result() {
+        let dir = tmp_datadir("agrees");
+        let mut home = home_with_datadir(&dir);
+        enter_backup_step(&mut home, "Consistent", "5555");
+
+        let words = shown_words(&home);
+        let out = drain(walk_backup_to_verified(&mut home));
+        let [Message::CubeCreated(result)] = out.as_slice() else {
+            panic!(
+                "verification must produce exactly one CubeCreated, got {:?}",
+                out
+            );
+        };
+
+        let _ = home.update(Message::CubeCreated(result.clone()));
+        assert!(
+            home.creation_backup_words.is_none(),
+            "the seed must be scrubbed whichever way creation went"
+        );
+
+        match result {
+            Ok(cube) => {
+                let on_disk = cubes_on_disk(&dir);
+                assert_eq!(on_disk.len(), 1, "expected one Cube, got {:?}", on_disk);
+                assert_eq!(on_disk[0].id, cube.id);
+                assert!(
+                    on_disk[0].backed_up,
+                    "a completed verification must be recorded as a backup"
+                );
+                assert!(
+                    on_disk[0].creation_backup_required,
+                    "the gate is armed for Cubes created under it"
+                );
+                match unlock::unlock_blocking(&unlock::CubeLocation::new(&dir, &on_disk[0]), "5555")
+                {
+                    Ok(unlock::PinOutcome::Unlock(signer)) => {
+                        assert_eq!(signer.words(), words)
+                    }
+                    other => panic!("a freshly created Cube did not unlock: {:?}", other),
+                }
+            }
+            Err(e) => {
+                // The refusal path. Nothing may be left behind — that is the
+                // whole reason the writes happen after the backup step.
+                assert!(
+                    cubes_on_disk(&dir).is_empty(),
+                    "a failed creation left a Cube in settings.json ({})",
+                    e
+                );
+                assert!(
+                    matches!(
+                        home.state,
+                        State::Cubes {
+                            create_cube: true,
+                            ..
+                        }
+                    ),
+                    "a failed creation must return to the create form, got {:?}",
+                    home.state
+                );
+                assert!(
+                    home.error
+                        .as_deref()
+                        .is_some_and(|m| m.contains(e.as_str())),
+                    "a failed creation must surface the reason; error was {:?}",
+                    home.error
+                );
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Restore is not creation: recovering a Cube from a phrase the user
+    /// already holds must not send them through a backup step for it.
+    #[test]
+    fn restoring_from_a_recovery_phrase_is_not_gated_by_the_backup_step() {
+        let dir = tmp_datadir("restore");
+        let mut home = home_with_datadir(&dir);
+        home.create_cube_name = coincube_ui::component::form::Value {
+            value: "Restored".to_string(),
+            ..Default::default()
+        };
+        type_pin(&mut home.create_cube_pin, "2468");
+        type_pin(&mut home.create_cube_pin_confirm, "2468");
+
+        // A real BIP39 phrase, entered word by word as the recovery grid does.
+        let mnemonic = "abandon abandon abandon abandon abandon abandon \
+                        abandon abandon abandon abandon abandon about";
+        for (i, word) in mnemonic.split_whitespace().enumerate() {
+            let _ = home.update(Message::View(ViewMessage::RecoveryWordInput {
+                index: i,
+                word: word.to_string(),
+            }));
+        }
+        let _ = home.update(Message::View(ViewMessage::SubmitRecovery));
+
+        assert!(
+            home.creating_cube,
+            "the phrase must have been accepted — otherwise this test proves nothing"
+        );
+        assert!(
+            !matches!(home.state, State::CreationBackup(_)),
+            "restore must go straight to creation, not through the backup step; state was {:?}",
+            home.state
+        );
+        assert!(
+            home.creation_backup_words.is_none(),
+            "restore must not stage a seed phrase for backup"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The verification challenge is real: wrong words do not pass, and a
+    /// failed attempt neither creates a Cube nor loses the seed.
+    #[test]
+    fn wrong_verification_words_do_not_create_a_cube() {
+        let dir = tmp_datadir("wrong-words");
+        let mut home = home_with_datadir(&dir);
+        enter_backup_step(&mut home, "Typo", "9876");
+
+        let _ = home.update(backup(BackupWalletMessage::ToggleBackupIntroCheck));
+        let _ = home.update(backup(BackupWalletMessage::NextStep));
+        let _ = home.update(backup(BackupWalletMessage::NextStep));
+        let State::CreationBackup(CreationBackupStep::Verification { word_indices, .. }) =
+            home.state.clone()
+        else {
+            panic!("expected the verification screen, got {:?}", home.state);
+        };
+
+        for &index in &word_indices {
+            let _ = home.update(backup(BackupWalletMessage::WordInput {
+                index: index as u8,
+                input: "zoo".to_string(),
+            }));
+        }
+        let out = drain(home.update(backup(BackupWalletMessage::VerifyPhrase)));
+        assert!(
+            out.is_empty(),
+            "a failed verification must not create a Cube: {:?}",
+            out
+        );
+        assert!(cubes_on_disk(&dir).is_empty());
+
+        let State::CreationBackup(CreationBackupStep::Verification { error, .. }) = &home.state
+        else {
+            panic!(
+                "expected to stay on the verification screen, got {:?}",
+                home.state
+            );
+        };
+        assert!(
+            error.is_some(),
+            "a failed verification must say so rather than silently doing nothing"
+        );
+        assert!(
+            home.creation_backup_words.is_some(),
+            "a failed attempt must keep the seed so the user can retry"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The intro checkbox actually gates the phrase.
+    #[test]
+    fn the_phrase_is_not_shown_until_the_intro_is_acknowledged() {
+        let dir = tmp_datadir("intro-gate");
+        let mut home = home_with_datadir(&dir);
+        enter_backup_step(&mut home, "Careful", "1357");
+
+        let _ = home.update(backup(BackupWalletMessage::NextStep));
+        assert_eq!(
+            step(&home),
+            CreationBackupStep::Intro(false),
+            "Next must do nothing until the user acknowledges the warning"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The default stays `false` even though creation now arms the gate.
+    ///
+    /// `new_*` is reused to *reconstruct* Cubes in the installer restore paths
+    /// (`gui/tab.rs`, `app/mod.rs`), which must not be gated — the Cube being
+    /// restored predates this machine. Only the two creation sites in `home.rs`
+    /// set the flag, and each sets evidence alongside it.
+    #[test]
+    fn the_constructor_default_stays_unarmed_for_restore_paths() {
+        let cube = CubeSettings::new("Restored".to_string(), Network::Bitcoin);
+        assert!(
+            !cube.creation_backup_required,
+            "restore paths reconstruct Cubes through `new_*` and must not be gated"
+        );
+        assert_eq!(
+            creation_gate::evaluate_for_cube(&cube, None),
+            creation_gate::CreationGate::Satisfied
+        );
+    }
+
+    /// **Unit 6b: the slot is written at Cube creation, not at enrolment.**
+    ///
+    /// Creating it when duress is armed instead would make mtime the oracle
+    /// the decoy exists to remove — a slot months newer than its Cube's seed
+    /// file announces the day duress was turned on. So it has to be here, in
+    /// the creation path, before any enrolment exists.
+    ///
+    /// Runs wherever the keystore works; where it does not, creation refuses
+    /// at phase 1 and there is no Cube to inspect.
+    #[test]
+    fn the_second_slot_is_written_at_creation_not_at_enrolment() {
+        let dir = tmp_datadir("slot-at-creation");
+        let mut home = home_with_datadir(&dir);
+        enter_backup_step(&mut home, "Slotted", "1234");
+
+        let out = drain(walk_backup_to_verified(&mut home));
+        let [Message::CubeCreated(Ok(cube))] = out.as_slice() else {
+            // The keystore refused, so nothing was created — covered by
+            // `an_unusable_keystore_refuses_before_any_seed_word_is_shown`.
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
+
+        let slot = cube
+            .duress_slot_file
+            .as_deref()
+            .expect("a Cube must leave creation with its second slot recorded");
+        assert!(
+            unlock::marker::exists(&dir, Network::Bitcoin, Some(slot)),
+            "the recorded slot {} is not on disk",
+            slot
+        );
+
+        // Two blobs, and no PIN opens the second one — it is a decoy, and no
+        // duress enrolment has happened.
+        let folder = coincube_core::signer::MasterSigner::mnemonics_folder(&dir, Network::Bitcoin);
+        let count = std::fs::read_dir(&folder).unwrap().count();
+        assert_eq!(count, 2, "expected a seed file and a slot, found {}", count);
+        for pin in ["1234", "0000", "8765"] {
+            assert!(
+                !unlock::marker::verify(&dir, Network::Bitcoin, &cube.id, Some(slot), pin, None),
+                "PIN {} opened the slot of a Cube with no duress enrolled",
+                pin
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **The invariant that makes X4's `None` sound** (see `gui/tab.rs`).
+    ///
+    /// Creation must never persist a Cube that is armed but carries neither
+    /// piece of local backup evidence, because that shape is what the open
+    /// gate would block with "couldn't confirm this Cube's backup". Both
+    /// exits from the backup step are checked against what actually lands in
+    /// `settings.json`.
+    ///
+    /// The verified exit runs the real write, so it needs the keystore; the
+    /// assertion is written to hold on either outcome, and the strict
+    /// keystore-dependent version is
+    /// `creating_a_cube_walks_the_backup_step_and_the_cube_opens`.
+    #[test]
+    fn creation_never_persists_an_armed_cube_without_evidence() {
+        let dir = tmp_datadir("armed-evidence");
+        let mut home = home_with_datadir(&dir);
+        enter_backup_step(&mut home, "Evidence", "1234");
+
+        let _ = drain(walk_backup_to_verified(&mut home));
+        for cube in cubes_on_disk(&dir) {
+            assert!(
+                cube.creation_backup_required,
+                "a Cube written by the creation flow must be armed"
+            );
+            assert!(
+                cube.backed_up || cube.creation_backup_bypass.is_some(),
+                "an armed Cube reached disk with no backup evidence — it would be \
+                 blocked at open; cube was {:?}",
+                cube.id
+            );
+            assert!(
+                !matches!(
+                    creation_gate::evaluate_for_cube(&cube, None),
+                    creation_gate::CreationGate::Blocked(_)
+                ),
+                "a Cube straight out of creation must not be blocked at open"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **Probe early, mint late.**
+    ///
+    /// On a machine whose keystore is unusable, creation must refuse *before*
+    /// a single seed word is shown. 3a moved the `capability()` probe into
+    /// `finalize_cube_creation`, which meant the user wrote down twelve words
+    /// and verified three of them before being told the Cube could not be
+    /// created — left holding a written phrase for a wallet that will never
+    /// exist.
+    ///
+    /// The assertion is conditioned on the platform's actual answer rather
+    /// than mocked, because the refusal is a real property of the machine:
+    /// where the keystore works there is nothing to refuse, and where it does
+    /// not — an unsigned macOS build, headless Linux — the seed must never
+    /// appear. On this repo's macOS dev machines it is the second branch that
+    /// runs, which is the branch that regressed.
+    #[test]
+    fn an_unusable_keystore_refuses_before_any_seed_word_is_shown() {
+        let dir = tmp_datadir("probe-order");
+        let mut home = home_with_datadir(&dir);
+        let out = drain(start_creation(&mut home, "No Keystore", "1234"));
+        assert!(
+            out.is_empty(),
+            "phase 1 must not create anything: {:?}",
+            out
+        );
+
+        match unlock::device_secret::capability() {
+            unlock::device_secret::Capability::Unavailable(why) => {
+                assert!(
+                    home.creation_backup_words.is_none(),
+                    "a seed phrase was generated for a Cube that cannot be created"
+                );
+                assert!(
+                    !matches!(home.state, State::CreationBackup(_)),
+                    "the backup wizard opened despite an unusable keystore; state was {:?}",
+                    home.state
+                );
+                assert_eq!(
+                    home.error.as_deref(),
+                    Some(why.as_str()),
+                    "the refusal must carry the keystore's own explanation"
+                );
+                assert!(!home.creating_cube, "the creating-cube spinner must clear");
+                assert!(
+                    cubes_on_disk(&dir).is_empty(),
+                    "a refused creation must write nothing"
+                );
+            }
+            unlock::device_secret::Capability::Available => {
+                // The keystore works, so there is nothing to refuse and the
+                // wizard is expected to be open with a phrase staged.
+                assert!(
+                    matches!(home.state, State::CreationBackup(_)),
+                    "a usable keystore must let creation proceed; state was {:?}",
+                    home.state
+                );
+                assert!(home.creation_backup_words.is_some());
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every screen of the step renders, including the bypass acknowledgement.
+    #[test]
+    fn creation_backup_screens_render() {
+        let words: Vec<String> = MasterSigner::generate(Network::Bitcoin)
+            .unwrap()
+            .words()
+            .iter()
+            .map(|w| w.to_string())
+            .collect();
+
+        for step in [
+            CreationBackupStep::Intro(false),
+            CreationBackupStep::Intro(true),
+            CreationBackupStep::Phrase,
+            CreationBackupStep::Verification {
+                word_indices: [1, 5, 9],
+                word_inputs: Default::default(),
+                error: Some("nope".to_string()),
+            },
+            CreationBackupStep::Bypass {
+                acknowledged: false,
+            },
+            CreationBackupStep::Bypass { acknowledged: true },
+        ] {
+            let _ = creation_backup_view(&step, Some(&words), false);
+            let _ = creation_backup_view(&step, Some(&words), true);
+            // The seed being gone mid-render must not panic.
+            let _ = creation_backup_view(&step, None, false);
+        }
     }
 }
