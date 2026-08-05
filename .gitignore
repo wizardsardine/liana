@@ -47,5 +47,6 @@ wildcard-cleanup-plan.md
 # Understand-Anything: keep architecture graph local (public repo)
 .understand-anything/
 
-# macOS app bundle build artifacts
-Tenshu.app/
+# Bundle assembled at the repo root by the local signing procedure in
+# docs/MACOS_KEYCHAIN_ENTITLEMENT.md §4. Build output, never committed.
+/Tenshu.app/

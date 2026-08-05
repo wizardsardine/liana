@@ -386,6 +386,7 @@ mod tests {
             xpub_envelope: Some(XpubEnvelope {
                 scheme: crate::services::connect::crypto::XPUB_ENVELOPE_SCHEME.to_string(),
                 recipient: crate::services::connect::crypto::RECIPIENT_CUBE_OWNER.to_string(),
+                aad_key_id_bound: true,
                 ephemeral_pubkey: KAT_E.to_string(),
                 nonce: KAT_NONCE.to_string(),
                 ciphertext: KAT_CT.to_string(),

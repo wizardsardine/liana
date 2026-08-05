@@ -115,6 +115,11 @@ encrypted_backup = { version = "=0.0.2", default-features = false, features = [
 	"rand",
 ], package = "bitcoin-encrypted-backup" }
 
+# CTAP2 over HID, for the FIDO2 security-key backend. This is what makes Linux
+# acceptable — it has no platform authenticator — and it is also the fallback
+# for Windows machines below the Windows Hello PRF floor (11 25H2).
+ctap-hid-fido2 = "3.5"
+
 zeroize = { version = "1", features = ["derive"] }
 chacha20poly1305 = "0.10.1"
 aes-gcm = { version = "0.10", features = ["aes"] }
@@ -155,8 +160,28 @@ zip = { version = "0.6", default-features = false, features = [
 	"bzip2",
 	"deflate",
 ] }
+# `webauthn.dll` bindings for the native Windows passkey backend, replacing the
+# iced_wry webview. PRF is available from WebAuthn API version 6
+# (make-credential) and version 8 (`pPRFGlobalEval` on get-assertion), probed at
+# runtime rather than assumed.
+windows = { version = "0.61", features = [
+	"Win32_Foundation",
+	"Win32_Networking_WindowsWebServices",
+	"Win32_UI_WindowsAndMessaging",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# The device secret's keychain item is written through `SecItem` directly, not
+# through `keyring`: keyring 3.3's macOS backend uses the legacy `SecKeychain`
+# API and can set neither `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` nor
+# `kSecAttrSynchronizable = false`. Both are required — an item that syncs to
+# iCloud uploads the second factor and defeats the design.
+# See `services/unlock/device_secret/apple.rs`.
+security-framework = "2.10"
+security-framework-sys = "2.10"
+core-foundation = "0.9"
+core-foundation-sys = "0.8"
+
 # objc2 0.6 has the PRF extension bindings (added with macOS 14 support).
 # This coexists with the 0.5 version pulled in by iced/winit/wry — we're
 # careful not to pass types between the two versions.

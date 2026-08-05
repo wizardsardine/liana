@@ -136,6 +136,23 @@ pub struct DuressLocalState {
     /// (no-Connect) enrollment — that path wipes locally with no server POST.
     #[serde(default)]
     pub account_id: Option<String>,
+    /// Set immediately **before** enrollment starts arming Cubes, cleared once
+    /// the enrollment is fully recorded. `arming && !enrolled` is an orphan: a
+    /// crash left live duress markers behind with no enrollment to explain
+    /// them.
+    ///
+    /// This breadcrumb replaces the marker scan that used to detect the same
+    /// thing. Since unit 6b every Cube carries a second slot whether or not
+    /// duress is armed, and a marker is indistinguishable from a decoy on
+    /// purpose — so no filesystem scan can find an orphan any more, and one
+    /// that appeared to would be reading the decoy.
+    ///
+    /// It is also strictly better than the scan it replaces: it is set before
+    /// the *first* write, so it catches a crash that armed some Cubes and not
+    /// others, which "any Cube looks armed" could never distinguish from a
+    /// healthy enrolment.
+    #[serde(default)]
+    pub arming: bool,
 }
 
 /// A durably-enqueued activation `POST` that must eventually reach Connect.
@@ -242,6 +259,7 @@ mod tests {
             }),
             duress_code: Some("enc:cafebabe".to_string()),
             account_id: Some("acct_123".to_string()),
+            arming: false,
         }
     }
 

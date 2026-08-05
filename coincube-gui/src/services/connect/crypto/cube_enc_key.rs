@@ -264,6 +264,17 @@ pub struct XpubEnvelope {
     /// request-shaped payload (or an older server) parsing.
     #[serde(default)]
     pub recipient: String,
+    /// The server's record of **which `key_id` the sealer bound into the AAD**:
+    /// `true` = this row's real id, `false` = `0` (see the module docs and
+    /// `SPEC-cube-xpub-envelope-v1` §4a).
+    ///
+    /// A **hint, not proof** — it is what the writer claimed, and the server
+    /// holds no key to verify it. Readers use it to try the likelier binding
+    /// first and must still handle both. `#[serde(default)]` (⇒ `false`) keeps
+    /// a server that predates the column parsing; a wrong value costs one extra
+    /// AES-GCM open, never a wrong answer.
+    #[serde(default)]
+    pub aad_key_id_bound: bool,
     /// Compressed (33-byte) ephemeral public key, hex.
     pub ephemeral_pubkey: String,
     /// 12-byte GCM nonce, hex.
@@ -277,6 +288,7 @@ impl std::fmt::Debug for XpubEnvelope {
         f.debug_struct("XpubEnvelope")
             .field("scheme", &self.scheme)
             .field("recipient", &self.recipient)
+            .field("aad_key_id_bound", &self.aad_key_id_bound)
             .field("ephemeral_pubkey", &self.ephemeral_pubkey)
             .field("nonce_hex_len", &self.nonce.len())
             .field("ciphertext_hex_len", &self.ciphertext.len())
@@ -323,6 +335,7 @@ fn seal_to_cube_pubkey(
     Ok(XpubEnvelope {
         scheme: SCHEME.to_string(),
         recipient: RECIPIENT_CUBE_OWNER.to_string(),
+        aad_key_id_bound: key_id != 0,
         ephemeral_pubkey: hex::encode(eph_pk.serialize()),
         nonce: hex::encode(nonce),
         ciphertext: hex::encode(ciphertext),
@@ -379,6 +392,7 @@ mod tests {
         XpubEnvelope {
             scheme: SCHEME.to_string(),
             recipient: RECIPIENT_CUBE_OWNER.to_string(),
+            aad_key_id_bound: true,
             ephemeral_pubkey: KAT_E.to_string(),
             nonce: KAT_NONCE.to_string(),
             ciphertext: KAT_CT.to_string(),

@@ -309,7 +309,7 @@ pub struct P2PPanel {
     /// Populated on `SparkPaySent`; never cleared in-process (the
     /// memory cost is one UUID per Spark-paid trade, negligible).
     spark_funded_order_ids: HashSet<String>,
-    mnemonic: String,
+    mnemonic: zeroize::Zeroizing<String>,
     // Node info (fetched from info event)
     node_currencies: Vec<String>,
     node_min_order_sats: Option<u64>,
@@ -429,7 +429,7 @@ impl P2PPanel {
     pub fn new(
         wallet: Option<Arc<Wallet>>,
         spark_backend: Option<Arc<SparkBackend>>,
-        mnemonic: String,
+        mnemonic: zeroize::Zeroizing<String>,
         default_currency: Option<String>,
         network: Network,
     ) -> Self {

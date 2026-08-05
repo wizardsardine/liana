@@ -180,6 +180,38 @@ pub struct Context {
     /// when the `Context` clone held by `Task::perform` drops after
     /// the install completes. `None` for non-restore flows.
     pub restore_pin: Option<zeroize::Zeroizing<String>>,
+    /// The PIN under which this Cube's seed material is encrypted on disk.
+    ///
+    /// Every mnemonic the installer writes goes through
+    /// `Signer::store_encrypted`, which requires a PIN — there is no
+    /// plaintext branch any more (I5). So the installer has to be told the
+    /// Cube's PIN, and where it comes from depends on the flow:
+    ///
+    /// - launched from inside an open Cube (`SetupVault`, loader vault setup):
+    ///   the live session PIN, captured at unlock
+    ///   ([`crate::app::session`]);
+    /// - Recovery-Kit restore: [`Self::restore_pin`], chosen on
+    ///   `RestorePinSetupStep` — a Cube that does not exist yet has no session.
+    ///
+    /// `None` means neither was available, and the install fails loudly at the
+    /// point it would have had to write a seed. That is deliberate: the
+    /// alternative this replaces was writing the seed in the clear.
+    pub cube_pin: Option<zeroize::Zeroizing<String>>,
+}
+
+impl Context {
+    /// The PIN to encrypt seed material under, preferring the restore PIN the
+    /// user just chose over a session PIN inherited from another Cube.
+    pub fn seed_password(&self) -> Option<&zeroize::Zeroizing<String>> {
+        self.restore_pin.as_ref().or(self.cube_pin.as_ref())
+    }
+
+    /// The Cube id to bind seed files to. `""` when the Cube has not been
+    /// minted yet — such files stay readable once it is (see
+    /// [`coincube_core::seed_crypt`]).
+    pub fn seed_cube_id(&self) -> &str {
+        self.cube_id.as_deref().unwrap_or("")
+    }
 }
 
 impl Context {
@@ -222,6 +254,9 @@ impl Context {
             connect_vault_members: Vec::new(),
             connect_vault_timelock_days: None,
             restore_pin: None,
+            // Filled in by `Installer::new` from the live session when the
+            // installer is launched from inside an open Cube.
+            cube_pin: None,
         }
     }
 }

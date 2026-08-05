@@ -1112,7 +1112,12 @@ pub enum BackupWalletMessage {
     /// User submits the PIN to unlock the mnemonic.
     VerifyPin,
     /// Async result of PIN verification + mnemonic decryption.
-    PinVerified(Result<Vec<String>, String>),
+    /// The decrypted seed phrase, wrapped **before** it enters the message
+    /// queue. iced clones messages, so a bare `Vec<String>` here meant every
+    /// in-flight copy of the seed dropped without being scrubbed — only the
+    /// final one stashed in state was `Zeroizing`. Matches
+    /// `RecoveryKitMessage::PinVerified`, which already did this.
+    PinVerified(Result<zeroize::Zeroizing<Vec<String>>, String>),
     /// Async result of persisting `backed_up = true` to settings.json after
     /// the user successfully completed the verification step.
     BackupSaveResult(Result<(), String>),
@@ -1602,6 +1607,11 @@ pub enum DuressMessage {
     DelaySelected(crate::services::duress::enroll::DuressDelay),
     MemorizedToggled(bool),
     SubmitEnrollment,
+    /// Result of the local duress-PIN collision pre-flight, which now runs off
+    /// the UI thread: checking a PIN means trial-decrypting each Cube's seed
+    /// file (~831 ms per Cube), not comparing a 27 ms hash. `Ok(())` resumes
+    /// the server enrollment; `Err` shows the message and stops.
+    EnrollPreflightDone(Result<(), String>, u64),
     EnrollResult(Result<(), String>, u64),
     /// Mainnet cubes + per-cube recovery-kit status, loaded for the duress
     /// intro screen's "set up a Recovery Kit for each Cube" checklist.
@@ -1641,6 +1651,10 @@ pub enum DuressMessage {
     /// Confirm the step-up: verify the regular Cube PIN locally, then call
     /// `disable_duress()` on the server.
     DisableSubmit,
+    /// Result of the local step-up PIN check, which now runs off the UI thread
+    /// for the same reason as [`Self::EnrollPreflightDone`]. `Ok(())` proceeds
+    /// to the server `disable_duress()` call.
+    DisableStepUpDone(Result<(), String>, u64),
     /// Result of the server `disable_duress()` call. `Active` (423) means duress
     /// is currently active and can't be disabled.
     DisableResult(Result<(), DuressDisableError>, u64),
@@ -1686,6 +1700,9 @@ impl std::fmt::Debug for DuressMessage {
             DelaySelected(d) => write!(f, "DelaySelected({:?})", d),
             MemorizedToggled(b) => write!(f, "MemorizedToggled({})", b),
             SubmitEnrollment => write!(f, "SubmitEnrollment"),
+            EnrollPreflightDone(res, gen) => {
+                write!(f, "EnrollPreflightDone({:?}, {})", res, gen)
+            }
             EnrollResult(res, gen) => write!(f, "EnrollResult({:?}, {})", res, gen),
             CubesLoaded(cubes, gen, seq) => write!(
                 f,
@@ -1702,6 +1719,7 @@ impl std::fmt::Debug for DuressMessage {
             DisableStart => write!(f, "DisableStart"),
             DisableCancel => write!(f, "DisableCancel"),
             DisableSubmit => write!(f, "DisableSubmit"),
+            DisableStepUpDone(res, gen) => write!(f, "DisableStepUpDone({:?}, {})", res, gen),
             DisableResult(res, gen) => write!(f, "DisableResult({:?}, {})", res, gen),
             DisarmComplete(res, gen) => write!(f, "DisarmComplete({:?}, {})", res, gen),
         }

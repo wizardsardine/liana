@@ -163,6 +163,21 @@ message SigningSession {
   // session (empty on PLAINTEXT). A signer reads the entry whose device_id is
   // its own; it cannot open anyone else's, and neither can the server.
   repeated PayloadEnvelope psbt_envelopes = 18;
+  // creator_transport_pubkey is the CREATING desktop's ECIES recipient key
+  // (33-byte compressed secp256k1), taken from that device's registration.
+  //
+  // WITHOUT THIS, RAIL 1 CANNOT COMPLETE. SubmittedSignature.signature_envelope
+  // is sealed to the session creator, and a signer has no other way to learn
+  // that key: SignerTarget.transport_pubkey is the signer's OWN, ResolveSigners
+  // is owner-only and returns signer targets, and DeviceService exposes no
+  // lookup. So it rides the session every signer already fetches.
+  //
+  // Public material, and every recipient is already a participant in this
+  // session. EMPTY means the creating device registered before transport keys
+  // existed; a signer MUST then refuse an ECIES_V1 session rather than sign
+  // something it cannot return (the server refuses to create one, so an empty
+  // value here should only ever appear on a PLAINTEXT session).
+  bytes creator_transport_pubkey = 19;
 }
 
 message CreateSigningSessionRequest {

@@ -230,7 +230,37 @@ where
         .map_err(|e| SettingsError::WritingFile(format!("Failed to sync settings: {}", e)))?;
     drop(file);
 
+    restrict_settings_permissions(&path).await;
+
     Ok(())
+}
+
+/// Owner-only permissions on `settings.json`.
+///
+/// It no longer holds PIN hashes, but it still describes every Cube on the
+/// device — names, ids, fingerprints, Vault association, Connect state. The
+/// mnemonics folder has been 0o700/0o400 since forever; this file was left at
+/// the process umask, which on a shared box is world-readable.
+///
+/// Best-effort: a filesystem that can't express the mode (FAT, some network
+/// mounts) must not fail a settings write over it. Logged at debug.
+async fn restrict_settings_permissions(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) =
+            tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await
+        {
+            tracing::debug!("could not restrict permissions on {}: {e}", path.display());
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows: the datadir sits under the user profile, whose ACL is
+        // owner-only by default. Read-only is deliberately NOT set here — this
+        // file is rewritten on every settings change.
+        let _ = path;
+    }
 }
 
 /// Metadata for a passkey-derived master key (stored in CubeSettings).
@@ -294,6 +324,7 @@ pub fn derive_master_signer_fingerprint(
     datadir_root: &std::path::Path,
     network: Network,
     pin: &str,
+    cube_id: &str,
     cube_created_at: i64,
 ) -> Option<Fingerprint> {
     use coincube_core::signer::{
@@ -339,8 +370,36 @@ pub fn derive_master_signer_fingerprint(
     candidates.sort_by_key(|(_, ts)| (ts - cube_created_at).abs());
 
     candidates.into_iter().map(|(fp, _)| fp).find(|&fp| {
-        MasterSigner::from_datadir_by_fingerprint(datadir_root, network, fp, Some(pin)).is_ok()
+        MasterSigner::from_datadir_by_fingerprint(datadir_root, network, fp, Some(pin), cube_id)
+            .is_ok()
     })
+}
+
+/// Outcome of [`derive_connect_encryption_pubkey`].
+///
+/// The two failure cases are deliberately separate. Collapsing them into
+/// `None` — which an earlier revision did — makes a Cube that *should* be
+/// registrable disappear silently: it never publishes an encryption pubkey, so
+/// Contacts cannot enrol enveloped keys against it and it sits forever in the
+/// A5 migration's registration-coverage report as a straggler nobody can
+/// explain. One of these is normal; the other is a bug that must be loud.
+#[derive(Debug)]
+pub enum ConnectEncryptionKey {
+    /// The 33-byte compressed public key, lowercase hex.
+    Derived(String),
+    /// **Expected.** This Cube has no master seed on this device — a
+    /// descriptor-only / watch-only restore, or a passkey Cube. There is
+    /// nothing to derive from and never will be until a seed arrives, so
+    /// callers skip quietly. Connect blinding simply degrades to "this Cube
+    /// can't receive enveloped keys".
+    NoSeed,
+    /// **Unexpected.** A master seed file exists and the Cube just unlocked,
+    /// but the seed would not open for us. In practice that means the
+    /// credentials we passed disagree with the ones the unlock path used —
+    /// most likely the `seed_crypt` `cube_id` AAD binding, or a v3 file
+    /// reached without the device secret. Callers must log this loudly and
+    /// surface it; skipping quietly is what produces the phantom straggler.
+    Unreadable(String),
 }
 
 /// Derives this Cube's Connect-blinding encryption **public** key from its
@@ -348,30 +407,57 @@ pub fn derive_master_signer_fingerprint(
 /// compressed key as lowercase hex.
 ///
 /// Only the public half is returned: the private scalar lives inside the
-/// returned-and-dropped [`CubeEncryptionKey`] and is zeroized here. Callers
+/// returned-and-dropped `CubeEncryptionKey` and is zeroized here. Callers
 /// persist the hex into [`CubeSettings::connect_encryption_pubkey`] so the
 /// later, PIN-less registration wave can publish it (`PLAN-connect-blinding`
 /// PR D2) — the *private* half is re-derived on demand at decrypt time and is
 /// never stored.
 ///
-/// Returns `None` when the Cube's master-seed mnemonic can't be opened with
-/// this PIN/fingerprint (a Cube minted before the field existed and not yet
-/// backfilled, or a passkey Cube with no on-disk seed). That is not an error
-/// worth surfacing: Connect blinding degrades to "this Cube can't receive
-/// enveloped keys yet", and the next successful unlock fills it in.
+/// ## Where the signer comes from
+///
+/// The session cache first, exactly as the Liquid and Spark loaders do.
+/// Verifying the PIN *is* a full Argon2id pass over the seed file, so the
+/// unlock that just happened is already holding the decrypted signer; re-reading
+/// the file would pay ~831 ms for a result we have. It is also the **only** way
+/// this works on a v3 Cube: a v3 seed needs the OS-keystore device secret,
+/// `coincube-core` has no keystore access, and so
+/// `MasterSigner::from_datadir_by_fingerprint` returns `DeviceSecretRequired`
+/// for every v3 file. Reading from disk is the fallback for the entry points
+/// that have no session (v1/v2 only).
 pub fn derive_connect_encryption_pubkey(
     datadir_root: &std::path::Path,
     network: Network,
     fingerprint: Fingerprint,
     pin: &str,
-) -> Option<String> {
+    cube_id: &str,
+) -> ConnectEncryptionKey {
     use crate::services::connect::crypto::CubeEncryptionKey;
-    use coincube_core::signer::MasterSigner;
+    use coincube_core::signer::{MasterSigner, SignerError};
 
-    let signer =
-        MasterSigner::from_datadir_by_fingerprint(datadir_root, network, fingerprint, Some(pin))
-            .ok()?;
-    Some(CubeEncryptionKey::derive(&signer, network).public_key_hex())
+    let loaded = match crate::app::session::unlocked_signer(cube_id, fingerprint) {
+        Some(signer) => Ok(signer),
+        None => MasterSigner::from_datadir_by_fingerprint(
+            datadir_root,
+            network,
+            fingerprint,
+            Some(pin),
+            cube_id,
+        ),
+    };
+
+    match loaded {
+        Ok(signer) => ConnectEncryptionKey::Derived(
+            CubeEncryptionKey::derive(&signer, network).public_key_hex(),
+        ),
+        // No seed file for this fingerprint: nothing to derive, and nothing
+        // wrong. Mapped the same way `load_breez_client` maps an absent signer.
+        Err(SignerError::SignerNotFound(_)) => ConnectEncryptionKey::NoSeed,
+        Err(SignerError::MnemonicStorage(ref e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            ConnectEncryptionKey::NoSeed
+        }
+        // Everything else means the file is there and we could not open it.
+        Err(e) => ConnectEncryptionKey::Unreadable(e.to_string()),
+    }
 }
 
 /// A Cube's relationship to Connect, rendered as a single tri-state cube icon
@@ -405,15 +491,22 @@ pub struct CubeSettings {
     /// The Vault wallet for this Cube (optional - may not be set up yet)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vault_wallet_id: Option<WalletId>,
-    /// Optional security PIN (stored as Argon2id hash with salt in PHC format)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub security_pin_hash: Option<String>,
-    /// Optional duress PIN (Argon2id PHC hash). Entering this PIN at Cube
-    /// unlock activates duress mode (Phase 3) instead of unlocking. Distinct
-    /// from `security_pin_hash`; enrollment enforces a Levenshtein distance of
-    /// at least 2 between them so it can't be triggered by accident.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub duress_pin_hash: Option<String>,
+    // `security_pin_hash` and `duress_pin_hash` used to live here. Both are
+    // gone.
+    //
+    // They were Argon2id PHC strings at m=19456 KiB, t=2, p=1 — ~27 ms a
+    // guess — sitting in the same directory as a seed file that costs ~831 ms
+    // a guess. An attacker holding the datadir simply attacked the cheap one:
+    // a 4-digit PIN fell in about 4 seconds on 64 cores. Verifying against a
+    // secret is now done by *decrypting the thing the secret protects*, so
+    // there is exactly one cost and it is the highest one available
+    // (PLAN-cube-unlock-hardening, invariant I1). See
+    // `crate::services::unlock`.
+    //
+    // Nothing reads either field any more. `CubeSettings` does not set
+    // `deny_unknown_fields`, so a `settings.json` written by an older build
+    // still deserializes — the values are simply ignored, and dropped on the
+    // next settings write. That is the whole migration.
     /// Fingerprint of this Cube's master seed MasterSigner.
     /// All wallets (Vault, Liquid, Spark) derive from this single seed.
     /// The serde aliases keep existing settings.json files readable without migration.
@@ -506,6 +599,49 @@ pub struct CubeSettings {
     /// exist and alerts are off) is derived from live state, independent of this.
     #[serde(default)]
     pub recovery_alerts_prompt_answered: bool,
+    /// Set when the user finished Cube creation **without** demonstrating a
+    /// backup, by explicitly accepting
+    /// [`crate::services::unlock::creation_gate::BYPASS_ACKNOWLEDGEMENT`].
+    ///
+    /// Recorded so support can identify these Cubes from the datadir: since the
+    /// seed file is sealed to this machine's keystore, a bypassed Cube whose
+    /// machine is lost is unrecoverable, and that has to be answerable without
+    /// relying on anyone's recollection. `None` on every Cube that backed up
+    /// normally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_backup_bypass:
+        Option<crate::services::unlock::creation_gate::CreationBackupBypass>,
+    /// Whether this Cube was created under the mandatory-backup gate.
+    ///
+    /// `false` — the serde default — for every Cube that predates it. That is
+    /// deliberate and load-bearing: the gate exists because a v3 seed file
+    /// can't be recovered from a copied datadir, and applying it retroactively
+    /// would lock every existing user out of a Cube they have been using
+    /// happily. Only Cubes created from now on are held to it.
+    #[serde(default)]
+    pub creation_backup_required: bool,
+    /// File name of this Cube's **second slot** in `mnemonics/`.
+    ///
+    /// Every Cube written since unit 6b has one, from creation. It holds a
+    /// duress marker when duress is armed and a decoy when it is not, and the
+    /// two are indistinguishable — see `services::unlock::marker`. So the
+    /// presence of this field says only "this Cube has a slot", never "duress
+    /// is armed on this Cube"; enrolment lives in `DuressLocalState`.
+    ///
+    /// It is *named* for duress because that is what the slot is for, not
+    /// because a populated field implies one. Reading it as an armed flag is
+    /// the mistake the decoy exists to make impossible — and a mistake that
+    /// would not show up until someone imaged a datadir.
+    ///
+    /// The name is random and drawn when the slot is first written, so this is
+    /// the only way to find the file. Recording it is not a leak: it replaced
+    /// a name derived from `id` + `created_at`, which any reader of this file
+    /// could simply compute.
+    ///
+    /// `None` is a Cube written before the field existed, or one whose slot
+    /// has yet to be backfilled by migration.
+    #[serde(default, alias = "duress_marker_file")]
+    pub duress_slot_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -529,8 +665,6 @@ impl CubeSettings {
             network,
             created_at: chrono::Utc::now().timestamp(),
             vault_wallet_id: None,
-            security_pin_hash: None,
-            duress_pin_hash: None,
             // Unknown until `/connect/features` answers for this account. A new
             // cube is not granted Liquid; if the account is, the flag lands on
             // the next features fetch and takes effect at the next cube open.
@@ -551,6 +685,11 @@ impl CubeSettings {
             recovery_kit_last_backed_up_descriptor_fingerprint: None,
             recovery_kit_last_backed_up_keychain_descriptor_fingerprint: None,
             recovery_alerts_prompt_answered: false,
+            creation_backup_bypass: None,
+            // Set explicitly by the creation flow; `new_*` is also used to
+            // reconstruct Cubes in restore paths, which must not be gated.
+            creation_backup_required: false,
+            duress_slot_file: None,
         }
     }
 
@@ -620,97 +759,48 @@ impl CubeSettings {
         }
     }
 
-    pub fn with_pin(mut self, pin: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        self.security_pin_hash = Some(Self::hash_pin(pin)?);
-        Ok(self)
-    }
-
-    pub fn has_pin(&self) -> bool {
-        self.security_pin_hash.is_some()
-    }
-
-    pub fn verify_pin(&self, pin: &str) -> bool {
-        if let Some(stored_hash) = &self.security_pin_hash {
-            Self::verify_argon2_pin(pin, stored_hash)
-        } else {
-            // No PIN set, allow access
-            true
-        }
-    }
-
-    /// Sets this Cube's duress PIN (Argon2id PHC hash). Callers must have
-    /// already validated distinctness from the regular PIN via
-    /// [`services::duress::enroll::validate_duress_pin`].
-    pub fn with_duress_pin(mut self, pin: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        self.duress_pin_hash = Some(Self::hash_pin(pin)?);
-        Ok(self)
-    }
-
-    pub fn has_duress_pin(&self) -> bool {
-        self.duress_pin_hash.is_some()
-    }
-
-    /// Verifies a candidate PIN against the stored duress-PIN hash.
+    /// Whether this Cube needs a PIN, answered from **ground truth on disk**
+    /// rather than from a settings field: a Cube has a PIN if and only if its
+    /// master seed file is encrypted.
     ///
-    /// Returns `false` when no duress PIN is configured — the opposite default
-    /// from [`verify_pin`](Self::verify_pin), which *allows* access when unset.
-    /// A duress match must only ever happen on an explicit, deliberate
-    /// configuration. Callers MUST run [`verify_pin`](Self::verify_pin) first
-    /// and only consult this on a regular-PIN miss, so the regular unlock path
-    /// is never shadowed and the two argon2 verifies take comparable time.
-    pub fn verify_duress_pin(&self, pin: &str) -> bool {
-        match &self.duress_pin_hash {
-            Some(stored_hash) => Self::verify_argon2_pin(pin, stored_hash),
-            None => false,
-        }
+    /// This replaces the old `has_pin()`, which read `security_pin_hash
+    /// .is_some()` and could drift from reality in either direction — a Cube
+    /// could carry a hash with no encrypted seed, or an encrypted seed with no
+    /// hash, and nothing would notice.
+    ///
+    /// There is deliberately **no** `verify_pin` any more. Verifying a PIN
+    /// means decrypting the seed file; see
+    /// [`crate::services::unlock::unlock_blocking`].
+    pub fn pin_requirement(
+        &self,
+        datadir_root: &std::path::Path,
+    ) -> crate::services::unlock::PinRequirement {
+        crate::services::unlock::pin_requirement(&crate::services::unlock::CubeLocation::new(
+            datadir_root,
+            self,
+        ))
     }
 
-    /// Hash PIN using Argon2id with a random salt
-    fn hash_pin(pin: &str) -> Result<String, Box<dyn std::error::Error>> {
-        use argon2::{
-            password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
-            Argon2, Params,
-        };
-
-        // Generate a random salt
-        let salt = SaltString::generate(&mut OsRng);
-
-        // Configure Argon2id. Production uses ~19 MiB of memory (m_cost 19456
-        // KiB, t_cost 2, p_cost 1) to make a PIN hash costly to brute-force.
-        // Test builds drop to the argon2 minimum: the suite hashes/verifies PINs
-        // hundreds of times, and paying 19 MiB per op starves CI enough to make
-        // PIN-verify tests flake under parallel load. Verification reads m/t/p
-        // from the stored PHC string, so a hash made at either cost round-trips.
-        #[cfg(not(test))]
-        let params = Params::new(19456, 2, 1, None)?;
-        #[cfg(test)]
-        let params = Params::new(8, 1, 1, None)?;
-        let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
-
-        // Hash the PIN
-        let password_hash = argon2.hash_password(pin.as_bytes(), &salt)?;
-
-        // Return the PHC string format
-        Ok(password_hash.to_string())
+    /// Whether a PIN is required to open this Cube.
+    pub fn has_pin(&self, datadir_root: &std::path::Path) -> bool {
+        self.pin_requirement(datadir_root) == crate::services::unlock::PinRequirement::Required
     }
 
-    /// Verify PIN against Argon2id hash
-    fn verify_argon2_pin(pin: &str, hash: &str) -> bool {
-        use argon2::{
-            password_hash::{PasswordHash, PasswordVerifier},
-            Argon2,
-        };
-
-        // Parse the PHC string
-        let parsed_hash = match PasswordHash::new(hash) {
-            Ok(h) => h,
-            Err(_) => return false,
-        };
-
-        // Verify the PIN
-        Argon2::default()
-            .verify_password(pin.as_bytes(), &parsed_hash)
-            .is_ok()
+    /// Whether this Cube has its second `mnemonics/` slot on disk.
+    ///
+    /// Renamed from `has_duress_pin`, which is what it used to mean and no
+    /// longer can. Since unit 6b every Cube carries a slot whether or not
+    /// duress is enrolled, and a marker is indistinguishable from a decoy by
+    /// design — so no filesystem check can answer "is duress armed". That
+    /// question is `DuressLocalState::enrolled`.
+    ///
+    /// What this answers is whether the slot needs backfilling.
+    pub fn has_duress_slot(&self, datadir_root: &std::path::Path) -> bool {
+        crate::services::unlock::marker::exists(
+            datadir_root,
+            self.network,
+            self.duress_slot_file.as_deref(),
+        )
     }
 
     /// Load Cube settings from file
@@ -1533,76 +1623,6 @@ mod test {
     }
 
     #[test]
-    fn test_pin_hashing_argon2id() {
-        use super::CubeSettings;
-        use coincube_core::miniscript::bitcoin::Network;
-
-        let pin = "1234";
-
-        // Create a cube with a PIN
-        let cube = CubeSettings::new("Test Cube".to_string(), Network::Bitcoin)
-            .with_pin(pin)
-            .expect("PIN hashing should succeed in tests");
-
-        // Verify the hash is in Argon2id format
-        let hash = cube.security_pin_hash.as_ref().unwrap();
-        assert!(
-            hash.starts_with("$argon2id$"),
-            "Hash should be in Argon2id format"
-        );
-
-        // Verify correct PIN works
-        assert!(cube.verify_pin("1234"), "Correct PIN should verify");
-
-        // Verify incorrect PIN fails
-        assert!(!cube.verify_pin("4321"), "Incorrect PIN should fail");
-        assert!(!cube.verify_pin("0000"), "Incorrect PIN should fail");
-    }
-
-    #[test]
-    fn test_pin_hashing_unique_salts() {
-        use super::CubeSettings;
-        use coincube_core::miniscript::bitcoin::Network;
-
-        let pin = "1234";
-
-        // Create two cubes with the same PIN
-        let cube1 = CubeSettings::new("Cube 1".to_string(), Network::Bitcoin)
-            .with_pin(pin)
-            .expect("PIN hashing should succeed in tests");
-        let cube2 = CubeSettings::new("Cube 2".to_string(), Network::Bitcoin)
-            .with_pin(pin)
-            .expect("PIN hashing should succeed in tests");
-
-        let hash1 = cube1.security_pin_hash.as_ref().unwrap();
-        let hash2 = cube2.security_pin_hash.as_ref().unwrap();
-
-        // Hashes should be different due to unique salts
-        assert_ne!(
-            hash1, hash2,
-            "Same PIN should produce different hashes with unique salts"
-        );
-
-        // Both should verify correctly
-        assert!(cube1.verify_pin(pin));
-        assert!(cube2.verify_pin(pin));
-    }
-
-    #[test]
-    fn test_no_pin_always_allows() {
-        use super::CubeSettings;
-        use coincube_core::miniscript::bitcoin::Network;
-
-        // Create a cube without a PIN
-        let cube = CubeSettings::new("No PIN Cube".to_string(), Network::Bitcoin);
-
-        // Any PIN should "verify" (allow access)
-        assert!(cube.verify_pin("1234"));
-        assert!(cube.verify_pin("0000"));
-        assert!(cube.verify_pin("9999"));
-    }
-
-    #[test]
     fn test_cube_settings_alias_backward_compat() {
         use super::CubeSettings;
 
@@ -1690,32 +1710,6 @@ mod test {
     }
 
     #[test]
-    fn duress_pin_verify_is_independent_of_regular_pin() {
-        use super::CubeSettings;
-        use coincube_core::miniscript::bitcoin::Network;
-
-        // No duress PIN set → never matches (opposite default from verify_pin).
-        let plain = CubeSettings::new("No duress".to_string(), Network::Bitcoin)
-            .with_pin("1234")
-            .unwrap();
-        assert!(!plain.has_duress_pin());
-        assert!(!plain.verify_duress_pin("1234"));
-        assert!(!plain.verify_duress_pin("0000"));
-
-        // With a duress PIN: only the duress PIN matches verify_duress_pin, and
-        // only the regular PIN matches verify_pin.
-        let cube = CubeSettings::new("Both".to_string(), Network::Bitcoin)
-            .with_pin("1234")
-            .unwrap()
-            .with_duress_pin("8765")
-            .unwrap();
-        assert!(cube.verify_pin("1234"));
-        assert!(!cube.verify_pin("8765"));
-        assert!(cube.verify_duress_pin("8765"));
-        assert!(!cube.verify_duress_pin("1234"));
-    }
-
-    #[test]
     fn backed_up_flag_is_not_recovery_kit() {
         use super::CubeSettings;
         use coincube_core::miniscript::bitcoin::Network;
@@ -1727,6 +1721,214 @@ mod test {
             !cube.has_recovery_kit(),
             "local seed backup must not be mistaken for a Connect recovery kit"
         );
+    }
+
+    /// PLAN-connect-blinding D2 hardening: "no seed here" and "there IS a seed
+    /// and it would not open" are different facts and must not both arrive as a
+    /// bare `None`. Conflating them is how a Cube becomes a permanent straggler
+    /// in the A5 registration-coverage report with no visible cause.
+    #[test]
+    fn missing_seed_and_unreadable_seed_are_distinguishable() {
+        use super::{derive_connect_encryption_pubkey, ConnectEncryptionKey};
+        use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
+        use coincube_core::miniscript::bitcoin::Network;
+        use coincube_core::signer::MasterSigner;
+        use std::str::FromStr;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        let root =
+            std::env::temp_dir().join(format!("coincube-encpubkey-{}-{}", std::process::id(), seq));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        const PIN: &str = "1234";
+        const CUBE: &str = "cube-a";
+        let fp = Fingerprint::from_str("deadbeef").unwrap();
+
+        // (1) Nothing on disk at all → NoSeed. Quiet skip, no error state.
+        assert!(
+            matches!(
+                derive_connect_encryption_pubkey(&root, Network::Testnet, fp, PIN, CUBE),
+                ConnectEncryptionKey::NoSeed
+            ),
+            "an absent seed must be reported as NoSeed, not as a failure"
+        );
+
+        // (2) Write a real seed for CUBE, then ask for it under a DIFFERENT
+        //     cube id. That is exactly the seed_crypt cube_id-binding
+        //     disagreement the hardening exists to catch: the file is present
+        //     and the AAD does not match, so it must be Unreadable — loud —
+        //     rather than silently skipped.
+        let signer = MasterSigner::generate(Network::Testnet).unwrap();
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
+        let real_fp = signer.fingerprint(&secp);
+        signer
+            // `device_secret: None` writes v2 — the format whose AAD binds the
+            // cube id and nothing else, which is what this test probes.
+            .store_encrypted(&root, Network::Testnet, &secp, None, PIN, CUBE, None)
+            .expect("store seed");
+
+        assert!(
+            matches!(
+                derive_connect_encryption_pubkey(
+                    &root,
+                    Network::Testnet,
+                    real_fp,
+                    PIN,
+                    "a-different-cube",
+                ),
+                ConnectEncryptionKey::Unreadable(_)
+            ),
+            "a present-but-unopenable seed must be Unreadable, never a quiet skip"
+        );
+
+        // (3) The same file, asked for correctly, derives the key — so (2) is
+        //     about the binding and not about the file being broken.
+        let ok = derive_connect_encryption_pubkey(&root, Network::Testnet, real_fp, PIN, CUBE);
+        let ConnectEncryptionKey::Derived(hex) = ok else {
+            panic!("the correct cube id must derive the key, got {:?}", ok);
+        };
+        assert_eq!(hex.len(), 66, "33-byte compressed pubkey as hex");
+        assert!(hex.starts_with("02") || hex.starts_with("03"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The regression the merge introduced, pinned.
+    ///
+    /// A **v3** seed needs the OS-keystore device secret, and `coincube-core`
+    /// has no keystore access — so `MasterSigner::from_datadir_by_fingerprint`
+    /// returns `DeviceSecretRequired` for *every* v3 file. Deriving straight
+    /// from disk therefore fails on the now-default Cube format, which would
+    /// have meant no Cube minted after the seed hardening ever registered an
+    /// encryption pubkey. The session cache (what the unlock that just ran is
+    /// already holding) is the path that works, and preferring it is also what
+    /// avoids a second ~831 ms Argon2id pass.
+    #[test]
+    fn a_v3_cube_derives_from_the_session_and_is_loud_without_it() {
+        use super::{derive_connect_encryption_pubkey, ConnectEncryptionKey};
+        use coincube_core::miniscript::bitcoin::Network;
+        use coincube_core::signer::MasterSigner;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use zeroize::Zeroizing;
+
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        let root = std::env::temp_dir().join(format!(
+            "coincube-encpubkey-v3-{}-{}",
+            std::process::id(),
+            seq
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        const PIN: &str = "1234";
+        // Namespaced: `app::session` is process-global, so a shared cube id
+        // would let these tests clobber each other under `cargo test`.
+        let cube_id = format!("cube-v3-{}-{}", std::process::id(), seq);
+        let device_secret: coincube_core::seed_crypt::DeviceSecret = Zeroizing::new([0x5a; 32]);
+
+        let signer = MasterSigner::generate(Network::Testnet).unwrap();
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
+        let fp = signer.fingerprint(&secp);
+        signer
+            .store_encrypted(
+                &root,
+                Network::Testnet,
+                &secp,
+                None,
+                PIN,
+                &cube_id,
+                Some(&device_secret),
+            )
+            .expect("store v3 seed");
+
+        // No session: the disk path cannot open v3 at all. Must be LOUD, not a
+        // quiet skip — a quiet skip here is precisely the phantom straggler.
+        crate::app::session::close();
+        let without_session =
+            derive_connect_encryption_pubkey(&root, Network::Testnet, fp, PIN, &cube_id);
+        assert!(
+            matches!(without_session, ConnectEncryptionKey::Unreadable(_)),
+            "a v3 seed with no session must report Unreadable, got {:?}",
+            without_session
+        );
+
+        // With the session populated — the real post-unlock state — it derives.
+        crate::app::session::store_unlocked_signer(
+            &cube_id,
+            fp,
+            signer.try_clone().expect("clone signer"),
+        );
+        let with_session =
+            derive_connect_encryption_pubkey(&root, Network::Testnet, fp, PIN, &cube_id);
+        let ConnectEncryptionKey::Derived(hex) = with_session else {
+            panic!(
+                "a v3 Cube must derive from the session, got {:?}",
+                with_session
+            );
+        };
+        assert_eq!(hex.len(), 66);
+
+        // It must be the key the envelope codec would use for this seed —
+        // registering anything else silently strands every sealed envelope.
+        let expected =
+            crate::services::connect::crypto::CubeEncryptionKey::derive(&signer, Network::Testnet)
+                .public_key_hex();
+        assert_eq!(hex, expected);
+
+        crate::app::session::close();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The other half of the matrix: a **v2** seed written before the cube-id
+    /// binding existed. `seed_crypt` keeps an unbound-AAD (empty `cube_id`)
+    /// fallback for exactly these files, so they must open from disk with no
+    /// session at all — the pre-hardening Cube keeps working.
+    #[test]
+    fn a_pre_hardening_v2_seed_derives_from_disk() {
+        use super::{derive_connect_encryption_pubkey, ConnectEncryptionKey};
+        use coincube_core::miniscript::bitcoin::Network;
+        use coincube_core::signer::MasterSigner;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        let root = std::env::temp_dir().join(format!(
+            "coincube-encpubkey-v2-{}-{}",
+            std::process::id(),
+            seq
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        const PIN: &str = "1234";
+        let signer = MasterSigner::generate(Network::Testnet).unwrap();
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
+        let fp = signer.fingerprint(&secp);
+
+        // Written with an EMPTY cube id: a v2 file from before the binding.
+        signer
+            .store_encrypted(&root, Network::Testnet, &secp, None, PIN, "", None)
+            .expect("store pre-hardening v2 seed");
+
+        // Opened while naming a Cube, with no session — the unbound-AAD
+        // fallback is what has to carry this, and it is v2-only by design.
+        crate::app::session::close();
+        let out =
+            derive_connect_encryption_pubkey(&root, Network::Testnet, fp, PIN, "cube-minted-later");
+        let ConnectEncryptionKey::Derived(hex) = out else {
+            panic!("a pre-hardening v2 seed must still derive, got {:?}", out);
+        };
+        assert_eq!(
+            hex,
+            crate::services::connect::crypto::CubeEncryptionKey::derive(&signer, Network::Testnet)
+                .public_key_hex()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

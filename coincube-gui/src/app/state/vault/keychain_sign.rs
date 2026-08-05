@@ -1145,20 +1145,63 @@ impl KeychainSignModal {
                 Ok(session) => {
                     let session_id = session.session_id.clone();
                     entry.session_id = session_id.clone();
-                    entry.status =
-                        PendingSessionStatus::from_proto(session_status_from_i32(session.status));
-                    entry.error = None;
-                    tracing::info!(
-                        target: "coincube_gui::signing",
-                        vault_id = self.vault_id.unwrap_or(0),
-                        session_id = %session_id,
-                        fingerprint = %fingerprint,
-                        "Signing session created"
-                    );
-                    if entry.cancel_requested && !entry.session_id.is_empty() {
-                        Some(entry.session_id.clone())
+
+                    // The signer seals its signature to whichever key the server
+                    // reports as ours (`SigningSession.creator_transport_pubkey`,
+                    // added for exactly this — a signer has no other way to learn
+                    // it). If that is not the key we hold, the signature comes
+                    // back unopenable, and the only symptom is a baffling
+                    // "couldn't decrypt the returned signature" *after* the
+                    // keyholder has already approved on their phone.
+                    //
+                    // Reachable without any malice: `DeviceTransportKey::
+                    // load_or_create` silently mints a replacement when the
+                    // sidecar is unreadable, while device registration
+                    // short-circuits once a device_id exists — so the server can
+                    // legitimately still hold the old pubkey. Catch it here,
+                    // before anyone is asked to approve anything.
+                    let mismatched = self
+                        .transport_key
+                        .as_ref()
+                        .map(|k| k.public_key())
+                        .is_some_and(|ours| {
+                            !session.creator_transport_pubkey.is_empty()
+                                && session.creator_transport_pubkey != ours
+                        });
+                    if mismatched {
+                        tracing::error!(
+                            target: "coincube_gui::signing",
+                            session_id = %session_id,
+                            "Connect reports a different transport key for this device than the \
+                             one held locally; the returned signature would be unopenable"
+                        );
+                        entry.status = PendingSessionStatus::Failed;
+                        entry.error = Some(
+                            "This computer's encrypted-signing key doesn't match the one Connect \
+                             has on file. Sign out of Connect and sign back in to re-register it, \
+                             then try again."
+                                .to_string(),
+                        );
+                        // Cancel it rather than leaving a session pending for a
+                        // keyholder whose approval could not be used anyway.
+                        Some((session_id, "creator_transport_key_mismatch"))
                     } else {
-                        None
+                        entry.status = PendingSessionStatus::from_proto(session_status_from_i32(
+                            session.status,
+                        ));
+                        entry.error = None;
+                        tracing::info!(
+                            target: "coincube_gui::signing",
+                            vault_id = self.vault_id.unwrap_or(0),
+                            session_id = %session_id,
+                            fingerprint = %fingerprint,
+                            "Signing session created"
+                        );
+                        if entry.cancel_requested && !entry.session_id.is_empty() {
+                            Some((entry.session_id.clone(), "user_cancelled"))
+                        } else {
+                            None
+                        }
                     }
                 }
                 Err(e) => {
@@ -1176,7 +1219,11 @@ impl KeychainSignModal {
                 }
             }
         };
-        let Some(sid) = cancel_sid else {
+        // The reason rides into the server's event log, so it names which of
+        // the two cancel paths fired — "the user hit Cancel all" and "we created
+        // a session nobody could complete" are very different things to read
+        // back six months later.
+        let Some((sid, reason)) = cancel_sid else {
             return Task::none();
         };
         let tokens = self.tokens.clone();
@@ -1194,7 +1241,7 @@ impl KeychainSignModal {
                     AuthInterceptor::with_device_id(&access_token, desktop_device_id),
                 );
                 client
-                    .cancel_signing_session(rpc_sid, "user_cancelled".to_string())
+                    .cancel_signing_session(rpc_sid, reason.to_string())
                     .await
                     .map_err(OpError::from_status)
             },
@@ -2183,6 +2230,21 @@ fn friendly_grpc_error(status: tonic::Status) -> (String, bool) {
             "Request timed out. The signing service may be slow — try again.".to_string(),
             false,
         ),
+        // The server refuses to create an end-to-end session when the CREATING
+        // device — this desktop — has no registered transport pubkey, because
+        // signers would have nothing to seal the signature back to
+        // (`PLAN-connect-blinding` 4a). The raw message is accurate but reads
+        // as an instruction to a developer, and the remedy is a thing the user
+        // has to do, so name it: re-registration happens on sign-in.
+        //
+        // Reachable two ways: this desktop registered before transport keys
+        // existed, or its device row was revoked. Both are fixed the same way.
+        tonic::Code::FailedPrecondition => (
+            "This computer isn't set up for encrypted signing yet. Sign out of \
+             Connect and sign back in to re-register it, then try again."
+                .to_string(),
+            false,
+        ),
         _ => (status.message().to_string(), false),
     }
 }
@@ -2298,6 +2360,33 @@ mod tests {
         0xF8, 0x17, 0x98,
     ];
 
+    /// A `CreateSigningSession` response with nothing set but the id — each
+    /// test fills in only the field it is about.
+    fn created_session() -> SigningSession {
+        SigningSession {
+            session_id: "session-created".to_string(),
+            request_id: "req-1".to_string(),
+            user_id: String::new(),
+            vault_id: String::new(),
+            descriptor_id: String::new(),
+            psbt: Vec::new(),
+            tx_summary: None,
+            policy_summary: None,
+            targets: Vec::new(),
+            status: crate::services::connect::grpc::connect_v1::SessionStatus::Pending as i32,
+            created_at: None,
+            expires_at: None,
+            created_by_device_id: String::new(),
+            note: String::new(),
+            submitted_signatures: Vec::new(),
+            is_recovery_spend: false,
+            payload_scheme: crate::services::connect::grpc::connect_v1::PayloadScheme::EciesV1
+                as i32,
+            psbt_envelopes: Vec::new(),
+            creator_transport_pubkey: Vec::new(),
+        }
+    }
+
     fn pending(status: PendingSessionStatus) -> PendingSession {
         PendingSession {
             session_id: "session-1".to_string(),
@@ -2366,6 +2455,78 @@ mod tests {
     // curve is rejected at the seal, which sits after the PSBT prune and so
     // isn't reachable with a fixture PSBT. That rejection is pinned at the
     // codec level by `crypto::transport`'s `malformed_inputs_are_rejected_by_name`.)
+
+    /// `SigningSession.creator_transport_pubkey` is what a signer seals its
+    /// signature to. If Connect's copy has drifted from ours the signature
+    /// comes back unopenable — and the only symptom without this check is a
+    /// confusing decrypt failure *after* the keyholder already approved.
+    #[test]
+    fn a_creator_transport_key_mismatch_fails_before_anyone_approves() {
+        let mut m = modal();
+        m.pending = vec![pending(PendingSessionStatus::Creating)];
+        let fp = m.pending[0].fingerprint;
+
+        let mut session = created_session();
+        // Any valid-but-different point: the server has a stale registration.
+        session.creator_transport_pubkey = TEST_TARGET_TRANSPORT_PUBKEY.to_vec();
+
+        let _ = m.on_session_created(fp, Ok(session));
+
+        assert_eq!(m.pending[0].status, PendingSessionStatus::Failed);
+        assert!(m.pending[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("re-register"));
+    }
+
+    #[test]
+    fn a_matching_creator_transport_key_proceeds() {
+        let mut m = modal();
+        m.pending = vec![pending(PendingSessionStatus::Creating)];
+        let fp = m.pending[0].fingerprint;
+
+        let mut session = created_session();
+        session.creator_transport_pubkey = m.transport_key.as_ref().unwrap().public_key().to_vec();
+
+        let _ = m.on_session_created(fp, Ok(session));
+
+        assert!(m.pending[0].error.is_none(), "{:?}", m.pending[0].error);
+        assert_eq!(m.pending[0].session_id, "session-created");
+    }
+
+    #[test]
+    fn an_empty_creator_transport_key_is_not_treated_as_a_mismatch() {
+        // Empty means the server did not report one — an older build, or a
+        // PLAINTEXT session. That is the "old server" case, not drift, and
+        // must not block a session the server was willing to create.
+        let mut m = modal();
+        m.pending = vec![pending(PendingSessionStatus::Creating)];
+        let fp = m.pending[0].fingerprint;
+
+        let _ = m.on_session_created(fp, Ok(created_session()));
+
+        assert!(m.pending[0].error.is_none(), "{:?}", m.pending[0].error);
+    }
+
+    /// The server refuses to create an ECIES session when THIS desktop has no
+    /// registered transport key, and the remedy is something the user has to
+    /// do. The raw gRPC text names the field, not the fix.
+    #[test]
+    fn failed_precondition_becomes_a_re_register_instruction() {
+        let err = OpError::from_status(tonic::Status::failed_precondition(
+            "this device has no registered transport_pubkey; re-register the device before \
+             creating an end-to-end encrypted session",
+        ));
+        assert!(
+            err.message.contains("Sign out of Connect and sign back in"),
+            "the remedy must be named, got: {}",
+            err.message
+        );
+        // Not an auth failure: it must not tear down the modal with the
+        // "session expired" banner.
+        assert!(!err.auth);
+    }
 
     #[test]
     fn the_signature_envelope_round_trips_through_the_desktop_transport_key() {

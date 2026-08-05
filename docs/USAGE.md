@@ -5,16 +5,20 @@ Bitcoin Signet, check out [this guide](TRY.md) instead.
 
 ### Installing the software
 
-The recommended installation method for regular users is to download [an executable software release
-from our website](https://wizardsardine.com/coincube/). If you prefer to build the project from source,
-see [`BUILD.md`](BUILD.md) instead.
+The recommended installation method for regular users is to download an executable software release
+from the [Github release page](https://github.com/coincubetech/coincube/releases). If you prefer to
+build the project from source, see [`BUILD.md`](BUILD.md) instead.
 
-We recommend you verify the software you downloaded against a PGP signature made by Edouard Paris
-using his key `5B63F3B97699C7EEF3B040B19B7F629A53E77B83`. For now the PGP signatures for the
-binaries downloaded on our website are only available on the [Github release
-page](https://github.com/wizardsardine/coincube/releases). Find the `.asc` file in the list
-corresponding to the binary you downloaded. Edouard's key is available elsewhere for cross-checking,
-such as on [his personal website](https://edouard.paris).
+Release artifacts are named `tenshu-<version>-<target>.<ext>`, where `<target>` is the Rust target
+triple — for instance `tenshu-1.5.0-aarch64-apple-darwin.dmg` for macOS on Apple Silicon, or
+`tenshu-1.5.0-x86_64-pc-windows-msvc.msi` for Windows.
+
+We recommend you verify what you downloaded before installing it. Every release ships a
+`SHA256SUMS-<version>.txt` covering all of its artifacts, plus a `SHA256SUMS-<version>.txt.asc` GPG
+signature made with the Coincube release signing key (`67F9701BF0D2DAF4`, `releases@coincube.io`).
+The key itself is in this repository at
+[`docs/security/coincube-release-public.asc`](security/coincube-release-public.asc), and the
+step-by-step procedure is in [`docs/security/VERIFY.md`](security/VERIFY.md).
 
 For Arch users, a `coincube-bin` is also available at the [AUR](https://aur.archlinux.org/). You can
 install it using your favourite wrapper (eg `paru -S coincube-bin` or `yay -S coincube-bin`), or manually:
@@ -42,10 +46,14 @@ See [this issue](https://github.com/wizardsardine/coincube/issues/414) for detai
 
 #### Apple, Windows, codesigned and notarized binaries
 
-We distribute both a non-codesigned and a codesigned-and-notarized MacOS application
-(`Coincube-noncodesigned.zip` and `Coincube.zip`). To run the non-codesigned app, see [this Apple support
-guide](https://support.apple.com/en-us/HT202491) (section "If you want to open an app that hasn’t
-been notarized or is from an unidentified developer").
+The macOS application is distributed as a codesigned and notarized disk image
+(`tenshu-<version>-<target>.dmg`, one for Apple Silicon and one for Intel). Open the DMG and drag
+`Tenshu.app` into your Applications folder; because it is notarized, no Gatekeeper override is
+needed.
+
+The app's bundle identifier is `io.coincube.tenshu`. If you have an older Tenshu installed that
+predates that identifier, macOS treats the new build as a **separate** application and will not
+replace it — remove the old one to avoid running two copies.
 
 We do not yet distribute codesigned binaries for Windows at this time.
 

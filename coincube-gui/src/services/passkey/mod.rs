@@ -4,9 +4,38 @@
 //! `objc2-authentication-services` (see [`macos`] submodule). On other
 //! platforms, it falls back to an embedded webview pointing at the hosted
 //! ceremony page at `coincube.io/passkey`.
+//!
+//! # DANGER: registration works, unlock does not
+//!
+//! This module can *create* a passkey Cube but cannot *open* one. macOS's
+//! [`macos::NativePasskeyCeremony::authenticate`] is a stub returning `Err`,
+//! and `gui::tab` refuses to open a Cube carrying `passkey_metadata`. A
+//! passkey Cube whose owner did not write down the mnemonic is therefore
+//! **permanently unopenable**.
+//!
+//! The whole path is dark behind [`crate::feature_flags::PASSKEY_ENABLED`],
+//! which defaults to `false`. Read the danger note on that constant before
+//! enabling it anywhere.
 
 #[cfg(target_os = "macos")]
 pub mod macos;
+pub mod security_key;
+#[cfg(windows)]
+pub mod windows;
+
+/// PRF eval input for Tenshu's Cube master seed:
+/// `SHA-256("coincube-tenshu/v1/master-seed")`.
+///
+/// **Treat as stable.** Registered in the PRF domain registry
+/// (`company-brain/decisions/2026-08-01-webauthn-prf-domain-registry.md`).
+/// Every backend — platform passkey on macOS or Windows, or a FIDO2 security
+/// key — feeds the authenticator these exact 32 bytes, so one credential
+/// derives one seed regardless of which code path ran. `coincube-core`'s test
+/// suite pins the same value.
+pub const PRF_SALT: &[u8] = &[
+    0x41, 0x68, 0xdc, 0x1c, 0xd4, 0x88, 0xa3, 0x7d, 0xe3, 0x0c, 0xdf, 0xca, 0x87, 0x42, 0x13, 0x02,
+    0x42, 0xcd, 0xee, 0x47, 0x28, 0x32, 0x42, 0xfe, 0xab, 0xcb, 0x98, 0x11, 0xf2, 0x39, 0x9c, 0x72,
+];
 
 use std::sync::{mpsc, Arc};
 

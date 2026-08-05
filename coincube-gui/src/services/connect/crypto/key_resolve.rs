@@ -235,13 +235,18 @@ const ENROL_TIME_KEY_ID: u64 = 0;
 ///
 /// ## Two AAD bindings exist, so the open is tried twice
 ///
-/// The row's real id first, then [`ENROL_TIME_KEY_ID`]. That order matters:
+/// Both candidates — the row's real id and [`ENROL_TIME_KEY_ID`] — are always
+/// tried; `XpubEnvelope::aad_key_id_bound` only decides which goes first:
 ///
-/// - A **migrated** envelope (sealed server-side against a known row) opens on
-///   the first attempt, and keeps its full binding — moved onto a different row
-///   it matches neither id, so it still fails closed.
-/// - A **fresh-enrol** envelope only ever matched `0`, so it opens on the
-///   second.
+/// - A **migrated** envelope (sealed server-side against a known row) keeps its
+///   full binding — moved onto a different row it matches neither candidate, so
+///   it still fails closed.
+/// - A **fresh-enrol** envelope only ever matched `0`.
+///
+/// Because the *set* of candidates is fixed, the hint changes performance and
+/// nothing else: a wrong or absent hint costs one extra AES-GCM open, never a
+/// different answer, and no ordering can make an envelope open against a row it
+/// was not sealed for.
 ///
 /// The honest cost: an envelope bound to `0` can be re-pointed at any key row
 /// of the *same Cube* and will still open, because there was never a row to
@@ -281,34 +286,43 @@ pub fn resolve_key_xpub<R: ConnectKeyRow + ?Sized>(
 }
 
 /// Opens an envelope under whichever `key_id` binding it was sealed with (see
-/// [`resolve_key_xpub`]): the row's real id, then [`ENROL_TIME_KEY_ID`].
+/// [`resolve_key_xpub`]): the row's real id and [`ENROL_TIME_KEY_ID`], ordered
+/// by the server's `aad_key_id_bound` hint.
+///
+/// The hint is the *writer's claim*, recorded by a server that cannot verify it,
+/// so it is only ever an ordering optimisation — both candidates are tried
+/// either way and a lying hint changes nothing but which open runs first.
 ///
 /// The retry is deliberately narrow. Only a tag failure
 /// ([`EciesError::BadKeyOrCorrupt`], which the codec reports for a wrong key,
 /// tampered bytes, *or* a mismatched AAD — indistinguishable by design) can be
 /// an AAD mismatch worth a second attempt. A structural failure means the bytes
 /// are malformed, so retrying would just do the same arithmetic twice and
-/// report the same thing. When both attempts fail, the caller sees the error
-/// from the *first* — the row's own binding is the one worth naming.
+/// report the same thing. When both fail, the caller sees the first attempt's
+/// error; both are the same indistinguishable `BadKeyOrCorrupt`.
 ///
-/// A row whose id is already `0` (a DTO that didn't carry one) is tried once;
-/// there is no second binding to try.
+/// A row whose id is already `0` has only one candidate and is tried once.
 fn open_either_binding(
     key: &CubeEncryptionKey,
     env: &XpubEnvelope,
     cube_id: u64,
     row_key_id: u64,
 ) -> Result<Zeroizing<Vec<u8>>, KeyResolveError> {
-    let first = match key.open(env, cube_id, row_key_id) {
+    let (first, second) = if env.aad_key_id_bound {
+        (row_key_id, ENROL_TIME_KEY_ID)
+    } else {
+        (ENROL_TIME_KEY_ID, row_key_id)
+    };
+    let err = match key.open(env, cube_id, first) {
         Ok(pt) => return Ok(pt),
         Err(e) => e,
     };
-    if row_key_id != ENROL_TIME_KEY_ID && matches!(first, EciesError::BadKeyOrCorrupt) {
-        if let Ok(pt) = key.open(env, cube_id, ENROL_TIME_KEY_ID) {
+    if second != first && matches!(err, EciesError::BadKeyOrCorrupt) {
+        if let Ok(pt) = key.open(env, cube_id, second) {
             return Ok(pt);
         }
     }
-    Err(KeyResolveError::Envelope(first.to_string()))
+    Err(KeyResolveError::Envelope(err.to_string()))
 }
 
 /// The checks `crypto.ValidateXPub` used to run server-side, plus the
@@ -403,6 +417,8 @@ mod tests {
         XpubEnvelope {
             scheme: super::super::cube_enc_key::SCHEME.to_string(),
             recipient: super::super::cube_enc_key::RECIPIENT_CUBE_OWNER.to_string(),
+            // First enrolment: the row did not exist, so `0` was bound.
+            aad_key_id_bound: false,
             ephemeral_pubkey: ENROL_E.to_string(),
             nonce: ENROL_NONCE.to_string(),
             ciphertext: ENROL_CT.to_string(),
@@ -418,6 +434,8 @@ mod tests {
         XpubEnvelope {
             scheme: super::super::cube_enc_key::SCHEME.to_string(),
             recipient: super::super::cube_enc_key::RECIPIENT_CUBE_OWNER.to_string(),
+            // Sealed against an existing row (the A5 migration's shape).
+            aad_key_id_bound: true,
             ephemeral_pubkey: KAT_E.to_string(),
             nonce: KAT_NONCE.to_string(),
             ciphertext: KAT_CT.to_string(),
@@ -507,6 +525,67 @@ mod tests {
         let resolved =
             resolve_key_xpub(&row, Some(&cube_key()), KAT_CUBE_ID, Network::Testnet).unwrap();
         assert_eq!(resolved.to_string(), XPUB);
+    }
+
+    /// `aad_key_id_bound` is the server's record of the *writer's claim*, and
+    /// the server holds no key to verify it. So a lying hint — in either
+    /// direction — must cost an extra AES-GCM open and nothing else. If these
+    /// ever fail, the hint has become load-bearing and a malicious or buggy
+    /// server can strand keys by flipping a boolean.
+    #[test]
+    fn a_lying_hint_changes_nothing_but_the_attempt_order() {
+        // A 0-bound envelope whose row claims it was bound to the real id.
+        let mut lies_bound = enrol_time_envelope();
+        lies_bound.aad_key_id_bound = true;
+        assert_eq!(
+            resolve_key_xpub(
+                &row(Some(lies_bound), "", PATH),
+                Some(&cube_key()),
+                KAT_CUBE_ID,
+                Network::Testnet,
+            )
+            .unwrap()
+            .to_string(),
+            XPUB
+        );
+
+        // …and a row-bound envelope whose row claims enrol-time. This is also
+        // the shape a server that predates the column serves, since the field
+        // defaults to false.
+        let mut lies_unbound = envelope();
+        lies_unbound.aad_key_id_bound = false;
+        assert_eq!(
+            resolve_key_xpub(
+                &row(Some(lies_unbound), "", PATH),
+                Some(&cube_key()),
+                KAT_CUBE_ID,
+                Network::Testnet,
+            )
+            .unwrap()
+            .to_string(),
+            XPUB
+        );
+    }
+
+    #[test]
+    fn a_hint_cannot_make_an_envelope_open_against_the_wrong_row() {
+        // The security property the hint must not touch: the candidate SET is
+        // fixed at {row id, 0}, so no ordering lets a migrated envelope open on
+        // a row it was not sealed for.
+        for hint in [true, false] {
+            let mut env = envelope();
+            env.aad_key_id_bound = hint;
+            let mut wrong_row = row(Some(env), "", PATH);
+            wrong_row.id = KAT_KEY_ID + 1;
+            assert!(
+                matches!(
+                    resolve_key_xpub(&wrong_row, Some(&cube_key()), KAT_CUBE_ID, Network::Testnet),
+                    Err(KeyResolveError::Envelope(_))
+                ),
+                "hint={} must not admit a row-swapped envelope",
+                hint
+            );
+        }
     }
 
     #[test]

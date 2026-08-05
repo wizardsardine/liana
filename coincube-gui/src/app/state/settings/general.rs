@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Network};
-use coincube_core::signer::MasterSigner;
+use coincube_core::signer::{MasterSigner, SignerError};
 use coincube_ui::widget::Element;
 use iced::Task;
 use rand::seq::SliceRandom;
@@ -21,6 +21,7 @@ use crate::daemon::Daemon;
 use crate::dir::CoincubeDirectory;
 use crate::pin_input::PinInput;
 use crate::services::fiat::currency::Currency;
+use crate::services::unlock;
 
 /// State for the master seed backup flow.
 ///
@@ -60,7 +61,10 @@ pub enum BackupSeedState {
 }
 
 /// Generate 3 random unique word indices from 1 to mnemonic_len.
-fn generate_random_word_indices(mnemonic_len: usize) -> Option<[usize; 3]> {
+///
+/// Shared with the creation-time backup step in `home.rs` so the two places
+/// that verify a written-down seed phrase challenge the user identically.
+pub(crate) fn generate_random_word_indices(mnemonic_len: usize) -> Option<[usize; 3]> {
     if mnemonic_len < 3 {
         return None;
     }
@@ -128,6 +132,30 @@ mod tests {
             UnitSetting::default(),
             &CoincubeDirectory::new(std::path::PathBuf::new()),
         )
+    }
+
+    /// The seed-reveal flows share the unlock throttle, so misclassifying an
+    /// operational failure as a wrong PIN spends the owner's guesses on a fault
+    /// no PIN can fix — and eventually locks them out of their own Cube.
+    #[test]
+    fn only_a_failed_decryption_counts_as_a_wrong_pin() {
+        assert!(is_wrong_pin(&SignerError::InvalidPassword));
+
+        for e in [
+            SignerError::DeviceSecretRequired,
+            SignerError::SignerNotFound(Fingerprint::default()),
+            SignerError::MnemonicStorage(std::io::Error::other("disk")),
+            SignerError::NotEncryptedFile,
+            SignerError::InvalidFileFormat,
+            SignerError::DecryptionFailed("argon2".to_string()),
+            SignerError::PasswordRequired,
+        ] {
+            assert!(
+                !is_wrong_pin(&e),
+                "{} would be reported as a wrong PIN and charged to the throttle",
+                e
+            );
+        }
     }
 
     fn backup_msg(msg: view::BackupWalletMessage) -> Message {
@@ -206,6 +234,28 @@ mod tests {
         ));
     }
 
+    /// The seed phrase must be `Zeroizing` *before* it enters the message
+    /// queue, not after it is delivered.
+    ///
+    /// iced clones messages freely, so a bare `Vec<String>` in the message meant
+    /// every in-flight copy dropped un-scrubbed and only the one that reached
+    /// state was protected. This is a type-level property — the test exists so
+    /// the signature can't quietly revert to `Vec<String>`, which would still
+    /// compile everywhere the value is used and leave no other trace.
+    #[test]
+    fn the_seed_is_zeroizing_before_it_enters_the_message_queue() {
+        fn assert_zeroizing(_: &view::BackupWalletMessage) {}
+        let msg = view::BackupWalletMessage::PinVerified(Ok(Zeroizing::new(words())));
+        assert_zeroizing(&msg);
+
+        // The sibling flow in `recovery_kit.rs` carries the same shape. If these
+        // two ever disagree again, one of them is leaking copies of a seed.
+        let _: Result<Zeroizing<Vec<String>>, String> = Ok(Zeroizing::new(words()));
+
+        // And it is redacted in Debug, so a `{:?}` on the message can't print it.
+        assert!(!format!("{:?}", msg).contains(&words()[0]));
+    }
+
     #[test]
     fn pin_verified_success_stores_words_and_clears_pin() {
         let mut state = state();
@@ -220,10 +270,12 @@ mod tests {
         let _ = state.update(
             None,
             &Cache::default(),
-            backup_msg(view::BackupWalletMessage::PinVerified(Ok(words()))),
+            backup_msg(view::BackupWalletMessage::PinVerified(Ok(Zeroizing::new(
+                words(),
+            )))),
         );
 
-        assert_eq!(state.backup_pin.value(), "");
+        assert_eq!(state.backup_pin.value().as_str(), "");
         assert!(matches!(state.backup_state, BackupSeedState::Intro(false)));
         assert_eq!(
             state.backup_mnemonic.as_ref().map(|words| words.len()),
@@ -250,7 +302,7 @@ mod tests {
             ))),
         );
 
-        assert_eq!(state.backup_pin.value(), "");
+        assert_eq!(state.backup_pin.value().as_str(), "");
         assert!(matches!(
             &state.backup_state,
             BackupSeedState::PinEntry { error: Some(error) } if error == "Incorrect PIN"
@@ -495,7 +547,7 @@ mod tests {
         );
 
         assert_eq!(state.backup_state, BackupSeedState::Completed);
-        assert_eq!(state.backup_pin.value(), "");
+        assert_eq!(state.backup_pin.value().as_str(), "");
         assert!(state.backup_mnemonic.is_none());
 
         let _ = state.update(
@@ -804,16 +856,69 @@ impl GeneralSettingsState {
 
                 let datadir = cache.datadir_path.path().to_path_buf();
                 let network = cache.network;
+                let cube_id = cube.id.clone();
+
+                // This is the *second* door to the same secret, and it is the
+                // one that hands over the permanent one. Reaching it needs an
+                // unlocked Cube, so it is not the laptop-thief case the unlock
+                // throttle was built for — but someone at an unattended,
+                // already-open Cube who wants the seed phrase rather than the
+                // session's balance would otherwise get unlimited guesses here.
+                // Share the unlock counter: it is the same PIN and the same
+                // Cube, so guesses should accumulate across both surfaces.
+                let throttle_root = datadir.clone();
+                let remaining = unlock::throttle::ThrottleState::load(&throttle_root)
+                    .remaining_lockout(&cube_id);
+                if !remaining.is_zero() {
+                    return Task::done(Message::View(view::Message::Settings(
+                        view::SettingsMessage::BackupMasterSeed(
+                            view::BackupWalletMessage::PinVerified(Err(
+                                unlock::throttle::lockout_message(remaining),
+                            )),
+                        ),
+                    )));
+                }
 
                 // Run Argon2id PIN verification + mnemonic decryption off
                 // the UI thread to avoid blocking the event loop.
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            if !cube.verify_pin(&pin) {
-                                return Err("Incorrect PIN. Please try again.".to_string());
+                            // The decryption *is* the PIN check — a wrong PIN
+                            // fails the seed file's GCM tag. The
+                            // `verify_pin` call that used to gate this was the
+                            // cheap Argon2 oracle (m=19 MiB vs the seed file's
+                            // 256 MiB) and is gone; see
+                            // PLAN-cube-unlock-hardening I1.
+                            let mut throttle =
+                                unlock::throttle::ThrottleState::load(&throttle_root);
+                            match load_mnemonic_words(
+                                &datadir,
+                                network,
+                                fingerprint,
+                                &pin,
+                                &cube_id,
+                            ) {
+                                Ok(words) => {
+                                    throttle.record_success(&throttle_root, &cube_id);
+                                    // Wrap here, not after delivery: from this
+                                    // point on every copy the message queue
+                                    // makes is scrubbed on drop.
+                                    Ok(Zeroizing::new(words))
+                                }
+                                // Only a wrong PIN is a guess. An operational
+                                // failure keeps its own message and costs the
+                                // user nothing against the throttle.
+                                Err(e) if !is_wrong_pin(&e) => Err(e.to_string()),
+                                Err(_) => {
+                                    let penalty = throttle.record_failure(&throttle_root, &cube_id);
+                                    Err(if penalty.is_zero() {
+                                        "Incorrect PIN. Please try again.".to_string()
+                                    } else {
+                                        unlock::throttle::lockout_message(penalty)
+                                    })
+                                }
                             }
-                            load_mnemonic_words(&datadir, network, fingerprint, &pin)
                         })
                         .await
                         .map_err(|e| format!("PIN verification task failed: {}", e))?
@@ -831,7 +936,7 @@ impl GeneralSettingsState {
                 match result {
                     Ok(words) => {
                         self.backup_pin.clear();
-                        self.backup_mnemonic = Some(Zeroizing::new(words));
+                        self.backup_mnemonic = Some(words);
                         self.backup_state = BackupSeedState::Intro(false);
                     }
                     Err(e) => {
@@ -1044,11 +1149,32 @@ pub(super) fn load_mnemonic_words(
     network: Network,
     fingerprint: Fingerprint,
     pin: &str,
-) -> Result<Vec<String>, String> {
-    let signer =
-        MasterSigner::from_datadir_by_fingerprint(datadir, network, fingerprint, Some(pin))
-            .map_err(|e| e.to_string())?;
+    cube_id: &str,
+) -> Result<Vec<String>, SignerError> {
+    let signer = MasterSigner::from_datadir_by_fingerprint(
+        datadir,
+        network,
+        fingerprint,
+        Some(pin),
+        cube_id,
+    )?;
     Ok(signer.words().iter().map(|w| (*w).to_string()).collect())
+}
+
+/// Whether a failed seed decryption means **the user typed the wrong PIN**.
+///
+/// Only `InvalidPassword` does: `seed_crypt::decrypt_with` returns it for a
+/// failed GCM tag and nothing else, and deliberately does *not* use it for a
+/// missing device secret (invariant I7). Everything else — an unreadable
+/// mnemonics folder, no file for this fingerprint, a v3 file whose keychain
+/// entry is unavailable — is an operational fault the PIN cannot fix.
+///
+/// The distinction has teeth on both sides. Reporting a locked keychain as
+/// "Incorrect PIN" sends the user to retype a PIN that was right, and each
+/// retry spends a guess against the shared unlock throttle — so a fault
+/// entirely outside their control locks them out of their own Cube.
+pub(super) fn is_wrong_pin(e: &SignerError) -> bool {
+    matches!(e, SignerError::InvalidPassword)
 }
 
 impl GeneralSettingsState {

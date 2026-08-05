@@ -3160,6 +3160,7 @@ mod tests {
         resolved.raw.xpub_envelope = Some(crate::services::connect::crypto::XpubEnvelope {
             scheme: crate::services::connect::crypto::XPUB_ENVELOPE_SCHEME.to_string(),
             recipient: crate::services::connect::crypto::RECIPIENT_CUBE_OWNER.to_string(),
+            aad_key_id_bound: true,
             ephemeral_pubkey: BLIND_E.to_string(),
             nonce: BLIND_NONCE.to_string(),
             ciphertext: ciphertext.to_string(),

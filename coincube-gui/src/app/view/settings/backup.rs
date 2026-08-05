@@ -4,6 +4,19 @@
 //! `BackupSeedState != None` (see `general.rs::general_section`).
 //!
 //! Flow: PinEntry → Intro → RecoveryPhrase → Verification → Completed.
+//!
+//! # Two callers, two message types
+//!
+//! `intro_view`, `recovery_phrase_view`, `verification_view` and
+//! `completed_view` are generic over the message type and take a mapper, so the
+//! Cube-creation backup step in `home.rs` can reuse them with its own
+//! `ViewMessage` instead of duplicating the markup. The mapper is a plain `fn`
+//! pointer rather than a closure: it is `Copy` and `'static`, so it threads
+//! through nested builders without lifetime noise.
+//!
+//! `pin_entry_view` is deliberately **not** generic — creation has no re-auth
+//! step. The PIN was just typed and the signer is already in hand, so there is
+//! nothing to decrypt and nothing to gate.
 
 use coincube_ui::{
     color,
@@ -25,13 +38,13 @@ fn wrap(msg: BackupWalletMessage) -> Message {
 
 /// Header for backup wizard screens: a single "< Back" button
 /// that rolls back one step in the flow.
-fn header<'a>(_title: &'a str) -> Element<'a, Message> {
+fn header<'a, M: Clone + 'a>(_title: &'a str, on: fn(BackupWalletMessage) -> M) -> Element<'a, M> {
     Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
         .push(
             ui_button::secondary(None, "< Back")
-                .on_press(wrap(BackupWalletMessage::PreviousStep))
+                .on_press(on(BackupWalletMessage::PreviousStep))
                 .padding([8, 16])
                 .width(Length::Fixed(150.0)),
         )
@@ -44,7 +57,7 @@ pub fn pin_entry_view<'a>(pin: &'a PinInput, error: Option<&'a str>) -> Element<
     let mut col = Column::new()
         .spacing(20)
         .width(Length::Fill)
-        .push(header("Enter PIN"))
+        .push(header("Enter PIN", wrap))
         .push(Space::new().height(Length::Fixed(16.0)))
         .push(
             Row::new()
@@ -129,12 +142,15 @@ pub fn pin_entry_view<'a>(pin: &'a PinInput, error: Option<&'a str>) -> Element<
 }
 
 /// Intro screen with security warning + "I understand" checkbox.
-pub fn intro_view(checked: bool) -> Element<'static, Message> {
+pub fn intro_view<M: Clone + 'static>(
+    checked: bool,
+    on: fn(BackupWalletMessage) -> M,
+) -> Element<'static, M> {
     let primary_color = color::ORANGE;
     Column::new()
         .spacing(20)
         .width(Length::Fill)
-        .push(header("Back up your wallet"))
+        .push(header("Back up your wallet", on))
         .push(Space::new().height(Length::Fixed(16.0)))
         .push(
             Row::new()
@@ -178,7 +194,7 @@ pub fn intro_view(checked: bool) -> Element<'static, Message> {
                 .push(
                     CheckBox::new(checked)
                         .label("I UNDERSTAND THAT IF I LOSE THESE WORDS, MY FUNDS CANNOT BE RECOVERED")
-                        .on_toggle(|_| wrap(BackupWalletMessage::ToggleBackupIntroCheck))
+                        .on_toggle(move |_| on(BackupWalletMessage::ToggleBackupIntroCheck))
                         .style(theme::checkbox::primary)
                         .size(20)
                 )
@@ -193,7 +209,7 @@ pub fn intro_view(checked: bool) -> Element<'static, Message> {
                 .push(Space::new().width(Length::Fill))
                 .push(
                     ui_button::secondary(None, "Cancel")
-                        .on_press(wrap(BackupWalletMessage::PreviousStep))
+                        .on_press(on(BackupWalletMessage::PreviousStep))
                         .padding([8, 16])
                         .width(Length::Fixed(150.0)),
                 )
@@ -202,7 +218,7 @@ pub fn intro_view(checked: bool) -> Element<'static, Message> {
                         .padding([8, 16])
                         .width(Length::Fixed(300.0));
                     if checked {
-                        btn.on_press(wrap(BackupWalletMessage::NextStep))
+                        btn.on_press(on(BackupWalletMessage::NextStep))
                     } else {
                         btn
                     }
@@ -213,7 +229,10 @@ pub fn intro_view(checked: bool) -> Element<'static, Message> {
 }
 
 /// Show the 12 mnemonic words in a 3×4 grid.
-pub fn recovery_phrase_view<'a>(mnemonic: &'a [String]) -> Element<'a, Message> {
+pub fn recovery_phrase_view<'a, M: Clone + 'a>(
+    mnemonic: &'a [String],
+    on: fn(BackupWalletMessage) -> M,
+) -> Element<'a, M> {
     let mut grid = Column::new().spacing(30).align_x(Alignment::Center);
 
     // 3 rows × 4 columns = 12 words
@@ -248,7 +267,7 @@ pub fn recovery_phrase_view<'a>(mnemonic: &'a [String]) -> Element<'a, Message> 
     Column::new()
         .spacing(20)
         .width(Length::Fill)
-        .push(header("Your Recovery Phrase"))
+        .push(header("Your Recovery Phrase", on))
         .push(
             Row::new()
                 .width(Length::Fill)
@@ -283,13 +302,13 @@ pub fn recovery_phrase_view<'a>(mnemonic: &'a [String]) -> Element<'a, Message> 
                 .push(Space::new().width(Length::Fill))
                 .push(
                     ui_button::secondary(None, "Back")
-                        .on_press(wrap(BackupWalletMessage::PreviousStep))
+                        .on_press(on(BackupWalletMessage::PreviousStep))
                         .padding([8, 16])
                         .width(Length::Fixed(150.0)),
                 )
                 .push(
                     ui_button::primary(None, "I've Written It Down")
-                        .on_press(wrap(BackupWalletMessage::NextStep))
+                        .on_press(on(BackupWalletMessage::NextStep))
                         .padding([8, 16])
                         .width(Length::Fixed(300.0)),
                 )
@@ -299,14 +318,14 @@ pub fn recovery_phrase_view<'a>(mnemonic: &'a [String]) -> Element<'a, Message> 
 }
 
 /// Helper: a labelled word input field with a bottom border.
-fn word_input_field<'a, F, S>(
+fn word_input_field<'a, M: Clone + 'a, F, S>(
     word_num: usize,
     word_value: &'a str,
     no_border_style: S,
     on_input: F,
-) -> Element<'a, Message>
+) -> Element<'a, M>
 where
-    F: Fn(String) -> Message + 'a,
+    F: Fn(String) -> M + 'a,
     S: Fn(
             &coincube_ui::theme::Theme,
             iced::widget::text_input::Status,
@@ -342,17 +361,18 @@ where
 }
 
 /// Verification screen — ask the user for 3 random words from the mnemonic.
-pub fn verification_view<'a>(
+pub fn verification_view<'a, M: Clone + 'a>(
     word_indices: &'a [usize; 3],
     word_inputs: &'a [String; 3],
     error: Option<&'a str>,
     saving: bool,
-) -> Element<'a, Message> {
+    on: fn(BackupWalletMessage) -> M,
+) -> Element<'a, M> {
     let all_filled = word_inputs.iter().all(|w| !w.is_empty());
 
     let mut content = Column::new().spacing(20).width(Length::Fill);
 
-    content = content.push(header("Verify Your Recovery Phrase"));
+    content = content.push(header("Verify Your Recovery Phrase", on));
 
     content = content.push(
         Row::new()
@@ -416,7 +436,7 @@ pub fn verification_view<'a>(
             &word_inputs[i],
             no_border_style,
             move |input| {
-                wrap(BackupWalletMessage::WordInput {
+                on(BackupWalletMessage::WordInput {
                     index: word_idx as u8,
                     input,
                 })
@@ -443,7 +463,7 @@ pub fn verification_view<'a>(
             .push(Space::new().width(Length::Fill))
             .push(
                 ui_button::secondary(None, "Back")
-                    .on_press(wrap(BackupWalletMessage::PreviousStep))
+                    .on_press(on(BackupWalletMessage::PreviousStep))
                     .padding([8, 16])
                     .width(Length::Fixed(150.0)),
             )
@@ -453,7 +473,7 @@ pub fn verification_view<'a>(
                     .padding([8, 16])
                     .width(Length::Fixed(300.0));
                 if all_filled && !saving {
-                    btn.on_press(wrap(BackupWalletMessage::VerifyPhrase))
+                    btn.on_press(on(BackupWalletMessage::VerifyPhrase))
                 } else {
                     btn
                 }
@@ -465,13 +485,13 @@ pub fn verification_view<'a>(
 }
 
 /// Completed screen — backup is recorded, show a confirmation.
-pub fn completed_view() -> Element<'static, Message> {
+pub fn completed_view<M: Clone + 'static>(on: fn(BackupWalletMessage) -> M) -> Element<'static, M> {
     let primary_color = color::ORANGE;
 
     Column::new()
         .spacing(20)
         .width(Length::Fill)
-        .push(header("Backup Complete"))
+        .push(header("Backup Complete", on))
         .push(Space::new().height(Length::Fixed(20.0)))
         .push(
             Row::new()
@@ -503,7 +523,7 @@ pub fn completed_view() -> Element<'static, Message> {
                 .push(Space::new().width(Length::Fill))
                 .push(
                     ui_button::primary(None, "Back to Settings")
-                        .on_press(wrap(BackupWalletMessage::Complete))
+                        .on_press(on(BackupWalletMessage::Complete))
                         .padding([8, 16])
                         .width(Length::Fixed(300.0))
                 )
@@ -519,7 +539,7 @@ pub fn passkey_pending_view() -> Element<'static, Message> {
     Column::new()
         .spacing(20)
         .width(Length::Fill)
-        .push(header("Backup via Passkey"))
+        .push(header("Backup via Passkey", wrap))
         .push(Space::new().height(Length::Fixed(20.0)))
         .push(
             Row::new()
@@ -580,13 +600,13 @@ pub fn dispatch<'a>(
     match state {
         BackupSeedState::None => None,
         BackupSeedState::PinEntry { error } => Some(pin_entry_view(pin, error.as_deref())),
-        BackupSeedState::Intro(checked) => Some(intro_view(*checked)),
+        BackupSeedState::Intro(checked) => Some(intro_view(*checked, wrap)),
         BackupSeedState::RecoveryPhrase => {
             // Without a loaded mnemonic we can't show anything useful —
             // bail back to the normal settings page. This shouldn't happen
             // under normal flow because the mnemonic is loaded in VerifyPin.
             let mnemonic = mnemonic?;
-            Some(recovery_phrase_view(mnemonic))
+            Some(recovery_phrase_view(mnemonic, wrap))
         }
         BackupSeedState::Verification {
             word_indices,
@@ -598,8 +618,9 @@ pub fn dispatch<'a>(
             word_inputs,
             error.as_deref(),
             *saving,
+            wrap,
         )),
-        BackupSeedState::Completed => Some(completed_view()),
+        BackupSeedState::Completed => Some(completed_view(wrap)),
         BackupSeedState::PasskeyPending => Some(passkey_pending_view()),
     }
 }

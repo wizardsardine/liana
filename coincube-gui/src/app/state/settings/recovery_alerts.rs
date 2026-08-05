@@ -691,13 +691,22 @@ fn build_seed_blob_json(
         .iter()
         .find(|c| c.id == local_cube_id)
         .ok_or("Cube not found in settings.")?;
-    if !cube_settings.verify_pin(pin) {
-        return Err("Incorrect PIN. Please try again.".to_string());
-    }
     let fingerprint = cube_settings
         .master_signer_fingerprint
         .ok_or("This Cube has no master signer.")?;
-    let words = super::general::load_mnemonic_words(datadir, network, fingerprint, pin)?;
+    // Decrypting the seed file *is* the PIN check (I1) — the cheap
+    // `verify_pin` hash that used to gate this is gone.
+    let words =
+        super::general::load_mnemonic_words(datadir, network, fingerprint, pin, local_cube_id)
+            .map_err(|e| {
+                // No throttle on this path, but the message still has to be
+                // true: only a failed decryption is a wrong PIN.
+                if super::general::is_wrong_pin(&e) {
+                    "Incorrect PIN. Please try again.".to_string()
+                } else {
+                    e.to_string()
+                }
+            })?;
     let phrase = Zeroizing::new(words.join(" "));
     let blob = SeedBlob {
         version: BLOB_VERSION,
