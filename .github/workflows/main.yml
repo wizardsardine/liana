@@ -103,19 +103,21 @@ jobs:
       # unsigned.
       #
       # Starting the daemon is not enough on its own: the runner has no keyring
-      # file yet, so the Secret Service answers a lookup for the *default*
-      # collection with "no result found" and the same tests fail for a new
-      # reason. Storing one item mints the default (login) collection, after
-      # which a lookup for an absent entry correctly reports "no entry" — the
-      # distinction `missing_entry_is_its_own_error` exists to check.
+      # file, so the Secret Service answers a lookup for the *default*
+      # collection with "no result found". Minting it with `secret-tool store`
+      # does not work either — it fails with "Object does not exist at path
+      # /org/freedesktop/secrets/collection/login" rather than creating the
+      # collection. Write the empty-password login keyring and its default
+      # alias directly, before the daemon starts.
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev gnome-keyring dbus-x11 libsecret-tools
+          sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev gnome-keyring dbus-x11
+          mkdir -p ~/.local/share/keyrings
+          printf '[keyring]\ndisplay-name=login\nctime=0\nmtime=0\nlock-on-idle=false\nlock-after=false\n' > ~/.local/share/keyrings/login.keyring
+          printf 'login' > ~/.local/share/keyrings/default
           dbus-run-session -- bash -c '
             echo -n "" | gnome-keyring-daemon --daemonize --unlock --components=secrets >/dev/null
-            echo -n "ci" | secret-tool store --label=ci-bootstrap coincube ci-bootstrap
-            secret-tool lookup coincube ci-bootstrap >/dev/null
             cargo test --color always -- --nocapture
           '

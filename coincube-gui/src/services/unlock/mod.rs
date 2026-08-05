@@ -641,7 +641,6 @@ pub fn migrate_seed_files(loc: &CubeLocation, pin: &str) -> Result<MigrationOutc
     // precisely because the gate is shut — and it is exactly the Cube that
     // needs the prompt.
     let held_back_by_gate = !eligible && secret.is_none();
-    let mut saw_seed_file = false;
 
     let marker_name = loc.duress_slot_file;
     let target_version = match secret {
@@ -653,6 +652,13 @@ pub fn migrate_seed_files(loc: &CubeLocation, pin: &str) -> Result<MigrationOutc
     // bytes carry no proof of it. See the check in the loop.
     let own_seed = master_seed_path(loc);
 
+    // "This Cube has a seed file" — which is what the prompt above is about —
+    // rather than "the folder is not empty". `mnemonics/` is shared per
+    // network, so reading any file used to set this: another Cube's seed, or a
+    // stray non-mnemonic, was enough to tell a Cube with nothing of its own to
+    // go and back up.
+    let saw_seed_file = own_seed.is_some();
+
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -663,7 +669,6 @@ pub fn migrate_seed_files(loc: &CubeLocation, pin: &str) -> Result<MigrationOutc
         let Ok(data) = std::fs::read(&path) else {
             continue;
         };
-        saw_seed_file = true;
         let version = seed_crypt::format_version(&data);
         if version == Some(target_version) {
             continue;
@@ -1971,6 +1976,28 @@ mod tests {
             !outcome.skipped_no_backup,
             "an empty folder produced a spurious back-up prompt"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The back-up prompt is about *this* Cube's seed, not about the folder
+    /// being non-empty. `mnemonics/` is shared per network, so reading any file
+    /// used to arm it — another Cube's seed was enough to tell a Cube with
+    /// nothing of its own to go and back up.
+    #[test]
+    fn another_cubes_seed_does_not_trigger_this_cubes_backup_prompt() {
+        let dir = tmp_dir("gate-neighbour");
+        make_cube(&dir, "cube-b", 2000, "5678");
+
+        // Cube A has no seed file of its own — only B's is in the folder, and
+        // A's creation window is far from B's so the fallback cannot claim it.
+        let l_a = loc(&dir, "cube-a", 9000, None);
+        let outcome = migrate_seed_files(&l_a, "1234").unwrap();
+        assert!(
+            !outcome.skipped_no_backup,
+            "a Cube with no seed was told to back up because of a neighbour's file"
+        );
+        assert_eq!(outcome.migrated, 0);
+
         std::fs::remove_dir_all(dir).unwrap();
     }
 

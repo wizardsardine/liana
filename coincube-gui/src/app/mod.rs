@@ -5707,6 +5707,25 @@ mod tests {
             root.exists(),
             root.is_dir(),
         );
+        // The other tests' roots. `TMPDIR=runner.temp` ruled out the macOS
+        // purge theory — the roots vanish on a volume with 96 GiB free — so the
+        // question is whether whatever removes them is aiming at this one or
+        // sweeping the whole temp directory. If the siblings are gone too it is
+        // a sweep, and only the slow tests (two Argon2 passes at 256 MiB) live
+        // long enough to notice.
+        if let Ok(entries) = fs::read_dir(std::env::temp_dir()) {
+            let mut siblings: Vec<String> = entries
+                .flatten()
+                .filter_map(|e| e.file_name().to_str().map(str::to_owned))
+                .filter(|n| n.starts_with("coincube-"))
+                .collect();
+            siblings.sort();
+            out.push_str(&format!(
+                "sibling coincube-* dirs in TMPDIR ({}): {:?}\n",
+                siblings.len(),
+                siblings
+            ));
+        }
         walk(root, 1, &mut out);
         out
     }
