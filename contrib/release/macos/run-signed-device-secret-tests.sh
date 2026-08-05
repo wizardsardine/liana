@@ -78,6 +78,18 @@ PLIST
 cp "$BIN" "$BUNDLE/Contents/MacOS/TestRunner"
 cp "$PROFILE" "$BUNDLE/Contents/embedded.provisionprofile"
 
+# The profile authorises a specific CERTIFICATE, not just an App ID, and every
+# other gate passes when that is wrong — the failure is a bare SIGKILL below.
+# Check it before spending a signing round-trip on it.
+echo "==> Checking the profile authorises the signing certificate"
+if [ -n "${SIGN_IDENTITY:-}" ]; then
+    "$REPO_ROOT/contrib/release/macos/check-profile-authorises-cert.sh" \
+        "$PROFILE" --identity "$SIGN_IDENTITY"
+elif [ -n "${P12_FILE:-}" ] && [ -n "${P12_PASSWORD_FILE:-}" ]; then
+    "$REPO_ROOT/contrib/release/macos/check-profile-authorises-cert.sh" \
+        "$PROFILE" --p12 "$P12_FILE" "$P12_PASSWORD_FILE"
+fi
+
 echo "==> Signing"
 if [ -n "${SIGN_IDENTITY:-}" ]; then
     codesign -f -s "$SIGN_IDENTITY" --options runtime --entitlements "$ENTITLEMENTS" "$BUNDLE"
@@ -94,7 +106,45 @@ fi
 codesign -d --entitlements - "$BUNDLE" 2>&1 | grep -q 'keychain-access-groups' \
     || { echo "the signature does not carry keychain-access-groups" >&2; exit 1; }
 
+# Read the certificate back OUT of the finished signature and check the profile
+# authorises it. The pre-sign check above tests what we meant to sign with; this
+# tests what actually landed, which is the thing AMFI will judge.
+"$REPO_ROOT/contrib/release/macos/check-profile-authorises-cert.sh" \
+    "$PROFILE" --signed-bundle "$BUNDLE"
+
+# The profile has to survive signing and be sealed by it, or AMFI never sees it.
+test -f "$BUNDLE/Contents/embedded.provisionprofile" \
+    || { echo "the signer dropped Contents/embedded.provisionprofile" >&2; exit 1; }
+grep -q 'embedded.provisionprofile' "$BUNDLE/Contents/_CodeSignature/CodeResources" \
+    || { echo "the profile is present but not sealed into CodeResources" >&2; exit 1; }
+
 echo "==> Running the ignored device_secret tests"
 # --test-threads=1: these tests share one keychain service name and assert on
 # provisioning races; running them concurrently would have them fight.
+#
+# A SIGKILL here (137) is AMFI refusing the signature at exec, and it arrives
+# with no output at all — which reads as a hung or crashed test rather than a
+# signing problem. The only evidence is in the unified log, so fetch it rather
+# than leaving the next person to rediscover the predicate.
+STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')
+set +e
 "$BUNDLE/Contents/MacOS/TestRunner" device_secret --ignored --test-threads=1
+STATUS=$?
+set -e
+if [ "$STATUS" -eq 137 ]; then
+    echo >&2
+    echo "==> Killed at exec (137). This is AMFI rejecting the signature," >&2
+    echo "    not a test failure." >&2
+    echo >&2
+    echo "    Bundle state at the moment it was refused:" >&2
+    codesign -dvvv --entitlements - "$BUNDLE" 2>&1 | sed 's/^/      /' >&2 || true
+    echo >&2
+    echo "    Unified log since $STARTED_AT:" >&2
+    log show --start "$STARTED_AT" --info --predicate \
+        'eventMessage CONTAINS[c] "coincube" OR eventMessage CONTAINS[c] "provisioning profile" OR eventMessage CONTAINS[c] "AMFI"' \
+        2>/dev/null | grep -iE "amfi|provisioning|taskgated|coincube" | tail -20 >&2 \
+        || echo "    (no matching log entries — run: log show --last 5m --info)" >&2
+    echo >&2
+    echo "    See docs/MACOS_KEYCHAIN_ENTITLEMENT.md section 4." >&2
+fi
+exit "$STATUS"
