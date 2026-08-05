@@ -44,9 +44,11 @@
 use coincube_core::miniscript::bitcoin::bip32::{DerivationPath, Xpub};
 use coincube_core::miniscript::bitcoin::Network;
 use std::str::FromStr;
+use zeroize::Zeroizing;
 
 use super::cube_enc_key::{CubeEncryptionKey, XpubEnvelope};
 use crate::services::coincube::{CubeKeyRaw, VaultMemberKeySummary};
+use crate::services::inheritance::EciesError;
 
 /// Why a Connect-served key couldn't be turned into a usable xpub.
 ///
@@ -211,12 +213,42 @@ impl ConnectKeyRow for VaultMemberKeySummary {
     }
 }
 
+/// The `key_id` a **freshly enrolled** envelope is bound to.
+///
+/// The Keychain seals before the `models.Key` row exists — `POST /keys` assigns
+/// the id with `tx.Create(key)` inside the same transaction, and there is no
+/// pre-allocation endpoint — so enrol-time envelopes can only bind `0`. The
+/// server's shape check validates with `keyID = 0` for exactly this reason
+/// (`services/keychain/key/handlers/key.go`); it never touches the AAD, which
+/// it holds no key to verify.
+///
+/// Envelopes the **API** seals — the A5 migration, which runs against existing
+/// rows — carry the real id. Hence [`resolve_key_xpub`]'s two-attempt open.
+const ENROL_TIME_KEY_ID: u64 = 0;
+
 /// Turns a Connect-served key row into a validated [`Xpub`].
 ///
 /// Prefers the envelope whenever one is present — an enrolled-and-blinded key
 /// must never silently fall back to a stale plaintext column (master I5: no
 /// plaintext downgrade). `cube_enc_key` is this Cube's seed-derived encryption
 /// key; `cube_id` is the **server** Cube id, rebuilt into the envelope AAD.
+///
+/// ## Two AAD bindings exist, so the open is tried twice
+///
+/// The row's real id first, then [`ENROL_TIME_KEY_ID`]. That order matters:
+///
+/// - A **migrated** envelope (sealed server-side against a known row) opens on
+///   the first attempt, and keeps its full binding — moved onto a different row
+///   it matches neither id, so it still fails closed.
+/// - A **fresh-enrol** envelope only ever matched `0`, so it opens on the
+///   second.
+///
+/// The honest cost: an envelope bound to `0` can be re-pointed at any key row
+/// of the *same Cube* and will still open, because there was never a row to
+/// bind. `cube_id` is still bound, so cross-Cube re-targeting fails either way,
+/// and the post-open checks (§5 of the spec) still have to pass. Closing it
+/// properly needs a pre-allocated key id at enrolment, which the API has no
+/// endpoint for.
 ///
 /// The plaintext branch runs the *same* post-decrypt validation, so a bad
 /// legacy row fails identically to a bad envelope and both reach the same
@@ -230,9 +262,7 @@ pub fn resolve_key_xpub<R: ConnectKeyRow + ?Sized>(
     let xpub_str = match row.envelope() {
         Some(env) => {
             let key = cube_enc_key.ok_or(KeyResolveError::Locked)?;
-            let plaintext = key
-                .open(env, cube_id, row.key_id())
-                .map_err(|e| KeyResolveError::Envelope(e.to_string()))?;
+            let plaintext = open_either_binding(key, env, cube_id, row.key_id())?;
             // The plaintext is a base58 xpub string; it lives in the zeroizing
             // buffer until this scope ends.
             String::from_utf8(plaintext.to_vec()).map_err(|_| KeyResolveError::NotAnXpub)?
@@ -248,6 +278,37 @@ pub fn resolve_key_xpub<R: ConnectKeyRow + ?Sized>(
     let xpub = Xpub::from_str(&xpub_str).map_err(|_| KeyResolveError::NotAnXpub)?;
     validate_xpub(&xpub, row.declared_derivation_path(), network)?;
     Ok(xpub)
+}
+
+/// Opens an envelope under whichever `key_id` binding it was sealed with (see
+/// [`resolve_key_xpub`]): the row's real id, then [`ENROL_TIME_KEY_ID`].
+///
+/// The retry is deliberately narrow. Only a tag failure
+/// ([`EciesError::BadKeyOrCorrupt`], which the codec reports for a wrong key,
+/// tampered bytes, *or* a mismatched AAD — indistinguishable by design) can be
+/// an AAD mismatch worth a second attempt. A structural failure means the bytes
+/// are malformed, so retrying would just do the same arithmetic twice and
+/// report the same thing. When both attempts fail, the caller sees the error
+/// from the *first* — the row's own binding is the one worth naming.
+///
+/// A row whose id is already `0` (a DTO that didn't carry one) is tried once;
+/// there is no second binding to try.
+fn open_either_binding(
+    key: &CubeEncryptionKey,
+    env: &XpubEnvelope,
+    cube_id: u64,
+    row_key_id: u64,
+) -> Result<Zeroizing<Vec<u8>>, KeyResolveError> {
+    let first = match key.open(env, cube_id, row_key_id) {
+        Ok(pt) => return Ok(pt),
+        Err(e) => e,
+    };
+    if row_key_id != ENROL_TIME_KEY_ID && matches!(first, EciesError::BadKeyOrCorrupt) {
+        if let Ok(pt) = key.open(env, cube_id, ENROL_TIME_KEY_ID) {
+            return Ok(pt);
+        }
+    }
+    Err(KeyResolveError::Envelope(first.to_string()))
 }
 
 /// The checks `crypto.ValidateXPub` used to run server-side, plus the
@@ -329,6 +390,24 @@ mod tests {
     const KAT_CUBE_ID: u64 = 42;
     /// Must match the fixture row's `id` — the AAD binds it.
     const KAT_KEY_ID: u64 = 7;
+
+    // The enrol-time vector: the SAME xpub, to the SAME Cube key, but sealed
+    // with `key_id = 0` — what a Keychain actually produces at `POST /keys`,
+    // before the row it will be stored against exists. Generated by the same
+    // Python oracle, which asserts it does NOT open under key_id 7.
+    const ENROL_E: &str = "029ac20335eb38768d2052be1dbbc3c8f6178407458e51e6b4ad22f1d91758895b";
+    const ENROL_NONCE: &str = "00000000000000000badc0de";
+    const ENROL_CT: &str = "317bb132d9a0d43257a3519b396a3fae30502124a693d4d06648f319f96fc6924b2b2b5af537437d128122c7f4ea7732d394c968c51bae9f20a7eff8cbefe1fc1503d462a415b380c1771ac1a31731ea25f757721a08aeb198219b1d14258ee5acd4697d58d3f9f7bbeb58dabec39253a454fc68aba4620df5c7207a4cf774";
+
+    fn enrol_time_envelope() -> XpubEnvelope {
+        XpubEnvelope {
+            scheme: super::super::cube_enc_key::SCHEME.to_string(),
+            recipient: super::super::cube_enc_key::RECIPIENT_CUBE_OWNER.to_string(),
+            ephemeral_pubkey: ENROL_E.to_string(),
+            nonce: ENROL_NONCE.to_string(),
+            ciphertext: ENROL_CT.to_string(),
+        }
+    }
 
     fn cube_key() -> CubeEncryptionKey {
         let signer = MasterSigner::from_str(Network::Testnet, MNEMONIC).unwrap();
@@ -416,13 +495,69 @@ mod tests {
         assert!(matches!(err, KeyResolveError::Envelope(_)));
     }
 
+    /// The live bug this fallback exists for: a first-time enrolment binds
+    /// `key_id = 0` because the Keychain seals before `POST /keys` assigns the
+    /// row id. Without the second attempt, every freshly-enrolled key failed to
+    /// open at Vault-build time — the common case, not an edge case.
+    #[test]
+    fn a_fresh_enrol_envelope_opens_on_a_real_row() {
+        let row = row(Some(enrol_time_envelope()), "", PATH);
+        assert_eq!(row.key_id(), KAT_KEY_ID, "the row must carry a real id");
+
+        let resolved =
+            resolve_key_xpub(&row, Some(&cube_key()), KAT_CUBE_ID, Network::Testnet).unwrap();
+        assert_eq!(resolved.to_string(), XPUB);
+    }
+
+    #[test]
+    fn a_fresh_enrol_envelope_is_still_bound_to_its_cube() {
+        // The fallback loosens the key binding, not the Cube one — a
+        // cross-Cube re-target must still fail closed.
+        let err = resolve_key_xpub(
+            &row(Some(enrol_time_envelope()), "", PATH),
+            Some(&cube_key()),
+            KAT_CUBE_ID + 1,
+            Network::Testnet,
+        )
+        .unwrap_err();
+        assert!(matches!(err, KeyResolveError::Envelope(_)));
+    }
+
+    #[test]
+    fn a_migrated_envelope_keeps_its_full_key_binding() {
+        // The fallback must not weaken envelopes that DO carry a real id: the
+        // API seals those against a known row, so a swap onto another row of
+        // the same Cube still has to fail. It matches neither the target row's
+        // id nor 0.
+        let mut wrong_row = row(Some(envelope()), "", PATH);
+        wrong_row.id = KAT_KEY_ID + 1;
+        let err = resolve_key_xpub(&wrong_row, Some(&cube_key()), KAT_CUBE_ID, Network::Testnet)
+            .unwrap_err();
+        assert!(matches!(err, KeyResolveError::Envelope(_)));
+    }
+
+    #[test]
+    fn the_row_binding_is_preferred_over_the_enrol_time_one() {
+        // Ordering check: a row-bound envelope opens without the fallback ever
+        // being reached, so it is the strong binding that wins when both could
+        // apply.
+        let resolved = resolve_key_xpub(
+            &row(Some(envelope()), "", PATH),
+            Some(&cube_key()),
+            KAT_CUBE_ID,
+            Network::Testnet,
+        )
+        .unwrap();
+        assert_eq!(resolved.to_string(), XPUB);
+    }
+
     #[test]
     fn the_key_id_is_taken_from_the_row_and_bound_into_the_aad() {
-        // The API binds `key_id` in the AAD, so the row a resolve is called for
-        // is cryptographically part of the open. A row claiming a different id
-        // cannot open an envelope sealed for key 7 — this is what stops a
-        // breached server swapping envelopes between two keys of one Cube,
-        // both of which this owner can otherwise read.
+        // The API binds `key_id` in the AAD, so for an envelope that carries a
+        // real id the row a resolve is called for is cryptographically part of
+        // the open. A row claiming a different id opens neither that id nor the
+        // enrol-time `0` fallback, so a breached server still cannot swap a
+        // migrated envelope between two keys of one Cube.
         let mut wrong_row = row(Some(envelope()), "", PATH);
         wrong_row.id = KAT_KEY_ID + 1;
         let err = resolve_key_xpub(&wrong_row, Some(&cube_key()), KAT_CUBE_ID, Network::Testnet)
