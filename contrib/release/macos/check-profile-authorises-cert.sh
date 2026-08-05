@@ -181,11 +181,15 @@ case "$MODE" in
         BUNDLE_PATH="${3:-}"
         [ -n "$BUNDLE_PATH" ] || usage
         [ -e "$BUNDLE_PATH" ] || { echo "no such bundle: $BUNDLE_PATH" >&2; exit 2; }
-        # `--extract-certificates` writes the chain as DER, leaf first. We want
-        # the leaf: that is what produced the signature and what the profile has
-        # to list.
-        ( cd "$WORK" && codesign -d --extract-certificates=chain "$BUNDLE_PATH" >/dev/null 2>&1 ) \
-            || { echo "could not read a signature from $BUNDLE_PATH" >&2; exit 2; }
+        # `--extract-certificates` writes the chain as DER, leaf first, using its
+        # argument as a filename PREFIX — which may include a directory. Writing
+        # straight into $WORK avoids cd'ing, which would break a RELATIVE bundle
+        # path like the `Tenshu.app` the workflows pass.
+        if ! err=$(codesign -d --extract-certificates="$WORK/chain" "$BUNDLE_PATH" 2>&1); then
+            echo "could not read a signature from $BUNDLE_PATH" >&2
+            echo "  $err" >&2
+            exit 2
+        fi
         [ -f "$WORK/chain0" ] || { echo "$BUNDLE_PATH carries no certificate chain (ad-hoc signed?)" >&2; exit 2; }
         openssl x509 -inform DER -in "$WORK/chain0" -out "$WORK/signer.pem" 2>/dev/null \
             || { echo "could not parse the leaf certificate from $BUNDLE_PATH" >&2; exit 2; }
