@@ -304,7 +304,7 @@ impl Installer {
         } else {
             Arc::new(Mutex::new(Signer::generate(network).unwrap()))
         };
-        let context = Context::new(
+        let mut context = Context::new(
             network,
             destination_path.clone(),
             remote_backend
@@ -342,10 +342,23 @@ impl Installer {
         // session can't supply credentials for a different Cube; the restore
         // flows have no Cube yet and get their PIN from `RestorePinSetupStep`
         // instead.
-        let mut context = context;
         context.cube_pin = cube_settings
             .as_ref()
             .and_then(|cs| crate::app::session::pin_for(&cs.id));
+        // Connect blinding (PR D3): the Vault builder opens Contacts' xpub
+        // envelopes with the Cube's seed-derived encryption key. The master
+        // signer behind the Breez client is that seed, already unlocked — same
+        // source `App` uses for `Cache::cube_encryption_key`.
+        context.cube_encryption_key = breez_client
+            .as_ref()
+            .and_then(|bc| bc.liquid_signer())
+            .and_then(|arc| {
+                arc.lock().ok().map(|s| {
+                    std::sync::Arc::new(
+                        crate::services::connect::crypto::CubeEncryptionKey::derive(&s, network),
+                    )
+                })
+            });
         let context = context;
 
         let mut installer = Installer {

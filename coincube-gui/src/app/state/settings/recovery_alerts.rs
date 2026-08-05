@@ -481,11 +481,23 @@ pub fn update(
                     };
                     ra.submitting = true;
                     ra.error = None;
+                    // Connect blinding (PR D3): the recovery-recipient list now
+                    // serves envelopes, so sealing needs this Cube's encryption
+                    // key to read the keyholder xpubs first.
+                    let cube_enc_key = cache.cube_encryption_key.clone();
+                    let network = cache.network;
                     Task::perform(
                         async move {
-                            enroll_escrow(&client, server_cube_id, descriptor_json, None)
-                                .await
-                                .map_err(|e| e.to_string())
+                            enroll_escrow(
+                                &client,
+                                server_cube_id,
+                                cube_enc_key.as_deref(),
+                                network,
+                                descriptor_json,
+                                None,
+                            )
+                            .await
+                            .map_err(|e| e.to_string())
                         },
                         move |res| {
                             ra_msg(RecoveryAlertsMessage::ChangeResult(
@@ -564,6 +576,8 @@ pub fn update(
             let network_dir = cache.datadir_path.network_directory(cache.network);
             let datadir = cache.datadir_path.path().to_path_buf();
             let network = cache.network;
+            // See the Vault-only branch: keyholder xpubs arrive blinded.
+            let cube_enc_key = cache.cube_encryption_key.clone();
             let local_cube_id = local_cube_id.to_string();
             ra.submitting = true;
             ra.awaiting_pin = false;
@@ -582,9 +596,16 @@ pub fn update(
                     })
                     .await
                     .map_err(|e| format!("PIN task failed: {}", e))??;
-                    enroll_escrow(&client, server_cube_id, descriptor_json, Some(seed_json))
-                        .await
-                        .map_err(|e| e.to_string())
+                    enroll_escrow(
+                        &client,
+                        server_cube_id,
+                        cube_enc_key.as_deref(),
+                        network,
+                        descriptor_json,
+                        Some(seed_json),
+                    )
+                    .await
+                    .map_err(|e| e.to_string())
                 },
                 move |res| {
                     ra_msg(RecoveryAlertsMessage::ChangeResult(

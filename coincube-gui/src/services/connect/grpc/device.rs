@@ -24,11 +24,18 @@ impl GrpcDeviceClient {
 
     /// Register this desktop as a device. Returns the server-assigned device ID.
     /// Idempotent — the server may return an existing device if already registered.
+    ///
+    /// `transport_pubkey` is this device's compressed-SEC1 ECIES transport key
+    /// (`PLAN-connect-blinding` PR D4). Signers seal their partial signatures
+    /// to it, so an E2E session can't complete without it being registered
+    /// first. Empty is accepted by the server (and means plaintext-only
+    /// sessions), but the desktop always sends one.
     pub async fn register_device(
         &mut self,
         device_name: String,
         app_version: String,
         os_version: String,
+        transport_pubkey: Vec<u8>,
     ) -> Result<RegisterDeviceResponse, tonic::Status> {
         let request = RegisterDeviceRequest {
             device_name,
@@ -38,6 +45,7 @@ impl GrpcDeviceClient {
             os_version,
             device_pubkey: String::new(), // Optional, for v2 assertions
             capabilities: vec!["create_session".to_string(), "cancel_session".to_string()],
+            transport_pubkey,
         };
         self.inner
             .register_device(request)

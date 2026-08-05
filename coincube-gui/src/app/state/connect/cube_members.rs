@@ -351,6 +351,7 @@ mod tests {
         pending_invites: Vec<CubeInviteSummary>,
     ) -> CubeResponse {
         CubeResponse {
+            encryption_pubkey: None,
             id: 42,
             uuid: "abc".to_string(),
             name: name.to_string(),

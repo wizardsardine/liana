@@ -129,6 +129,17 @@ pub struct ConnectCubePanel {
     /// (PLAN-duress-vault-gate PR 3). Flipped to `true` in-session when a
     /// Vault is created (see `App::WalletUpdated`).
     pub cube_has_vault: bool,
+    /// This Cube's Connect-blinding encryption **public** key (33-byte
+    /// compressed secp256k1, lowercase hex), read from
+    /// `CubeSettings::connect_encryption_pubkey`. `None` for a Cube whose seed
+    /// hasn't been unlocked on a build that derives it (e.g. a passkey Cube) —
+    /// registration then simply doesn't run, and Contacts can't enrol enveloped
+    /// keys against this Cube until it does.
+    pub cube_encryption_pubkey: Option<String>,
+    /// True once this session has published [`Self::cube_encryption_pubkey`] to
+    /// Connect. The endpoint is idempotent, so this only avoids a redundant
+    /// round-trip per launch — correctness doesn't depend on it.
+    pub(super) enc_pubkey_registered: bool,
     /// The server-side numeric ID — set after registering with the backend.
     /// Used in API paths: /connect/cubes/{server_cube_id}/...
     pub server_cube_id: Option<u64>,
@@ -200,6 +211,8 @@ impl ConnectCubePanel {
             cube_name,
             cube_network,
             cube_has_vault,
+            cube_encryption_pubkey: None,
+            enc_pubkey_registered: false,
             server_cube_id: None,
             registration_error: None,
             lightning_address: None,
@@ -445,6 +458,60 @@ impl ConnectCubePanel {
         })
     }
 
+    /// Publishes this Cube's Connect-blinding encryption pubkey to the API
+    /// (`PLAN-connect-blinding` PR D2 — the "registration wave" that also
+    /// unblocks the server-side migration, api PR A5).
+    ///
+    /// This is what lets an invited Contact's Keychain seal its xpub to us: the
+    /// API attaches the registered key to invite payloads and refuses
+    /// envelope-mode enrolment for owners who haven't registered. So it must
+    /// run **before** any invite is created — hence firing it as soon as the
+    /// server cube id is known, not lazily at Vault-build time.
+    ///
+    /// Idempotent server-side; no-ops without a live client, a server cube id,
+    /// or a derived pubkey. Failure is logged and retried on the next launch:
+    /// nothing the user is doing right now depends on it, and surfacing a toast
+    /// for a background hygiene call would be noise.
+    pub fn register_encryption_pubkey(&mut self) -> iced::Task<Message> {
+        if self.enc_pubkey_registered {
+            return iced::Task::none();
+        }
+        let (Some(client), Some(server_id), Some(pubkey)) = (
+            self.client.clone(),
+            self.server_cube_id,
+            self.cube_encryption_pubkey.clone(),
+        ) else {
+            return iced::Task::none();
+        };
+        self.enc_pubkey_registered = true;
+        iced::Task::perform(
+            async move {
+                match client.put_cube_encryption_pubkey(server_id, &pubkey).await {
+                    Ok(_) => {
+                        log::info!(
+                            "[CONNECT-CUBE] registered encryption pubkey {} for cube {}",
+                            pubkey,
+                            server_id
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[CONNECT-CUBE] registering encryption pubkey for cube {} failed: {e}",
+                            server_id
+                        );
+                        false
+                    }
+                }
+            },
+            |ok| {
+                Message::View(view::Message::ConnectCube(
+                    ConnectCubeMessage::EncryptionKeyRegistered(ok),
+                ))
+            },
+        )
+    }
+
     /// Re-report this Cube's Vault presence to the server when a Vault is
     /// created mid-session on an already-registered Cube, so its `hasVault`
     /// flips without waiting for a fresh registration (the duress vault gate;
@@ -499,16 +566,35 @@ impl ConnectCubePanel {
                         let reconcile_task = self.reconcile_spark_lightning_address();
                         // Trigger avatar load now that cube is registered.
                         let avatar_task = self.load_avatar_if_needed();
-                        match (reconcile_task, avatar_task) {
-                            (Some(r), Some(a)) => return iced::Task::batch([r, a]),
-                            (Some(t), None) | (None, Some(t)) => return t,
-                            (None, None) => {}
+                        // The server cube id just became known, which is the
+                        // only thing the encryption-pubkey PUT was waiting on.
+                        // Publish now so invites created in this session carry
+                        // the key (PLAN-connect-blinding PR D2). Skip it when
+                        // the server already reports the key we'd send.
+                        if cube_resp.encryption_pubkey.is_some()
+                            && cube_resp.encryption_pubkey == self.cube_encryption_pubkey
+                        {
+                            self.enc_pubkey_registered = true;
                         }
+                        let enc_key_task = self.register_encryption_pubkey();
+                        let mut tasks = vec![enc_key_task];
+                        tasks.extend(reconcile_task);
+                        tasks.extend(avatar_task);
+                        return iced::Task::batch(tasks);
                     }
                     Err(e) => {
                         log::error!("[CONNECT-CUBE] Failed to register cube: {}", e);
                         self.registration_error = Some(e);
                     }
+                }
+            }
+
+            ConnectCubeMessage::EncryptionKeyRegistered(ok) => {
+                // Background hygiene: on failure, clear the in-session latch so
+                // a later trigger (e.g. the next `ensure_cube_registered`) can
+                // retry rather than waiting for a relaunch.
+                if !ok {
+                    self.enc_pubkey_registered = false;
                 }
             }
 
@@ -1498,6 +1584,7 @@ mod tests {
 
     fn cube_response(lightning_address: Option<&str>) -> CubeResponse {
         CubeResponse {
+            encryption_pubkey: None,
             id: 42,
             uuid: "cube-uuid".to_string(),
             name: "Family Vault".to_string(),

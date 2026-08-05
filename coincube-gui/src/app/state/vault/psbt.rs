@@ -777,6 +777,7 @@ fn build_keychain_if_ready(
         cache.cube_id.clone(),
         descriptor_id,
         psbt.clone(),
+        cache.connect_transport_key.clone(),
     );
     let launch = modal.launch();
     (Some(modal), launch)

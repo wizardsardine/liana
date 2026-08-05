@@ -51,7 +51,7 @@ pub const SCHEME: &str = "ecies-secp256k1-hkdf-sha256-aes256gcm-v1";
 /// The label prefixing both the HKDF `info` and the AEAD `aad` (SPEC §1). The
 /// trailing `\x00` is part of the label — it separates the label from the
 /// binary that follows.
-const ECIES_LABEL: &[u8] = b"coincube-inheritance-ecies-v1\x00";
+pub(crate) const ECIES_LABEL: &[u8] = b"coincube-inheritance-ecies-v1\x00";
 
 /// HKDF salt: 32 explicit zero bytes (SPEC §1 — not empty/None).
 const HKDF_SALT: [u8; 32] = [0u8; 32];
@@ -76,23 +76,40 @@ const WRAP_VERSION: u8 = 0x01;
 /// full path from the seed root so Keychain derives the matching `d`.
 pub const ENCRYPTION_CHILD_INDEX: u32 = 7000;
 
-const KEY_LEN: usize = 32; // AES-256
-const NONCE_LEN: usize = 12; // GCM standard
-const TAG_LEN: usize = 16;
+// The four length constants and the two primitives below (`ecdh_ikm`,
+// `hkdf_key`) are `pub(crate)` because the Connect-blinding xpub envelope
+// (`services::connect::crypto::cube_enc_key`) is the *same* construction over a
+// different domain label — one implementation of the curve/KDF core, two
+// domains (SPEC-cube-xpub-envelope-v1 §1 defers to SPEC-ecies-v1 §1). Do not
+// add a second ECDH/HKDF implementation; add a label instead.
+pub(crate) const KEY_LEN: usize = 32; // AES-256
+pub(crate) const NONCE_LEN: usize = 12; // GCM standard
+pub(crate) const TAG_LEN: usize = 16;
 /// Compressed secp256k1 point.
-const PUBKEY_LEN: usize = 33;
+pub(crate) const PUBKEY_LEN: usize = 33;
 /// Fixed length of a `wrapped_shared_key` (§4b): `version(1) ‖ E_w(33) ‖
 /// nonce(12) ‖ ct‖tag(48)` — the wrapped plaintext is always the 32-byte `K`.
 const WRAPPED_LEN: usize = 1 + PUBKEY_LEN + NONCE_LEN + KEY_LEN + TAG_LEN;
 
-/// Which recovery artifact an envelope carries. The byte form is bound into
-/// the AAD; the wire string matches the API's `artifactKind`.
+/// Which artifact an envelope carries. The byte form is bound into the AAD; the
+/// wire string matches the API's `artifactKind`.
+///
+/// The discriminants are the cross-repo contract — `coincube-api`'s
+/// `crypto.ArtifactKindByte*` in `crypto/ecies.go` must agree byte-for-byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactKind {
     /// The wallet output descriptor (Vault-only and Full-Cube tiers).
     Descriptor,
     /// The master seed / mnemonic (Full-Cube tier only).
     Seed,
+    /// A keyholder's extended public key, blinded to the owning Cube's
+    /// encryption pubkey (`PLAN-connect-blinding` Track A).
+    ///
+    /// A *different envelope family* riding the *same* construction: same
+    /// scheme id, same label, same HKDF — only this byte differs. That is what
+    /// makes an xpub envelope fail closed if anything tries to open it as a
+    /// descriptor or seed, and vice-versa, without needing a second codec.
+    Xpub,
 }
 
 impl ArtifactKind {
@@ -101,14 +118,17 @@ impl ArtifactKind {
         match self {
             Self::Descriptor => "descriptor",
             Self::Seed => "seed",
+            Self::Xpub => "xpub",
         }
     }
 
-    /// One-byte AAD discriminant (SPEC §1: descriptor=0x01, seed=0x02).
+    /// One-byte AAD discriminant (SPEC §1: descriptor=0x01, seed=0x02;
+    /// xpub=0x03 per the Connect-blinding extension).
     fn aad_byte(self) -> u8 {
         match self {
             Self::Descriptor => 0x01,
             Self::Seed => 0x02,
+            Self::Xpub => 0x03,
         }
     }
 
@@ -118,6 +138,7 @@ impl ArtifactKind {
         match s {
             "descriptor" => Some(Self::Descriptor),
             "seed" => Some(Self::Seed),
+            "xpub" => Some(Self::Xpub),
             _ => None,
         }
     }
@@ -217,7 +238,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `label ‖ kind_byte ‖ cube_id(u64 BE) ‖ keyholder_key_id(u64 BE)`. The heir
 /// rebuilds it from the envelope kind + the recovery context, so a server that
 /// re-targets an envelope to a different cube/keyholder breaks the tag.
-fn aad_bytes(kind: ArtifactKind, cube_id: u64, keyholder_key_id: u64) -> Vec<u8> {
+pub(crate) fn aad_bytes(kind: ArtifactKind, cube_id: u64, keyholder_key_id: u64) -> Vec<u8> {
     let mut aad = Vec::with_capacity(ECIES_LABEL.len() + 1 + 8 + 8);
     aad.extend_from_slice(ECIES_LABEL);
     aad.push(kind.aad_byte());
@@ -230,7 +251,7 @@ fn aad_bytes(kind: ArtifactKind, cube_id: u64, keyholder_key_id: u64) -> Vec<u8>
 /// `scalar · point`** — the raw curve point, deliberately NOT the SHA256-hashed
 /// `ecdh::SharedSecret`. `shared_secret_point` returns the uncompressed `x‖y`;
 /// we compress it (prefix from the parity of `y`).
-fn ecdh_ikm(point: &PublicKey, scalar: &SecretKey) -> Zeroizing<[u8; PUBKEY_LEN]> {
+pub(crate) fn ecdh_ikm(point: &PublicKey, scalar: &SecretKey) -> Zeroizing<[u8; PUBKEY_LEN]> {
     let xy = shared_secret_point(point, scalar); // [u8; 64] = x(32) ‖ y(32), BE
     let mut ikm = Zeroizing::new([0u8; PUBKEY_LEN]);
     ikm[0] = 0x02 | (xy[63] & 0x01); // compressed prefix from y's least bit
@@ -241,7 +262,7 @@ fn ecdh_ikm(point: &PublicKey, scalar: &SecretKey) -> Zeroizing<[u8; PUBKEY_LEN]
 /// HKDF-SHA256 per SPEC §1 / §4b: `salt = 0x00*32`, `info = label ‖ E ‖ P`,
 /// 32-byte output. `label` is [`ECIES_LABEL`] for envelopes and [`WRAP_LABEL`]
 /// for the §4b key wrap; `eph_pub` is `E`, `recipient_pub` is `P` (compressed).
-fn hkdf_key(
+pub(crate) fn hkdf_key(
     label: &[u8],
     ikm: &[u8],
     eph_pub: &[u8],
@@ -468,7 +489,7 @@ pub fn unwrap_shared_key(
 /// Generates a uniformly random valid secp256k1 secret key. The reject loop
 /// only ever retries on the negligible chance of a zero / out-of-range
 /// scalar; in practice it succeeds on the first draw.
-fn random_secret_key() -> SecretKey {
+pub(crate) fn random_secret_key() -> SecretKey {
     let mut rng = rand::thread_rng();
     loop {
         let mut bytes = Zeroizing::new([0u8; 32]);

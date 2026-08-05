@@ -627,6 +627,8 @@ pub async fn load_application(
     .unwrap_or_default();
     // Both last poll fields start with the same value.
     let cache = Cache {
+        connect_transport_key: None,
+        cube_encryption_key: None,
         datadir_path: config.datadir_path,
         network: config.info.network,
         // Recomputed from the P2P panel's Mostro config once panels are built.

@@ -616,6 +616,44 @@ pub struct UpdateCubeRequest {
     pub has_vault: Option<bool>,
 }
 
+/// Request body for `PUT /api/v1/connect/cubes/{cubeId}/encryption-pubkey` —
+/// the Cube's Connect-blinding encryption pubkey
+/// (`SPEC-cube-xpub-envelope-v1` §3).
+///
+/// Public material: 33-byte compressed secp256k1, lowercase hex. The server
+/// canonicalises to lowercase and validates the point before storing. The
+/// private half is derived from the Cube's master seed on demand and never
+/// leaves the device.
+#[derive(Debug, Clone, Serialize)]
+pub struct PutCubeEncryptionPubkeyRequest {
+    #[serde(rename = "encryptionPubkey")]
+    pub encryption_pubkey: String,
+}
+
+/// Response of both the `PUT` and `GET` on
+/// `/connect/cubes/{cubeId}/encryption-pubkey`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CubeEncryptionPubkeyResponse {
+    pub cube_id: u64,
+    /// `None` when the owner hasn't registered yet — the signal that the
+    /// registration wave still needs to run, and the reason envelope-mode
+    /// enrolment is refused for this Cube until it does.
+    pub encryption_pubkey: Option<String>,
+}
+
+/// Request body for
+/// `POST /api/v1/connect/cubes/{cubeId}/keys/{keyId}/envelope-invalid`.
+///
+/// `reason` is a closed set (`"decrypt_failed"` | `"xpub_invalid"`) — it is
+/// echoed into the audit trail and the keyholder's re-enrol email, so free text
+/// would be an injection surface. Build it with
+/// [`crate::services::connect::crypto::KeyResolveError::report_reason`].
+#[derive(Debug, Clone, Serialize)]
+pub struct ReportEnvelopeInvalidRequest {
+    pub reason: String,
+}
+
 /// Response from POST/GET /api/v1/connect/cubes/{id}
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -640,6 +678,13 @@ pub struct CubeResponse {
     /// local `settings.json`, which wins over this value).
     #[serde(default)]
     pub has_vault: Option<bool>,
+    /// The Cube's registered Connect-blinding encryption pubkey (33-byte
+    /// compressed secp256k1, lowercase hex) when one has been registered.
+    /// `None` on an API that predates the field, or on a Cube whose owner
+    /// hasn't run the registration wave yet — in which case Contacts' Keychains
+    /// have nothing to seal their xpubs to. Public material.
+    #[serde(default)]
+    pub encryption_pubkey: Option<String>,
     /// Populated by `GET /connect/cubes/{id}` (not by `list_cubes`). Defaults
     /// to empty so existing list-based code paths keep working.
     #[serde(default)]
@@ -746,7 +791,20 @@ pub struct CubeKeyRaw {
     // --- Required fields (present in both legacy and W3 shapes) ---
     pub id: u64,
     pub name: String,
+    /// Plaintext xpub. **Empty once the key is blinded** — Connect serves
+    /// [`Self::xpub_envelope`] instead (`PLAN-connect-blinding` Track A). It
+    /// stays populated during the dual-write window and for keys enrolled
+    /// before blinding shipped, so both shapes must be tolerated. Read it
+    /// through [`crate::services::connect::crypto::resolve_key_xpub`], which
+    /// prefers the envelope and applies the post-decrypt validation the server
+    /// can no longer do; never parse this field directly.
+    #[serde(default)]
     pub xpub: String,
+    /// The blinded xpub, sealed by the key owner's Keychain to this Cube's
+    /// encryption pubkey (`SPEC-cube-xpub-envelope-v1`). Present instead of
+    /// [`Self::xpub`] once the key is enrolled in envelope mode.
+    #[serde(default)]
+    pub xpub_envelope: Option<crate::services::connect::crypto::XpubEnvelope>,
     pub fingerprint: String,
     pub derivation_path: String,
     pub network: String,
@@ -800,6 +858,15 @@ pub struct CubeKeyRaw {
 /// recipient. Mirrors the API's `models.RecoveryRecipientRoleOwnerSelf`.
 pub const RECOVERY_ROLE_OWNER_SELF: &str = "owner-self";
 
+/// `status` value for a key whose xpub envelope the owner reported as
+/// unopenable (`models.KeyStatusEnvelopeInvalid`, `coincube-api` PR A4).
+///
+/// **Not a revocation.** The key material is presumed fine; the *ciphertext*
+/// isn't. The server clears the stale envelope with the flag, so such a row
+/// arrives with neither an `xpub` nor an `xpubEnvelope` and stays unusable
+/// until its owner re-enrols from their Keychain.
+pub const KEY_STATUS_ENVELOPE_INVALID: &str = "envelope_invalid";
+
 impl CubeKeyRaw {
     /// Returns the server-supplied `ownerUserId` when present, falling back
     /// to the legacy `primaryOwnerId`. Callers should prefer this over
@@ -817,6 +884,13 @@ impl CubeKeyRaw {
     /// shows it as a disabled row and the selection handler refuses it.
     pub fn is_owner_self_recovery(&self) -> bool {
         self.recovery_role == RECOVERY_ROLE_OWNER_SELF
+    }
+
+    /// `true` iff this key is awaiting re-enrolment after its xpub envelope was
+    /// reported unopenable. It has no readable key material at all, so it can't
+    /// be placed in a Vault until its owner re-shares it.
+    pub fn is_envelope_invalid(&self) -> bool {
+        self.status == KEY_STATUS_ENVELOPE_INVALID
     }
 }
 
@@ -1400,7 +1474,18 @@ pub struct AddVaultMemberRequest {
 pub struct VaultMemberKeySummary {
     pub id: u64,
     pub name: String,
+    /// Plaintext xpub. **Empty once the key is blinded** — Connect serves
+    /// [`Self::xpub_envelope`] instead (`PLAN-connect-blinding` Track A).
+    /// `#[serde(default)]` so an envelope-only response still deserialises.
+    /// Read it through [`crate::services::connect::crypto::resolve_key_xpub`],
+    /// never directly.
+    #[serde(default)]
     pub xpub: String,
+    /// The blinded xpub, sealed by the keyholder's Keychain to the owning
+    /// Cube's encryption pubkey (`SPEC-cube-xpub-envelope-v1`). Present instead
+    /// of [`Self::xpub`] once the key is enrolled in envelope mode.
+    #[serde(default)]
+    pub xpub_envelope: Option<crate::services::connect::crypto::XpubEnvelope>,
     pub derivation_path: String,
 }
 

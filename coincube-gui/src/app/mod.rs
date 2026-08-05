@@ -1780,6 +1780,48 @@ fn make_connect_stream(
 /// for this environment), or with `Some(cfg)` otherwise. The handler
 /// stashes the config and the next `subscription()` tick wires the
 /// stream.
+/// Derives the active Cube's Connect-blinding encryption key
+/// (`SPEC-cube-xpub-envelope-v1` §3) from the master signer the Cube was
+/// unlocked with, for [`Cache::cube_encryption_key`].
+///
+/// The signer reached through the Breez client is the Cube's **master seed**
+/// signer — all wallets (Vault, Liquid, Spark) derive from it, and it's the
+/// same fingerprint recorded in `CubeSettings::master_signer_fingerprint`, so
+/// the key derived here is the one whose public half was registered with
+/// Connect at unlock.
+///
+/// Returns `None` when there's no on-disk seed to derive from (watch-only /
+/// descriptor-only restores, passkey Cubes): blinded keys then surface as
+/// `KeyResolveError::Locked` rather than being wrongly reported invalid.
+fn derive_cube_encryption_key(
+    breez_client: &BreezClient,
+    network: coincube_core::miniscript::bitcoin::Network,
+) -> Option<Arc<crate::services::connect::crypto::CubeEncryptionKey>> {
+    let signer = breez_client.liquid_signer()?;
+    let guard = signer.lock().ok()?;
+    Some(Arc::new(
+        crate::services::connect::crypto::CubeEncryptionKey::derive(&guard, network),
+    ))
+}
+
+/// Loads (minting on first use) this device's Connect signing-rail transport
+/// key for [`Cache::connect_transport_key`].
+///
+/// A failure here is non-fatal and logged: the desktop simply can't run
+/// end-to-end signing sessions this launch, and `KeychainSignModal` fails those
+/// rows closed rather than downgrading to a plaintext rail.
+fn load_connect_transport_key(
+    network_dir: &crate::dir::NetworkDirectory,
+) -> Option<Arc<crate::services::connect::crypto::DeviceTransportKey>> {
+    match crate::services::connect::crypto::DeviceTransportKey::load_or_create(network_dir) {
+        Ok(k) => Some(Arc::new(k)),
+        Err(e) => {
+            tracing::warn!("Could not load this device's Connect transport key: {e}");
+            None
+        }
+    }
+}
+
 fn connect_stream_ready_task(
     network: coincube_core::miniscript::bitcoin::Network,
     datadir: CoincubeDirectory,
@@ -1874,6 +1916,17 @@ impl App {
             String,
         )>,
     ) -> (App, Task<Message>) {
+        let mut cache = cache;
+        // Connect blinding (PR D3): derive the Cube's encryption key once from
+        // the master signer the unlock already loaded, so every surface that
+        // opens a Connect-served key can do so without re-prompting for a PIN.
+        cache.cube_encryption_key = derive_cube_encryption_key(&breez_client, cache.network);
+        // …and load (or mint) this device's signing-rail transport key. Not
+        // seed-derived and not Cube-scoped — it comes up with the rail at login
+        // (PR D4).
+        cache.connect_transport_key =
+            load_connect_transport_key(&data_dir.network_directory(cache.network));
+        let cache = cache;
         let config_arc = Arc::new(config);
         let liquid_backend = Arc::new(LiquidBackend::new(breez_client.clone()));
         let wallet_registry = crate::app::wallets::WalletRegistry::with_spark(
@@ -1895,6 +1948,11 @@ impl App {
             cube_settings.name.clone(),
             settings::network_to_api_string(cache.network),
         );
+        // Connect blinding (PR D2): hand the panel the seed-derived encryption
+        // pubkey persisted at unlock, so the registration wave can publish it.
+        panels
+            .connect
+            .set_cube_encryption_pubkey(cube_settings.connect_encryption_pubkey.clone());
         let mut tasks = vec![];
         if let Some(vault_overview) = panels.vault_overview.as_mut() {
             tasks.push(vault_overview.reload(Some(daemon.clone()), Some(wallet.clone())));
@@ -2049,7 +2107,14 @@ impl App {
             cube_settings.name.clone(),
             settings::network_to_api_string(network),
         );
+        // See the sibling assignments in `App::new` (PRs D2/D3).
+        panels
+            .connect
+            .set_cube_encryption_pubkey(cube_settings.connect_encryption_pubkey.clone());
         let mut cache = cache;
+        cache.cube_encryption_key = derive_cube_encryption_key(&breez_client, network);
+        cache.connect_transport_key =
+            load_connect_transport_key(&datadir.network_directory(network));
         cache.has_p2p = panels.p2p.is_some();
         // See the sibling assignment in `App::new`: probe the on-disk Liquid
         // state (not the live connection) for the "wallet exists on this machine"

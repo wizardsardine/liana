@@ -375,6 +375,91 @@ pub fn derive_master_signer_fingerprint(
     })
 }
 
+/// Outcome of [`derive_connect_encryption_pubkey`].
+///
+/// The two failure cases are deliberately separate. Collapsing them into
+/// `None` — which an earlier revision did — makes a Cube that *should* be
+/// registrable disappear silently: it never publishes an encryption pubkey, so
+/// Contacts cannot enrol enveloped keys against it and it sits forever in the
+/// A5 migration's registration-coverage report as a straggler nobody can
+/// explain. One of these is normal; the other is a bug that must be loud.
+#[derive(Debug)]
+pub enum ConnectEncryptionKey {
+    /// The 33-byte compressed public key, lowercase hex.
+    Derived(String),
+    /// **Expected.** This Cube has no master seed on this device — a
+    /// descriptor-only / watch-only restore, or a passkey Cube. There is
+    /// nothing to derive from and never will be until a seed arrives, so
+    /// callers skip quietly. Connect blinding simply degrades to "this Cube
+    /// can't receive enveloped keys".
+    NoSeed,
+    /// **Unexpected.** A master seed file exists and the Cube just unlocked,
+    /// but the seed would not open for us. In practice that means the
+    /// credentials we passed disagree with the ones the unlock path used —
+    /// most likely the `seed_crypt` `cube_id` AAD binding, or a v3 file
+    /// reached without the device secret. Callers must log this loudly and
+    /// surface it; skipping quietly is what produces the phantom straggler.
+    Unreadable(String),
+}
+
+/// Derives this Cube's Connect-blinding encryption **public** key from its
+/// master seed (`SPEC-cube-xpub-envelope-v1` §3), returning the 33-byte
+/// compressed key as lowercase hex.
+///
+/// Only the public half is returned: the private scalar lives inside the
+/// returned-and-dropped `CubeEncryptionKey` and is zeroized here. Callers
+/// persist the hex into [`CubeSettings::connect_encryption_pubkey`] so the
+/// later, PIN-less registration wave can publish it (`PLAN-connect-blinding`
+/// PR D2) — the *private* half is re-derived on demand at decrypt time and is
+/// never stored.
+///
+/// ## Where the signer comes from
+///
+/// The session cache first, exactly as the Liquid and Spark loaders do.
+/// Verifying the PIN *is* a full Argon2id pass over the seed file, so the
+/// unlock that just happened is already holding the decrypted signer; re-reading
+/// the file would pay ~831 ms for a result we have. It is also the **only** way
+/// this works on a v3 Cube: a v3 seed needs the OS-keystore device secret,
+/// `coincube-core` has no keystore access, and so
+/// `MasterSigner::from_datadir_by_fingerprint` returns `DeviceSecretRequired`
+/// for every v3 file. Reading from disk is the fallback for the entry points
+/// that have no session (v1/v2 only).
+pub fn derive_connect_encryption_pubkey(
+    datadir_root: &std::path::Path,
+    network: Network,
+    fingerprint: Fingerprint,
+    pin: &str,
+    cube_id: &str,
+) -> ConnectEncryptionKey {
+    use crate::services::connect::crypto::CubeEncryptionKey;
+    use coincube_core::signer::{MasterSigner, SignerError};
+
+    let loaded = match crate::app::session::unlocked_signer(cube_id, fingerprint) {
+        Some(signer) => Ok(signer),
+        None => MasterSigner::from_datadir_by_fingerprint(
+            datadir_root,
+            network,
+            fingerprint,
+            Some(pin),
+            cube_id,
+        ),
+    };
+
+    match loaded {
+        Ok(signer) => ConnectEncryptionKey::Derived(
+            CubeEncryptionKey::derive(&signer, network).public_key_hex(),
+        ),
+        // No seed file for this fingerprint: nothing to derive, and nothing
+        // wrong. Mapped the same way `load_breez_client` maps an absent signer.
+        Err(SignerError::SignerNotFound(_)) => ConnectEncryptionKey::NoSeed,
+        Err(SignerError::MnemonicStorage(ref e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            ConnectEncryptionKey::NoSeed
+        }
+        // Everything else means the file is there and we could not open it.
+        Err(e) => ConnectEncryptionKey::Unreadable(e.to_string()),
+    }
+}
+
 /// A Cube's relationship to Connect, rendered as a single tri-state cube icon
 /// on the Cubes list (Phase 1 of duress mode). The progression
 /// Sovereign → Registered → Backed up mirrors increasing recoverability.
@@ -432,6 +517,23 @@ pub struct CubeSettings {
         alias = "breez_wallet_signer_fingerprint"
     )]
     pub master_signer_fingerprint: Option<Fingerprint>,
+    /// This Cube's Connect-blinding encryption **public** key — 33-byte
+    /// compressed secp256k1, lowercase hex (`SPEC-cube-xpub-envelope-v1` §3).
+    ///
+    /// Cached here for the same ordering reason as [`Self::liquid_granted`],
+    /// mirrored: the private half is derived from the master seed and so is
+    /// only computable while the Cube is unlocked (PIN in hand), but the
+    /// *registration* that publishes it to Connect happens later — after
+    /// Connect sign-in, on a code path with no PIN. So the public half is
+    /// derived once at unlock and persisted here; the registration wave reads
+    /// it from settings.
+    ///
+    /// Public material — safe to store in plaintext, safe to log. The private
+    /// scalar is never persisted anywhere. `None` means "not derived yet"
+    /// (a legacy Cube before its first unlock on this build); it is re-derived
+    /// and re-persisted at the next unlock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_encryption_pubkey: Option<String>,
     /// Bitcoin display unit preference for this cube
     #[serde(default)]
     pub unit_setting: unit::UnitSetting,
@@ -568,6 +670,9 @@ impl CubeSettings {
             // the next features fetch and takes effect at the next cube open.
             liquid_granted: None,
             master_signer_fingerprint: None,
+            // Derived at the first unlock (the PIN is needed to reach the
+            // seed), then persisted — see the field docs.
+            connect_encryption_pubkey: None,
             backed_up: false,
             mfa_done: false,
             remote_synced: false,
@@ -1616,6 +1721,214 @@ mod test {
             !cube.has_recovery_kit(),
             "local seed backup must not be mistaken for a Connect recovery kit"
         );
+    }
+
+    /// PLAN-connect-blinding D2 hardening: "no seed here" and "there IS a seed
+    /// and it would not open" are different facts and must not both arrive as a
+    /// bare `None`. Conflating them is how a Cube becomes a permanent straggler
+    /// in the A5 registration-coverage report with no visible cause.
+    #[test]
+    fn missing_seed_and_unreadable_seed_are_distinguishable() {
+        use super::{derive_connect_encryption_pubkey, ConnectEncryptionKey};
+        use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
+        use coincube_core::miniscript::bitcoin::Network;
+        use coincube_core::signer::MasterSigner;
+        use std::str::FromStr;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        let root =
+            std::env::temp_dir().join(format!("coincube-encpubkey-{}-{}", std::process::id(), seq));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        const PIN: &str = "1234";
+        const CUBE: &str = "cube-a";
+        let fp = Fingerprint::from_str("deadbeef").unwrap();
+
+        // (1) Nothing on disk at all → NoSeed. Quiet skip, no error state.
+        assert!(
+            matches!(
+                derive_connect_encryption_pubkey(&root, Network::Testnet, fp, PIN, CUBE),
+                ConnectEncryptionKey::NoSeed
+            ),
+            "an absent seed must be reported as NoSeed, not as a failure"
+        );
+
+        // (2) Write a real seed for CUBE, then ask for it under a DIFFERENT
+        //     cube id. That is exactly the seed_crypt cube_id-binding
+        //     disagreement the hardening exists to catch: the file is present
+        //     and the AAD does not match, so it must be Unreadable — loud —
+        //     rather than silently skipped.
+        let signer = MasterSigner::generate(Network::Testnet).unwrap();
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
+        let real_fp = signer.fingerprint(&secp);
+        signer
+            // `device_secret: None` writes v2 — the format whose AAD binds the
+            // cube id and nothing else, which is what this test probes.
+            .store_encrypted(&root, Network::Testnet, &secp, None, PIN, CUBE, None)
+            .expect("store seed");
+
+        assert!(
+            matches!(
+                derive_connect_encryption_pubkey(
+                    &root,
+                    Network::Testnet,
+                    real_fp,
+                    PIN,
+                    "a-different-cube",
+                ),
+                ConnectEncryptionKey::Unreadable(_)
+            ),
+            "a present-but-unopenable seed must be Unreadable, never a quiet skip"
+        );
+
+        // (3) The same file, asked for correctly, derives the key — so (2) is
+        //     about the binding and not about the file being broken.
+        let ok = derive_connect_encryption_pubkey(&root, Network::Testnet, real_fp, PIN, CUBE);
+        let ConnectEncryptionKey::Derived(hex) = ok else {
+            panic!("the correct cube id must derive the key, got {:?}", ok);
+        };
+        assert_eq!(hex.len(), 66, "33-byte compressed pubkey as hex");
+        assert!(hex.starts_with("02") || hex.starts_with("03"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The regression the merge introduced, pinned.
+    ///
+    /// A **v3** seed needs the OS-keystore device secret, and `coincube-core`
+    /// has no keystore access — so `MasterSigner::from_datadir_by_fingerprint`
+    /// returns `DeviceSecretRequired` for *every* v3 file. Deriving straight
+    /// from disk therefore fails on the now-default Cube format, which would
+    /// have meant no Cube minted after the seed hardening ever registered an
+    /// encryption pubkey. The session cache (what the unlock that just ran is
+    /// already holding) is the path that works, and preferring it is also what
+    /// avoids a second ~831 ms Argon2id pass.
+    #[test]
+    fn a_v3_cube_derives_from_the_session_and_is_loud_without_it() {
+        use super::{derive_connect_encryption_pubkey, ConnectEncryptionKey};
+        use coincube_core::miniscript::bitcoin::Network;
+        use coincube_core::signer::MasterSigner;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use zeroize::Zeroizing;
+
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        let root = std::env::temp_dir().join(format!(
+            "coincube-encpubkey-v3-{}-{}",
+            std::process::id(),
+            seq
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        const PIN: &str = "1234";
+        // Namespaced: `app::session` is process-global, so a shared cube id
+        // would let these tests clobber each other under `cargo test`.
+        let cube_id = format!("cube-v3-{}-{}", std::process::id(), seq);
+        let device_secret: coincube_core::seed_crypt::DeviceSecret = Zeroizing::new([0x5a; 32]);
+
+        let signer = MasterSigner::generate(Network::Testnet).unwrap();
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
+        let fp = signer.fingerprint(&secp);
+        signer
+            .store_encrypted(
+                &root,
+                Network::Testnet,
+                &secp,
+                None,
+                PIN,
+                &cube_id,
+                Some(&device_secret),
+            )
+            .expect("store v3 seed");
+
+        // No session: the disk path cannot open v3 at all. Must be LOUD, not a
+        // quiet skip — a quiet skip here is precisely the phantom straggler.
+        crate::app::session::close();
+        let without_session =
+            derive_connect_encryption_pubkey(&root, Network::Testnet, fp, PIN, &cube_id);
+        assert!(
+            matches!(without_session, ConnectEncryptionKey::Unreadable(_)),
+            "a v3 seed with no session must report Unreadable, got {:?}",
+            without_session
+        );
+
+        // With the session populated — the real post-unlock state — it derives.
+        crate::app::session::store_unlocked_signer(
+            &cube_id,
+            fp,
+            signer.try_clone().expect("clone signer"),
+        );
+        let with_session =
+            derive_connect_encryption_pubkey(&root, Network::Testnet, fp, PIN, &cube_id);
+        let ConnectEncryptionKey::Derived(hex) = with_session else {
+            panic!(
+                "a v3 Cube must derive from the session, got {:?}",
+                with_session
+            );
+        };
+        assert_eq!(hex.len(), 66);
+
+        // It must be the key the envelope codec would use for this seed —
+        // registering anything else silently strands every sealed envelope.
+        let expected =
+            crate::services::connect::crypto::CubeEncryptionKey::derive(&signer, Network::Testnet)
+                .public_key_hex();
+        assert_eq!(hex, expected);
+
+        crate::app::session::close();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The other half of the matrix: a **v2** seed written before the cube-id
+    /// binding existed. `seed_crypt` keeps an unbound-AAD (empty `cube_id`)
+    /// fallback for exactly these files, so they must open from disk with no
+    /// session at all — the pre-hardening Cube keeps working.
+    #[test]
+    fn a_pre_hardening_v2_seed_derives_from_disk() {
+        use super::{derive_connect_encryption_pubkey, ConnectEncryptionKey};
+        use coincube_core::miniscript::bitcoin::Network;
+        use coincube_core::signer::MasterSigner;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        let root = std::env::temp_dir().join(format!(
+            "coincube-encpubkey-v2-{}-{}",
+            std::process::id(),
+            seq
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        const PIN: &str = "1234";
+        let signer = MasterSigner::generate(Network::Testnet).unwrap();
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
+        let fp = signer.fingerprint(&secp);
+
+        // Written with an EMPTY cube id: a v2 file from before the binding.
+        signer
+            .store_encrypted(&root, Network::Testnet, &secp, None, PIN, "", None)
+            .expect("store pre-hardening v2 seed");
+
+        // Opened while naming a Cube, with no session — the unbound-AAD
+        // fallback is what has to carry this, and it is v2-only by design.
+        crate::app::session::close();
+        let out =
+            derive_connect_encryption_pubkey(&root, Network::Testnet, fp, PIN, "cube-minted-later");
+        let ConnectEncryptionKey::Derived(hex) = out else {
+            panic!("a pre-hardening v2 seed must still derive, got {:?}", out);
+        };
+        assert_eq!(
+            hex,
+            crate::services::connect::crypto::CubeEncryptionKey::derive(&signer, Network::Testnet)
+                .public_key_hex()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -400,6 +400,13 @@ pub enum Message {
         /// opens and its files are untouched, but the upgrade did not happen and
         /// the user is told rather than only the log.
         migration_error: Option<String>,
+        /// Set when the Cube's Connect encryption key could not be derived
+        /// *despite* a seed file being present (`PLAN-connect-blinding` D2).
+        /// Same contract as `migration_error`: the Cube opens fine, but the
+        /// consequence is invisible — the Cube never registers with Connect and
+        /// its Contacts cannot share keys with it — so it is told, not only
+        /// logged.
+        enc_key_error: Option<String>,
         breez_client: Result<Arc<app::breez_liquid::BreezClient>, app::breez_liquid::BreezError>,
         /// Spark backend loaded in the same task as the Liquid client.
         /// `None` if the cube has no Spark signer configured; `Some(Err(..))`
@@ -453,7 +460,10 @@ pub struct Tab {
     ///
     /// Held rather than dispatched because only `State::App` handles
     /// `Message::Run`; see [`Tab::flush_migration_warning`].
-    pending_migration_warning: Option<String>,
+    /// Non-fatal warnings raised during unlock, parked until an `App` exists
+    /// to show them. `Loader` and `Login` cannot toast, so anything raised
+    /// before the Cube is up waits here.
+    pending_unlock_warnings: Vec<String>,
 }
 
 impl Tab {
@@ -462,7 +472,7 @@ impl Tab {
             id,
             state,
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
-            pending_migration_warning: None,
+            pending_unlock_warnings: Vec::new(),
         }
     }
 
@@ -544,12 +554,15 @@ impl Tab {
         if !matches!(self.state, State::App(_)) {
             return Task::none();
         }
-        match self.pending_migration_warning.take() {
-            Some(msg) => Task::done(Message::Run(app::Message::View(
-                app::view::Message::ShowToast(log::Level::Warn, msg),
-            ))),
-            None => Task::none(),
+        let queued = std::mem::take(&mut self.pending_unlock_warnings);
+        if queued.is_empty() {
+            return Task::none();
         }
+        Task::batch(queued.into_iter().map(|msg| {
+            Task::done(Message::Run(app::Message::View(
+                app::view::Message::ShowToast(log::Level::Warn, msg),
+            )))
+        }))
     }
 
     pub fn on_tick(&mut self) -> Task<Message> {
@@ -1577,6 +1590,8 @@ impl Tab {
                                     // failure reaches the user rather than only
                                     // the log file.
                                     let mut migration_error: Option<String> = None;
+                                    // Set only by the CEK::Unreadable arm below.
+                                    let mut enc_key_error: Option<String> = None;
 
                                     // The PIN stays available for the lifetime
                                     // of the open Cube. The Vault installer
@@ -1821,6 +1836,100 @@ impl Tab {
                                     // from the same master seed fingerprint.
                                     let breez_signer_fingerprint = cube.master_signer_fingerprint;
 
+                                    // Connect blinding (PLAN-connect-blinding
+                                    // PR D2): the Cube's encryption *public*
+                                    // key is seed-derived, so unlock is the
+                                    // only moment it can be computed — the
+                                    // registration wave that publishes it runs
+                                    // later, after Connect sign-in, with no PIN
+                                    // in hand. Derive once and persist; the
+                                    // private half is never stored and is
+                                    // re-derived on demand at decrypt time.
+                                    if cube.connect_encryption_pubkey.is_none() {
+                                        if let Some(fp) = breez_signer_fingerprint {
+                                            use app::settings::ConnectEncryptionKey as CEK;
+                                            match app::settings::derive_connect_encryption_pubkey(
+                                                datadir_clone.path(),
+                                                network_val,
+                                                fp,
+                                                &pin,
+                                                &cube.id,
+                                            ) {
+                                                CEK::Derived(pubkey) => {
+                                                    cube.connect_encryption_pubkey =
+                                                        Some(pubkey.clone());
+                                                    let cube_id = cube.id.clone();
+                                                    let network_dir = datadir_clone
+                                                        .network_directory(network_val);
+                                                    if let Err(e) =
+                                                        app::settings::update_settings_file(
+                                                            &network_dir,
+                                                            |mut s| {
+                                                                if let Some(c) = s
+                                                                    .cubes
+                                                                    .iter_mut()
+                                                                    .find(|c| c.id == cube_id)
+                                                                {
+                                                                    c.connect_encryption_pubkey =
+                                                                        Some(pubkey.clone());
+                                                                }
+                                                                Some(s)
+                                                            },
+                                                        )
+                                                        .await
+                                                    {
+                                                        tracing::warn!(
+                                                            "Failed to persist Connect encryption \
+                                                             pubkey for cube {}: {}",
+                                                            cube.id,
+                                                            e
+                                                        );
+                                                    }
+                                                }
+                                                // No seed on this device — expected for a
+                                                // watch-only restore or a passkey Cube. Nothing
+                                                // to derive and nothing wrong.
+                                                CEK::NoSeed => {
+                                                    tracing::debug!(
+                                                        "Cube {} has no master seed on this \
+                                                         device; skipping Connect encryption-key \
+                                                         derivation",
+                                                        cube.id
+                                                    );
+                                                }
+                                                // The Cube just unlocked and a seed file IS
+                                                // there, but it would not open for us — the
+                                                // credentials disagree with the unlock path
+                                                // (seed_crypt cube_id binding, or a v3 file
+                                                // reached without the device secret). Never
+                                                // skip this quietly: the Cube would silently
+                                                // never register an encryption pubkey, its
+                                                // Contacts could not enrol enveloped keys, and
+                                                // it would sit in the A5 coverage report as a
+                                                // straggler with no visible cause.
+                                                CEK::Unreadable(why) => {
+                                                    tracing::error!(
+                                                        cube_id = %cube.id,
+                                                        fingerprint = %fp,
+                                                        error = %why,
+                                                        "Connect blinding: the master seed for \
+                                                         this Cube exists but could not be \
+                                                         opened to derive its encryption key. \
+                                                         This Cube will not register with \
+                                                         Connect and its Contacts cannot share \
+                                                         keys with it until this is fixed."
+                                                    );
+                                                    enc_key_error = Some(format!(
+                                                        "This Cube couldn't prepare its Connect \
+                                                         encryption key, so contacts can't share \
+                                                         keys with it yet. Details in the logs \
+                                                         ({why})."
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     let breez_result =
                                         if let Some(fingerprint) = breez_signer_fingerprint {
                                             breez_liquid::load_breez_client(
@@ -1890,6 +1999,7 @@ impl Tab {
                                         internal_bitcoind_clone,
                                         backup_clone,
                                         migration_error,
+                                        enc_key_error,
                                     )
                                 },
                                 |(
@@ -1903,6 +2013,7 @@ impl Tab {
                                     internal_bitcoind,
                                     backup,
                                     migration_error,
+                                    enc_key_error,
                                 )| {
                                     Message::BreezClientLoadedAfterPin {
                                         breez_client: breez_result,
@@ -1915,6 +2026,7 @@ impl Tab {
                                         internal_bitcoind,
                                         backup,
                                         migration_error,
+                                        enc_key_error,
                                     }
                                 },
                             )
@@ -2147,6 +2259,7 @@ impl Tab {
                     internal_bitcoind,
                     backup,
                     migration_error,
+                    enc_key_error,
                 },
             ) => {
                 // Surfaced through the app's normal toast path once the Cube is
@@ -2157,7 +2270,8 @@ impl Tab {
                 // Two of the three branches below land in `Loader` or `Login`,
                 // which cannot show a toast, so park it and let
                 // `flush_migration_warning` deliver it when `App` arrives.
-                self.pending_migration_warning = migration_error;
+                self.pending_unlock_warnings =
+                    migration_error.into_iter().chain(enc_key_error).collect();
                 // The Vault is independent of Liquid: any Breez load failure
                 // (NetworkNotSupported, transient connection errors, SDK
                 // throttling, etc.) should fall back to a disconnected client
@@ -2657,6 +2771,8 @@ pub fn create_app_with_remote_backend(
 
     Ok(App::new(
         Cache {
+            connect_transport_key: None,
+            cube_encryption_key: None,
             network,
             datadir_path: coincube_dir.clone(),
             // Recomputed from the P2P panel's Mostro config once panels are built.
@@ -2908,13 +3024,13 @@ mod migration_warning_tests {
     #[test]
     fn the_warning_is_held_while_no_state_can_show_it() {
         let mut tab = non_app_tab();
-        tab.pending_migration_warning = Some("seed files were not upgraded".to_string());
+        tab.pending_unlock_warnings = vec!["seed files were not upgraded".to_string()];
 
         let _ = tab.flush_migration_warning();
 
         assert_eq!(
-            tab.pending_migration_warning.as_deref(),
-            Some("seed files were not upgraded"),
+            tab.pending_unlock_warnings,
+            vec!["seed files were not upgraded".to_string()],
             "the warning was consumed by a state that cannot display it"
         );
     }
@@ -2924,7 +3040,28 @@ mod migration_warning_tests {
     fn flushing_without_a_warning_keeps_it_empty() {
         let mut tab = non_app_tab();
         let _ = tab.flush_migration_warning();
-        assert!(tab.pending_migration_warning.is_none());
+        assert!(tab.pending_unlock_warnings.is_empty());
+    }
+
+    /// Two independent things can fail in one unlock — a seed-file migration
+    /// and the Connect encryption-key derivation. Neither may swallow the
+    /// other: the queue was widened from a single slot precisely so the
+    /// second one cannot go silent.
+    #[test]
+    fn both_unlock_warnings_are_held_together() {
+        let mut tab = non_app_tab();
+        tab.pending_unlock_warnings = vec![
+            "seed files were not upgraded".to_string(),
+            "couldn't prepare its Connect encryption key".to_string(),
+        ];
+
+        let _ = tab.flush_migration_warning();
+
+        assert_eq!(
+            tab.pending_unlock_warnings.len(),
+            2,
+            "a non-App state must hold every warning, not just the first"
+        );
     }
 }
 
