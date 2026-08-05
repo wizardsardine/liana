@@ -75,13 +75,23 @@ jobs:
         run: |
           choco install protoc --yes --no-progress
           cargo test --no-default-features -- --test-threads=2
+      # TMPDIR is redirected off `/var/folders/.../T`, macOS's per-user temp
+      # directory, which the OS purges under disk pressure. Two tests that write
+      # a datadir there failed on this runner and nowhere else, and the
+      # diagnostics show the failure exactly: a root that `create_dir_all` had
+      # just created reports `exists=false` a few seconds later, and the tests
+      # created before the purge are the ones that fail. `runner.temp` lives on
+      # the workspace volume and is not purgeable.
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'macOS-latest'
         env:
           PROTOC: /opt/homebrew/bin/protoc
+          TMPDIR: ${{ runner.temp }}
         run: |
           brew install protobuf
+          df -h / "$TMPDIR"
           cargo test --color always -- --nocapture
+          df -h / "$TMPDIR"
       # The device-secret tests are not mockable by design: they exercise the
       # real Secret Service, because "the key half lives in the OS keystore" is
       # the property under test. A bare runner has no session bus and no keyring
@@ -91,12 +101,21 @@ jobs:
       # unlocked (empty-password) login keyring instead of gating the tests off,
       # which would drop keystore coverage on the one platform that can run it
       # unsigned.
+      #
+      # Starting the daemon is not enough on its own: the runner has no keyring
+      # file yet, so the Secret Service answers a lookup for the *default*
+      # collection with "no result found" and the same tests fail for a new
+      # reason. Storing one item mints the default (login) collection, after
+      # which a lookup for an absent entry correctly reports "no entry" — the
+      # distinction `missing_entry_is_its_own_error` exists to check.
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev gnome-keyring dbus-x11
+          sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev gnome-keyring dbus-x11 libsecret-tools
           dbus-run-session -- bash -c '
             echo -n "" | gnome-keyring-daemon --daemonize --unlock --components=secrets >/dev/null
+            echo -n "ci" | secret-tool store --label=ci-bootstrap coincube ci-bootstrap
+            secret-tool lookup coincube ci-bootstrap >/dev/null
             cargo test --color always -- --nocapture
           '
