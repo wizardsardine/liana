@@ -119,6 +119,13 @@ pub enum UnlockError {
     /// The keystore itself couldn't be reached. Transient — unlocking the
     /// keychain and retrying works.
     KeystoreUnreachable(String),
+    /// The keystore can't be used by *this build*, whatever the user does.
+    /// Terminal, and that is the whole difference from `KeystoreUnreachable`:
+    /// the retry advice that variant appends is not just useless here, it sends
+    /// the user to unlock a keychain that is already unlocked while the real
+    /// cause — an unsigned binary with no `keychain-access-groups` entitlement —
+    /// goes unmentioned. The detail carries the entire message.
+    KeystoreUnusable(String),
     /// The keystore works but holds no device secret for this Cube. For a v3
     /// seed file that is terminal on this machine; the copy must point at the
     /// Recovery Kit.
@@ -140,6 +147,9 @@ impl std::fmt::Display for UnlockError {
                 f,
                 "{detail} Your Cube is safe — unlock your system keychain and try again."
             ),
+            // No trailing advice: there is none to give that the detail does
+            // not already carry, and "try again" would be a lie.
+            Self::KeystoreUnusable(detail) => write!(f, "{detail}"),
             Self::DeviceSecretMissing => write!(
                 f,
                 "Part of this Cube's encryption key was stored in this computer's system \
@@ -999,6 +1009,10 @@ mod tests {
             (
                 "KeystoreUnreachable",
                 UnlockError::KeystoreUnreachable("Detail.".to_string()).to_string(),
+            ),
+            (
+                "KeystoreUnusable",
+                UnlockError::KeystoreUnusable("Detail.".to_string()).to_string(),
             ),
             (
                 "DeviceSecretMissing",

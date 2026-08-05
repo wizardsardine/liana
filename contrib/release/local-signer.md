@@ -18,10 +18,11 @@ See [`macos/README.md`](macos/README.md) — the local signer needs:
 1. The hardened-runtime entitlements file at
    [`macos/coincube.entitlements`](macos/coincube.entitlements)
    wired into the `rcodesign sign` invocation.
-2. The Info.plist additions documented in
-   [`macos/Info.plist.local-signer.md`](macos/Info.plist.local-signer.md)
-   (Bonjour usage description + service identifier list — required on
-   macOS 14+).
+2. `NSLocalNetworkUsageDescription` and `NSBonjourServices` (Bonjour
+   usage description + service identifier list — required on macOS
+   14+), baked into the `Info.plist` inside the
+   [`macos/_coincube.zip`](macos/_coincube.zip) bundle template and
+   asserted by the release workflows before the binary is copied in.
 
 `mDNSResponder` is system-provided on every supported macOS version;
 no service needs to be installed.

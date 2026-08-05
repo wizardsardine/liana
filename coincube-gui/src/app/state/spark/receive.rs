@@ -757,6 +757,26 @@ impl State for SparkReceive {
                 }
             }
             SparkReceiveMessage::History => redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
+            SparkReceiveMessage::CopyPaymentRequest(text) => {
+                // Pair the clipboard write with the global toast overlay so
+                // the button gives the same feedback as every other Copy in
+                // the app. The label names the rail the request belongs to —
+                // an on-chain deposit address and a BOLT11 invoice look
+                // nothing alike, and the confirmation is a cheap way to say
+                // which one landed on the clipboard.
+                let label = match self.method {
+                    SparkReceiveMethod::Bolt11 => "Copied Lightning invoice to clipboard",
+                    SparkReceiveMethod::OnchainBitcoin => "Copied Bitcoin address to clipboard",
+                    SparkReceiveMethod::Spark => "Copied Spark address to clipboard",
+                };
+                Task::batch([
+                    iced::clipboard::write(text),
+                    Task::done(Message::View(crate::app::view::Message::ShowToast(
+                        log::Level::Info,
+                        label.to_string(),
+                    ))),
+                ])
+            }
         }
     }
 }

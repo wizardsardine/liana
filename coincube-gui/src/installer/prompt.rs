@@ -1,12 +1,14 @@
 pub const BACKUP_DESCRIPTOR_MESSAGE: &str = "This backup is required to recover your funds.
 Click “Back Up Descriptor” to download an encrypted file of your wallet configuration and store it in safe, accessible places.
 You can also copy the plain-text descriptor string, but it’s less private.
+You can keep an off-device copy too: sign in to Connect and back up your Wallet Descriptor from Settings → General → Cube Recovery Kit once setup is finished.
 ⚠️ This file does not include your seed phrase(s). Back those up separately.";
 pub const BACKUP_DESCRIPTOR_HELP: &str = "In Bitcoin, to spend from a wallet that isn't a standard single-key setup, you need both your private keys (usually stored as seed words) to sign transactions, and your wallet descriptor to locate your coins — like a map of your addresses.
 Without the descriptor, your wallet may not find your coins — even if you still have the keys.
 When you click “Back Up Descriptor”, Coincube creates an encrypted file that can only be decrypted by the holder of the corresponding private key — meaning recovery requires one of your wallet’s private keys or signing devices, not a public key.
 Coincube handles this automatically during the restore of a wallet process by asking you to connect a device or enter a key.
-This file is safer and more private than copying the descriptor manually.";
+This file is safer and more private than copying the descriptor manually.
+Your Cube Recovery Kit is the second place to keep it. Once setup is finished, go to Settings → General → Cube Recovery Kit and sign in to Connect: Coincube encrypts your Wallet Descriptor (and, unless your Cube is protected by a passkey, your Master Seed Phrase) and stores it in your Connect account, so you can restore this wallet on a new device without hunting for the downloaded file. It's a backup of the same descriptor, not a replacement for one — keep the local copy as well.";
 pub const REGISTER_DESCRIPTOR_HELP: &str = "To be used with the wallet, a signing device needs the descriptor. If the descriptor contains one or more keys imported from an external signing device, the descriptor must be registered on it. Registration confirms that the device is able to handle the policy. Registration on a device is not a substitute for backing up the descriptor.";
 pub const MNEMONIC_HELP: &str = "This Vault key is derived from your Master Key. If you haven't already, back up your Master Seed Phrase in Settings → Master Seed Phrase Back Up — it's required to recover your Cube and every Vault key derived from it.";
 pub const RECOVER_MNEMONIC_HELP: &str = "If you were using a Vault key stored locally in your wallet, you will need to recover it from your Master Seed Phrase to be able to sign transactions again. Otherwise you can directly go to the next step.";

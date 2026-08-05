@@ -46,3 +46,7 @@ clippy-sonar.json
 wildcard-cleanup-plan.md
 # Understand-Anything: keep architecture graph local (public repo)
 .understand-anything/
+
+# Bundle assembled at the repo root by the local signing procedure in
+# docs/MACOS_KEYCHAIN_ENTITLEMENT.md §4. Build output, never committed.
+/Tenshu.app/

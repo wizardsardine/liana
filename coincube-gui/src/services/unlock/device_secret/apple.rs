@@ -147,7 +147,11 @@ pub fn add_if_absent(service: &str, account: &str, secret: &[u8]) -> Result<bool
 /// know what is wrong.
 fn keychain_error(status: i32, context: &str) -> UnlockError {
     if status == ERR_SEC_MISSING_ENTITLEMENT {
-        UnlockError::KeystoreUnreachable(MISSING_ENTITLEMENT_MSG.to_string())
+        // `Unusable`, not `Unreachable`: the keychain is reachable and probably
+        // already unlocked. What's missing is in the *binary*, so the retry
+        // advice `KeystoreUnreachable` appends would send the user to unlock
+        // something that isn't locked and never mention code signing.
+        UnlockError::KeystoreUnusable(MISSING_ENTITLEMENT_MSG.to_string())
     } else {
         UnlockError::KeystoreUnreachable(format!("{context} (OSStatus {status})"))
     }
@@ -311,6 +315,11 @@ mod tests {
             "couldn't read back this Cube's keychain attributes",
         ] {
             let e = keychain_error(ERR_SEC_MISSING_ENTITLEMENT, context);
+            assert!(
+                matches!(e, UnlockError::KeystoreUnusable(_)),
+                "the entitlement failure is terminal for this build, not a \
+                 reachability problem the user can clear"
+            );
             let msg = e.to_string();
             assert!(
                 msg.contains("signed build"),
@@ -322,12 +331,24 @@ mod tests {
                 "the raw status is the least actionable thing to show: {}",
                 msg
             );
+            // The keychain is reachable and almost certainly already unlocked;
+            // what is missing is in the binary. Retry advice here costs the
+            // reader the one sentence that names the real cause.
+            assert!(
+                !msg.contains("try again"),
+                "sends the user to unlock a keychain that isn't locked: {}",
+                msg
+            );
         }
 
-        // Other statuses keep their context and the number.
-        let other = keychain_error(-25300, "your system keychain couldn't be read").to_string();
+        // Other statuses keep their context, the number, and the retry advice —
+        // those genuinely are the transient case.
+        let other = keychain_error(-25300, "your system keychain couldn't be read");
+        assert!(matches!(other, UnlockError::KeystoreUnreachable(_)));
+        let other = other.to_string();
         assert!(other.contains("-25300"));
         assert!(!other.contains("signed build"));
+        assert!(other.contains("try again"));
     }
 
     #[test]

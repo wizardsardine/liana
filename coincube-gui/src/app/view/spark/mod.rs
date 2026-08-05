@@ -251,4 +251,10 @@ pub enum SparkReceiveMessage {
     SelectTransaction(usize),
     /// User tapped "View All Transactions".
     History,
+    /// User tapped "Copy" under the generated payment request. Routed
+    /// through the panel rather than the app-level `Message::Clipboard`
+    /// so the handler can pair the clipboard write with a confirmation
+    /// toast naming the rail that was copied — the same pattern Vault
+    /// and Liquid Receive use.
+    CopyPaymentRequest(String),
 }
