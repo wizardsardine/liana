@@ -87,11 +87,18 @@ jobs:
         env:
           PROTOC: /opt/homebrew/bin/protoc
           TMPDIR: ${{ runner.temp }}
+        # The trailing `df` is the measurement that matters, and it is only
+        # interesting when the tests fail — so it must not be skipped when they
+        # do. A `run:` block is `bash -e`, which aborts the step on the failing
+        # `cargo test`, and the last run lost the after-reading for that reason.
+        # Capture the status, take the reading, then fail with it.
         run: |
           brew install protobuf
           df -h / "$TMPDIR"
-          cargo test --color always -- --nocapture
+          status=0
+          cargo test --color always -- --nocapture || status=$?
           df -h / "$TMPDIR"
+          exit $status
       # The device-secret tests are not mockable by design: they exercise the
       # real Secret Service, because "the key half lives in the OS keystore" is
       # the property under test. A bare runner has no session bus and no keyring

@@ -15,7 +15,7 @@ Every Windows user installing Tenshu sees a SmartScreen warning naming an **Unkn
 | | Azure Trusted Signing | Traditional EV cert |
 |---|---|---|
 | Cost | ~**$9.99/month** (~$120/yr), Basic tier = 5,000 signatures/month | ~$287–700/yr |
-| SmartScreen reputation | **Immediate**, and tied to your *identity* rather than a specific cert | Immediate for EV; OV must accrue download history |
+| SmartScreen reputation | Accrues over time — **not immediate**. Attaches to your *identity*, so it survives the automatic cert rotation | Accrues over time — **not immediate**. EV no longer confers instant reputation |
 | Key storage | Microsoft-managed HSM | FIPS 140-2 L2 hardware **mandatory** since June 2023 — physical token or a cloud HSM |
 | Works in GitHub Actions | **Yes, natively** — 6 secrets and an official action | Physical token: **no**, needs a self-hosted runner with the token plugged in. Cloud HSM: yes, at extra cost |
 | Cert lifetime | Short-lived, rotated automatically | 1–3 years, manual renewal |
@@ -44,33 +44,69 @@ The cost difference is real but secondary. The operational difference — no har
 2. **Register the resource provider** and create a **Trusted Signing account** (portal or CLI). Pick a region near CI; it doesn't affect trust.
 3. **Identity validation** — Organization type. Needs legal name, business address, business identifier, website URL (`coincube.io`), and two contact emails. Assign yourself the **Trusted Signing Identity Verifier** role first, or the request can't be created. Expect a domain-ownership step on `coincube.io` — you already control the DNS and the `.well-known` path from the AASA work.
 4. **Certificate profile** — Public Trust, once validation passes.
-5. **Service principal for CI** — an Entra app registration with a client secret, granted the **Trusted Signing Certificate Profile Signer** role on the account.
+5. **Service principal for CI** — an Entra app registration granted the **Trusted Signing Certificate Profile Signer** role on the account. **Do not create a client secret**; give it a federated credential instead (§4), so CI proves who it is with a short-lived GitHub token and there is no standing credential that can sign as COINCUBE.
 
 ## 4. Wire it into `releases.yml`
 
-Six repository secrets, mirroring the Apple ones already there:
+**Authenticate with GitHub OIDC, not a client secret.** A stored `AZURE_CLIENT_SECRET` is a standing credential that signs code as COINCUBE TECHNOLOGY LLC: anyone who can read it, or run a workflow that can, can produce an installer Windows trusts as ours. Workload identity federation replaces it with a token GitHub mints per job and Entra exchanges — nothing long-lived to leak, and nothing to rotate.
 
-```
+### 4.1 Federated credential on the Entra app
+
+On the app registration from §3.5, add a **federated credential**:
+
+| Field | Value |
+|---|---|
+| Issuer | `https://token.actions.githubusercontent.com` |
+| Organization / repository | `coincubetech` / `coincube` |
+| Entity type | **Environment** |
+| Environment name | `release` |
+| Subject | `repo:coincubetech/coincube:environment:release` |
+| Audience | `api://AzureADTokenExchange` |
+
+Scope it to an *environment*, not to the repository as a whole. A repo-wide subject lets any workflow on any branch reach the signing identity; an environment subject only matches jobs that declare `environment: release`, so the environment's protection rules and approvers become the gate on signing. Create the `release` environment in repo settings, and add `environment: release` to the release job — the token's subject is built from it, so without it the exchange simply fails.
+
+### 4.2 Secrets
+
+Five, down from six — the tenant, client and subscription IDs are identifiers, not credentials, and stay:
+
+```text
 AZURE_TENANT_ID
 AZURE_CLIENT_ID
-AZURE_CLIENT_SECRET
 AZURE_ENDPOINT               # e.g. https://eus.codesigning.azure.net
 AZURE_CODE_SIGNING_NAME      # the Trusted Signing account name
 AZURE_CERT_PROFILE_NAME      # the certificate profile name
 ```
 
-Add one step to the Windows leg, **after** `cargo wix` produces the MSI and **before** the upload:
+### 4.3 Workflow changes
+
+The job needs an OIDC token. `releases.yml` sets `permissions: contents: write` at the top, and naming any permission drops the rest of the defaults — so add the key rather than replacing the block:
 
 ```yaml
+permissions:
+  contents: write
+  id-token: write
+```
+
+Then log in with OIDC and let the signing action take the credential from the environment `azure/login` leaves behind, instead of passing one:
+
+```yaml
+      - name: Azure login (OIDC)
+        if: matrix.platform == 'windows'
+        uses: azure/login@v2
+        with:
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          allow-no-subscriptions: true
+
       - name: Sign Windows MSI
         if: matrix.platform == 'windows'
-        uses: azure/trusted-signing-action@v0
+        uses: azure/artifact-signing-action@v2
         with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          # No azure-client-secret, and no azure-tenant-id/azure-client-id
+          # either: omitting them makes the action fall back to the ambient
+          # Azure credential, which is the federated token from the step above.
           endpoint: ${{ secrets.AZURE_ENDPOINT }}
-          trusted-signing-account-name: ${{ secrets.AZURE_CODE_SIGNING_NAME }}
+          signing-account-name: ${{ secrets.AZURE_CODE_SIGNING_NAME }}
           certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
           files-folder: target/wix
           files-folder-filter: msi
@@ -79,7 +115,9 @@ Add one step to the Windows leg, **after** `cargo wix` produces the MSI and **be
           timestamp-digest: SHA256
 ```
 
-Verify the action's current major version before merging — pin it, don't float.
+The rename carried into the action: `azure/trusted-signing-action@v0` became `azure/artifact-signing-action@v2`, and `trusted-signing-account-name` became `signing-account-name`. Older snippets on the web still show the v0 form — it does not match this action's inputs.
+
+Pin both actions to a checked version — don't float — and confirm the ambient-credential behaviour against Microsoft's docs before merging. If the version you pin still requires explicit credentials, pass `azure-tenant-id` and `azure-client-id` — but never reintroduce `azure-client-secret`.
 
 **Do the same in `nightly.yml`.** Both workflows build a Windows MSI; leaving nightly unsigned means the artifact people actually test differs from the one that ships.
 
@@ -97,7 +135,9 @@ Manually, on a clean Windows VM with no prior reputation:
 
 1. Download the MSI the way a user would (browser, from the GitHub Release).
 2. Confirm SmartScreen shows **COINCUBE TECHNOLOGY LLC** as the publisher, not "Unknown publisher".
-3. Install, launch, and confirm no warning at run time — that's the check that catches an unsigned inner `.exe`.
+3. Install, launch, and check for a warning at run time — that's what catches an unsigned inner `.exe`.
+
+Read step 3 by the publisher name, not by the presence of a prompt. A correctly signed build with no reputation yet still shows "unrecognized app" — but it names the publisher. "Unknown publisher" is the failure.
 
 Add the publisher-name check to the release checklist. `signtool verify` proves a signature exists; only the clean-VM install proves the user-visible outcome.
 
@@ -105,7 +145,7 @@ Add the publisher-name check to the release checklist. `signtool verify` proves 
 
 If COINCUBE TECHNOLOGY LLC is rejected or stalls past the launch window, buy an **EV certificate with cloud HSM signing** — DigiCert KeyLocker, SSL.com eSigner, or Certum. Not a physical USB token: that would break CI.
 
-Expect ~$300–700/yr, EV vetting of one to three weeks, and a second certificate-rotation runbook to sit alongside `APPLE_CERT_ROTATION.md`. Choose EV over OV — OV requires accumulating download reputation before SmartScreen goes quiet, which for a wallet released to a small initial audience could take months.
+Expect ~$300–700/yr, EV vetting of one to three weeks, and a second certificate-rotation runbook to sit alongside `APPLE_CERT_ROTATION.md`. Choose EV over OV for the stronger identity vetting and the hardware-key requirement — **not** for SmartScreen: neither tier buys immediate reputation any more, and both accrue it from download history the same way. Whichever route you take, plan for early downloads to still hit an "unrecognized app" prompt, and don't let a launch date depend on it being gone.
 
 ## 7. While you're here
 
