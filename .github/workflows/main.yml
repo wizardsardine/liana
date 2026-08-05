@@ -75,16 +75,56 @@ jobs:
         run: |
           choco install protoc --yes --no-progress
           cargo test --no-default-features -- --test-threads=2
+      # TMPDIR is redirected off `/var/folders/.../T`, macOS's per-user temp
+      # directory, which the OS purges under disk pressure. Two tests that write
+      # a datadir there failed on this runner and nowhere else, and the
+      # diagnostics show the failure exactly: a root that `create_dir_all` had
+      # just created reports `exists=false` a few seconds later, and the tests
+      # created before the purge are the ones that fail. `runner.temp` lives on
+      # the workspace volume and is not purgeable.
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'macOS-latest'
         env:
           PROTOC: /opt/homebrew/bin/protoc
+          TMPDIR: ${{ runner.temp }}
+        # The trailing `df` is the measurement that matters, and it is only
+        # interesting when the tests fail — so it must not be skipped when they
+        # do. A `run:` block is `bash -e`, which aborts the step on the failing
+        # `cargo test`, and the last run lost the after-reading for that reason.
+        # Capture the status, take the reading, then fail with it.
         run: |
           brew install protobuf
-          cargo test --color always -- --nocapture
+          df -h / "$TMPDIR"
+          status=0
+          cargo test --color always -- --nocapture || status=$?
+          df -h / "$TMPDIR"
+          exit $status
+      # The device-secret tests are not mockable by design: they exercise the
+      # real Secret Service, because "the key half lives in the OS keystore" is
+      # the property under test. A bare runner has no session bus and no keyring
+      # daemon, so `org.freedesktop.secrets` is unavailable and every test that
+      # provisions or reads a device secret fails — 37 of them, all with the same
+      # `KeystoreUnreachable` error. Give the suite a session bus with an
+      # unlocked (empty-password) login keyring instead of gating the tests off,
+      # which would drop keystore coverage on the one platform that can run it
+      # unsigned.
+      #
+      # Starting the daemon is not enough on its own: the runner has no keyring
+      # file, so the Secret Service answers a lookup for the *default*
+      # collection with "no result found". Minting it with `secret-tool store`
+      # does not work either — it fails with "Object does not exist at path
+      # /org/freedesktop/secrets/collection/login" rather than creating the
+      # collection. Write the empty-password login keyring and its default
+      # alias directly, before the daemon starts.
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev
-          cargo test --color always -- --nocapture
+          sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev gnome-keyring dbus-x11
+          mkdir -p ~/.local/share/keyrings
+          printf '[keyring]\ndisplay-name=login\nctime=0\nmtime=0\nlock-on-idle=false\nlock-after=false\n' > ~/.local/share/keyrings/login.keyring
+          printf 'login' > ~/.local/share/keyrings/default
+          dbus-run-session -- bash -c '
+            echo -n "" | gnome-keyring-daemon --daemonize --unlock --components=secrets >/dev/null
+            cargo test --color always -- --nocapture
+          '

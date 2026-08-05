@@ -184,6 +184,10 @@ pub struct Home {
     /// this is the whole wallet; cleared on every exit from the step —
     /// completion, bypass, abandonment and failure alike.
     creation_backup_words: Option<zeroize::Zeroizing<Vec<String>>>,
+    /// The Cube list parked while [`State::CreationBackup`] owns the screen,
+    /// so cancelling puts the user back where they were. Empty at every other
+    /// time. Not secret — these entries are already in `settings.json`.
+    creation_backup_cubes: Vec<CubeSettings>,
     developer_mode: bool,
     /// Connect account tier — controls how many Cubes can be created per network.
     account_tier: AccountTier,
@@ -261,6 +265,7 @@ impl Home {
                 recovery_words: Default::default(),
                 recovery_active_index: None,
                 creation_backup_words: None,
+                creation_backup_cubes: Vec::new(),
                 developer_mode,
                 account_tier: GlobalSettings::load_account_tier(&GlobalSettings::path(
                     &datadir_path,
@@ -594,10 +599,9 @@ impl Home {
                         Ok(signer) => {
                             self.creating_cube = false;
                             self.error = None;
-                            self.creation_backup_words = Some(zeroize::Zeroizing::new(
+                            self.enter_creation_backup(
                                 signer.words().iter().map(|w| w.to_string()).collect(),
-                            ));
-                            self.state = State::CreationBackup(CreationBackupStep::Intro(false));
+                            );
                             Task::none()
                         }
                         Err(e) => {
@@ -670,8 +674,10 @@ impl Home {
                         self.create_cube_pin_confirm = pin_input::PinInput::new();
                         // The creation-time backup step's copy of the seed has
                         // done its job — scrub it. `reload()` below replaces
-                        // `State::CreationBackup` with the Cube list.
+                        // `State::CreationBackup` with the Cube list, which
+                        // also makes the list parked for a cancel stale.
                         self.scrub_creation_seed();
+                        self.creation_backup_cubes = Vec::new();
                         // Explicitly clear recovery words to prevent mnemonic from lingering in memory
                         for word in &mut self.recovery_words {
                             word.clear();
@@ -2292,8 +2298,28 @@ impl Home {
         self.creation_backup_words = None;
     }
 
+    /// Enter the creation-time backup step, parking the Cube list.
+    ///
+    /// The step owns the whole `State`, so the list the user was looking at has
+    /// to be held somewhere for [`Self::abandon_creation_backup`] to put back.
+    fn enter_creation_backup(&mut self, words: Vec<String>) {
+        self.creation_backup_cubes = match &mut self.state {
+            State::Cubes { cubes, .. } => std::mem::take(cubes),
+            _ => Vec::new(),
+        };
+        self.creation_backup_words = Some(zeroize::Zeroizing::new(words));
+        self.state = State::CreationBackup(CreationBackupStep::Intro(false));
+    }
+
     /// Leave the backup step without creating anything, scrubbing the seed.
     fn abandon_creation_backup(&mut self) {
+        // Take the parked list *before* anything else can replace the state.
+        //
+        // Rebuilding `State::Cubes` with an empty vector instead made a
+        // cancelled creation look like it had wiped every Cube on the device,
+        // and left `total_cube_count` — the check that enforces the per-network
+        // Cube limit — reading zero until the next reload.
+        let cubes = std::mem::take(&mut self.creation_backup_cubes);
         self.scrub_creation_seed();
         self.creating_cube = false;
         self.error = None;
@@ -2301,7 +2327,7 @@ impl Home {
         // deliberately kept: a retry reuses the same UUID, matching the
         // existing failure path.
         self.state = State::Cubes {
-            cubes: Vec::new(),
+            cubes,
             create_cube: true,
         };
     }
@@ -5192,13 +5218,12 @@ mod tests {
         type_pin(&mut home.create_cube_pin, pin);
         type_pin(&mut home.create_cube_pin_confirm, pin);
         let signer = MasterSigner::generate(home.network).expect("seed generation");
-        home.creation_backup_words = Some(zeroize::Zeroizing::new(
-            signer.words().iter().map(|w| w.to_string()).collect(),
-        ));
         home.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
         home.creating_cube = false;
         home.error = None;
-        home.state = State::CreationBackup(CreationBackupStep::Intro(false));
+        // The real transition, so the Cube list is parked exactly as it is in
+        // production rather than by a copy of the logic that can drift.
+        home.enter_creation_backup(signer.words().iter().map(|w| w.to_string()).collect());
     }
 
     /// The backup step the flow is currently on. Panics if it left the step —
@@ -5470,6 +5495,49 @@ mod tests {
             stray.is_empty(),
             "an abandoned creation left files behind: {:?}",
             stray
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Cancelling a *second* Cube's creation must not look like the first one
+    /// was deleted.
+    ///
+    /// The backup step owns the whole `State`, and rebuilding `State::Cubes`
+    /// with an empty vector on the way out emptied the list on screen and made
+    /// `total_cube_count` read zero — the count the per-network Cube limit is
+    /// enforced against — until something else triggered a reload.
+    #[test]
+    fn cancelling_the_backup_step_puts_the_existing_cubes_back() {
+        let dir = tmp_datadir("cancel-keeps-cubes");
+        let mut home = home_with_datadir(&dir);
+        let existing = cube("already-here", "First", home.network);
+        home.state = State::Cubes {
+            cubes: vec![existing.clone()],
+            create_cube: true,
+        };
+
+        enter_backup_step(&mut home, "Second", "1111");
+        assert!(matches!(home.state, State::CreationBackup(_)));
+
+        let _ = home.update(Message::View(ViewMessage::CancelCreationBackup));
+
+        let State::Cubes { cubes, create_cube } = &home.state else {
+            panic!(
+                "cancelling must return to the Cube list, got {:?}",
+                home.state
+            );
+        };
+        assert!(create_cube, "cancelling returns to the create form");
+        assert_eq!(
+            cubes.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            vec![existing.id.as_str()],
+            "the Cube the user already had vanished from the list"
+        );
+        assert_eq!(
+            home.total_cube_count(),
+            1,
+            "the Cube limit would be computed against a list that lost a Cube"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

@@ -677,7 +677,15 @@ fn build_seed_blob_json(
     // `verify_pin` hash that used to gate this is gone.
     let words =
         super::general::load_mnemonic_words(datadir, network, fingerprint, pin, local_cube_id)
-            .map_err(|_| "Incorrect PIN. Please try again.".to_string())?;
+            .map_err(|e| {
+                // No throttle on this path, but the message still has to be
+                // true: only a failed decryption is a wrong PIN.
+                if super::general::is_wrong_pin(&e) {
+                    "Incorrect PIN. Please try again.".to_string()
+                } else {
+                    e.to_string()
+                }
+            })?;
     let phrase = Zeroizing::new(words.join(" "));
     let blob = SeedBlob {
         version: BLOB_VERSION,

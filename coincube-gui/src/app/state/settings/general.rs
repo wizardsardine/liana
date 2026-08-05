@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Network};
-use coincube_core::signer::MasterSigner;
+use coincube_core::signer::{MasterSigner, SignerError};
 use coincube_ui::widget::Element;
 use iced::Task;
 use rand::seq::SliceRandom;
@@ -132,6 +132,30 @@ mod tests {
             UnitSetting::default(),
             &CoincubeDirectory::new(std::path::PathBuf::new()),
         )
+    }
+
+    /// The seed-reveal flows share the unlock throttle, so misclassifying an
+    /// operational failure as a wrong PIN spends the owner's guesses on a fault
+    /// no PIN can fix — and eventually locks them out of their own Cube.
+    #[test]
+    fn only_a_failed_decryption_counts_as_a_wrong_pin() {
+        assert!(is_wrong_pin(&SignerError::InvalidPassword));
+
+        for e in [
+            SignerError::DeviceSecretRequired,
+            SignerError::SignerNotFound(Fingerprint::default()),
+            SignerError::MnemonicStorage(std::io::Error::other("disk")),
+            SignerError::NotEncryptedFile,
+            SignerError::InvalidFileFormat,
+            SignerError::DecryptionFailed("argon2".to_string()),
+            SignerError::PasswordRequired,
+        ] {
+            assert!(
+                !is_wrong_pin(&e),
+                "{} would be reported as a wrong PIN and charged to the throttle",
+                e
+            );
+        }
     }
 
     fn backup_msg(msg: view::BackupWalletMessage) -> Message {
@@ -882,6 +906,10 @@ impl GeneralSettingsState {
                                     // makes is scrubbed on drop.
                                     Ok(Zeroizing::new(words))
                                 }
+                                // Only a wrong PIN is a guess. An operational
+                                // failure keeps its own message and costs the
+                                // user nothing against the throttle.
+                                Err(e) if !is_wrong_pin(&e) => Err(e.to_string()),
                                 Err(_) => {
                                     let penalty = throttle.record_failure(&throttle_root, &cube_id);
                                     Err(if penalty.is_zero() {
@@ -1122,16 +1150,31 @@ pub(super) fn load_mnemonic_words(
     fingerprint: Fingerprint,
     pin: &str,
     cube_id: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, SignerError> {
     let signer = MasterSigner::from_datadir_by_fingerprint(
         datadir,
         network,
         fingerprint,
         Some(pin),
         cube_id,
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
     Ok(signer.words().iter().map(|w| (*w).to_string()).collect())
+}
+
+/// Whether a failed seed decryption means **the user typed the wrong PIN**.
+///
+/// Only `InvalidPassword` does: `seed_crypt::decrypt_with` returns it for a
+/// failed GCM tag and nothing else, and deliberately does *not* use it for a
+/// missing device secret (invariant I7). Everything else — an unreadable
+/// mnemonics folder, no file for this fingerprint, a v3 file whose keychain
+/// entry is unavailable — is an operational fault the PIN cannot fix.
+///
+/// The distinction has teeth on both sides. Reporting a locked keychain as
+/// "Incorrect PIN" sends the user to retype a PIN that was right, and each
+/// retry spends a guess against the shared unlock throttle — so a fault
+/// entirely outside their control locks them out of their own Cube.
+pub(super) fn is_wrong_pin(e: &SignerError) -> bool {
+    matches!(e, SignerError::InvalidPassword)
 }
 
 impl GeneralSettingsState {

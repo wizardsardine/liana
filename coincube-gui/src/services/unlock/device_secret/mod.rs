@@ -184,22 +184,30 @@ mod backend {
 /// only one of those is usable. The probe item is deleted afterwards; a failure
 /// to delete is not treated as a probe failure.
 pub fn capability() -> Capability {
-    const PROBE: &str = "__capability_probe__";
+    let probe = probe_account();
     let probe_value = [0x5Au8; 32];
 
-    let _ = backend::delete(PROBE);
-    if let Err(e) = backend::add_if_absent(PROBE, &probe_value) {
+    let _ = backend::delete(&probe);
+    if let Err(e) = backend::add_if_absent(&probe, &probe_value) {
         return Capability::Unavailable(e.to_string());
     }
-    let read_back = backend::load(PROBE);
+    let read_back = backend::load(&probe);
     // The attribute contract is part of "usable", not a separate nicety: an
     // item that syncs to iCloud is worse than no item at all, because the user
     // believes they have a second factor that is in fact escrowed.
-    let attrs = backend::verify_attributes(PROBE);
-    let _ = backend::delete(PROBE);
+    let attrs = backend::verify_attributes(&probe);
+    let _ = backend::delete(&probe);
 
     match (read_back, attrs) {
         (Ok(Some(v)), Ok(())) if v.as_slice() == probe_value => Capability::Available,
+        // Written, then gone. Its own outcome: "returned unexpected data" points
+        // the user at a corrupt keychain when what they have is one that does
+        // not keep what it accepts.
+        (Ok(None), Ok(())) => Capability::Unavailable(
+            "Your system keychain accepted a test item and then reported it missing. \
+             Coincube can't rely on it to protect this Cube."
+                .to_string(),
+        ),
         (Ok(_), Ok(())) => Capability::Unavailable(
             "Your system keychain returned unexpected data. Coincube can't rely on it \
              to protect this Cube."
@@ -207,6 +215,34 @@ pub fn capability() -> Capability {
         ),
         (Err(e), _) | (_, Err(e)) => Capability::Unavailable(e.to_string()),
     }
+}
+
+/// A keychain account name used by exactly one [`capability`] call.
+///
+/// A fixed name made two probes destructive to each other: the second one's
+/// opening `delete` removes the item the first just wrote, so the first reads
+/// back nothing and reports the keychain unusable — which refuses Cube creation
+/// on a machine where nothing is wrong. Two Coincube windows opening the create
+/// form together is enough to hit it.
+///
+/// Same shape as the tests' `probe_cube_id`, plus a counter so two threads
+/// inside one process cannot land on the same name whatever the clock's
+/// resolution.
+fn probe_account() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!(
+        "__capability_probe__-{}-{}-{}",
+        std::process::id(),
+        nanos,
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 /// Only the keyring-backed platforms surface raw crate errors; macOS builds its
@@ -285,28 +321,39 @@ pub fn load_optional(cube_id: &str) -> Result<Option<DeviceSecret>, UnlockError>
 /// Idempotent: an existing entry is returned untouched. Overwriting one would
 /// make every v3 file sealed under it permanently unopenable, so this must
 /// never be "fixed" into an unconditional write.
+///
+/// Either way the entry's attributes are verified before it is handed back —
+/// a pre-existing item gets the same contract as one minted here.
 pub fn get_or_create(datadir_root: &Path, cube_id: &str) -> Result<DeviceSecret, UnlockError> {
     let _in_process = provision_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _cross_process = cross_process_guard(datadir_root)?;
 
-    if let Some(existing) = load_optional(cube_id)? {
-        return Ok(existing);
-    }
+    let secret = match load_optional(cube_id)? {
+        Some(existing) => existing,
+        None => {
+            let mut candidate: DeviceSecret = Zeroizing::new([0u8; 32]);
+            {
+                use rand::RngCore;
+                rand::rngs::OsRng.fill_bytes(candidate.as_mut());
+            }
+            backend::add_if_absent(cube_id, candidate.as_ref())?;
+            // Read back unconditionally — see the note above.
+            load(cube_id)?
+        }
+    };
 
-    let mut candidate: DeviceSecret = Zeroizing::new([0u8; 32]);
-    {
-        use rand::RngCore;
-        rand::rngs::OsRng.fill_bytes(candidate.as_mut());
-    }
-    backend::add_if_absent(cube_id, candidate.as_ref())?;
-
-    // Read back unconditionally — see the note above.
-    let winner = load(cube_id)?;
-
-    // A keystore that accepts a write and then can't return it would otherwise
-    // strand the Cube at the *next* open, long after the user could act.
+    // Both paths, one check. A keystore that accepts a write and then can't
+    // return it would otherwise strand the Cube at the *next* open, long after
+    // the user could act — and an entry that predates the attribute contract
+    // (an older build wrote these through `keyring`'s legacy file-keychain
+    // API, which sets neither attribute) is exactly the case the existing-item
+    // path used to wave through. An item quietly syncing to iCloud is worse
+    // than no item at all: the user believes they have a second factor that is
+    // in fact escrowed.
+    //
+    // Read-only, so this does not disturb the idempotence above.
     backend::verify_attributes(cube_id)?;
-    Ok(winner)
+    Ok(secret)
 }
 
 /// Remove this Cube's entry.
@@ -370,6 +417,33 @@ mod tests {
             Err(UnlockError::KeystoreUnreachable(_))
         ));
         assert!(to_secret(&Zeroizing::new(vec![7u8; 32])).is_ok());
+    }
+
+    /// Probes must not be able to delete each other's items.
+    ///
+    /// `capability()` opens by deleting its own probe account. When that name
+    /// was a constant, a second probe wiped the first one's item mid-round-trip
+    /// and the first reported the keychain unusable — refusing Cube creation on
+    /// a machine where nothing was wrong.
+    #[test]
+    fn each_capability_probe_gets_its_own_account() {
+        let names: std::collections::HashSet<String> = (0..64).map(|_| probe_account()).collect();
+        assert_eq!(names.len(), 64, "probe account names repeated: {:?}", names);
+
+        // Concurrency is the case that matters — a shared clock reading is not
+        // enough on its own.
+        let threads: Vec<_> = (0..8)
+            .map(|_| std::thread::spawn(|| (0..32).map(|_| probe_account()).collect::<Vec<_>>()))
+            .collect();
+        let concurrent: std::collections::HashSet<String> = threads
+            .into_iter()
+            .flat_map(|h| h.join().expect("probe thread"))
+            .collect();
+        assert_eq!(
+            concurrent.len(),
+            8 * 32,
+            "two threads shared a probe account"
+        );
     }
 
     #[test]

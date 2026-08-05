@@ -651,13 +651,23 @@ pub fn migrate_seed_files(loc: &CubeLocation, pin: &str) -> Result<MigrationOutc
     // precisely because the gate is shut — and it is exactly the Cube that
     // needs the prompt.
     let held_back_by_gate = !eligible && secret.is_none();
-    let mut saw_seed_file = false;
 
     let marker_name = loc.duress_slot_file;
     let target_version = match secret {
         Some(_) => seed_crypt::SEED_FILE_VERSION_V3,
         None => seed_crypt::SEED_FILE_VERSION_V2,
     };
+
+    // Ownership of an *unbound* file has to come from its name, because its
+    // bytes carry no proof of it. See the check in the loop.
+    let own_seed = master_seed_path(loc);
+
+    // "This Cube has a seed file" — which is what the prompt above is about —
+    // rather than "the folder is not empty". `mnemonics/` is shared per
+    // network, so reading any file used to set this: another Cube's seed, or a
+    // stray non-mnemonic, was enough to tell a Cube with nothing of its own to
+    // go and back up.
+    let saw_seed_file = own_seed.is_some();
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -669,8 +679,37 @@ pub fn migrate_seed_files(loc: &CubeLocation, pin: &str) -> Result<MigrationOutc
         let Ok(data) = std::fs::read(&path) else {
             continue;
         };
-        saw_seed_file = true;
-        if seed_crypt::format_version(&data) == Some(target_version) {
+        let version = seed_crypt::format_version(&data);
+        if version == Some(target_version) {
+            continue;
+        }
+
+        // `mnemonics/` is per-**network**, so it holds every Cube's seeds — and
+        // this pass runs with one Cube's PIN, id and device secret.
+        //
+        // For v2 and v3 that is safe by construction: the Cube id is in the
+        // AAD, so another Cube's file fails to open and lands in
+        // `skipped_foreign`. v1 and plaintext have no such binding. `decrypt_v1`
+        // ignores `cube_id` entirely, so a foreign v1 file opens whenever the
+        // two Cubes share a PIN — and four digits collide often. A plaintext
+        // file is worse: `rewrite_file` re-seals it after a BIP39 parse and no
+        // PIN check at all, so *every* legacy plaintext seed in the folder gets
+        // sealed under whichever Cube migrates first.
+        //
+        // Either way the owning Cube can never open its own seed again — wrong
+        // AAD, wrong device secret — and this pass would count the theft as a
+        // successful migration. So an unbound file is touched only when the
+        // name says it is this Cube's master seed, using the same
+        // fingerprint/creation-window rule the rest of the module classifies
+        // with. Leaving someone else's legacy file at v1 costs them nothing;
+        // re-sealing it costs them the wallet.
+        let bound_to_a_cube = matches!(
+            version,
+            Some(seed_crypt::SEED_FILE_VERSION_V2) | Some(seed_crypt::SEED_FILE_VERSION_V3)
+        );
+        if !bound_to_a_cube && own_seed.as_deref() != Some(path.as_path()) {
+            tracing::debug!("migration: skipping {name}: unbound and not this Cube's seed");
+            outcome.skipped_foreign += 1;
             continue;
         }
 
@@ -996,6 +1035,16 @@ mod tests {
             (
                 "throttle::lockout_message",
                 throttle::lockout_message(std::time::Duration::from_secs(4)),
+            ),
+            // Both optional clauses at once — every `\`-continued literal in
+            // that function is in this one string.
+            (
+                "app::describe_rollback",
+                crate::app::describe_rollback(
+                    "Couldn't arm.".to_string(),
+                    vec!["Primary".to_string()],
+                    vec!["Backup".to_string()],
+                ),
             ),
         ];
 
@@ -1552,6 +1601,88 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// **The cross-Cube seed theft.**
+    ///
+    /// `mnemonics/` is per-network, so it holds every Cube's seeds, and the
+    /// migration runs with one Cube's PIN, id and device secret. A v2/v3 file is
+    /// bound to its Cube by the AAD and simply fails to open — that is what
+    /// `migration_leaves_other_cubes_files_alone` covers. A **plaintext** file
+    /// has no binding at all: `rewrite_file` re-seals it after a BIP39 parse
+    /// with no PIN check, so migrating Cube A used to seal Cube B's legacy seed
+    /// under A's id, and B could never open its own wallet again.
+    #[test]
+    fn migration_does_not_seal_another_cubes_plaintext_seed() {
+        let dir = tmp_dir("migrate-steal");
+        let secp = Secp256k1::signing_only();
+
+        // Cube A migrates. Cube B is a stranger whose seed is still plaintext.
+        let fp_a = make_cube(&dir, "cube-a", 1000, "1234");
+        let folder = MasterSigner::mnemonics_folder(&dir, NET);
+        let b_signer = MasterSigner::generate(NET).unwrap();
+        let fp_b = b_signer.fingerprint(&secp);
+        let b_words = b_signer.words();
+        let b_path = folder.join(format!("mnemonic-{}-master_2000-2000.txt", fp_b));
+        std::fs::write(&b_path, b_signer.mnemonic_str().as_bytes()).unwrap();
+
+        let l_a = loc(&dir, "cube-a", 1000, Some(fp_a));
+        let outcome = migrate_seed_files(&l_a, "1234").unwrap();
+        assert_eq!(
+            outcome.migrated, 0,
+            "Cube A counted another Cube's seed as its own migration"
+        );
+
+        // B's file is untouched: still plaintext, still B's words.
+        let after = std::fs::read(&b_path).unwrap();
+        assert!(
+            !MasterSigner::is_encrypted(&after),
+            "Cube B's seed was sealed by a migration it never ran"
+        );
+        let l_b = loc(&dir, "cube-b", 2000, Some(fp_b));
+        assert_eq!(pin_requirement(&l_b), PinRequirement::Unprotected);
+
+        // And B can still migrate its own file, under its own id.
+        assert_eq!(migrate_seed_files(&l_b, "5678").unwrap().migrated, 1);
+        match unlock_blocking(&l_b, "5678").unwrap() {
+            PinOutcome::Unlock(s) => assert_eq!(s.words(), b_words),
+            other => panic!("Cube B can no longer open its own seed: {:?}", other),
+        }
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The v1 variant of the same theft: `decrypt_v1` ignores `cube_id`, so a
+    /// foreign v1 file opens whenever the two Cubes share a PIN — and four
+    /// digits collide often enough to be a real case, not a contrived one.
+    #[test]
+    fn migration_does_not_reseal_another_cubes_v1_seed_on_a_shared_pin() {
+        let dir = tmp_dir("migrate-steal-v1");
+        let secp = Secp256k1::signing_only();
+        let folder = MasterSigner::mnemonics_folder(&dir, NET);
+
+        let fp_a = make_cube(&dir, "cube-a", 1000, "1234");
+        let b_signer = MasterSigner::generate(NET).unwrap();
+        let fp_b = b_signer.fingerprint(&secp);
+        let b_path = folder.join(format!("mnemonic-{}-master_2000-2000.txt", fp_b));
+        // Same PIN as Cube A, sealed at v1 — no AAD, so nothing but the name
+        // says whose it is.
+        std::fs::write(&b_path, legacy_v1_blob(&b_signer.mnemonic_str(), "1234")).unwrap();
+        assert_eq!(
+            seed_crypt::format_version(&std::fs::read(&b_path).unwrap()),
+            Some(1)
+        );
+        let before = std::fs::read(&b_path).unwrap();
+
+        let l_a = loc(&dir, "cube-a", 1000, Some(fp_a));
+        assert_eq!(migrate_seed_files(&l_a, "1234").unwrap().migrated, 0);
+        assert_eq!(
+            std::fs::read(&b_path).unwrap(),
+            before,
+            "Cube B's v1 seed was re-sealed under Cube A"
+        );
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn migration_does_not_destroy_the_duress_marker() {
         let dir = tmp_dir("migrate-marker");
@@ -1859,6 +1990,28 @@ mod tests {
             !outcome.skipped_no_backup,
             "an empty folder produced a spurious back-up prompt"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The back-up prompt is about *this* Cube's seed, not about the folder
+    /// being non-empty. `mnemonics/` is shared per network, so reading any file
+    /// used to arm it — another Cube's seed was enough to tell a Cube with
+    /// nothing of its own to go and back up.
+    #[test]
+    fn another_cubes_seed_does_not_trigger_this_cubes_backup_prompt() {
+        let dir = tmp_dir("gate-neighbour");
+        make_cube(&dir, "cube-b", 2000, "5678");
+
+        // Cube A has no seed file of its own — only B's is in the folder, and
+        // A's creation window is far from B's so the fallback cannot claim it.
+        let l_a = loc(&dir, "cube-a", 9000, None);
+        let outcome = migrate_seed_files(&l_a, "1234").unwrap();
+        assert!(
+            !outcome.skipped_no_backup,
+            "a Cube with no seed was told to back up because of a neighbour's file"
+        );
+        assert_eq!(outcome.migrated, 0);
+
         std::fs::remove_dir_all(dir).unwrap();
     }
 

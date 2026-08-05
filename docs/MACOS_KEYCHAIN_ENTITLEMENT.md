@@ -73,11 +73,13 @@ For reference, what that step was:
 - Certificates and Identifiers → **Identifiers** → new App ID, explicit Bundle ID `io.coincube.tenshu`
 - Enable **Associated Domains** — needed for passkey later, and cheaper now than amending the App ID and regenerating any profiles built on it
 
-**There is no "Keychain Sharing" capability in the portal, and its absence is not a missed step.** Keychain Sharing is an Xcode-side capability whose only effect is writing `keychain-access-groups` into the entitlements file; keychain access groups are authorised implicitly by the App ID prefix. Nothing to tick.
+**There is no "Keychain Sharing" capability in the portal, and its absence is not a missed step.** Keychain Sharing is an Xcode-side capability whose only effect is writing `keychain-access-groups` into the entitlements file. Nothing to tick.
+
+That is a statement about the *portal*, not about the signature. It does not answer whether the signed binary needs an embedded provisioning profile to be *authorised* for the group it requests — §4 settles that, and if the answer is yes, the profile itself has to list the group (§4 shows how to check).
 
 **The Bundle ID is immutable** — Apple does not allow editing it after creation. A typo means abandoning the App ID and creating another, so verify it character-for-character against the entitlement value in §3.
 
-Then, **only if the §4 test shows a profile is required**: Profiles → create a **Developer ID** provisioning profile for that App ID (the macOS profile type for distribution outside the App Store), download it, and embed it as `Tenshu.app/Contents/embedded.provisionprofile` before signing.
+**A provisioning profile is required** — §4 settled that empirically on 2026-08-04, and without one the signed app is killed at launch rather than merely refused the keychain. Profiles → create a **Developer ID** profile for that App ID (the macOS type for distribution outside the App Store), download it, **verify it authorises the group** (§4), and embed it as `Tenshu.app/Contents/embedded.provisionprofile` before signing. Done already: the profile is committed at `contrib/release/macos/embedded.provisionprofile`.
 
 **No certificate work.** The existing Developer ID Application certificate is not bundle-specific and is unaffected — nothing in `APPLE_CERT_ROTATION.md` changes.
 
@@ -165,6 +167,16 @@ codesign -dv --verbose=4 Tenshu.app 2>&1 | grep -E 'Authority|flags'
 - **Launches but Cube creation fails with −34018** → the profile is present but does not authorise the group; compare the group in the profile's entitlements against the one in `coincube.entitlements`.
 - **Cube creation succeeds** → the signature, the entitlement and the profile all line up. Done.
 
+The middle case is worth pre-empting, because a profile only authorises what it actually lists: one generated before the App ID was settled, or from the wrong App ID, fails the same way as having none. Read the profile rather than inferring it from the App ID:
+
+```bash
+# What the profile authorises
+security cms -D -i contrib/release/macos/embedded.provisionprofile \
+  | plutil -extract Entitlements.keychain-access-groups xml1 -o - -
+```
+
+It has to *cover* §3's `8UVR249AD5.io.coincube.tenshu` — the committed profile does so with the team-wide wildcard `8UVR249AD5.*` rather than the literal string, so match on coverage, not equality. `codesign -d --entitlements -` showing the group proves only that it was *requested*.
+
 Either way, finish by running the tests that assert the property the entitlement exists for:
 
 ```bash
@@ -191,7 +203,7 @@ The pipeline currently proves the app is *signed and notarized*, not that it *wo
   codesign -d --entitlements - Tenshu.app 2>&1 | grep -q 'keychain-access-groups' \
     || { echo "entitlement missing from signature"; exit 1; }
   ```
-- A **signed macOS runner job** running `cargo test -- --ignored`, which is what turns the three keychain tests from documentation into enforcement. This is the D4 item in `company-brain/plans/cube-unlock-hardening-fixes/`.
+- A **signed macOS runner job** running `contrib/release/macos/run-signed-device-secret-tests.sh` (with `P12_FILE`/`P12_PASSWORD_FILE`, as §4 documents), which is what turns the three keychain tests from documentation into enforcement. Not bare `cargo test -- --ignored` — §4 explains why that is killed on exec rather than run. This is the D4 item in `company-brain/plans/cube-unlock-hardening-fixes/`.
 
 ## 7. Stale docs to fix while here
 
