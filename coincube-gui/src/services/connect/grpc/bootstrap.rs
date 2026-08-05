@@ -13,6 +13,7 @@ use tokio::sync::RwLock;
 use crate::dir::NetworkDirectory;
 use crate::services::connect::client::auth::AccessTokenResponse;
 use crate::services::connect::client::cache::{self, Account, ConnectCacheError};
+use crate::services::connect::crypto::DeviceTransportKey;
 
 use super::{
     create_channel, device::GrpcDeviceClient, interceptor::AuthInterceptor, CreateChannelError,
@@ -88,12 +89,26 @@ pub async fn ensure_device_registered(
         return Ok(existing);
     }
 
+    // Mint (or load) this device's ECIES transport key before registering, so
+    // the registration that creates the device also publishes the key signers
+    // seal their signatures back to (PLAN-connect-blinding PR D4). A device
+    // registered without one can only run plaintext sessions.
+    let transport_pubkey = DeviceTransportKey::load_or_create(network_dir)
+        .map(|k| k.public_key().to_vec())
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                "Could not mint a Connect transport key ({e}); registering without one — \
+                 end-to-end signing will be unavailable on this device"
+            );
+            Vec::new()
+        });
+
     let channel = create_channel(grpc_url).await?;
     let access_token = tokens.read().await.access_token.clone();
     let mut device = GrpcDeviceClient::new(channel, AuthInterceptor::new(&access_token));
 
     let resp = device
-        .register_device(device_name, app_version, os_version)
+        .register_device(device_name, app_version, os_version, transport_pubkey)
         .await?;
 
     // Guard against a malformed server response: an empty/whitespace

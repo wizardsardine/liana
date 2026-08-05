@@ -91,6 +91,15 @@ pub struct PendingSession {
     /// `SignerDevice.id` returned by `ResolveSigners`. Echoed back to
     /// the API on `CreateSigningSession.targets[i].device_id`.
     pub device_id: String,
+    /// The target device's registered ECIES transport public key (33-byte
+    /// compressed secp256k1), from `ResolveSigners`. **Empty means that
+    /// keyholder's app predates end-to-end signing** — the session fails
+    /// closed rather than falling back to a plaintext rail (master I5).
+    pub transport_pubkey: Vec<u8>,
+    /// The client-generated `request_id` of this row's live session. Bound into
+    /// the payload AAD in both directions, so it's needed again to open the
+    /// signature envelope that comes back. Empty until a session is created.
+    pub request_id: String,
     /// Display label — `name (owner_email)` or `name (you)`.
     pub label: String,
     /// Latest known session status. Driven by `SessionEvent`s on the
@@ -353,6 +362,12 @@ pub struct KeychainSignModal {
     tokens: Arc<RwLock<AccessTokenResponse>>,
     grpc_url: String,
     desktop_device_id: String,
+    /// This device's ECIES transport key (`PLAN-connect-blinding` PR D4).
+    /// Signers seal their partial signatures to its public half; only this
+    /// holds the private half. `None` if the sidecar couldn't be read — E2E
+    /// signing is then unavailable and sessions fail closed rather than
+    /// downgrading.
+    transport_key: Option<Arc<crate::services::connect::crypto::DeviceTransportKey>>,
     /// Vault ID on the API — sourced from `ConnectVaultResponse.id`.
     /// Populated after the classification fetch returns.
     vault_id: Option<u64>,
@@ -419,6 +434,7 @@ impl KeychainSignModal {
         cube_uuid: String,
         descriptor_id: String,
         psbt: Psbt,
+        transport_key: Option<Arc<crate::services::connect::crypto::DeviceTransportKey>>,
     ) -> Self {
         Self {
             wallet,
@@ -426,6 +442,7 @@ impl KeychainSignModal {
             tokens,
             grpc_url,
             desktop_device_id,
+            transport_key,
             vault_id: None,
             cube_server_id,
             cube_uuid,
@@ -851,6 +868,8 @@ impl KeychainSignModal {
                 key_id,
                 fingerprint,
                 device_id: target.device_id.clone(),
+                transport_pubkey: target.transport_pubkey.clone(),
+                request_id: String::new(),
                 label,
                 status: PendingSessionStatus::Idle,
                 error: None,
@@ -877,6 +896,40 @@ impl KeychainSignModal {
         let fingerprint = entry.fingerprint;
         let device_id = entry.device_id.clone();
         let key_id = entry.key_id;
+        let transport_pubkey = entry.transport_pubkey.clone();
+
+        // ── End-to-end preconditions (PLAN-connect-blinding PR D4) ────────
+        //
+        // Every payload on this rail is an envelope. Two ways that can be
+        // impossible, and both fail the row closed — never downgrade a session
+        // to the plaintext rail (master I5). Checked before any PSBT work so
+        // the user gets the actionable message rather than a preparation error.
+        //
+        //   * the signer registered no transport key (their app predates E2E);
+        //   * this desktop has no transport key of its own, so the signature
+        //     couldn't be sealed back to us anyway.
+        if self.transport_key.is_none() {
+            if let Some(entry) = self.pending.get_mut(index) {
+                entry.status = PendingSessionStatus::Failed;
+                entry.error = Some(
+                    "This device can't set up encrypted signing yet. Restart Tenshu and try \
+                     again."
+                        .to_string(),
+                );
+            }
+            return Task::none();
+        }
+        if transport_pubkey.is_empty() {
+            if let Some(entry) = self.pending.get_mut(index) {
+                entry.status = PendingSessionStatus::Failed;
+                entry.error = Some(format!(
+                    "{} needs to update their Keychain app before they can sign — their app \
+                     doesn't support encrypted signing requests yet.",
+                    entry.label
+                ));
+            }
+            return Task::none();
+        }
         // Reset state to creating; clear any previous error and stale
         // cancel intent (an explicit request overrides a prior cancel-all
         // so the new session isn't auto-cancelled). A retried/re-requested
@@ -925,6 +978,40 @@ impl KeychainSignModal {
             }
         };
         let psbt_bytes = psbt_to_sign.serialize();
+
+        // Seal the PSBT to this signer's registered transport key so Connect
+        // relays ciphertext it cannot read. The `request_id` minted here binds
+        // both directions' envelopes to this session (see `transport.rs`), so
+        // it is recorded on the row for the signature-open later.
+        let request_id = uuid_v4();
+        let psbt_envelope = match crate::services::connect::crypto::seal_to_device(
+            &transport_pubkey,
+            &request_id,
+            &psbt_bytes,
+        ) {
+            Ok(sealed) => sealed,
+            Err(e) => {
+                tracing::warn!(
+                    target: "coincube_gui::signing",
+                    error = %e,
+                    "Could not encrypt the PSBT to the signer's transport key"
+                );
+                if let Some(entry) = self.pending.get_mut(index) {
+                    entry.status = PendingSessionStatus::Failed;
+                    entry.error = Some(format!(
+                        "Couldn't encrypt the request for {}: their registered signing key looks \
+                         invalid. Ask them to re-open their Keychain app.",
+                        entry.label
+                    ));
+                }
+                return Task::none();
+            }
+        };
+        if let Some(entry) = self.pending.get_mut(index) {
+            entry.request_id = request_id.clone();
+        }
+        let envelope_device_id = device_id.clone();
+
         let vault_id = self.vault_id.unwrap_or(0).to_string();
         let descriptor_id = self.descriptor_id.clone();
         let tokens = self.tokens.clone();
@@ -941,14 +1028,29 @@ impl KeychainSignModal {
                     AuthInterceptor::with_device_id(&access_token, desktop_device_id),
                 );
                 let req = CreateSigningSessionRequest {
-                    request_id: uuid_v4(),
+                    request_id,
                     vault_id,
                     descriptor_id,
-                    psbt: psbt_bytes,
+                    // Empty under ECIES_V1 — the real PSBT rides
+                    // `psbt_envelopes`, sealed per target.
+                    psbt: Vec::new(),
+                    payload_scheme:
+                        crate::services::connect::grpc::connect_v1::PayloadScheme::EciesV1 as i32,
+                    psbt_envelopes: vec![
+                        crate::services::connect::grpc::connect_v1::PayloadEnvelope {
+                            device_id: envelope_device_id,
+                            ephemeral_pubkey: psbt_envelope.ephemeral_pubkey,
+                            nonce: psbt_envelope.nonce,
+                            ciphertext: psbt_envelope.ciphertext,
+                        },
+                    ],
                     targets: vec![crate::services::connect::grpc::connect_v1::SignerTarget {
                         device_id,
                         key_fingerprint: fingerprint_as_str(&fingerprint),
                         key_id: key_id.to_string(),
+                        // Echoed back so the server can pair target ↔ envelope
+                        // without re-reading the device row.
+                        transport_pubkey,
                     }],
                     note: String::new(),
                     ttl: Some(prost_types::Duration {
@@ -1306,9 +1408,49 @@ impl KeychainSignModal {
         // the daemon's update path. The existing SignModal handler uses
         // the same `merge_signatures` + `update_spend_tx` shape; we
         // replicate it inline rather than refactor for one call site.
+        // Under ECIES_V1 the signature comes back sealed to this desktop's
+        // transport key (PR D4); the plaintext `signed_psbt` field is empty.
+        // Open it here, then merge exactly as before — the merge, the daemon
+        // update, and everything downstream are unchanged by blinding.
+        let request_id = self
+            .pending
+            .iter()
+            .find(|p| p.session_id == session_id)
+            .map(|p| p.request_id.clone())
+            .unwrap_or_default();
+        let transport_key = self.transport_key.clone();
+        let open_signature = |sig: &crate::services::connect::grpc::connect_v1::SubmittedSignature| -> Result<Vec<u8>, String> {
+            let Some(env) = sig.signature_envelope.as_ref() else {
+                // Plaintext session (pre-E2E signer, or an old server). Nothing
+                // to open.
+                return Ok(sig.signed_psbt.clone());
+            };
+            let key = transport_key
+                .as_ref()
+                .ok_or_else(|| "no transport key on this device".to_string())?;
+            key.open(
+                &env.ephemeral_pubkey,
+                &env.nonce,
+                &env.ciphertext,
+                &request_id,
+            )
+            .map(|pt| pt.to_vec())
+            .map_err(|e| e.to_string())
+        };
+
         let mut submitted = session.submitted_signatures.into_iter();
         let first = submitted.next().expect("checked non-empty above");
-        let mut signed_psbt = match Psbt::deserialize(&first.signed_psbt) {
+        let first_bytes = match open_signature(&first) {
+            Ok(b) => b,
+            Err(e) => {
+                if let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) {
+                    entry.status = PendingSessionStatus::Failed;
+                    entry.error = Some(format!("Couldn't decrypt the returned signature: {}", e));
+                }
+                return Task::none();
+            }
+        };
+        let mut signed_psbt = match Psbt::deserialize(&first_bytes) {
             Ok(p) => p,
             Err(e) => {
                 if let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) {
@@ -1319,7 +1461,20 @@ impl KeychainSignModal {
             }
         };
         for sig in submitted {
-            match Psbt::deserialize(&sig.signed_psbt) {
+            let bytes = match open_signature(&sig) {
+                Ok(b) => b,
+                Err(e) => {
+                    if let Some(entry) =
+                        self.pending.iter_mut().find(|p| p.session_id == session_id)
+                    {
+                        entry.status = PendingSessionStatus::Failed;
+                        entry.error =
+                            Some(format!("Couldn't decrypt the returned signature: {}", e));
+                    }
+                    return Task::none();
+                }
+            };
+            match Psbt::deserialize(&bytes) {
                 Ok(psbt) => super::psbt::merge_signatures_pub(&mut signed_psbt, &psbt),
                 Err(e) => {
                     if let Some(entry) =
@@ -2120,12 +2275,34 @@ mod tests {
             "cube-local".to_string(),
             RECOVERY_DESC.to_string(),
             empty_psbt(),
+            Some(Arc::new(test_transport_key())),
         )
     }
+
+    /// A throwaway transport keypair for the modal under test — the real one
+    /// comes from the device sidecar via `Cache::connect_transport_key`.
+    fn test_transport_key() -> crate::services::connect::crypto::DeviceTransportKey {
+        let dir = crate::dir::NetworkDirectory::new(std::env::temp_dir().join(format!(
+            "coincube-keychain-sign-transport-{}",
+            std::process::id()
+        )));
+        std::fs::create_dir_all(dir.path()).unwrap();
+        crate::services::connect::crypto::DeviceTransportKey::load_or_create(&dir).unwrap()
+    }
+
+    /// A valid compressed secp256k1 point standing in for a signer device's
+    /// registered transport key (the generator point).
+    const TEST_TARGET_TRANSPORT_PUBKEY: [u8; 33] = [
+        0x02, 0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC, 0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87,
+        0x0B, 0x07, 0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9, 0x59, 0xF2, 0x81, 0x5B, 0x16,
+        0xF8, 0x17, 0x98,
+    ];
 
     fn pending(status: PendingSessionStatus) -> PendingSession {
         PendingSession {
             session_id: "session-1".to_string(),
+            request_id: "req-1".to_string(),
+            transport_pubkey: TEST_TARGET_TRANSPORT_PUBKEY.to_vec(),
             key_id: 7,
             fingerprint: Fingerprint::from_str("f5acc2fd").unwrap(),
             device_id: "phone-1".to_string(),
@@ -2138,6 +2315,95 @@ mod tests {
             signed_psbt_merged: false,
             signed_psbt_persisting: false,
         }
+    }
+
+    // ── End-to-end signing rail (PLAN-connect-blinding PR D4) ────────
+    //
+    // The rail must be all-or-nothing: a session either travels sealed to the
+    // signer's transport key, or it doesn't happen. These pin the two refusal
+    // paths and the sealed-payload round-trip.
+
+    #[test]
+    fn a_signer_without_a_transport_key_fails_closed_with_an_update_prompt() {
+        // Master I5, no downgrade: an older Keychain that registered no
+        // transport key must not silently drag the session back onto the
+        // plaintext rail.
+        let mut m = modal();
+        let mut row = pending(PendingSessionStatus::Idle);
+        row.transport_pubkey = Vec::new();
+        m.pending = vec![row];
+
+        let _ = m.create_session_for(0);
+
+        assert_eq!(m.pending[0].status, PendingSessionStatus::Failed);
+        let err = m.pending[0].error.as_deref().unwrap();
+        assert!(
+            err.contains("update their Keychain app"),
+            "expected an update prompt, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn a_desktop_without_a_transport_key_refuses_rather_than_downgrading() {
+        // The mirror case: we couldn't mint our own key, so a signature could
+        // never be sealed back to us. Refuse instead of falling back.
+        let mut m = modal();
+        m.transport_key = None;
+        m.pending = vec![pending(PendingSessionStatus::Idle)];
+
+        let _ = m.create_session_for(0);
+
+        assert_eq!(m.pending[0].status, PendingSessionStatus::Failed);
+        assert!(m.pending[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("encrypted signing"));
+    }
+
+    // (A target whose transport key is the right length but not a point on the
+    // curve is rejected at the seal, which sits after the PSBT prune and so
+    // isn't reachable with a fixture PSBT. That rejection is pinned at the
+    // codec level by `crypto::transport`'s `malformed_inputs_are_rejected_by_name`.)
+
+    #[test]
+    fn the_signature_envelope_round_trips_through_the_desktop_transport_key() {
+        // What the rail actually does end to end: the signer seals the signed
+        // PSBT to our transport pubkey, bound to the session's request_id, and
+        // only this desktop can open it.
+        use crate::services::connect::crypto::{seal_to_device, DeviceTransportKey};
+
+        let key = test_transport_key();
+        let signed_psbt = b"cHNidP8-pretend-signed-psbt".to_vec();
+        let request_id = "req-e2e-1";
+
+        let sealed = seal_to_device(&key.public_key(), request_id, &signed_psbt).unwrap();
+        let opened = key
+            .open(
+                &sealed.ephemeral_pubkey,
+                &sealed.nonce,
+                &sealed.ciphertext,
+                request_id,
+            )
+            .unwrap();
+        assert_eq!(opened.as_slice(), signed_psbt.as_slice());
+
+        // A different device — i.e. the server, or another signer — cannot.
+        let other = DeviceTransportKey::load_or_create(&crate::dir::NetworkDirectory::new({
+            let d = std::env::temp_dir().join(format!("coincube-ks-other-{}", std::process::id()));
+            std::fs::create_dir_all(&d).unwrap();
+            d
+        }))
+        .unwrap();
+        assert!(other
+            .open(
+                &sealed.ephemeral_pubkey,
+                &sealed.nonce,
+                &sealed.ciphertext,
+                request_id
+            )
+            .is_err());
     }
 
     #[test]

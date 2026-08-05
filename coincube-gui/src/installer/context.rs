@@ -135,6 +135,17 @@ pub struct Context {
     /// fetch Cube-scoped Keychain keys.  `None` when launched from
     /// the Loader (user hasn't done coincube-api auth yet).
     pub coincube_client: Option<CoincubeClient>,
+    /// The Cube's Connect-blinding encryption key (`SPEC-cube-xpub-envelope-v1`
+    /// §3), derived in `Installer::new` from the master signer the Cube was
+    /// unlocked with. The Vault builder needs it to open the xpub envelopes
+    /// Connect now serves in place of plaintext keys (PR D3).
+    ///
+    /// `None` when the installer is running without an unlocked Cube seed —
+    /// a fresh install, or a watch-only restore. Blinded keys then surface as
+    /// "needs re-sharing"/locked in the picker rather than being selectable
+    /// with a key we can't read.
+    pub cube_encryption_key:
+        Option<std::sync::Arc<crate::services::connect::crypto::CubeEncryptionKey>>,
     /// Cube display name used when idempotently registering the cube
     /// with the backend during Final. `None` when no cube settings
     /// were passed in.
@@ -206,6 +217,7 @@ impl Context {
             backup: None,
             cube_id: cube_settings.map(|cs| cs.id.clone()),
             coincube_client,
+            cube_encryption_key: None,
             cube_name: cube_settings.map(|cs| cs.name.clone()),
             connect_vault_members: Vec::new(),
             connect_vault_timelock_days: None,

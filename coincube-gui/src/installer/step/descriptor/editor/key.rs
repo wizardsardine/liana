@@ -63,6 +63,11 @@ pub struct ResolvedCubeKey {
 pub struct ResolvedCubeKeys {
     pub my_keys: Vec<ResolvedCubeKey>,
     pub contact_keys: Vec<ResolvedCubeKey>,
+    /// Connect's numeric id for this Cube, resolved in the same round-trip.
+    /// Bound into every xpub envelope's AAD, so a blinded key can't be opened
+    /// without it (PR D3). `None` when the lookup failed — blinded keys then
+    /// report as unreadable rather than being silently skipped.
+    pub server_cube_id: Option<u64>,
 }
 
 /// Splits a Cube's key list into the viewer's own keys and its contacts' keys.
@@ -123,6 +128,7 @@ fn resolve_cube_keys(
     }
 
     ResolvedCubeKeys {
+        server_cube_id: None,
         my_keys,
         contact_keys,
     }
@@ -285,6 +291,16 @@ pub struct SelectKeySource {
     cube_id: Option<String>,
     /// Authenticated coincube-api client for fetching Keychain keys.
     coincube_client: Option<crate::services::coincube::CoincubeClient>,
+    /// This Cube's Connect-blinding encryption key — what opens the xpub
+    /// envelopes Connect serves in place of plaintext keys (PR D3). `None` on a
+    /// fresh install or watch-only restore, in which case blinded keys can't be
+    /// selected and say so.
+    cube_encryption_key:
+        Option<std::sync::Arc<crate::services::connect::crypto::CubeEncryptionKey>>,
+    /// Connect's **numeric** id for this Cube, resolved alongside the key
+    /// fetch. Required because it is bound into each envelope's AAD; without it
+    /// a blinded key can't be opened at all.
+    cube_server_id: Option<u64>,
     /// Resolved Keychain keys owned by the current user.
     my_keychain_keys: Vec<ResolvedCubeKey>,
     /// Resolved Keychain keys owned by contacts.
@@ -326,6 +342,9 @@ impl SelectKeySource {
         master_signer: Arc<Mutex<Signer>>,
         cube_id: Option<String>,
         coincube_client: Option<crate::services::coincube::CoincubeClient>,
+        cube_encryption_key: Option<
+            std::sync::Arc<crate::services::connect::crypto::CubeEncryptionKey>,
+        >,
     ) -> Self {
         Self {
             network,
@@ -336,6 +355,8 @@ impl SelectKeySource {
             master_signer,
             cube_id,
             coincube_client,
+            cube_encryption_key,
+            cube_server_id: None,
             my_keychain_keys: Vec::new(),
             contact_keychain_keys: Vec::new(),
             keychain_keys_loading: false,
@@ -1059,7 +1080,22 @@ impl SelectKeySource {
                 let user = client.get_user().await.map_err(|e| e.to_string())?;
                 let current_user_id: u64 = user.id.into();
 
-                Ok(resolve_cube_keys(raw_keys, &contacts, current_user_id))
+                // The picker addresses this Cube by UUID, but an xpub envelope
+                // is bound to the *numeric* Connect id (PR D3). Resolve it here
+                // rather than plumbing it through every installer entry point.
+                // A failure isn't fatal to the fetch: plaintext keys still work
+                // and blinded ones surface a clear per-key error.
+                let server_cube_id = match client.list_cubes().await {
+                    Ok(cubes) => cubes.iter().find(|c| c.uuid == cube_id).map(|c| c.id),
+                    Err(e) => {
+                        tracing::warn!("Failed to resolve Connect cube id for {cube_id}: {e}");
+                        None
+                    }
+                };
+
+                let mut resolved = resolve_cube_keys(raw_keys, &contacts, current_user_id);
+                resolved.server_cube_id = server_cube_id;
+                Ok(resolved)
             },
             |result| Self::route(SelectKeySourceMessage::CubeKeysLoaded(result)),
         )
@@ -1071,6 +1107,7 @@ impl SelectKeySource {
             Ok(resolved) => {
                 self.my_keychain_keys = resolved.my_keys;
                 self.contact_keychain_keys = resolved.contact_keys;
+                self.cube_server_id = resolved.server_cube_id;
                 self.keychain_keys_error = None;
             }
             Err(e) => {
@@ -1079,6 +1116,44 @@ impl SelectKeySource {
             }
         }
         Task::none()
+    }
+
+    /// Reports an unreadable Keychain key to Connect so its owner gets a
+    /// re-enrol prompt (api PR A4).
+    ///
+    /// Fire-and-forget: the builder has already shown the user why this key
+    /// can't be used, and a failed report just means the owner finds out at the
+    /// next attempt. [`KeyResolveError::should_report_invalid`] filters out
+    /// local conditions — a device that simply can't read envelopes must not
+    /// invalidate other people's keys — and `report_reason` maps the failure to
+    /// the API's closed reason set.
+    ///
+    /// Needs the numeric Cube id: the endpoint is Cube-scoped so an owner can
+    /// only flag keys attached to their own Cube. Without it (the id lookup
+    /// failed) the report is skipped rather than guessed at.
+    fn report_envelope_invalid(
+        &self,
+        resolved: &ResolvedCubeKey,
+        error: &crate::services::connect::crypto::KeyResolveError,
+    ) -> Task<Message> {
+        if !error.should_report_invalid() {
+            return Task::none();
+        }
+        let (Some(client), Some(cube_id)) = (self.coincube_client.clone(), self.cube_server_id)
+        else {
+            return Task::none();
+        };
+        let key_id = resolved.raw.id;
+        let reason = error.report_reason();
+        Task::future(async move {
+            if let Err(e) = client
+                .report_key_envelope_invalid(cube_id, key_id, reason)
+                .await
+            {
+                tracing::warn!("Failed to report key {key_id} as envelope_invalid: {e}");
+            }
+        })
+        .discard()
     }
 
     fn on_select_keychain_key(&mut self, resolved: ResolvedCubeKey) -> Task<Message> {
@@ -1093,17 +1168,56 @@ impl SelectKeySource {
             );
             return Task::none();
         }
+        // Already reported unopenable (api PR A4): the server dropped the stale
+        // ciphertext along with the flag, so there is nothing left to decrypt.
+        // Short-circuit before `resolve_key_xpub` so we don't re-report a
+        // failure this owner has already reported — the keyholder has one
+        // re-enrol prompt pending, and a second adds nothing.
+        if resolved.raw.is_envelope_invalid() {
+            self.error = Some(format!(
+                "“{}” is waiting to be re-shared. Its owner has been asked to share it again \
+                 from their Keychain app.",
+                resolved.raw.name
+            ));
+            return Task::none();
+        }
         let fingerprint_str = &resolved.raw.fingerprint;
-        let xpub_str = &resolved.raw.xpub;
         let derivation_str = &resolved.raw.derivation_path;
 
         let Ok(fingerprint) = Fingerprint::from_str(fingerprint_str) else {
             self.error = Some(format!("Invalid fingerprint: {}", fingerprint_str));
             return Task::none();
         };
-        let Ok(xpub) = xpub_str.parse::<Xpub>() else {
-            self.error = Some(format!("Invalid xpub: {}", xpub_str));
-            return Task::none();
+        // Connect blinding (PR D3): the key arrives as an envelope sealed to
+        // this Cube, so this is where it gets opened — and where the format /
+        // network / fingerprint validation the server used to do now runs. A
+        // legacy plaintext row takes the same path and the same checks.
+        // Everything below (descriptor assembly, quorum rules) is unchanged: it
+        // operates on the decrypted xpub.
+        let xpub = match crate::services::connect::crypto::resolve_key_xpub(
+            &resolved.raw,
+            self.cube_encryption_key.as_deref(),
+            // No numeric cube id means we can't rebuild the envelope AAD.
+            // Passing a sentinel would "fail closed" only by luck, so treat it
+            // as the fetch problem it is — 0 is never a real Connect cube id,
+            // so a blinded key deterministically fails the tag check here.
+            self.cube_server_id.unwrap_or(0),
+            self.network,
+        ) {
+            Ok(xpub) => xpub,
+            Err(e) => {
+                tracing::warn!(
+                    "Keychain key {} ({}) could not be resolved: {}",
+                    resolved.raw.id,
+                    resolved.raw.name,
+                    e
+                );
+                self.error = Some(e.user_message(&resolved.raw.name));
+                // Tell Connect the envelope is unusable so it can push a
+                // re-enrol prompt to the key's owner (api PR A4). Local
+                // conditions (this device simply can't read it) are excluded.
+                return self.report_envelope_invalid(&resolved, &e);
+            }
         };
         let Ok(derivation_path) = DerivationPath::from_str(derivation_str) else {
             self.error = Some(format!("Invalid derivation path: {}", derivation_str));
@@ -2454,6 +2568,11 @@ mod tests {
     use super::*;
 
     const TESTNET_XPUB: &str = "tpubD6NzVbkrYhZ4XHQ1pLJ7pdpEGWCVbSUEaUakxnrtENzaZaDp4vL6gBgGH7n983ZPgsVe5G2JEAM2oYZkEPCNrfo9XLq8nHFhp9GzFjGc1uQ";
+    /// A real BIP-48 testnet **account** xpub (`m/48'/1'/0'/2'`, depth 4) —
+    /// the shape Connect actually serves for a Keychain key, and consistent
+    /// with `raw_key`'s declared `derivation_path`. Distinct from
+    /// [`TESTNET_XPUB`] above, which is a depth-0 master.
+    const TESTNET_ACCOUNT_XPUB: &str = "tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ";
     const TESTNET_DESCRIPTOR_KEY: &str = "[8a550171/48'/1'/0'/2']tpubD6NzVbkrYhZ4XHQ1pLJ7pdpEGWCVbSUEaUakxnrtENzaZaDp4vL6gBgGH7n983ZPgsVe5G2JEAM2oYZkEPCNrfo9XLq8nHFhp9GzFjGc1uQ";
     const MAINNET_DESCRIPTOR_KEY: &str = "[abcdef01/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW";
 
@@ -2536,6 +2655,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             Arc::new(Mutex::new(Signer::generate(Network::Signet).unwrap())),
+            None,
             None,
             None,
         )
@@ -2706,9 +2826,10 @@ mod tests {
 
     fn raw_key(id: u64, fingerprint: &str, owner_id: u64) -> CubeKeyRaw {
         CubeKeyRaw {
+            xpub_envelope: None,
             id,
             name: format!("Key {id}"),
-            xpub: TESTNET_XPUB.to_string(),
+            xpub: TESTNET_ACCOUNT_XPUB.to_string(),
             fingerprint: fingerprint.to_string(),
             derivation_path: "m/48'/1'/0'/2'".to_string(),
             network: "signet".to_string(),
@@ -2907,12 +3028,21 @@ mod tests {
             Some("Invalid fingerprint: not-hex")
         );
 
+        // Under Connect blinding the xpub is resolved (and validated) by
+        // `resolve_key_xpub`, so an unusable key surfaces the shared re-share
+        // wording rather than a raw parse error.
         invalid.raw.fingerprint = "8a550171".to_string();
         invalid.raw.xpub = "not-xpub".to_string();
         let _ = picker.on_select_keychain_key(invalid.clone());
-        assert_eq!(picker.error.as_deref(), Some("Invalid xpub: not-xpub"));
+        assert_eq!(
+            picker.error.as_deref(),
+            Some(
+                "\u{201c}Key 2\u{201d} couldn't be read and needs re-sharing. Ask its owner to \
+                 re-share the key from their Keychain app."
+            )
+        );
 
-        invalid.raw.xpub = TESTNET_XPUB.to_string();
+        invalid.raw.xpub = TESTNET_ACCOUNT_XPUB.to_string();
         invalid.raw.derivation_path = "not-path".to_string();
         let _ = picker.on_select_keychain_key(invalid);
         assert_eq!(
@@ -2923,9 +3053,11 @@ mod tests {
         let mut bitcoin_picker = empty_picker();
         bitcoin_picker.network = Network::Bitcoin;
         let _ = bitcoin_picker.on_select_keychain_key(resolved_key(3, "8a550171", 7));
+        // The network check now runs inside `resolve_key_xpub` — one place for
+        // it, whether the key arrived blinded or as legacy plaintext.
         assert_eq!(
             bitcoin_picker.error.as_deref(),
-            Some("Key network does not match")
+            Some("\u{201c}Key 3\u{201d} is for a different Bitcoin network.")
         );
 
         let mut elsewhere_picker = picker_with_placed_key(vec![(0, 0)], vec![(1, 0)], fg);
@@ -2988,6 +3120,138 @@ mod tests {
         let _ = ok_picker.on_select_keychain_key(resolved_key(1, "8a550171", 7));
         assert!(matches!(ok_picker.selected_key, SelectedKey::New(_)));
         assert_eq!(ok_picker.step, Step::Details);
+    }
+
+    // ── Connect blinding: the builder opens envelopes (PR D3) ────────
+    //
+    // The key picker is where a Contact's blinded xpub is decrypted. These
+    // pin the two outcomes that matter: a good envelope selects exactly as a
+    // plaintext key used to, and an unopenable one lands in the "needs
+    // re-sharing" state instead of crashing or silently selecting nothing.
+
+    /// The `SPEC-cube-xpub-envelope-v1` §8 vector — `TESTNET_ACCOUNT_XPUB`
+    /// sealed to the Cube key derived from the vector mnemonic, cube id 42.
+    const BLIND_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    const BLIND_E: &str = "032c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991";
+    const BLIND_NONCE: &str = "0000000000000000cafebabe";
+    const BLIND_CT: &str = "fc13b1b9639e00e163b3664b62f516ad49d7f19c5383a758706ca813fa8e236cf14a4189aa61ee94801d31cb26a14a999eb5ea2c90a53bc704c5b262ff2b4cf984e97d7c92d13069b829b972c501190db9eaba00b8df84a25c78125e602cff3b037c7db65974b063084596a64667d5f92d647067c3c5453237d7e9e3573a57";
+    const BLIND_CUBE_ID: u64 = 42;
+    /// The AAD binds the key id, so the fixture row must BE key 7.
+    const BLIND_KEY_ID: u64 = 7;
+
+    /// A picker on testnet holding the vector Cube's encryption key, with the
+    /// numeric cube id already resolved (as `on_cube_keys_loaded` sets it).
+    fn blinded_picker() -> SelectKeySource {
+        use coincube_core::signer::MasterSigner;
+        let mut picker = empty_picker();
+        picker.network = Network::Testnet;
+        let signer = MasterSigner::from_str(Network::Testnet, BLIND_MNEMONIC).unwrap();
+        picker.cube_encryption_key = Some(Arc::new(
+            crate::services::connect::crypto::CubeEncryptionKey::derive(&signer, Network::Testnet),
+        ));
+        picker.cube_server_id = Some(BLIND_CUBE_ID);
+        picker
+    }
+
+    fn blinded_key(id: u64, ciphertext: &str) -> ResolvedCubeKey {
+        let mut resolved = resolved_key(id, "8a550171", 7);
+        // Envelope-mode rows carry no plaintext column at all.
+        resolved.raw.xpub = String::new();
+        resolved.raw.xpub_envelope = Some(crate::services::connect::crypto::XpubEnvelope {
+            scheme: crate::services::connect::crypto::XPUB_ENVELOPE_SCHEME.to_string(),
+            recipient: crate::services::connect::crypto::RECIPIENT_CUBE_OWNER.to_string(),
+            ephemeral_pubkey: BLIND_E.to_string(),
+            nonce: BLIND_NONCE.to_string(),
+            ciphertext: ciphertext.to_string(),
+        });
+        resolved
+    }
+
+    #[test]
+    fn blinded_keychain_key_is_decrypted_and_selected() {
+        let mut picker = blinded_picker();
+        let _ = picker.on_select_keychain_key(blinded_key(BLIND_KEY_ID, BLIND_CT));
+
+        assert!(picker.error.is_none(), "error: {:?}", picker.error);
+        let SelectedKey::New(key) = &picker.selected_key else {
+            panic!("blinded key should select: {:?}", picker.selected_key);
+        };
+        // The descriptor key is built from the *decrypted* xpub, with the
+        // row's plaintext origin metadata — exactly as before blinding.
+        assert!(key.key.to_string().contains(TESTNET_ACCOUNT_XPUB));
+        assert_eq!(picker.step, Step::Details);
+    }
+
+    #[test]
+    fn an_already_reported_key_is_refused_without_re_reporting() {
+        // After an A4 report the server clears the ciphertext and flags the
+        // row, so it comes back with neither xpub nor envelope. Selecting it
+        // must say "waiting to be re-shared", not run the resolver and file a
+        // second report against a keyholder who already has one pending.
+        let mut picker = blinded_picker();
+        let mut row = blinded_key(BLIND_KEY_ID, BLIND_CT);
+        row.raw.status = crate::services::coincube::KEY_STATUS_ENVELOPE_INVALID.to_string();
+        row.raw.xpub_envelope = None;
+        row.raw.xpub = String::new();
+
+        let _ = picker.on_select_keychain_key(row);
+
+        assert!(matches!(picker.selected_key, SelectedKey::None));
+        assert!(picker
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("waiting to be re-shared"));
+        assert_eq!(picker.step, Step::Grid);
+    }
+
+    #[test]
+    fn a_blinded_key_without_the_cube_key_reports_locked_not_bad() {
+        // Watch-only / no-seed install: the key is fine, this device just
+        // can't read it. The message must not tell the user to go bother the
+        // key's owner.
+        let mut picker = blinded_picker();
+        picker.cube_encryption_key = None;
+        let _ = picker.on_select_keychain_key(blinded_key(BLIND_KEY_ID, BLIND_CT));
+
+        assert!(matches!(picker.selected_key, SelectedKey::None));
+        assert!(picker
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("isn't available on this device"));
+    }
+
+    #[test]
+    fn an_unopenable_envelope_surfaces_the_re_enrol_state() {
+        let mut picker = blinded_picker();
+        let mut tampered = hex::decode(BLIND_CT).unwrap();
+        tampered[0] ^= 0x01;
+        let _ = picker.on_select_keychain_key(blinded_key(BLIND_KEY_ID, &hex::encode(tampered)));
+
+        assert!(matches!(picker.selected_key, SelectedKey::None));
+        assert!(picker
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("needs re-sharing"));
+        assert_eq!(picker.step, Step::Grid, "a bad key must not advance");
+    }
+
+    #[test]
+    fn a_blinded_key_cannot_be_opened_without_the_numeric_cube_id() {
+        // The cube id is bound into the AAD, so a failed id lookup must fail
+        // the open rather than quietly resolving to something.
+        let mut picker = blinded_picker();
+        picker.cube_server_id = None;
+        let _ = picker.on_select_keychain_key(blinded_key(BLIND_KEY_ID, BLIND_CT));
+
+        assert!(matches!(picker.selected_key, SelectedKey::None));
+        assert!(picker
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("needs re-sharing"));
     }
 
     // ── resolve_cube_keys: self/contact classification ───────────────

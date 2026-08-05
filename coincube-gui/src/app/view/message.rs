@@ -604,6 +604,18 @@ pub enum NodeSettingsMessage {
     /// Validate the fields and restart the managed node to apply the new prune
     /// target / mempool cap.
     NodeResourceApply,
+    // "Your own Esplora" (BYO chain source — `PLAN-connect-blinding` PR D5).
+    // By default chain queries go through COINCUBE's proxy (or a public
+    // provider); pointing the daemon at the user's own Esplora removes that
+    // party from the address-lookup path entirely.
+    /// Edit the custom Esplora URL field (raw string, unvalidated).
+    CustomEsploraEdited(String),
+    /// Probe the entered URL (`GET {url}/blocks/tip/height`) and, if it
+    /// answers, switch the daemon's chain backend to it.
+    CustomEsploraApply,
+    /// Probe result: the tip height the endpoint reported, or why it didn't
+    /// answer. A failure never changes the daemon config.
+    CustomEsploraProbeResult(Result<u32, String>),
 }
 
 #[derive(Debug, Clone)]
@@ -1842,6 +1854,11 @@ pub enum ConnectCubeMessage {
     CubeRegistered(Result<crate::services::coincube::CubeResponse, String>),
     /// Retry a previously failed cube registration.
     RetryRegistration,
+    /// Outcome of publishing the Cube's Connect-blinding encryption pubkey
+    /// (`PUT /connect/cubes/{id}/encryption-key`, `PLAN-connect-blinding` PR
+    /// D2). `false` means the call failed and will be retried next launch —
+    /// background hygiene, never surfaced to the user.
+    EncryptionKeyRegistered(bool),
     CopyToClipboard(String),
     Error(String),
     Avatar(AvatarMessage),

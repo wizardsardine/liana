@@ -2117,6 +2117,84 @@ pub fn inbound_tor_section<'a>(
     card::simple(col).width(Length::Fill).into()
 }
 
+/// The "Your own Esplora" panel (`PLAN-connect-blinding` PR D5).
+///
+/// By default a Vault's chain queries go through COINCUBE's Esplora proxy or a
+/// public provider, which means somebody other than the user sees which
+/// addresses are being looked up (IP-linked, not account-linked — see
+/// `SECURITY.md`). Pointing the daemon at the user's own Esplora removes that
+/// party from the path entirely. The copy says exactly that, in those terms:
+/// this is the mitigation we actually offer, so it shouldn't be undersold or
+/// oversold.
+///
+/// `probing` is true while the entered URL is being checked; `status` carries
+/// the last probe verdict (`Ok(tip_height)` or the failure reason).
+pub fn custom_esplora_section<'a>(
+    url: &'a form::Value<String>,
+    probing: bool,
+    status: Option<&'a Result<u32, String>>,
+) -> Element<'a, NodeSettingsMessage> {
+    let field = form::Form::new_trimmed("https://esplora.example.com/api", url, |v| {
+        NodeSettingsMessage::CustomEsploraEdited(v)
+    })
+    .warning("Enter a full http:// or https:// URL")
+    .size(P1_SIZE)
+    .padding(10);
+
+    let apply: Element<'_, NodeSettingsMessage> = if probing {
+        button::secondary(None, "Checking…").padding([8, 14]).into()
+    } else {
+        button::secondary(None, "Check and use")
+            .padding([8, 14])
+            .on_press(NodeSettingsMessage::CustomEsploraApply)
+            .into()
+    };
+
+    let mut col = Column::new()
+        .spacing(15)
+        .push(text("Your own Esplora").bold().size(18))
+        .push(
+            text(
+                "By default, chain queries go through COINCUBE's proxy — which means we \
+                 see which addresses your wallet asks about, though not who you are. \
+                 Point this at your own Esplora server to remove us from that path.",
+            )
+            .size(12)
+            .style(theme::text::secondary),
+        )
+        .push(
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(Container::new(field).width(Length::Fill))
+                .push(apply),
+        );
+
+    if let Some(status) = status {
+        col = col.push(match status {
+            Ok(height) => text(format!(
+                "Reachable — reported block height {}. Switching your chain queries over.",
+                height
+            ))
+            .size(12)
+            .style(theme::text::success),
+            Err(e) => text(e.clone()).size(12).style(theme::text::error),
+        });
+    }
+
+    col = col.push(separation().width(Length::Fill)).push(
+        text(
+            "No fallback is kept: if your server is unreachable, syncing stops rather than \
+             quietly sending your address lookups somewhere else. Switch back to \
+             COINCUBE | Connect above to restore the default providers.",
+        )
+        .size(12)
+        .style(theme::text::secondary),
+    );
+
+    card::simple(col).width(Length::Fill).into()
+}
+
 /// The "Node resources" panel: tune the managed node's prune target and mempool
 /// cap, then apply via a force-restart. Reuses the installer's shared controls so
 /// the presets/fields never drift, and adds the honesty copy about what changing

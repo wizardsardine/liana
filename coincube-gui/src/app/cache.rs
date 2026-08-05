@@ -148,6 +148,35 @@ pub struct Cache {
     /// cubes by numeric id, not by the local UUID carried in
     /// `cube_id` above.
     pub current_cube_server_id: Option<u64>,
+    /// The active Cube's Connect-blinding encryption keypair
+    /// (`SPEC-cube-xpub-envelope-v1` §3), derived from the master seed the
+    /// Cube was unlocked with and held for the life of the session.
+    ///
+    /// Every surface that reads a Connect-served key — the Vault builder, the
+    /// heir-escrow recipient list, the signer join — needs it to open xpub
+    /// envelopes, and none of them has a PIN in hand. Deriving it once here
+    /// from the already-in-memory master signer avoids re-prompting and adds no
+    /// new secret lifetime: the seed it comes from is resident anyway (it backs
+    /// the Liquid/Spark signers). The private scalar is zeroized when the Arc
+    /// drops and is never written to disk.
+    ///
+    /// `None` on a Cube with no on-disk seed (watch-only / descriptor-only
+    /// restores, passkey Cubes). Blinded keys then resolve to
+    /// `KeyResolveError::Locked` rather than being reported as invalid.
+    pub cube_encryption_key: Option<Arc<crate::services::connect::crypto::CubeEncryptionKey>>,
+    /// This device's Connect signing-rail transport key (`PLAN-connect-blinding`
+    /// PR D4) — the key signers seal their partial signatures to, and the only
+    /// thing that can open them.
+    ///
+    /// Loaded (minted on first use) from the network directory at launch,
+    /// alongside the device identity it is registered with. Unlike
+    /// [`Self::cube_encryption_key`] it is **not** seed-derived and does not
+    /// need an unlocked Cube: the rail comes up at login.
+    ///
+    /// `None` only if the sidecar couldn't be read or written, in which case
+    /// end-to-end signing is unavailable and sessions fail closed rather than
+    /// downgrading to a plaintext rail.
+    pub connect_transport_key: Option<Arc<crate::services::connect::crypto::DeviceTransportKey>>,
     /// SHA-256 hex fingerprint of the *live* descriptor blob — i.e.
     /// what `descriptor_blob_from_wallet(...)` currently produces
     /// given the loaded wallet. `None` when there's no wallet.
@@ -203,6 +232,8 @@ pub struct Cache {
 impl std::default::Default for Cache {
     fn default() -> Self {
         Self {
+            connect_transport_key: None,
+            cube_encryption_key: None,
             datadir_path: CoincubeDirectory::new(std::path::PathBuf::new()),
             node_bitcoind_sync_progress: None,
             node_bitcoind_ibd: None,

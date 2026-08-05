@@ -48,6 +48,52 @@ message SignerTarget {
   string device_id = 1;
   string key_fingerprint = 2;
   string key_id = 3;
+  // transport_pubkey is the ECIES recipient key this device registered
+  // (33-byte compressed secp256k1) — what the initiating desktop seals this
+  // target's PSBT envelope to. Same encoding as
+  // RegisterDeviceRequest.transport_pubkey.
+  //
+  // EMPTY means the device has not registered one (an older Keychain). Such a
+  // target cannot take part in an ECIES_V1 session, and the initiator MUST
+  // fail closed with "this keyholder's app needs updating" rather than
+  // downgrade the session to plaintext.
+  bytes transport_pubkey = 4;
+}
+
+// PayloadScheme declares how a signing session's PSBT and signatures are
+// encoded on the rail (PLAN-connect-blinding B1).
+//
+// PLAINTEXT is the legacy contract: `bytes psbt` / `bytes signed_psbt` carry
+// the real thing, and the server parses the PSBT to build a TxSummary.
+//
+// ECIES_V1 is end-to-end: the desktop seals ONE PayloadEnvelope per resolved
+// signer target to that device's transport_pubkey, and the signer seals its
+// signature back to the desktop's. The server relays opaque bytes, never parses
+// the PSBT, and never builds a summary — the Keychain builds its own from the
+// plaintext it alone can see (WYSIWYS).
+//
+// UNSPECIFIED means an old client that predates this field; the server treats
+// it as PLAINTEXT so existing desktops keep working unchanged.
+enum PayloadScheme {
+  PAYLOAD_SCHEME_UNSPECIFIED = 0;
+  PAYLOAD_SCHEME_PLAINTEXT = 1;
+  PAYLOAD_SCHEME_ECIES_V1 = 2;
+}
+
+// PayloadEnvelope is one ECIES-sealed payload on the signing rail: a PSBT
+// sealed to a signer device, or a signature sealed back to the desktop.
+//
+// Same primitives as every other envelope in the system (SPEC-ecies-v1 §1:
+// secp256k1, compressed SEC1, HKDF-SHA256, AES-256-GCM). The server stores and
+// relays these three fields verbatim and holds no key that can open them.
+message PayloadEnvelope {
+  // device_id names the target this envelope is sealed to. Set on the
+  // request PSBT envelopes (one per signer target); empty on a signature
+  // envelope, which is always sealed to the session creator's desktop.
+  string device_id = 1;
+  bytes ephemeral_pubkey = 2; // 33-byte compressed SEC1
+  bytes nonce = 3;            // 12 bytes
+  bytes ciphertext = 4;       // ciphertext ‖ 16-byte GCM tag
 }
 
 message SigningPolicySummary {
@@ -76,9 +122,14 @@ message TxSummary {
 
 message SubmittedSignature {
   string device_id = 1;
+  // signed_psbt carries the real partially-signed PSBT on a PLAINTEXT session,
+  // and is EMPTY on an ECIES_V1 session (see signature_envelope).
   bytes signed_psbt = 2;
   repeated string signed_key_ids = 3;
   google.protobuf.Timestamp created_at = 4;
+  // signature_envelope is the ECIES_V1 counterpart: the signed PSBT sealed to
+  // the session creator's desktop transport pubkey. Opaque to the server.
+  PayloadEnvelope signature_envelope = 5;
 }
 
 message SigningSession {
@@ -87,7 +138,12 @@ message SigningSession {
   string user_id = 3;
   string vault_id = 4;
   string descriptor_id = 5;
+  // psbt carries the real PSBT on a PLAINTEXT session, and is EMPTY on an
+  // ECIES_V1 session (see psbt_envelopes).
   bytes psbt = 6;
+  // tx_summary is server-built from the PSBT and is therefore ABSENT on an
+  // ECIES_V1 session — the server cannot read the transaction. The Keychain
+  // builds its own summary from the plaintext it decrypts (WYSIWYS).
   TxSummary tx_summary = 7;
   SigningPolicySummary policy_summary = 8;
   repeated SignerTarget targets = 9;
@@ -101,6 +157,12 @@ message SigningSession {
   // branch (inheritance recovery). Server-recorded at creation after the
   // recovery gate passes; lets clients render recovery sessions distinctly.
   bool is_recovery_spend = 16;
+  // payload_scheme declares how psbt / signatures are encoded on this session.
+  PayloadScheme payload_scheme = 17;
+  // psbt_envelopes holds one sealed PSBT per signer target on an ECIES_V1
+  // session (empty on PLAINTEXT). A signer reads the entry whose device_id is
+  // its own; it cannot open anyone else's, and neither can the server.
+  repeated PayloadEnvelope psbt_envelopes = 18;
 }
 
 message CreateSigningSessionRequest {
@@ -118,6 +180,13 @@ message CreateSigningSessionRequest {
   // path being open (keyholder caller + monitoring state available/reminding +
   // owner not under duress). Ignored (false) for ordinary owner-branch spends.
   bool is_recovery_spend = 9;
+  // payload_scheme selects the rail contract. Omitted/UNSPECIFIED is treated as
+  // PLAINTEXT so pre-blinding desktops keep working.
+  PayloadScheme payload_scheme = 10;
+  // psbt_envelopes is REQUIRED for ECIES_V1 and must contain exactly one entry
+  // per declared target; `psbt` must then be empty. The reverse holds for
+  // PLAINTEXT. Mixing the two is rejected at create — there is no downgrade.
+  repeated PayloadEnvelope psbt_envelopes = 11;
 }
 
 message CreateSigningSessionResponse {
@@ -167,8 +236,13 @@ message MarkViewedResponse {}
 
 message SubmitPartialSignatureRequest {
   string session_id = 1;
+  // signed_psbt is used on a PLAINTEXT session; leave it empty on ECIES_V1.
   bytes signed_psbt = 2;
   repeated string signed_key_ids = 3;
+  // signature_envelope is REQUIRED on an ECIES_V1 session: the signed PSBT
+  // sealed to the session creator's desktop transport pubkey. Decided
+  // 2026-08-03 — ALL rail payloads are envelopes, in both directions.
+  PayloadEnvelope signature_envelope = 4;
 }
 
 message SubmitPartialSignatureResponse {
@@ -183,6 +257,18 @@ message RegisterDeviceRequest {
   string os_version = 5;
   string device_pubkey = 6;
   repeated string capabilities = 7;
+  // transport_pubkey is this device's ECIES recipient key for the signing rail
+  // (33-byte compressed secp256k1). BOTH sides register one: the desktop (which
+  // already registers as a device, keyed on cache.account.device_id) so signers
+  // can seal signatures back to it, and each Keychain so the desktop can seal
+  // that signer's PSBT.
+  //
+  // ONE TRANSPORT-KEY CONCEPT: this is the same idea as
+  // CreateDecryptRequestRequest.desktop_transport_pubkey on the inheritance
+  // decrypt relay — same curve, same encoding, same "the server relays a blob
+  // it cannot open" role. The relay's key is per-recovery and ephemeral; this
+  // one is per-device and persistent, which is why it rides registration.
+  bytes transport_pubkey = 8;
 }
 
 message RegisterDeviceResponse {
@@ -210,8 +296,6 @@ message StreamEnvelope {
     // ListPendingDecryptRequests / GetDecryptResult fetches for reliability).
     DecryptRequestedEvent decrypt_requested = 9; // → heir's Keychain
     DecryptResultEvent decrypt_result = 10;      // → heir's desktop
-    // Duress was disabled (turned off) account-wide; every connected device
-    // disarms locally. Offline clients reconcile via GET /connect/duress.
     DuressDisabledEvent duress_disabled = 11;
   }
 }
@@ -219,7 +303,6 @@ message StreamEnvelope {
 // DuressActivatedEvent is broadcast on the existing Connect stream when an
 // account enters duress, so every connected desktop / Keychain client can
 // react in realtime. Offline clients reconcile via GET /connect/duress.
-// (Synced from coincube-api/grpc/connect.proto for Phase 7b.)
 message DuressActivatedEvent {
   string account_id = 1;
   google.protobuf.Timestamp duress_unlock_at = 2;
@@ -232,10 +315,11 @@ message DuressClearedEvent {
   google.protobuf.Timestamp cleared_at = 2;
 }
 
-// DuressDisabledEvent is broadcast when duress is turned OFF for an account
-// (the inverse of enrollment — not the same as all-clear, which only ends an
-// active episode). Every connected device disarms locally; offline clients
-// reconcile via GET /connect/duress.
+// DuressDisabledEvent is broadcast on the existing Connect stream when an
+// account UNENROLLS from duress (disable), as distinct from DuressClearedEvent
+// (an active episode ended; the account stays enrolled-normal). Clients act
+// differently: disabled triggers a local disarm, not just exit-from-cryptic.
+// Best-effort; offline clients reconcile via GET /connect/duress (enrolled:false).
 message DuressDisabledEvent {
   string account_id = 1;
   google.protobuf.Timestamp disabled_at = 2;

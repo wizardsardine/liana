@@ -68,6 +68,10 @@ pub struct DefineDescriptor {
     cube_id: Option<String>,
     /// Authenticated coincube-api client for fetching Keychain keys.
     coincube_client: Option<crate::services::coincube::CoincubeClient>,
+    /// This Cube's Connect-blinding encryption key, for opening the xpub
+    /// envelopes Connect serves in place of plaintext keys (PR D3).
+    cube_encryption_key:
+        Option<std::sync::Arc<crate::services::connect::crypto::CubeEncryptionKey>>,
 
     error: Option<String>,
 }
@@ -91,6 +95,7 @@ impl DefineDescriptor {
             accounts: Default::default(),
             cube_id: None,
             coincube_client: None,
+            cube_encryption_key: None,
         }
     }
 
@@ -257,6 +262,7 @@ impl DefineDescriptor {
             self.signer.clone(),
             self.cube_id.clone(),
             self.coincube_client.clone(),
+            self.cube_encryption_key.clone(),
         )
     }
 }
@@ -266,6 +272,7 @@ impl Step for DefineDescriptor {
         self.load_template(ctx.descriptor_template);
         self.cube_id = ctx.cube_id.clone();
         self.coincube_client = ctx.coincube_client.clone();
+        self.cube_encryption_key = ctx.cube_encryption_key.clone();
     }
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.

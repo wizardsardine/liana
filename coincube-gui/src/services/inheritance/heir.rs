@@ -127,6 +127,14 @@ pub fn open_blob(
             check_blob_version("descriptor blob", blob.version)?;
             Ok(OpenedArtifact::Descriptor(blob))
         }
+        // An xpub envelope belongs to Connect blinding's key-listing surfaces
+        // (`services::connect::crypto`), not to a heir-recovery release. Its
+        // AAD carries a different artifact_kind, so `open_with_shared_key`
+        // above would already have failed the tag — this arm only exists so
+        // adding the kind can't silently acquire a meaning here.
+        ArtifactKind::Xpub => Err(HeirDecryptError::Envelope(
+            "recovery envelope has an unexpected artifact kind (xpub)".to_string(),
+        )),
     }
 }
 

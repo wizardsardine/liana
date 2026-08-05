@@ -200,11 +200,29 @@ impl ConnectPanel {
     /// `is_authenticated()` is false and no panel client exists) by
     /// registering from the restored tokens directly.
     pub fn ensure_cube_registered(&mut self) -> iced::Task<Message> {
-        if self.cube.server_cube_id.is_some() || !self.account.is_authenticated() {
+        if !self.account.is_authenticated() {
             return iced::Task::none();
         }
         self.sync_client();
+        if self.cube.server_cube_id.is_some() {
+            // Already registered — but the Connect-blinding encryption pubkey
+            // still needs publishing on Cubes registered before that field
+            // existed (PLAN-connect-blinding PR D2). Self-latching and
+            // idempotent, so this is a no-op once it has succeeded.
+            return self.cube.register_encryption_pubkey();
+        }
         self.cube.register_cube()
+    }
+
+    /// Seeds the Cube's Connect-blinding encryption **public** key from
+    /// `CubeSettings::connect_encryption_pubkey` (derived and persisted at
+    /// unlock — see `app::settings::derive_connect_encryption_pubkey`).
+    ///
+    /// Separate from the constructor because the panel is built in places that
+    /// don't hold the full `CubeSettings`; the App calls this right after
+    /// building the panels.
+    pub fn set_cube_encryption_pubkey(&mut self, pubkey: Option<String>) {
+        self.cube.cube_encryption_pubkey = pubkey;
     }
 
     /// React to a mid-session Vault creation (PLAN-duress-vault-gate PR 3):
@@ -374,6 +392,50 @@ mod tests {
         panel.cube.server_cube_id = None;
         panel.sync_active_cube_server_id();
         assert_eq!(panel.account.contacts_state.active_cube_server_id, None);
+    }
+
+    /// PR D2: the pubkey seeded from settings is what the registration wave
+    /// publishes, and the panel no-ops (rather than half-registering) when a
+    /// Cube has no derived key yet.
+    #[test]
+    fn set_cube_encryption_pubkey_seeds_the_registration_wave() {
+        let mut panel = ConnectPanel::new(
+            None,
+            "cube-uuid".to_string(),
+            "Family Vault".to_string(),
+            "regtest".to_string(),
+            false,
+        );
+        assert_eq!(panel.cube.cube_encryption_pubkey, None);
+
+        panel.set_cube_encryption_pubkey(Some("02aa".repeat(16) + "bb"));
+        assert!(panel.cube.cube_encryption_pubkey.is_some());
+
+        // No client and no server cube id → nothing to publish yet, and the
+        // in-session latch must stay open so a later trigger still fires.
+        let _ = panel.cube.register_encryption_pubkey();
+        assert!(!panel.cube.enc_pubkey_registered);
+    }
+
+    /// PR D2: a Cube that is *already* registered still needs its encryption
+    /// pubkey published — Cubes minted before Connect blinding existed would
+    /// otherwise never get one, and their Contacts could never enrol an
+    /// enveloped key.
+    #[test]
+    fn ensure_cube_registered_still_publishes_the_key_for_registered_cubes() {
+        let mut panel = ConnectPanel::new(
+            None,
+            "cube-uuid".to_string(),
+            "Family Vault".to_string(),
+            "regtest".to_string(),
+            false,
+        );
+        panel.cube.server_cube_id = Some(42);
+        panel.set_cube_encryption_pubkey(Some("02".to_string() + &"bb".repeat(32)));
+
+        // Unauthenticated → still a no-op (no client to call with).
+        let _ = panel.ensure_cube_registered();
+        assert!(!panel.cube.enc_pubkey_registered);
     }
 
     #[test]

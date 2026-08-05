@@ -1399,6 +1399,57 @@ impl Tab {
                                     // from the same master seed fingerprint.
                                     let breez_signer_fingerprint = cube.master_signer_fingerprint;
 
+                                    // Connect blinding (PLAN-connect-blinding
+                                    // PR D2): the Cube's encryption *public*
+                                    // key is seed-derived, so unlock is the
+                                    // only moment it can be computed — the
+                                    // registration wave that publishes it runs
+                                    // later, after Connect sign-in, with no PIN
+                                    // in hand. Derive once and persist; the
+                                    // private half is never stored and is
+                                    // re-derived on demand at decrypt time.
+                                    if cube.connect_encryption_pubkey.is_none() {
+                                        if let Some(fp) = breez_signer_fingerprint {
+                                            if let Some(pubkey) =
+                                                app::settings::derive_connect_encryption_pubkey(
+                                                    datadir_clone.path(),
+                                                    network_val,
+                                                    fp,
+                                                    &pin,
+                                                )
+                                            {
+                                                cube.connect_encryption_pubkey =
+                                                    Some(pubkey.clone());
+                                                let cube_id = cube.id.clone();
+                                                let network_dir =
+                                                    datadir_clone.network_directory(network_val);
+                                                if let Err(e) = app::settings::update_settings_file(
+                                                    &network_dir,
+                                                    |mut s| {
+                                                        if let Some(c) = s
+                                                            .cubes
+                                                            .iter_mut()
+                                                            .find(|c| c.id == cube_id)
+                                                        {
+                                                            c.connect_encryption_pubkey =
+                                                                Some(pubkey.clone());
+                                                        }
+                                                        Some(s)
+                                                    },
+                                                )
+                                                .await
+                                                {
+                                                    tracing::warn!(
+                                                        "Failed to persist Connect encryption \
+                                                         pubkey for cube {}: {}",
+                                                        cube.id,
+                                                        e
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     let breez_result =
                                         if let Some(fingerprint) = breez_signer_fingerprint {
                                             breez_liquid::load_breez_client(
@@ -2207,6 +2258,8 @@ pub fn create_app_with_remote_backend(
 
     Ok(App::new(
         Cache {
+            connect_transport_key: None,
+            cube_encryption_key: None,
             network,
             datadir_path: coincube_dir.clone(),
             // Recomputed from the P2P panel's Mostro config once panels are built.

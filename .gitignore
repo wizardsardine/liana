@@ -46,3 +46,6 @@ clippy-sonar.json
 wildcard-cleanup-plan.md
 # Understand-Anything: keep architecture graph local (public repo)
 .understand-anything/
+
+# macOS app bundle build artifacts
+Tenshu.app/

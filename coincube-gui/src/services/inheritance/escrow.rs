@@ -11,10 +11,13 @@ use std::str::FromStr;
 
 use coincube_core::miniscript::bitcoin::bip32::{DerivationPath, Xpub};
 
+use coincube_core::miniscript::bitcoin::Network;
+
 use super::ecies::{seal_to_xpub, ArtifactKind, ENCRYPTION_CHILD_INDEX};
 use super::error::EciesError;
 use super::wire::envelope_to_wire;
 use crate::services::coincube::{ConnectVaultResponse, InheritanceEnvelopeWire, VaultMemberRole};
+use crate::services::connect::crypto::{resolve_key_xpub, CubeEncryptionKey};
 
 /// The owner's chosen escrow tier for a Vault (the single selector decided for
 /// the ECIES pivot). Heartbeat monitoring (the server-blind release gate) is on
@@ -57,11 +60,13 @@ pub struct KeyholderXpub {
 /// Errors from building the escrow set.
 #[derive(Debug)]
 pub enum EscrowError {
-    /// A keyholder's registered xpub didn't parse — we refuse to upload a
-    /// partial set silently, because a dropped keyholder couldn't recover.
-    BadKeyholderXpub {
+    /// A keyholder's registered key couldn't be turned into a usable xpub —
+    /// the blinding envelope wouldn't open, the plaintext didn't parse, or the
+    /// decrypted key failed validation. We refuse to upload a partial set
+    /// silently, because a dropped keyholder couldn't recover.
+    UnreadableKeyholderKey {
         key_id: u64,
-        source: coincube_core::miniscript::bitcoin::bip32::Error,
+        source: crate::services::connect::crypto::KeyResolveError,
     },
     /// No keyholder with a registered key was found — there is no one to
     /// escrow to, so escrow would be a no-op the owner should be told about.
@@ -79,7 +84,7 @@ pub enum EscrowError {
 impl std::fmt::Display for EscrowError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::BadKeyholderXpub { key_id, source } => write!(
+            Self::UnreadableKeyholderKey { key_id, source } => write!(
                 f,
                 "keyholder key #{} has an unreadable xpub ({}); can't set up recovery for them",
                 key_id, source
@@ -127,11 +132,26 @@ fn validate_account_derivation(path: &str) -> Result<(), ()> {
 }
 
 /// Extracts the designated inheritance keyholders (role == Keyholder, with a
-/// registered key) and parses each xpub. A keyholder role without a registered
-/// key (e.g. a pending invite) is skipped; a present-but-unparseable xpub is a
-/// hard error (we never silently drop a keyholder from the set).
+/// registered key) and resolves each xpub. A keyholder role without a registered
+/// key (e.g. a pending invite) is skipped; a present-but-unreadable key is a
+/// hard error (we never silently drop a keyholder from the set — a dropped
+/// keyholder simply couldn't recover, and they'd never find out).
+///
+/// Under Connect blinding (`PLAN-connect-blinding` PR D3) the recovery-recipient
+/// list serves **envelopes** rather than plaintext xpubs, so this goes through
+/// [`resolve_key_xpub`]: it opens the envelope with the Cube's seed-derived
+/// encryption key, or accepts a legacy plaintext column, and validates the
+/// result either way. `cube_enc_key` is `None` only where the Cube's seed isn't
+/// available (watch-only restores), which surfaces as a hard error here — the
+/// right outcome, since sealing an escrow set you can't verify would be worse.
+///
+/// The sealing semantics below are unchanged: the same envelope set is built
+/// from the same xpubs, just resolved differently.
 pub fn keyholders_from_vault(
     vault: &ConnectVaultResponse,
+    cube_enc_key: Option<&CubeEncryptionKey>,
+    cube_id: u64,
+    network: Network,
 ) -> Result<Vec<KeyholderXpub>, EscrowError> {
     let mut out = Vec::new();
     for m in &vault.members {
@@ -141,9 +161,11 @@ pub fn keyholders_from_vault(
         let Some(key) = m.key.as_ref() else {
             continue; // keyholder without a registered key — nothing to seal to
         };
-        let xpub = Xpub::from_str(&key.xpub).map_err(|source| EscrowError::BadKeyholderXpub {
-            key_id: key.id,
-            source,
+        let xpub = resolve_key_xpub(key, cube_enc_key, cube_id, network).map_err(|source| {
+            EscrowError::UnreadableKeyholderKey {
+                key_id: key.id,
+                source,
+            }
         })?;
         // CC-DESK-002: validate the account derivation path parses before we
         // build the enc-child path from it and seal an envelope. A malformed
@@ -277,6 +299,7 @@ mod tests {
 
     fn key_summary(id: u64, xpub: &Xpub) -> VaultMemberKeySummary {
         VaultMemberKeySummary {
+            xpub_envelope: None,
             id,
             name: "Heir key".into(),
             xpub: xpub.to_string(),
@@ -315,7 +338,7 @@ mod tests {
                 Some(key_summary(11, &bob.account_xpub)),
             ),
         ]);
-        let khs = keyholders_from_vault(&vault).unwrap();
+        let khs = keyholders_from_vault(&vault, None, CUBE, Network::Bitcoin).unwrap();
         assert_eq!(khs.len(), 1);
         assert_eq!(khs[0].key_id, 10);
     }
@@ -323,16 +346,72 @@ mod tests {
     #[test]
     fn keyholders_errors_on_unparseable_xpub() {
         let bad = VaultMemberKeySummary {
+            xpub_envelope: None,
             id: 99,
             name: "Broken".into(),
             xpub: "not-an-xpub".into(),
             derivation_path: "m/0".into(),
         };
         let vault = vault_with(vec![member(VaultMemberRole::Keyholder, Some(bad))]);
-        let err = keyholders_from_vault(&vault).unwrap_err();
+        let err = keyholders_from_vault(&vault, None, CUBE, Network::Bitcoin).unwrap_err();
         assert!(matches!(
             err,
-            EscrowError::BadKeyholderXpub { key_id: 99, .. }
+            EscrowError::UnreadableKeyholderKey { key_id: 99, .. }
+        ));
+    }
+
+    /// Connect blinding (PR D3): the recovery-recipient list serves the
+    /// keyholder's xpub as an envelope. Sealing must resolve it through the
+    /// Cube's encryption key and otherwise behave exactly as before.
+    #[test]
+    fn keyholders_resolves_a_blinded_keyholder_key() {
+        use crate::services::connect::crypto::{CubeEncryptionKey, XpubEnvelope};
+        use coincube_core::signer::MasterSigner;
+
+        const MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        // The SPEC-cube-xpub-envelope-v1 §8 vector: a testnet BIP-48 account
+        // xpub sealed to the Cube key derived from the same mnemonic, cube 42.
+        const KAT_XPUB: &str = "tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ";
+        const KAT_E: &str = "032c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991";
+        const KAT_NONCE: &str = "0000000000000000cafebabe";
+        const KAT_CT: &str = "fc13b1b9639e00e163b3664b62f516ad49d7f19c5383a758706ca813fa8e236cf14a4189aa61ee94801d31cb26a14a999eb5ea2c90a53bc704c5b262ff2b4cf984e97d7c92d13069b829b972c501190db9eaba00b8df84a25c78125e602cff3b037c7db65974b063084596a64667d5f92d647067c3c5453237d7e9e3573a57";
+        const KAT_CUBE: u64 = 42;
+        // The AAD binds the key id too, so the fixture row must BE key 7.
+        const KAT_KEY: u64 = 7;
+
+        let blinded = VaultMemberKeySummary {
+            id: KAT_KEY,
+            name: "Kenji's phone".into(),
+            xpub: String::new(),
+            xpub_envelope: Some(XpubEnvelope {
+                scheme: crate::services::connect::crypto::XPUB_ENVELOPE_SCHEME.to_string(),
+                recipient: crate::services::connect::crypto::RECIPIENT_CUBE_OWNER.to_string(),
+                ephemeral_pubkey: KAT_E.to_string(),
+                nonce: KAT_NONCE.to_string(),
+                ciphertext: KAT_CT.to_string(),
+            }),
+            derivation_path: "m/48'/1'/0'/2'".into(),
+        };
+        let vault = vault_with(vec![member(VaultMemberRole::Keyholder, Some(blinded))]);
+
+        let signer = MasterSigner::from_str(Network::Testnet, MNEMONIC).unwrap();
+        let cube_key = CubeEncryptionKey::derive(&signer, Network::Testnet);
+
+        let khs =
+            keyholders_from_vault(&vault, Some(&cube_key), KAT_CUBE, Network::Testnet).unwrap();
+        assert_eq!(khs.len(), 1);
+        assert_eq!(khs[0].key_id, KAT_KEY);
+        assert_eq!(khs[0].xpub.to_string(), KAT_XPUB);
+
+        // Without the Cube key the set can't be built — better to fail loudly
+        // than to upload an escrow set that silently drops a keyholder.
+        let err = keyholders_from_vault(&vault, None, KAT_CUBE, Network::Testnet).unwrap_err();
+        assert!(matches!(
+            err,
+            EscrowError::UnreadableKeyholderKey {
+                key_id: KAT_KEY,
+                ..
+            }
         ));
     }
 
@@ -340,7 +419,7 @@ mod tests {
     fn keyholders_errors_when_none() {
         let vault = vault_with(vec![member(VaultMemberRole::Observer, None)]);
         assert!(matches!(
-            keyholders_from_vault(&vault).unwrap_err(),
+            keyholders_from_vault(&vault, None, CUBE, Network::Bitcoin).unwrap_err(),
             EscrowError::NoKeyholders
         ));
     }

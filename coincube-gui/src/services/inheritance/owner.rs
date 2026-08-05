@@ -12,7 +12,10 @@
 //! monitoring record itself is stored keyed on CubeID, not VaultID, so there
 //! is no separate vault-scoped surface to address.
 
+use coincube_core::miniscript::bitcoin::Network;
 use zeroize::Zeroizing;
+
+use crate::services::connect::crypto::CubeEncryptionKey;
 
 use super::escrow::{build_escrow_set, keyholders_from_vault, EscrowError};
 use crate::services::coincube::{
@@ -75,6 +78,8 @@ impl From<CoincubeError> for OwnerEscrowError {
 pub async fn enroll_escrow(
     client: &CoincubeClient,
     server_cube_id: u64,
+    cube_enc_key: Option<&CubeEncryptionKey>,
+    network: Network,
     descriptor_json: Vec<u8>,
     seed_json: Option<Zeroizing<Vec<u8>>>,
 ) -> Result<VaultMonitoringStatus, OwnerEscrowError> {
@@ -83,7 +88,7 @@ pub async fn enroll_escrow(
     //    is owned here so it's wiped when this fn returns; `build_escrow_set`
     //    only borrows the bytes to seal them, so it needs no `Zeroizing` itself.
     let vault = client.get_connect_vault(server_cube_id).await?;
-    let keyholders = keyholders_from_vault(&vault)?;
+    let keyholders = keyholders_from_vault(&vault, cube_enc_key, server_cube_id, network)?;
     let set = build_escrow_set(
         &keyholders,
         server_cube_id,
@@ -282,9 +287,16 @@ mod tests {
         });
 
         let client = CoincubeClient::for_test(server.base_url());
-        let status = enroll_escrow(&client, 42, b"wsh(desc)#ck".to_vec(), None)
-            .await
-            .expect("enroll should succeed");
+        let status = enroll_escrow(
+            &client,
+            42,
+            None,
+            Network::Bitcoin,
+            b"wsh(desc)#ck".to_vec(),
+            None,
+        )
+        .await
+        .expect("enroll should succeed");
 
         vault_mock.assert();
         escrow_mock.assert();
@@ -459,7 +471,7 @@ mod tests {
         });
         // No escrow PUT mock — it must NOT be called.
         let client = CoincubeClient::for_test(server.base_url());
-        let err = enroll_escrow(&client, 42, b"d".to_vec(), None)
+        let err = enroll_escrow(&client, 42, None, Network::Bitcoin, b"d".to_vec(), None)
             .await
             .expect_err("no keyholders should error");
         vault_mock.assert();

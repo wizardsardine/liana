@@ -2,14 +2,16 @@ use super::{
     get_countries, AddVaultMemberRequest, ApiResponse, AvatarGenerateData, AvatarGenerateRequest,
     AvatarSelectData, AvatarSelectRequest, BillingHistoryEntry, ChargeStatusResponse,
     CheckoutRequest, CheckoutResponse, CoincubeError, ConnectPlan, ConnectVaultResponse, Contact,
-    ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest, CubeInviteOrAddResult,
-    CubeKeyRaw, CubeLimitsResponse, CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData,
-    Invite, LightningAddress, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
-    PublicAvatarData, ReceivedInvite, RecoveryKit, RecoveryKitStatus, RedeemCampaignRequest,
-    RedeemCampaignResponse, RefreshTokenRequest, RegenerationData, RegisterCubeRequest,
-    ReserveLightningAddressRequest, SaveQuoteRequest, SaveQuoteResponse, StatsPeriod,
-    TimeseriesResponse, TodayStats, UpdateCubeRequest, UpdateLightningAddressRequest,
-    UpsertRecoveryKitRequest, User, VaultMemberResponse, VerifiedDevice,
+    ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest,
+    CubeEncryptionPubkeyResponse, CubeInviteOrAddResult, CubeKeyRaw, CubeLimitsResponse,
+    CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData, Invite, LightningAddress,
+    LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest, PublicAvatarData,
+    PutCubeEncryptionPubkeyRequest, ReceivedInvite, RecoveryKit, RecoveryKitStatus,
+    RedeemCampaignRequest, RedeemCampaignResponse, RefreshTokenRequest, RegenerationData,
+    RegisterCubeRequest, ReportEnvelopeInvalidRequest, ReserveLightningAddressRequest,
+    SaveQuoteRequest, SaveQuoteResponse, StatsPeriod, TimeseriesResponse, TodayStats,
+    UpdateCubeRequest, UpdateLightningAddressRequest, UpsertRecoveryKitRequest, User,
+    VaultMemberResponse, VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -424,6 +426,106 @@ impl CoincubeClient {
         let res = res.check_success().await?;
         let resp: ApiResponse<CubeResponse> = res.json().await?;
         Ok(resp.data)
+    }
+
+    /// PUT /api/v1/connect/cubes/{cubeId}/encryption-pubkey — register this
+    /// Cube's Connect-blinding encryption pubkey (`coincube-api` PR A1).
+    ///
+    /// `pubkey_hex` is the 33-byte compressed secp256k1 key from
+    /// [`crate::services::connect::crypto::CubeEncryptionKey::public_key_hex`],
+    /// derived from the Cube's master seed. It is **public** material — the
+    /// private half never leaves the device — and the endpoint is idempotent,
+    /// so re-registering the same key on every launch is a no-op server-side.
+    ///
+    /// Registering is what lets an invited Contact's Keychain seal its xpub to
+    /// this Cube: the API attaches the registered key to invite payloads, and
+    /// refuses envelope-mode enrolment (`OWNER_ENCRYPTION_PUBKEY_MISSING`) for
+    /// owners who haven't registered.
+    ///
+    /// Owner-only and **duress-gated** server-side: a coerced owner must not be
+    /// able to rotate the recipient key, which would strand every envelope
+    /// already sealed to the old one. Re-registering a *different* point is
+    /// permitted but consequential for exactly that reason — this client only
+    /// ever sends the key derived from the Cube's own seed, which is stable.
+    pub async fn put_cube_encryption_pubkey(
+        &self,
+        cube_id: u64,
+        pubkey_hex: &str,
+    ) -> Result<CubeEncryptionPubkeyResponse, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/encryption-pubkey",
+            self.base_url, cube_id
+        );
+        let res = self
+            .client
+            .put(&url)
+            .json(&PutCubeEncryptionPubkeyRequest {
+                encryption_pubkey: pubkey_hex.to_string(),
+            })
+            .send()
+            .await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<CubeEncryptionPubkeyResponse> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// GET /api/v1/connect/cubes/{cubeId}/encryption-pubkey — read back what is
+    /// registered, so the desktop can tell whether the registration wave still
+    /// needs to run. Owner-only; carries no secret material.
+    pub async fn get_cube_encryption_pubkey(
+        &self,
+        cube_id: u64,
+    ) -> Result<CubeEncryptionPubkeyResponse, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/encryption-pubkey",
+            self.base_url, cube_id
+        );
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<CubeEncryptionPubkeyResponse> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// POST /api/v1/connect/cubes/{cubeId}/keys/{keyId}/envelope-invalid —
+    /// report that this key's xpub envelope can't be opened, or opened but
+    /// failed validation (`coincube-api` PR A4).
+    ///
+    /// A bad envelope is only discovered late, at Vault-build time, on a
+    /// different device from the one that sealed it, and the server can't
+    /// detect it at all (it holds no key). Reporting flips the key to
+    /// `envelope_invalid` and drops the stale ciphertext, which pushes a
+    /// "re-share your key" prompt to its owner — the only way they'd find out.
+    ///
+    /// `reason` must be one of the API's closed set (`"decrypt_failed"` or
+    /// `"xpub_invalid"`); it is echoed into the audit trail and the keyholder's
+    /// email, so it is not free text. Use
+    /// [`crate::services::connect::crypto::KeyResolveError::report_reason`].
+    ///
+    /// Owner-only and duress-gated: a coerced owner must not be able to force
+    /// keyholders into a re-enrol loop. Only report failures that are the
+    /// *key's* fault — `KeyResolveError::should_report_invalid` excludes the
+    /// local "this device has no Cube key" case, which would otherwise let a
+    /// watch-only restore invalidate every key in a Vault.
+    pub async fn report_key_envelope_invalid(
+        &self,
+        cube_id: u64,
+        key_id: u64,
+        reason: &str,
+    ) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/keys/{}/envelope-invalid",
+            self.base_url, cube_id, key_id
+        );
+        let res = self
+            .client
+            .post(&url)
+            .json(&ReportEnvelopeInvalidRequest {
+                reason: reason.to_string(),
+            })
+            .send()
+            .await?;
+        res.check_success().await?;
+        Ok(())
     }
 
     /// DELETE /api/v1/connect/cubes/{cubeId} — delete a cube.

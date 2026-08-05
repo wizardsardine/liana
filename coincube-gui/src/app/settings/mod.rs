@@ -343,6 +343,37 @@ pub fn derive_master_signer_fingerprint(
     })
 }
 
+/// Derives this Cube's Connect-blinding encryption **public** key from its
+/// master seed (`SPEC-cube-xpub-envelope-v1` §3), returning the 33-byte
+/// compressed key as lowercase hex.
+///
+/// Only the public half is returned: the private scalar lives inside the
+/// returned-and-dropped [`CubeEncryptionKey`] and is zeroized here. Callers
+/// persist the hex into [`CubeSettings::connect_encryption_pubkey`] so the
+/// later, PIN-less registration wave can publish it (`PLAN-connect-blinding`
+/// PR D2) — the *private* half is re-derived on demand at decrypt time and is
+/// never stored.
+///
+/// Returns `None` when the Cube's master-seed mnemonic can't be opened with
+/// this PIN/fingerprint (a Cube minted before the field existed and not yet
+/// backfilled, or a passkey Cube with no on-disk seed). That is not an error
+/// worth surfacing: Connect blinding degrades to "this Cube can't receive
+/// enveloped keys yet", and the next successful unlock fills it in.
+pub fn derive_connect_encryption_pubkey(
+    datadir_root: &std::path::Path,
+    network: Network,
+    fingerprint: Fingerprint,
+    pin: &str,
+) -> Option<String> {
+    use crate::services::connect::crypto::CubeEncryptionKey;
+    use coincube_core::signer::MasterSigner;
+
+    let signer =
+        MasterSigner::from_datadir_by_fingerprint(datadir_root, network, fingerprint, Some(pin))
+            .ok()?;
+    Some(CubeEncryptionKey::derive(&signer, network).public_key_hex())
+}
+
 /// A Cube's relationship to Connect, rendered as a single tri-state cube icon
 /// on the Cubes list (Phase 1 of duress mode). The progression
 /// Sovereign → Registered → Backed up mirrors increasing recoverability.
@@ -393,6 +424,23 @@ pub struct CubeSettings {
         alias = "breez_wallet_signer_fingerprint"
     )]
     pub master_signer_fingerprint: Option<Fingerprint>,
+    /// This Cube's Connect-blinding encryption **public** key — 33-byte
+    /// compressed secp256k1, lowercase hex (`SPEC-cube-xpub-envelope-v1` §3).
+    ///
+    /// Cached here for the same ordering reason as [`Self::liquid_granted`],
+    /// mirrored: the private half is derived from the master seed and so is
+    /// only computable while the Cube is unlocked (PIN in hand), but the
+    /// *registration* that publishes it to Connect happens later — after
+    /// Connect sign-in, on a code path with no PIN. So the public half is
+    /// derived once at unlock and persisted here; the registration wave reads
+    /// it from settings.
+    ///
+    /// Public material — safe to store in plaintext, safe to log. The private
+    /// scalar is never persisted anywhere. `None` means "not derived yet"
+    /// (a legacy Cube before its first unlock on this build); it is re-derived
+    /// and re-persisted at the next unlock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_encryption_pubkey: Option<String>,
     /// Bitcoin display unit preference for this cube
     #[serde(default)]
     pub unit_setting: unit::UnitSetting,
@@ -488,6 +536,9 @@ impl CubeSettings {
             // the next features fetch and takes effect at the next cube open.
             liquid_granted: None,
             master_signer_fingerprint: None,
+            // Derived at the first unlock (the PIN is needed to reach the
+            // seed), then persisted — see the field docs.
+            connect_encryption_pubkey: None,
             backed_up: false,
             mfa_done: false,
             remote_synced: false,

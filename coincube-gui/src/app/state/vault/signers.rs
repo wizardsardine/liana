@@ -341,6 +341,7 @@ mod tests {
 
     fn cube_key(id: u64, fp: &str, owner_user_id: u64, name: &str) -> CubeKeyRaw {
         CubeKeyRaw {
+            xpub_envelope: None,
             id,
             name: name.to_string(),
             xpub: String::new(),
@@ -382,6 +383,7 @@ mod tests {
                 }),
             }),
             key: key_id.map(|_| VaultMemberKeySummary {
+                xpub_envelope: None,
                 id: key_id.unwrap_or(0),
                 name: String::new(),
                 xpub: String::new(),
