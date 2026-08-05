@@ -5664,6 +5664,53 @@ mod tests {
         }
     }
 
+    /// What this test's datadir actually contains, right now.
+    ///
+    /// Attached to the failure messages of the tests that write seed files.
+    /// Both of them fail on the macOS CI runners and pass everywhere else, and
+    /// both fail in the same way: a directory the test just created is not
+    /// there when the next syscall runs (`store_encrypted` gets `ENOENT` from
+    /// `open`; `duress_enroll_network_dirs` finds nothing on a root it read
+    /// successfully moments earlier). A bare `unwrap` on a machine nobody can
+    /// log into leaves no way to tell a vanished directory from one that was
+    /// never created, so the assertions carry the tree with them.
+    ///
+    /// Remove once those runs are understood.
+    fn describe_tree(root: &Path) -> String {
+        fn walk(dir: &Path, depth: usize, out: &mut String) {
+            let entries = match fs::read_dir(dir) {
+                Ok(e) => e,
+                Err(e) => {
+                    out.push_str(&format!(
+                        "{:indent$}<unreadable: {e}>\n",
+                        "",
+                        indent = depth * 2
+                    ));
+                    return;
+                }
+            };
+            let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+            paths.sort();
+            for p in paths {
+                let name = p.file_name().unwrap_or_default().to_string_lossy();
+                out.push_str(&format!("{:indent$}{name}\n", "", indent = depth * 2));
+                if p.is_dir() {
+                    walk(&p, depth + 1, out);
+                }
+            }
+        }
+
+        let mut out = format!(
+            "TMPDIR={:?}\nroot={:?} exists={} is_dir={}\n",
+            std::env::temp_dir(),
+            root,
+            root.exists(),
+            root.is_dir(),
+        );
+        walk(root, 1, &mut out);
+        out
+    }
+
     fn write_settings_dir(root: &Path, name: &str, settings: Settings) -> PathBuf {
         let dir = root.join(name);
         fs::create_dir_all(&dir).expect("create network dir");
@@ -5822,7 +5869,17 @@ mod tests {
                 &cube.id,
                 None,
             )
-            .unwrap();
+            .unwrap_or_else(|e| {
+                panic!(
+                    "store_encrypted failed for cube {} on {}: {}\nmnemonics dir: {:?} exists={}\n{}",
+                    cube.id,
+                    cube.network,
+                    e,
+                    MasterSigner::mnemonics_folder(root, cube.network),
+                    MasterSigner::mnemonics_folder(root, cube.network).exists(),
+                    describe_tree(root),
+                )
+            });
     }
 
     #[test]
@@ -5859,16 +5916,24 @@ mod tests {
         // Collides with cube-a's real unlock PIN...
         assert_eq!(
             duress_pin_collision_check_blocking(root.path(), "1234").unwrap_err(),
-            DURESS_PIN_COLLIDES_MSG
+            DURESS_PIN_COLLIDES_MSG,
+            "{}",
+            describe_tree(root.path())
         );
         // ...and with cube-b's, even though it's on a different network. The
         // hash-based predecessor could only catch a Cube whose hash happened to
         // be recorded; this one opens the file.
         assert_eq!(
             duress_pin_collision_check_blocking(root.path(), "9999").unwrap_err(),
-            DURESS_PIN_COLLIDES_MSG
+            DURESS_PIN_COLLIDES_MSG,
+            "{}",
+            describe_tree(root.path())
         );
-        assert!(duress_pin_collision_check_blocking(root.path(), "5555").is_ok());
+        assert!(
+            duress_pin_collision_check_blocking(root.path(), "5555").is_ok(),
+            "{}",
+            describe_tree(root.path())
+        );
     }
 
     /// Arm duress on `cube` exactly as enrollment does: mint an unpredictable
@@ -5916,7 +5981,11 @@ mod tests {
             verify_regular_cube_pin_blocking(root.path(), "").unwrap_err(),
             "Enter your Cube unlock PIN to continue."
         );
-        assert!(verify_regular_cube_pin_blocking(root.path(), "1234").is_ok());
+        assert!(
+            verify_regular_cube_pin_blocking(root.path(), "1234").is_ok(),
+            "{}",
+            describe_tree(root.path())
+        );
         // The duress PIN must not satisfy a step-up — and the rejection must
         // look identical to any other wrong PIN.
         assert_eq!(
