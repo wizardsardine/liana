@@ -82,9 +82,21 @@ jobs:
         run: |
           brew install protobuf
           cargo test --color always -- --nocapture
+      # The device-secret tests are not mockable by design: they exercise the
+      # real Secret Service, because "the key half lives in the OS keystore" is
+      # the property under test. A bare runner has no session bus and no keyring
+      # daemon, so `org.freedesktop.secrets` is unavailable and every test that
+      # provisions or reads a device secret fails — 37 of them, all with the same
+      # `KeystoreUnreachable` error. Give the suite a session bus with an
+      # unlocked (empty-password) login keyring instead of gating the tests off,
+      # which would drop keystore coverage on the one platform that can run it
+      # unsigned.
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev
-          cargo test --color always -- --nocapture
+          sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev gnome-keyring dbus-x11
+          dbus-run-session -- bash -c '
+            echo -n "" | gnome-keyring-daemon --daemonize --unlock --components=secrets >/dev/null
+            cargo test --color always -- --nocapture
+          '
