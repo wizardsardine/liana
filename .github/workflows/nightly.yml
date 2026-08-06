@@ -108,7 +108,7 @@ jobs:
         run: echo "BUILD_TAG=$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >> $GITHUB_ENV
 
       - name: Cache Cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
@@ -134,7 +134,7 @@ jobs:
 
       - name: Upload Linux artifact
         if: matrix.platform == 'linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: tenshu-nightly-${{ env.BUILD_TAG }}-${{ matrix.target }}
           path: target/${{ matrix.target }}/minimal/coincube
@@ -155,7 +155,7 @@ jobs:
 
       - name: Upload Windows artifact
         if: matrix.platform == 'windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: tenshu-nightly-${{ env.BUILD_TAG }}-${{ matrix.target }}
           path: target/wix/tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi
@@ -318,7 +318,7 @@ jobs:
 
       - name: Upload macOS artifact
         if: matrix.platform == 'macos'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: tenshu-nightly-${{ env.BUILD_TAG }}-${{ matrix.target }}
           path: tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg
