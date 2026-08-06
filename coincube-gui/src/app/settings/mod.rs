@@ -1976,11 +1976,20 @@ mod test {
         );
 
         // And the value the passkey path uses instead is the same one every
-        // other path would have produced from this seed.
+        // other path would have produced from this seed. Checked the same way
+        // `missing_seed_and_unreadable_seed_are_distinguishable` checks its
+        // derived key: length alone would pass for any 33-byte blob, so pin the
+        // SEC1 compressed-point prefix too — that is what makes it a *public
+        // key* rather than 66 hex characters.
         let direct =
             crate::services::connect::crypto::CubeEncryptionKey::derive(&signer, Network::Testnet)
                 .public_key_hex();
-        assert_eq!(direct.len(), 66);
+        assert_eq!(direct.len(), 66, "33-byte compressed pubkey as hex");
+        assert!(
+            direct.starts_with("02") || direct.starts_with("03"),
+            "not a SEC1 compressed point: {}",
+            direct
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -84,6 +84,31 @@ pub struct PasskeyUnlock {
     loading_image_handle: image::Handle,
 }
 
+/// Whether a seed the assertion just derived may open this Cube.
+///
+/// A passkey Cube records the fingerprint its credential derived at creation.
+/// If an assertion produces a different one, some *other* credential answered
+/// and its seed is not this Cube's — opening anyway would show a valid-looking,
+/// empty wallet and invite the user to conclude their coins are gone.
+///
+/// `expected == None` accepts: that is a Cube minted before the field was
+/// recorded, so there is nothing to disagree with. The assertion is the
+/// authority there, and `gui::tab` writes the fingerprint through afterwards.
+///
+/// Pulled out of `poll` as a free function purely so it can be tested. The
+/// guard is otherwise reachable only behind a live `NativePasskeyCeremony`,
+/// which cannot be constructed without raising a real system prompt.
+#[cfg(target_os = "macos")]
+fn derived_fingerprint_opens_this_cube(
+    expected: Option<Fingerprint>,
+    derived: Fingerprint,
+) -> bool {
+    match expected {
+        Some(expected) => expected == derived,
+        None => true,
+    }
+}
+
 /// Where the screen is. Deliberately not "loading: bool" — the user needs to
 /// be able to tell "we're waiting on the system Touch ID sheet" from "we have
 /// your key and are opening your wallets".
@@ -287,25 +312,22 @@ impl PasskeyUnlock {
                 let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
                 let fingerprint = signer.fingerprint(&secp);
 
-                // Guard against opening the wrong wallet. The Cube records the
-                // fingerprint its passkey derived at creation; if the assertion
-                // produces a different one, some *other* credential answered
-                // and its seed is not this Cube's. Opening anyway would show a
-                // valid-looking, empty wallet and invite the user to conclude
-                // their coins are gone.
-                if let Some(expected) = self.cube.master_signer_fingerprint {
-                    if expected != fingerprint {
-                        tracing::error!(
-                            cube_id = %self.cube.id,
-                            %expected,
-                            derived = %fingerprint,
-                            "passkey assertion derived a seed that is not this Cube's"
-                        );
-                        self.fail(PasskeyError::CredentialNotFound(
-                            "the passkey that answered belongs to a different Cube".to_string(),
-                        ));
-                        return Task::none();
-                    }
+                // Guard against opening the wrong wallet — see
+                // `derived_fingerprint_opens_this_cube`.
+                if !derived_fingerprint_opens_this_cube(
+                    self.cube.master_signer_fingerprint,
+                    fingerprint,
+                ) {
+                    tracing::error!(
+                        cube_id = %self.cube.id,
+                        expected = ?self.cube.master_signer_fingerprint,
+                        derived = %fingerprint,
+                        "passkey assertion derived a seed that is not this Cube's"
+                    );
+                    self.fail(PasskeyError::CredentialNotFound(
+                        "the passkey that answered belongs to a different Cube".to_string(),
+                    ));
+                    return Task::none();
                 }
 
                 crate::app::session::store_unlocked_signer(&self.cube.id, fingerprint, signer);
@@ -511,6 +533,41 @@ mod tests {
             }
             _ => panic!("a relock must land back on the prompt, not stay on Opening"),
         }
+    }
+
+    /// The wrong-wallet guard. An assertion can only be answered by a
+    /// credential the *system* picked, so "some other passkey answered" is not
+    /// a hypothetical — and the failure it prevents is silent: a valid-looking,
+    /// correctly-derived, entirely empty wallet, which reads to the owner as
+    /// "my coins are gone".
+    ///
+    /// Tested through the extracted helper rather than `poll`, which is
+    /// reachable only behind a live `NativePasskeyCeremony` and therefore only
+    /// behind a real Touch ID prompt.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn only_this_cubes_own_fingerprint_opens_it() {
+        use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
+
+        let mine = Fingerprint::from([0xaa, 0xbb, 0xcc, 0xdd]);
+        let theirs = Fingerprint::from([0x11, 0x22, 0x33, 0x44]);
+
+        assert!(
+            derived_fingerprint_opens_this_cube(Some(mine), mine),
+            "a Cube must open on the fingerprint it recorded"
+        );
+        assert!(
+            !derived_fingerprint_opens_this_cube(Some(mine), theirs),
+            "another credential's seed must never open this Cube — it would \
+             present an empty wallet as if it were the user's"
+        );
+        // A Cube minted before the field was recorded has nothing to disagree
+        // with, so the assertion is the authority. Rejecting here would strand
+        // every such Cube.
+        assert!(
+            derived_fingerprint_opens_this_cube(None, theirs),
+            "a Cube with no recorded fingerprint must still open"
+        );
     }
 
     /// **I12**, stated as a test. Three outcomes, three different messages, and
