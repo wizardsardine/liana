@@ -22,6 +22,25 @@ path = "src/main.rs"
 [lints.rust]
 mismatched_lifetime_syntaxes = "allow"
 
+# Mirrors the root Cargo.toml's `[profile.minimal]`. The release workflows
+# build the gui with `--profile minimal`, and both halves of a packaged build
+# have to ship under one profile — a workspace that lacks this profile fails
+# the build outright ("profile `minimal` is not defined") rather than silently
+# diverging, which is the point.
+#
+# `panic = "abort"` matches the gui. The bridge is a subprocess whose death the
+# parent already handles (`SparkClientError::BridgeUnavailable`, plus
+# `kill_on_drop(true)` on the child), so aborting is no worse than unwinding,
+# and no test catches a panic. Note `cargo test` builds under the `test`
+# profile, so this does not affect the test harness.
+[profile.minimal]
+inherits = "release"
+opt-level = "z"
+lto = "thin"
+strip = true
+codegen-units = 1
+panic = "abort"
+
 [dependencies]
 coincube-spark-protocol = { path = "../coincube-spark-protocol" }
 # 0.19.0 made the sqlite storage backend an opt-in feature (it was implicit in

@@ -107,12 +107,18 @@ jobs:
         shell: bash
         run: echo "BUILD_TAG=$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >> $GITHUB_ENV
 
+      # The Spark bridge is a separate workspace with a separate lock and a
+      # separate target dir, and its dep graph (breez-sdk-spark, boltz-client,
+      # alloy) is expensive to build from scratch. Cache it alongside the root
+      # one, and key on both locks so a change to either invalidates.
       - name: Cache Cargo
         uses: actions/cache@v5
         with:
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'coincube-spark-bridge/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
-          path: target
+          path: |
+            target
+            coincube-spark-bridge/target
 
       - name: Generate Icons for Installers
         if: matrix.platform != 'linux'
@@ -128,16 +134,51 @@ jobs:
         if: matrix.platform == 'linux'
         run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config protobuf-compiler libdbus-1-dev libwebkit2gtk-4.1-dev
 
-      - name: Build Linux binary
+      - name: Build Linux binaries
         if: matrix.platform == 'linux'
-        run: cargo build --package coincube-gui --bin coincube --profile minimal --target ${{ matrix.target }} --locked
+        run: |
+          cargo build --package coincube-gui --bin coincube --profile minimal --target ${{ matrix.target }} --locked
+          # The bridge is excluded from the root workspace, so the line above
+          # cannot build it — this is the second half of `make build`.
+          cargo build --manifest-path coincube-spark-bridge/Cargo.toml --profile minimal --target ${{ matrix.target }} --locked
+
+      # Both binaries ship inside one archive, in one directory. Two loose
+      # assets would let a user extract them to different places and reproduce
+      # the "Spark is not configured" bug the packaging fixes — the gui only
+      # finds the bridge as a sibling of its own executable. The tarball also
+      # survives GitHub's artifact zip with its exec bits intact, which a bare
+      # uploaded binary does not.
+      - name: Package Linux archive
+        if: matrix.platform == 'linux'
+        run: |
+          stage=tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}
+          mkdir -p "$stage"
+          cp target/${{ matrix.target }}/minimal/coincube "$stage/"
+          cp coincube-spark-bridge/target/${{ matrix.target }}/minimal/coincube-spark-bridge "$stage/"
+          cp LICENCE README.md "$stage/"
+          tar czf "$stage.tar.gz" "$stage"
+
+          tar tzf "$stage.tar.gz" | grep -q "^$stage/coincube-spark-bridge$" \
+            || { echo "coincube-spark-bridge missing from $stage.tar.gz"; tar tzf "$stage.tar.gz"; exit 1; }
+
+          # It execs and answers on the protocol — no API key, no mnemonic and
+          # no network; stdin EOF ends the run.
+          out=$(echo '{"type":"request","id":1,"method":"shutdown"}' \
+            | "./$stage/coincube-spark-bridge" 2> bridge-stderr.txt) \
+            || { echo "bridge failed to run:"; cat bridge-stderr.txt; exit 1; }
+          echo "$out"
+          echo "$out" | grep -q '"kind":"shutdown"' \
+            || { echo "bridge did not answer the shutdown handshake"; cat bridge-stderr.txt; exit 1; }
+          rm -f bridge-stderr.txt
+
+          echo "STAGE=$stage" >> "$GITHUB_ENV"
 
       - name: Upload Linux artifact
         if: matrix.platform == 'linux'
         uses: actions/upload-artifact@v6
         with:
           name: tenshu-nightly-${{ env.BUILD_TAG }}-${{ matrix.target }}
-          path: target/${{ matrix.target }}/minimal/coincube
+          path: ${{ env.STAGE }}.tar.gz
 
       # --------------------------------------------------
       # Windows
@@ -151,7 +192,46 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           cargo build --package coincube-gui --profile minimal --locked
+          # The bridge is excluded from the root workspace, so the line above
+          # cannot build it — this is the second half of `make build`.
+          cargo build --manifest-path coincube-spark-bridge/Cargo.toml --profile minimal --locked
+          # `cargo wix --no-build` only packages files that already exist, and
+          # main.wxs sources both binaries from $(var.CargoTargetBinDir)
+          # (target\minimal). The bridge builds into its own workspace's target
+          # dir, so copy it across before wix looks for it.
+          Copy-Item coincube-spark-bridge\target\minimal\coincube-spark-bridge.exe target\minimal\
           cargo wix --package coincube-gui --no-build --profile minimal --output "target/wix/tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
+
+      # A string grep of the .msi proves nothing — the payload is in a
+      # compressed cab. An administrative install unpacks the real file table,
+      # which is also the only way to check the installed *layout*: the gui
+      # looks for the bridge next to its own executable, so a bridge in a
+      # different directory reproduces the bug the MSI change exists to fix.
+      - name: Verify Spark bridge is in the MSI
+        if: matrix.platform == 'windows'
+        run: |
+          $msi = (Resolve-Path "target/wix/tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi").Path
+          $dest = Join-Path $env:RUNNER_TEMP "msi-contents"
+          Remove-Item -Recurse -Force $dest -ErrorAction SilentlyContinue
+          $p = Start-Process msiexec -ArgumentList @('/a', "`"$msi`"", '/qn', "TARGETDIR=`"$dest`"") -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { Write-Host "msiexec administrative install failed: $($p.ExitCode)"; exit 1 }
+
+          $gui = Get-ChildItem -Path $dest -Recurse -Filter coincube.exe | Select-Object -First 1
+          if (-not $gui) { Write-Host "coincube.exe missing from the MSI"; exit 1 }
+          $bridge = Get-ChildItem -Path $dest -Recurse -Filter coincube-spark-bridge.exe | Select-Object -First 1
+          if (-not $bridge) { Write-Host "coincube-spark-bridge.exe missing from the MSI"; exit 1 }
+          if ($bridge.DirectoryName -ne $gui.DirectoryName) {
+            Write-Host "bridge installs to $($bridge.DirectoryName) but the gui installs to $($gui.DirectoryName) — they must be siblings"
+            exit 1
+          }
+          Write-Host "both binaries install to $($gui.DirectoryName)"
+
+          # It execs and speaks the protocol. No API key, no mnemonic, no
+          # network: stdin EOF ends the run on its own.
+          $out = '{"type":"request","id":1,"method":"shutdown"}' | & $bridge.FullName
+          if ($LASTEXITCODE -ne 0) { Write-Host "bridge exited with $LASTEXITCODE"; exit 1 }
+          Write-Host $out
+          if ($out -notmatch '"kind":"shutdown"') { Write-Host "bridge did not answer the shutdown handshake"; exit 1 }
 
       - name: Upload Windows artifact
         if: matrix.platform == 'windows'
@@ -184,6 +264,11 @@ jobs:
         run: |
           rustup target add ${{ matrix.target }}
           cargo build --package coincube-gui --profile minimal --target ${{ matrix.target }} --locked
+          # The bridge is deliberately excluded from the root workspace, so the
+          # line above cannot build it — this is the second half of the
+          # Makefile's `build: bridge gui`. Omit it and the bundle ships with no
+          # Spark bridge, and every Spark panel renders "not configured".
+          cargo build --manifest-path coincube-spark-bridge/Cargo.toml --profile minimal --target ${{ matrix.target }} --locked
 
       - name: Assemble .app bundle
         if: matrix.platform == 'macos'
@@ -207,6 +292,17 @@ jobs:
 
           mv target/${{ matrix.target }}/minimal/coincube Tenshu.app/Contents/MacOS/Coincube
           mv contrib/release/macos/Coincube.icns Tenshu.app/Contents/Resources/Coincube.icns
+
+          # The gui resolves the Spark bridge as a sibling of its own
+          # executable, under that literal filename — see resolve_bridge_path()
+          # in coincube-gui/src/app/breez_spark/client.rs. So: Contents/MacOS/
+          # and nowhere else (Resources/ or Frameworks/ silently reproduces the
+          # "Spark is not configured" bug), and NOT renamed the way the main
+          # binary is renamed to Coincube. Like the provisioning profile below,
+          # it has to be in place before signing: notarization rejects unsigned
+          # nested Mach-O, and adding one afterwards breaks the seal.
+          mv coincube-spark-bridge/target/${{ matrix.target }}/minimal/coincube-spark-bridge \
+             Tenshu.app/Contents/MacOS/coincube-spark-bridge
 
           # keychain-access-groups is a *restricted* entitlement: AMFI validates
           # it against an embedded provisioning profile at exec time. Without
@@ -282,6 +378,62 @@ jobs:
           # out of the p12: that is what AMFI will judge, and it needs no secret.
           contrib/release/macos/check-profile-authorises-cert.sh \
             "$profile" --signed-bundle Tenshu.app
+
+      # Every artifact built between 2026-04-15 and 2026-08-06 shipped without
+      # the Spark bridge, and nothing in this pipeline noticed: codesign,
+      # notarization and spctl all pass on a bundle with no Spark in it. Only an
+      # explicit contents assertion catches it, so this step is the whole point
+      # of bundling the bridge — without it the next workflow edit can drop the
+      # binary again and ship green. Runs before notarization so a bad bundle
+      # fails in seconds rather than half an hour.
+      - name: Verify Spark bridge is bundled, correct arch, signed and runnable
+        if: matrix.platform == 'macos'
+        run: |
+          bridge=Tenshu.app/Contents/MacOS/coincube-spark-bridge
+
+          # (1) Present at all — the failure this exists to catch.
+          test -f "$bridge" \
+            || { echo "coincube-spark-bridge missing from Tenshu.app/Contents/MacOS"; exit 1; }
+
+          # (2) Built for this leg's architecture. A wrong-arch bridge is still
+          #     found by resolve_bridge_path() — it just dies on exec, which
+          #     surfaces to the user as the same "not configured" message.
+          case "${{ matrix.target }}" in
+            aarch64-*) want=arm64 ;;
+            x86_64-*)  want=x86_64 ;;
+            *) echo "unhandled target ${{ matrix.target }}"; exit 1 ;;
+          esac
+          archs=$(lipo -archs "$bridge")
+          echo "bridge architectures: $archs"
+          echo "$archs" | tr ' ' '\n' | grep -qx "$want" \
+            || { echo "bridge is [$archs], expected $want for ${{ matrix.target }}"; exit 1; }
+
+          # (3) Covered by the bundle signature. Also the empirical answer to
+          #     "does rcodesign --for-notarization sign a second Mach-O in
+          #     Contents/MacOS?" — if this fails, the bridge needs its own
+          #     rcodesign pass before the bundle is signed.
+          codesign --verify --strict --verbose=2 "$bridge" \
+            || { echo "bridge is not covered by the bundle signature"; exit 1; }
+
+          # (4) It actually runs. Presence proves nothing about exec: the
+          #     keychain-entitlement failure class is a SIGKILL at launch with
+          #     every signing check green (docs/MACOS_KEYCHAIN_ENTITLEMENT.md).
+          #     A shutdown round trip exercises exec, the hardened runtime, the
+          #     tokio runtime and the JSON-RPC loop, and needs no API key, no
+          #     mnemonic and no network — unlike --smoke-test, which requires
+          #     COINCUBE_SPARK_MNEMONIC and transacts against Spark mainnet.
+          #     Native arch only: the x64 leg cross-compiles on an arm64 runner.
+          if [ "$want" = "$(uname -m)" ]; then
+            out=$(echo '{"type":"request","id":1,"method":"shutdown"}' \
+              | "$bridge" 2> bridge-stderr.txt) \
+              || { echo "bridge failed to run:"; cat bridge-stderr.txt; exit 1; }
+            echo "$out"
+            echo "$out" | grep -q '"kind":"shutdown"' \
+              || { echo "bridge did not answer the shutdown handshake"; cat bridge-stderr.txt; exit 1; }
+            rm -f bridge-stderr.txt
+          else
+            echo "skipping the run check: ${{ matrix.target }} cannot exec on $(uname -m)"
+          fi
 
       # The D4 item: the only proof the entitlement *took*. `codesign -d` shows
       # it was requested; these three tests write to the data-protection

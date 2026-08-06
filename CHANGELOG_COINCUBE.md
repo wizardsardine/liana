@@ -72,6 +72,16 @@ These Liana components were significantly adapted for Coincube:
 
 ### Unreleased (v1.1.0 — target: May 2026)
 
+#### Fixes
+
+**Spark wallet now works in installed builds**
+
+Sources: `.github/workflows/{main,nightly,releases}.yml`, `contrib/release/wix/main.wxs`, `coincube-spark-bridge/Cargo.toml`
+- Release artifacts never contained `coincube-spark-bridge`, the sibling process that hosts the Spark SDK. It is a standalone Cargo workspace, so the `cargo build --package coincube-gui` in each workflow could not build it, and no artifact published since the Spark wallet landed (2026-04-15) had it. Anyone who opened the Spark tab in an installed build was told Spark was "not configured for this cube" — their cube was fine, and there was nothing they could have configured. Development builds were unaffected, which is why this went unnoticed: the gui falls back to the bridge in the checkout's `target/` directory.
+- All three platforms now build and ship the bridge alongside the app: in `Tenshu.app/Contents/MacOS/` (signed and notarized with the bundle), in the MSI's `bin` directory, and in the Linux `.tar.gz`. Each workflow asserts the packaged artifact contains it, is the right architecture, is covered by the signature, and answers a JSON-RPC round trip — the failure is invisible to `codesign`, notarization and `spctl`, so only an explicit check catches a recurrence.
+- The Linux release asset keeps its `tenshu-<version>-<target>.tar.gz` name but now extracts to a directory holding both binaries; the nightly Linux artifact changes from a bare binary to that same archive.
+- The bridge's 15 unit tests and its clippy lints now run in CI (`bridge_tests` job); a bare `cargo test` at the root never reached them.
+
 ### March 2026
 
 #### Features

@@ -110,6 +110,27 @@
                 Name="Tenshu"
                 WorkingDirectory="APPLICATIONFOLDER" />
             </Component>
+
+            <!--
+              The Spark wallet's SDK runs in this sibling subprocess, which the
+              gui locates next to its own executable under exactly this name
+              (resolve_bridge_path(), coincube-gui/src/app/breez_spark/client.rs).
+              It therefore has to install into the same <Directory> as
+              coincube.exe, and must not be renamed.
+
+              coincube-spark-bridge is its own Cargo workspace and builds into
+              coincube-spark-bridge\target\, not $(var.CargoTargetBinDir); the
+              release workflows copy it across before cargo wix runs (with the
+              no-build flag, so it packages only what is already on disk).
+              That keeps this Source path uniform with the one above.
+            -->
+            <Component Id='binary1' Guid='*'>
+              <File
+                Id='exe1'
+                Name='coincube-spark-bridge.exe'
+                Source='$(var.CargoTargetBinDir)\coincube-spark-bridge.exe'
+                KeyPath='yes' />
+            </Component>
           </Directory>
         </Directory>
       </Directory>
@@ -127,6 +148,7 @@
 
       <ComponentRef Id='License' />
       <ComponentRef Id='binary0' />
+      <ComponentRef Id='binary1' />
 
     </Feature>
 
