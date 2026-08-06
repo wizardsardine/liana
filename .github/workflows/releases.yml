@@ -70,7 +70,7 @@ jobs:
           echo "COINCUBE_VERSION=$version" >> $GITHUB_ENV
 
       - name: Cache Cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
@@ -244,6 +244,17 @@ jobs:
           echo "provisioning profile valid for $days more days (expires $expiry)"
           [ "$days" -gt 0 ] || { echo "the embedded provisioning profile has expired"; exit 1; }
           rm -f profile.plist
+
+          # A profile authorises specific CERTIFICATES, not just an App ID, so
+          # signing with a different Developer ID cert for the same team — a
+          # rotated one, or an older p12 still in the signing secret — is
+          # rejected by AMFI at exec. Nothing above catches it: the common names
+          # are identical, codesign and spctl pass, and notarization succeeds.
+          # The app is simply SIGKILLed on every user's machine.
+          # Read the certificate back out of the finished signature rather than
+          # out of the p12: that is what AMFI will judge, and it needs no secret.
+          contrib/release/macos/check-profile-authorises-cert.sh \
+            "$profile" --signed-bundle Tenshu.app
 
       - name: Notarize and staple app
         if: matrix.platform == 'macos'

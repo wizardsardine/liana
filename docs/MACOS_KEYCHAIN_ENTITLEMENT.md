@@ -161,6 +161,39 @@ codesign -dv --verbose=4 Tenshu.app 2>&1 | grep -E 'Authority|flags'
 ./Tenshu.app/Contents/MacOS/Coincube --datadir /tmp/tenshu-entitlement-test
 ```
 
+**The profile authorises certificates, not just an App ID.** Its `DeveloperCertificates` array lists the exact certificate(s) allowed to produce the signature — ours lists one. Sign with any *other* Developer ID Application certificate for the same team (a rotated one, a second one issued to another machine, an older p12 still sitting in a CI secret) and AMFI refuses the profile with the same `no eligible provisioning profiles found` / SIGKILL as having no profile at all.
+
+Nothing else catches it. The common name is identical across every certificate a team holds, so the signing log reads the same either way; `codesign -v`, `spctl` and notarization all pass. `contrib/release/macos/check-profile-authorises-cert.sh` compares the two and is wired into both signing workflows and the signed-test script — run it by hand when a signature behaves oddly:
+
+```bash
+# Against an already-signed bundle. Needs no certificate and no secret, so this
+# is the one for diagnosing a CI failure — download the signed app from the
+# run's artifacts and ask which certificate actually produced the signature.
+contrib/release/macos/check-profile-authorises-cert.sh \
+  contrib/release/macos/embedded.provisionprofile --signed-bundle Tenshu.app
+
+# Against a keychain identity, the way you sign locally.
+contrib/release/macos/check-profile-authorises-cert.sh \
+  contrib/release/macos/embedded.provisionprofile \
+  --identity "Developer ID Application: COINCUBE TECHNOLOGY LLC"
+
+# Against a p12, the way CI signs. `cert.p12`/`cert.pass` are written by the
+# "Prepare Apple Developer ID certificate" step from CERTIFICATE_P12_BASE64 and
+# exist only during a CI run — locally, point this at a real copy.
+contrib/release/macos/check-profile-authorises-cert.sh \
+  contrib/release/macos/embedded.provisionprofile --p12 cert.p12 cert.pass
+```
+
+After an Apple certificate rotation (`docs/APPLE_CERT_ROTATION.md`) the profile must be regenerated for the new certificate and re-committed, or signing keeps working while every build stops launching.
+
+During a rotation two valid certificates can share the common name above. `--identity` resolves the name against the eligible code-signing identities and **refuses an ambiguous match** rather than guessing — exactly the case that would otherwise slip through. When it does, pass the SHA-1 of the certificate you mean instead of the name:
+
+```bash
+security find-identity -v -p codesigning   # lists each identity's SHA-1 and name
+contrib/release/macos/check-profile-authorises-cert.sh \
+  contrib/release/macos/embedded.provisionprofile --identity <40-hex-sha1>
+```
+
 **Reading the result:**
 
 - **Killed at launch (`zsh: killed`, no window)** → restricted, profile required. This is what happened on 2026-08-04; check the log lines above to confirm it is AMFI and not a crash.
