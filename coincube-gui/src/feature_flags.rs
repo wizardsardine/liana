@@ -14,8 +14,9 @@
 /// Controlled by the `COINCUBE_ENABLE_PASSKEY` env var at build time. When
 /// `false`:
 ///
-/// - The "Use Passkey" toggle is hidden from the Create Cube form.
-/// - `Home::passkey_mode` is forced to `false` on init and after dismiss.
+/// - The Passkey/PIN toggle is hidden from the Create Cube form.
+/// - `Home::passkey_mode` is `false` on init and after dismiss (it tracks
+///   [`PASSKEY_CREATION_AVAILABLE`], so the PIN path is the only one).
 /// - The `CreateCube` handler's passkey branch becomes dead code.
 /// - `gui::tab` refuses to open an existing passkey Cube, naming the flag.
 /// - All passkey service code still compiles but is unreachable.
@@ -63,7 +64,9 @@
 /// pass as a failure.
 ///
 /// Device-binding is the PIN path's property, delivered by the `ENCRYPTED_V3`
-/// device secret, and the PIN path is unchanged and remains the default.
+/// device secret. The PIN path itself is unchanged, but it is no longer the
+/// default: the Create Cube form presents Passkey/PIN as an A/B choice with
+/// Passkey selected wherever [`PASSKEY_CREATION_AVAILABLE`] holds.
 pub const PASSKEY_ENABLED: bool = is_truthy(option_env!("COINCUBE_ENABLE_PASSKEY"));
 
 /// Whether the Create Cube form may offer a passkey on *this* platform.

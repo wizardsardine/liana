@@ -275,11 +275,12 @@ impl Home {
                 connect_expanded: false,
                 active_section: HomeSection::Cubes,
                 theme_mode: GlobalSettings::load_theme_mode(&GlobalSettings::path(&datadir_path)),
-                // Off by default even where passkeys are available. A custody
-                // choice this consequential should be opted into, not arrived
-                // at — and the PIN path remains the default for everyone who
-                // doesn't choose otherwise.
-                passkey_mode: false,
+                // On by default wherever passkeys are available: the Create
+                // Cube form offers Passkey/PIN as an A/B choice with Passkey
+                // selected. Where the feature is off or the platform can't
+                // open a passkey Cube, this stays `false` and the PIN path is
+                // the only one — the toggle isn't rendered at all there.
+                passkey_mode: feature_flags::PASSKEY_CREATION_AVAILABLE,
                 passkey_ceremony: None,
                 #[cfg(target_os = "macos")]
                 native_passkey_ceremony: None,
@@ -442,11 +443,11 @@ impl Home {
                         self.create_cube_name = coincube_ui::component::form::Value::default();
                         self.create_cube_pin = pin_input::PinInput::new();
                         self.create_cube_pin_confirm = pin_input::PinInput::new();
-                        // Back to the PIN path, unconditionally — dismissing the
+                        // Back to the default unlock method — dismissing the
                         // form discards the custody choice along with the rest
                         // of the inputs, so reopening it starts from the same
-                        // default a first-time user sees.
-                        self.passkey_mode = false;
+                        // state a first-time user sees.
+                        self.passkey_mode = feature_flags::PASSKEY_CREATION_AVAILABLE;
                         // Clear recovery words when exiting create cube flow
                         for word in &mut self.recovery_words {
                             word.clear();
@@ -3181,16 +3182,33 @@ fn create_cube_form<'a>(
         );
     }
 
-    // Passkey toggle — hidden entirely when the passkey feature is off, and on
-    // every platform but macOS regardless. The Windows Hello and security-key
-    // labels this used to carry offered a choice whose unlock path does not
-    // exist yet; taking it would have produced a Cube the build could not
-    // open. See `PASSKEY_CREATION_AVAILABLE`.
+    // Unlock-method toggle — hidden entirely when the passkey feature is off,
+    // and on every platform but macOS regardless. The Windows Hello and
+    // security-key labels this used to carry offered a choice whose unlock path
+    // does not exist yet; taking it would have produced a Cube the build could
+    // not open. See `PASSKEY_CREATION_AVAILABLE`.
+    //
+    // Styled as a two-label A/B row to match the General Settings toggles
+    // (BTC/Sats, Fiat/Bitcoin): left label = toggler off. Passkey sits on the
+    // left because it is the default.
     if feature_flags::PASSKEY_CREATION_AVAILABLE {
         column = column.push(
-            Toggler::new(passkey_mode)
-                .label("Use Passkey (Touch ID)")
-                .on_toggle(ViewMessage::TogglePasskeyMode),
+            card::simple(
+                Row::new()
+                    .spacing(20)
+                    .align_y(Alignment::Center)
+                    .push(text("Unlock method:").bold())
+                    .push(Space::new().width(Length::Fill))
+                    .push(text("Passkey"))
+                    .push(
+                        Toggler::new(!passkey_mode)
+                            .on_toggle(|is_pin| ViewMessage::TogglePasskeyMode(!is_pin))
+                            .width(50)
+                            .style(theme::toggler::orange),
+                    )
+                    .push(text("PIN")),
+            )
+            .width(Length::Fill),
         );
     }
     column = column.push(
@@ -4666,7 +4684,7 @@ mod tests {
         ];
         home.recovery_words[0] = "abandon".to_string();
         home.recovery_active_index = Some(0);
-        home.passkey_mode = true;
+        home.passkey_mode = !feature_flags::PASSKEY_CREATION_AVAILABLE;
 
         let _ = home.update(Message::View(ViewMessage::ShowCreateCube(false)));
 
@@ -4682,9 +4700,11 @@ mod tests {
         assert_eq!(home.create_cube_pin_confirm.value().as_str(), "");
         assert!(home.recovery_words.iter().all(String::is_empty));
         assert!(home.recovery_active_index.is_none());
-        assert!(
-            !home.passkey_mode,
-            "the PIN path is the default; a passkey is opted into"
+        assert_eq!(
+            home.passkey_mode,
+            feature_flags::PASSKEY_CREATION_AVAILABLE,
+            "dismissing restores the default unlock method: passkey where \
+             available, PIN otherwise"
         );
     }
 
@@ -4696,6 +4716,9 @@ mod tests {
             create_cube: true,
         };
         home.create_cube_name.value = "My Cube".to_string();
+        // PIN-path validation: the form defaults to a passkey where one is
+        // available, which skips every check below.
+        home.passkey_mode = false;
 
         let _ = home.update(Message::View(ViewMessage::CreateCube));
         assert_eq!(home.error.as_deref(), Some("Please enter all 4 PIN digits"));
@@ -5224,6 +5247,9 @@ mod tests {
             value: name.to_string(),
             ..Default::default()
         };
+        // The PIN path explicitly: `passkey_mode` defaults on wherever passkeys
+        // are available, and a passkey creation would launch a real ceremony.
+        home.passkey_mode = false;
         type_pin(&mut home.create_cube_pin, pin);
         type_pin(&mut home.create_cube_pin_confirm, pin);
         home.update(Message::View(ViewMessage::CreateCube))
@@ -5246,6 +5272,7 @@ mod tests {
             value: name.to_string(),
             ..Default::default()
         };
+        home.passkey_mode = false;
         type_pin(&mut home.create_cube_pin, pin);
         type_pin(&mut home.create_cube_pin_confirm, pin);
         let signer = MasterSigner::generate(home.network).expect("seed generation");
