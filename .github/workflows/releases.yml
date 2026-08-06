@@ -17,6 +17,22 @@ env:
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
   BREEZ_API_KEY: ${{ github.event_name == 'push' && secrets.BREEZ_API_KEY || 'DUMMY_BREEZ_API_KEY' }}
   COINCUBE_API_URL: ${{ vars.COINCUBE_API_URL }}
+  # Build-time passkey flags. Read via `option_env!`, so they have to reach
+  # rustc through the process environment — `.env` is gitignored and does not
+  # exist on a runner, so `coincube-gui/build.rs` forwards nothing here.
+  #
+  # Workflow-level, not step-level: `env` at this scope merges with the
+  # step-level blocks (`PROTOC`, `TMPDIR`), so the macOS build step inherits
+  # both without touching them.
+  #
+  # These must be **repo-level** Actions variables. Mapped under an Environment
+  # instead, a job with no `environment:` key cannot see them, `${{ vars.X }}`
+  # expands to the empty string, and the runner exports the variable anyway —
+  # which `option_env!` reports as `Some("")`, not `None`. The `const _: () =
+  # assert!` in `coincube-gui/src/feature_flags.rs` fails the build in that
+  # case rather than shipping a binary whose RP id never matches the AASA.
+  COINCUBE_ENABLE_PASSKEY: ${{ vars.COINCUBE_ENABLE_PASSKEY }}
+  COINCUBE_PASSKEY_RP_ID: ${{ vars.COINCUBE_PASSKEY_RP_ID }}
 
 jobs:
   release:

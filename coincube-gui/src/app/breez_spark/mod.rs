@@ -13,9 +13,10 @@
 //!   Lightning only for now.
 //! - [`client::SparkClient`]: cloneable subprocess handle, async
 //!   methods for `get_info` / `list_payments` / `shutdown`.
-//! - [`load_spark_client`]: convenience loader that reads the cube's
-//!   Spark [`MasterSigner`] from disk, unlocks it with the user PIN,
-//!   builds a [`SparkConfig`], and hands the mnemonic to the bridge.
+//! - [`load_spark_client`]: convenience loader that resolves the cube's
+//!   Spark [`MasterSigner`] from a [`SeedSource`] — the encrypted seed
+//!   file, or a signer the caller already holds — builds a
+//!   [`SparkConfig`], and hands the mnemonic to the bridge.
 
 pub mod assets;
 pub mod client;
@@ -29,15 +30,18 @@ use std::path::Path;
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Network};
-use coincube_core::signer::MasterSigner;
 use zeroize::Zeroizing;
 
-/// Load the Spark backend from the cube's datadir + fingerprint + PIN.
+use crate::app::seed_source::SeedSource;
+
+/// Load the Spark backend for a cube, taking its master seed from `seed`.
 ///
-/// Mirrors [`crate::app::breez_liquid::load_breez_client`]. The Spark
-/// SDK needs the raw mnemonic on `connect`, so this function:
-/// 1. loads the [`MasterSigner`] from disk by fingerprint;
-/// 2. decrypts its mnemonic with the supplied PIN;
+/// Mirrors [`crate::app::breez_liquid::load_breez_client`], including its
+/// [`SeedSource`] parameter — a passkey Cube has no seed file, so the source
+/// has to be explicit rather than "fingerprint plus PIN". The Spark SDK needs
+/// the raw mnemonic on `connect`, so this function:
+/// 1. resolves the [`coincube_core::signer::MasterSigner`] from `seed`;
+/// 2. extracts its mnemonic;
 /// 3. passes the mnemonic to the bridge subprocess via stdin;
 /// 4. drops the mnemonic string (zeroized) as soon as the bridge
 ///    confirms init success.
@@ -47,8 +51,7 @@ use zeroize::Zeroizing;
 pub async fn load_spark_client(
     datadir: &Path,
     network: Network,
-    spark_signer_fingerprint: Fingerprint,
-    password: &str,
+    seed: SeedSource<'_>,
     cube_id: &str,
 ) -> Result<Arc<SparkClient>, SparkLoadError> {
     // Only mainnet and regtest are supported — reject unsupported
@@ -59,19 +62,14 @@ pub async fn load_spark_client(
         _ => return Err(SparkLoadError::NetworkNotSupported(network)),
     }
 
-    // Prefer the signer the unlock already decrypted — same reasoning as the
-    // Liquid loader. Spark runs immediately after it, so without this a single
-    // unlock paid three full Argon2id derivations instead of one.
-    let cached = crate::app::session::unlocked_signer(cube_id, spark_signer_fingerprint);
-    let signer = match cached {
-        Some(signer) => signer,
-        None => MasterSigner::from_datadir_by_fingerprint(
-            datadir,
-            network,
-            spark_signer_fingerprint,
-            Some(password),
-            cube_id,
-        )
+    let spark_signer_fingerprint = seed.fingerprint();
+
+    // `resolve` prefers the signer the unlock already decrypted — same
+    // reasoning as the Liquid loader. Spark runs immediately after it, so
+    // without that a single unlock paid three full Argon2id derivations
+    // instead of one.
+    let signer = seed
+        .resolve(datadir, network, cube_id)
         .map_err(|e| match e {
             coincube_core::signer::SignerError::MnemonicStorage(io_err)
                 if io_err.kind() == std::io::ErrorKind::NotFound =>
@@ -79,8 +77,7 @@ pub async fn load_spark_client(
                 SparkLoadError::SignerNotFound(spark_signer_fingerprint)
             }
             _ => SparkLoadError::SignerError(e.to_string()),
-        })?,
-    };
+        })?;
 
     // Extract the mnemonic as a Zeroizing<String> so the buffer is
     // scrubbed after the bridge has accepted it.
@@ -157,9 +154,14 @@ mod tests {
         let datadir = std::path::Path::new("/this/path/should/not/be/read");
 
         for network in [Network::Testnet, Network::Signet] {
-            let err = load_spark_client(datadir, network, fingerprint, "pin", "cube-a")
-                .await
-                .unwrap_err();
+            let err = load_spark_client(
+                datadir,
+                network,
+                SeedSource::encrypted_file(fingerprint, "pin"),
+                "cube-a",
+            )
+            .await
+            .unwrap_err();
             assert!(matches!(
                 err,
                 SparkLoadError::NetworkNotSupported(n) if n == network

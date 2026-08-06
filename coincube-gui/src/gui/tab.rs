@@ -35,6 +35,11 @@ pub enum State {
     Loader(Loader),
     Login(login::CoincubeLiteLogin),
     PinEntry(crate::pin_entry::PinEntry),
+    /// Unlock screen for a passkey Cube. Its own state rather than a mode of
+    /// `PinEntry` because it shares nothing with one: no PIN buffer, no
+    /// throttle, no duress arm — a passkey Cube has no PIN to guess at and no
+    /// duress PIN to enrol.
+    PasskeyUnlock(crate::passkey_unlock::PasskeyUnlock),
     App(App),
     /// Cryptic "Duress Mode Activated" dead-end. Entered when a duress PIN is
     /// detected at Cube unlock (after the wipe runs); the device is effectively
@@ -368,6 +373,7 @@ pub enum Message {
     Run(app::Message),
     Login(login::Message),
     PinEntry(crate::pin_entry::Message),
+    PasskeyUnlock(crate::passkey_unlock::Message),
     /// Messages from the cryptic "Duress Mode Activated" screen.
     Duress(crate::app::view::duress::active_screen::Message),
     /// The background activation-queue drainer finished (queue emptied). No-op
@@ -527,6 +533,7 @@ impl Tab {
             State::Home(_) => "Home",
             State::Login(_) => "Login",
             State::PinEntry(_) => "Enter PIN",
+            State::PasskeyUnlock(_) => "Unlock with passkey",
             State::App(a) => a.title(),
             State::DuressActive(_) => "COINCUBE",
         }
@@ -755,70 +762,40 @@ impl Tab {
                     {
                         l.set_error(format!(
                             "{reason}\n\n{}",
-                            crate::services::unlock::creation_gate::NOT_A_BACKUP_COPY
+                            crate::services::unlock::creation_gate::not_a_backup_copy(
+                                cube.is_passkey_cube()
+                            )
                         ));
                         return Task::none();
                     }
 
-                    if cube.is_passkey_cube() {
-                        // Passkey Cubes don't have an encrypted mnemonic on
-                        // disk — their master seed is re-derived from the
-                        // WebAuthn PRF output on every open. That path isn't
-                        // wired up yet (blocked on macOS code signing +
-                        // associated-domains entitlement), so the only way
-                        // to actually open a passkey Cube right now is via
-                        // the mnemonic recovery flow.
-                        //
-                        // Refuse to open, surface a clear error to the user,
-                        // and stay on the home. This prevents falling
-                        // through to the PinEntry state and crashing on the
-                        // (missing) mnemonic load.
-                        tracing::warn!(
-                            "Refusing to open passkey Cube '{}' — passkey auth flow is not \
-                             wired up. The user must restore from their mnemonic backup.",
-                            cube.name
+                    // A passkey Cube has no PIN and no encrypted seed file —
+                    // its master seed is re-derived from a WebAuthn PRF
+                    // assertion on every open. Route it to its own unlock
+                    // screen rather than the PIN keypad, which would ask for a
+                    // PIN that does not exist and then fail on a seed file that
+                    // is not there.
+                    //
+                    // The flag still gates it: `PASSKEY_ENABLED` off means no
+                    // build can *create* one of these, but a datadir carried
+                    // from a build where it was on can still contain one. Say
+                    // what is true and stop, rather than open a Cube whose
+                    // unlock path this build has deliberately turned off.
+                    let passkey_cube = cube.is_passkey_cube();
+                    if passkey_cube && !crate::feature_flags::PASSKEY_ENABLED {
+                        l.set_error(
+                            "This Cube is unlocked with a passkey, and passkey unlock is \
+                             turned off in this build. Restore it from your Recovery Kit \
+                             and its recovery password, or use a build with \
+                             COINCUBE_ENABLE_PASSKEY set.",
                         );
-                        let msg = if crate::feature_flags::PASSKEY_ENABLED {
-                            // The macOS assertion ceremony now exists
-                            // (`services::passkey::macos::authenticate`), but two
-                            // things still stand between it and a working unlock,
-                            // and both are worse to get wrong than to wait for:
-                            //
-                            // 1. The loaders (`load_breez_client`,
-                            //    `load_spark_client`) read the seed from a file
-                            //    by fingerprint. A passkey Cube has no seed file
-                            //    — the seed is re-derived from the PRF output —
-                            //    so an in-memory signer has to be threaded
-                            //    through them first. Opening the Cube today lands
-                            //    in the app with no Liquid or Spark wallet.
-                            // 2. The two-machine acceptance check is unrun. Per
-                            //    the 2026-08-04 decision the passkey is
-                            //    Apple-ID-bound, so what has to be proved is
-                            //    that the credential *does* reach a second Mac
-                            //    on the same Apple ID and derives the same
-                            //    seed — the opposite of what the superseded
-                            //    2026-08-01 decision asked for, and a property
-                            //    this code already has rather than one it
-                            //    still needs to implement.
-                            //
-                            // Refusing with an accurate message beats opening a
-                            // half-working Cube.
-                            "This Cube was created with a passkey. Opening a Cube with a \
-                             passkey isn't available yet. Restore from your mnemonic \
-                             backup to access this Cube."
-                                .to_string()
-                        } else {
-                            "This Cube was created with a passkey, but the passkey feature \
-                             is currently disabled. Restore from your mnemonic backup to \
-                             access this Cube, or re-enable COINCUBE_ENABLE_PASSKEY in your \
-                             environment."
-                                .to_string()
-                        };
-                        l.set_error(msg);
                         return Task::none();
                     }
 
-                    // PIN entry
+                    // Shared by both unlock paths from here down: the Vault's
+                    // wallet settings, the duress account id (PIN path only —
+                    // a passkey Cube has no duress PIN), and where to go on
+                    // success.
                     let wallet_settings = cube.vault_wallet_id.as_ref().and_then(|vault_id| {
                         let network_dir = datadir_path.network_directory(network);
                         app::settings::Settings::from_file(&network_dir)
@@ -855,12 +832,20 @@ impl Tab {
                         wallet_settings,
                     };
 
-                    self.state = State::PinEntry(crate::pin_entry::PinEntry::new(
-                        cube,
-                        datadir_root,
-                        on_success,
-                        duress_account_id,
-                    ));
+                    self.state = if passkey_cube {
+                        State::PasskeyUnlock(crate::passkey_unlock::PasskeyUnlock::new(
+                            cube,
+                            datadir_root,
+                            on_success,
+                        ))
+                    } else {
+                        State::PinEntry(crate::pin_entry::PinEntry::new(
+                            cube,
+                            datadir_root,
+                            on_success,
+                            duress_account_id,
+                        ))
+                    };
                     Task::none()
                 }
                 home::Message::View(home::ViewMessage::ToggleTheme) => {
@@ -1018,8 +1003,10 @@ impl Tab {
                                 match breez_liquid::load_breez_client(
                                     datadir.path(),
                                     network,
-                                    seed.master_signer_fingerprint,
-                                    seed.pin.as_str(),
+                                    app::seed_source::SeedSource::encrypted_file(
+                                        seed.master_signer_fingerprint,
+                                        seed.pin.as_str(),
+                                    ),
                                     &cube.id,
                                     // Restore-from-seed: there is no persisted
                                     // grant yet (the cube is being created right
@@ -1077,8 +1064,10 @@ impl Tab {
                                 match app::breez_spark::load_spark_client(
                                     datadir.path(),
                                     network,
-                                    seed.master_signer_fingerprint,
-                                    seed.pin.as_str(),
+                                    app::seed_source::SeedSource::encrypted_file(
+                                        seed.master_signer_fingerprint,
+                                        seed.pin.as_str(),
+                                    ),
                                     &cube.id,
                                 )
                                 .await
@@ -1935,8 +1924,10 @@ impl Tab {
                                             breez_liquid::load_breez_client(
                                                 datadir_clone.path(),
                                                 network_val,
-                                                fingerprint,
-                                                &pin,
+                                                app::seed_source::SeedSource::encrypted_file(
+                                                    fingerprint,
+                                                    &pin,
+                                                ),
                                                 &cube.id,
                                                 // Last-seen `liquidEnabled` grant.
                                                 // Connect hasn't signed in yet at
@@ -1966,8 +1957,10 @@ impl Tab {
                                             match app::breez_spark::load_spark_client(
                                                 datadir_clone.path(),
                                                 network_val,
-                                                fingerprint,
-                                                &pin,
+                                                app::seed_source::SeedSource::encrypted_file(
+                                                    fingerprint,
+                                                    &pin,
+                                                ),
                                                 &cube.id,
                                             )
                                             .await
@@ -2094,6 +2087,262 @@ impl Tab {
                     )
                 }
                 m => pin_entry.update(m).map(Message::PinEntry),
+            },
+            (State::PasskeyUnlock(unlock), Message::PasskeyUnlock(msg)) => match msg {
+                crate::passkey_unlock::Message::Unlocked { fingerprint } => {
+                    // The assertion succeeded and `passkey_unlock` has already
+                    // parked the derived signer in `app::session`. What follows
+                    // is the PIN path's post-unlock work minus everything that
+                    // needs a PIN, which for a passkey Cube is everything that
+                    // touches a seed file:
+                    //
+                    // * **No seed-file migration.** A passkey Cube has no seed
+                    //   file to bring up to `ENCRYPTED_V3`. `migrate_seed_files`
+                    //   would find nothing and needs a PIN it cannot be given.
+                    // * **No second (duress) slot.** Duress is triggered by
+                    //   entering a duress *PIN*; a Cube with no PIN has no
+                    //   trigger, so minting a decoy slot would be theatre.
+                    // * **No fingerprint backfill by trial decryption.** The
+                    //   fingerprint is not guessed from disk — the assertion
+                    //   just derived it. It is written through below for the
+                    //   Cubes minted before it was recorded.
+                    let crate::pin_entry::PinEntrySuccess::LoadApp {
+                        datadir,
+                        config,
+                        network,
+                        wallet_settings,
+                        internal_bitcoind,
+                        backup,
+                    } = &unlock.on_success;
+
+                    let cube = unlock.cube().clone();
+                    let config_clone = config.clone();
+                    let datadir_clone = datadir.clone();
+                    let network_val = *network;
+                    let wallet_settings_clone = wallet_settings.clone();
+                    let internal_bitcoind_clone = internal_bitcoind.clone();
+                    let backup_clone = backup.clone();
+
+                    Task::perform(
+                        async move {
+                            let mut cube = cube;
+                            let mut enc_key_error: Option<String> = None;
+
+                            // The seed the assertion derived, from the session
+                            // it was parked in. It is not carried through the
+                            // message because iced clones messages freely and
+                            // every clone would be another master seed on the
+                            // heap.
+                            let signer =
+                                crate::app::session::unlocked_signer(&cube.id, fingerprint);
+                            let Some(signer) = signer else {
+                                // Only reachable if the session was closed
+                                // between the assertion and here (a lock, or a
+                                // second Cube opening). Not a lost Cube — the
+                                // user just unlocks again.
+                                return (
+                                    config_clone,
+                                    datadir_clone,
+                                    network_val,
+                                    cube,
+                                    Err(app::breez_liquid::BreezError::SignerError(
+                                        "This Cube locked again before it finished opening. \
+                                         Unlock it with your passkey to try again."
+                                            .to_string(),
+                                    )),
+                                    None,
+                                    wallet_settings_clone,
+                                    internal_bitcoind_clone,
+                                    backup_clone,
+                                    None,
+                                    None,
+                                );
+                            };
+                            let signer = std::sync::Arc::new(signer);
+
+                            // Record the fingerprint for a passkey Cube minted
+                            // before the field existed. Unlike the PIN path
+                            // this is not a trial decryption over the mnemonics
+                            // folder — the assertion is the authority.
+                            if cube.master_signer_fingerprint != Some(fingerprint) {
+                                cube.master_signer_fingerprint = Some(fingerprint);
+                                let cube_id = cube.id.clone();
+                                let network_dir = datadir_clone.network_directory(network_val);
+                                if let Err(e) =
+                                    app::settings::update_settings_file(&network_dir, |mut s| {
+                                        if let Some(c) =
+                                            s.cubes.iter_mut().find(|c| c.id == cube_id)
+                                        {
+                                            c.master_signer_fingerprint = Some(fingerprint);
+                                        }
+                                        Some(s)
+                                    })
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "Failed to persist master_signer_fingerprint for \
+                                         passkey cube {}: {}",
+                                        cube.id,
+                                        e
+                                    );
+                                }
+                            }
+
+                            // Connect blinding (PLAN-connect-blinding D2), same
+                            // as the PIN path. The empty password is never read:
+                            // `derive_connect_encryption_pubkey` checks the
+                            // session first and the assertion just filled it.
+                            if cube.connect_encryption_pubkey.is_none() {
+                                use app::settings::ConnectEncryptionKey as CEK;
+                                match app::settings::derive_connect_encryption_pubkey(
+                                    datadir_clone.path(),
+                                    network_val,
+                                    fingerprint,
+                                    "",
+                                    &cube.id,
+                                ) {
+                                    CEK::Derived(pubkey) => {
+                                        cube.connect_encryption_pubkey = Some(pubkey.clone());
+                                        let cube_id = cube.id.clone();
+                                        let network_dir =
+                                            datadir_clone.network_directory(network_val);
+                                        if let Err(e) = app::settings::update_settings_file(
+                                            &network_dir,
+                                            |mut s| {
+                                                if let Some(c) =
+                                                    s.cubes.iter_mut().find(|c| c.id == cube_id)
+                                                {
+                                                    c.connect_encryption_pubkey =
+                                                        Some(pubkey.clone());
+                                                }
+                                                Some(s)
+                                            },
+                                        )
+                                        .await
+                                        {
+                                            tracing::warn!(
+                                                "Failed to persist Connect encryption pubkey \
+                                                 for passkey cube {}: {}",
+                                                cube.id,
+                                                e
+                                            );
+                                        }
+                                    }
+                                    // Unreachable on this path — the signer is
+                                    // in hand, so there is always something to
+                                    // derive from. Kept so a future change that
+                                    // makes it reachable is loud, not silent.
+                                    CEK::NoSeed => {
+                                        tracing::debug!(
+                                            "Passkey cube {} reported no seed while holding \
+                                             an unlocked signer",
+                                            cube.id
+                                        );
+                                    }
+                                    CEK::Unreadable(why) => {
+                                        tracing::error!(
+                                            cube_id = %cube.id,
+                                            fingerprint = %fingerprint,
+                                            error = %why,
+                                            "Connect blinding: could not derive this passkey \
+                                             Cube's encryption key"
+                                        );
+                                        enc_key_error = Some(format!(
+                                            "This Cube couldn't prepare its Connect \
+                                             encryption key, so contacts can't share keys \
+                                             with it yet. Details in the logs ({why})."
+                                        ));
+                                    }
+                                }
+                            }
+
+                            // The whole point of PR A: both loaders take the
+                            // signer the assertion produced, with no seed file
+                            // anywhere in the picture.
+                            let breez_result = breez_liquid::load_breez_client(
+                                datadir_clone.path(),
+                                network_val,
+                                app::seed_source::SeedSource::in_memory(signer.clone()),
+                                &cube.id,
+                                cube.liquid_granted.unwrap_or(false),
+                            )
+                            .await;
+
+                            let spark_backend = match app::breez_spark::load_spark_client(
+                                datadir_clone.path(),
+                                network_val,
+                                app::seed_source::SeedSource::in_memory(signer),
+                                &cube.id,
+                            )
+                            .await
+                            {
+                                Ok(client) => {
+                                    Some(Arc::new(app::wallets::SparkBackend::new(client)))
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Spark bridge unavailable, continuing without \
+                                         Spark: {}",
+                                        e
+                                    );
+                                    None
+                                }
+                            };
+
+                            (
+                                config_clone,
+                                datadir_clone,
+                                network_val,
+                                cube,
+                                breez_result,
+                                spark_backend,
+                                wallet_settings_clone,
+                                internal_bitcoind_clone,
+                                backup_clone,
+                                None,
+                                enc_key_error,
+                            )
+                        },
+                        |(
+                            config,
+                            datadir,
+                            network,
+                            cube,
+                            breez_result,
+                            spark_backend,
+                            wallet_settings,
+                            internal_bitcoind,
+                            backup,
+                            migration_error,
+                            enc_key_error,
+                        )| {
+                            Message::BreezClientLoadedAfterPin {
+                                breez_client: breez_result,
+                                spark_backend,
+                                config,
+                                datadir,
+                                network,
+                                cube,
+                                wallet_settings,
+                                internal_bitcoind,
+                                backup,
+                                migration_error,
+                                enc_key_error,
+                            }
+                        },
+                    )
+                }
+                crate::passkey_unlock::Message::Back => {
+                    // Dropping the screen drops any in-flight ceremony, which
+                    // cancels the system prompt.
+                    let network = unlock.cube().network;
+                    let crate::pin_entry::PinEntrySuccess::LoadApp { datadir, .. } =
+                        &unlock.on_success;
+                    let (home, command) = Home::new(datadir.clone(), Some(network));
+                    self.state = State::Home(home);
+                    command.map(Message::Launch)
+                }
+                m => unlock.update(m).map(Message::PasskeyUnlock),
             },
             (State::DuressActive(screen), Message::Duress(msg)) => match msg {
                 crate::app::view::duress::active_screen::Message::SignInPressed => {
@@ -2347,6 +2596,10 @@ impl Tab {
             State::Home(v) => v.subscription().map(Message::Launch),
             State::Login(_) => Subscription::none(),
             State::PinEntry(_) => Subscription::none(),
+            // Unlike `PinEntry`, this one needs a subscription: the macOS
+            // authorization delegate answers on a channel with no waker to
+            // hook, so the ceremony has to be polled.
+            State::PasskeyUnlock(v) => v.subscription().map(Message::PasskeyUnlock),
             State::DuressActive(_) => Subscription::none(),
         }
     }
@@ -2359,6 +2612,7 @@ impl Tab {
             State::Loader(v) => v.view().map(Message::Load),
             State::Login(v) => v.view().map(Message::Login),
             State::PinEntry(v) => v.view().map(Message::PinEntry),
+            State::PasskeyUnlock(v) => v.view().map(Message::PasskeyUnlock),
             State::DuressActive(v) => v.view().map(Message::Duress),
         }
     }
@@ -2371,6 +2625,7 @@ impl Tab {
             State::App(s) => s.stop(),
             State::Login(_) => {}
             State::PinEntry(_) => {}
+            State::PasskeyUnlock(_) => {}
             State::DuressActive(_) => {}
         }
     }
@@ -2816,7 +3071,6 @@ pub fn create_app_with_remote_backend(
             cube_name: cube_settings.name.clone(),
             current_cube_backed_up: cube_settings.backed_up,
             backup_warning_dismissed: false,
-            current_cube_is_passkey: cube_settings.is_passkey_cube(),
             has_p2p: false, // Set later by App::new based on mnemonic availability
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
             btc_usd_price: None,

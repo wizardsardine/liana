@@ -8,65 +8,95 @@
 //! `cargo:rustc-env=KEY=VALUE`, so each key becomes visible to `option_env!`
 //! during compilation of this crate.
 
-/// Whether the passkey-based Cube creation flow is enabled.
+/// Whether the passkey path — creating a Cube with one, and opening it — is
+/// enabled at all.
 ///
-/// Controlled by the `COINCUBE_ENABLE_PASSKEY` env var at build time.
-/// Defaults to `false`. When `false`:
+/// Controlled by the `COINCUBE_ENABLE_PASSKEY` env var at build time. When
+/// `false`:
 ///
 /// - The "Use Passkey" toggle is hidden from the Create Cube form.
 /// - `Home::passkey_mode` is forced to `false` on init and after dismiss.
 /// - The `CreateCube` handler's passkey branch becomes dead code.
+/// - `gui::tab` refuses to open an existing passkey Cube, naming the flag.
 /// - All passkey service code still compiles but is unreachable.
 ///
-/// When `true`, the existing passkey code path re-activates (webview on
-/// non-macOS, native AuthenticationServices on macOS).
+/// # What this used to be, and why it changed
 ///
-/// # DANGER: enabling this flag can create a Cube that cannot be opened
+/// This flag carried a `DANGER` block for months. It said, correctly, that
+/// enabling it could create a Cube that **cannot be opened**: passkey
+/// registration worked and passkey unlock did not, so a Cube created with the
+/// flag on was openable only if its owner had written the mnemonic down.
 ///
-/// Passkey *creation* works; passkey *unlock* does not. A Cube created with
-/// this flag on is openable only if its owner wrote down the mnemonic —
-/// otherwise it is **permanently lost**, and no amount of support intervention
-/// recovers it.
+/// Every item on that list is now closed:
 ///
-/// What is done, as of 2026-08-04:
-///
-/// - `services::passkey::macos::NativePasskeyCeremony::authenticate` is fully
-///   implemented — the assertion ceremony with the registration PRF salt.
-/// - The macOS signing prerequisites are met: `io.coincube.tenshu` is signed
-///   with `keychain-access-groups` and `com.apple.developer.associated-domains`,
+/// - **Unlock works.** `crate::passkey_unlock` runs the assertion, derives the
+///   seed through HKDF + BIP39, and hands it to the Liquid and Spark loaders as
+///   `SeedSource::InMemory` — a passkey Cube has no seed file, and the loaders
+///   no longer assume one.
+/// - **The Recovery Kit carries the seed** (**I11**). A re-authentication
+///   ceremony at Kit time re-derives it, so recovery no longer depends on the
+///   user having written twelve words down, or on iCloud Keychain being on.
+/// - **The signing prerequisites are met**: `io.coincube.tenshu` is signed with
+///   `keychain-access-groups` and `com.apple.developer.associated-domains`,
 ///   authorised by the embedded provisioning profile, and the AASA at
 ///   coincube.io lists the app under `webcredentials`.
+/// - **`COINCUBE_PASSKEY_RP_ID`** is set to `coincube.io` in `.env`; the
+///   compiled default stays `localhost` for dev builds.
 ///
-/// What still blocks it:
+/// # What is still true, and is now permanent
 ///
-/// - `gui::tab` refuses to open a Cube carrying `passkey_metadata`, because
-///   `load_breez_client` / `load_spark_client` read the seed from a file by
-///   fingerprint and a passkey Cube has none — its seed is re-derived from the
-///   PRF output. An in-memory signer has to be threaded through them first, or
-///   the Cube opens with no Liquid and no Spark wallet. See the comment at the
-///   refusal site for the full reasoning.
-/// - `COINCUBE_PASSKEY_RP_ID` still defaults to `"localhost"`; a real build
-///   must set it to `coincube.io` to match the AASA.
-/// - The Recovery Kit is still descriptor-only for passkey Cubes, so a passkey
-///   user's only recovery is a written mnemonic. Per the 2026-08-04 decision
-///   the Kit must carry the seed — which needs the same re-derivation as the
-///   point above, so the two land together.
-/// - The **two-machine acceptance check is unrun**. Per that decision the
-///   passkey is Apple-ID-bound, so what must be proved is that the credential
-///   *does* reach a second Mac on the same Apple ID and derives the *same*
-///   seed (compare xpubs, never mnemonics), and separately that a Kit alone
-///   restores the Cube on a machine with no access to that Apple ID.
+/// The credential is **synced**, not device-bound. Apple holds the credential
+/// that deterministically produces a passkey Cube's master seed, and from the
+/// first shipped passkey Cube onward that cannot be tightened without stranding
+/// it — reversing the call was free only while no passkey Cube existed outside
+/// a developer machine, and shipping spends that window. That is the trade
+/// `company-brain/decisions/2026-08-04-tenshu-passkey-apple-id-bound.md` made
+/// knowingly.
 ///
-/// Do not flip this on for any build a real user might touch until all three
-/// are closed.
-///
-/// Note the acceptance check inverted on 2026-08-04. An earlier decision made
+/// It also means the **acceptance check inverted**. An earlier decision made
 /// the passkey device-bound and asked for proof the credential did *not*
-/// travel; that decision is superseded, and the code never implemented it —
-/// `ASAuthorizationPlatformPublicKeyCredentialProvider` produces a synced
-/// credential and nothing pins otherwise. Device-binding is the PIN path's
-/// property, delivered by the `ENCRYPTED_V3` device secret.
+/// travel; what must be proved now is the opposite — that it *does* reach a
+/// second Mac on the same Apple ID and derives the same seed (compare xpubs,
+/// never mnemonics) — and, separately and more importantly, that a Recovery Kit
+/// alone restores the Cube on a machine with no access to that Apple ID.
+/// Anyone working from the superseded plan will run the wrong test and read a
+/// pass as a failure.
+///
+/// Device-binding is the PIN path's property, delivered by the `ENCRYPTED_V3`
+/// device secret, and the PIN path is unchanged and remains the default.
 pub const PASSKEY_ENABLED: bool = is_truthy(option_env!("COINCUBE_ENABLE_PASSKEY"));
+
+/// Whether the Create Cube form may offer a passkey on *this* platform.
+///
+/// macOS only, per
+/// `company-brain/decisions/2026-08-03-passkey-macos-only-for-now.md`. The
+/// unlock ceremony is `services::passkey::macos`; Windows and Linux have no
+/// working equivalent (`windows.rs` still builds its own unverified origin
+/// string, which is part of why it is deferred). Offering the toggle there
+/// would create Cubes that this build cannot open — the exact failure the
+/// flag's old `DANGER` note existed to prevent.
+///
+/// [`PASSKEY_ENABLED`] deliberately stays platform-agnostic: it also gates
+/// *opening* a Cube, and a passkey Cube whose datadir is carried to Linux
+/// should be told this OS can't open it, not that the feature is off.
+pub const PASSKEY_CREATION_AVAILABLE: bool = PASSKEY_ENABLED && cfg!(target_os = "macos");
+
+// A build with the passkey path on must know its Relying Party ID. If it does
+// not, `services::passkey::RP_ID` falls back to the dev value `localhost`,
+// which never matches the AASA at coincube.io: registration and assertion both
+// fail, and nothing upstream of a running app reveals it — codesign,
+// notarization and `spctl` all pass on a build with the wrong RP id.
+//
+// What this guards is a CI misconfiguration, not a typo. A GitHub Actions
+// `${{ vars.X }}` on an undefined variable expands to the *empty string*, and
+// the runner exports the variable anyway, so `option_env!` yields `Some("")`
+// rather than `None`. Mapping the variable at the wrong scope — under an
+// Environment rather than at repo level, where a job with no `environment:`
+// key cannot see it — produces exactly that.
+const _: () = assert!(
+    !PASSKEY_ENABLED || is_set(option_env!("COINCUBE_PASSKEY_RP_ID")),
+    "COINCUBE_ENABLE_PASSKEY is on but COINCUBE_PASSKEY_RP_ID is unset or empty"
+);
 
 /// Whether the cube-scoped Members UI (W8 / PLAN-cube-membership-desktop) is
 /// shown in the Connect sidebar.
@@ -131,6 +161,40 @@ const fn is_falsy(val: Option<&str>) -> bool {
     bytes_eq_ci(b, b"0") || bytes_eq_ci(b, b"false") || bytes_eq_ci(b, b"no")
 }
 
+/// `const`-compatible "present and non-empty" check for a build-time variable.
+///
+/// `option_env!` distinguishes unset (`None`) from set-but-empty (`Some("")`),
+/// and for anything sourced from CI the second case is the common one: a GitHub
+/// Actions `${{ vars.X }}` on an undefined variable expands to the empty string
+/// and the runner exports the variable regardless. Treat that as "not
+/// configured", because it is a misconfiguration rather than a value.
+pub const fn is_set(val: Option<&str>) -> bool {
+    match val {
+        Some(s) => !s.is_empty(),
+        None => false,
+    }
+}
+
+/// The value of a build-time variable, or `default` when it is unset **or
+/// empty**.
+///
+/// The string-valued counterpart to `is_truthy`. Prefer it over a bare
+/// `match option_env!(..) { Some(v) => v, None => .. }`, which binds `Some("")`
+/// to `v` and hands the empty string to callers instead of falling back — see
+/// [`is_set`] for why CI produces that case routinely.
+pub const fn non_empty_or(val: Option<&'static str>, default: &'static str) -> &'static str {
+    match val {
+        Some(s) => {
+            if s.is_empty() {
+                default
+            } else {
+                s
+            }
+        }
+        None => default,
+    }
+}
+
 /// Case-insensitive byte-slice equality, const-stable.
 const fn bytes_eq_ci(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -193,6 +257,26 @@ mod tests {
         assert!(is_falsy(Some("False")));
         assert!(is_falsy(Some("no")));
         assert!(is_falsy(Some("NO")));
+    }
+
+    #[test]
+    fn is_set_rejects_unset_and_empty() {
+        // `Some("")` is what a GitHub Actions `${{ vars.X }}` on an undefined
+        // variable produces. It must read as "not configured", not as a value.
+        assert!(!is_set(None));
+        assert!(!is_set(Some("")));
+        assert!(is_set(Some("coincube.io")));
+        assert!(is_set(Some(" ")));
+    }
+
+    #[test]
+    fn non_empty_or_falls_back_on_unset_and_empty() {
+        assert_eq!(non_empty_or(None, "localhost"), "localhost");
+        assert_eq!(non_empty_or(Some(""), "localhost"), "localhost");
+        assert_eq!(
+            non_empty_or(Some("coincube.io"), "localhost"),
+            "coincube.io"
+        );
     }
 
     #[test]

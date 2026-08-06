@@ -96,9 +96,6 @@ pub struct Cache {
     /// app restart — the reminder keeps surfacing until the user
     /// actually backs up.
     pub backup_warning_dismissed: bool,
-    /// Whether the current Cube uses a passkey-derived master key (no PIN,
-    /// no stored encrypted mnemonic). Used to hide the seed-backup UI.
-    pub current_cube_is_passkey: bool,
     /// Whether the P2P panel is available (requires a valid mnemonic)
     pub has_p2p: bool,
     /// Resolved P2P test-coordinator gate for [`Self::network`]: a
@@ -252,7 +249,6 @@ impl std::default::Default for Cache {
             cube_name: String::new(),
             current_cube_backed_up: false,
             backup_warning_dismissed: false,
-            current_cube_is_passkey: false,
             has_p2p: false,
             p2p_test_coordinator: false,
             marketplace_flags: crate::app::features::MarketplaceServerFlags::OFF,

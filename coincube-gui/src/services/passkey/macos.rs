@@ -59,7 +59,75 @@ pub enum NativeOutcome {
     Authenticated {
         prf_output: Zeroizing<[u8; 32]>,
     },
-    Error(String),
+    /// A **classified** failure, not a string. Invariant **I12** turns on the
+    /// caller being able to tell a cancelled Touch ID prompt apart from a
+    /// PRF-less authenticator apart from an absent credential — collapsing them
+    /// into one message is how a user concludes their wallet is gone.
+    Failed(super::PasskeyError),
+}
+
+/// `ASAuthorizationError` codes, from `AuthenticationServices/ASFoundation.h`.
+/// Declared here rather than imported because `objc2-authentication-services`
+/// exposes the error domain but not the code enum.
+mod as_error {
+    pub const UNKNOWN: isize = 1000;
+    pub const CANCELED: isize = 1001;
+    pub const INVALID_RESPONSE: isize = 1002;
+    pub const NOT_HANDLED: isize = 1003;
+    pub const FAILED: isize = 1004;
+    pub const NOT_INTERACTIVE: isize = 1005;
+}
+
+/// Map an `ASAuthorizationController` failure onto the I12 taxonomy.
+///
+/// `Canceled` is the only code with an unambiguous meaning, and it is the one
+/// that matters most: it is by far the most common failure and the one most
+/// likely to be misread as a lost Cube.
+///
+/// The rest — `Unknown`, `NotHandled`, `Failed`, `NotInteractive` — are how
+/// macOS reports "there was nothing here to authorise with" (no matching
+/// credential for this RP, the Apple ID not signed in, iCloud Keychain off).
+/// They are not distinguishable from one another at the framework level and
+/// they call for the same remedy, so they share
+/// [`super::PasskeyError::CredentialNotFound`], which keeps the raw detail for
+/// the log.
+fn classify_authorization_error(code: isize, detail: String) -> super::PasskeyError {
+    use super::PasskeyError;
+    match code {
+        as_error::CANCELED => PasskeyError::Cancelled,
+        as_error::UNKNOWN
+        | as_error::NOT_HANDLED
+        | as_error::FAILED
+        | as_error::NOT_INTERACTIVE => PasskeyError::CredentialNotFound(detail),
+        as_error::INVALID_RESPONSE => PasskeyError::InvalidResponse(detail),
+        _ => PasskeyError::CeremonyFailed(detail),
+    }
+}
+
+/// Whether this machine can actually run a PRF ceremony.
+///
+/// The version floor in the module header is a **compile-time** statement about
+/// the SDK; this is the runtime half of it. `objc2` resolves
+/// `ASAuthorizationPublicKeyCredentialPRF…` lazily by selector, so a binary
+/// built against the macOS 15 SDK links and launches fine on macOS 14 — and
+/// then `setPrf:` is an unrecognised selector, which is a **crash**, not a
+/// graceful degradation.
+///
+/// Probing for the class turns that into a capability answer the caller can
+/// act on. It is checked before the request is built, so the failure arrives as
+/// [`super::PasskeyError::PrfNotSupported`] and reads as "this Mac can't do
+/// this" rather than as a lost Cube (**I12**).
+///
+/// The registration input class is the one probed: it appeared in the same SDK
+/// as the assertion input, and both ceremonies need both.
+pub fn prf_supported() -> bool {
+    // A literal `c"…"` would be cleaner, but this crate is on an edition
+    // without C-string literals.
+    const NAME: &[u8] = b"ASAuthorizationPublicKeyCredentialPRFRegistrationInput\0";
+    std::ffi::CStr::from_bytes_with_nul(NAME)
+        .ok()
+        .and_then(objc2::runtime::AnyClass::get)
+        .is_some()
 }
 
 /// Re-export of the shared, registered PRF eval input. Every backend must use
@@ -105,8 +173,9 @@ define_class!(
             let msg = desc.to_string();
             let code = error.code();
             let full = format!("{} (code {})", msg, code);
+            let classified = classify_authorization_error(code, full);
             if let Some(sender) = self.ivars().sender.get() {
-                let _ = sender.send(NativeOutcome::Error(full));
+                let _ = sender.send(NativeOutcome::Failed(classified));
             }
         }
     }
@@ -220,17 +289,20 @@ unsafe fn extract_outcome(authorization: &ASAuthorization) -> NativeOutcome {
         let credential_id = unsafe { reg.credentialID() }.to_vec();
 
         let Some(prf) = (unsafe { reg.prf() }) else {
-            return NativeOutcome::Error("PRF extension not supported by this passkey".to_string());
+            return NativeOutcome::Failed(super::PasskeyError::PrfNotSupported);
         };
         let Some(first) = (unsafe { prf.first() }) else {
-            return NativeOutcome::Error("PRF output missing first value".to_string());
+            return NativeOutcome::Failed(super::PasskeyError::PrfNotSupported);
         };
         return match prf_bytes(&first) {
             Ok(prf_output) => NativeOutcome::Registered {
                 credential_id,
                 prf_output,
             },
-            Err(e) => NativeOutcome::Error(e),
+            Err(e) => {
+                tracing::error!("passkey registration PRF output unusable: {e}");
+                NativeOutcome::Failed(super::PasskeyError::InvalidPrfOutput)
+            }
         };
     }
 
@@ -242,24 +314,24 @@ unsafe fn extract_outcome(authorization: &ASAuthorization) -> NativeOutcome {
             // dropped the extension. This must be a clear capability error and
             // never a silently different seed — deriving from anything else
             // here would produce a valid-looking wallet that is not the user's.
-            return NativeOutcome::Error(
-                "This passkey can't produce the key material Coincube needs (the PRF \
-                 extension is unavailable). Restore this Cube from your Recovery Kit \
-                 or written seed phrase."
-                    .to_string(),
-            );
+            // I12: `PrfNotSupported` is its own outcome precisely so this can
+            // never render as "your Cube is gone".
+            return NativeOutcome::Failed(super::PasskeyError::PrfNotSupported);
         };
         // The assertion output's `first` is non-optional in the SDK.
         let first = unsafe { prf.first() };
         return match prf_bytes(&first) {
             Ok(prf_output) => NativeOutcome::Authenticated { prf_output },
-            Err(e) => NativeOutcome::Error(e),
+            Err(e) => {
+                tracing::error!("passkey assertion PRF output unusable: {e}");
+                NativeOutcome::Failed(super::PasskeyError::InvalidPrfOutput)
+            }
         };
     }
 
-    NativeOutcome::Error(
+    NativeOutcome::Failed(super::PasskeyError::InvalidResponse(
         "Unexpected credential type returned by AuthenticationServices".to_string(),
-    )
+    ))
 }
 
 /// Active passkey ceremony — holds the controller, delegate, and channel receiver.
@@ -268,7 +340,10 @@ unsafe fn extract_outcome(authorization: &ASAuthorization) -> NativeOutcome {
 pub struct NativePasskeyCeremony {
     controller: Retained<ASAuthorizationController>,
     _delegate: Retained<PasskeyDelegate>,
-    receiver: mpsc::Receiver<NativeOutcome>,
+    /// `None` once [`NativePasskeyCeremony::take_receiver`] has handed the
+    /// channel to a waiter on another thread. The controller and delegate stay
+    /// here regardless — they are the request, and dropping them cancels it.
+    receiver: Option<mpsc::Receiver<NativeOutcome>>,
 }
 
 impl NativePasskeyCeremony {
@@ -280,6 +355,11 @@ impl NativePasskeyCeremony {
     pub fn register(rp_id: &str, user_id: &[u8], user_name: &str) -> Result<Self, String> {
         let mtm = MainThreadMarker::new()
             .ok_or_else(|| "Passkey ceremony must be started on the main thread".to_string())?;
+        // Before anything is built: `setPrf:` below would be an unrecognised
+        // selector on macOS 14, which crashes the app rather than failing.
+        if !prf_supported() {
+            return Err(super::PasskeyError::PrfNotSupported.user_message());
+        }
 
         unsafe {
             // Build provider
@@ -351,7 +431,7 @@ impl NativePasskeyCeremony {
             Ok(Self {
                 controller,
                 _delegate: delegate,
-                receiver: rx,
+                receiver: Some(rx),
             })
         }
     }
@@ -362,15 +442,27 @@ impl NativePasskeyCeremony {
     /// stored in `CubeSettings::passkey_metadata`. It is passed as the single
     /// `allowedCredentials` entry so the system offers exactly this Cube's
     /// passkey rather than a picker over every credential for the RP.
-    pub fn authenticate(rp_id: &str, credential_id: &[u8]) -> Result<Self, String> {
-        let mtm = MainThreadMarker::new()
-            .ok_or_else(|| "Passkey ceremony must be started on the main thread".to_string())?;
+    ///
+    /// Errors are [`super::PasskeyError`], not strings, so a caller can honour
+    /// **I12** without re-parsing prose.
+    pub fn authenticate(rp_id: &str, credential_id: &[u8]) -> Result<Self, super::PasskeyError> {
+        let mtm = MainThreadMarker::new().ok_or_else(|| {
+            super::PasskeyError::CeremonyFailed(
+                "Passkey ceremony must be started on the main thread".to_string(),
+            )
+        })?;
+        // See `register`: on macOS 14 this is a crash, not a failure.
+        if !prf_supported() {
+            return Err(super::PasskeyError::PrfNotSupported);
+        }
+        // A Cube whose stored credential id is empty has nothing to offer the
+        // authenticator. That is the one case we can name with certainty, so it
+        // gets the same classified outcome as "the platform has no such
+        // passkey" rather than a bare failure.
         if credential_id.is_empty() {
-            return Err(
-                "This Cube's passkey credential ID is missing, so its passkey can't be \
-                 offered. Restore from your Recovery Kit or written seed phrase."
-                    .to_string(),
-            );
+            return Err(super::PasskeyError::CredentialNotFound(
+                "this Cube has no stored passkey credential id".to_string(),
+            ));
         }
 
         unsafe {
@@ -441,14 +533,29 @@ impl NativePasskeyCeremony {
             Ok(Self {
                 controller,
                 _delegate: delegate,
-                receiver: rx,
+                receiver: Some(rx),
             })
         }
     }
 
-    /// Poll for a result (non-blocking).
+    /// Poll for a result (non-blocking). `None` once the channel has been
+    /// handed off with [`Self::take_receiver`].
     pub fn try_recv(&self) -> Option<NativeOutcome> {
-        self.receiver.try_recv().ok()
+        self.receiver.as_ref().and_then(|r| r.try_recv().ok())
+    }
+
+    /// Take the result channel, leaving the controller and delegate in place.
+    ///
+    /// This is what lets a caller wait for the result on another thread: the
+    /// ceremony itself is not `Send` (retained Objective-C objects), but
+    /// `Receiver<NativeOutcome>` is. The ceremony must stay alive and parked on
+    /// the main thread for as long as the waiter cares — dropping it drops the
+    /// delegate, which drops the sender, which wakes the waiter with a
+    /// disconnect. See `services::passkey::reauth`.
+    ///
+    /// Returns `None` on a second call.
+    pub fn take_receiver(&mut self) -> Option<mpsc::Receiver<NativeOutcome>> {
+        self.receiver.take()
     }
 
     /// Cancel the in-progress ceremony.

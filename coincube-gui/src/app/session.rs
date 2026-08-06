@@ -53,7 +53,16 @@ struct Session {
     /// The Cube this PIN belongs to. Checked on read so a stale session from a
     /// previously-open Cube can never hand its PIN to a different one.
     cube_id: String,
-    pin: Zeroizing<String>,
+    /// `None` for a **passkey** Cube, which has no PIN at all: its master seed
+    /// comes from a WebAuthn assertion, not from an encrypted file.
+    ///
+    /// This is an `Option` rather than an empty string on purpose. The two
+    /// consumers of a PIN after unlock both do something irreversible with it —
+    /// the Vault installer *encrypts a hot signer* under it, and duress
+    /// enrolment validates the duress PIN against it — and an empty string is a
+    /// value they would happily use. `None` makes them refuse instead, which is
+    /// the only safe direction to fail.
+    pin: Option<Zeroizing<String>>,
     /// The master signer the unlock already decrypted, and the fingerprint it
     /// belongs to.
     ///
@@ -83,11 +92,26 @@ fn lock_session() -> std::sync::MutexGuard<'static, Option<Session>> {
     cell().lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Record a successful unlock. Replaces any previous session — opening a
+/// Record a successful PIN unlock. Replaces any previous session — opening a
 /// second Cube without closing the first is not a thing the UI can do, but if
 /// it ever becomes one, the newest wins and the old PIN is zeroized here.
 pub fn open(cube_id: impl Into<String>, pin: Zeroizing<String>) {
-    let cube_id = cube_id.into();
+    open_inner(cube_id.into(), Some(pin));
+}
+
+/// Record a successful unlock for a Cube that **has** no PIN — a passkey Cube.
+///
+/// Everything a session provides other than the PIN still applies: idle
+/// auto-lock, the current Cube id, and the signer the assertion just derived.
+/// [`pin_for`] and [`current_pin`] answer `None`, so the two callers that would
+/// otherwise act on a PIN (the Vault installer's seed encryption and duress
+/// enrolment's duress-PIN validation) refuse rather than proceed on an empty
+/// string.
+pub fn open_without_pin(cube_id: impl Into<String>) {
+    open_inner(cube_id.into(), None);
+}
+
+fn open_inner(cube_id: String, pin: Option<Zeroizing<String>>) {
     let mut guard = lock_session();
     // Re-opening the *same* Cube keeps the signer the unlock already decrypted.
     // The PIN screen stores it before this runs, and clobbering it here would
@@ -119,7 +143,9 @@ pub fn store_unlocked_signer(cube_id: &str, fingerprint: Fingerprint, signer: Ma
         _ => {
             *guard = Some(Session {
                 cube_id: cube_id.to_string(),
-                pin: Zeroizing::new(String::new()),
+                // No PIN yet, and possibly never — a passkey Cube stores its
+                // signer here and never calls `open`. `None`, not `""`.
+                pin: None,
                 signer: Some((fingerprint, signer)),
                 last_activity: Instant::now(),
             })
@@ -149,19 +175,20 @@ pub fn unlocked_signer(cube_id: &str, fingerprint: Fingerprint) -> Option<Master
         .and_then(|(_, signer)| signer.try_clone().ok())
 }
 
-/// The open Cube's PIN, if `cube_id` is the Cube that is actually open.
+/// The open Cube's PIN, if `cube_id` is the Cube that is actually open **and**
+/// that Cube has a PIN at all. A passkey Cube answers `None`.
 pub fn pin_for(cube_id: &str) -> Option<Zeroizing<String>> {
     lock_session()
         .as_ref()
         .filter(|s| s.cube_id == cube_id)
-        .map(|s| s.pin.clone())
+        .and_then(|s| s.pin.clone())
 }
 
 /// The open Cube's PIN, whichever Cube that is. Use [`pin_for`] when the
 /// caller knows which Cube it means — this exists for the installer, which
-/// runs before the restored Cube's id is minted.
+/// runs before the restored Cube's id is minted. `None` for a passkey Cube.
 pub fn current_pin() -> Option<Zeroizing<String>> {
-    lock_session().as_ref().map(|s| s.pin.clone())
+    lock_session().as_ref().and_then(|s| s.pin.clone())
 }
 
 /// Id of the currently open Cube, if any.
@@ -337,6 +364,35 @@ mod tests {
             "`open` dropped the signer the unlock had already decrypted"
         );
         assert_eq!(pin_for("cube-a").as_deref(), Some(&"1234".to_string()));
+        close();
+    }
+
+    #[test]
+    fn a_passkey_session_has_a_signer_and_no_pin() {
+        // The distinction that keeps an empty string out of the Vault
+        // installer's seed encryption and out of duress-PIN validation. Both
+        // treat `None` as "refuse"; both would happily use `""`.
+        let _g = guard();
+        close();
+        let (fp, s) = signer();
+        let words = s.words();
+
+        store_unlocked_signer("cube-passkey", fp, s);
+        open_without_pin("cube-passkey");
+
+        assert!(is_open());
+        assert_eq!(current_cube_id().as_deref(), Some("cube-passkey"));
+        assert_eq!(
+            unlocked_signer("cube-passkey", fp).map(|s| s.words()),
+            Some(words),
+            "`open_without_pin` dropped the signer the assertion derived"
+        );
+        assert_eq!(
+            pin_for("cube-passkey"),
+            None,
+            "a passkey Cube must never hand out a PIN, not even an empty one"
+        );
+        assert_eq!(current_pin(), None);
         close();
     }
 

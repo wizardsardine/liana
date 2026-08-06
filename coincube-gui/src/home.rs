@@ -278,7 +278,11 @@ impl Home {
                 // Default to the feature flag value. When the passkey feature
                 // is disabled (the common case pre-launch), this is always
                 // `false`, forcing the PIN flow.
-                passkey_mode: feature_flags::PASSKEY_ENABLED,
+                // Off by default even where passkeys are available. A custody
+                // choice this consequential should be opted into, not arrived
+                // at — and the PIN path remains the default for everyone who
+                // doesn't choose otherwise.
+                passkey_mode: false,
                 passkey_ceremony: None,
                 #[cfg(target_os = "macos")]
                 native_passkey_ceremony: None,
@@ -442,7 +446,7 @@ impl Home {
                         self.create_cube_pin = pin_input::PinInput::new();
                         self.create_cube_pin_confirm = pin_input::PinInput::new();
                         // Reset to the feature flag default (false when disabled).
-                        self.passkey_mode = feature_flags::PASSKEY_ENABLED;
+                        self.passkey_mode = false;
                         // Clear recovery words when exiting create cube flow
                         for word in &mut self.recovery_words {
                             word.clear();
@@ -505,7 +509,7 @@ impl Home {
                 // true while the feature is disabled (stale state, manual
                 // toggle before a hot-reload, etc.), always fall through to
                 // the PIN flow when the compile-time flag is off.
-                let passkey_mode = self.passkey_mode && feature_flags::PASSKEY_ENABLED;
+                let passkey_mode = self.passkey_mode && feature_flags::PASSKEY_CREATION_AVAILABLE;
 
                 if !passkey_mode {
                     // PIN-based flow: validate PIN
@@ -975,9 +979,21 @@ impl Home {
                         );
                         Task::none()
                     }
-                    NativeOutcome::Error(e) => {
+                    NativeOutcome::Failed(e) => {
                         self.creating_cube = false;
-                        self.error = Some(e);
+                        // Registration, not unlock — but the same rule applies:
+                        // a cancelled Touch ID prompt must read as "nothing
+                        // happened", not as a failure the user has to interpret.
+                        // Nothing has been written to disk at this point.
+                        tracing::warn!("passkey registration failed: {e}");
+                        self.error = Some(match e {
+                            passkey_svc::PasskeyError::Cancelled => {
+                                "Passkey setup was cancelled. Your Cube was not created — \
+                                 try again, or create it with a PIN instead."
+                                    .to_string()
+                            }
+                            other => other.user_message(),
+                        });
                         Task::none()
                     }
                 }
@@ -3165,19 +3181,15 @@ fn create_cube_form<'a>(
         );
     }
 
-    // Passkey toggle — hidden entirely when the passkey feature is disabled
-    // via the COINCUBE_ENABLE_PASSKEY env var. The surrounding PIN flow
-    // remains fully functional in that case.
-    if feature_flags::PASSKEY_ENABLED {
+    // Passkey toggle — hidden entirely when the passkey feature is off, and on
+    // every platform but macOS regardless. The Windows Hello and security-key
+    // labels this used to carry offered a choice whose unlock path does not
+    // exist yet; taking it would have produced a Cube the build could not
+    // open. See `PASSKEY_CREATION_AVAILABLE`.
+    if feature_flags::PASSKEY_CREATION_AVAILABLE {
         column = column.push(
             Toggler::new(passkey_mode)
-                .label(if cfg!(target_os = "macos") {
-                    "Use Passkey (Touch ID)"
-                } else if cfg!(target_os = "windows") {
-                    "Use Passkey (Windows Hello)"
-                } else {
-                    "Use Passkey (Security Key)"
-                })
+                .label("Use Passkey (Touch ID)")
                 .on_toggle(ViewMessage::TogglePasskeyMode),
         );
     }
@@ -3207,6 +3219,22 @@ fn create_cube_form<'a>(
              you'll use a FIDO2 security key to unlock it."
         };
         column = column.push(p1_regular(description).style(theme::text::secondary));
+        // The recovery story, stated at the moment the choice is made.
+        //
+        // This is the positive claim that replaces the device-bound one. A
+        // passkey Cube skips the creation-time written-phrase step entirely, so
+        // without this sentence a user would leave creation with no idea what
+        // their backup is — and the honest answer is not "your passkey", which
+        // reaches a second Mac only if iCloud Keychain happens to be on
+        // (**I11**).
+        column = column.push(
+            p1_regular(
+                "Your backup is your Recovery Kit. Create one in Settings \u{2014} it \
+                 carries this Cube's master seed, encrypted with a recovery password \
+                 only you know, so you can restore the Cube even without your passkey.",
+            )
+            .style(theme::text::secondary),
+        );
     } else {
         // PIN setup section
         column = column.push(Space::new().height(Length::Fixed(10.0)));
@@ -4654,7 +4682,10 @@ mod tests {
         assert_eq!(home.create_cube_pin_confirm.value().as_str(), "");
         assert!(home.recovery_words.iter().all(String::is_empty));
         assert!(home.recovery_active_index.is_none());
-        assert_eq!(home.passkey_mode, feature_flags::PASSKEY_ENABLED);
+        assert!(
+            !home.passkey_mode,
+            "the PIN path is the default; a passkey is opted into"
+        );
     }
 
     #[test]
