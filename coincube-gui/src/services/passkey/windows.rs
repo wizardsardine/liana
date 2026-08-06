@@ -236,6 +236,21 @@ pub fn register(rp_id: &str, rp_name: &str, user_id: &[u8], user_name: &str) -> 
         };
 
         let attestation = &*credential;
+        // `from_raw_parts` requires a non-null, aligned pointer *even for a
+        // zero length*, so a null `pbCredentialId` here is undefined behaviour
+        // rather than an empty slice. A zero-length id is separately useless:
+        // the assertion below addresses the credential by id, so it would fail
+        // with a far less obvious error after the user has already been
+        // prompted. Free the platform allocation on the way out — this is the
+        // only early return between acquiring it and the free below.
+        if attestation.pbCredentialId.is_null() || attestation.cbCredentialId == 0 {
+            WebAuthNFreeCredentialAttestation(Some(credential));
+            return NativeOutcome::Error(
+                "Windows Hello created a passkey but returned no credential ID. This Cube \
+                 was not created."
+                    .to_string(),
+            );
+        }
         let credential_id = std::slice::from_raw_parts(
             attestation.pbCredentialId,
             attestation.cbCredentialId as usize,
@@ -373,7 +388,7 @@ pub fn assert(rp_id: &str, credential_id: &[u8]) -> NativeOutcome {
 
         let a = &*assertion;
         let salt = a.pHmacSecret;
-        if salt.is_null() || (*salt).cbFirst < 32 {
+        if salt.is_null() || (*salt).pbFirst.is_null() || (*salt).cbFirst < 32 {
             WebAuthNFreeAssertion(assertion);
             return NativeOutcome::Error(
                 "This passkey didn't return the key material Coincube needs (no PRF \
