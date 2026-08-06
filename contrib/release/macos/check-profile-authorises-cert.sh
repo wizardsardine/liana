@@ -76,7 +76,7 @@ MODE="${2:-}"
 [ -f "$PROFILE" ] || { echo "no such profile: $PROFILE" >&2; exit 2; }
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+trap 'stty echo 2>/dev/null || true; rm -rf "$WORK"' EXIT INT TERM
 
 # The certificate we would sign with, as PEM.
 case "$MODE" in
@@ -172,10 +172,79 @@ case "$MODE" in
         fi
         ;;
     --identity)
-        CN="${3:-}"
-        [ -n "$CN" ] || usage
-        security find-certificate -c "$CN" -p > "$WORK/signer.pem" 2>/dev/null \
-            || { echo "no certificate matching '$CN' in the keychain" >&2; exit 2; }
+        IDENT="${3:-}"
+        [ -n "$IDENT" ] || usage
+        # A common name is NOT a safe selector: rotated Developer ID certificates
+        # share one, and `find-certificate -c` returns whichever it hits first, so
+        # it can resolve to a certificate that is not the one signing the build —
+        # the exact mismatch this script exists to catch. Resolve the argument
+        # against the *eligible code-signing identities* and refuse an ambiguous
+        # common name; a 40-hex SHA-1 is accepted directly because it is unique.
+        python3 - "$IDENT" "$WORK/signer.pem" <<'IDENT_PY'
+import re, subprocess, sys
+
+ident = sys.argv[1].strip()
+out = sys.argv[2]
+
+listing = subprocess.run(
+    ["security", "find-identity", "-v", "-p", "codesigning"],
+    capture_output=True, text=True,
+).stdout
+# lines look like:  1) <40-hex SHA-1>  "<name>"
+ids = re.findall(r'^\s*\d+\)\s+([0-9A-Fa-f]{40})\s+"(.*)"\s*$', listing, re.M)
+
+if re.fullmatch(r'[0-9A-Fa-f]{40}', ident):
+    matches = [(h, n) for h, n in ids if h.lower() == ident.lower()]
+else:
+    matches = [(h, n) for h, n in ids if n == ident]
+
+if not matches:
+    print(f"no eligible code-signing identity matches '{ident}'", file=sys.stderr)
+    if ids:
+        print("known code-signing identities:", file=sys.stderr)
+        for h, n in ids:
+            print(f"  {h}  {n}", file=sys.stderr)
+    raise SystemExit(2)
+if len(matches) > 1:
+    print(f"'{ident}' matches {len(matches)} code-signing identities — ambiguous.", file=sys.stderr)
+    print("Re-run --identity with the exact SHA-1 of the one you mean:", file=sys.stderr)
+    for h, n in matches:
+        print(f"  {h}  {n}", file=sys.stderr)
+    raise SystemExit(2)
+
+sha1, name = matches[0]
+
+# Export THAT certificate by SHA-1 (find-certificate -c would re-introduce the
+# name ambiguity), walking the -Z listing which prefixes each PEM with its hash.
+dump = subprocess.run(
+    ["security", "find-certificate", "-a", "-Z", "-p"],
+    capture_output=True, text=True,
+).stdout
+blocks, cur, buf = [], None, []
+for line in dump.splitlines():
+    m = re.match(r'SHA-1 hash:\s*([0-9A-Fa-f]{40})', line)
+    if m:
+        cur, buf = m.group(1), []
+        continue
+    if line.startswith("-----BEGIN CERTIFICATE-----"):
+        buf = [line]
+    elif line.startswith("-----END CERTIFICATE-----"):
+        buf.append(line)
+        if cur:
+            blocks.append((cur, "\n".join(buf)))
+        buf = []
+    elif buf:
+        buf.append(line)
+
+chosen = [b for h, b in blocks if h.lower() == sha1.lower()]
+if not chosen:
+    print(f"resolved identity {sha1} but could not export its certificate", file=sys.stderr)
+    raise SystemExit(2)
+with open(out, "w") as fh:
+    fh.write(chosen[0] + "\n")
+print(f"selected code-signing identity {sha1}  {name}", file=sys.stderr)
+IDENT_PY
+        [ -s "$WORK/signer.pem" ] || exit 2
         ;;
     --signed-bundle)
         BUNDLE_PATH="${3:-}"
@@ -193,6 +262,35 @@ case "$MODE" in
         [ -f "$WORK/chain0" ] || { echo "$BUNDLE_PATH carries no certificate chain (ad-hoc signed?)" >&2; exit 2; }
         openssl x509 -inform DER -in "$WORK/chain0" -out "$WORK/signer.pem" 2>/dev/null \
             || { echo "could not parse the leaf certificate from $BUNDLE_PATH" >&2; exit 2; }
+        # The SIGKILL-at-launch failure hinges on the profile EMBEDDED in the
+        # bundle, not on whatever --profile the caller passed. If they differ,
+        # authorising $PROFILE would be a false green while the shipped bundle
+        # still crashes. Require the embedded profile and assert (by UUID) that
+        # it is the one we are about to check. (codesign --verify --strict is
+        # intentionally NOT re-run here — the release/nightly workflows already
+        # gate on codesign/spctl/notarization; this script's job is the profile
+        # <-> certificate authorisation the other gates cannot see.)
+        EMBEDDED=""
+        for cand in \
+            "$BUNDLE_PATH/Contents/embedded.provisionprofile" \
+            "$BUNDLE_PATH/embedded.provisionprofile"; do
+            [ -f "$cand" ] && { EMBEDDED="$cand"; break; }
+        done
+        [ -n "$EMBEDDED" ] || {
+            echo "$BUNDLE_PATH embeds no provisioning profile" >&2
+            echo "  (expected Contents/embedded.provisionprofile) — an unprovisioned" >&2
+            echo "  Developer ID bundle is SIGKILLed at launch by AMFI." >&2
+            exit 2
+        }
+        _uuid() { security cms -D -i "$1" 2>/dev/null | plutil -extract UUID raw - 2>/dev/null; }
+        EMB_UUID=$(_uuid "$EMBEDDED"); PROF_UUID=$(_uuid "$PROFILE")
+        if [ -z "$EMB_UUID" ] || [ -z "$PROF_UUID" ] || [ "$EMB_UUID" != "$PROF_UUID" ]; then
+            echo "the bundle's embedded profile is not the one being checked" >&2
+            echo "  embedded : ${EMB_UUID:-<undecodable>} ($EMBEDDED)" >&2
+            echo "  --profile: ${PROF_UUID:-<undecodable>} ($PROFILE)" >&2
+            echo "Pass the embedded profile as --profile, or re-sign the bundle with it." >&2
+            exit 2
+        fi
         ;;
     *)
         usage

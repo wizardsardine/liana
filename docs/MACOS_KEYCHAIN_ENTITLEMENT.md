@@ -186,6 +186,14 @@ contrib/release/macos/check-profile-authorises-cert.sh \
 
 After an Apple certificate rotation (`docs/APPLE_CERT_ROTATION.md`) the profile must be regenerated for the new certificate and re-committed, or signing keeps working while every build stops launching.
 
+During a rotation two valid certificates can share the common name above. `--identity` resolves the name against the eligible code-signing identities and **refuses an ambiguous match** rather than guessing — exactly the case that would otherwise slip through. When it does, pass the SHA-1 of the certificate you mean instead of the name:
+
+```bash
+security find-identity -v -p codesigning   # lists each identity's SHA-1 and name
+contrib/release/macos/check-profile-authorises-cert.sh \
+  contrib/release/macos/embedded.provisionprofile --identity <40-hex-sha1>
+```
+
 **Reading the result:**
 
 - **Killed at launch (`zsh: killed`, no window)** → restricted, profile required. This is what happened on 2026-08-04; check the log lines above to confirm it is AMFI and not a crash.
