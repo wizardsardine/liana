@@ -6,6 +6,18 @@ on:
       - master
   pull_request:
 
+# Build-time passkey flags, same repo-level Actions variables the release
+# workflow uses. CI has to compile the *shipping* configuration: without these,
+# every job here builds `PASSKEY_ENABLED = false` while releases ship `true`,
+# so a green run says nothing about the binary that goes out — the passkey
+# unlock path would never be type-checked, linted or tested until release day.
+#
+# Workflow-level, so it merges with (rather than replaces) the job-level `env`
+# blocks in `linter` and `unit_tests` that carry `BREEZ_API_KEY`.
+env:
+  COINCUBE_ENABLE_PASSKEY: ${{ vars.COINCUBE_ENABLE_PASSKEY }}
+  COINCUBE_PASSKEY_RP_ID: ${{ vars.COINCUBE_PASSKEY_RP_ID }}
+
 jobs:
   linter:
     runs-on: ubuntu-latest
@@ -26,6 +38,37 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config protobuf-compiler libdbus-1-dev libwebkit2gtk-4.1-dev
           cargo clippy --all-targets -- -D warnings
+
+  # coincube-spark-bridge is excluded from the root workspace (see the root
+  # Cargo.toml), so the bare `cargo test` in unit_tests does not reach it and
+  # its 15 tests had never run in CI. Its Cargo.lock is its own, hence the
+  # distinct cache key — sharing the root's would thrash both.
+  bridge_tests:
+    needs: linter
+    runs-on: ubuntu-latest
+    env:
+      BREEZ_API_KEY: ${{ github.event_name == 'push' && secrets.BREEZ_API_KEY || 'DUMMY_BREEZ_API_KEY' }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config protobuf-compiler
+      - name: Cache Cargo (bridge workspace)
+        uses: actions/cache@v5
+        with:
+          key: cargo-bridge-${{ runner.os }}-${{ hashFiles('coincube-spark-bridge/Cargo.lock') }}
+          restore-keys: cargo-bridge-${{ runner.os }}-
+          path: coincube-spark-bridge/target
+      - name: clippy
+        run: cargo clippy --manifest-path coincube-spark-bridge/Cargo.toml --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --manifest-path coincube-spark-bridge/Cargo.toml
 
   unit_tests:
     needs: linter

@@ -35,8 +35,27 @@ The Spark SDK's dependency graph (`rusqlite`, `tokio_with_wasm`, `frost_secp256k
 ### Bridge lifecycle
 
 - The gui spawns the bridge lazily when the cube has a `master_signer_fingerprint` set (a single MasterSigner shared by all wallets). If the spawn fails (binary missing, handshake error) the `WalletRegistry` holds `spark = None`, and all Spark panels render an "unavailable" stub.
-- The bridge binary is located via the `COINCUBE_SPARK_BRIDGE_PATH` env var, or falls back to `coincube-spark-bridge` sitting alongside the main `coincube` binary in the same directory.
+- The bridge binary is located via the `COINCUBE_SPARK_BRIDGE_PATH` env var, or falls back to `coincube-spark-bridge` sitting alongside the main `coincube` binary in the same directory, or — in a development checkout only — to `coincube-spark-bridge/target/{debug,release}/`. See [Packaging](#packaging) for what that means for released builds.
 - Shutdown is cooperative: the gui sends a `Shutdown` method on app exit; the bridge drops its SDK handle and closes stdio.
+
+### Packaging
+
+The bridge is a second binary, and a release artifact that does not contain it has a Spark wallet that cannot start — every panel renders the "not configured" stub, on a cube that is perfectly fine. Every build shipped between 2026-04-15 and 2026-08-06 was in exactly that state, because `cargo build --package coincube-gui` cannot build a crate the root workspace excludes, and the third resolution step above makes any developer checkout look healthy.
+
+So, for each platform, CI builds the bridge under the same `minimal` profile as the gui and ships it **in the same directory as the app executable, under its own name**:
+
+| Platform | Location |
+|---|---|
+| macOS | `Tenshu.app/Contents/MacOS/coincube-spark-bridge`, placed before `rcodesign sign` so the signature seals it |
+| Windows | the MSI's `bin` directory, next to `coincube.exe` |
+| Linux | inside `tenshu-<version>-<target>.tar.gz`, next to `coincube` |
+
+Two consequences worth knowing before editing a workflow or a `.wxs`:
+
+- **The filename is load-bearing and the directory is load-bearing.** `resolve_bridge_path()` joins the literal `coincube-spark-bridge` (`.exe` on Windows) onto `current_exe().parent()`. The macOS main binary is renamed to `Coincube` in the bundle; the bridge must *not* be renamed to match, and must not be moved to `Contents/Resources/` or `Contents/Frameworks/`.
+- **Nothing else in the pipeline notices when it goes missing.** `codesign`, notarization and `spctl` all pass on a bundle with no bridge in it. The only thing standing between that regression and a user is the explicit contents assertion in each workflow (`Verify Spark bridge is bundled…`, `Verify Spark bridge is in the MSI`, and the `tar tzf` check on Linux). Each of them also runs the packaged bridge through a `shutdown` round trip, which needs no API key, no mnemonic and no network.
+
+The bridge carries no entitlements of its own: `rcodesign` signs it as nested code, and the entitlements XML applies to the main executable only. Nothing it does needs one — `BREEZ_API_KEY` reaches the bridge in the JSON-RPC `Init` message, not the environment.
 
 ### Seed handoff (Phase 3 compromise)
 
@@ -85,7 +104,7 @@ Implementation detail hidden from the UI: the SDK uses the USDB stable token (`b
 
 ## Troubleshooting
 
-- **"Spark bridge unavailable" in every Spark panel** — the bridge subprocess either failed to spawn (binary not found at `COINCUBE_SPARK_BRIDGE_PATH` or next to `coincube`) or crashed during handshake. Check stderr from `coincube-spark-bridge` for the root cause.
+- **"Spark bridge unavailable" in every Spark panel** — the bridge subprocess either failed to spawn (binary not found at `COINCUBE_SPARK_BRIDGE_PATH` or next to `coincube`) or crashed during handshake. Check stderr from `coincube-spark-bridge` for the root cause. In a checkout, the usual cause is having run bare `cargo build` instead of `make build`; in an installed build, it means the artifact shipped without the bridge — check the app directory for it (see [Packaging](#packaging)).
 - **"Stable Balance is not configured" errors from `set_stable_balance`** — the bridge's `mainnet_config` always wires up `stable_balance_config` with the USDB token, so this should never fire in a release build. If it does, the bridge got started without the token constant — rebuild and re-deploy.
 - **Incoming Lightning Address payments land on Liquid, not Spark** — either the cube's `default_lightning_backend` is still set to Liquid (check **Settings → Lightning**), the bridge is down for this cube (check the bridge-status card in **Spark → Settings**), the API hasn't been updated to send the `description` field over SSE yet, or the payer is sending a NIP-57 zap (description exceeds 639 bytes → automatic fallback).
 - **Lost Spark balance after restarting the cube** — `storage_dir` may have moved between restarts. The SDK stores its local database there; pointing at a different directory on the next launch looks like an empty wallet until the SDK re-syncs. Ensure the `datadir` passed to `load_spark_client` is stable per cube.
@@ -93,7 +112,9 @@ Implementation detail hidden from the UI: the SDK uses the USDB stable token (`b
 ## Testing
 
 - **Mainnet-only**: per user direction, Spark development and testing happen on mainnet with small amounts. There is no regtest harness for Spark.
-- **Smoke-test script**: `cargo run -p coincube-spark-bridge --bin coincube-spark-bridge-smoketest` (Phase 2 test harness) connects to Spark mainnet, runs `init` + `get_info`, and prints the balance/pubkey. Use it to verify the bridge binary + API key + mnemonic independently of the gui.
+- **Unit tests**: the bridge is its own workspace, so a bare `cargo test` at the root does not reach it. Run `make test`, or `cargo test --manifest-path coincube-spark-bridge/Cargo.toml`. CI does this in the `bridge_tests` job.
+- **Smoke test**: `coincube-spark-bridge --smoke-test` (Phase 2 test harness) connects to Spark mainnet, runs `init` + `get_info` + `list_payments`, and prints the balance/pubkey. It reads `BREEZ_API_KEY`, `COINCUBE_SPARK_MNEMONIC` and `COINCUBE_SPARK_STORAGE_DIR` from the environment — the one place the bridge reads the API key from the environment rather than the `Init` message — and it transacts against mainnet, so it is a local tool, not a CI check.
+- **Liveness check**: `echo '{"type":"request","id":1,"method":"shutdown"}' | coincube-spark-bridge` prints a `shutdown` response and exits 0. No key, no mnemonic, no network — this is what the release workflows run against the packaged binary.
 - **End-to-end journey**: create a cube → load Spark and Liquid → receive sats via `@coincube.io` (should land on Spark) → send a BOLT11 payment → send L-BTC from Liquid → toggle Stable Balance on and off → verify everything in Transactions.
 
 ## References

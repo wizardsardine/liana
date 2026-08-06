@@ -1931,6 +1931,69 @@ mod test {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// Why the passkey unlock path must **not** use
+    /// `derive_connect_encryption_pubkey`.
+    ///
+    /// The helper resolves the seed itself — session cache first, seed file
+    /// second. A passkey Cube has no seed file at all, so if the session lookup
+    /// misses (the passkey flow awaits a settings write between parking the
+    /// signer and needing the key, so its lookup is a *second* one), the
+    /// fallback has nothing to read and the answer is `NoSeed` — which callers
+    /// are told to skip quietly.
+    ///
+    /// Quietly is exactly wrong for that Cube: it would never register an
+    /// encryption pubkey, its Contacts could never enrol enveloped keys against
+    /// it, and it would sit in the coverage report as an unexplained straggler.
+    /// `gui::tab`'s passkey arm therefore derives from the signer it is already
+    /// holding. This test exists so that reverting it to the helper fails here.
+    #[test]
+    fn a_seedless_cube_reports_no_seed_rather_than_deriving() {
+        use super::{derive_connect_encryption_pubkey, ConnectEncryptionKey};
+        use coincube_core::miniscript::bitcoin::Network;
+        use coincube_core::signer::MasterSigner;
+
+        let root = std::env::temp_dir().join(format!(
+            "coincube-encpubkey-seedless-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        // A fingerprint no session entry can match (this signer was never
+        // stored anywhere), against a datadir holding no seed files. That is
+        // the shape of a passkey Cube whose session lookup missed — and it
+        // needs no `session::close()`, so it cannot perturb the process-global
+        // session that sibling tests share.
+        let signer = MasterSigner::generate(Network::Testnet).unwrap();
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
+        let fp = signer.fingerprint(&secp);
+
+        let out = derive_connect_encryption_pubkey(&root, Network::Testnet, fp, "", "cube-passkey");
+        assert!(
+            matches!(out, ConnectEncryptionKey::NoSeed),
+            "a seedless Cube must not silently derive something; got {:?}",
+            out
+        );
+
+        // And the value the passkey path uses instead is the same one every
+        // other path would have produced from this seed. Checked the same way
+        // `missing_seed_and_unreadable_seed_are_distinguishable` checks its
+        // derived key: length alone would pass for any 33-byte blob, so pin the
+        // SEC1 compressed-point prefix too — that is what makes it a *public
+        // key* rather than 66 hex characters.
+        let direct =
+            crate::services::connect::crypto::CubeEncryptionKey::derive(&signer, Network::Testnet)
+                .public_key_hex();
+        assert_eq!(direct.len(), 66, "33-byte compressed pubkey as hex");
+        assert!(
+            direct.starts_with("02") || direct.starts_with("03"),
+            "not a SEC1 compressed point: {}",
+            direct
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn from_file_distinguishes_missing_empty_and_valid() {
         use super::{Settings, SettingsError, SETTINGS_FILE_NAME};

@@ -5,20 +5,30 @@
 //! platforms, it falls back to an embedded webview pointing at the hosted
 //! ceremony page at `coincube.io/passkey`.
 //!
-//! # DANGER: registration works, unlock does not
+//! # Registration and unlock, on macOS
 //!
-//! This module can *create* a passkey Cube but cannot *open* one. macOS's
-//! [`macos::NativePasskeyCeremony::authenticate`] is a stub returning `Err`,
-//! and `gui::tab` refuses to open a Cube carrying `passkey_metadata`. A
-//! passkey Cube whose owner did not write down the mnemonic is therefore
-//! **permanently unopenable**.
+//! Both halves work on macOS: [`macos::NativePasskeyCeremony::register`] mints
+//! the credential at Cube creation, and
+//! [`macos::NativePasskeyCeremony::authenticate`] re-derives the same master
+//! seed at every unlock (`crate::passkey_unlock`) and whenever the Recovery Kit
+//! or the Backup-Master-Seed screen needs the seed in hand.
 //!
-//! The whole path is dark behind [`crate::feature_flags::PASSKEY_ENABLED`],
-//! which defaults to `false`. Read the danger note on that constant before
-//! enabling it anywhere.
+//! The credential is **synced**, not device-bound —
+//! `ASAuthorizationPlatformPublicKeyCredentialProvider` produces an
+//! iCloud-Keychain passkey, so the same Cube opens on any Mac signed into the
+//! same Apple ID. That is deliberate
+//! (`company-brain/decisions/2026-08-04-tenshu-passkey-apple-id-bound.md`), and
+//! it is *not* a recovery promise: iCloud Keychain can be off, and we can
+//! neither require nor detect that. The promise is the Recovery Kit, which
+//! carries the encrypted master seed for a passkey Cube (**I11**).
+//!
+//! Windows and Linux have no unlock path yet, so the passkey option is not
+//! offered there — see
+//! `company-brain/decisions/2026-08-03-passkey-macos-only-for-now.md`.
 
 #[cfg(target_os = "macos")]
 pub mod macos;
+pub mod reauth;
 pub mod security_key;
 #[cfg(windows)]
 pub mod windows;
@@ -41,28 +51,51 @@ use std::sync::{mpsc, Arc};
 
 use zeroize::Zeroizing;
 
+use crate::feature_flags::non_empty_or;
+
 /// Base URL for the passkey ceremony page.
 ///
 /// Configured at build time via `COINCUBE_PASSKEY_CEREMONY_URL` (forwarded by
-/// `build.rs` from `.env`). Defaults to a local dev URL so non-production
-/// builds don't point at a non-existent hosted endpoint. Production deploys
-/// must set this to the actual ceremony page URL.
-pub const CEREMONY_BASE_URL: &str = match option_env!("COINCUBE_PASSKEY_CEREMONY_URL") {
-    Some(v) => v,
-    None => "http://localhost:8080/passkey",
-};
+/// `build.rs` from `.env`, or exported directly by CI). Defaults to a local dev
+/// URL so non-production builds don't point at a non-existent hosted endpoint.
+/// Production deploys must set this to the actual ceremony page URL.
+///
+/// An **empty** value is treated as unset and falls back to the default. See
+/// [`non_empty_or`]: a bare `match option_env!(..)` would bind `Some("")` to the
+/// value arm and hand callers the empty string, which CI produces routinely.
+pub const CEREMONY_BASE_URL: &str = non_empty_or(
+    option_env!("COINCUBE_PASSKEY_CEREMONY_URL"),
+    "http://localhost:8080/passkey",
+);
 
 /// Relying Party ID — must match the ceremony page's domain.
 ///
 /// Configured at build time via `COINCUBE_PASSKEY_RP_ID`. Production deploys
 /// must set this to the actual domain hosting the ceremony page.
-pub const RP_ID: &str = match option_env!("COINCUBE_PASSKEY_RP_ID") {
-    Some(v) => v,
-    None => "localhost",
-};
+///
+/// An **empty** value is treated as unset and falls back to `localhost`, for the
+/// reason given on [`CEREMONY_BASE_URL`]. Falling back is the safe half of the
+/// fix, not the whole of it — `localhost` never matches the AASA at
+/// coincube.io either, so a release build that reached this fallback would fail
+/// every ceremony at runtime with nothing upstream to catch it. That is what the
+/// `const _: () = assert!` in [`crate::feature_flags`] is for: with the passkey
+/// path on, an unset or empty RP id fails the build instead.
+pub const RP_ID: &str = non_empty_or(option_env!("COINCUBE_PASSKEY_RP_ID"), "localhost");
 
 /// Errors that can occur during a passkey ceremony.
-#[derive(Debug, Clone)]
+///
+/// # Invariant I12
+///
+/// A failed, cancelled, or unsupported passkey assertion is **never** reported
+/// as a lost or corrupt Cube. That is the passkey-path mirror of I7: a user who
+/// taps Cancel on a Touch ID prompt must not walk away believing their wallet
+/// is gone.
+///
+/// Three outcomes are therefore distinct types, not one string:
+/// [`PasskeyError::Cancelled`], [`PasskeyError::PrfNotSupported`] and
+/// [`PasskeyError::CredentialNotFound`]. [`PasskeyError::user_message`] is what
+/// the UI shows for each; none of them says the Cube is lost.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PasskeyError {
     /// The ceremony page reported an error via IPC.
     CeremonyFailed(String),
@@ -74,8 +107,57 @@ pub enum PasskeyError {
     InvalidPrfOutput,
     /// The user cancelled the ceremony.
     Cancelled,
-    /// The PRF extension is not supported on this platform.
+    /// The PRF extension is not supported on this platform, or the credential
+    /// that answered was registered without it. Never derive a seed from
+    /// anything else in this case: it would produce a valid-looking wallet that
+    /// is not the user's.
     PrfNotSupported,
+    /// This Cube's credential could not be offered — the Cube has no stored
+    /// credential id, or the platform authenticator has no such passkey.
+    ///
+    /// On macOS this covers the `ASAuthorizationError` codes that mean "there
+    /// was nothing here to authorise with" (`Unknown`, `NotHandled`, `Failed`,
+    /// `NotInteractive`). They cannot be told apart from each other at the
+    /// framework level, and they call for the same thing from the user: either
+    /// sign in to the Apple ID that holds the passkey, or restore from the
+    /// Recovery Kit. The underlying detail is preserved for the log.
+    CredentialNotFound(String),
+}
+
+impl PasskeyError {
+    /// Copy for the user. Per **I12**, none of these may read as a lost or
+    /// corrupt Cube, and each of the three passkey-specific outcomes says
+    /// something different about what to do next.
+    pub fn user_message(&self) -> String {
+        match self {
+            Self::Cancelled => "Touch ID was cancelled, so this Cube stayed locked. \
+                 Your Cube and its funds are untouched — try again when you're ready."
+                .to_string(),
+            Self::PrfNotSupported => {
+                "This passkey can't produce the key material COINCUBE needs, so it can't \
+                 unlock this Cube. Nothing is wrong with the Cube itself: restore it \
+                 from your Recovery Kit and its recovery password."
+                    .to_string()
+            }
+            Self::CredentialNotFound(_) => {
+                "This Mac couldn't find this Cube's passkey. Sign in to the Apple ID \
+                 that created it (with iCloud Keychain on), or restore this Cube from \
+                 your Recovery Kit and its recovery password. The Cube itself is fine."
+                    .to_string()
+            }
+            Self::InvalidPrfOutput => {
+                "This Cube's passkey returned key material COINCUBE couldn't use. The \
+                 Cube itself is fine — restore it from your Recovery Kit and its \
+                 recovery password."
+                    .to_string()
+            }
+            other => format!(
+                "Couldn't complete the passkey check, so this Cube stayed locked. \
+                 The Cube itself is fine — try again, or restore it from your Recovery \
+                 Kit. ({other})"
+            ),
+        }
+    }
 }
 
 impl std::fmt::Display for PasskeyError {
@@ -87,6 +169,9 @@ impl std::fmt::Display for PasskeyError {
             Self::InvalidPrfOutput => write!(f, "PRF output is not 32 bytes"),
             Self::Cancelled => write!(f, "Passkey ceremony was cancelled"),
             Self::PrfNotSupported => write!(f, "PRF extension is not supported on this platform"),
+            Self::CredentialNotFound(detail) => {
+                write!(f, "This Cube's passkey was not available: {}", detail)
+            }
         }
     }
 }

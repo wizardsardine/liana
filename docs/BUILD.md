@@ -97,3 +97,34 @@ build  deps  examples  incremental  coincube  coincube-cli  coincube-cli.d  coin
 
 Whether your are building the whole wallet or only the daemon, make sure not to forget the
 `--release` command line option. You would otherwise build without optimizations.
+
+### The Spark bridge: use `make`, not bare `cargo`
+
+The Spark wallet's SDK runs in a sibling process, [`coincube-spark-bridge`](../coincube-spark-bridge),
+which is a **standalone Cargo workspace** — the root [`Cargo.toml`](../Cargo.toml) excludes it,
+because `breez-sdk-spark` and `breez-sdk-liquid` cannot share a dependency graph. The practical
+consequence is short and easy to trip over:
+
+> `cargo build` at the root does **not** build the Spark bridge. A wallet built that way starts
+> fine, and every Spark panel reports *"Spark is not configured for this cube"*.
+
+The [`Makefile`](../Makefile) exists to keep the two halves in step. Prefer it over raw `cargo`:
+
+```
+$ make build          # bridge + gui, debug
+$ make release        # bridge + gui, release
+$ make run            # build the bridge, then run the gui
+$ make test           # root workspace tests + bridge tests
+```
+
+`PROFILE` selects the profile (`make build PROFILE=minimal` is what the release workflows do). If
+you do drive `cargo` directly, the bridge needs its own invocation:
+
+```
+$ cargo build --manifest-path coincube-spark-bridge/Cargo.toml --release
+```
+
+At runtime the gui looks for the bridge next to its own executable, then falls back to
+`coincube-spark-bridge/target/{debug,release}/` so a checkout works without copying anything.
+`COINCUBE_SPARK_BRIDGE_PATH` overrides both. See [`SPARK_WALLET.md`](./SPARK_WALLET.md) for how
+release artifacts ship it.

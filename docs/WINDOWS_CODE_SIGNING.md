@@ -121,7 +121,7 @@ Pin both actions to a checked version — don't float — and confirm the ambien
 
 **Do the same in `nightly.yml`.** Both workflows build a Windows MSI; leaving nightly unsigned means the artifact people actually test differs from the one that ships.
 
-**Sign the `.exe` too, not just the MSI.** `cargo wix` packages an already-built binary. Signing only the installer leaves the installed executable unsigned, so SmartScreen and any endpoint-protection tooling still flag it at *run* time. Sign `target/<target>/minimal/coincube.exe` before `cargo wix`, then sign the MSI after.
+**Sign the `.exe`s too, not just the MSI.** `cargo wix` packages already-built binaries. Signing only the installer leaves the installed executables unsigned, so SmartScreen and any endpoint-protection tooling still flag them at *run* time. There are **two**: sign `target/minimal/coincube.exe` and `target/minimal/coincube-spark-bridge.exe` before `cargo wix`, then sign the MSI after. The second is the Spark bridge, which the workflow copies into that directory from its own workspace's `target/` before packaging — the gui spawns it as a subprocess, so an unsigned or blocked bridge takes the Spark wallet down while the app itself looks fine (see [`SPARK_WALLET.md`](./SPARK_WALLET.md#packaging)).
 
 ## 5. Verification
 

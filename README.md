@@ -76,7 +76,7 @@ Or invoke cargo directly for just the bridge:
 cargo build --manifest-path coincube-spark-bridge/Cargo.toml
 ```
 
-At runtime the gui looks for the bridge binary next to the gui executable, then falls back to `coincube-spark-bridge/target/{debug,release}/coincube-spark-bridge`. A custom location can be provided via the `COINCUBE_SPARK_BRIDGE_PATH` environment variable.
+At runtime the gui looks for the bridge binary next to the gui executable, then falls back to `coincube-spark-bridge/target/{debug,release}/coincube-spark-bridge`. A custom location can be provided via the `COINCUBE_SPARK_BRIDGE_PATH` environment variable. Released artifacts ship the bridge next to the app executable on every platform, and CI asserts it is there — see [`docs/SPARK_WALLET.md`](docs/SPARK_WALLET.md#packaging).
 
 ## Connect signing flow
 

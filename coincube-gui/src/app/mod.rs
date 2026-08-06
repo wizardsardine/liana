@@ -6,6 +6,7 @@ pub mod error;
 pub mod features;
 pub mod menu;
 pub mod message;
+pub mod seed_source;
 pub mod session;
 pub mod settings;
 pub mod state;
@@ -2086,7 +2087,6 @@ impl App {
             display_mode,
             cube_name: cube_settings.name.clone(),
             current_cube_backed_up: cube_settings.backed_up,
-            current_cube_is_passkey: cube_settings.is_passkey_cube(),
             cube_id: cube_settings.id.clone(),
             recovery_kit_last_backed_up_descriptor_fingerprint: cube_settings
                 .recovery_kit_last_backed_up_descriptor_fingerprint
@@ -3754,7 +3754,6 @@ impl App {
                             self.cache.backup_warning_dismissed = false;
                         }
                         self.cache.current_cube_backed_up = cube.backed_up;
-                        self.cache.current_cube_is_passkey = cube.is_passkey_cube();
                         self.cube_settings.backed_up = cube.backed_up;
                         // Mirror the drift fingerprint cache (W12). Refreshing
                         // on every SettingsSaved keeps the Recovery-Kit card

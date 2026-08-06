@@ -40,6 +40,37 @@ build` after having `cargo update -p coincube-core`.)
 - If possible push the Coincube library to [crates.io](https://crates.io).
 - Celebrate.
 
+## Artifact contents check
+
+Before publishing, confirm each artifact actually contains **both** binaries. CI asserts this on
+every build, but a hand-made release does not go through those steps, and nothing else catches it:
+a bundle missing `coincube-spark-bridge` signs, notarizes and passes `spctl` exactly like a good
+one — it just has a Spark wallet that never starts. See
+[`SPARK_WALLET.md`](./SPARK_WALLET.md#packaging).
+
+```
+# macOS — inside the mounted DMG
+ls "/Volumes/Tenshu/Tenshu.app/Contents/MacOS/"        # Coincube + coincube-spark-bridge
+codesign --verify --strict "/Volumes/Tenshu/Tenshu.app/Contents/MacOS/coincube-spark-bridge"
+
+# Linux
+tar tzf tenshu-<version>-<target>.tar.gz               # coincube + coincube-spark-bridge
+
+# Windows — after installing
+dir "C:\Program Files\Tenshu\bin"                      # coincube.exe + coincube-spark-bridge.exe
+```
+
+Then check the bridge runs, which needs no API key, mnemonic or network:
+
+```
+echo '{"type":"request","id":1,"method":"shutdown"}' | ./coincube-spark-bridge
+# {"type":"response","id":1,"ok":{"kind":"shutdown","data":{}}}
+```
+
+Finally, open the Spark tab once on a machine **with no repository checkout**. A machine that has
+one satisfies the gui's development fallback path and will report success regardless of what the
+artifact contains.
+
 In order to build the release assets:
 
 ```

@@ -142,7 +142,6 @@ fn recovery_section<'a>(
                     .as_deref(),
             );
             col = col.push(recovery_kit_card(
-                cache.current_cube_is_passkey,
                 cache.has_vault,
                 rk.status.as_ref(),
                 rk.status_loading,
@@ -625,13 +624,18 @@ pub(crate) fn backup_overview(status: Option<&RecoveryKitStatus>) -> BackupOverv
 
 /// Whether a method independently holds everything the Cube's shape requires
 /// (master §definitions: completeness is per-method):
-///   * passkey — descriptor only (the seed is unextractable on-device);
-///   * mnemonic + vault — seed **and** descriptor;
-///   * mnemonic, no vault — seed alone.
-pub(crate) fn method_complete(m: &MethodBackup, has_vault: bool, is_passkey: bool) -> bool {
-    if is_passkey {
-        m.descriptor
-    } else if has_vault {
+///   * with a Vault — seed **and** descriptor;
+///   * without one — seed alone.
+///
+/// There is no passkey arm any more. It used to read "descriptor only, the seed
+/// is unextractable on-device", and since **I11** that premise is false: a
+/// passkey Cube's Kit carries the encrypted master seed, re-derived from a
+/// WebAuthn assertion at Kit time. Keeping a passkey arm here would put this
+/// card and `cube_backup_completeness` — which this function is supposed to
+/// mirror — back into disagreement, with the card claiming "backed up" for a
+/// Cube the duress gate would block.
+pub(crate) fn method_complete(m: &MethodBackup, has_vault: bool) -> bool {
+    if has_vault {
         m.seed && m.descriptor
     } else {
         m.seed
@@ -694,49 +698,39 @@ pub(crate) struct CardState {
     primary_mode: RecoveryKitMode,
 }
 
-/// The "Create" (nothing backed up yet) card state, per Cube shape.
-fn create_state(is_passkey: bool) -> CardState {
-    if is_passkey {
-        CardState {
-            title: "Back up your Wallet Descriptor",
-            subtitle: "Your Master Seed Phrase is protected by your passkey and isn't included \
-                       in the Recovery Kit — we back up the Wallet Descriptor only."
-                .to_string(),
-            primary_label: "Create Recovery Kit",
-            primary_mode: RecoveryKitMode::Create,
-        }
-    } else {
-        CardState {
-            title: "Back up your Cube Recovery Kit",
-            subtitle: "Back up your Master Seed Phrase and Wallet Descriptor to your Connect \
-                       account so you can restore your Cube if you lose this device."
-                .to_string(),
-            primary_label: "Create Recovery Kit",
-            primary_mode: RecoveryKitMode::Create,
-        }
+/// The "Create" (nothing backed up yet) card state.
+///
+/// One state for both shapes. The passkey variant used to say the seed "is
+/// protected by your passkey and isn't included in the Recovery Kit"; that
+/// claim is gone with **I11**, and its removal matters more than the wording
+/// change suggests — a passkey user who read it and skipped the Kit was left
+/// with recovery that depended entirely on iCloud Keychain being on, which we
+/// can neither require nor detect.
+fn create_state() -> CardState {
+    CardState {
+        title: "Back up your Cube Recovery Kit",
+        subtitle: "Back up your Master Seed Phrase and Wallet Descriptor to your Connect \
+                   account so you can restore your Cube if you lose this device."
+            .to_string(),
+        primary_label: "Create Recovery Kit",
+        primary_mode: RecoveryKitMode::Create,
     }
 }
 
 /// A sentence naming the missing half of an incomplete enabled method (`label`
 /// is "password" / "phone"), or `None` when the method is complete for the
-/// shape. An enabled method holds at least one half, so for the mnemonic+vault
-/// shape the gap is whichever half is absent; for the descriptor-only (passkey)
-/// and seed-only (vaultless) shapes it names that required half.
-fn method_gap_sentence(
-    m: &MethodBackup,
-    has_vault: bool,
-    is_passkey: bool,
-    label: &str,
-) -> Option<String> {
-    if method_complete(m, has_vault, is_passkey) {
+/// shape. An enabled method holds at least one half, so for the vault shape the
+/// gap is whichever half is absent; for the seed-only (vaultless) shape it
+/// names that required half.
+fn method_gap_sentence(m: &MethodBackup, has_vault: bool, label: &str) -> Option<String> {
+    if method_complete(m, has_vault) {
         return None;
     }
-    let missing_half = if is_passkey || m.seed {
-        // Passkey needs the descriptor; a mnemonic+vault method that already
-        // holds the seed is missing the descriptor.
+    let missing_half = if m.seed {
+        // A vault method that already holds the seed is missing the descriptor.
         "Wallet Descriptor"
     } else {
-        // No seed present — the seed is what's missing (mnemonic, either shape).
+        // No seed present — the seed is what's missing, in either shape.
         "Master Seed Phrase"
     };
     Some(format!(
@@ -751,10 +745,9 @@ fn method_gap_sentence(
 fn password_gap_cta(
     password: &Option<MethodBackup>,
     has_vault: bool,
-    is_passkey: bool,
 ) -> Option<(&'static str, RecoveryKitMode)> {
     let pw = password.as_ref()?;
-    if method_complete(pw, has_vault, is_passkey) {
+    if method_complete(pw, has_vault) {
         return None;
     }
     if pw.seed && !pw.descriptor {
@@ -776,17 +769,14 @@ fn password_gap_cta(
 /// loaded yet" (loading / sign-in copy — mnemonic only, matching prior copy).
 fn recovery_kit_card_state(
     overview: &BackupOverview,
-    is_passkey: bool,
     has_vault: bool,
     loading: bool,
     status_present: bool,
 ) -> CardState {
-    // Not loaded yet. The passkey card historically shows its Create copy here;
-    // the mnemonic card shows a loading / sign-in line. Preserve both.
+    // Not loaded yet — a loading / sign-in line. The passkey card used to show
+    // its Create copy here instead; with one Create state for both shapes there
+    // is nothing left to special-case.
     if !status_present {
-        if is_passkey {
-            return create_state(true);
-        }
         return CardState {
             title: "Cube Recovery Kit",
             subtitle: if loading {
@@ -801,7 +791,7 @@ fn recovery_kit_card_state(
 
     // No method enabled → Create.
     if !overview.any_enabled() {
-        return create_state(is_passkey);
+        return create_state();
     }
 
     // Per-method completeness. A disabled method vacuously satisfies the
@@ -809,21 +799,17 @@ fn recovery_kit_card_state(
     let pw_complete = overview
         .password
         .as_ref()
-        .map(|m| method_complete(m, has_vault, is_passkey))
+        .map(|m| method_complete(m, has_vault))
         .unwrap_or(true);
     let kc_complete = overview
         .keychain
         .as_ref()
-        .map(|m| method_complete(m, has_vault, is_passkey))
+        .map(|m| method_complete(m, has_vault))
         .unwrap_or(true);
 
     if pw_complete && kc_complete {
         // Every enabled method complete → backed up.
-        let title = if is_passkey {
-            "Wallet Descriptor backed up"
-        } else {
-            "Recovery Kit backed up"
-        };
+        let title = "Recovery Kit backed up";
         let subtitle = format!(
             "Last updated {}.",
             overview
@@ -844,12 +830,12 @@ fn recovery_kit_card_state(
     // each gap in deterministic order (password first).
     let mut gaps: Vec<String> = Vec::new();
     if let Some(pw) = &overview.password {
-        if let Some(s) = method_gap_sentence(pw, has_vault, is_passkey, "password") {
+        if let Some(s) = method_gap_sentence(pw, has_vault, "password") {
             gaps.push(s);
         }
     }
     if let Some(kc) = &overview.keychain {
-        if let Some(s) = method_gap_sentence(kc, has_vault, is_passkey, "phone") {
+        if let Some(s) = method_gap_sentence(kc, has_vault, "phone") {
             gaps.push(s);
         }
     }
@@ -857,7 +843,7 @@ fn recovery_kit_card_state(
     // The CTA closes the first gap (password first); a keychain-only gap
     // re-seals via Rotate (the protection-choice → phone re-seal fills whatever
     // the tier requires in one pass).
-    let (primary_label, primary_mode) = password_gap_cta(&overview.password, has_vault, is_passkey)
+    let (primary_label, primary_mode) = password_gap_cta(&overview.password, has_vault)
         .unwrap_or(("Finish backing up", RecoveryKitMode::Rotate));
 
     CardState {
@@ -872,40 +858,22 @@ fn recovery_kit_card_state(
 /// backup card. Shows copy + a primary action that drives the
 /// `RecoveryKitMessage` flow. States mirror the plan §6.3 matrix.
 ///
-/// - `is_passkey`: when true, the seed is unextractable on-device and
-///   only the descriptor can be backed up; the card has a reduced
-///   two-state variant and is suppressed entirely on passkey cubes
-///   without a Vault (nothing to back up).
-/// - `has_vault`: gates the "complete" copy on mnemonic cubes — a
-///   seed-only kit on a vaultless cube is already "complete" from the
-///   user's perspective, so the CTA becomes "Update" rather than
-///   "Add Wallet Descriptor".
+/// - `has_vault`: gates the "complete" copy — a seed-only kit on a
+///   vaultless cube is already "complete" from the user's perspective, so
+///   the CTA becomes "Update" rather than "Add Wallet Descriptor".
+///
+/// The Cube's passkey shape is no longer an input. It used to select a reduced
+/// descriptor-only variant, and to **suppress the card entirely** on a passkey
+/// Cube with no Vault ("nothing to back up — create a Vault to enable
+/// Recovery-Kit backup"). That suppression was the worst of it: the Cube most
+/// in need of a Kit was the one shown no way to make one. Since **I11** a
+/// passkey Cube backs up its master seed like any other, Vault or no Vault.
 fn recovery_kit_card<'a>(
-    is_passkey: bool,
     has_vault: bool,
     status: Option<&RecoveryKitStatus>,
     loading: bool,
     drift: DescriptorDrift,
 ) -> Element<'a, Message> {
-    // Passkey + no vault => nothing to back up yet. Render a thin
-    // informational card rather than the regular flow.
-    if is_passkey && !has_vault {
-        return card::simple(
-            Column::new()
-                .spacing(4)
-                .push(text("Back up your Wallet Descriptor").bold())
-                .push(
-                    text(
-                        "Passkey Cubes back up the Wallet Descriptor only — create a Vault \
-                         to enable Recovery-Kit backup.",
-                    )
-                    .size(14),
-                ),
-        )
-        .width(Length::Fill)
-        .into();
-    }
-
     // One source of truth for what's backed up, by which method (master
     // §definitions). Drives the card state, the pills, and Remove visibility.
     let overview = backup_overview(status);
@@ -914,7 +882,7 @@ fn recovery_kit_card<'a>(
         subtitle,
         primary_label,
         primary_mode,
-    } = recovery_kit_card_state(&overview, is_passkey, has_vault, loading, status.is_some());
+    } = recovery_kit_card_state(&overview, has_vault, loading, status.is_some());
 
     // Drift overrides the "complete" state: primary CTA becomes "Update now"
     // and the subtitle swaps to a drift warning naming the stale method(s)
@@ -1451,13 +1419,13 @@ mod tests {
 
     /// Convenience: card state for a mnemonic-with-vault cube.
     fn mnemonic_vault_state(st: &RecoveryKitStatus) -> CardState {
-        recovery_kit_card_state(&backup_overview(Some(st)), false, true, false, true)
+        recovery_kit_card_state(&backup_overview(Some(st)), true, false, true)
     }
 
     // ---- method_complete truth table (all shapes) ----
 
     #[test]
-    fn method_complete_passkey_needs_descriptor_only() {
+    fn method_complete_vaultless_needs_seed_only() {
         let seed_only = MethodBackup {
             seed: true,
             descriptor: false,
@@ -1466,28 +1434,12 @@ mod tests {
             seed: false,
             descriptor: true,
         };
-        assert!(!method_complete(&seed_only, true, true));
-        assert!(method_complete(&desc_only, true, true));
-        // has_vault is irrelevant for passkey.
-        assert!(method_complete(&desc_only, false, true));
+        assert!(method_complete(&seed_only, false));
+        assert!(!method_complete(&desc_only, false));
     }
 
     #[test]
-    fn method_complete_mnemonic_vaultless_needs_seed_only() {
-        let seed_only = MethodBackup {
-            seed: true,
-            descriptor: false,
-        };
-        let desc_only = MethodBackup {
-            seed: false,
-            descriptor: true,
-        };
-        assert!(method_complete(&seed_only, false, false));
-        assert!(!method_complete(&desc_only, false, false));
-    }
-
-    #[test]
-    fn method_complete_mnemonic_vault_needs_both() {
+    fn method_complete_vault_needs_both() {
         let both = MethodBackup {
             seed: true,
             descriptor: true,
@@ -1500,9 +1452,25 @@ mod tests {
             seed: false,
             descriptor: true,
         };
-        assert!(method_complete(&both, true, false));
-        assert!(!method_complete(&seed_only, true, false));
-        assert!(!method_complete(&desc_only, true, false));
+        assert!(method_complete(&both, true));
+        assert!(!method_complete(&seed_only, true));
+        assert!(!method_complete(&desc_only, true));
+    }
+
+    /// **I11**, from the card's side. A descriptor-only kit used to read
+    /// "Wallet Descriptor backed up" on a passkey Cube; it now reads incomplete
+    /// for every shape, because the seed belongs in the Kit.
+    ///
+    /// The card and `cube_backup_completeness` are supposed to be the same rule
+    /// stated twice. This is the row where they used to differ.
+    #[test]
+    fn a_descriptor_only_kit_is_never_complete() {
+        let desc_only = MethodBackup {
+            seed: false,
+            descriptor: true,
+        };
+        assert!(!method_complete(&desc_only, true));
+        assert!(!method_complete(&desc_only, false));
     }
 
     // ---- backup_overview presence rules (master F1) ----
@@ -1604,7 +1572,7 @@ mod tests {
     fn password_only_seed_only_vaultless_is_backed_up() {
         // A seed-only kit on a vaultless cube is already complete.
         let st = status(true, false, Some("2026-05-01T00:00:00Z"), None);
-        let s = recovery_kit_card_state(&backup_overview(Some(&st)), false, false, false, true);
+        let s = recovery_kit_card_state(&backup_overview(Some(&st)), false, false, true);
         assert_eq!(s.title, "Recovery Kit backed up");
         assert_eq!(s.primary_mode, RecoveryKitMode::Rotate);
     }
@@ -1718,32 +1686,36 @@ mod tests {
         assert!(backup_overview(Some(&absent)).keychain.is_none());
     }
 
-    // ---- passkey variant (descriptor-only shape) ----
+    // ---- one card for both shapes (I11) ----
 
+    /// The card no longer branches on shape, so a passkey Cube with a
+    /// descriptor-only kit gets the same "finish backing up" treatment a
+    /// mnemonic Cube does — where it used to be told it was done.
     #[test]
-    fn passkey_descriptor_backed_up() {
+    fn a_descriptor_only_kit_reads_incomplete() {
         let st = status(false, true, Some("2026-05-01T00:00:00Z"), None);
-        let s = recovery_kit_card_state(&backup_overview(Some(&st)), true, true, false, true);
-        assert_eq!(s.title, "Wallet Descriptor backed up");
-        assert_eq!(s.primary_mode, RecoveryKitMode::Rotate);
+        let s = recovery_kit_card_state(&backup_overview(Some(&st)), true, false, true);
+        assert_eq!(s.title, "Finish backing up your Recovery Kit");
+        assert!(s.subtitle.contains("Master Seed Phrase"));
+        assert_eq!(s.primary_mode, RecoveryKitMode::AddSeed);
     }
 
     #[test]
-    fn passkey_no_kit_is_create() {
+    fn no_kit_is_create() {
         let st = status(false, false, None, None);
-        let s = recovery_kit_card_state(&backup_overview(Some(&st)), true, true, false, true);
-        assert_eq!(s.title, "Back up your Wallet Descriptor");
+        let s = recovery_kit_card_state(&backup_overview(Some(&st)), true, false, true);
+        assert_eq!(s.title, "Back up your Cube Recovery Kit");
         assert_eq!(s.primary_mode, RecoveryKitMode::Create);
     }
 
     // ---- not-loaded-yet (status None) preserves prior copy ----
 
     #[test]
-    fn not_loaded_mnemonic_shows_loading_or_signin() {
-        let loading = recovery_kit_card_state(&backup_overview(None), false, true, true, false);
+    fn not_loaded_shows_loading_or_signin() {
+        let loading = recovery_kit_card_state(&backup_overview(None), true, true, false);
         assert_eq!(loading.title, "Cube Recovery Kit");
         assert!(loading.subtitle.contains("Checking"));
-        let idle = recovery_kit_card_state(&backup_overview(None), false, true, false, false);
+        let idle = recovery_kit_card_state(&backup_overview(None), true, false, false);
         assert!(idle.subtitle.contains("Sign in"));
     }
 

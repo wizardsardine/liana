@@ -58,6 +58,10 @@ A note for **Linux users only**: released binaries may not be working on your sy
 running a too old glibc. In this case you may have to build from source. See the [short section
 about this in the README](../README.md#a-note-on-linux-binaries-and-glibc-version).
 
+The Linux archive extracts to a `tenshu-<version>-<target>/` directory holding two executables:
+`coincube` and `coincube-spark-bridge`. Keep them together — Tenshu looks for the Spark bridge next
+to its own executable, and moving one without the other disables the Spark wallet.
+
 ### Verify your download
 
 Every release is published on the [GitHub releases page](https://github.com/coincubetech/coincube/releases)

@@ -532,10 +532,14 @@ pub fn completed_view<M: Clone + 'static>(on: fn(BackupWalletMessage) -> M) -> E
         .into()
 }
 
-/// Shown for passkey-derived Cubes. The mnemonic can be re-derived from
-/// the WebAuthn PRF output, but passkey re-authentication isn't wired up
-/// yet. Tell the user what's going on and how to proceed.
-pub fn passkey_pending_view() -> Element<'static, Message> {
+/// Shown while the system passkey prompt is up for a passkey-derived Cube.
+///
+/// This replaces `passkey_pending_view`, which told the user that
+/// re-authentication was "coming soon" and to "keep access to the device or
+/// security key that holds your passkey". Both halves of that were wrong to
+/// leave standing: re-authentication works, and a platform passkey is bound to
+/// the Apple ID rather than to the device.
+pub fn passkey_reauth_view() -> Element<'static, Message> {
     Column::new()
         .spacing(20)
         .width(Length::Fill)
@@ -558,15 +562,62 @@ pub fn passkey_pending_view() -> Element<'static, Message> {
                 .push(
                     Container::new(
                         text(
-                            "This Cube uses a passkey-derived master key. \
-                             To display your 12-word recovery phrase we need to \
-                             re-authenticate with your passkey — this feature is \
-                             coming soon. In the meantime, make sure you keep \
-                             access to the device or security key that holds \
-                             your passkey.",
+                            "Confirm with Touch ID to show this Cube's recovery phrase. \
+                             We ask again because putting your master seed on screen is \
+                             not the same as opening your wallet.",
                         )
                         .size(18)
                         .align_x(iced::alignment::Horizontal::Center),
+                    )
+                    .width(Length::Fixed(600.0))
+                    .align_x(iced::alignment::Horizontal::Center),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(24.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    ui_button::secondary(None, "Cancel")
+                        .on_press(wrap(BackupWalletMessage::PreviousStep))
+                        .padding([8, 16])
+                        .width(Length::Fixed(300.0)),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .into()
+}
+
+/// Terminal error for the passkey path. The message is I12-compliant copy from
+/// `PasskeyError::user_message` — it never says the Cube is lost.
+pub fn backup_error_view(message: &str) -> Element<'_, Message> {
+    Column::new()
+        .spacing(20)
+        .width(Length::Fill)
+        .push(header("Backup via Passkey", wrap))
+        .push(Space::new().height(Length::Fixed(20.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(icon::lock_icon().size(100).color(color::ORANGE))
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(16.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    Container::new(
+                        text(message)
+                            .size(18)
+                            .align_x(iced::alignment::Horizontal::Center),
                     )
                     .width(Length::Fixed(600.0))
                     .align_x(iced::alignment::Horizontal::Center),
@@ -621,6 +672,7 @@ pub fn dispatch<'a>(
             wrap,
         )),
         BackupSeedState::Completed => Some(completed_view(wrap)),
-        BackupSeedState::PasskeyPending => Some(passkey_pending_view()),
+        BackupSeedState::PasskeyReauth => Some(passkey_reauth_view()),
+        BackupSeedState::Error(message) => Some(backup_error_view(message)),
     }
 }
