@@ -75,7 +75,7 @@ MODE="${2:-}"
 [ -n "$PROFILE" ] || usage
 [ -f "$PROFILE" ] || { echo "no such profile: $PROFILE" >&2; exit 2; }
 
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/coincube-cert.XXXXXXXX")"
 trap 'stty echo 2>/dev/null || true; rm -rf "$WORK"' EXIT INT TERM
 
 # The certificate we would sign with, as PEM.
@@ -92,6 +92,13 @@ case "$MODE" in
         if [ -z "$P12_PASS" ] || { [ -f "$P12_PASS" ] && [ ! -s "$P12_PASS" ]; }; then
             if [ -n "$P12_PASS" ]; then
                 echo "note: $P12_PASS is empty — prompting instead." >&2
+            fi
+            if [ ! -t 0 ]; then
+                echo "no usable password file for $(basename "$P12") and stdin is not a" >&2
+                echo "TTY — refusing to hang on a prompt. Pass the password file as the" >&2
+                echo "4th argument (written by the CI 'Prepare Apple Developer ID" >&2
+                echo "certificate' step), or run this interactively." >&2
+                exit 2
             fi
             printf 'password for %s: ' "$(basename "$P12")" >&2
             stty -echo 2>/dev/null || true

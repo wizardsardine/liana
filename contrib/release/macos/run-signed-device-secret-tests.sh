@@ -115,7 +115,13 @@ codesign -d --entitlements - "$BUNDLE" 2>&1 | grep -q 'keychain-access-groups' \
 # The profile has to survive signing and be sealed by it, or AMFI never sees it.
 test -f "$BUNDLE/Contents/embedded.provisionprofile" \
     || { echo "the signer dropped Contents/embedded.provisionprofile" >&2; exit 1; }
-grep -q 'embedded.provisionprofile' "$BUNDLE/Contents/_CodeSignature/CodeResources" \
+# CodeResources is a plist (often binary), so grepping the raw bytes can miss a
+# real seal or match for the wrong reason. Parse it and require the profile to be
+# sealed under files2 (modern) or files (legacy). PlistBuddy splits key paths on
+# ':', so the dotted key name is matched literally.
+_cr="$BUNDLE/Contents/_CodeSignature/CodeResources"
+/usr/libexec/PlistBuddy -c 'Print :files2:embedded.provisionprofile' "$_cr" >/dev/null 2>&1 \
+    || /usr/libexec/PlistBuddy -c 'Print :files:embedded.provisionprofile' "$_cr" >/dev/null 2>&1 \
     || { echo "the profile is present but not sealed into CodeResources" >&2; exit 1; }
 
 echo "==> Running the ignored device_secret tests"

@@ -13,6 +13,8 @@ jobs:
       BREEZ_API_KEY: ${{ github.event_name == 'push' && secrets.BREEZ_API_KEY || 'DUMMY_BREEZ_API_KEY' }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -46,6 +48,8 @@ jobs:
     steps:
       - name: Checkout source code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - name: Install Rust ${{ matrix.toolchain }} toolchain
         run: |
           rustup update ${{ matrix.toolchain }}
