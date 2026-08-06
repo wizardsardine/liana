@@ -7,7 +7,9 @@
 //!
 //! Flow for a mnemonic cube in Create mode:
 //!   PinEntry → PasswordEntry → Uploading → Completed
-//! A passkey cube (descriptor-only) skips PinEntry.
+//! A passkey cube runs the same flow with `PasskeyReauth` in place of
+//! `PinEntry` — its Kit carries the master seed too (**I11**), re-derived from
+//! a WebAuthn assertion rather than decrypted from a file.
 
 use coincube_ui::{
     color,
@@ -507,6 +509,47 @@ pub fn phone_sealing_view() -> Element<'static, Message> {
         .into()
 }
 
+/// The passkey Cube's stand-in for the PIN keypad. There is nothing to type —
+/// the system Touch ID sheet is up in front of this — so it explains *why*
+/// there is a second prompt inside an already-open Cube: backing the master
+/// seed up to Connect is a different act from opening the wallet.
+///
+/// Unlike the other in-flight screens ([`phone_sealing_view`],
+/// [`uploading_view`]) this one needs a Cancel. Those resolve on their own in
+/// about a second; this one waits on a person, and if the system sheet never
+/// appears — the presentation anchor falls back to a hidden window — there is
+/// nothing on screen to dismiss and nothing else here to press. Without the
+/// button the user is held until the ceremony's 180-second deadline.
+///
+/// `Cancel` drops the parked ceremony, which dismisses the sheet and wakes the
+/// waiting task; the late `Cancelled` it produces is absorbed by the flow guard
+/// in `RecoveryKitMessage::PinVerified`.
+pub fn passkey_reauth_view() -> Element<'static, Message> {
+    Column::new()
+        .spacing(20)
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .push(Space::new().height(Length::Fixed(80.0)))
+        .push(icon::key_icon().size(100).color(color::ORANGE))
+        .push(Space::new().height(Length::Fixed(16.0)))
+        .push(text("Confirm with Touch ID").size(20))
+        .push(
+            text(
+                "Your Recovery Kit carries this Cube's master seed, so we ask for your \
+                 passkey again before backing it up.",
+            )
+            .size(14),
+        )
+        .push(Space::new().height(Length::Fixed(8.0)))
+        .push(
+            ui_button::secondary(None, "Cancel")
+                .on_press(wrap(RecoveryKitMessage::Cancel))
+                .padding([8, 16])
+                .width(Length::Fixed(150.0)),
+        )
+        .into()
+}
+
 /// Indeterminate "uploading" state. Kept simple — the upload is
 /// usually sub-second so a full spinner widget is overkill.
 pub fn uploading_view() -> Element<'static, Message> {
@@ -745,6 +788,7 @@ pub fn dispatch<'a>(
             ))
         }
         RecoveryKitState::PhoneSealing { .. } => Some(phone_sealing_view()),
+        RecoveryKitState::PasskeyReauth { .. } => Some(passkey_reauth_view()),
         RecoveryKitState::PasswordEntry {
             password,
             confirm,

@@ -10,9 +10,10 @@ pub use config::BreezConfig;
 pub use breez_sdk_liquid::prelude::{GetInfoResponse, ReceivePaymentResponse, SendPaymentResponse};
 
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Network};
-use coincube_core::signer::MasterSigner;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+
+use crate::app::seed_source::SeedSource;
 
 #[derive(Debug, Clone)]
 pub enum BreezError {
@@ -117,7 +118,13 @@ pub fn discard_empty_liquid_state(dirs: &[std::path::PathBuf]) {
     }
 }
 
-/// Load BreezClient from datadir using the master signer fingerprint.
+/// Load BreezClient for a Cube, taking its master seed from `seed`.
+///
+/// `seed` is an explicit [`SeedSource`] rather than a `(fingerprint, password)`
+/// pair because a passkey Cube has no seed file at all — its master seed is
+/// re-derived from a WebAuthn PRF assertion at unlock and only ever exists in
+/// memory. [`SeedSource::EncryptedFile`] is the unchanged PIN-Cube path,
+/// session-cache fast path included.
 ///
 /// The master signer is always loaded — its mnemonic backs seed-derived
 /// features (Spark, and P2P/Mostro identity) that work on networks where the
@@ -134,30 +141,20 @@ pub fn discard_empty_liquid_state(dirs: &[std::path::PathBuf]) {
 pub async fn load_breez_client(
     datadir: &Path,
     network: Network,
-    master_signer_fingerprint: Fingerprint,
-    password: &str,
+    seed: SeedSource<'_>,
     cube_id: &str,
     liquid_granted: bool,
 ) -> Result<Arc<BreezClient>, BreezError> {
     let liquid_supported = crate::app::features::liquid(network).is_available();
+    let master_signer_fingerprint = seed.fingerprint();
 
-    // Prefer the signer the unlock already decrypted. Verifying the PIN is a
-    // full Argon2id pass over the seed file, so re-reading it here would pay
-    // ~831 ms for a result we are already holding. Falls back to disk whenever
-    // the session has nothing for this Cube+fingerprint — every other entry
-    // point (restore, login, tests) takes that path unchanged.
-    let cached = crate::app::session::unlocked_signer(cube_id, master_signer_fingerprint);
-    let loaded = match cached {
-        Some(signer) => Ok(signer),
-        None => MasterSigner::from_datadir_by_fingerprint(
-            datadir,
-            network,
-            master_signer_fingerprint,
-            Some(password),
-            cube_id,
-        ),
-    };
-    let liquid_signer = match loaded {
+    // `SeedSource::resolve` prefers the signer the unlock already decrypted.
+    // Verifying the PIN is a full Argon2id pass over the seed file, so
+    // re-reading it here would pay ~831 ms for a result we are already
+    // holding. It falls back to disk whenever the session has nothing for this
+    // Cube+fingerprint — every other entry point (restore, login, tests) takes
+    // that path unchanged.
+    let liquid_signer = match seed.resolve(datadir, network, cube_id) {
         Ok(signer) => Arc::new(Mutex::new(signer)),
         Err(e) => {
             let mapped = match e {
@@ -284,5 +281,125 @@ async fn seed_has_liquid_activity(client: &BreezClient) -> bool {
             log::warn!("Liquid history probe failed ({e}) — keeping the wallet to be safe");
             true
         }
+    }
+}
+
+#[cfg(test)]
+mod seed_source_tests {
+    use super::*;
+    use coincube_core::miniscript::bitcoin::bip32::DerivationPath;
+    use coincube_core::miniscript::bitcoin::secp256k1::Secp256k1;
+    use coincube_core::signer::MasterSigner;
+    use std::str::FromStr;
+
+    /// A fresh datadir under the system temp dir. `tempfile` isn't a dependency
+    /// of this crate; the same hand-rolled pattern is used in
+    /// `phone_signer::pairing_store`.
+    fn scratch_datadir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "coincube-seed-source-{tag}-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The equivalence PR A exists to prove: a signer handed in as
+    /// `SeedSource::InMemory` and the *same* seed read back out of its
+    /// encrypted file produce the same wallet.
+    ///
+    /// Compares **xpubs**, not mnemonics — the same rule the two-machine
+    /// acceptance gate runs under. Two different encodings of one key would
+    /// compare unequal as words and equal as xpubs, and it is the xpub that
+    /// decides whether the user's coins are there.
+    ///
+    /// Runs on testnet so `features::liquid` is unavailable and
+    /// `load_breez_client` returns a disconnected client carrying the signer,
+    /// with no Breez SDK, network or API key involved.
+    #[tokio::test]
+    async fn in_memory_and_encrypted_file_derive_the_same_xpubs() {
+        let datadir = scratch_datadir("equivalence");
+        let network = Network::Testnet;
+        let cube_id = "cube-equivalence";
+        let pin = "1234";
+        let secp = Secp256k1::signing_only();
+
+        let signer = MasterSigner::generate(network).unwrap();
+        let fingerprint = signer.fingerprint(&secp);
+        // v2 file (no device secret), so the read below needs only the PIN.
+        signer
+            .store_encrypted(&datadir, network, &secp, None, pin, cube_id, None)
+            .unwrap();
+
+        let from_file = load_breez_client(
+            &datadir,
+            network,
+            SeedSource::encrypted_file(fingerprint, pin),
+            cube_id,
+            false,
+        )
+        .await
+        .expect("the encrypted-file arm loads");
+
+        let from_memory = load_breez_client(
+            &datadir,
+            network,
+            SeedSource::in_memory(Arc::new(signer.try_clone().unwrap())),
+            cube_id,
+            false,
+        )
+        .await
+        .expect("the in-memory arm loads");
+
+        // BIP-84 account 0 — an arbitrary but real derivation, so this compares
+        // derived key material rather than just the master fingerprint.
+        let path = DerivationPath::from_str("m/84'/0'/0'").unwrap();
+        let xpub_of = |client: &Arc<BreezClient>| {
+            let arc = client
+                .liquid_signer()
+                .expect("a disconnected client still carries its signer");
+            let guard = arc.lock().unwrap();
+            guard.xpub_at(&path, &secp)
+        };
+
+        assert_eq!(
+            xpub_of(&from_file),
+            xpub_of(&from_memory),
+            "the two SeedSource arms must produce the same wallet"
+        );
+        assert_eq!(
+            xpub_of(&from_file),
+            signer.xpub_at(&path, &secp),
+            "and both must match the seed they were built from"
+        );
+
+        let _ = std::fs::remove_dir_all(&datadir);
+    }
+
+    /// The property that makes passkey unlock possible at all: the in-memory
+    /// arm never touches the datadir, so a Cube with no seed file on disk still
+    /// loads its wallets.
+    #[tokio::test]
+    async fn the_in_memory_arm_loads_with_no_seed_file_on_disk() {
+        let datadir = scratch_datadir("no-seed-file");
+        let network = Network::Testnet;
+        let signer = MasterSigner::generate(network).unwrap();
+
+        let client = load_breez_client(
+            &datadir,
+            network,
+            SeedSource::in_memory(Arc::new(signer)),
+            "cube-passkey",
+            false,
+        )
+        .await
+        .expect("a passkey Cube has no seed file and must still load");
+        assert!(client.liquid_signer().is_some());
+
+        let _ = std::fs::remove_dir_all(&datadir);
     }
 }

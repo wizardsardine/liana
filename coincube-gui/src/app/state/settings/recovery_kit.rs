@@ -44,10 +44,14 @@ use crate::services::recovery::{
     SeedBlob, SeedBlobCube, SeedBlobMnemonic, BLOB_VERSION, MIN_PASSWORD_LEN,
 };
 
-/// Whether this cube's seed is extractable on-device (mnemonic cubes
-/// can extract via PIN; passkey cubes cannot — their seed derives from
-/// a WebAuthn PRF re-ceremony). Drives whether PIN entry is part of
-/// the flow.
+/// How this Cube's seed is re-obtained for the Kit. Both shapes can produce
+/// it; they differ only in the ceremony that unlocks it — a PIN and an Argon2id
+/// pass over the seed file, or a WebAuthn assertion and an HKDF.
+///
+/// Both re-prompt. The open Cube's signer is already in `app::session`, so
+/// neither prompt is fetching something we do not have; both are asking for
+/// **consent** to export the master seed to Connect, which is not the same act
+/// as opening the wallet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeedSource {
     Mnemonic,
@@ -141,6 +145,15 @@ pub enum RecoveryKitState {
     PhoneSealing {
         mode: RecoveryKitMode,
     },
+    /// A passkey Cube's stand-in for `PinEntry`: the system Touch ID sheet is
+    /// up, re-authenticating so the Kit can carry the master seed (**I11**).
+    ///
+    /// There is no input to collect here — the prompt is the system's — so this
+    /// carries only the mode, which the shared `PinVerified` handler reads back
+    /// out when the seed arrives.
+    PasskeyReauth {
+        mode: RecoveryKitMode,
+    },
     PasswordEntry {
         mode: RecoveryKitMode,
         /// Present for mnemonic cubes once PIN has been verified. `None`
@@ -184,6 +197,9 @@ impl std::fmt::Debug for RecoveryKitState {
                 .field("mode", mode)
                 .field("error", error)
                 .finish(),
+            Self::PasskeyReauth { mode } => {
+                f.debug_struct("PasskeyReauth").field("mode", mode).finish()
+            }
             Self::ProtectionChoice {
                 mode,
                 mnemonic,
@@ -403,28 +419,55 @@ pub fn update(
                     rk.flow = RecoveryKitState::PinEntry { mode, error: None };
                 }
                 SeedSource::Passkey => {
-                    // Passkey cubes skip PIN entry — the seed is not
-                    // extractable on-device; we can only upload the
-                    // descriptor blob. Guard: a descriptor must exist.
-                    if wallet.is_none() {
+                    // **I11**: a passkey Cube's Kit carries the encrypted
+                    // master seed. The seed comes from a re-authentication
+                    // ceremony *here*, at Kit time, not from anything captured
+                    // at creation — which is what lets a Cube whose owner
+                    // skipped the Kit at creation come back and build one.
+                    //
+                    // The Vault guard this replaced is gone with it. It said
+                    // "create a Vault first, a passkey Cube can only back up
+                    // its Wallet Descriptor"; a vaultless passkey Cube now has
+                    // exactly one thing to back up and it is the important one.
+                    let Some(cube) = lookup_cube(cache, local_cube_id) else {
                         rk.flow = RecoveryKitState::Error {
-                            message: "Create a Vault first — a passkey Cube can only back up its \
-                                      Wallet Descriptor, and there's no Vault yet."
-                                .to_string(),
+                            message: "Couldn't read this Cube's settings.".to_string(),
                         };
                         return Task::none();
+                    };
+                    match crate::services::passkey::reauth::begin(&cube) {
+                        Ok(fut) => {
+                            rk.flow = RecoveryKitState::PasskeyReauth { mode };
+                            // Resolves into the same `PinVerified` handler the
+                            // PIN path uses: by then both shapes are holding
+                            // the same thing, a `Zeroizing<Vec<String>>`.
+                            return Task::perform(fut, |res| {
+                                Message::View(view::Message::Settings(
+                                    view::SettingsMessage::RecoveryKit(
+                                        RecoveryKitMessage::PinVerified(
+                                            res.map_err(|e| e.user_message()),
+                                        ),
+                                    ),
+                                ))
+                            });
+                        }
+                        Err(e) => {
+                            rk.flow = RecoveryKitState::Error {
+                                message: e.user_message(),
+                            };
+                            return Task::none();
+                        }
                     }
-                    // Passkey cubes have no on-device seed, so there's no PIN
-                    // gate; offer the protection-mode choice (flag on, with the
-                    // phone key auto-detected on entry) or jump straight to the
-                    // password entry (flag off).
-                    return enter_after_seed_unlock(rk, mode, None, client, server_cube_id);
                 }
             }
             Task::none()
         }
 
         RecoveryKitMessage::Cancel => {
+            // Drops the parked ceremony, which dismisses the system sheet and
+            // wakes the waiting task with a disconnect. No-op off the passkey
+            // path.
+            crate::services::passkey::reauth::cancel();
             rk.reset_flow();
             Task::none()
         }
@@ -444,10 +487,18 @@ pub fn update(
 
         RecoveryKitMessage::PinVerified(res) => {
             rk.pin.clear();
-            let mode = match &rk.flow {
-                RecoveryKitState::PinEntry { mode, .. } => *mode,
+            // Both unlock shapes land here. `PasskeyReauth` has no input to
+            // restore on failure, so it is tracked separately below.
+            let (mode, from_passkey) = match &rk.flow {
+                RecoveryKitState::PinEntry { mode, .. } => (*mode, false),
+                RecoveryKitState::PasskeyReauth { mode } => (*mode, true),
                 _ => return Task::none(),
             };
+            if from_passkey {
+                // The ceremony is finished; drop the parked controller so the
+                // next Start is not replacing a live one.
+                crate::services::passkey::reauth::cancel();
+            }
             match res {
                 Ok(words) => {
                     // `words: Zeroizing<Vec<String>>` — the wrap
@@ -460,9 +511,17 @@ pub fn update(
                     enter_after_seed_unlock(rk, mode, Some(words), client, server_cube_id)
                 }
                 Err(e) => {
-                    rk.flow = RecoveryKitState::PinEntry {
-                        mode,
-                        error: Some(e),
+                    rk.flow = if from_passkey {
+                        // No keypad to return to — the prompt was the system's.
+                        // The message is already I12-compliant copy from
+                        // `PasskeyError::user_message`, so show it as-is and let
+                        // the user start the wizard again.
+                        RecoveryKitState::Error { message: e }
+                    } else {
+                        RecoveryKitState::PinEntry {
+                            mode,
+                            error: Some(e),
+                        }
                     };
                     Task::none()
                 }
@@ -1204,6 +1263,16 @@ fn set_protection_error(rk: &mut RecoveryKit, msg: &str) {
             };
         }
     }
+}
+
+/// This Cube's settings entry, read fresh from `settings.json`.
+///
+/// The passkey path needs the credential id and the network, and neither is
+/// carried in `Cache`. Same read `gather_cube_meta` does, narrowed to the Cube.
+fn lookup_cube(cache: &Cache, local_cube_id: &str) -> Option<settings::CubeSettings> {
+    let network_dir = cache.datadir_path.network_directory(cache.network);
+    let s = settings::Settings::from_file(&network_dir).ok()?;
+    s.cubes.iter().find(|c| c.id == local_cube_id).cloned()
 }
 
 /// Read cube-scoped metadata from settings: the `SeedBlobCube` (for a seed blob)
@@ -2489,12 +2558,28 @@ mod tests {
     }
 
     #[test]
-    fn include_halves_passkey_no_seed() {
-        // Passkey cubes never populate the mnemonic — the seed is
-        // unextractable on-device. Only the descriptor goes up.
-        let m: Option<Zeroizing<Vec<String>>> = None;
+    fn include_halves_passkey_uploads_the_seed_too() {
+        // **I11**. This test used to assert the opposite — that a passkey Cube
+        // uploaded a descriptor and no seed, because its seed was held to be
+        // unextractable on-device. It is not: the re-auth ceremony at Kit time
+        // re-derives it from the WebAuthn PRF output, so a passkey Cube's Kit
+        // carries both halves exactly like a mnemonic Cube's.
+        //
+        // That is the whole recovery story for a passkey user whose iCloud
+        // Keychain is off, which is a state we can neither require nor detect.
+        let m = mnemonic_some();
         let d = descriptor_some();
-        assert_eq!(include_halves(&m, &d), (false, true));
+        assert_eq!(include_halves(&m, &d), (true, true));
+    }
+
+    #[test]
+    fn include_halves_passkey_no_vault_seed_only() {
+        // A passkey Cube with no Vault. There is nothing to pair the seed with,
+        // and it used to be blocked from building a Kit at all ("create a Vault
+        // first"). It now backs up the one thing it has.
+        let m = mnemonic_some();
+        let d: Option<DescriptorBlob> = None;
+        assert_eq!(include_halves(&m, &d), (true, false));
     }
 
     #[test]

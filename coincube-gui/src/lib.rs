@@ -15,6 +15,7 @@ pub mod loader;
 pub mod loading;
 pub mod logger;
 pub mod node;
+pub mod passkey_unlock;
 pub mod phone_signer;
 pub mod pin_entry;
 pub mod pin_input;

@@ -142,9 +142,11 @@ pub fn dashboard_with_info<'a, T: Into<Element<'a, Message>>>(
 ) -> Element<'a, Message> {
     let has_vault = cache.has_vault;
     let has_p2p = cache.has_p2p;
-    let show_backup_warning = !cache.current_cube_backed_up
-        && !cache.current_cube_is_passkey
-        && !cache.backup_warning_dismissed;
+    // Passkey Cubes used to be exempt from this banner, because there was no
+    // way for one to back its seed up. There is now (**I11**), so an
+    // un-backed-up passkey Cube gets the same nudge as any other — it is the
+    // Cube that most needs it.
+    let show_backup_warning = !cache.current_cube_backed_up && !cache.backup_warning_dismissed;
     let nav_ctx = nav::NavContext {
         has_vault,
         has_p2p,

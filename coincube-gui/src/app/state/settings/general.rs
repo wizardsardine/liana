@@ -54,10 +54,19 @@ pub enum BackupSeedState {
     },
     /// Backup complete — cube.backed_up is now true.
     Completed,
-    /// Passkey re-authentication is required to derive the mnemonic, but the
-    /// passkey auth ceremony is not yet wired up.  Show an informational
-    /// screen explaining how to back up once passkey auth is available.
-    PasskeyPending,
+    /// Terminal failure with copy for the user. Reached only from the passkey
+    /// path — the PIN path lands its errors back on the keypad, which a
+    /// system-owned prompt has no equivalent of.
+    Error(String),
+    /// The system passkey prompt is up, re-deriving this Cube's master seed
+    /// from a WebAuthn assertion.
+    ///
+    /// This replaces `PasskeyPending`, which was a dead end: it told the user
+    /// that re-authentication was "coming soon" and to keep hold of the device
+    /// holding their passkey — advice that was both useless and, after the
+    /// 2026-08-04 decision, wrong, since a platform passkey is Apple-ID-bound
+    /// rather than device-bound.
+    PasskeyReauth,
 }
 
 /// Generate 3 random unique word indices from 1 to mnemonic_len.
@@ -232,6 +241,42 @@ mod tests {
             BackupSeedState::PinEntry { error: Some(error) }
                 if error == "Please enter all 4 PIN digits"
         ));
+    }
+
+    /// A verification result that arrives after the user has left the wizard
+    /// must be dropped, not acted on.
+    ///
+    /// This is reachable, not theoretical: `PreviousStep` cancels a live passkey
+    /// ceremony, which wakes the waiting task with `Cancelled`, and the
+    /// authenticator can answer in the same instant the user backs out. Both
+    /// arms were wrong before the guard — `Ok` walked someone who had just left
+    /// back into the flow that reveals the master seed, and `Err` landed a
+    /// passkey Cube on a PIN keypad it has no PIN for.
+    ///
+    /// The invariant used to live only in a comment on `PreviousStep`.
+    #[test]
+    fn a_stale_verification_result_is_ignored() {
+        for result in [Ok(Zeroizing::new(words())), Err("cancelled".to_string())] {
+            let mut state = state();
+            // Whatever the wizard was doing, the user has since backed out.
+            assert_eq!(state.backup_state, BackupSeedState::None);
+
+            let _ = state.update(
+                None,
+                &Cache::default(),
+                backup_msg(view::BackupWalletMessage::PinVerified(result)),
+            );
+
+            assert_eq!(
+                state.backup_state,
+                BackupSeedState::None,
+                "a stale result reopened a wizard the user had left"
+            );
+            assert!(
+                state.backup_mnemonic.is_none(),
+                "a stale result loaded the master seed for display"
+            );
+        }
     }
 
     /// The seed phrase must be `Zeroizing` *before* it enters the message
@@ -802,15 +847,34 @@ impl GeneralSettingsState {
 
         match msg {
             BackupWalletMessage::Start => {
-                // Passkey-backed cubes derive their mnemonic from the WebAuthn
-                // PRF output — there is no encrypted mnemonic on disk and no
-                // PIN.  Once passkey re-authentication is implemented we will
-                // re-derive the mnemonic here; until then, show a helpful
-                // holding screen.
+                // Passkey Cubes derive their mnemonic from the WebAuthn PRF
+                // output — there is no encrypted mnemonic on disk and no PIN.
+                // Re-derive it through an assertion, which is the passkey
+                // path's exact analogue of the PIN re-prompt below: the open
+                // Cube's signer is already in `app::session`, so neither
+                // prompt is fetching something we lack. Both are asking for
+                // consent to put the master seed on screen.
                 if let Some(cube) = self.lookup_cube(cache) {
                     if cube.is_passkey_cube() {
-                        self.backup_state = BackupSeedState::PasskeyPending;
-                        return Task::none();
+                        self.backup_mnemonic = None;
+                        return match crate::services::passkey::reauth::begin(&cube) {
+                            Ok(fut) => {
+                                self.backup_state = BackupSeedState::PasskeyReauth;
+                                Task::perform(fut, |res| {
+                                    Message::View(view::Message::Settings(
+                                        view::SettingsMessage::BackupMasterSeed(
+                                            view::BackupWalletMessage::PinVerified(
+                                                res.map_err(|e| e.user_message()),
+                                            ),
+                                        ),
+                                    ))
+                                })
+                            }
+                            Err(e) => {
+                                self.backup_state = BackupSeedState::Error(e.user_message());
+                                Task::none()
+                            }
+                        };
                     }
                 }
                 // Always re-prompt for PIN before showing anything sensitive.
@@ -933,6 +997,30 @@ impl GeneralSettingsState {
                 )
             }
             BackupWalletMessage::PinVerified(result) => {
+                // Shared by both unlock shapes: a verified PIN and a completed
+                // assertion both arrive here holding the same words.
+                //
+                // Only the two states that *asked* for a verification may
+                // consume one — same guard `VerifyPin` applies above. A stale
+                // result is not hypothetical: `PreviousStep` cancels a live
+                // ceremony, which wakes the waiting task with `Cancelled`, and
+                // the authenticator can answer in the same instant the user
+                // backs out. Acting on either would reopen a wizard the user
+                // just left, and on the `Ok` path that means re-entering the
+                // flow that puts the master seed on screen, unprompted. The
+                // `Err` path was no better: with the state already back at
+                // `None`, `from_passkey` read `false` and a cancelled Touch ID
+                // prompt landed a passkey Cube on a PIN keypad it has no PIN
+                // for.
+                let from_passkey = match &self.backup_state {
+                    BackupSeedState::PasskeyReauth => true,
+                    BackupSeedState::PinEntry { .. } => false,
+                    _ => return Task::none(),
+                };
+                if from_passkey {
+                    // The ceremony is over; drop the parked controller.
+                    crate::services::passkey::reauth::cancel();
+                }
                 match result {
                     Ok(words) => {
                         self.backup_pin.clear();
@@ -941,7 +1029,14 @@ impl GeneralSettingsState {
                     }
                     Err(e) => {
                         self.backup_pin.clear();
-                        self.backup_state = BackupSeedState::PinEntry { error: Some(e) };
+                        self.backup_state = if from_passkey {
+                            // No keypad to return to — the prompt was the
+                            // system's. `e` is already I12-compliant copy from
+                            // `PasskeyError::user_message`.
+                            BackupSeedState::Error(e)
+                        } else {
+                            BackupSeedState::PinEntry { error: Some(e) }
+                        };
                     }
                 }
                 Task::none()
@@ -992,7 +1087,15 @@ impl GeneralSettingsState {
                         self.backup_mnemonic = None;
                         BackupSeedState::None
                     }
-                    BackupSeedState::PasskeyPending => BackupSeedState::None,
+                    // Backing out of a live ceremony: dropping the parked
+                    // controller dismisses the system sheet and wakes the
+                    // waiting task, whose late result the `PinVerified` arm
+                    // then ignores because the state has moved on.
+                    BackupSeedState::PasskeyReauth => {
+                        crate::services::passkey::reauth::cancel();
+                        BackupSeedState::None
+                    }
+                    BackupSeedState::Error(_) => BackupSeedState::None,
                     BackupSeedState::None => BackupSeedState::None,
                 };
                 Task::none()

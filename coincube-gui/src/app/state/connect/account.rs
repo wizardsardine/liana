@@ -182,20 +182,43 @@ pub enum CubeBackupCompleteness {
 }
 
 /// The completeness rule (PLAN-duress-vault-gate "single source of truth").
-/// Mirrors the shape semantics already encoded in `recovery_kit_card`
+/// Mirrors the shape semantics encoded in `recovery_kit_card`
 /// (`app/view/settings/general.rs`): a seed-only kit is complete on a
-/// vaultless mnemonic Cube, passkey Cubes are descriptor-only, and a
-/// passkey Cube with no Vault has nothing to back up.
+/// vaultless Cube, and a Vault Cube needs both halves.
 ///
 /// - `has_vault == None` → vault presence unknown → `Unknown`.
 /// - `halves == None`    → status unavailable    → `Unknown`.
-/// - `!has_vault, mnemonic`: `Complete` ⇔ `seed`.
-/// - `has_vault, mnemonic`:  `Complete` ⇔ `seed && descriptor`.
-/// - `has_vault, passkey`:   `Complete` ⇔ `descriptor` (no on-device seed).
-/// - `!has_vault, passkey`:  nothing to back up → `Complete`.
+/// - `!has_vault`: `Complete` ⇔ `seed`.
+/// - `has_vault`:  `Complete` ⇔ `seed && descriptor`.
+///
+/// # Why there is no longer a passkey arm (**I11**)
+///
+/// There used to be two, and they were the weakest rows in the table: a
+/// passkey Cube with a Vault was `Complete ⇔ descriptor`, and a passkey Cube
+/// without one was `Complete` unconditionally — both because a passkey Cube's
+/// seed was held to be unextractable, so its Kit could only ever carry a
+/// descriptor.
+///
+/// That is no longer true. A passkey Cube's Kit carries the encrypted master
+/// seed, obtained from a re-authentication ceremony at Kit time
+/// (`app/state/settings/recovery_kit.rs`). Platform passkeys sync only when
+/// iCloud Keychain is enabled, which we can neither require nor detect, so
+/// sync-based recovery cannot be *promised* to anyone — the Kit can, and it is
+/// the only recovery a passkey user is owed.
+///
+/// The consequence is that Cube shape no longer changes the verdict at all, so
+/// the parameter is gone rather than ignored. Two things follow, and both are
+/// deliberate:
+///
+/// 1. **Other-device Cubes get a real answer.** `DuressCube::completeness`
+///    used to evaluate an unknown-shape Cube both ways and fall back to
+///    `Unknown` when they disagreed. They cannot disagree now.
+/// 2. **A passkey Cube with no Kit seed reads incomplete.** Per **I13** that
+///    is only safe because the Kit upload path can now produce one; flipping
+///    this rule without that would mark every passkey Cube incomplete and
+///    block Cube creation through `creation_gate::evaluate`.
 pub fn cube_backup_completeness(
     has_vault: Option<bool>,
-    is_passkey: bool,
     halves: Option<(bool, bool)>,
 ) -> CubeBackupCompleteness {
     use CubeBackupCompleteness::*;
@@ -203,25 +226,12 @@ pub fn cube_backup_completeness(
     let Some(has_vault) = has_vault else {
         return Unknown;
     };
-    // Passkey Cube with no Vault: no seed to extract, no descriptor to back
-    // up — nothing to back up, so it never blocks (mirrors the card's
-    // suppressed state).
-    if is_passkey && !has_vault {
-        return Complete;
-    }
     // Status not (yet) available → Unknown (never coerced to Complete).
     let Some((seed, descriptor)) = halves else {
         return Unknown;
     };
-    if is_passkey {
-        // Passkey + Vault: descriptor-only.
-        if descriptor {
-            Complete
-        } else {
-            NoKit
-        }
-    } else if !has_vault {
-        // Vaultless mnemonic: seed-only kit is complete.
+    if !has_vault {
+        // Vaultless: a seed-only kit is complete.
         if seed {
             Complete
         } else if descriptor {
@@ -230,7 +240,7 @@ pub fn cube_backup_completeness(
             NoKit
         }
     } else {
-        // Vault mnemonic: needs both halves.
+        // Vault: needs both halves.
         match (seed, descriptor) {
             (true, true) => Complete,
             (true, false) => MissingDescriptor,
@@ -275,31 +285,18 @@ pub fn duress_kit_halves(status: &RecoveryKitStatus) -> (bool, bool) {
 impl DuressCube {
     /// This Cube's backup completeness (shared by badge + gate).
     ///
-    /// When the passkey shape is known (this-device Cubes, from local
-    /// settings) it feeds straight into [`cube_backup_completeness`]. When
-    /// it's unknown (other-device Cubes, `is_passkey == None`) we must not
-    /// assume "mnemonic": a passkey Vault Cube's kit is descriptor-only, so
-    /// treating it as a mnemonic would misread a complete descriptor-only kit
-    /// as "Master Seed Phrase missing" — wrong copy, and a wrong-criterion
-    /// block. Instead, evaluate both interpretations: commit to the verdict
-    /// only when they agree, else fail closed to `Unknown` (blocks without
-    /// claiming which half is missing). This still passes the unambiguous
-    /// cases (e.g. both halves present ⇒ Complete under either shape), so
-    /// other-device coverage isn't lost — only the genuinely shape-dependent
-    /// rows fall back to "couldn't verify".
+    /// [`Self::is_passkey`] is not consulted. It used to be, and an
+    /// other-device Cube whose shape was unknown had to be evaluated both ways
+    /// and fall back to `Unknown` whenever the two readings disagreed — a
+    /// passkey Vault Cube's kit was descriptor-only, so reading it as a
+    /// mnemonic Cube misreported a complete kit as "Master Seed Phrase
+    /// missing".
+    ///
+    /// Since **I11** a passkey Cube's Kit carries the seed, so the two
+    /// readings are the same reading and the ambiguity is gone. Every Cube now
+    /// gets a real verdict, whichever device it lives on.
     pub fn completeness(&self) -> CubeBackupCompleteness {
-        match self.is_passkey {
-            Some(is_passkey) => cube_backup_completeness(self.has_vault, is_passkey, self.halves),
-            None => {
-                let as_mnemonic = cube_backup_completeness(self.has_vault, false, self.halves);
-                let as_passkey = cube_backup_completeness(self.has_vault, true, self.halves);
-                if as_mnemonic == as_passkey {
-                    as_mnemonic
-                } else {
-                    CubeBackupCompleteness::Unknown
-                }
-            }
-        }
+        cube_backup_completeness(self.has_vault, self.halves)
     }
 
     /// Whether this Cube blocks Tier-1 enrollment. Only Vault Cubes block:
@@ -4967,78 +4964,134 @@ mod duress_enroll_tests {
     #[test]
     fn completeness_truth_table() {
         use CubeBackupCompleteness::*;
-        // (has_vault, is_passkey, halves) → expected
-        // Vaultless mnemonic: complete ⇔ seed.
+        // (has_vault, halves) → expected
+        // Vaultless: complete ⇔ seed.
         assert_eq!(
-            cube_backup_completeness(Some(false), false, Some((true, false))),
+            cube_backup_completeness(Some(false), Some((true, false))),
             Complete
         );
         assert_eq!(
-            cube_backup_completeness(Some(false), false, Some((true, true))),
+            cube_backup_completeness(Some(false), Some((true, true))),
             Complete
         );
         assert_eq!(
-            cube_backup_completeness(Some(false), false, Some((false, false))),
+            cube_backup_completeness(Some(false), Some((false, false))),
             NoKit
         );
         // Descriptor-only kit on a vaultless mnemonic: seed still missing.
         assert_eq!(
-            cube_backup_completeness(Some(false), false, Some((false, true))),
+            cube_backup_completeness(Some(false), Some((false, true))),
             MissingSeed
         );
 
-        // Vault mnemonic: needs both halves.
+        // Vault: needs both halves.
         assert_eq!(
-            cube_backup_completeness(Some(true), false, Some((true, true))),
+            cube_backup_completeness(Some(true), Some((true, true))),
             Complete
         );
         assert_eq!(
-            cube_backup_completeness(Some(true), false, Some((true, false))),
+            cube_backup_completeness(Some(true), Some((true, false))),
             MissingDescriptor
         );
         assert_eq!(
-            cube_backup_completeness(Some(true), false, Some((false, true))),
+            cube_backup_completeness(Some(true), Some((false, true))),
             MissingSeed
         );
         assert_eq!(
-            cube_backup_completeness(Some(true), false, Some((false, false))),
+            cube_backup_completeness(Some(true), Some((false, false))),
             NoKit
         );
 
-        // Passkey + Vault: descriptor-only.
-        assert_eq!(
-            cube_backup_completeness(Some(true), true, Some((false, true))),
-            Complete
-        );
-        assert_eq!(
-            cube_backup_completeness(Some(true), true, Some((false, false))),
-            NoKit
-        );
-        // Seed presence is irrelevant on a passkey Cube — descriptor decides.
-        assert_eq!(
-            cube_backup_completeness(Some(true), true, Some((true, false))),
-            NoKit
-        );
-
-        // Passkey + no Vault: nothing to back up → Complete regardless of halves.
-        assert_eq!(
-            cube_backup_completeness(Some(false), true, Some((false, false))),
-            Complete
-        );
-        assert_eq!(cube_backup_completeness(Some(false), true, None), Complete);
-
-        // Status unavailable → Unknown (never coerced to Complete), for every
-        // shape where there's actually something to back up.
-        assert_eq!(cube_backup_completeness(Some(false), false, None), Unknown);
-        assert_eq!(cube_backup_completeness(Some(true), false, None), Unknown);
-        assert_eq!(cube_backup_completeness(Some(true), true, None), Unknown);
+        // Status unavailable → Unknown (never coerced to Complete).
+        assert_eq!(cube_backup_completeness(Some(false), None), Unknown);
+        assert_eq!(cube_backup_completeness(Some(true), None), Unknown);
 
         // Vault presence unknown → Unknown regardless of halves.
+        assert_eq!(cube_backup_completeness(None, Some((true, true))), Unknown);
+        assert_eq!(cube_backup_completeness(None, None), Unknown);
+    }
+
+    /// **I11 / I13**, as a table. The passkey rows the plan replaced:
+    /// `has_vault, passkey` moved from `Complete ⇔ descriptor` to
+    /// `Complete ⇔ seed && descriptor`, and `!has_vault, passkey` moved from
+    /// an unconditional `Complete` to `Complete ⇔ seed`.
+    ///
+    /// Both now agree with the mnemonic rows of the same shape, which is the
+    /// point: a passkey Cube's Kit carries the seed, so shape stopped mattering.
+    /// This test is written against the *shape* rather than the (now absent)
+    /// parameter so it still fails if a passkey arm is ever reintroduced via
+    /// `DuressCube::completeness`.
+    #[test]
+    fn a_passkey_cube_is_judged_exactly_like_a_mnemonic_cube() {
+        use CubeBackupCompleteness::*;
+
+        let passkey_with_vault = |halves| DuressCube {
+            has_vault: Some(true),
+            is_passkey: Some(true),
+            halves,
+            ..duress_cube("pk", true)
+        };
+        let passkey_no_vault = |halves| DuressCube {
+            has_vault: Some(false),
+            is_passkey: Some(true),
+            halves,
+            ..duress_cube("pk", true)
+        };
+
+        // Vault + passkey: a descriptor-only kit no longer passes. This is the
+        // row that makes the Kit carry the seed load-bearing rather than
+        // optional.
         assert_eq!(
-            cube_backup_completeness(None, false, Some((true, true))),
-            Unknown
+            passkey_with_vault(Some((false, true))).completeness(),
+            MissingSeed
         );
-        assert_eq!(cube_backup_completeness(None, false, None), Unknown);
+        assert_eq!(
+            passkey_with_vault(Some((true, true))).completeness(),
+            Complete
+        );
+        assert_eq!(
+            passkey_with_vault(Some((true, false))).completeness(),
+            MissingDescriptor
+        );
+        assert_eq!(
+            passkey_with_vault(Some((false, false))).completeness(),
+            NoKit
+        );
+
+        // No Vault + passkey: no longer "nothing to back up". There is now
+        // exactly one thing to back up, and it is the seed.
+        assert_eq!(
+            passkey_no_vault(Some((true, false))).completeness(),
+            Complete
+        );
+        assert_eq!(passkey_no_vault(Some((false, false))).completeness(), NoKit);
+        assert_eq!(
+            passkey_no_vault(Some((false, true))).completeness(),
+            MissingSeed
+        );
+        // And an unavailable status is Unknown, where it used to be Complete —
+        // a passkey Cube can no longer pass the gate on shape alone.
+        assert_eq!(passkey_no_vault(None).completeness(), Unknown);
+    }
+
+    /// A Cube on another device (shape unknown) now gets a real verdict rather
+    /// than the `Unknown` the dual-evaluation fallback used to produce for
+    /// every shape-dependent row.
+    #[test]
+    fn an_unknown_shape_no_longer_forces_unknown() {
+        use CubeBackupCompleteness::*;
+        let other_device = |halves| DuressCube {
+            has_vault: Some(true),
+            is_passkey: None,
+            halves,
+            ..duress_cube("remote", true)
+        };
+        assert_eq!(
+            other_device(Some((false, true))).completeness(),
+            MissingSeed,
+            "this row read Unknown while passkey and mnemonic disagreed on it"
+        );
+        assert_eq!(other_device(Some((true, true))).completeness(), Complete);
     }
 
     /// `RecoveryKitStatus` fixture: password-kit halves plus the artifact
@@ -5181,8 +5234,18 @@ mod duress_enroll_tests {
         assert_eq!(merge_cube_vault_shape(None, None), (None, None, false));
     }
 
+    /// This test used to be called `completeness_with_unknown_passkey_shape`
+    /// and it pinned the dual-evaluation fallback: an other-device Cube whose
+    /// shape was unknown had to be read both ways, and the shape-dependent rows
+    /// fell back to `Unknown` because passkey and mnemonic disagreed on them.
+    ///
+    /// Since **I11** they cannot disagree — a passkey Cube's Kit carries the
+    /// seed, so there is one rule — and every row that used to be `Unknown`
+    /// for want of a shape now gets a real verdict. The rows that stay
+    /// `Unknown` are the ones that always deserved it: no kit status fetched,
+    /// or vault presence itself unknown.
     #[test]
-    fn completeness_with_unknown_passkey_shape() {
+    fn completeness_no_longer_needs_to_know_the_shape() {
         use CubeBackupCompleteness::*;
 
         // Helper: an other-device Vault Cube (is_passkey unknown) with the
@@ -5195,43 +5258,43 @@ mod duress_enroll_tests {
             ..duress_cube("other", true)
         };
 
-        // Both halves present → Complete under either shape → committed.
+        // Unchanged: unambiguous under the old dual evaluation too.
         assert_eq!(
             other_device_vault(Some((true, true))).completeness(),
             Complete
         );
-        // No kit at all → NoKit under either shape → committed.
         assert_eq!(
             other_device_vault(Some((false, false))).completeness(),
             NoKit
         );
 
-        // Descriptor-only kit: mnemonic reads MissingSeed (block), passkey
-        // reads Complete (allow). Shape-dependent → must NOT claim MissingSeed;
-        // fail closed to Unknown instead. This is the misclassification the
-        // review flagged.
+        // Descriptor-only kit. Was `Unknown` (mnemonic said MissingSeed,
+        // passkey said Complete). Now MissingSeed for both, so the gate can
+        // name the missing half instead of saying "couldn't verify".
         assert_eq!(
             other_device_vault(Some((false, true))).completeness(),
-            Unknown
+            MissingSeed
         );
-        // Seed-only kit: mnemonic MissingDescriptor vs passkey NoKit — both
-        // block but differ, so Unknown (honest "couldn't verify").
+        // Seed-only kit. Was `Unknown` (MissingDescriptor vs NoKit).
         assert_eq!(
             other_device_vault(Some((true, false))).completeness(),
-            Unknown
+            MissingDescriptor
         );
-        // Status not fetched → Unknown regardless of shape.
+        // Still Unknown, and rightly: no status was fetched. Never coerced to
+        // Complete.
         assert_eq!(other_device_vault(None).completeness(), Unknown);
 
-        // A known-passkey (this-device) Cube is unaffected: descriptor-only is
-        // Complete, not MissingSeed.
+        // A known-passkey (this-device) Cube reads identically — the point of
+        // the collapse. Descriptor-only used to be `Complete` here; it is the
+        // row **I13** changed, and the reason the Kit upload path had to change
+        // in the same PR.
         let local_passkey_vault = DuressCube {
             has_vault: Some(true),
             is_passkey: Some(true),
             halves: Some((false, true)),
             ..duress_cube("local-passkey", true)
         };
-        assert_eq!(local_passkey_vault.completeness(), Complete);
+        assert_eq!(local_passkey_vault.completeness(), MissingSeed);
     }
 
     #[test]

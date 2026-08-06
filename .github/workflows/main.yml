@@ -6,6 +6,18 @@ on:
       - master
   pull_request:
 
+# Build-time passkey flags, same repo-level Actions variables the release
+# workflow uses. CI has to compile the *shipping* configuration: without these,
+# every job here builds `PASSKEY_ENABLED = false` while releases ship `true`,
+# so a green run says nothing about the binary that goes out — the passkey
+# unlock path would never be type-checked, linted or tested until release day.
+#
+# Workflow-level, so it merges with (rather than replaces) the job-level `env`
+# blocks in `linter` and `unit_tests` that carry `BREEZ_API_KEY`.
+env:
+  COINCUBE_ENABLE_PASSKEY: ${{ vars.COINCUBE_ENABLE_PASSKEY }}
+  COINCUBE_PASSKEY_RP_ID: ${{ vars.COINCUBE_PASSKEY_RP_ID }}
+
 jobs:
   linter:
     runs-on: ubuntu-latest

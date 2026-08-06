@@ -57,12 +57,56 @@ pub const BYPASS_ACKNOWLEDGEMENT: &str =
     "I understand that without a backup, losing this computer means losing the \
      bitcoin in this Cube, and that nobody — including COINCUBE — can recover it.";
 
-/// The creation-copy line that matters most, and the one users get wrong.
+/// The creation-copy line that matters most, and the one users get wrong —
+/// for a **PIN** Cube.
+///
+/// Every clause here is a statement about the `ENCRYPTED_V3` device secret, so
+/// it is true for a PIN Cube and false for a passkey one. Use
+/// [`not_a_backup_copy`] rather than reaching for this constant directly unless
+/// the Cube's shape is known to be PIN.
 pub const NOT_A_BACKUP_COPY: &str =
     "Copying the Coincube folder is not a backup. Part of this Cube's encryption key \
      is stored in this computer's system keychain and never leaves it, so the folder \
      will not open on another machine. Your Recovery Kit and written seed phrase are \
      the only way to regain access to this Cube on another computer.";
+
+/// The same line for a **passkey** Cube.
+///
+/// The PIN version's reasoning does not transfer. A passkey Cube has no seed
+/// file and no device secret, so "part of the encryption key is in this
+/// computer's keychain" is simply not true of it — and the conclusion it
+/// supports is wrong in the other direction too: the passkey *is* synced, so
+/// the same Cube does open on another Mac signed into the same Apple ID
+/// (`company-brain/decisions/2026-08-04-tenshu-passkey-apple-id-bound.md`).
+///
+/// What stays true is the part that matters: the folder is not the backup, and
+/// iCloud Keychain sync is not a promise we are in a position to make — it can
+/// be off, and we can neither require nor detect that. The Recovery Kit is the
+/// one recovery a passkey user is owed (**I11**), so it is the one named here.
+///
+/// It must not overclaim in the *other* direction either. A passkey Cube has no
+/// device secret, so folder plus Apple ID is genuinely sufficient to open it —
+/// telling someone a copy "will not open anywhere" would invite them to treat
+/// the folder as safe to hand around, leave on a shared machine, or sync to
+/// somewhere public. Both halves have to be said: the copy is not a backup,
+/// *and* it is not harmless.
+pub const NOT_A_BACKUP_COPY_PASSKEY: &str =
+    "Copying the Coincube folder is not a backup. The folder doesn't hold your passkey \
+     — that lives in your Apple ID — so on its own it opens nothing. It will open on \
+     another Mac signed in to the same Apple ID once iCloud Keychain has synced your \
+     passkey there, which COINCUBE can't confirm for you, so treat the folder as \
+     sensitive rather than safe to pass around. Your Recovery Kit is the backup that \
+     works regardless: it carries this Cube's master seed, encrypted with a recovery \
+     password only you know.";
+
+/// The right "a folder copy is not a backup" line for this Cube's shape.
+pub const fn not_a_backup_copy(is_passkey: bool) -> &'static str {
+    if is_passkey {
+        NOT_A_BACKUP_COPY_PASSKEY
+    } else {
+        NOT_A_BACKUP_COPY
+    }
+}
 
 /// Verdict for the creation gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,7 +177,6 @@ pub fn evaluate_for_cube(
     }
     let kit = Some(cube_backup_completeness(
         Some(cube.vault_wallet_id.is_some()),
-        cube.is_passkey_cube(),
         kit_halves,
     ));
     evaluate(cube.backed_up, kit, cube.creation_backup_bypass.as_ref())
@@ -265,9 +308,9 @@ mod tests {
     #[test]
     fn a_seed_only_kit_satisfies_a_seed_only_cube() {
         // Partial kits stay valid — `cube_backup_completeness` already resolves
-        // a vaultless mnemonic Cube with a seed half to `Complete`, and the
-        // gate must not second-guess it.
-        let verdict = cube_backup_completeness(Some(false), false, Some((true, false)));
+        // a vaultless Cube with a seed half to `Complete`, and the gate must
+        // not second-guess it.
+        let verdict = cube_backup_completeness(Some(false), Some((true, false)));
         assert_eq!(verdict, C::Complete);
         assert_eq!(
             evaluate(false, Some(verdict), None),
@@ -349,8 +392,75 @@ mod tests {
     #[test]
     fn the_copy_says_a_folder_copy_is_not_a_backup() {
         // This is the sentence that decides whether the support queue fills up.
-        assert!(NOT_A_BACKUP_COPY.contains("not a backup"));
-        assert!(NOT_A_BACKUP_COPY.contains("Recovery Kit"));
+        for copy in [NOT_A_BACKUP_COPY, NOT_A_BACKUP_COPY_PASSKEY] {
+            assert!(copy.contains("not a backup"));
+            assert!(copy.contains("Recovery Kit"));
+        }
         assert!(BYPASS_ACKNOWLEDGEMENT.contains("nobody"));
+    }
+
+    /// The passkey line must not inherit the PIN line's device-secret
+    /// reasoning, and must not claim the passkey stays on this machine — the
+    /// 2026-08-01 device-bound decision is superseded and the code never
+    /// implemented it.
+    #[test]
+    fn the_passkey_copy_makes_no_device_bound_claim() {
+        let copy = NOT_A_BACKUP_COPY_PASSKEY.to_lowercase();
+        for false_claim in [
+            "system keychain",
+            "never leaves",
+            "written seed phrase",
+            "will not open on another machine",
+        ] {
+            assert!(
+                !copy.contains(false_claim),
+                "the passkey copy still says {:?}, which is not true of a passkey Cube",
+                false_claim
+            );
+        }
+        // And it must say the thing that *is* the promise.
+        assert!(copy.contains("icloud keychain"));
+        assert!(copy.contains("master seed"));
+    }
+
+    /// The mirror of the test above. Correcting a device-bound overclaim is
+    /// easy to overcorrect into "a folder copy opens nothing", which is just as
+    /// false and more dangerous: a passkey Cube has no device secret, so folder
+    /// plus Apple ID really does open it. A user who believes the copy is inert
+    /// will treat it as safe to share.
+    #[test]
+    fn the_passkey_copy_does_not_call_a_folder_copy_harmless() {
+        let copy = NOT_A_BACKUP_COPY_PASSKEY.to_lowercase();
+        for overclaim in [
+            "will not open anywhere",
+            "opens nothing anywhere",
+            "cannot be opened",
+            "useless to anyone",
+        ] {
+            assert!(
+                !copy.contains(overclaim),
+                "the passkey copy says {:?}, which invites a user to hand the folder \
+                 around — folder plus Apple ID is enough to open a passkey Cube",
+                overclaim
+            );
+        }
+        // It has to name the case where the copy *does* open, and say the folder
+        // is still worth protecting.
+        assert!(
+            copy.contains("same apple id"),
+            "the copy never admits the folder opens on a same-Apple-ID Mac: {}",
+            copy
+        );
+        assert!(
+            copy.contains("sensitive"),
+            "the copy never tells the user to protect the folder: {}",
+            copy
+        );
+    }
+
+    #[test]
+    fn the_selector_matches_the_shape() {
+        assert_eq!(not_a_backup_copy(false), NOT_A_BACKUP_COPY);
+        assert_eq!(not_a_backup_copy(true), NOT_A_BACKUP_COPY_PASSKEY);
     }
 }
