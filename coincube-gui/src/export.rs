@@ -1658,17 +1658,27 @@ mod tests {
 
     use super::*;
 
-    fn unique_temp_path(label: &str) -> PathBuf {
+    /// This test's own scratch directory, and `label` resolved inside it.
+    ///
+    /// Both are returned so cleanup can delete the root it was handed. A test
+    /// that re-derives the root by walking `parent()` a fixed number of times
+    /// is counting the components of `label`, and one component too many lands
+    /// on `$TMPDIR` itself — `remove_dir_all` then takes out every other
+    /// test's scratch directory, in this process and any other running one.
+    /// The tests that notice are whichever ones happen to be slow enough to
+    /// still be holding a directory (the Argon2 duress tests), which is why
+    /// this reads as unrelated flakiness on CI.
+    fn unique_temp_dir(label: &str) -> (PathBuf, PathBuf) {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock should be after unix epoch")
             .as_nanos();
-        env::temp_dir()
-            .join(format!(
-                "coincube-export-test-{}-{unique}",
-                std::process::id()
-            ))
-            .join(label)
+        let root = env::temp_dir().join(format!(
+            "coincube-export-test-{}-{unique}",
+            std::process::id()
+        ));
+        let path = root.join(label);
+        (root, path)
     }
 
     #[test]
@@ -1778,12 +1788,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_string_creates_parent_directory_and_reports_progress() {
-        let path = unique_temp_path("nested/out.txt");
-        let root = path
-            .parent()
-            .and_then(Path::parent)
-            .expect("test path has parent")
-            .to_path_buf();
+        let (root, path) = unique_temp_dir("nested/out.txt");
         let (sender, mut receiver) = unbounded_channel();
 
         export_string(&sender, path.clone(), "hello export".to_string())
@@ -1800,7 +1805,7 @@ mod tests {
 
     #[tokio::test]
     async fn import_xpub_and_parser_failures_are_reported_without_side_effects() {
-        let path = unique_temp_path("bad-xpub.txt");
+        let (root, path) = unique_temp_dir("bad-xpub.txt");
         fs::create_dir_all(path.parent().expect("test path has parent")).unwrap();
         fs::write(&path, "not an xpub").unwrap();
         let (sender, _receiver) = unbounded_channel();
@@ -1813,11 +1818,6 @@ mod tests {
         assert!(parse_coldcard_xpub_json("{bad json").is_none());
         assert!(parse_coldcard_xpub_ccxp("{bad json").is_none());
 
-        let root = path
-            .parent()
-            .and_then(Path::parent)
-            .expect("test path has parent")
-            .to_path_buf();
         let _ = fs::remove_dir_all(root);
     }
 

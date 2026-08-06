@@ -38,13 +38,37 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev
+          sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev gnome-keyring dbus-x11
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@528e28158500e8adf409c61ac0eaa6bdd47f49ca # cargo-llvm-cov
 
+      # Same Secret Service setup as CI's ubuntu leg, and for the same reason:
+      # the device-secret tests are deliberately not mockable — "the key half
+      # lives in the OS keystore" is the property under test. A bare runner has
+      # no session bus and no keyring daemon, so `org.freedesktop.secrets` is
+      # absent and every test that provisions or reads a device secret fails
+      # with `KeystoreUnreachable` (40 of them here, across services::unlock,
+      # app and home). Coverage never got this treatment when CI did, which is
+      # why it has been red since the seed hardening landed.
+      #
+      # Starting the daemon is not enough on its own: with no keyring file the
+      # Secret Service answers a lookup for the *default* collection with "no
+      # result found", and `secret-tool store` cannot mint it. Write the
+      # empty-password login keyring and its default alias first.
+      #
+      # Keep this in step with the equivalent block in main.yml — they solve
+      # one problem in two places, and a fix applied to only one of them will
+      # look like a flake in the other.
       - name: Generate coverage
-        run: ./contrib/coverage.sh
+        run: |
+          mkdir -p ~/.local/share/keyrings
+          printf '[keyring]\ndisplay-name=login\nctime=0\nmtime=0\nlock-on-idle=false\nlock-after=false\n' > ~/.local/share/keyrings/login.keyring
+          printf 'login' > ~/.local/share/keyrings/default
+          dbus-run-session -- bash -c '
+            echo -n "" | gnome-keyring-daemon --daemonize --unlock --components=secrets >/dev/null
+            ./contrib/coverage.sh
+          '
 
       - name: Upload coverage artifacts
         if: always()

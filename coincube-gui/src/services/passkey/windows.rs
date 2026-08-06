@@ -212,21 +212,45 @@ pub fn register(rp_id: &str, rp_name: &str, user_id: &[u8], user_name: &str) -> 
             ..Default::default()
         };
 
-        let mut credential = std::ptr::null_mut();
-        let hr = WebAuthNAuthenticatorMakeCredential(
+        // `windows` 0.61.3 changed this binding: the out-parameter is gone and
+        // the attestation comes back in a `Result` instead of an `HRESULT`
+        // plus `*mut *mut`. Same underlying `webauthn.dll` entry point — only
+        // the generated Rust wrapper moved.
+        let credential = match WebAuthNAuthenticatorMakeCredential(
             parent_window(),
             &rp,
             &user,
             &cose,
             &client_data,
             Some(&mut options),
-            &mut credential,
-        );
-        if hr.is_err() || credential.is_null() {
-            return NativeOutcome::Error(describe_hresult(hr));
-        }
+        ) {
+            Ok(p) if !p.is_null() => p,
+            // Success with a null pointer should be impossible, but the
+            // dereference below would be undefined behaviour if it happened.
+            Ok(_) => {
+                return NativeOutcome::Error(
+                    "Windows Hello reported success but returned no credential.".to_string(),
+                )
+            }
+            Err(e) => return NativeOutcome::Error(describe_hresult(e.code())),
+        };
 
         let attestation = &*credential;
+        // `from_raw_parts` requires a non-null, aligned pointer *even for a
+        // zero length*, so a null `pbCredentialId` here is undefined behaviour
+        // rather than an empty slice. A zero-length id is separately useless:
+        // the assertion below addresses the credential by id, so it would fail
+        // with a far less obvious error after the user has already been
+        // prompted. Free the platform allocation on the way out — this is the
+        // only early return between acquiring it and the free below.
+        if attestation.pbCredentialId.is_null() || attestation.cbCredentialId == 0 {
+            WebAuthNFreeCredentialAttestation(Some(credential));
+            return NativeOutcome::Error(
+                "Windows Hello created a passkey but returned no credential ID. This Cube \
+                 was not created."
+                    .to_string(),
+            );
+        }
         let credential_id = std::slice::from_raw_parts(
             attestation.pbCredentialId,
             attestation.cbCredentialId as usize,
@@ -346,22 +370,26 @@ pub fn assert(rp_id: &str, credential_id: &[u8]) -> NativeOutcome {
             ..Default::default()
         };
 
-        let mut assertion = std::ptr::null_mut();
-        let hr = WebAuthNAuthenticatorGetAssertion(
+        // Same 0.61.3 signature change as the make-credential call above.
+        let assertion = match WebAuthNAuthenticatorGetAssertion(
             parent_window(),
             PCWSTR(rp_id_w.as_ptr()),
             &client_data,
             Some(&mut options),
-            &mut assertion,
-        );
-        if hr.is_err() || assertion.is_null() {
-            return NativeOutcome::Error(describe_hresult(hr));
-        }
+        ) {
+            Ok(p) if !p.is_null() => p,
+            Ok(_) => {
+                return NativeOutcome::Error(
+                    "Windows Hello reported success but returned no assertion.".to_string(),
+                )
+            }
+            Err(e) => return NativeOutcome::Error(describe_hresult(e.code())),
+        };
 
         let a = &*assertion;
         let salt = a.pHmacSecret;
-        if salt.is_null() || (*salt).cbFirst < 32 {
-            WebAuthNFreeAssertion(Some(assertion));
+        if salt.is_null() || (*salt).pbFirst.is_null() || (*salt).cbFirst < 32 {
+            WebAuthNFreeAssertion(assertion);
             return NativeOutcome::Error(
                 "This passkey didn't return the key material Coincube needs (no PRF \
                  output). Restore this Cube from your Recovery Kit or written seed phrase."
@@ -373,7 +401,7 @@ pub fn assert(rp_id: &str, credential_id: &[u8]) -> NativeOutcome {
         );
         let mut prf_output = Zeroizing::new([0u8; 32]);
         prf_output.copy_from_slice(&bytes[..32]);
-        WebAuthNFreeAssertion(Some(assertion));
+        WebAuthNFreeAssertion(assertion);
 
         NativeOutcome::Authenticated { prf_output }
     }
