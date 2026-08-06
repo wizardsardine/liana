@@ -43,13 +43,19 @@ use coincube_ui::{
 
 use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
 // Referenced only from `poll`, which is `#[cfg(target_os = "macos")]` — the
-// non-macOS `begin` (line 200) short-circuits before any seed is derived, so on
+// non-macOS `begin` short-circuits before any seed is derived, so on
 // other platforms this would be an unused import (`-D warnings` in CI).
 #[cfg(target_os = "macos")]
 use coincube_core::signer::MasterSigner;
 
 use crate::app::settings::CubeSettings;
 use crate::pin_entry::PinEntrySuccess;
+// Gated with `fail` below, whose signature is its last non-doc use off macOS —
+// `credential` and `poll`, the other two users, are already macOS-only.
+// Doc-comment links do *not* count as a use for `unused_imports`, so leaving
+// this ungated would fail CI's ubuntu `linter` job on `-D warnings`. The tests
+// module imports it separately, by absolute path, and is unaffected.
+#[cfg(target_os = "macos")]
 use crate::services::passkey::PasskeyError;
 
 /// How often the ceremony's channel is polled. Matches the cadence
@@ -57,7 +63,7 @@ use crate::services::passkey::PasskeyError;
 ///
 /// macOS-only for the same reason as the `MasterSigner` import above: the only
 /// reader is `subscription`'s `#[cfg(target_os = "macos")]` arm, and there is no
-/// ceremony to poll on a platform whose `begin` short-circuits (line 200).
+/// ceremony to poll on a platform whose `begin` short-circuits.
 #[cfg(target_os = "macos")]
 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
 
@@ -87,7 +93,7 @@ enum Phase {
     /// The ceremony is up; the system sheet is in front of the user.
     ///
     /// Constructed only by `begin`'s `#[cfg(target_os = "macos")]` arm — the
-    /// non-macOS `begin` (line 200) short-circuits straight to `Idle` with an
+    /// non-macOS `begin` short-circuits straight to `Idle` with an
     /// explanatory error — so elsewhere this is matched but never built, which
     /// `dead_code` reports. Annotated per-variant, not on the enum: an
     /// enum-level allow would also silence a variant added later that really is
@@ -328,8 +334,37 @@ impl PasskeyUnlock {
         Task::none()
     }
 
+    /// The session was closed between a successful assertion and the wallet
+    /// load — a lock, a return to the launcher, or a duress activation. Go back
+    /// to the prompt with an explanation.
+    ///
+    /// Not a ceremony failure, which is why it carries no
+    /// [`crate::services::passkey::PasskeyError`]: the assertion succeeded and the seed was
+    /// this Cube's. What went stale is the session it was parked in, and the
+    /// remedy is simply to authenticate again. The screen still holds its
+    /// `on_success`, so the button works unchanged.
+    pub fn relocked(&mut self) {
+        tracing::info!(
+            cube_id = %self.cube.id,
+            "passkey unlock raced a re-lock; returning to the prompt"
+        );
+        self.phase = Phase::Idle {
+            error: Some(
+                "This Cube locked again before it finished opening. Unlock it with your \
+                 passkey to try again."
+                    .to_string(),
+            ),
+        };
+    }
+
     /// Land a classified failure on the screen. **I12**: the copy comes from
     /// [`PasskeyError::user_message`], and none of it says the Cube is lost.
+    ///
+    /// macOS-only, like the `MasterSigner` import and `POLL_INTERVAL` above:
+    /// every caller is inside `begin` or `poll`'s `#[cfg(target_os = "macos")]`
+    /// arm. The non-macOS arms set `Phase::Idle` directly, because the one
+    /// thing they have to say is fixed and needs no `PasskeyError` to classify.
+    #[cfg(target_os = "macos")]
     fn fail(&mut self, error: PasskeyError) {
         tracing::warn!(cube_id = %self.cube.id, error = %error, "passkey unlock did not complete");
         self.phase = Phase::Idle {
@@ -422,7 +457,61 @@ impl PasskeyUnlock {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::services::passkey::PasskeyError;
+
+    fn screen() -> PasskeyUnlock {
+        PasskeyUnlock::new(
+            crate::app::settings::CubeSettings::new_with_id(
+                uuid::Uuid::nil(),
+                "Test".to_string(),
+                coincube_core::miniscript::bitcoin::Network::Bitcoin,
+            ),
+            std::path::PathBuf::new(),
+            PinEntrySuccess::LoadApp {
+                datadir: crate::dir::CoincubeDirectory::new(std::path::PathBuf::new()),
+                config: crate::app::Config::new(false),
+                network: coincube_core::miniscript::bitcoin::Network::Bitcoin,
+                internal_bitcoind: None,
+                backup: None,
+                wallet_settings: None,
+            },
+        )
+    }
+
+    /// Losing the session between a successful assertion and the wallet load
+    /// must return the user to the prompt, not drop them inside a Cube that is
+    /// supposed to be locked.
+    ///
+    /// The old relock path returned `Err(BreezError::SignerError(..))` through
+    /// `BreezClientLoadedAfterPin`, whose error arm substitutes a *disconnected*
+    /// client and carries on — so the user landed in the Cube with no Liquid, no
+    /// Spark and no P2P, and the one sentence telling them what to do went to
+    /// `tracing::warn!` instead of to them.
+    #[test]
+    fn a_relock_returns_to_the_prompt_with_a_usable_button() {
+        let mut screen = screen();
+        screen.phase = Phase::Opening;
+
+        screen.relocked();
+
+        match &screen.phase {
+            Phase::Idle { error } => {
+                let error = error.as_deref().expect("the user is told why");
+                assert!(
+                    error.contains("locked again"),
+                    "the relock explanation never reached the screen: {}",
+                    error
+                );
+                // I12: a re-lock is not a lost Cube.
+                let lower = error.to_lowercase();
+                for forbidden in ["lost", "gone", "corrupt"] {
+                    assert!(!lower.contains(forbidden), "{}", error);
+                }
+            }
+            _ => panic!("a relock must land back on the prompt, not stay on Opening"),
+        }
+    }
 
     /// **I12**, stated as a test. Three outcomes, three different messages, and
     /// not one of them tells the user their Cube is gone.

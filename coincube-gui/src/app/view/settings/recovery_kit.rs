@@ -513,6 +513,17 @@ pub fn phone_sealing_view() -> Element<'static, Message> {
 /// the system Touch ID sheet is up in front of this — so it explains *why*
 /// there is a second prompt inside an already-open Cube: backing the master
 /// seed up to Connect is a different act from opening the wallet.
+///
+/// Unlike the other in-flight screens ([`phone_sealing_view`],
+/// [`uploading_view`]) this one needs a Cancel. Those resolve on their own in
+/// about a second; this one waits on a person, and if the system sheet never
+/// appears — the presentation anchor falls back to a hidden window — there is
+/// nothing on screen to dismiss and nothing else here to press. Without the
+/// button the user is held until the ceremony's 180-second deadline.
+///
+/// `Cancel` drops the parked ceremony, which dismisses the sheet and wakes the
+/// waiting task; the late `Cancelled` it produces is absorbed by the flow guard
+/// in `RecoveryKitMessage::PinVerified`.
 pub fn passkey_reauth_view() -> Element<'static, Message> {
     Column::new()
         .spacing(20)
@@ -528,6 +539,13 @@ pub fn passkey_reauth_view() -> Element<'static, Message> {
                  passkey again before backing it up.",
             )
             .size(14),
+        )
+        .push(Space::new().height(Length::Fixed(8.0)))
+        .push(
+            ui_button::secondary(None, "Cancel")
+                .on_press(wrap(RecoveryKitMessage::Cancel))
+                .padding([8, 16])
+                .width(Length::Fixed(150.0)),
         )
         .into()
 }

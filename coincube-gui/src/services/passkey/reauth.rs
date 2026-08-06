@@ -34,7 +34,7 @@
 //! sender, which is what makes [`cancel`] wake the waiting task.
 
 // Both this import and `CEREMONY_DEADLINE` below are referenced only from the
-// `#[cfg(target_os = "macos")]` `begin` — the non-macOS `begin` (line 189)
+// `#[cfg(target_os = "macos")]` `begin` — the non-macOS `begin`
 // deliberately short-circuits and never starts a ceremony, so there is nothing
 // to time out. Ungated, they would be dead code on every other platform, which
 // CI's ubuntu `linter` job treats as an error (`-D warnings`).

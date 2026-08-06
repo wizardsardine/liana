@@ -243,6 +243,42 @@ mod tests {
         ));
     }
 
+    /// A verification result that arrives after the user has left the wizard
+    /// must be dropped, not acted on.
+    ///
+    /// This is reachable, not theoretical: `PreviousStep` cancels a live passkey
+    /// ceremony, which wakes the waiting task with `Cancelled`, and the
+    /// authenticator can answer in the same instant the user backs out. Both
+    /// arms were wrong before the guard — `Ok` walked someone who had just left
+    /// back into the flow that reveals the master seed, and `Err` landed a
+    /// passkey Cube on a PIN keypad it has no PIN for.
+    ///
+    /// The invariant used to live only in a comment on `PreviousStep`.
+    #[test]
+    fn a_stale_verification_result_is_ignored() {
+        for result in [Ok(Zeroizing::new(words())), Err("cancelled".to_string())] {
+            let mut state = state();
+            // Whatever the wizard was doing, the user has since backed out.
+            assert_eq!(state.backup_state, BackupSeedState::None);
+
+            let _ = state.update(
+                None,
+                &Cache::default(),
+                backup_msg(view::BackupWalletMessage::PinVerified(result)),
+            );
+
+            assert_eq!(
+                state.backup_state,
+                BackupSeedState::None,
+                "a stale result reopened a wizard the user had left"
+            );
+            assert!(
+                state.backup_mnemonic.is_none(),
+                "a stale result loaded the master seed for display"
+            );
+        }
+    }
+
     /// The seed phrase must be `Zeroizing` *before* it enters the message
     /// queue, not after it is delivered.
     ///
@@ -963,7 +999,24 @@ impl GeneralSettingsState {
             BackupWalletMessage::PinVerified(result) => {
                 // Shared by both unlock shapes: a verified PIN and a completed
                 // assertion both arrive here holding the same words.
-                let from_passkey = matches!(self.backup_state, BackupSeedState::PasskeyReauth);
+                //
+                // Only the two states that *asked* for a verification may
+                // consume one — same guard `VerifyPin` applies above. A stale
+                // result is not hypothetical: `PreviousStep` cancels a live
+                // ceremony, which wakes the waiting task with `Cancelled`, and
+                // the authenticator can answer in the same instant the user
+                // backs out. Acting on either would reopen a wizard the user
+                // just left, and on the `Ok` path that means re-entering the
+                // flow that puts the master seed on screen, unprompted. The
+                // `Err` path was no better: with the state already back at
+                // `None`, `from_passkey` read `false` and a cancelled Touch ID
+                // prompt landed a passkey Cube on a PIN keypad it has no PIN
+                // for.
+                let from_passkey = match &self.backup_state {
+                    BackupSeedState::PasskeyReauth => true,
+                    BackupSeedState::PinEntry { .. } => false,
+                    _ => return Task::none(),
+                };
                 if from_passkey {
                     // The ceremony is over; drop the parked controller.
                     crate::services::passkey::reauth::cancel();

@@ -275,9 +275,6 @@ impl Home {
                 connect_expanded: false,
                 active_section: HomeSection::Cubes,
                 theme_mode: GlobalSettings::load_theme_mode(&GlobalSettings::path(&datadir_path)),
-                // Default to the feature flag value. When the passkey feature
-                // is disabled (the common case pre-launch), this is always
-                // `false`, forcing the PIN flow.
                 // Off by default even where passkeys are available. A custody
                 // choice this consequential should be opted into, not arrived
                 // at — and the PIN path remains the default for everyone who
@@ -445,7 +442,10 @@ impl Home {
                         self.create_cube_name = coincube_ui::component::form::Value::default();
                         self.create_cube_pin = pin_input::PinInput::new();
                         self.create_cube_pin_confirm = pin_input::PinInput::new();
-                        // Reset to the feature flag default (false when disabled).
+                        // Back to the PIN path, unconditionally — dismissing the
+                        // form discards the custody choice along with the rest
+                        // of the inputs, so reopening it starts from the same
+                        // default a first-time user sees.
                         self.passkey_mode = false;
                         // Clear recovery words when exiting create cube flow
                         for word in &mut self.recovery_words {

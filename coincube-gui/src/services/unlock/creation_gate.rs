@@ -83,11 +83,19 @@ pub const NOT_A_BACKUP_COPY: &str =
 /// iCloud Keychain sync is not a promise we are in a position to make — it can
 /// be off, and we can neither require nor detect that. The Recovery Kit is the
 /// one recovery a passkey user is owed (**I11**), so it is the one named here.
+///
+/// It must not overclaim in the *other* direction either. A passkey Cube has no
+/// device secret, so folder plus Apple ID is genuinely sufficient to open it —
+/// telling someone a copy "will not open anywhere" would invite them to treat
+/// the folder as safe to hand around, leave on a shared machine, or sync to
+/// somewhere public. Both halves have to be said: the copy is not a backup,
+/// *and* it is not harmless.
 pub const NOT_A_BACKUP_COPY_PASSKEY: &str =
-    "Copying the Coincube folder is not a backup. This Cube opens with your passkey, \
-     which lives in your Apple ID — not in the folder — so a copy of the folder will \
-     not open anywhere. Your passkey reaches another Mac only if iCloud Keychain is \
-     on, and COINCUBE can't check that for you. Your Recovery Kit is the backup that \
+    "Copying the Coincube folder is not a backup. The folder doesn't hold your passkey \
+     — that lives in your Apple ID — so on its own it opens nothing. It will open on \
+     another Mac signed in to the same Apple ID once iCloud Keychain has synced your \
+     passkey there, which COINCUBE can't confirm for you, so treat the folder as \
+     sensitive rather than safe to pass around. Your Recovery Kit is the backup that \
      works regardless: it carries this Cube's master seed, encrypted with a recovery \
      password only you know.";
 
@@ -413,6 +421,41 @@ mod tests {
         // And it must say the thing that *is* the promise.
         assert!(copy.contains("icloud keychain"));
         assert!(copy.contains("master seed"));
+    }
+
+    /// The mirror of the test above. Correcting a device-bound overclaim is
+    /// easy to overcorrect into "a folder copy opens nothing", which is just as
+    /// false and more dangerous: a passkey Cube has no device secret, so folder
+    /// plus Apple ID really does open it. A user who believes the copy is inert
+    /// will treat it as safe to share.
+    #[test]
+    fn the_passkey_copy_does_not_call_a_folder_copy_harmless() {
+        let copy = NOT_A_BACKUP_COPY_PASSKEY.to_lowercase();
+        for overclaim in [
+            "will not open anywhere",
+            "opens nothing anywhere",
+            "cannot be opened",
+            "useless to anyone",
+        ] {
+            assert!(
+                !copy.contains(overclaim),
+                "the passkey copy says {:?}, which invites a user to hand the folder \
+                 around — folder plus Apple ID is enough to open a passkey Cube",
+                overclaim
+            );
+        }
+        // It has to name the case where the copy *does* open, and say the folder
+        // is still worth protecting.
+        assert!(
+            copy.contains("same apple id"),
+            "the copy never admits the folder opens on a same-Apple-ID Mac: {}",
+            copy
+        );
+        assert!(
+            copy.contains("sensitive"),
+            "the copy never tells the user to protect the folder: {}",
+            copy
+        );
     }
 
     #[test]

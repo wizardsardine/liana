@@ -401,6 +401,20 @@ pub enum Message {
         /// no Spark signer or the bridge failed to spawn.
         spark_backend: Option<Arc<app::wallets::SparkBackend>>,
     },
+    /// A passkey unlock succeeded, but the session it parked its signer in was
+    /// closed before the wallets finished loading — a lock, a return to the
+    /// launcher, or a duress activation.
+    ///
+    /// Its own message rather than an `Err` through
+    /// [`Message::BreezClientLoadedAfterPin`]: that handler treats every Breez
+    /// error as "carry on with a disconnected client", which would drop the
+    /// user *inside* a Cube that is supposed to be locked, with no Liquid, no
+    /// Spark and no P2P, and the explanation only in the log.
+    ///
+    /// Carries nothing — the tab is still in [`State::PasskeyUnlock`] at this
+    /// point (nothing mutates it between the assertion and the load), so the
+    /// screen just returns to its prompt.
+    PasskeyRelocked,
     BreezClientLoadedAfterPin {
         /// Set when the post-unlock seed-file migration aborted. The Cube still
         /// opens and its files are untouched, but the upgrade did not happen and
@@ -2126,7 +2140,6 @@ impl Tab {
                     Task::perform(
                         async move {
                             let mut cube = cube;
-                            let mut enc_key_error: Option<String> = None;
 
                             // The seed the assertion derived, from the session
                             // it was parked in. It is not carried through the
@@ -2136,27 +2149,12 @@ impl Tab {
                             let signer =
                                 crate::app::session::unlocked_signer(&cube.id, fingerprint);
                             let Some(signer) = signer else {
-                                // Only reachable if the session was closed
-                                // between the assertion and here (a lock, or a
-                                // second Cube opening). Not a lost Cube — the
-                                // user just unlocks again.
-                                return (
-                                    config_clone,
-                                    datadir_clone,
-                                    network_val,
-                                    cube,
-                                    Err(app::breez_liquid::BreezError::SignerError(
-                                        "This Cube locked again before it finished opening. \
-                                         Unlock it with your passkey to try again."
-                                            .to_string(),
-                                    )),
-                                    None,
-                                    wallet_settings_clone,
-                                    internal_bitcoind_clone,
-                                    backup_clone,
-                                    None,
-                                    None,
-                                );
+                                // The session was closed between the assertion
+                                // and here. Send the user back to the unlock
+                                // prompt rather than into a Cube that is
+                                // supposed to be locked — see
+                                // `Message::PasskeyRelocked`.
+                                return Message::PasskeyRelocked;
                             };
                             let signer = std::sync::Arc::new(signer);
 
@@ -2188,71 +2186,60 @@ impl Tab {
                                 }
                             }
 
-                            // Connect blinding (PLAN-connect-blinding D2), same
-                            // as the PIN path. The empty password is never read:
-                            // `derive_connect_encryption_pubkey` checks the
-                            // session first and the assertion just filled it.
+                            // Connect blinding (PLAN-connect-blinding D2).
+                            //
+                            // Derived from the signer this task is already
+                            // holding, **not** through
+                            // `derive_connect_encryption_pubkey`. That helper
+                            // takes a fingerprint and a password and goes
+                            // looking for the seed again — session cache first,
+                            // seed file second — which is right for the PIN
+                            // path and wrong here twice over:
+                            //
+                            // 1. There is an `.await` above (the fingerprint
+                            //    backfill), so its session lookup is a *second*
+                            //    one and can miss where the first hit. A
+                            //    passkey Cube has no seed file for the fallback
+                            //    to read, so a miss became `NoSeed` — logged at
+                            //    debug and skipped. The Cube would then never
+                            //    register an encryption pubkey, its Contacts
+                            //    could never share keys with it, and it would
+                            //    sit in the coverage report as a straggler with
+                            //    no visible cause.
+                            // 2. The password it was handed was `""`, which is
+                            //    not a credential for anything.
+                            //
+                            // `CubeEncryptionKey::derive` is infallible given a
+                            // signer, so there is no failure to report and the
+                            // `NoSeed` / `Unreadable` arms this used to match on
+                            // are gone rather than merely unlikely.
                             if cube.connect_encryption_pubkey.is_none() {
-                                use app::settings::ConnectEncryptionKey as CEK;
-                                match app::settings::derive_connect_encryption_pubkey(
-                                    datadir_clone.path(),
-                                    network_val,
-                                    fingerprint,
-                                    "",
-                                    &cube.id,
-                                ) {
-                                    CEK::Derived(pubkey) => {
-                                        cube.connect_encryption_pubkey = Some(pubkey.clone());
-                                        let cube_id = cube.id.clone();
-                                        let network_dir =
-                                            datadir_clone.network_directory(network_val);
-                                        if let Err(e) = app::settings::update_settings_file(
-                                            &network_dir,
-                                            |mut s| {
-                                                if let Some(c) =
-                                                    s.cubes.iter_mut().find(|c| c.id == cube_id)
-                                                {
-                                                    c.connect_encryption_pubkey =
-                                                        Some(pubkey.clone());
-                                                }
-                                                Some(s)
-                                            },
-                                        )
-                                        .await
+                                let pubkey =
+                                    crate::services::connect::crypto::CubeEncryptionKey::derive(
+                                        &signer,
+                                        network_val,
+                                    )
+                                    .public_key_hex();
+                                cube.connect_encryption_pubkey = Some(pubkey.clone());
+                                let cube_id = cube.id.clone();
+                                let network_dir = datadir_clone.network_directory(network_val);
+                                if let Err(e) =
+                                    app::settings::update_settings_file(&network_dir, |mut s| {
+                                        if let Some(c) =
+                                            s.cubes.iter_mut().find(|c| c.id == cube_id)
                                         {
-                                            tracing::warn!(
-                                                "Failed to persist Connect encryption pubkey \
-                                                 for passkey cube {}: {}",
-                                                cube.id,
-                                                e
-                                            );
+                                            c.connect_encryption_pubkey = Some(pubkey.clone());
                                         }
-                                    }
-                                    // Unreachable on this path — the signer is
-                                    // in hand, so there is always something to
-                                    // derive from. Kept so a future change that
-                                    // makes it reachable is loud, not silent.
-                                    CEK::NoSeed => {
-                                        tracing::debug!(
-                                            "Passkey cube {} reported no seed while holding \
-                                             an unlocked signer",
-                                            cube.id
-                                        );
-                                    }
-                                    CEK::Unreadable(why) => {
-                                        tracing::error!(
-                                            cube_id = %cube.id,
-                                            fingerprint = %fingerprint,
-                                            error = %why,
-                                            "Connect blinding: could not derive this passkey \
-                                             Cube's encryption key"
-                                        );
-                                        enc_key_error = Some(format!(
-                                            "This Cube couldn't prepare its Connect \
-                                             encryption key, so contacts can't share keys \
-                                             with it yet. Details in the logs ({why})."
-                                        ));
-                                    }
+                                        Some(s)
+                                    })
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "Failed to persist Connect encryption pubkey \
+                                         for passkey cube {}: {}",
+                                        cube.id,
+                                        e
+                                    );
                                 }
                             }
 
@@ -2289,47 +2276,28 @@ impl Tab {
                                 }
                             };
 
-                            (
-                                config_clone,
-                                datadir_clone,
-                                network_val,
-                                cube,
-                                breez_result,
-                                spark_backend,
-                                wallet_settings_clone,
-                                internal_bitcoind_clone,
-                                backup_clone,
-                                None,
-                                enc_key_error,
-                            )
-                        },
-                        |(
-                            config,
-                            datadir,
-                            network,
-                            cube,
-                            breez_result,
-                            spark_backend,
-                            wallet_settings,
-                            internal_bitcoind,
-                            backup,
-                            migration_error,
-                            enc_key_error,
-                        )| {
                             Message::BreezClientLoadedAfterPin {
                                 breez_client: breez_result,
                                 spark_backend,
-                                config,
-                                datadir,
-                                network,
+                                config: config_clone,
+                                datadir: datadir_clone,
+                                network: network_val,
                                 cube,
-                                wallet_settings,
-                                internal_bitcoind,
-                                backup,
-                                migration_error,
-                                enc_key_error,
+                                wallet_settings: wallet_settings_clone,
+                                internal_bitcoind: internal_bitcoind_clone,
+                                backup: backup_clone,
+                                // A passkey Cube has no seed file, so there is
+                                // no migration that could have failed — and the
+                                // encryption key is derived from a signer this
+                                // task already holds, which cannot fail either.
+                                migration_error: None,
+                                enc_key_error: None,
                             }
                         },
+                        // The block builds its own message: the relock path
+                        // above needs to pick a *different* one, which a
+                        // fixed-shape tuple could not express.
+                        |msg| msg,
                     )
                 }
                 crate::passkey_unlock::Message::Back => {
@@ -2494,6 +2462,15 @@ impl Tab {
                         command.map(Message::Launch)
                     }
                 }
+            }
+            // Still in `PasskeyUnlock` — nothing mutates the tab state between
+            // the assertion and the wallet load — so the screen is reused in
+            // place rather than rebuilt. If the user has since navigated away,
+            // this falls through to the catch-all and is correctly ignored
+            // rather than yanking them back.
+            (State::PasskeyUnlock(unlock), Message::PasskeyRelocked) => {
+                unlock.relocked();
+                Task::none()
             }
             (
                 _,
