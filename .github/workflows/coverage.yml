@@ -38,7 +38,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev
+          sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev gnome-keyring dbus-x11
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@528e28158500e8adf409c61ac0eaa6bdd47f49ca # cargo-llvm-cov
@@ -102,7 +102,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config protobuf-compiler gnome-keyring dbus-x11
+          sudo apt-get install -y pkg-config protobuf-compiler
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@528e28158500e8adf409c61ac0eaa6bdd47f49ca # cargo-llvm-cov
