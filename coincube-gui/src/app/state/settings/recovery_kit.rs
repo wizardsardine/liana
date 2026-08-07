@@ -1800,7 +1800,14 @@ fn restore_entry_on_upload_error(flow: &mut RecoveryKitState, err: &str) {
     // the `mem::replace` above — leave it.
 }
 
-async fn encrypt_and_upload(
+/// Encrypt the Kit halves under `password` and PUT them to Connect.
+///
+/// `pub(crate)` because the **creation flow** uses it too: a Cube can now be
+/// given its Recovery Kit before it is written to disk (`home.rs`), and that
+/// must produce a byte-identical Kit to the one Settings produces later — same
+/// blob version, same KDF params, same scheme string. One function is how that
+/// stays true.
+pub(crate) async fn encrypt_and_upload(
     client: CoincubeClient,
     cube_id_num: u64,
     mnemonic: Option<Zeroizing<Vec<String>>>,

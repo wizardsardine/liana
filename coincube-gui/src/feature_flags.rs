@@ -64,9 +64,11 @@
 /// pass as a failure.
 ///
 /// Device-binding is the PIN path's property, delivered by the `ENCRYPTED_V3`
-/// device secret. The PIN path itself is unchanged, but it is no longer the
-/// default: the Create Cube form presents Passkey/PIN as an A/B choice with
-/// Passkey selected wherever [`PASSKEY_CREATION_AVAILABLE`] holds.
+/// device secret, and the PIN path is unchanged. The Create Cube form presents
+/// Passkey/PIN as an A/B choice; which one it *starts* on is
+/// `home::Home::default_passkey_mode` — passkey wherever this flag and the
+/// platform allow it. Both creation paths derive a 12-word mnemonic and run the
+/// same backup wizard, so neither has a weaker set of exits than the other.
 pub const PASSKEY_ENABLED: bool = is_truthy(option_env!("COINCUBE_ENABLE_PASSKEY"));
 
 /// Whether the Create Cube form may offer a passkey on *this* platform.

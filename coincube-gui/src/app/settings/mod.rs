@@ -611,6 +611,16 @@ pub struct CubeSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creation_backup_bypass:
         Option<crate::services::unlock::creation_gate::CreationBackupBypass>,
+    /// Set when the user finished Cube creation by **creating a Recovery Kit**
+    /// in the creation flow itself.
+    ///
+    /// The local half of that Kit: the creation gate is evaluated offline at
+    /// open time, so a Kit that lives only on Connect cannot satisfy it. `None`
+    /// on every Cube that took another exit — a written phrase, the bypass, or
+    /// creation before the option existed. See
+    /// [`crate::services::unlock::creation_gate::CreationRecoveryKit`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_recovery_kit: Option<crate::services::unlock::creation_gate::CreationRecoveryKit>,
     /// Whether this Cube was created under the mandatory-backup gate.
     ///
     /// `false` — the serde default — for every Cube that predates it. That is
@@ -686,6 +696,7 @@ impl CubeSettings {
             recovery_kit_last_backed_up_keychain_descriptor_fingerprint: None,
             recovery_alerts_prompt_answered: false,
             creation_backup_bypass: None,
+            creation_recovery_kit: None,
             // Set explicitly by the creation flow; `new_*` is also used to
             // reconstruct Cubes in restore paths, which must not be gated.
             creation_backup_required: false,

@@ -39,8 +39,8 @@ impl Signer {
         self.key.set_network(network)
     }
 
-    /// 12 words for a generated or user-entered seed, 24 for a
-    /// passkey-derived one.
+    /// 12 words for a generated or passkey-derived seed, 24 for one restored
+    /// from a 24-word phrase.
     pub fn mnemonic(&self) -> Vec<&'static str> {
         self.key.words()
     }

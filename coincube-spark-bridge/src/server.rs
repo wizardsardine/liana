@@ -24,10 +24,11 @@ use breez_sdk_spark::{
     CheckLightningAddressRequest, ClaimDepositRequest, CrossChainAddressDetails,
     CrossChainAddressFamily, CrossChainRouteFilter, CrossChainRoutePair, EventListener,
     GetInfoRequest, InputType, LightningAddressInfo as SdkLightningAddressInfo,
-    ListPaymentsRequest, ListUnclaimedDepositsRequest, LnurlPayRequest, MaxFee, PaymentDetails,
-    PaymentRequest, PrepareLnurlPayRequest, PrepareLnurlPayResponse, PrepareSendPaymentRequest,
-    PrepareSendPaymentResponse, ReceivePaymentMethod, ReceivePaymentRequest,
-    RegisterLightningAddressRequest, SdkEvent, SendPaymentMethod, SendPaymentRequest, SourceAsset,
+    ListPaymentsRequest, ListUnclaimedDepositsRequest, LnurlPayRequest, MaxFee,
+    OnchainConfirmationSpeed, PaymentDetails, PaymentRequest, PrepareLnurlPayRequest,
+    PrepareLnurlPayResponse, PrepareSendPaymentRequest, PrepareSendPaymentResponse,
+    ReceivePaymentMethod, ReceivePaymentRequest, RegisterLightningAddressRequest, SdkEvent,
+    SendOnchainFeeQuote, SendPaymentMethod, SendPaymentOptions, SendPaymentRequest, SourceAsset,
     StableBalanceActiveLabel, UpdateUserSettingsRequest,
 };
 use coincube_spark_protocol::{
@@ -583,7 +584,10 @@ async fn handle_prepare_send(
             // to u64 for display. Bitcoin-side sends are well within
             // u64::MAX.
             let amount_sat = clamp_u128_to_u64(prepare.amount);
-            let (fee_sat, method_tag) = fee_and_method(&prepare.payment_method);
+            // The tier quoted here is the tier `execute_regular_send` will send
+            // at — both read `selected_onchain_speed()`.
+            let (fee_sat, method_tag) =
+                fee_and_method(&prepare.payment_method, &selected_onchain_speed());
 
             let handle = Uuid::new_v4().to_string();
             state
@@ -650,12 +654,85 @@ fn sdk_route_to_protocol(route: &CrossChainRoutePair) -> coincube_spark_protocol
     }
 }
 
-/// The sats-denominated fee for a prepared send, plus the method tag the gui
-/// branches on.
+/// The on-chain confirmation tier this build previews **and** sends at.
+///
+/// Named once, and taken as an argument by everything that depends on it
+/// ([`fee_and_method`], [`send_options_for`]), so no code path can quote one
+/// tier and execute another.
+///
+/// That is not hypothetical. `fee_and_method` used to hardcode
+/// `fee_quote.speed_medium` while `execute_regular_send` passed `options: None`
+/// — and in the pinned SDK 0.19.0, `None` on a Bitcoin-address send resolves to
+/// `OnchainConfirmationSpeed::Fast` (`sdk/payments/send/bitcoin_address.rs`:
+/// `None => OnchainConfirmationSpeed::Fast, // Default to fast`). The
+/// confirmation screen showed the medium fee, the wallet paid the fast one, and
+/// the success response reported the medium figure back.
+///
+/// When the UI grows a Fast/Medium/Slow picker, the user's choice replaces this
+/// call at the two call sites and the invariant holds by construction: the tier
+/// that priced the send is the tier that is sent.
+fn selected_onchain_speed() -> OnchainConfirmationSpeed {
+    OnchainConfirmationSpeed::Medium
+}
+
+/// Stable name for a confirmation tier, for logs and tests.
+///
+/// `OnchainConfirmationSpeed` is an SDK type with neither `Debug` nor
+/// `PartialEq`, so this is also how the bridge states which tier a send went
+/// out at without reaching for a derive it does not own.
+fn speed_tag(speed: &OnchainConfirmationSpeed) -> &'static str {
+    match speed {
+        OnchainConfirmationSpeed::Fast => "fast",
+        OnchainConfirmationSpeed::Medium => "medium",
+        OnchainConfirmationSpeed::Slow => "slow",
+    }
+}
+
+/// Total sats for one tier of an on-chain fee quote.
+///
+/// Saturating, matching the SDK's own `total_fee_sat()`: both halves are
+/// externally supplied and must not be able to wrap a displayed total.
+fn onchain_fee_for_speed(quote: &SendOnchainFeeQuote, speed: &OnchainConfirmationSpeed) -> u64 {
+    let tier = match speed {
+        OnchainConfirmationSpeed::Fast => &quote.speed_fast,
+        OnchainConfirmationSpeed::Medium => &quote.speed_medium,
+        OnchainConfirmationSpeed::Slow => &quote.speed_slow,
+    };
+    tier.user_fee_sat.saturating_add(tier.l1_broadcast_fee_sat)
+}
+
+/// The SDK options a prepared payment must be executed with, for `speed`.
+///
+/// `Some` only for Bitcoin-address sends: that is the one method whose options
+/// carry a confirmation speed, and the SDK rejects
+/// `SendPaymentOptions::BitcoinAddress` on any other method with
+/// `InvalidInput`. Bolt11, Spark and cross-chain sends therefore keep the
+/// `None` they have always been executed with, and their behaviour is unchanged.
+fn send_options_for(
+    method: &SendPaymentMethod,
+    speed: &OnchainConfirmationSpeed,
+) -> Option<SendPaymentOptions> {
+    match method {
+        SendPaymentMethod::BitcoinAddress { .. } => Some(SendPaymentOptions::BitcoinAddress {
+            confirmation_speed: speed.clone(),
+        }),
+        SendPaymentMethod::Bolt11Invoice { .. }
+        | SendPaymentMethod::SparkAddress { .. }
+        | SendPaymentMethod::SparkInvoice { .. }
+        | SendPaymentMethod::CrossChainAddress { .. } => None,
+    }
+}
+
+/// The sats-denominated fee for a prepared send at `speed`, plus the method tag
+/// the gui branches on.
 ///
 /// Single definition on purpose: this used to be written out twice (once when
 /// preparing, once when executing), and two copies of a money-formatting match
 /// is two chances to disagree about what a fee is.
+///
+/// `speed` only affects the Bitcoin-address arm; every other method quotes one
+/// fee regardless. It is still taken unconditionally so that the preview and
+/// the execution are demonstrably reading the same selection.
 ///
 /// **The fee is in sats, and for a cross-chain send that is not the whole
 /// story.** Cross-chain's headline fee (`fee_amount`) is denominated in the
@@ -664,21 +741,25 @@ fn sdk_route_to_protocol(route: &CrossChainRoutePair) -> coincube_spark_protocol
 /// `source_transfer_fee_sats` is genuinely sats, so that is what's reported
 /// here; the full breakdown reaches the gui on the prepare response's
 /// `CrossChainQuote`, which is where the send panel renders it.
-fn fee_and_method(method: &SendPaymentMethod) -> (u64, &'static str) {
+fn fee_and_method(
+    method: &SendPaymentMethod,
+    speed: &OnchainConfirmationSpeed,
+) -> (u64, &'static str) {
     match method {
         SendPaymentMethod::BitcoinAddress { fee_quote, .. } => {
-            // Default to the medium-speed quote for display — the gui can
-            // surface all three tiers in a later phase.
-            let fee =
-                fee_quote.speed_medium.user_fee_sat + fee_quote.speed_medium.l1_broadcast_fee_sat;
-            (fee, "BitcoinAddress")
+            (onchain_fee_for_speed(fee_quote, speed), "BitcoinAddress")
         }
         SendPaymentMethod::Bolt11Invoice {
             spark_transfer_fee_sats,
             lightning_fee_sats,
             ..
         } => (
-            spark_transfer_fee_sats.unwrap_or(0) + lightning_fee_sats,
+            // Saturating for the same reason as `onchain_fee_for_speed`: two
+            // SDK-supplied values being combined into a number the user is
+            // shown and charged against.
+            spark_transfer_fee_sats
+                .unwrap_or(0)
+                .saturating_add(*lightning_fee_sats),
             "Bolt11Invoice",
         ),
         SendPaymentMethod::SparkAddress { fee, .. } => (clamp_u128_to_u64(*fee), "SparkAddress"),
@@ -1032,8 +1113,22 @@ async fn execute_regular_send(
 ) -> Response {
     // Snapshot for the response so we can surface the final amount/fee
     // even after the SDK consumes the prepare response.
+    //
+    // One selection drives all three of: the fee reported back to the gui, the
+    // options the SDK executes under, and (via `handle_prepare_send`) the fee
+    // the confirmation screen showed. They cannot disagree.
+    let speed = selected_onchain_speed();
     let amount_sat = clamp_u128_to_u64(prepare.amount);
-    let (fee_sat, _method) = fee_and_method(&prepare.payment_method);
+    let (fee_sat, method_tag) = fee_and_method(&prepare.payment_method, &speed);
+    let options = send_options_for(&prepare.payment_method, &speed);
+    if options.is_some() {
+        // Which tier the money actually goes out at, next to the fee reported
+        // for it. If those two ever disagree again, the log says so.
+        tracing::debug!(
+            "executing {method_tag} send at {} speed, fee {fee_sat} sat",
+            speed_tag(&speed)
+        );
+    }
 
     // The SDK rejects an idempotency key on any payment with a token transfer
     // leg — a direct token send or an AMM conversion (see `orchestrate_send`).
@@ -1047,13 +1142,14 @@ async fn execute_regular_send(
     let has_token_leg = prepare.token_identifier.is_some() || prepare.conversion_estimate.is_some();
     let idempotency_key = if has_token_leg { None } else { idempotency_key };
 
-    // Phase 4c ships the default send options (Medium speed for
-    // on-chain, Spark-preferred routing for Bolt11 without a completion
-    // timeout). User-configurable options (fee tier picker) land in
-    // Phase 4f when the UI has the real controls to expose them.
+    // On-chain sends carry an **explicit** confirmation speed — the one the fee
+    // above was quoted at. Leaving `options: None` here is what made the SDK
+    // fall back to `Fast` while the user was looking at the Medium fee. Every
+    // other method still passes `None` and keeps the SDK defaults it had
+    // (Spark-preferred routing for Bolt11 without a completion timeout, etc.).
     let request = SendPaymentRequest {
         prepare_response: prepare,
-        options: None,
+        options,
         idempotency_key,
     };
 
@@ -1763,6 +1859,188 @@ async fn sweep_expired_prepares(state: &Arc<ServerState>) {
             evicted_regular,
             evicted_lnurl
         );
+    }
+}
+
+#[cfg(test)]
+mod fee_tier_tests {
+    use super::*;
+    use breez_sdk_spark::{
+        BitcoinAddressDetails, BitcoinNetwork, PaymentRequestSource, SendOnchainSpeedFeeQuote,
+    };
+
+    /// Distinct per-tier totals so a test can tell which tier was read.
+    /// slow = 100, medium = 220, fast = 3_300.
+    fn fee_quote() -> SendOnchainFeeQuote {
+        let tier = |user: u64, l1: u64| SendOnchainSpeedFeeQuote {
+            user_fee_sat: user,
+            l1_broadcast_fee_sat: l1,
+        };
+        SendOnchainFeeQuote {
+            id: "quote-1".to_string(),
+            expires_at: 0,
+            speed_fast: tier(3_000, 300),
+            speed_medium: tier(200, 20),
+            speed_slow: tier(90, 10),
+        }
+    }
+
+    fn bitcoin_address_method() -> SendPaymentMethod {
+        SendPaymentMethod::BitcoinAddress {
+            address: BitcoinAddressDetails {
+                address: "bc1qexample".to_string(),
+                network: BitcoinNetwork::Bitcoin,
+                source: PaymentRequestSource {
+                    bip_21_uri: None,
+                    bip_353_address: None,
+                },
+            },
+            fee_quote: fee_quote(),
+        }
+    }
+
+    fn spark_address_method() -> SendPaymentMethod {
+        SendPaymentMethod::SparkAddress {
+            address: "sp1example".to_string(),
+            fee: 42,
+            token_identifier: None,
+        }
+    }
+
+    /// **The audited mismatch, as a test.** A Bitcoin-address send prepared at
+    /// Medium must execute with an explicit Medium option — not `None`, which
+    /// the pinned SDK resolves to Fast, charging 3_300 sats for a send quoted
+    /// at 220.
+    #[test]
+    fn a_bitcoin_address_send_executes_at_the_tier_it_was_quoted_at() {
+        let method = bitcoin_address_method();
+        let speed = selected_onchain_speed();
+        assert_eq!(
+            speed_tag(&speed),
+            "medium",
+            "the shipped tier is Medium; if this changes, the fee shown changes with it"
+        );
+
+        let (quoted_fee, tag) = fee_and_method(&method, &speed);
+        assert_eq!(tag, "BitcoinAddress");
+        assert_eq!(quoted_fee, 220, "the preview must be the medium total");
+
+        match send_options_for(&method, &speed) {
+            Some(SendPaymentOptions::BitcoinAddress { confirmation_speed }) => {
+                assert_eq!(
+                    speed_tag(&confirmation_speed),
+                    "medium",
+                    "execution must name the tier explicitly — `None` means Fast in \
+                     the pinned SDK, which is the bug"
+                );
+            }
+            _ => panic!("a Bitcoin-address send must carry an explicit confirmation speed"),
+        }
+    }
+
+    /// Preview and execution read one selection: for every tier, the fee the gui
+    /// is given equals the fee of the tier the SDK is told to use. This is the
+    /// property a future Fast/Medium/Slow picker must not be able to break.
+    #[test]
+    fn the_quoted_fee_and_the_executed_tier_agree_for_every_tier() {
+        let method = bitcoin_address_method();
+        let expected = [
+            (OnchainConfirmationSpeed::Fast, 3_300_u64),
+            (OnchainConfirmationSpeed::Medium, 220),
+            (OnchainConfirmationSpeed::Slow, 100),
+        ];
+
+        for (speed, fee) in expected {
+            let tag = speed_tag(&speed);
+            let (quoted, _) = fee_and_method(&method, &speed);
+            assert_eq!(quoted, fee, "wrong fee quoted for {tag}");
+
+            let Some(SendPaymentOptions::BitcoinAddress { confirmation_speed }) =
+                send_options_for(&method, &speed)
+            else {
+                panic!("a Bitcoin-address send must carry options for {tag}");
+            };
+            assert_eq!(speed_tag(&confirmation_speed), tag);
+            // And the fee that tier will actually be charged at.
+            assert_eq!(
+                onchain_fee_for_speed(
+                    match &method {
+                        SendPaymentMethod::BitcoinAddress { fee_quote, .. } => fee_quote,
+                        _ => unreachable!(),
+                    },
+                    &confirmation_speed
+                ),
+                quoted,
+                "the executed tier's fee differs from the quoted fee for {tag}"
+            );
+        }
+    }
+
+    /// Fast and Slow must not be reportable as Medium: the tiers are distinct
+    /// values and the lookup is total, so a mixed-up tier shows up as a
+    /// different number rather than silently passing.
+    #[test]
+    fn the_tiers_cannot_be_confused_with_one_another() {
+        let quote = fee_quote();
+        let fast = onchain_fee_for_speed(&quote, &OnchainConfirmationSpeed::Fast);
+        let medium = onchain_fee_for_speed(&quote, &OnchainConfirmationSpeed::Medium);
+        let slow = onchain_fee_for_speed(&quote, &OnchainConfirmationSpeed::Slow);
+
+        assert_eq!((fast, medium, slow), (3_300, 220, 100));
+        assert_ne!(fast, medium);
+        assert_ne!(slow, medium);
+        assert!(slow < medium && medium < fast, "tiers must stay ordered");
+    }
+
+    /// Fee arithmetic saturates rather than wrapping: both halves come from the
+    /// SDK and a wrapped total would be shown to the user as a tiny fee.
+    #[test]
+    fn tier_totals_saturate_on_absurd_sdk_values() {
+        let quote = SendOnchainFeeQuote {
+            id: "overflow".to_string(),
+            expires_at: 0,
+            speed_fast: SendOnchainSpeedFeeQuote {
+                user_fee_sat: u64::MAX,
+                l1_broadcast_fee_sat: 10,
+            },
+            speed_medium: SendOnchainSpeedFeeQuote {
+                user_fee_sat: u64::MAX,
+                l1_broadcast_fee_sat: 1,
+            },
+            speed_slow: SendOnchainSpeedFeeQuote {
+                user_fee_sat: 0,
+                l1_broadcast_fee_sat: 0,
+            },
+        };
+        assert_eq!(
+            onchain_fee_for_speed(&quote, &OnchainConfirmationSpeed::Medium),
+            u64::MAX
+        );
+    }
+
+    /// Every other payment method keeps the options it has always been executed
+    /// with — `None`. The SDK rejects a Bitcoin-address option elsewhere with
+    /// `InvalidInput`, so applying one would break Bolt11 and Spark sends
+    /// outright.
+    #[test]
+    fn non_bitcoin_methods_keep_their_existing_options_and_fees() {
+        let speed = selected_onchain_speed();
+
+        let spark = spark_address_method();
+        assert!(
+            send_options_for(&spark, &speed).is_none(),
+            "a Spark send must not be given Bitcoin-address options"
+        );
+        assert_eq!(fee_and_method(&spark, &speed), (42, "SparkAddress"));
+
+        // The tier must make no difference off the on-chain path.
+        for other in [
+            OnchainConfirmationSpeed::Fast,
+            OnchainConfirmationSpeed::Slow,
+        ] {
+            assert_eq!(fee_and_method(&spark, &other), (42, "SparkAddress"));
+            assert!(send_options_for(&spark, &other).is_none());
+        }
     }
 }
 

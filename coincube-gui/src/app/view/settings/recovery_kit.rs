@@ -35,14 +35,15 @@ fn wrap(msg: RecoveryKitMessage) -> Message {
     Message::Settings(SettingsMessage::RecoveryKit(msg))
 }
 
-/// Single "< Back" button row — mirrors backup.rs::header.
-fn header<'a>() -> Element<'a, Message> {
+/// Single "< Back" button row — mirrors backup.rs::header. Generic over the
+/// message type for the same reason [`password_entry_view`] is.
+fn header_with<'a, M: Clone + 'a>(on: fn(RecoveryKitMessage) -> M) -> Element<'a, M> {
     Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
         .push(
             ui_button::secondary(None, "< Back")
-                .on_press(wrap(RecoveryKitMessage::Cancel))
+                .on_press(on(RecoveryKitMessage::Cancel))
                 .padding([8, 16])
                 .width(Length::Fixed(150.0)),
         )
@@ -55,7 +56,7 @@ pub fn pin_entry_view<'a>(pin: &'a PinInput, error: Option<&'a str>) -> Element<
     let mut col = Column::new()
         .spacing(20)
         .width(Length::Fill)
-        .push(header())
+        .push(header_with(wrap))
         .push(Space::new().height(Length::Fixed(16.0)))
         .push(
             Row::new()
@@ -140,12 +141,18 @@ pub fn pin_entry_view<'a>(pin: &'a PinInput, error: Option<&'a str>) -> Element<
 
 /// Password entry. Two inputs (password + confirm), live strength
 /// meter, acknowledge checkbox, Submit button gated on all three.
-pub fn password_entry_view<'a>(
+/// Message-generic so the **creation flow** can render the identical screen
+/// (`home.rs`), the way the backup wizard's screens are shared with creation.
+/// One recovery-password screen, one set of gates: a second copy would drift on
+/// the length floor or the strength band, and the two places a user chooses
+/// this password would stop agreeing about what is acceptable.
+pub fn password_entry_view<'a, M: Clone + 'a>(
     password: &'a Zeroizing<String>,
     confirm: &'a Zeroizing<String>,
     acknowledged: bool,
     error: Option<&'a str>,
-) -> Element<'a, Message> {
+    on: fn(RecoveryKitMessage) -> M,
+) -> Element<'a, M> {
     let (strength, hint) = score_password(password, &[]);
     let strength_label = strength.label();
     let strength_fraction = strength.fraction();
@@ -165,7 +172,7 @@ pub fn password_entry_view<'a>(
     let mut col = Column::new()
         .spacing(20)
         .width(Length::Fill)
-        .push(header())
+        .push(header_with(on))
         .push(Space::new().height(Length::Fixed(16.0)))
         .push(
             Row::new()
@@ -205,13 +212,13 @@ pub fn password_entry_view<'a>(
         .push(caption("Recovery password"))
         .push(
             TextInput::new("Choose a password", password.as_str())
-                .on_input(|v| {
+                .on_input(move |v| {
                     // Wrap at the message boundary — the `String`
                     // from iced's callback is the last unprotected
                     // copy in our code path; every in-flight clone
                     // from here on is in a `Zeroizing` wrapper that
                     // wipes on drop.
-                    wrap(RecoveryKitMessage::PasswordChanged(Zeroizing::new(v)))
+                    on(RecoveryKitMessage::PasswordChanged(Zeroizing::new(v)))
                 })
                 .secure(true)
                 .size(16)
@@ -234,7 +241,7 @@ pub fn password_entry_view<'a>(
         .push(caption("Confirm recovery password"))
         .push(
             TextInput::new("Re-enter password", confirm.as_str())
-                .on_input(|v| wrap(RecoveryKitMessage::ConfirmChanged(Zeroizing::new(v))))
+                .on_input(move |v| on(RecoveryKitMessage::ConfirmChanged(Zeroizing::new(v))))
                 .secure(true)
                 .size(16)
                 .padding(12)
@@ -274,7 +281,7 @@ pub fn password_entry_view<'a>(
                 Container::new(
                     CheckBox::new(acknowledged)
                         .label("I've written this password down somewhere I can find it")
-                        .on_toggle(|v| wrap(RecoveryKitMessage::AcknowledgeToggled(v)))
+                        .on_toggle(move |v| on(RecoveryKitMessage::AcknowledgeToggled(v)))
                         .style(theme::checkbox::primary),
                 )
                 .width(Length::Fixed(600.0)),
@@ -303,7 +310,7 @@ pub fn password_entry_view<'a>(
             .push(Space::new().width(Length::Fill))
             .push(
                 ui_button::secondary(None, "Cancel")
-                    .on_press(wrap(RecoveryKitMessage::Cancel))
+                    .on_press(on(RecoveryKitMessage::Cancel))
                     .padding([8, 16])
                     .width(Length::Fixed(150.0)),
             )
@@ -312,7 +319,7 @@ pub fn password_entry_view<'a>(
                     .padding([8, 16])
                     .width(Length::Fixed(300.0));
                 if can_submit {
-                    btn.on_press(wrap(RecoveryKitMessage::SubmitPassword))
+                    btn.on_press(on(RecoveryKitMessage::SubmitPassword))
                 } else {
                     btn
                 }
@@ -347,7 +354,7 @@ pub fn protection_choice_view<'a>(
     let mut col = Column::new()
         .spacing(16)
         .width(Length::Fill)
-        .push(header())
+        .push(header_with(wrap))
         .push(Space::new().height(Length::Fixed(8.0)))
         .push(
             Row::new()
@@ -598,7 +605,7 @@ pub fn confirm_remove_view<'a>(password: bool, keychain: bool) -> Element<'a, Me
     let mut col = Column::new()
         .spacing(16)
         .width(Length::Fill)
-        .push(header())
+        .push(header_with(wrap))
         .push(Space::new().height(Length::Fixed(8.0)))
         .push(
             Row::new()
@@ -800,6 +807,7 @@ pub fn dispatch<'a>(
             confirm,
             *acknowledged,
             error.as_deref(),
+            wrap,
         )),
         RecoveryKitState::Uploading { .. } => Some(uploading_view()),
         RecoveryKitState::ConfirmRemove => {

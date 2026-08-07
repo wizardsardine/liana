@@ -19,7 +19,9 @@ use iced::{
 
 use crate::app::breez_liquid::assets::{format_usdt_display, AssetKind};
 use crate::app::menu::Menu;
-use crate::app::state::liquid::send::{LiquidSendFlowState, Modal, ReceiveNetwork, SendAsset};
+use crate::app::state::liquid::send::{
+    LiquidSendFlowState, Modal, PreparedIntent, ReceiveNetwork, SendAsset,
+};
 use crate::app::view::{
     self, vault::fiat::FiatAmount, FiatAmountConverter, LiquidSendMessage, Message,
 };
@@ -47,14 +49,12 @@ pub struct LiquidSendFlowConfig<'a> {
     pub description: Option<&'a str>,
     pub lightning_limits: Option<(u64, u64)>,
     pub amount: Amount,
-    pub prepare_response: Option<&'a breez_sdk_liquid::prelude::PrepareSendResponse>,
     pub is_sending: bool,
     pub menu: &'a Menu,
     pub cache: &'a Cache,
     pub input_type: &'a Option<InputType>,
     pub onchain_limits: Option<(u64, u64)>,
     pub bitcoin_unit: BitcoinDisplayUnit,
-    pub prepare_onchain_response: Option<&'a breez_sdk_liquid::prelude::PreparePayOnchainResponse>,
     pub error: Option<&'a str>,
     pub cross_asset_supported: bool,
     pub pay_fees_with_asset: bool,
@@ -166,20 +166,14 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
                 Modal::None => content,
             }
         }
-        LiquidSendFlowState::FinalCheck => {
+        LiquidSendFlowState::FinalCheck(intent) => {
+            // Everything on this screen comes off the intent. Nothing here reads
+            // the live input fields, so what the user approves is what executes.
             let content = final_check_page(
-                config.amount,
-                config.comment,
-                config.description,
+                intent,
                 config.fiat_converter.as_ref(),
-                config.prepare_response,
                 config.is_sending,
                 config.bitcoin_unit,
-                config.input_type,
-                config.prepare_onchain_response,
-                config.to_asset,
-                config.usdt_amount_input.value.trim(),
-                config.from_asset,
             )
             .map(Message::LiquidSend);
             view::dashboard(config.menu, config.cache, content)
@@ -1294,21 +1288,25 @@ pub fn fiat_input_model<'a>(
         .into()
 }
 
-#[allow(clippy::too_many_arguments)]
+/// The confirmation screen, rendered **only** from the prepared intent.
+///
+/// It used to take the amount, assets, comment and destination as loose
+/// arguments read from the live screen state, with the prepared responses passed
+/// alongside. Those fields keep changing while a prepare is in flight, so the
+/// screen could describe a payment that was not the one about to execute. Taking
+/// the intent — the same value `ConfirmSend` executes — removes the possibility.
 pub fn final_check_page<'a>(
-    amount: Amount,
-    comment: String,
-    description: Option<&'a str>,
+    intent: &'a PreparedIntent,
     fiat_converter: Option<&FiatAmountConverter>,
-    prepare_response: Option<&'a breez_sdk_liquid::prelude::PrepareSendResponse>,
     is_sending: bool,
     bitcoin_unit: BitcoinDisplayUnit,
-    input_type: &'a Option<InputType>,
-    prepare_onchain_response: Option<&'a breez_sdk_liquid::prelude::PreparePayOnchainResponse>,
-    to_asset: SendAsset,
-    usdt_send_amount: &'a str,
-    from_asset: SendAsset,
 ) -> Element<'a, LiquidSendMessage> {
+    let amount = intent.amount();
+    let to_asset = intent.to_asset();
+    let from_asset = intent.from_asset();
+    let usdt_send_amount = intent.usdt_amount_display();
+    let comment = intent.comment().unwrap_or("").to_string();
+    let description = intent.description();
     let header = Row::new()
         .push(
             button::secondary(Some(icon::previous_icon()), "Back")
@@ -1364,30 +1362,11 @@ pub fn final_check_page<'a>(
 
     content = content.push(Space::new().height(Length::Fixed(2.0)));
 
-    // Determine fee display: for USDt sends, the SDK may pay fees in USDt (asset fees)
-    // or in L-BTC. Check `estimated_asset_fees` first — if set, fees are paid in USDt.
-    let usdt_asset_fees: Option<f64> = if to_asset == SendAsset::Usdt {
-        prepare_response.and_then(|p| p.estimated_asset_fees)
-    } else {
-        None
-    };
-
-    let fees_sat = if usdt_asset_fees.is_some() {
-        // Fees paid in USDt — no L-BTC fee to display
-        0
-    } else if to_asset == SendAsset::Usdt {
-        prepare_response.and_then(|p| p.fees_sat).unwrap_or(0)
-    } else if let Some(input_type) = input_type {
-        match input_type {
-            InputType::BitcoinAddress { .. } => prepare_onchain_response
-                .map(|p| p.total_fees_sat)
-                .unwrap_or(0),
-            _ => prepare_response.and_then(|p| p.fees_sat).unwrap_or(0),
-        }
-    } else {
-        0
-    };
-
+    // Fee display: for USDt sends the SDK may quote the fee in USDt (asset fees)
+    // or in L-BTC. The intent answers both, from the response it actually holds
+    // — no guessing from the input type about which prepare applies.
+    let usdt_asset_fees: Option<f64> = intent.asset_fees();
+    let fees_sat = intent.fees_sat();
     let fees_amount = Amount::from_sat(fees_sat);
 
     if to_asset == SendAsset::Usdt {
@@ -1529,8 +1508,7 @@ pub fn final_check_page<'a>(
             .into();
     }
 
-    let total_sat = amount.to_sat() + fees_sat;
-    let total_amount = Amount::from_sat(total_sat);
+    let total_amount = Amount::from_sat(intent.total_sat());
 
     content = content.push(
         Container::new(

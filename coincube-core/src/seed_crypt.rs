@@ -101,7 +101,7 @@ const MIN_V2_LEN: usize = MARKER_LEN + HEADER_LEN + SALT_LEN + NONCE_LEN + TAG_L
 /// AES-GCM ciphertext is exactly plaintext-length plus a 16-byte tag, and every
 /// other field in the envelope is fixed-size. So without padding `ls -l` reads
 /// out the plaintext length: a 12-word mnemonic (~80–95 bytes), a 24-word
-/// passkey-derived one (~150–215) and the duress marker were each identifiable
+/// restored one (~150–215) and the duress marker were each identifiable
 /// on sight. The marker used to compensate with a hand-tuned 93-byte constant
 /// that matched *a common 12-word mnemonic* and nothing else — it was still
 /// distinguishable from a 24-word Cube, and from 12-word Cubes whose words

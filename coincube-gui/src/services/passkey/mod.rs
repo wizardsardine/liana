@@ -125,9 +125,16 @@ pub enum PasskeyError {
 }
 
 impl PasskeyError {
-    /// Copy for the user. Per **I12**, none of these may read as a lost or
-    /// corrupt Cube, and each of the three passkey-specific outcomes says
-    /// something different about what to do next.
+    /// Copy for the user when a passkey ceremony **unlocks** an existing Cube.
+    ///
+    /// Per **I12**, none of these may read as a lost or corrupt Cube, and each
+    /// of the three passkey-specific outcomes says something different about
+    /// what to do next.
+    ///
+    /// Do not use this for a *registration* failure — see
+    /// [`Self::registration_message`]. Every message here speaks about "this
+    /// Cube" and offers the Recovery Kit, which during creation describes a
+    /// Cube that does not exist and a Kit the user cannot have.
     pub fn user_message(&self) -> String {
         match self {
             Self::Cancelled => "Touch ID was cancelled, so this Cube stayed locked. \
@@ -155,6 +162,58 @@ impl PasskeyError {
                 "Couldn't complete the passkey check, so this Cube stayed locked. \
                  The Cube itself is fine — try again, or restore it from your Recovery \
                  Kit. ({other})"
+            ),
+        }
+    }
+
+    /// Copy for the user when the ceremony was **registering** a passkey for a
+    /// Cube being created.
+    ///
+    /// The registration mirror of [`Self::user_message`], and the reason the
+    /// two cannot be one function: at registration time nothing has been
+    /// written to disk, so the only true statement is "your Cube was not
+    /// created". The unlock copy instead reassures the user that "the Cube
+    /// itself is fine" and points them at their Recovery Kit — during creation
+    /// that names a Cube that does not exist and sends them looking for a Kit
+    /// they were never issued.
+    ///
+    /// Every arm therefore says the Cube was not created, offers the PIN path
+    /// as the way forward, and mentions no Recovery Kit.
+    ///
+    /// # The failure a developer will hit first
+    ///
+    /// On an unsigned local build every registration lands in
+    /// [`Self::CredentialNotFound`] with `ASAuthorizationError` 1004 and the
+    /// detail "The calling process does not have an application identifier".
+    /// That is macOS refusing WebAuthn to a process with no code-signed app
+    /// identity — `cargo run` produces a bare binary, not a bundle — and no
+    /// user-facing wording can fix it. The detail is preserved in the log for
+    /// exactly this case; see `contrib/release/macos/README.md`.
+    pub fn registration_message(&self) -> String {
+        match self {
+            Self::Cancelled => "Passkey setup was cancelled. Your Cube was not created — \
+                 try again, or create it with a PIN instead."
+                .to_string(),
+            Self::PrfNotSupported => {
+                "This Mac's passkeys can't produce the key material COINCUBE needs, so \
+                 this Cube can't be secured with one. Your Cube was not created — \
+                 create it with a PIN instead."
+                    .to_string()
+            }
+            Self::CredentialNotFound(_) => {
+                "This Mac couldn't create a passkey. Check that you're signed in to your \
+                 Apple ID with iCloud Keychain on, then try again — or create this Cube \
+                 with a PIN instead. Your Cube was not created."
+                    .to_string()
+            }
+            Self::InvalidPrfOutput => {
+                "The new passkey returned key material COINCUBE couldn't use, so your \
+                 Cube was not created. Try again, or create it with a PIN instead."
+                    .to_string()
+            }
+            other => format!(
+                "Couldn't set up a passkey, so your Cube was not created. Try again, \
+                 or create it with a PIN instead. ({other})"
             ),
         }
     }
@@ -435,6 +494,95 @@ impl std::fmt::Debug for CeremonyOutcome {
                 .debug_struct("Authenticated")
                 .field("prf_output", &"<redacted>")
                 .finish(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every classified outcome, so a new variant cannot be added without a
+    /// decision about what it says at registration time.
+    fn every_error() -> Vec<PasskeyError> {
+        vec![
+            PasskeyError::Cancelled,
+            PasskeyError::PrfNotSupported,
+            PasskeyError::CredentialNotFound("code 1004".to_string()),
+            PasskeyError::InvalidPrfOutput,
+            PasskeyError::CeremonyFailed("boom".to_string()),
+            PasskeyError::WebviewFailed("boom".to_string()),
+            PasskeyError::InvalidResponse("boom".to_string()),
+        ]
+    }
+
+    /// The registration mirror of **I12**. Nothing exists yet when registration
+    /// fails, so no message may describe a Cube the user has or a backup they
+    /// were never issued — and every one must say the Cube was not created, or
+    /// the user is left unable to tell whether a half-made Cube is sitting on
+    /// disk.
+    #[test]
+    fn registration_failures_never_name_a_cube_that_does_not_exist() {
+        for error in every_error() {
+            let msg = error.registration_message();
+            let lower = msg.to_lowercase();
+
+            assert!(
+                !lower.contains("recovery kit"),
+                "registration copy sends the user to a Recovery Kit they \
+                 cannot have yet: {}",
+                msg
+            );
+            assert!(
+                !lower.contains("this cube's passkey")
+                    && !lower.contains("the cube itself is fine")
+                    && !lower.contains("stayed locked"),
+                "registration copy talks about an existing Cube: {}",
+                msg
+            );
+            assert!(
+                lower.contains("was not created"),
+                "registration copy must say the Cube was not created, so the \
+                 user knows nothing was left behind: {}",
+                msg
+            );
+            // The I12 rule itself still holds on this side.
+            for forbidden in ["lost", "gone", "corrupt", "deleted", "destroyed"] {
+                assert!(
+                    !lower.contains(forbidden),
+                    "registration copy says {:?}, which reads as a \
+                     wallet the user has lost: {}",
+                    forbidden,
+                    msg
+                );
+            }
+        }
+    }
+
+    /// The two message sets are for different moments and must not be swapped
+    /// by a later refactor that "deduplicates" them.
+    #[test]
+    fn registration_and_unlock_copy_differ_for_every_error() {
+        for error in every_error() {
+            assert_ne!(
+                error.registration_message(),
+                error.user_message(),
+                "registration and unlock copy are identical for {:?}",
+                error
+            );
+        }
+    }
+
+    /// Cancelling is the most common failure and the one most likely to be
+    /// misread; it stays distinguishable from the rest here too.
+    #[test]
+    fn cancelled_registration_is_distinguishable() {
+        let cancelled = PasskeyError::Cancelled.registration_message();
+        for other in every_error()
+            .into_iter()
+            .filter(|e| e != &PasskeyError::Cancelled)
+        {
+            assert_ne!(cancelled, other.registration_message());
         }
     }
 }

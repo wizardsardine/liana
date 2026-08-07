@@ -450,15 +450,23 @@ mod tests {
     }
 
     /// Write a real master-seed file so the folder holds what a Cube's folder
-    /// actually holds. `word_count` picks between a 12-word Cube and a 24-word
-    /// (passkey-derived) one.
+    /// actually holds. `word_count` picks between a 12-word Cube — what both
+    /// creation paths produce — and one restored from a 24-word phrase.
     fn store_seed(dir: &Path, cube_id: &str, word_count: usize) -> String {
         use coincube_core::signer::MasterSigner;
 
         let secp = Secp256k1::signing_only();
         let signer = match word_count {
             12 => MasterSigner::generate(NET).unwrap(),
-            24 => MasterSigner::from_prf_output(NET, &[0x5A; 32]).unwrap(),
+            // A 24-word mnemonic — the largest a seed file can hold. No Cube
+            // shape produces one any more (both creation paths make 12 words),
+            // but the envelope must still cover the longest phrase a restore
+            // could ever carry in.
+            24 => MasterSigner::from_mnemonic(
+                NET,
+                coincube_core::bip39::Mnemonic::from_entropy(&[0x5A; 32]).unwrap(),
+            )
+            .unwrap(),
             other => panic!("unsupported word count {}", other),
         };
         assert_eq!(
