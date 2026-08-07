@@ -936,6 +936,17 @@ pub struct LightningAddress {
     pub lightning_address: Option<String>,
 }
 
+/// Response of `GET /api/v1/connect/cubes/{id}/lightning-address/check`.
+/// Our API's answer is authoritative for `@coincube.io` usernames — it is
+/// the same conflict source the reserve step hits, including reservations
+/// that never made it to the Breez-hosted LNURL server.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LightningAddressAvailability {
+    pub available: bool,
+    pub username: String,
+}
+
 /// Error response shape: `{ "success": false, "error": { "code": "...", "message": "..." } }`
 #[derive(Debug, Clone, Deserialize)]
 pub struct ApiErrorResponse {

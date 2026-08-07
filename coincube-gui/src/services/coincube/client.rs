@@ -5,13 +5,13 @@ use super::{
     ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest,
     CubeEncryptionPubkeyResponse, CubeInviteOrAddResult, CubeKeyRaw, CubeLimitsResponse,
     CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData, Invite, LightningAddress,
-    LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest, PublicAvatarData,
-    PutCubeEncryptionPubkeyRequest, ReceivedInvite, RecoveryKit, RecoveryKitStatus,
-    RedeemCampaignRequest, RedeemCampaignResponse, RefreshTokenRequest, RegenerationData,
-    RegisterCubeRequest, ReportEnvelopeInvalidRequest, ReserveLightningAddressRequest,
-    SaveQuoteRequest, SaveQuoteResponse, StatsPeriod, TimeseriesResponse, TodayStats,
-    UpdateCubeRequest, UpdateLightningAddressRequest, UpsertRecoveryKitRequest, User,
-    VaultMemberResponse, VerifiedDevice,
+    LightningAddressAvailability, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
+    PublicAvatarData, PutCubeEncryptionPubkeyRequest, ReceivedInvite, RecoveryKit,
+    RecoveryKitStatus, RedeemCampaignRequest, RedeemCampaignResponse, RefreshTokenRequest,
+    RegenerationData, RegisterCubeRequest, ReportEnvelopeInvalidRequest,
+    ReserveLightningAddressRequest, SaveQuoteRequest, SaveQuoteResponse, StatsPeriod,
+    TimeseriesResponse, TodayStats, UpdateCubeRequest, UpdateLightningAddressRequest,
+    UpsertRecoveryKitRequest, User, VaultMemberResponse, VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -584,6 +584,33 @@ impl CoincubeClient {
         let res = res.check_success().await?;
         let resp: ApiResponse<LightningAddress> = res.json().await?;
         Ok(resp.data)
+    }
+
+    /// Availability check against our own API — the authoritative store
+    /// for `@coincube.io` usernames and the exact conflict source the
+    /// reserve step hits. The Breez-side
+    /// `check_lightning_address_available` only consults the LNURL
+    /// registry, which reports "available" for a username an unconfirmed
+    /// or orphaned reservation still holds in our DB — so the typing hint
+    /// must AND both answers.
+    pub async fn check_lightning_address_available(
+        &self,
+        cube_id: &str,
+        username: &str,
+    ) -> Result<bool, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/lightning-address/check",
+            self.base_url, cube_id
+        );
+        let res = self
+            .client
+            .get(&url)
+            .query(&[("username", username)])
+            .send()
+            .await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<LightningAddressAvailability> = res.json().await?;
+        Ok(resp.data.available)
     }
 
     /// Phase 4g step 1: reserve `username` against the cube. The API
