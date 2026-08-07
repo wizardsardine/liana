@@ -456,10 +456,11 @@ impl MasterSigner {
 
     /// The BIP39 mnemonics from which the master key of this signer is derived.
     ///
-    /// Length is 12 for a generated or user-entered seed and 24 for a
-    /// passkey-derived one (`from_prf_output` feeds BIP39 16 bytes of
-    /// HKDF output). It used to return `[&str; 12]` with an `.expect("Always
-    /// 12 words")`; that would now panic on a passkey Cube.
+    /// Length is 12 for both creation paths — [`Self::generate`] and
+    /// [`Self::from_prf_output`] each feed BIP39 16 bytes of entropy — and 24
+    /// for a seed restored from a 24-word phrase the user typed in. It used to
+    /// return `[&str; 12]` with an `.expect("Always 12 words")`; that would
+    /// panic on a restored 24-word seed.
     pub fn words(&self) -> Vec<&'static str> {
         self.mnemonic.words().collect()
     }

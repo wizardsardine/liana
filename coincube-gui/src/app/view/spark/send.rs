@@ -524,8 +524,9 @@ fn phase_body<'a>(
 
         // A dispatched payment with no answer. The heading is the whole point:
         // this must never read as "failed", because the payment may well have
-        // gone through — and the only action offered before the check finishes
-        // is waiting.
+        // gone through — and until the check finishes the only thing offered is
+        // waiting, plus a read-only look at the transaction list. Nothing that
+        // could send it a second time.
         SparkSendPhase::OutcomeUnknown {
             message,
             outcome,
@@ -565,13 +566,21 @@ fn phase_body<'a>(
                             .on_press(Message::SparkSend(SparkSendMessage::ReconcileRequested))
                             .width(Length::Fixed(140.0)),
                     );
-                    actions = actions.push(
-                        button::transparent_border(None, "View transactions")
-                            .on_press(Message::SparkSend(SparkSendMessage::History))
-                            .width(Length::Fixed(180.0)),
-                    );
                 }
             }
+
+            // Offered in both arms, and last in the row either way. It is
+            // read-only — a redirect to the transaction list, no resend and no
+            // new idempotency key — so it does not undercut "wait while the
+            // check runs". Building it inside the resolved arm alone left the
+            // checking arm with an empty action row: the one screen where the
+            // user most wants to go look for their payment offered nothing to
+            // press.
+            actions = actions.push(
+                button::transparent_border(None, "View transactions")
+                    .on_press(Message::SparkSend(SparkSendMessage::History))
+                    .width(Length::Fixed(180.0)),
+            );
 
             Container::new(
                 content

@@ -450,8 +450,8 @@ mod tests {
     }
 
     /// Write a real master-seed file so the folder holds what a Cube's folder
-    /// actually holds. `word_count` picks between a 12-word Cube and a 24-word
-    /// (passkey-derived) one.
+    /// actually holds. `word_count` picks between a 12-word Cube — what both
+    /// creation paths produce — and one restored from a 24-word phrase.
     fn store_seed(dir: &Path, cube_id: &str, word_count: usize) -> String {
         use coincube_core::signer::MasterSigner;
 

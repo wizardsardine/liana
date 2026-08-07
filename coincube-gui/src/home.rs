@@ -148,10 +148,19 @@ pub enum CreationBackupStep {
 ///
 /// # What is *not* kept here
 ///
-/// Neither the PRF output nor the derived signer. The fingerprint is computed
-/// at ceremony time and the seed material dropped immediately: a passkey Cube
-/// stores no seed anyway (it re-derives from the credential on every open), so
-/// holding it across a user-paced step would be secret-lifetime for nothing.
+/// Neither the PRF output nor the derived signer: the fingerprint is taken at
+/// ceremony time and both are dropped before this struct is built. A passkey
+/// Cube stores no seed either — it re-derives from the credential on every
+/// open.
+///
+/// The derived *phrase* is a different matter, and is not kept in this struct
+/// but does outlive the ceremony. `passkey_registration_succeeded` puts it in
+/// `creation_backup_words` under `Zeroizing`, where it stays until the backup
+/// step ends and `scrub_creation_seed` clears each word. That is deliberate:
+/// the Recovery Kit branch has to encrypt the seed, and the PRF output is
+/// reachable at the ceremony and nowhere afterwards without a second Touch ID
+/// prompt. It is the same bargain, the same field and the same scrub the PIN
+/// path already uses.
 #[derive(Debug, Clone)]
 struct PendingPasskeyCube {
     /// Base64 WebAuthn credential id, as persisted in `PasskeyMetadata`.
@@ -2433,11 +2442,16 @@ impl Home {
     /// webview one — so there is exactly one answer to "what happens when a
     /// credential is registered", and it is testable without a real ceremony.
     ///
-    /// It derives the Cube's fingerprint, drops the seed material, and hands
-    /// over to the creation-backup step. **Nothing is written to disk**: that is
-    /// [`Self::finalize_passkey_cube_creation`], reached only once the user has
-    /// accepted the bypass acknowledgement (the sole exit a passkey Cube has
-    /// today — see [`DEFAULT_PASSKEY_MODE`]).
+    /// It derives the Cube's fingerprint, drops the PRF output and the signer,
+    /// keeps the phrase for the duration of the step (see
+    /// [`PendingPasskeyCube`]), and hands over to the creation-backup step.
+    ///
+    /// **Nothing is written to disk**: that is
+    /// [`Self::finalize_passkey_cube_creation`], reached once the step resolves
+    /// through any of its three exits — the written phrase, a Recovery Kit, or
+    /// the recorded bypass acknowledgement. The acknowledgement was the only
+    /// one a passkey Cube had until both paths moved to a 12-word mnemonic and
+    /// the same wizard; [`Self::default_passkey_mode`] records that change.
     fn passkey_registration_succeeded(
         &mut self,
         credential_id: String,
@@ -7495,17 +7509,23 @@ mod tests {
     }
 
     /// An upload that comes back without the seed half is not a backup, and
-    /// must not be recorded as one. (The refusal lives in the upload task; this
-    /// pins the evidence shape it is allowed to produce.)
+    /// must not be recorded as one. The upload task refuses to write that
+    /// evidence — but `has_seed` is read back off disk, so the gate itself has
+    /// to hold the line for a record written by anything else.
     #[test]
     fn only_a_kit_that_holds_the_seed_counts_as_evidence() {
-        let mut cube = CubeSettings::new("SeedOnly".to_string(), Network::Bitcoin);
-        cube.creation_backup_required = true;
-        cube.creation_recovery_kit = Some(creation_gate::CreationRecoveryKit {
-            at: 1_700_000_000,
-            cube_id: 5,
-            has_seed: true,
-        });
+        let kitted = |has_seed| {
+            let mut cube = CubeSettings::new("SeedOnly".to_string(), Network::Bitcoin);
+            cube.creation_backup_required = true;
+            cube.creation_recovery_kit = Some(creation_gate::CreationRecoveryKit {
+                at: 1_700_000_000,
+                cube_id: 5,
+                has_seed,
+            });
+            cube
+        };
+
+        let cube = kitted(true);
         assert!(cube
             .creation_recovery_kit
             .as_ref()
@@ -7513,6 +7533,17 @@ mod tests {
         assert_eq!(
             creation_gate::evaluate_for_cube(&cube, None),
             creation_gate::CreationGate::Satisfied
+        );
+
+        // A Kit that never got the seed restores nothing. Its mere presence
+        // must not stand in for a backup.
+        assert!(
+            matches!(
+                creation_gate::evaluate_for_cube(&kitted(false), None),
+                creation_gate::CreationGate::Blocked(_)
+            ),
+            "a seedless Kit satisfied the gate — the Cube it cannot restore is \
+             free to be funded"
         );
     }
 

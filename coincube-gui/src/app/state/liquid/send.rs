@@ -241,14 +241,29 @@ impl PreparedIntent {
         self.context.description.as_deref()
     }
 
-    /// Fee paid in the asset (USDt), when the SDK quoted one. `None` means the
-    /// fee is paid in L-BTC and [`Self::fees_sat`] carries it.
+    /// Fee paid in the asset (USDt), when the payment about to be executed
+    /// actually pays in it. `None` means the fee is paid in L-BTC and
+    /// [`Self::fees_sat`] carries it.
+    ///
+    /// Keyed on the `use_asset_fees` frozen into the payment — the same value
+    /// `ConfirmSend` hands the SDK — not on the destination asset alone. The
+    /// SDK quotes `estimated_asset_fees` alongside `fees_sat` whenever an asset
+    /// fee is *available*, including on the two shapes that cannot use one: a
+    /// cross-asset send (refused by the SDK) and a same-asset USDt send where
+    /// the user declined asset fees. Reading the quote on its own therefore
+    /// showed a USDt fee and a zero L-BTC fee for a payment that was about to
+    /// deduct L-BTC, and `total_sat` under-reported by that fee.
     pub fn asset_fees(&self) -> Option<f64> {
         if self.context.to_asset != SendAsset::Usdt {
             return None;
         }
         match &self.payment {
-            PreparedPayment::Regular { response, .. } => response.estimated_asset_fees,
+            PreparedPayment::Regular {
+                response,
+                use_asset_fees,
+            } => use_asset_fees
+                .then_some(response.estimated_asset_fees)
+                .flatten(),
             PreparedPayment::Onchain { .. } => None,
         }
     }
@@ -1791,29 +1806,42 @@ impl State for LiquidSend {
                         return Task::none();
                     }
 
-                    // If the preferred fee method is unavailable, fall back to the
-                    // other one automatically.
-                    let mut pay_fees_with_asset = context.pay_fees_with_asset;
-                    if !pay_fees_with_asset
-                        && prepare_response.fees_sat.is_none()
-                        && prepare_response.estimated_asset_fees.is_some()
-                    {
-                        pay_fees_with_asset = true;
-                    } else if pay_fees_with_asset
-                        && prepare_response.estimated_asset_fees.is_none()
-                        && prepare_response.fees_sat.is_some()
-                    {
-                        pay_fees_with_asset = false;
-                    }
-                    self.pay_fees_with_asset = pay_fees_with_asset;
+                    // The fee-method choice exists only for a same-asset USDt
+                    // send: a cross-asset swap cannot use asset fees (SDK
+                    // constraint) and no other send is offered one. Both the
+                    // fallback and the write-back are scoped to that shape.
+                    //
+                    // Unscoped, the fallback read every response — and an L-BTC
+                    // send's response is always `fees_sat: Some` with no asset
+                    // fee, which is exactly the second branch's "the asset fee
+                    // is unavailable, switch them to L-BTC". So sending L-BTC
+                    // silently cleared a `pay_fees_with_asset` the user had set
+                    // for USDt, and the next USDt send opened with a preference
+                    // they never changed (it also drives the SendMax branch).
+                    let asset_fee_choice_applies = context.from_asset == context.to_asset
+                        && matches!(context.to_asset, SendAsset::Usdt);
 
-                    // Cross-asset swaps cannot use asset fees per SDK constraint.
-                    // For same-asset USDt sends, respect the user's preference.
+                    let mut pay_fees_with_asset = context.pay_fees_with_asset;
+                    if asset_fee_choice_applies {
+                        // If the preferred fee method is unavailable, fall back
+                        // to the other one automatically.
+                        if !pay_fees_with_asset
+                            && prepare_response.fees_sat.is_none()
+                            && prepare_response.estimated_asset_fees.is_some()
+                        {
+                            pay_fees_with_asset = true;
+                        } else if pay_fees_with_asset
+                            && prepare_response.estimated_asset_fees.is_none()
+                            && prepare_response.fees_sat.is_some()
+                        {
+                            pay_fees_with_asset = false;
+                        }
+                        self.pay_fees_with_asset = pay_fees_with_asset;
+                    }
+
                     // Resolved here, once, and carried by the intent — never
                     // recomputed at confirm time from fields that have moved on.
-                    let use_asset_fees = context.from_asset == context.to_asset
-                        && matches!(context.to_asset, SendAsset::Usdt)
-                        && pay_fees_with_asset;
+                    let use_asset_fees = asset_fee_choice_applies && pay_fees_with_asset;
 
                     let mut context = (**context).clone();
                     context.pay_fees_with_asset = pay_fees_with_asset;
@@ -2212,11 +2240,19 @@ impl State for LiquidSend {
                         // On FinalCheck but superseded: fail closed and say so
                         // rather than sending something the user didn't approve.
                         if matches!(self.flow_state, LiquidSendFlowState::FinalCheck(_)) {
-                            self.error = Some(
+                            self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
+                            // Said through the global toast, not `self.error`.
+                            // That field reaches the screen only via the
+                            // AmountInput modal, and this branch lands on
+                            // `Modal::None` — so the refusal rendered nowhere
+                            // and the payment appeared to vanish on its own.
+                            // Clearing it also stops the banner resurfacing over
+                            // whatever the user composes next.
+                            self.error = None;
+                            return Task::done(Message::View(view::Message::ShowError(
                                 "This payment is no longer current. Please start again."
                                     .to_string(),
-                            );
-                            self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
+                            )));
                         }
                         return Task::none();
                     };
@@ -2510,6 +2546,37 @@ mod tests {
         );
     }
 
+    /// `send`, but handing back the messages the update emitted. Anything the
+    /// screen reports through the global toast rather than its own state is
+    /// only observable here.
+    fn send_emitting(panel: &mut LiquidSend, msg: view::LiquidSendMessage) -> Vec<Message> {
+        use iced_runtime::futures::futures::StreamExt;
+
+        let task = panel.update(
+            None,
+            &cache(),
+            Message::View(view::Message::LiquidSend(msg)),
+        );
+        let Some(stream) = iced_runtime::task::into_stream(task) else {
+            return Vec::new();
+        };
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async move {
+                stream
+                    .filter_map(|action| async move {
+                        match action {
+                            iced_runtime::Action::Output(msg) => Some(msg),
+                            _ => None,
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .await
+            })
+    }
+
     fn liquid_input(address: &str) -> InputType {
         InputType::LiquidAddress {
             address: LiquidAddressData {
@@ -2787,10 +2854,27 @@ mod tests {
         assert!(p.prepared_intent().is_some());
         assert!(p.executable_intent().is_none());
 
-        send(&mut p, view::LiquidSendMessage::ConfirmSend);
+        let emitted = send_emitting(&mut p, view::LiquidSendMessage::ConfirmSend);
         assert!(!p.is_sending, "a superseded intent must not be sent");
         assert!(matches!(p.flow_state, LiquidSendFlowState::Main { .. }));
-        assert!(p.error.is_some(), "the user must be told to start again");
+
+        // Told through the toast, which is the only channel that reaches the
+        // user here: this branch lands on `Modal::None`, and `self.error` is
+        // rendered by the AmountInput modal alone. Asserting on `self.error`
+        // passed while the user saw nothing at all.
+        assert!(
+            emitted.iter().any(|m| matches!(
+                m,
+                Message::View(view::Message::ShowError(msg))
+                    if msg.contains("no longer current")
+            )),
+            "the user must be told to start again, got: {:?}",
+            emitted
+        );
+        assert!(
+            p.error.is_none(),
+            "a stale banner must not follow the user to the next payment"
+        );
     }
 
     /// Editing the destination invalidates a prepare made for the old one.
@@ -2933,5 +3017,73 @@ mod tests {
                 ..
             })
         ));
+
+        // And the fee the screen shows follows that refusal. The SDK quoted an
+        // asset fee anyway; displaying it here would promise a USDt fee and a
+        // zero L-BTC fee for a payment that pays 11 sats in L-BTC.
+        let intent = p.executable_intent().expect("prepared");
+        assert_eq!(
+            intent.asset_fees(),
+            None,
+            "a cross-asset send does not pay fees in the asset, whatever the SDK quoted"
+        );
+        assert_eq!(intent.fees_sat(), 11, "the L-BTC fee must still be shown");
+    }
+
+    /// The fee-method fallback belongs to the same-asset USDt send and nothing
+    /// else. An L-BTC send's prepare response is always `fees_sat: Some` with no
+    /// asset fee — the exact shape the fallback reads as "asset fees are
+    /// unavailable, switch them to L-BTC" — so before this was scoped, sending
+    /// L-BTC cleared a preference the user had set for USDt, and the next USDt
+    /// send opened with a fee method they never chose.
+    #[test]
+    fn an_lbtc_send_leaves_the_usdt_fee_preference_alone() {
+        let mut p = panel();
+        p.pay_fees_with_asset = true; // chosen earlier, on a USDt send
+        compose(&mut p, liquid_input("lq1a"), 50_000);
+
+        let ctx = Box::new(p.open_prepare_context());
+        send(
+            &mut p,
+            view::LiquidSendMessage::PrepareResponseReceived(ctx, regular_response("lq1a", 11)),
+        );
+
+        assert!(
+            p.pay_fees_with_asset(),
+            "an L-BTC send changed the USDt fee preference"
+        );
+        // And the payment it prepared pays its fee in L-BTC regardless.
+        let intent = p.executable_intent().expect("prepared");
+        assert_eq!(intent.asset_fees(), None);
+        assert_eq!(intent.fees_sat(), 11);
+    }
+
+    /// Same asset, USDt, but the user declined asset fees: the SDK still quotes
+    /// one, and the payment still executes with `use_asset_fees: false`. The
+    /// screen must show the L-BTC fee it is actually going to pay.
+    #[test]
+    fn declining_asset_fees_shows_the_lbtc_fee() {
+        let mut asset_response = regular_response("lq1a", 11);
+        asset_response.estimated_asset_fees = Some(0.5);
+        let intent = PreparedIntent::new(
+            PrepareContext {
+                generation: 1,
+                amount: Amount::from_sat(0),
+                usdt_amount_display: "12.34".to_string(),
+                to_asset: SendAsset::Usdt,
+                from_asset: SendAsset::Usdt,
+                comment: None,
+                description: None,
+                pay_fees_with_asset: false,
+            },
+            PreparedPayment::Regular {
+                response: Box::new(asset_response),
+                use_asset_fees: false,
+            },
+        );
+
+        assert_eq!(intent.asset_fees(), None);
+        assert_eq!(intent.fees_sat(), 11);
+        assert_eq!(intent.total_sat(), 11);
     }
 }

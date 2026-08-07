@@ -213,7 +213,19 @@ pub fn evaluate_for_cube(
     // Kit this client uploaded during creation. `kit_halves` is `None` at open
     // time by design, so a Kit that exists only on the server cannot answer
     // this question — see [`CreationRecoveryKit`].
-    let local_backup = cube.backed_up || cube.creation_recovery_kit.is_some();
+    //
+    // The Kit must actually hold the seed. `has_seed` is read back from
+    // `settings.json`, so `is_some()` alone trusted the writer: the upload task
+    // refuses to record evidence for a seedless Kit today, but a record written
+    // by an older build, or by any future path that forgets that check, would
+    // satisfy a fail-closed gate with a Kit that cannot restore the Cube. A
+    // seedless Kit falls through to `kit`, which is `Unknown` at open time and
+    // blocks.
+    let local_backup = cube.backed_up
+        || cube
+            .creation_recovery_kit
+            .as_ref()
+            .is_some_and(|kit| kit.has_seed);
     evaluate(local_backup, kit, cube.creation_backup_bypass.as_ref())
 }
 
