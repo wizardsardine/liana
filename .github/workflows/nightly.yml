@@ -15,6 +15,17 @@ env:
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
   BREEZ_API_KEY: ${{ secrets.BREEZ_API_KEY }}
   COINCUBE_API_URL: ${{ vars.COINCUBE_API_URL }}
+  # Build-time passkey flags — the same repo-level Actions variables
+  # releases.yml reads. They have to be here too, or the nightly DMG is the one
+  # artifact people actually install with the passkey path compiled out:
+  # `option_env!` sees nothing (`.env` is gitignored and absent on a runner, so
+  # `coincube-gui/build.rs` forwards nothing), `PASSKEY_ENABLED` is `false`, and
+  # the `const _: () = assert!` in `coincube-gui/src/feature_flags.rs` stays
+  # quiet because it only guards the flag being *on*. Nothing downstream
+  # notices: codesign, notarization and spctl all pass. This is how every
+  # nightly between 32e0033a and 2026-08-07 shipped without Passkey.
+  COINCUBE_ENABLE_PASSKEY: ${{ vars.COINCUBE_ENABLE_PASSKEY }}
+  COINCUBE_PASSKEY_RP_ID: ${{ vars.COINCUBE_PASSKEY_RP_ID }}
 
 jobs:
   # Gate the build: a scheduled nightly is skipped when master has not changed
