@@ -5,14 +5,13 @@ use super::{
     ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest,
     CubeEncryptionPubkeyResponse, CubeInviteOrAddResult, CubeKeyRaw, CubeLimitsResponse,
     CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData, Invite, LightningAddress,
-    LightningAddressAvailability,
-    LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest, PublicAvatarData,
-    PutCubeEncryptionPubkeyRequest, ReceivedInvite, RecoveryKit, RecoveryKitStatus,
-    RedeemCampaignRequest, RedeemCampaignResponse, RefreshTokenRequest, RegenerationData,
-    RegisterCubeRequest, ReportEnvelopeInvalidRequest, ReserveLightningAddressRequest,
-    SaveQuoteRequest, SaveQuoteResponse, StatsPeriod, TimeseriesResponse, TodayStats,
-    UpdateCubeRequest, UpdateLightningAddressRequest, UpsertRecoveryKitRequest, User,
-    VaultMemberResponse, VerifiedDevice,
+    LightningAddressAvailability, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
+    PublicAvatarData, PutCubeEncryptionPubkeyRequest, ReceivedInvite, RecoveryKit,
+    RecoveryKitStatus, RedeemCampaignRequest, RedeemCampaignResponse, RefreshTokenRequest,
+    RegenerationData, RegisterCubeRequest, ReportEnvelopeInvalidRequest,
+    ReserveLightningAddressRequest, SaveQuoteRequest, SaveQuoteResponse, StatsPeriod,
+    TimeseriesResponse, TodayStats, UpdateCubeRequest, UpdateLightningAddressRequest,
+    UpsertRecoveryKitRequest, User, VaultMemberResponse, VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
