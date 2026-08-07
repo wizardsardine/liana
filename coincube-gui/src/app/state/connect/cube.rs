@@ -631,21 +631,57 @@ impl ConnectCubePanel {
                     return iced::Task::none();
                 };
 
-                // Debounced availability check against the Breez-hosted
-                // LNURL server. This is the UX hint during typing — the
-                // authoritative conflict check is what our Go API does
-                // on reserve. Abort any previous in-flight task.
+                // Debounced availability check. Two sources, ANDed:
+                // the Breez-hosted LNURL server (catches names
+                // registered outside our DB) and our own Go API
+                // (authoritative for @coincube.io — the same conflict
+                // source the reserve step hits, including unconfirmed
+                // or orphaned reservations Breez has never heard of;
+                // Breez-only checking showed "Available" for names the
+                // reserve then 409'd). The API result is still just a
+                // hint — reserve remains the authoritative gate — so
+                // an API *error* falls back to the Breez-only answer
+                // rather than blocking typing. Abort any previous
+                // in-flight task.
                 if let Some(handle) = self.ln_check_abort.take() {
                     handle.abort();
                 }
                 self.ln_check_version += 1;
                 let version = self.ln_check_version;
                 let username = self.ln_username_input.clone();
+                let api_client = self.client.clone();
+                let api_cube_id = self.api_cube_id();
                 self.ln_checking = true;
                 let (task, abort_handle) = iced::Task::perform(
                     async move {
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                        let res = spark.check_lightning_address_available(username).await;
+                        let res = spark
+                            .check_lightning_address_available(username.clone())
+                            .await;
+                        let res = match res {
+                            Ok(true) => {
+                                if let (Some(client), Some(cube_id)) = (api_client, api_cube_id) {
+                                    match client
+                                        .check_lightning_address_available(&cube_id, &username)
+                                        .await
+                                    {
+                                        Ok(api_available) => Ok(api_available),
+                                        Err(e) => {
+                                            log::warn!(
+                                                "[CONNECT-CUBE] API availability check \
+                                                 failed, falling back to Breez-only \
+                                                 hint: {}",
+                                                e
+                                            );
+                                            Ok(true)
+                                        }
+                                    }
+                                } else {
+                                    Ok(true)
+                                }
+                            }
+                            other => other,
+                        };
                         (res, version)
                     },
                     move |(res, v)| match res {
