@@ -36,6 +36,7 @@ use coincube_ui::widget::Element;
 use iced::Task;
 
 use super::cross_chain;
+use crate::app::breez_spark::client::SparkClientError;
 use crate::app::cache::Cache;
 use crate::app::menu::{Menu, SparkSubMenu};
 use crate::app::message::Message;
@@ -88,6 +89,175 @@ pub enum SparkSendPhase {
         message: String,
         policy: cross_chain::RetryPolicy,
     },
+    /// The send was dispatched and we do not know what happened to it.
+    ///
+    /// Kept strictly apart from [`Self::Error`], which means the bridge
+    /// answered and the answer was "no". Here nobody answered: the SDK may
+    /// have paid, may be about to, or may have done nothing. Reporting that as
+    /// a failure — which is what the generic 30s query timeout used to do — is
+    /// how a single payment becomes two, because the failure screen's "Try
+    /// again" resets the flow and mints a fresh idempotency key.
+    ///
+    /// The intent and its key are held across this state, and no new send is
+    /// offered until [`ReconcileOutcome`] says what happened.
+    OutcomeUnknown {
+        message: String,
+        /// `None` while the first check is still running.
+        outcome: Option<ReconcileOutcome>,
+        /// Whether a check is in flight right now.
+        checking: bool,
+        /// What protects a retry on this payment's rail. Carried in the phase
+        /// so the screen renders from the payment that was actually
+        /// dispatched, not from panel state that may since have moved on.
+        guard: RetryGuard,
+    },
+}
+
+/// What can protect a retry of *this* payment from paying twice.
+///
+/// Not a property of the panel but of the rail the payment is on, so it is
+/// recorded when the send is dispatched rather than inferred later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryGuard {
+    /// The bitcoin rails (Lightning / on-chain / Spark / LNURL). The SDK
+    /// honours `idempotency_key`, deriving the transfer id from it, so
+    /// re-sending under the same key cannot pay twice — even across a fresh
+    /// prepare, because the guard is the key, not the handle.
+    IdempotencyKey,
+    /// A token or conversion leg — every cross-chain send. The SDK rejects an
+    /// idempotency key here, so the bridge drops it and the only dedup is
+    /// re-sending the identical provider quote. Once that is gone, nothing
+    /// protects a retry and the user must be sent to check the payment's real
+    /// state instead.
+    None,
+}
+
+/// What a reconciliation check concluded about a payment with an unknown
+/// outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReconcileOutcome {
+    /// The payment exists. It went through; there is nothing to retry.
+    Landed,
+    /// The bridge's own late answer said the send was rejected. Definite, so
+    /// the ordinary correct-and-retry path applies.
+    DefinitelyFailed(String),
+    /// Nothing matching the intent is in the payment history. Combined with
+    /// [`RetryGuard::IdempotencyKey`] this makes another attempt safe — and if
+    /// the history was merely stale, the key dedups it anyway.
+    NoTrace,
+    /// The check itself could not be completed (history unavailable), or the
+    /// rail offers no authoritative way to tell. Never offer a blind retry
+    /// from here.
+    Inconclusive(String),
+}
+
+impl ReconcileOutcome {
+    /// Whether the panel may offer to send again, given the rail's guard.
+    ///
+    /// Fail-closed by construction: only the combination of "no trace of this
+    /// payment" **and** "a retry is idempotency-protected" is safe. Everything
+    /// else — landed, inconclusive, or an unguarded rail — routes the user to
+    /// the payment history instead.
+    pub fn may_resend(&self, guard: RetryGuard) -> bool {
+        matches!(self, Self::NoTrace) && matches!(guard, RetryGuard::IdempotencyKey)
+    }
+
+    /// What to tell the user.
+    pub fn guidance(&self, guard: RetryGuard) -> String {
+        match self {
+            Self::Landed => "This payment did go through. It's in your transaction history — \
+                 don't send it again."
+                .to_string(),
+            Self::DefinitelyFailed(msg) => {
+                format!("The payment was rejected, so nothing was sent: {msg}")
+            }
+            Self::NoTrace => match guard {
+                RetryGuard::IdempotencyKey => {
+                    "No payment matching this one is in your history. Sending again reuses \
+                     the same payment key, so if the first attempt did land after all, it \
+                     can't be paid twice."
+                        .to_string()
+                }
+                RetryGuard::None => {
+                    "No payment matching this one is in your history, but this route can't \
+                     guarantee a retry won't send twice. Refresh and check Transactions \
+                     before sending again."
+                        .to_string()
+                }
+            },
+            Self::Inconclusive(msg) => format!(
+                "Couldn't confirm what happened to this payment ({msg}). Refresh and check \
+                 Transactions before sending again."
+            ),
+        }
+    }
+}
+
+/// How far before the dispatch timestamp a matching payment is still accepted
+/// as "this one".
+///
+/// The SDK stamps a payment when *it* recorded it, which can be a moment before
+/// the gui's own `dispatched_at` (clock skew between the gui process and the
+/// bridge, and the SDK timestamping on entry rather than on completion). Zero
+/// slack would make a payment that plainly is ours look like it isn't — and
+/// that mistake points the wrong way: it would report `NoTrace` for a payment
+/// that landed. Sixty seconds is comfortably more than any plausible skew and
+/// still far short of "some earlier payment of the same size".
+const RECONCILE_BACKDATE_SLACK_SECS: i64 = 60;
+
+/// Whether the payment history contains the send described by `pending`.
+///
+/// Deliberately conservative in the direction that matters: it errs towards
+/// *finding* a match (which blocks a resend) rather than missing one (which
+/// would enable one). An outgoing payment of the same size, no older than the
+/// dispatch minus [`RECONCILE_BACKDATE_SLACK_SECS`], is treated as this
+/// payment.
+///
+/// This is inference, not proof — the SDK has no "look up by idempotency key"
+/// call, so there is nothing better available. It is only ever used to decide
+/// between "definitely landed" and "no evidence"; the safety of acting on the
+/// latter rests on the idempotency key, not on this function being right.
+fn payment_matches_intent(
+    payments: &[coincube_spark_protocol::PaymentSummary],
+    pending: &PendingSend,
+) -> bool {
+    let floor = pending.dispatched_at - RECONCILE_BACKDATE_SLACK_SECS;
+    payments.iter().any(|p| {
+        p.direction.eq_ignore_ascii_case("outgoing")
+            && p.timestamp as i64 >= floor
+            && p.amount_sat.unsigned_abs() == pending.amount_sat
+    })
+}
+
+/// Which guard protects a retry of this prepared payment.
+///
+/// Decided from the prepare itself rather than from a method-name string, so a
+/// new payment method cannot quietly default to "guarded": the presence of a
+/// cross-chain quote *is* the presence of a token/conversion leg, which is
+/// exactly the condition under which the bridge drops the idempotency key
+/// (`execute_regular_send`'s `has_token_leg` gate mirrors the SDK's own).
+pub fn retry_guard_for(prepare: &PrepareSendOk) -> RetryGuard {
+    if prepare.cross_chain.is_some() {
+        RetryGuard::None
+    } else {
+        RetryGuard::IdempotencyKey
+    }
+}
+
+/// The payment a send was dispatched for, kept across an unknown outcome.
+///
+/// Everything reconciliation needs to recognise the payment in the history,
+/// plus the guard that decides whether another attempt may be offered at all.
+#[derive(Debug, Clone)]
+pub struct PendingSend {
+    /// Client request id, for claiming the bridge's late answer.
+    pub request_id: Option<u64>,
+    /// Unix seconds when the send was dispatched. Bounds the history search:
+    /// an older payment of the same size is somebody else's.
+    pub dispatched_at: i64,
+    /// Amount in sats, as prepared.
+    pub amount_sat: u64,
+    pub guard: RetryGuard,
 }
 
 /// The cross-chain destination the user is sending to, and the routes that can
@@ -255,6 +425,10 @@ pub struct SparkSend {
     /// there the retry guard is [`Self::cross_chain_prepare`] instead. Cleared
     /// on success or reset.
     send_idempotency_key: Option<String>,
+    /// The dispatched payment, retained so an unknown outcome can be
+    /// reconciled and — only if reconciliation clears it — retried under the
+    /// same key. `None` whenever no send is in flight or unresolved.
+    pending_send: Option<PendingSend>,
     /// The prepared cross-chain quote of the in-flight send, retained so a
     /// failed send can be retried by re-sending the **same handle** — same
     /// provider swap id, which dedups the BTC leg at the Spark protocol level.
@@ -304,6 +478,7 @@ impl SparkSend {
             slippage_input: String::new(),
             advanced_open: false,
             send_idempotency_key: None,
+            pending_send: None,
             cross_chain_prepare: None,
             quote_countdown: None,
             receive_target: SparkSendTarget::Lightning,
@@ -356,6 +531,7 @@ impl SparkSend {
     /// visible failure, so the key dies with the intent that minted it.
     fn abandon_payment_intent(&mut self) {
         self.send_idempotency_key = None;
+        self.pending_send = None;
         self.cross_chain_prepare = None;
         self.quote_countdown = None;
     }
@@ -452,6 +628,12 @@ impl SparkSend {
             .cross_chain
             .as_deref()
             .map(cross_chain::RetryPolicy::for_quote);
+        // A cross-chain send carries a token/conversion leg, so the bridge
+        // drops the idempotency key the SDK would reject; its only dedup is
+        // re-sending the identical quote. Everything else is on the bitcoin
+        // rails, where the key *is* the guard.
+        let guard = retry_guard_for(&prepare);
+        let amount_sat = prepare.amount_sat;
         if prepare.cross_chain.is_some() {
             self.cross_chain_prepare = Some(prepare);
         }
@@ -460,12 +642,33 @@ impl SparkSend {
             .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
             .clone();
 
+        // Recorded *before* dispatch: if the answer never comes, this is all
+        // reconciliation will have to go on.
+        self.pending_send = Some(PendingSend {
+            request_id: None,
+            dispatched_at: chrono::Utc::now().timestamp(),
+            amount_sat,
+            guard,
+        });
+
         self.phase = SparkSendPhase::Sending;
         Task::perform(
             async move { backend.send_payment(handle, Some(key)).await },
             move |result| match result {
                 Ok(ok) => Message::View(crate::app::view::Message::SparkSend(
                     SparkSendMessage::SendSucceeded(ok),
+                )),
+                // An indeterminate outcome is routed to its own message on
+                // every rail. It is not a cross-chain failure and not a plain
+                // failure: nobody has said the payment didn't happen.
+                Err(SparkClientError::OutcomeUnknown {
+                    request_id,
+                    message,
+                }) => Message::View(crate::app::view::Message::SparkSend(
+                    SparkSendMessage::SendOutcomeUnknown {
+                        request_id,
+                        message,
+                    },
                 )),
                 Err(e) => {
                     let msg = e.to_string();
@@ -474,6 +677,64 @@ impl SparkSend {
                         None => SparkSendMessage::SendFailed(msg),
                     }))
                 }
+            },
+        )
+    }
+
+    /// Check what actually happened to a payment whose outcome is unknown.
+    ///
+    /// Two sources, in order of authority:
+    ///
+    /// 1. **The bridge's own late answer.** If it has arrived since the caller
+    ///    gave up, it is a direct statement about *this* request and settles
+    ///    the question outright — including when it says the send was rejected.
+    /// 2. **The payment history**, bounded to payments at or after the moment
+    ///    of dispatch. This is inference, not proof, so it is used only to say
+    ///    "found it" or "nothing there"; the safety of acting on "nothing
+    ///    there" comes from [`RetryGuard::IdempotencyKey`], not from this list
+    ///    being complete.
+    ///
+    /// Anything that cannot be established returns
+    /// [`ReconcileOutcome::Inconclusive`], which never enables a resend.
+    fn reconcile_unknown_send(&self) -> Task<Message> {
+        use crate::app::view::SparkSendMessage;
+        let (Some(backend), Some(pending)) = (self.backend.clone(), self.pending_send.clone())
+        else {
+            return Task::done(Message::View(crate::app::view::Message::SparkSend(
+                SparkSendMessage::ReconcileFinished(ReconcileOutcome::Inconclusive(
+                    "the payment's details are no longer available".to_string(),
+                )),
+            )));
+        };
+
+        Task::perform(
+            async move {
+                if let Some(request_id) = pending.request_id {
+                    match backend.client().take_late_outcome(request_id).await {
+                        Some(Ok(_sent)) => return ReconcileOutcome::Landed,
+                        Some(Err(SparkClientError::BridgeError { message, .. })) => {
+                            return ReconcileOutcome::DefinitelyFailed(message);
+                        }
+                        Some(Err(e)) => return ReconcileOutcome::Inconclusive(e.to_string()),
+                        None => {}
+                    }
+                }
+
+                match backend.list_payments(Some(50), None).await {
+                    Ok(list) => {
+                        if payment_matches_intent(&list.payments, &pending) {
+                            ReconcileOutcome::Landed
+                        } else {
+                            ReconcileOutcome::NoTrace
+                        }
+                    }
+                    Err(e) => ReconcileOutcome::Inconclusive(e.to_string()),
+                }
+            },
+            |outcome| {
+                Message::View(crate::app::view::Message::SparkSend(
+                    SparkSendMessage::ReconcileFinished(outcome),
+                ))
             },
         )
     }
@@ -829,6 +1090,9 @@ impl State for SparkSend {
                 self.dispatch_send(prepare)
             }
             SparkSendMessage::CrossChainSendFailed(err, policy) => {
+                // Definite: the bridge answered. The retained quote is what
+                // guards the retry here, not the key.
+                self.pending_send = None;
                 self.phase = SparkSendPhase::CrossChainFailed {
                     message: err,
                     policy,
@@ -848,6 +1112,7 @@ impl State for SparkSend {
                 // against this one and silently drop a payment the user meant
                 // to make.
                 self.send_idempotency_key = None;
+                self.pending_send = None;
                 self.cross_chain_prepare = None;
                 self.quote_countdown = None;
                 self.cross_chain = None;
@@ -876,8 +1141,120 @@ impl State for SparkSend {
                 refresh
             }
             SparkSendMessage::SendFailed(err) => {
+                // A definite rejection: the bridge answered. The payment did
+                // not happen, so the ordinary correct-and-retry path applies
+                // and `Reset` may safely mint a new key.
+                self.pending_send = None;
                 self.phase = SparkSendPhase::Error(err);
                 Task::none()
+            }
+            SparkSendMessage::SendOutcomeUnknown {
+                request_id,
+                message,
+            } => {
+                // Everything about the payment is kept: the key, the inputs,
+                // and now the request id, so a late answer can still be
+                // claimed. Nothing here says the payment failed.
+                if let Some(pending) = self.pending_send.as_mut() {
+                    pending.request_id = Some(request_id);
+                } else {
+                    // Defensive: an unknown outcome with no recorded intent
+                    // can still be reconciled against the bridge's late answer.
+                    self.pending_send = Some(PendingSend {
+                        request_id: Some(request_id),
+                        dispatched_at: chrono::Utc::now().timestamp(),
+                        amount_sat: 0,
+                        guard: RetryGuard::None,
+                    });
+                }
+                let guard = self
+                    .pending_send
+                    .as_ref()
+                    .map(|p| p.guard)
+                    .unwrap_or(RetryGuard::None);
+                self.phase = SparkSendPhase::OutcomeUnknown {
+                    message,
+                    outcome: None,
+                    checking: true,
+                    guard,
+                };
+                self.reconcile_unknown_send()
+            }
+            SparkSendMessage::ReconcileRequested => {
+                let SparkSendPhase::OutcomeUnknown {
+                    message,
+                    checking,
+                    guard,
+                    ..
+                } = &self.phase
+                else {
+                    return Task::none();
+                };
+                if *checking {
+                    return Task::none();
+                }
+                self.phase = SparkSendPhase::OutcomeUnknown {
+                    message: message.clone(),
+                    outcome: None,
+                    checking: true,
+                    guard: *guard,
+                };
+                self.reconcile_unknown_send()
+            }
+            SparkSendMessage::ReconcileFinished(outcome) => {
+                let SparkSendPhase::OutcomeUnknown { message, guard, .. } = &self.phase else {
+                    return Task::none();
+                };
+                let message = message.clone();
+                let guard = *guard;
+                match &outcome {
+                    // The bridge answered late and said it was rejected: that
+                    // is a definite failure, so the panel can offer the normal
+                    // start-over path.
+                    ReconcileOutcome::DefinitelyFailed(reason) => {
+                        self.pending_send = None;
+                        self.phase = SparkSendPhase::Error(reason.clone());
+                    }
+                    _ => {
+                        self.phase = SparkSendPhase::OutcomeUnknown {
+                            message,
+                            outcome: Some(outcome),
+                            checking: false,
+                            guard,
+                        };
+                    }
+                }
+                // Refresh the visible history either way — the user is being
+                // told to check it.
+                fetch_payments_task(self.backend.clone())
+            }
+            SparkSendMessage::ResendAfterUnknownRequested => {
+                // Only from a reconciliation that found no trace, and only on a
+                // rail whose retry is idempotency-protected. The key and the
+                // inputs are untouched, so re-preparing and confirming re-sends
+                // *this* payment rather than minting a second one.
+                let SparkSendPhase::OutcomeUnknown {
+                    outcome: Some(outcome),
+                    checking: false,
+                    guard,
+                    ..
+                } = &self.phase
+                else {
+                    return Task::none();
+                };
+                let guard = *guard;
+                if !outcome.may_resend(guard) {
+                    return Task::none();
+                }
+                debug_assert!(
+                    self.send_idempotency_key.is_some(),
+                    "a resend must reuse the original key"
+                );
+                self.pending_send = None;
+                self.phase = SparkSendPhase::Idle;
+                Task::done(Message::View(crate::app::view::Message::SparkSend(
+                    SparkSendMessage::PrepareRequested,
+                )))
             }
             SparkSendMessage::Reset => {
                 self.destination_input.clear();
@@ -887,6 +1264,7 @@ impl State for SparkSend {
                 // Reset abandons the send, so its key must go too — the next
                 // send is a different payment and needs a fresh one.
                 self.send_idempotency_key = None;
+                self.pending_send = None;
                 self.cross_chain_prepare = None;
                 self.quote_countdown = None;
                 self.slippage_input.clear();
@@ -1207,6 +1585,7 @@ fn fetch_balance_task(backend: Option<Arc<SparkBackend>>) -> Task<Message> {
 mod tests {
     use super::*;
     use crate::app::view::{Message as ViewMessage, SparkSendMessage};
+    use coincube_spark_protocol::PaymentSummary;
 
     #[test]
     fn amount_parses_in_the_configured_unit() {
@@ -2025,5 +2404,349 @@ mod tests {
             sent_panel_after_method("SparkAddress").sent_celebration_context,
             "spark-send"
         );
+    }
+
+    // ── Unknown payment outcome ─────────────────────────────────────────
+
+    fn payment(amount_sat: i64, timestamp: u64, direction: &str) -> PaymentSummary {
+        PaymentSummary {
+            id: "pay-1".to_string(),
+            amount_sat,
+            fees_sat: 0,
+            token_amount: None,
+            token_decimals: None,
+            token_ticker: None,
+            timestamp,
+            status: "completed".to_string(),
+            direction: direction.to_string(),
+            method: "lightning".to_string(),
+            description: None,
+        }
+    }
+
+    /// A panel that has just dispatched a bitcoin-rail send of 1_000 sats and
+    /// been told the outcome is unknown.
+    fn unknown_outcome_panel(guard: RetryGuard) -> SparkSend {
+        let mut panel = SparkSend::new(None);
+        panel.destination_input = "lnbc1example".to_string();
+        panel.amount_input = "1000".to_string();
+        panel.send_idempotency_key = Some("key-from-the-first-attempt".to_string());
+        panel.pending_send = Some(PendingSend {
+            request_id: Some(7),
+            dispatched_at: chrono::Utc::now().timestamp(),
+            amount_sat: 1_000,
+            guard,
+        });
+        panel.phase = SparkSendPhase::OutcomeUnknown {
+            message: "The Spark bridge did not answer.".to_string(),
+            outcome: None,
+            checking: false,
+            guard,
+        };
+        panel
+    }
+
+    /// **The audited hazard, as a test.** A send that outruns the client
+    /// deadline must not be presented as a failure, and must not leave the
+    /// panel able to mint a second payment.
+    #[test]
+    fn a_timed_out_send_is_never_reported_as_failed() {
+        let mut panel = SparkSend::new(None);
+        panel.send_idempotency_key = Some("key-1".to_string());
+        panel.pending_send = Some(PendingSend {
+            request_id: None,
+            dispatched_at: chrono::Utc::now().timestamp(),
+            amount_sat: 1_000,
+            guard: RetryGuard::IdempotencyKey,
+        });
+        panel.phase = SparkSendPhase::Sending;
+
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::SendOutcomeUnknown {
+                request_id: 42,
+                message: "The Spark bridge did not answer within 120s.".to_string(),
+            },
+        );
+
+        match &panel.phase {
+            SparkSendPhase::OutcomeUnknown {
+                outcome, checking, ..
+            } => {
+                assert!(outcome.is_none(), "no verdict before the check runs");
+                assert!(checking, "the check must start immediately");
+            }
+            other => panic!("a timed-out send must not be a failure, got {:?}", other),
+        }
+        assert!(
+            !matches!(panel.phase, SparkSendPhase::Error(_)),
+            "an unknown outcome must never land in the definite-failure phase"
+        );
+
+        // The intent survives, key included — that is what stops a retry
+        // becoming a second payment.
+        assert_eq!(
+            panel.send_idempotency_key.as_deref(),
+            Some("key-1"),
+            "the idempotency key must survive an unknown outcome"
+        );
+        let pending = panel.pending_send.as_ref().expect("intent retained");
+        assert_eq!(
+            pending.request_id,
+            Some(42),
+            "the late answer stays claimable"
+        );
+        assert_eq!(pending.amount_sat, 1_000);
+    }
+
+    /// While the outcome is unknown, no path offers a new send — not before the
+    /// check finishes, and not after an inconclusive one.
+    #[test]
+    fn no_new_send_is_offered_until_reconciliation_clears_it() {
+        // Still checking.
+        let mut panel = unknown_outcome_panel(RetryGuard::IdempotencyKey);
+        panel.phase = SparkSendPhase::OutcomeUnknown {
+            message: "unknown".to_string(),
+            outcome: None,
+            checking: true,
+            guard: RetryGuard::IdempotencyKey,
+        };
+        let _ = send(&mut panel, SparkSendMessage::ResendAfterUnknownRequested);
+        assert!(
+            matches!(panel.phase, SparkSendPhase::OutcomeUnknown { .. }),
+            "a resend must not be possible while the check is running"
+        );
+
+        // Inconclusive: the history could not be read.
+        let mut panel = unknown_outcome_panel(RetryGuard::IdempotencyKey);
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::ReconcileFinished(ReconcileOutcome::Inconclusive(
+                "bridge unavailable".to_string(),
+            )),
+        );
+        let _ = send(&mut panel, SparkSendMessage::ResendAfterUnknownRequested);
+        assert!(
+            matches!(panel.phase, SparkSendPhase::OutcomeUnknown { .. }),
+            "an inconclusive check must not enable a resend"
+        );
+        assert!(panel.send_idempotency_key.is_some());
+    }
+
+    /// Reconciliation finding the payment blocks any resend outright: it went
+    /// through, and the only correct action is to look at the history.
+    #[test]
+    fn a_payment_that_landed_can_never_be_sent_again() {
+        for guard in [RetryGuard::IdempotencyKey, RetryGuard::None] {
+            let mut panel = unknown_outcome_panel(guard);
+            let _ = send(
+                &mut panel,
+                SparkSendMessage::ReconcileFinished(ReconcileOutcome::Landed),
+            );
+            let _ = send(&mut panel, SparkSendMessage::ResendAfterUnknownRequested);
+            assert!(
+                matches!(panel.phase, SparkSendPhase::OutcomeUnknown { .. }),
+                "a landed payment must not offer a resend"
+            );
+            assert!(!ReconcileOutcome::Landed.may_resend(guard));
+            assert!(ReconcileOutcome::Landed
+                .guidance(guard)
+                .contains("did go through"));
+        }
+    }
+
+    /// The one safe resend: nothing in the history **and** an
+    /// idempotency-guarded rail. It keeps the original key, so if the history
+    /// was merely stale the SDK dedups instead of paying twice.
+    #[test]
+    fn a_cleared_unknown_send_retries_under_the_original_key() {
+        let mut panel = unknown_outcome_panel(RetryGuard::IdempotencyKey);
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::ReconcileFinished(ReconcileOutcome::NoTrace),
+        );
+        assert!(ReconcileOutcome::NoTrace.may_resend(RetryGuard::IdempotencyKey));
+
+        let _ = send(&mut panel, SparkSendMessage::ResendAfterUnknownRequested);
+        assert_eq!(
+            panel.send_idempotency_key.as_deref(),
+            Some("key-from-the-first-attempt"),
+            "a resend must reuse the key, or the SDK cannot dedup it"
+        );
+        assert!(matches!(panel.phase, SparkSendPhase::Idle));
+        // The destination and amount are untouched, so the re-prepare describes
+        // the same payment.
+        assert_eq!(panel.destination_input, "lnbc1example");
+        assert_eq!(panel.amount_input, "1000");
+    }
+
+    /// A rail with no idempotency guarantee never gets a blind retry, however
+    /// the check came out.
+    #[test]
+    fn an_unguarded_rail_is_sent_to_the_payment_history_instead() {
+        let mut panel = unknown_outcome_panel(RetryGuard::None);
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::ReconcileFinished(ReconcileOutcome::NoTrace),
+        );
+        assert!(!ReconcileOutcome::NoTrace.may_resend(RetryGuard::None));
+
+        let _ = send(&mut panel, SparkSendMessage::ResendAfterUnknownRequested);
+        assert!(
+            matches!(panel.phase, SparkSendPhase::OutcomeUnknown { .. }),
+            "an unguarded rail must not resend even with no trace of the payment"
+        );
+        let guidance = ReconcileOutcome::NoTrace.guidance(RetryGuard::None);
+        assert!(guidance.contains("Transactions"), "{}", guidance);
+        assert!(guidance.contains("twice"), "{}", guidance);
+    }
+
+    /// The bridge's own late answer wins over any inference from history, in
+    /// both directions: a late rejection is a definite failure the user can
+    /// correct and retry normally.
+    #[test]
+    fn a_late_definite_rejection_becomes_an_ordinary_failure() {
+        let mut panel = unknown_outcome_panel(RetryGuard::IdempotencyKey);
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::ReconcileFinished(ReconcileOutcome::DefinitelyFailed(
+                "invoice expired".to_string(),
+            )),
+        );
+        match &panel.phase {
+            SparkSendPhase::Error(msg) => assert_eq!(msg, "invoice expired"),
+            other => panic!(
+                "a definite rejection must be an ordinary failure, got {:?}",
+                other
+            ),
+        }
+        assert!(
+            panel.pending_send.is_none(),
+            "a definite failure has nothing left to reconcile"
+        );
+
+        // And the ordinary path still works: Reset clears the key so the
+        // corrected payment is a new one.
+        let _ = send(&mut panel, SparkSendMessage::Reset);
+        assert!(panel.send_idempotency_key.is_none());
+        assert!(matches!(panel.phase, SparkSendPhase::Idle));
+    }
+
+    /// A definite `SendFailed` — the bridge answered "no" — is unchanged: it is
+    /// a failure, it clears the pending intent, and Reset mints a fresh key.
+    #[test]
+    fn a_definite_send_failure_is_still_an_ordinary_failure() {
+        let mut panel = unknown_outcome_panel(RetryGuard::IdempotencyKey);
+        panel.phase = SparkSendPhase::Sending;
+        let _ = send(&mut panel, SparkSendMessage::SendFailed("nope".to_string()));
+        assert!(matches!(panel.phase, SparkSendPhase::Error(_)));
+        assert!(panel.pending_send.is_none());
+    }
+
+    /// History matching brackets on direction, amount and time, and errs
+    /// towards *finding* the payment — the direction that blocks a resend.
+    #[test]
+    fn history_matching_recognises_this_payment_and_not_another() {
+        let now = chrono::Utc::now().timestamp();
+        let pending = PendingSend {
+            request_id: None,
+            dispatched_at: now,
+            amount_sat: 1_000,
+            guard: RetryGuard::IdempotencyKey,
+        };
+
+        // The payment itself, recorded a moment after dispatch.
+        assert!(payment_matches_intent(
+            &[payment(-1_000, (now + 2) as u64, "outgoing")],
+            &pending
+        ));
+        // Recorded slightly *before* the gui's clock — still ours.
+        assert!(payment_matches_intent(
+            &[payment(-1_000, (now - 5) as u64, "outgoing")],
+            &pending
+        ));
+        // An older payment of the same size is somebody else's.
+        assert!(!payment_matches_intent(
+            &[payment(-1_000, (now - 3_600) as u64, "outgoing")],
+            &pending
+        ));
+        // A receive of the same size is not this send.
+        assert!(!payment_matches_intent(
+            &[payment(1_000, (now + 2) as u64, "incoming")],
+            &pending
+        ));
+        // A different amount is a different payment.
+        assert!(!payment_matches_intent(
+            &[payment(-2_000, (now + 2) as u64, "outgoing")],
+            &pending
+        ));
+        // Empty history is no evidence.
+        assert!(!payment_matches_intent(&[], &pending));
+    }
+
+    /// Every rail the panel can send on, with the guard each one gets and what
+    /// that permits after an unknown outcome. A new payment method landing here
+    /// without a decision shows up as a failing case rather than as a silent
+    /// "guarded" default.
+    #[test]
+    fn every_rail_has_an_explicit_retry_guard() {
+        // The bitcoin rails: the bridge forwards the idempotency key and the
+        // SDK honours it, so a reconciled resend cannot pay twice.
+        for method in [
+            "Bolt11Invoice",
+            "BitcoinAddress",
+            "SparkAddress",
+            "SparkInvoice",
+            // LNURL-pay is executed by `execute_lnurl_send`, which also
+            // forwards the key.
+            "LnurlPay",
+        ] {
+            let prepare = PrepareSendOk {
+                handle: "h".to_string(),
+                amount_sat: 1_000,
+                fee_sat: 1,
+                method: method.to_string(),
+                cross_chain: None,
+            };
+            let guard = retry_guard_for(&prepare);
+            assert_eq!(
+                guard,
+                RetryGuard::IdempotencyKey,
+                "{} must be idempotency-guarded",
+                method
+            );
+            assert!(
+                ReconcileOutcome::NoTrace.may_resend(guard),
+                "{} must allow a reconciled resend",
+                method
+            );
+            assert!(
+                !ReconcileOutcome::Landed.may_resend(guard),
+                "{} must never resend a payment that landed",
+                method
+            );
+        }
+
+        // Cross-chain: a token/conversion leg. The SDK rejects a key there and
+        // the bridge drops it, so nothing guards a fresh attempt.
+        let future = (chrono::Utc::now() + chrono::Duration::seconds(60)).to_rfc3339();
+        let cross_chain = prepared_with_quote(&future);
+        assert_eq!(retry_guard_for(&cross_chain), RetryGuard::None);
+        for outcome in [
+            ReconcileOutcome::NoTrace,
+            ReconcileOutcome::Landed,
+            ReconcileOutcome::Inconclusive("x".to_string()),
+        ] {
+            assert!(
+                !outcome.may_resend(RetryGuard::None),
+                "a cross-chain send must never be blind-retried"
+            );
+        }
+        // And its existing quote-reuse retry path is untouched.
+        assert!(cross_chain
+            .cross_chain
+            .as_deref()
+            .map(cross_chain::RetryPolicy::for_quote)
+            .is_some_and(|p| p.may_retry()));
     }
 }

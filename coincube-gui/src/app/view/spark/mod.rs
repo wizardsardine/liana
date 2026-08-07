@@ -169,6 +169,29 @@ pub enum SparkSendMessage {
     /// panel can tell "safe to retry" apart from "check the payment's state
     /// first, because a retry might pay twice".
     CrossChainSendFailed(String, crate::app::state::spark::cross_chain::RetryPolicy),
+
+    // ── Unknown payment outcome ─────────────────────────────────────────
+    /// The send was dispatched and no answer came back — the transport timed
+    /// out, or the bridge went away after being handed the payment.
+    ///
+    /// **This is not a failure**, and the panel must never render it as one.
+    /// `request_id` identifies the request so a late answer can still be
+    /// claimed from the client; see
+    /// [`SparkClient::take_late_outcome`](crate::app::breez_spark::client::SparkClient::take_late_outcome).
+    SendOutcomeUnknown {
+        request_id: u64,
+        message: String,
+    },
+    /// Ask again whether the unknown payment landed. Fired on entering the
+    /// unknown state and by the "Check again" button.
+    ReconcileRequested,
+    /// The result of that check.
+    ReconcileFinished(crate::app::state::spark::send::ReconcileOutcome),
+    /// The user chose to send again after reconciliation found no trace of the
+    /// payment. Deliberately **not** [`Self::Reset`]: the original idempotency
+    /// key and intent are kept, so the SDK dedups if the first attempt did land
+    /// after all.
+    ResendAfterUnknownRequested,
 }
 
 /// View-level messages for the Phase 4c Spark Receive panel.

@@ -52,6 +52,34 @@ pub struct CreationBackupBypass {
     pub acknowledged: String,
 }
 
+/// A Cube Recovery Kit created **during** creation, recorded on the Cube.
+///
+/// The creation gate is evaluated at open time with no server status (see
+/// `gui::tab`: an offline user or an expired session must not be locked out of
+/// a wallet whose material is right here). So a Kit that exists only on Connect
+/// is invisible to the gate exactly when it matters. This is the local half:
+/// proof that this client uploaded a Kit for this Cube before the Cube was
+/// written, which is checkable with no network at all.
+///
+/// It records an **act**, not a live guarantee — same as
+/// [`CreationBackupBypass`] and same as `CubeSettings::backed_up`, which
+/// records that a phrase was shown and verified, not that the paper still
+/// exists. A Kit deleted from Connect later is surfaced by the online
+/// completeness check (`cube_backup_completeness`), which is where live truth
+/// belongs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreationRecoveryKit {
+    /// Unix seconds when the Kit was uploaded.
+    pub at: i64,
+    /// Connect's numeric id for this Cube — what a support conversation or a
+    /// restore needs to find the Kit.
+    pub cube_id: u64,
+    /// Whether the uploaded Kit carried the encrypted seed half. A seed-only
+    /// Kit is a complete backup for a Cube with no Vault, which every Cube is
+    /// at creation.
+    pub has_seed: bool,
+}
+
 /// Text the user must be shown — and must actively accept — to bypass.
 pub const BYPASS_ACKNOWLEDGEMENT: &str =
     "I understand that without a backup, losing this computer means losing the \
@@ -122,24 +150,26 @@ pub enum CreationGate {
 
 /// Whether this Cube may finish creation.
 ///
-/// - `local_seed_backed_up` is `CubeSettings::backed_up` — the user wrote the
-///   seed phrase down and confirmed it. That alone satisfies the gate: a
-///   written mnemonic recovers a Cube just as well as a server kit does, and
-///   demanding a Connect account to create a local wallet would be wrong.
+/// - `local_backup` is evidence, checkable **without a network**, that this
+///   Cube can be recovered: `CubeSettings::backed_up` (the user wrote the seed
+///   phrase down and confirmed it), or a [`CreationRecoveryKit`] uploaded
+///   during creation. Either alone satisfies the gate — a written mnemonic
+///   recovers a Cube just as well as a server kit does, and demanding a Connect
+///   account to create a local wallet would be wrong.
 /// - `kit` is the server-side Recovery Kit completeness for this Cube's shape,
 ///   `None` when the Cube isn't registered with Connect at all.
 ///
 /// Fails **closed** on `Unknown`: a status probe that didn't answer is not
 /// evidence of a backup.
 pub fn evaluate(
-    local_seed_backed_up: bool,
+    local_backup: bool,
     kit: Option<CubeBackupCompleteness>,
     bypass: Option<&CreationBackupBypass>,
 ) -> CreationGate {
     if bypass.is_some() {
         return CreationGate::Bypassed;
     }
-    if local_seed_backed_up {
+    if local_backup {
         return CreationGate::Satisfied;
     }
     match kit {
@@ -179,7 +209,12 @@ pub fn evaluate_for_cube(
         Some(cube.vault_wallet_id.is_some()),
         kit_halves,
     ));
-    evaluate(cube.backed_up, kit, cube.creation_backup_bypass.as_ref())
+    // Local, offline-checkable evidence: a written-down phrase, or a Recovery
+    // Kit this client uploaded during creation. `kit_halves` is `None` at open
+    // time by design, so a Kit that exists only on the server cannot answer
+    // this question — see [`CreationRecoveryKit`].
+    let local_backup = cube.backed_up || cube.creation_recovery_kit.is_some();
+    evaluate(local_backup, kit, cube.creation_backup_bypass.as_ref())
 }
 
 #[cfg(test)]
@@ -456,6 +491,73 @@ mod tests {
             "the copy never tells the user to protect the folder: {}",
             copy
         );
+    }
+
+    /// A Recovery Kit made during creation is a **backup**, and satisfies the
+    /// gate on its own — including with no server status at all, which is the
+    /// only way the gate is ever evaluated at open time (`gui::tab` passes
+    /// `None` so an offline user is never locked out).
+    #[test]
+    fn a_creation_recovery_kit_satisfies_the_gate_offline() {
+        use crate::app::settings::CubeSettings;
+        use coincube_core::miniscript::bitcoin::Network;
+
+        let mut cube = CubeSettings::new("Kitted".to_string(), Network::Bitcoin);
+        cube.creation_backup_required = true;
+        // The shape the Kit branch writes: no written phrase, no bypass.
+        cube.backed_up = false;
+        cube.creation_recovery_kit = Some(CreationRecoveryKit {
+            at: 1_700_000_000,
+            cube_id: 42,
+            has_seed: true,
+        });
+
+        assert_eq!(
+            evaluate_for_cube(&cube, None),
+            CreationGate::Satisfied,
+            "a Cube whose Kit was made at creation must open with no network"
+        );
+        // And it is not a bypass — the distinction is what support reads.
+        assert!(cube.creation_backup_bypass.is_none());
+        assert_ne!(evaluate_for_cube(&cube, None), CreationGate::Bypassed);
+    }
+
+    /// The three creation exits stay distinguishable on the Cube itself.
+    #[test]
+    fn the_three_creation_exits_are_told_apart() {
+        use crate::app::settings::CubeSettings;
+        use coincube_core::miniscript::bitcoin::Network;
+
+        let armed = |name: &str| {
+            let mut c = CubeSettings::new(name.to_string(), Network::Bitcoin);
+            c.creation_backup_required = true;
+            c
+        };
+
+        // 1. Wrote the phrase down.
+        let mut phrase = armed("Phrase");
+        phrase.backed_up = true;
+        assert_eq!(evaluate_for_cube(&phrase, None), CreationGate::Satisfied);
+
+        // 2. Made a Recovery Kit.
+        let mut kit = armed("Kit");
+        kit.creation_recovery_kit = Some(CreationRecoveryKit {
+            at: 1,
+            cube_id: 7,
+            has_seed: true,
+        });
+        assert_eq!(evaluate_for_cube(&kit, None), CreationGate::Satisfied);
+
+        // 3. Took the acknowledgement.
+        let mut bypassed = armed("Bypassed");
+        bypassed.creation_backup_bypass = Some(bypass());
+        assert_eq!(evaluate_for_cube(&bypassed, None), CreationGate::Bypassed);
+
+        // None of the three — still blocked. Creation must never write this.
+        assert!(matches!(
+            evaluate_for_cube(&armed("Nothing"), None),
+            CreationGate::Blocked(_)
+        ));
     }
 
     #[test]

@@ -73,7 +73,9 @@ pub fn mainnet_config(api_key: String) -> breez_sdk_spark::Config {
     // configured" and fall back to the default. An empty string
     // would otherwise be handed to the SDK as a valid domain and
     // produce nonsense Lightning Addresses like `user@`.
-    config.lnurl_domain = Some(configured_lnurl_domain(std::env::var("COINCUBE_LNURL_DOMAIN").ok()));
+    config.lnurl_domain = Some(configured_lnurl_domain(
+        std::env::var("COINCUBE_LNURL_DOMAIN").ok(),
+    ));
     // Cross-chain stablecoin send (USDT/USDC to EVM/Solana/Tron). Opt-in: the
     // providers (Orchestra, Boltz) run background work such as websockets, so
     // the SDK leaves them off unless this is set. Mainnet-only, which is all

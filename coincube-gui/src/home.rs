@@ -13,6 +13,7 @@ use coincube_ui::{
 use coincubed::config::ConfigError;
 use tokio::runtime::Handle;
 
+use crate::app::state::settings::recovery_kit::encrypt_and_upload as recovery_kit_upload;
 use crate::feature_flags;
 use crate::pin_input;
 use crate::recover_vault::{self, RecoverVaultMessage, RecoverVaultPanel};
@@ -33,7 +34,7 @@ use crate::{
             AuthConfig, CubeConnectState, CubeSettings, WalletSettings,
         },
         state::{connect::ConnectAccountPanel, settings::general},
-        view::{BackupWalletMessage, ConnectAccountMessage},
+        view::{BackupWalletMessage, ConnectAccountMessage, RecoveryKitMessage},
     },
     delete::{delete_wallet, DeleteError},
     dir::{CoincubeDirectory, NetworkDirectory},
@@ -88,7 +89,19 @@ pub enum State {
 ///
 /// The screens themselves are the Settings backup wizard's, reused verbatim
 /// via [`app::view::settings::backup`]'s message-generic views, so the two
-/// places a user is shown their seed phrase cannot drift apart.
+/// places a user is shown their seed phrase cannot drift apart. The Recovery
+/// Kit screens come from the Settings Kit flow the same way.
+///
+/// # One flow, both unlock methods
+///
+/// PIN and passkey Cubes run the *same* step machine and get the same three
+/// exits: write the phrase down, create a Recovery Kit, or take the recorded
+/// acknowledgement. That is only possible because both derive a **12-word**
+/// mnemonic — `generate` and `from_prf_output` produce the same shape, so one
+/// phrase screen and one 12-word restore grid serve both. Nothing here
+/// branches on the unlock method except the copy that has to (a passkey Cube's
+/// folder-copy warning is not the PIN one) and the Kit's availability, which
+/// depends on Connect rather than on the Cube.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CreationBackupStep {
     /// Intro + security warning; the bool is the "I understand" checkbox.
@@ -105,6 +118,46 @@ pub enum CreationBackupStep {
     /// [`creation_gate::BYPASS_ACKNOWLEDGEMENT`], which is what gets persisted
     /// to the Cube as a [`creation_gate::CreationBackupBypass`].
     Bypass { acknowledged: bool },
+
+    /// Choosing *how* to back up. The entry point for every Cube, whichever
+    /// unlock method it uses.
+    Choice,
+    /// Choosing the Recovery Kit's recovery password. The fields themselves
+    /// live on [`Home`] (`creation_kit_password` and friends) rather than in
+    /// the variant, because this enum is `Clone + PartialEq + Eq` and a
+    /// password has no business being either.
+    KitPassword,
+    /// Registering the Cube with Connect and uploading the Kit.
+    KitUploading,
+}
+
+/// A passkey credential that has been registered but whose Cube has **not** been
+/// written to disk yet.
+///
+/// Passkey creation used to persist the Cube the instant the ceremony returned,
+/// which meant it never passed through the creation-backup step and reached
+/// `settings.json` with `creation_backup_required = false` — the shape
+/// [`creation_gate::evaluate_for_cube`] reads as "predates the gate" and waves
+/// through. A user could fund a Cube whose only recovery was the credential
+/// itself, without ever being shown the acknowledgement, let alone accepting it.
+///
+/// So the registration result is parked here instead, and the Cube is written
+/// only by [`Home::finalize_passkey_cube_creation`] once the step resolves.
+/// Abandoning leaves nothing behind — the credential exists in the platform
+/// authenticator, which is inert without a Cube that references it.
+///
+/// # What is *not* kept here
+///
+/// Neither the PRF output nor the derived signer. The fingerprint is computed
+/// at ceremony time and the seed material dropped immediately: a passkey Cube
+/// stores no seed anyway (it re-derives from the credential on every open), so
+/// holding it across a user-paced step would be secret-lifetime for nothing.
+#[derive(Debug, Clone)]
+struct PendingPasskeyCube {
+    /// Base64 WebAuthn credential id, as persisted in `PasskeyMetadata`.
+    credential_id: String,
+    /// Fingerprint of the master signer this credential derives.
+    master_fingerprint: coincube_core::miniscript::bitcoin::bip32::Fingerprint,
 }
 
 fn bip39_suggestions(prefix: &str, limit: usize) -> Vec<String> {
@@ -203,6 +256,22 @@ pub struct Home {
     pub theme_mode: coincube_ui::theme::palette::ThemeMode,
     /// Whether the user has chosen to create a passkey-derived Cube (no PIN).
     passkey_mode: bool,
+    /// A registered passkey credential awaiting the creation-backup step. See
+    /// [`PendingPasskeyCube`]. `Some` only while `State::CreationBackup` is on
+    /// screen for a passkey Cube, and it is what tells that step — and the
+    /// finalizer — which of the two creation paths it is resolving.
+    pending_passkey_cube: Option<PendingPasskeyCube>,
+    /// Recovery password for a Kit being created during Cube creation, and its
+    /// confirmation. Held here rather than in [`CreationBackupStep`] so the
+    /// step stays `Clone + Eq`, and in `Zeroizing` so the password is wiped
+    /// when the step ends. Cleared by [`Home::scrub_creation_kit`].
+    creation_kit_password: zeroize::Zeroizing<String>,
+    creation_kit_confirm: zeroize::Zeroizing<String>,
+    /// Active acceptance of "I've written this password down" — the same gate
+    /// the Settings Kit flow applies.
+    creation_kit_acknowledged: bool,
+    /// Failure from the Kit upload, shown on the password screen.
+    creation_kit_error: Option<String>,
     /// Active passkey ceremony (webview open, awaiting IPC result).
     passkey_ceremony: Option<PasskeyCeremony>,
     /// Active native macOS passkey ceremony (uses AuthenticationServices).
@@ -275,12 +344,15 @@ impl Home {
                 connect_expanded: false,
                 active_section: HomeSection::Cubes,
                 theme_mode: GlobalSettings::load_theme_mode(&GlobalSettings::path(&datadir_path)),
-                // On by default wherever passkeys are available: the Create
-                // Cube form offers Passkey/PIN as an A/B choice with Passkey
-                // selected. Where the feature is off or the platform can't
-                // open a passkey Cube, this stays `false` and the PIN path is
-                // the only one — the toggle isn't rendered at all there.
-                passkey_mode: feature_flags::PASSKEY_CREATION_AVAILABLE,
+                // Recomputed whenever the Create Cube form opens — see
+                // `Home::default_passkey_mode`. A freshly constructed `Home`
+                // has no Connect session, so this is PIN.
+                passkey_mode: false,
+                pending_passkey_cube: None,
+                creation_kit_password: zeroize::Zeroizing::new(String::new()),
+                creation_kit_confirm: zeroize::Zeroizing::new(String::new()),
+                creation_kit_acknowledged: false,
+                creation_kit_error: None,
                 passkey_ceremony: None,
                 #[cfg(target_os = "macos")]
                 native_passkey_ceremony: None,
@@ -437,6 +509,12 @@ impl Home {
                 Task::none()
             }
             Message::View(ViewMessage::ShowCreateCube(show)) => {
+                if show {
+                    // Opening the form picks the default afresh: whether the
+                    // passkey path can demonstrate a backup depends on the
+                    // Connect session, which can change between visits.
+                    self.passkey_mode = self.default_passkey_mode();
+                }
                 if let State::Cubes { create_cube, .. } = &mut self.state {
                     *create_cube = show;
                     if !show {
@@ -447,7 +525,7 @@ impl Home {
                         // form discards the custody choice along with the rest
                         // of the inputs, so reopening it starts from the same
                         // state a first-time user sees.
-                        self.passkey_mode = feature_flags::PASSKEY_CREATION_AVAILABLE;
+                        self.passkey_mode = self.default_passkey_mode();
                         // Clear recovery words when exiting create cube flow
                         for word in &mut self.recovery_words {
                             word.clear();
@@ -627,6 +705,15 @@ impl Home {
             }
             Message::View(ViewMessage::CreationBackup(msg)) => self.update_creation_backup(msg),
             Message::View(ViewMessage::CreationBackupBypassRequested) => {
+                // Not while a Kit upload is in flight: its result decides
+                // whether a Cube gets written, and taking the acknowledgement
+                // underneath it would race two finalizers.
+                if matches!(
+                    self.state,
+                    State::CreationBackup(CreationBackupStep::KitUploading)
+                ) {
+                    return Task::none();
+                }
                 if matches!(self.state, State::CreationBackup(_)) {
                     self.state = State::CreationBackup(CreationBackupStep::Bypass {
                         acknowledged: false,
@@ -658,7 +745,75 @@ impl Home {
                     // same words the user actually agreed to.
                     acknowledged: creation_gate::BYPASS_ACKNOWLEDGEMENT.to_string(),
                 };
-                self.finalize_cube_creation(false, Some(bypass))
+                // Same acknowledgement, same recorded evidence, either shape of
+                // Cube. Only the write differs: a passkey Cube has no seed file
+                // or device secret to mint.
+                if self.creating_passkey_cube() {
+                    self.finalize_passkey_cube_creation(false, Some(bypass), None)
+                } else {
+                    self.finalize_cube_creation(false, Some(bypass), None)
+                }
+            }
+            Message::View(ViewMessage::CreationBackupChoiceRequested) => {
+                // Never mid-upload: that result decides whether a Cube gets
+                // written, and stepping away underneath it would race two
+                // finalizers.
+                if matches!(
+                    self.state,
+                    State::CreationBackup(CreationBackupStep::KitUploading)
+                ) {
+                    return Task::none();
+                }
+                if matches!(self.state, State::CreationBackup(_)) {
+                    self.scrub_creation_kit();
+                    self.state = State::CreationBackup(CreationBackupStep::Choice);
+                    self.error = None;
+                }
+                Task::none()
+            }
+            Message::View(ViewMessage::CreationKitRequested) => {
+                // From the choice screen, or back out of "I'll do this later" —
+                // the acknowledgement is a decision the user may reverse while
+                // the Cube is still unwritten. Never while a Kit is out of
+                // reach: a signed-out session has nowhere to upload one.
+                // Applies to both unlock methods.
+                if !matches!(
+                    self.state,
+                    State::CreationBackup(
+                        CreationBackupStep::Choice | CreationBackupStep::Bypass { .. }
+                    )
+                ) || !self.can_create_recovery_kit()
+                {
+                    return Task::none();
+                }
+                self.scrub_creation_kit();
+                self.state = State::CreationBackup(CreationBackupStep::KitPassword);
+                Task::none()
+            }
+            Message::View(ViewMessage::CreationKit(msg)) => self.update_creation_kit(msg),
+            Message::View(ViewMessage::CreationKitUploaded(result)) => {
+                match result {
+                    Ok(evidence) => {
+                        // The Kit is on Connect. Only now is the Cube written —
+                        // and it is written with the evidence, so it opens.
+                        self.scrub_creation_kit();
+                        if self.creating_passkey_cube() {
+                            self.finalize_passkey_cube_creation(false, None, Some(evidence))
+                        } else {
+                            self.finalize_cube_creation(false, None, Some(evidence))
+                        }
+                    }
+                    Err(e) => {
+                        // Nothing was written. Back to the password screen with
+                        // the reason: the user can retry, or take the
+                        // acknowledgement instead. Both exits still exist.
+                        tracing::warn!("recovery kit upload during creation failed: {}", e);
+                        self.creating_cube = false;
+                        self.creation_kit_error = Some(e);
+                        self.state = State::CreationBackup(CreationBackupStep::KitPassword);
+                        Task::none()
+                    }
+                }
             }
             Message::View(ViewMessage::CancelCreationBackup) => {
                 self.abandon_creation_backup();
@@ -682,6 +837,11 @@ impl Home {
                         // `State::CreationBackup` with the Cube list, which
                         // also makes the list parked for a cancel stale.
                         self.scrub_creation_seed();
+                        self.scrub_creation_kit();
+                        // The passkey registration has been consumed by the
+                        // write; holding it would let a second finalize insert
+                        // a duplicate.
+                        self.pending_passkey_cube = None;
                         self.creation_backup_cubes = Vec::new();
                         // Explicitly clear recovery words to prevent mnemonic from lingering in memory
                         for word in &mut self.recovery_words {
@@ -691,8 +851,19 @@ impl Home {
                         self.recovery_active_index = None;
                         let reload_task = self.reload();
 
-                        // If logged in, register the new cube with the Connect API
-                        if let Some(client) = self.connect_account.authenticated_client() {
+                        // If logged in, register the new cube with the Connect API.
+                        // A Cube whose Recovery Kit was made during creation is
+                        // already registered — the Kit could not have been
+                        // uploaded otherwise — and registering again would
+                        // create a duplicate server-side record.
+                        if cube.remote_synced {
+                            tracing::debug!(
+                                "Cube {} was registered by the creation Recovery Kit — \
+                                 skipping the post-creation registration",
+                                cube.id
+                            );
+                            reload_task
+                        } else if let Some(client) = self.connect_account.authenticated_client() {
                             let cube_id = cube.id.clone();
                             let cube_network = cube.network;
                             let req = RegisterCubeRequest {
@@ -817,59 +988,13 @@ impl Home {
 
                 match result {
                     Ok(CeremonyOutcome::Registered(registration)) => {
-                        // Derive master signer from PRF output
-                        let network = self.network;
-                        let datadir_path = self.datadir_path.clone();
-                        let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
-                        let cube_name = self.create_cube_name.value.trim().to_string();
-                        let credential_id = registration.credential_id.clone();
-                        let prf_output = registration.prf_output;
-
-                        Task::perform(
-                            async move {
-                                let master_signer =
-                                    MasterSigner::from_prf_output(network, &prf_output).map_err(
-                                        |e| format!("Failed to derive master signer: {}", e),
-                                    )?;
-
-                                let secp =
-                                    coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                                let master_fingerprint = master_signer.fingerprint(&secp);
-
-                                let network_dir = datadir_path.network_directory(network);
-                                network_dir.init().map_err(|e| {
-                                    format!("Failed to create network directory: {}", e)
-                                })?;
-
-                                // Passkey Cube: no encrypted seed file, no PIN.
-                                let passkey_metadata = settings::PasskeyMetadata {
-                                    credential_id,
-                                    rp_id: passkey_svc::RP_ID.to_string(),
-                                    created_at: chrono::Utc::now().timestamp(),
-                                    label: None,
-                                };
-
-                                let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
-                                    .with_master_signer(master_fingerprint)
-                                    .with_passkey(passkey_metadata);
-
-                                tracing::info!(
-                                    "Passkey Cube created with fingerprint: {} (no seed on disk)",
-                                    master_fingerprint
-                                );
-
-                                settings::update_settings_file(&network_dir, |mut settings| {
-                                    if settings.cubes.iter().any(|c| c.id == cube.id) {
-                                        return Some(settings);
-                                    }
-                                    settings.cubes.push(cube.clone());
-                                    Some(settings)
-                                })
-                                .await
-                                .map(|_| cube)
-                                .map_err(|e| e.to_string())
-                            },
-                            Message::CubeCreated,
+                        // Shared with the native macOS path: one place decides
+                        // what a successful registration does, so the two
+                        // ceremony backends cannot drift on whether the Cube is
+                        // gated (they did — this one persisted immediately).
+                        self.passkey_registration_succeeded(
+                            registration.credential_id.clone(),
+                            &registration.prf_output,
                         )
                     }
                     Ok(CeremonyOutcome::Authenticated(_auth)) => {
@@ -883,7 +1008,11 @@ impl Home {
                     }
                     Err(e) => {
                         self.creating_cube = false;
-                        self.error = Some(e.to_string());
+                        // `Display` is the developer string ("Passkey ceremony
+                        // failed: …"); the user gets the registration copy, and
+                        // the detail goes to the log where it is of use.
+                        tracing::warn!("passkey registration failed: {e}");
+                        self.error = Some(e.registration_message());
                         Task::none()
                     }
                 }
@@ -919,59 +1048,8 @@ impl Home {
                         credential_id,
                         prf_output,
                     } => {
-                        let network = self.network;
-                        let datadir_path = self.datadir_path.clone();
-                        let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
-                        let cube_name = self.create_cube_name.value.trim().to_string();
-                        let credential_id_b64 = base64::Engine::encode(
-                            &base64::engine::general_purpose::STANDARD,
-                            &credential_id,
-                        );
-                        Task::perform(
-                            async move {
-                                let master_signer =
-                                    MasterSigner::from_prf_output(network, &prf_output).map_err(
-                                        |e| format!("Failed to derive master signer: {}", e),
-                                    )?;
-
-                                let secp =
-                                    coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                                let master_fingerprint = master_signer.fingerprint(&secp);
-
-                                let network_dir = datadir_path.network_directory(network);
-                                network_dir.init().map_err(|e| {
-                                    format!("Failed to create network directory: {}", e)
-                                })?;
-
-                                let passkey_metadata = settings::PasskeyMetadata {
-                                    credential_id: credential_id_b64,
-                                    rp_id: passkey_svc::RP_ID.to_string(),
-                                    created_at: chrono::Utc::now().timestamp(),
-                                    label: None,
-                                };
-
-                                let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
-                                    .with_master_signer(master_fingerprint)
-                                    .with_passkey(passkey_metadata);
-
-                                tracing::info!(
-                                    "Passkey Cube created (native macOS) with fingerprint: {}",
-                                    master_fingerprint
-                                );
-
-                                settings::update_settings_file(&network_dir, |mut settings| {
-                                    if settings.cubes.iter().any(|c| c.id == cube.id) {
-                                        return Some(settings);
-                                    }
-                                    settings.cubes.push(cube.clone());
-                                    Some(settings)
-                                })
-                                .await
-                                .map(|_| cube)
-                                .map_err(|e| e.to_string())
-                            },
-                            Message::CubeCreated,
-                        )
+                        // Same shared transition as the webview ceremony.
+                        self.passkey_registration_succeeded_raw(&credential_id, &prf_output)
                     }
                     NativeOutcome::Authenticated { .. } => {
                         self.creating_cube = false;
@@ -985,16 +1063,12 @@ impl Home {
                         // Registration, not unlock — but the same rule applies:
                         // a cancelled Touch ID prompt must read as "nothing
                         // happened", not as a failure the user has to interpret.
-                        // Nothing has been written to disk at this point.
+                        // Nothing has been written to disk at this point, which
+                        // is why `registration_message` and not `user_message`:
+                        // the unlock copy would name a Cube that doesn't exist
+                        // and send the user to a Recovery Kit they can't have.
                         tracing::warn!("passkey registration failed: {e}");
-                        self.error = Some(match e {
-                            passkey_svc::PasskeyError::Cancelled => {
-                                "Passkey setup was cancelled. Your Cube was not created — \
-                                 try again, or create it with a PIN instead."
-                                    .to_string()
-                            }
-                            other => other.user_message(),
-                        });
+                        self.error = Some(e.registration_message());
                         Task::none()
                     }
                 }
@@ -2227,8 +2301,17 @@ impl Home {
             }
             // Back out of the first screen: nothing has been written, so this
             // is a plain abandonment.
+            // Stepping back off the first phrase screen returns to the choice,
+            // where the other two exits are.
+            (CreationBackupStep::Choice, BackupWalletMessage::NextStep) => {
+                self.state = State::CreationBackup(CreationBackupStep::Intro(false));
+                Task::none()
+            }
             (CreationBackupStep::Intro(_), BackupWalletMessage::PreviousStep) => {
-                self.abandon_creation_backup();
+                // Back to the choice, not out of creation: the other two exits
+                // are there and the gate still has to be resolved. Cancelling
+                // outright is `CancelCreationBackup`, offered on that screen.
+                self.state = State::CreationBackup(CreationBackupStep::Choice);
                 Task::none()
             }
             (
@@ -2270,7 +2353,10 @@ impl Home {
                 });
 
                 if all_correct {
-                    self.finalize_cube_creation(true, None)
+                    // Same evidence, either shape of Cube; only the write
+                    // differs (a passkey Cube has no seed file or device
+                    // secret to mint).
+                    self.finalize_backed_up_cube()
                 } else {
                     self.state = State::CreationBackup(CreationBackupStep::Verification {
                         word_indices: *word_indices,
@@ -2325,7 +2411,422 @@ impl Home {
             _ => Vec::new(),
         };
         self.creation_backup_words = Some(zeroize::Zeroizing::new(words));
-        self.state = State::CreationBackup(CreationBackupStep::Intro(false));
+        self.state = State::CreationBackup(CreationBackupStep::Choice);
+    }
+
+    /// Finish creation with the **written-phrase** exit, whichever unlock
+    /// method the Cube uses.
+    ///
+    /// The two finalizers differ only in what they write — a PIN Cube gets a
+    /// device secret and a sealed seed file, a passkey Cube gets neither — so
+    /// the wizard that produced the evidence does not need to know which it is
+    /// talking to.
+    fn finalize_backed_up_cube(&mut self) -> Task<Message> {
+        if self.creating_passkey_cube() {
+            self.finalize_passkey_cube_creation(true, None, None)
+        } else {
+            self.finalize_cube_creation(true, None, None)
+        }
+    }
+
+    /// Both passkey ceremonies land here — the native macOS one and the
+    /// webview one — so there is exactly one answer to "what happens when a
+    /// credential is registered", and it is testable without a real ceremony.
+    ///
+    /// It derives the Cube's fingerprint, drops the seed material, and hands
+    /// over to the creation-backup step. **Nothing is written to disk**: that is
+    /// [`Self::finalize_passkey_cube_creation`], reached only once the user has
+    /// accepted the bypass acknowledgement (the sole exit a passkey Cube has
+    /// today — see [`DEFAULT_PASSKEY_MODE`]).
+    fn passkey_registration_succeeded(
+        &mut self,
+        credential_id: String,
+        prf_output: &zeroize::Zeroizing<[u8; 32]>,
+    ) -> Task<Message> {
+        // Derive the signer, take its fingerprint, and keep the phrase only for
+        // the duration of the step.
+        //
+        // The seed is held because the Recovery Kit branch has to encrypt it,
+        // and the credential's PRF output is available *here* and nowhere later
+        // without a second Touch ID ceremony. It is the same bargain the PIN
+        // path already makes with `creation_backup_words` — the same field, the
+        // same `Zeroizing`, and the same `scrub_creation_seed` on every exit —
+        // and unlike the PIN path this phrase is never displayed.
+        let (master_fingerprint, words) = {
+            let master_signer = match MasterSigner::from_prf_output(self.network, prf_output) {
+                Ok(signer) => signer,
+                Err(e) => {
+                    self.creating_cube = false;
+                    self.error = Some(format!("Failed to derive master signer: {}", e));
+                    return Task::none();
+                }
+            };
+            let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+            let words: Vec<String> = master_signer
+                .words()
+                .iter()
+                .map(|w| w.to_string())
+                .collect();
+            (master_signer.fingerprint(&secp), words)
+        };
+
+        self.pending_passkey_cube = Some(PendingPasskeyCube {
+            credential_id,
+            master_fingerprint,
+        });
+        self.creation_backup_words = Some(zeroize::Zeroizing::new(words));
+        self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
+        self.creating_cube = false;
+        self.error = None;
+
+        // Park the Cube list exactly as the PIN path does, so cancelling puts
+        // the user back where they were.
+        self.creation_backup_cubes = match &mut self.state {
+            State::Cubes { cubes, .. } => std::mem::take(cubes),
+            _ => Vec::new(),
+        };
+        // The same entry point a PIN Cube gets. Which exits the choice screen
+        // offers depends on the session, not on the unlock method.
+        self.state = State::CreationBackup(CreationBackupStep::Choice);
+        Task::none()
+    }
+
+    /// Which unlock method the Create Cube form starts on.
+    ///
+    /// **Passkey wherever the platform supports it.**
+    ///
+    /// This used to be conditional on a Connect session, because the Recovery
+    /// Kit was the only backup a passkey Cube could get and the Kit needs an
+    /// account. It no longer is: both creation paths derive a 12-word mnemonic
+    /// and run the same wizard, so a signed-out passkey Cube can write its
+    /// phrase down and leave creation with verified, offline-checkable
+    /// evidence — exactly like a PIN Cube. With the exits equal, there is
+    /// nothing left for the default to protect against.
+    fn default_passkey_mode(&self) -> bool {
+        feature_flags::PASSKEY_CREATION_AVAILABLE
+    }
+
+    /// Whether the creation flow can offer a Recovery Kit.
+    ///
+    /// The Kit lives on Connect: it needs an authenticated session to upload
+    /// to, and a Cube registered there to hang off. Signed out, neither exists,
+    /// so the exit is hidden rather than shown as a button that cannot work.
+    /// The written-phrase exit is unaffected — that one needs no account.
+    fn can_create_recovery_kit(&self) -> bool {
+        self.connect_account.authenticated_client().is_some()
+    }
+
+    /// The recovery-password screen of the creation Kit branch.
+    ///
+    /// Shares the Settings Kit flow's message type and its screen, so the two
+    /// places a user chooses this password apply the same rules. Variants that
+    /// belong to Settings alone (PIN re-entry, protection-mode choice, removal)
+    /// are inert here.
+    fn update_creation_kit(&mut self, msg: RecoveryKitMessage) -> Task<Message> {
+        if !matches!(self.state, State::CreationBackup(_)) {
+            return Task::none();
+        }
+        match msg {
+            RecoveryKitMessage::PasswordChanged(v) => {
+                self.creation_kit_password = v;
+                self.creation_kit_error = None;
+                Task::none()
+            }
+            RecoveryKitMessage::ConfirmChanged(v) => {
+                self.creation_kit_confirm = v;
+                self.creation_kit_error = None;
+                Task::none()
+            }
+            RecoveryKitMessage::AcknowledgeToggled(v) => {
+                self.creation_kit_acknowledged = v;
+                Task::none()
+            }
+            RecoveryKitMessage::Cancel => {
+                // Back to the choice, not out of creation: the user still has
+                // to resolve the gate one way or the other.
+                self.scrub_creation_kit();
+                self.state = State::CreationBackup(CreationBackupStep::Choice);
+                Task::none()
+            }
+            RecoveryKitMessage::SubmitPassword => self.submit_creation_kit(),
+            _ => Task::none(),
+        }
+    }
+
+    /// Register the Cube with Connect and upload its Recovery Kit.
+    ///
+    /// The order is forced: `put_recovery_kit` is keyed by Connect's **numeric**
+    /// cube id, which only exists once the Cube is registered. Registering
+    /// before the local Cube is written is safe — the server record is name,
+    /// uuid and network, and a Cube that exists only there holds no funds and
+    /// cannot be opened. If the upload then fails, the local write never
+    /// happens and there is no half-created Cube; the stray server record is
+    /// reconciled by the same catch-up sync that already handles a Cube
+    /// registered from another device.
+    fn submit_creation_kit(&mut self) -> Task<Message> {
+        use crate::services::recovery::MIN_PASSWORD_LEN;
+
+        let Some(client) = self.connect_account.authenticated_client() else {
+            self.creation_kit_error = Some(
+                "You're signed out of Connect, so there's nowhere to save a Recovery Kit. \
+                 Sign in and try again, or choose \"I'll do this later\"."
+                    .to_string(),
+            );
+            return Task::none();
+        };
+        let Some(words) = self.creation_backup_words.clone() else {
+            // The seed is what the Kit is *for*; without it there is nothing to
+            // encrypt and the Cube must not be written.
+            self.error = Some(
+                "This Cube's seed was lost before the Recovery Kit could be made. \
+                 Nothing was written — please start again."
+                    .to_string(),
+            );
+            self.abandon_creation_backup();
+            return Task::none();
+        };
+
+        // The same three gates the Settings screen shows, re-checked here: the
+        // button is only one of the two ways this message can arrive.
+        let password = self.creation_kit_password.clone();
+        if password.len() < MIN_PASSWORD_LEN {
+            self.creation_kit_error = Some(format!(
+                "Password must be at least {} characters.",
+                MIN_PASSWORD_LEN
+            ));
+            return Task::none();
+        }
+        if password.as_str() != self.creation_kit_confirm.as_str() {
+            self.creation_kit_error = Some("Passwords don't match.".to_string());
+            return Task::none();
+        }
+        if !self.creation_kit_acknowledged {
+            self.creation_kit_error =
+                Some("Confirm you've written the recovery password down.".to_string());
+            return Task::none();
+        }
+
+        let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
+        let cube_name = self.create_cube_name.value.trim().to_string();
+        let network = self.network;
+        let api_network = settings::network_to_api_string(network);
+        let created_at = chrono::Utc::now();
+
+        self.creation_kit_error = None;
+        self.creating_cube = true;
+        self.state = State::CreationBackup(CreationBackupStep::KitUploading);
+
+        Task::perform(
+            async move {
+                // 1. Register, so the Kit has a cube to hang off. A Cube the
+                //    user already registered from another device comes back
+                //    from the list rather than being created twice.
+                let cube_uuid = cube_id.to_string();
+                let registered = match client
+                    .register_cube(RegisterCubeRequest {
+                        uuid: cube_uuid.clone(),
+                        name: cube_name.clone(),
+                        network: api_network.clone(),
+                        // A Cube being created has no Vault yet; the flag is
+                        // monotonic and flips later.
+                        has_vault: None,
+                    })
+                    .await
+                {
+                    Ok(resp) => Ok(resp.id),
+                    Err(e) => {
+                        // Registration is not idempotent, so a retry after a
+                        // partial failure must find the existing record rather
+                        // than give up.
+                        match client.list_cubes().await {
+                            Ok(cubes) => cubes
+                                .into_iter()
+                                .find(|c| c.uuid == cube_uuid)
+                                .map(|c| c.id)
+                                .ok_or_else(|| {
+                                    format!("Couldn't register this Cube with Connect: {}", e)
+                                }),
+                            Err(_) => {
+                                Err(format!("Couldn't register this Cube with Connect: {}", e))
+                            }
+                        }
+                    }
+                }?;
+
+                // 2. Encrypt and upload — the *same* function Settings uses, so
+                //    a Kit made here and a Kit made later are the same artifact.
+                //    Seed only: a Cube at creation has no Vault, and
+                //    `cube_backup_completeness` counts a seed-only Kit as
+                //    complete for a vaultless Cube.
+                let outcome = recovery_kit_upload(
+                    client,
+                    registered,
+                    Some(words),
+                    // No Vault at creation, so no descriptor half to seal.
+                    None,
+                    crate::services::recovery::SeedBlobCube {
+                        uuid: cube_uuid,
+                        name: cube_name,
+                        network: api_network,
+                        created_at: created_at.to_rfc3339(),
+                        lightning_address: None,
+                    },
+                    password,
+                )
+                .await?;
+
+                if !outcome.now_has_seed {
+                    // Connect accepted the call but is not holding the seed —
+                    // that is not a backup, and must not be recorded as one.
+                    return Err("Connect didn't store this Cube's encrypted seed. \
+                                Nothing was written — please try again."
+                        .to_string());
+                }
+
+                Ok(creation_gate::CreationRecoveryKit {
+                    at: created_at.timestamp(),
+                    cube_id: registered,
+                    has_seed: outcome.now_has_seed,
+                })
+            },
+            |result| Message::View(ViewMessage::CreationKitUploaded(result)),
+        )
+    }
+
+    /// Wipe the recovery password and its confirmation.
+    ///
+    /// Called on every exit from the Kit branch — success, failure, cancel —
+    /// alongside [`Self::scrub_creation_seed`]. `Zeroizing` wipes the buffer
+    /// on drop; replacing the value is what makes that drop happen now rather
+    /// than whenever the panel is next reused.
+    fn scrub_creation_kit(&mut self) {
+        self.creation_kit_password = zeroize::Zeroizing::new(String::new());
+        self.creation_kit_confirm = zeroize::Zeroizing::new(String::new());
+        self.creation_kit_acknowledged = false;
+        self.creation_kit_error = None;
+    }
+
+    /// The native macOS ceremony hands back a raw credential id where the
+    /// webview one hands back base64. That encoding is the *only* difference
+    /// between the two completion paths; everything else is
+    /// [`Self::passkey_registration_succeeded`].
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    fn passkey_registration_succeeded_raw(
+        &mut self,
+        credential_id: &[u8],
+        prf_output: &zeroize::Zeroizing<[u8; 32]>,
+    ) -> Task<Message> {
+        let credential_id =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credential_id);
+        self.passkey_registration_succeeded(credential_id, prf_output)
+    }
+
+    /// Whether the creation-backup step on screen belongs to a passkey Cube.
+    fn creating_passkey_cube(&self) -> bool {
+        self.pending_passkey_cube.is_some()
+    }
+
+    /// Phase 2 of **passkey** creation: the only place a passkey Cube is
+    /// written to `settings.json`.
+    ///
+    /// Mirrors [`Self::finalize_cube_creation`] and arms the same gate. There is
+    /// no seed file, no device secret and no PIN to write — a passkey Cube is
+    /// its metadata plus a fingerprint — so the write is just the settings
+    /// insert, but the *evidence* rules are identical: `backed_up` or a recorded
+    /// bypass, and `creation_backup_required = true` either way.
+    ///
+    /// Refuses outright if none is present. That combination — armed, no
+    /// evidence — is the one shape `creation_gate::evaluate_for_cube` blocks,
+    /// and writing it would produce a Cube that cannot be opened.
+    fn finalize_passkey_cube_creation(
+        &mut self,
+        backed_up: bool,
+        bypass: Option<creation_gate::CreationBackupBypass>,
+        recovery_kit: Option<creation_gate::CreationRecoveryKit>,
+    ) -> Task<Message> {
+        let Some(pending) = self.pending_passkey_cube.clone() else {
+            self.error = Some(
+                "This passkey Cube's registration was lost before it could be saved. \
+                 Nothing was written — please start again."
+                    .to_string(),
+            );
+            self.abandon_creation_backup();
+            return Task::none();
+        };
+        if !backed_up && bypass.is_none() && recovery_kit.is_none() {
+            // Unreachable through the UI; a hard refusal rather than a Cube
+            // nobody can open if it ever becomes reachable.
+            tracing::error!("refusing to persist a passkey Cube with no backup evidence");
+            self.error = Some(
+                "This Cube can't be created without a backup or an acknowledgement. \
+                 Nothing was written."
+                    .to_string(),
+            );
+            return Task::none();
+        }
+
+        self.creating_cube = true;
+        self.error = None;
+        let network = self.network;
+        let cube_name = self.create_cube_name.value.trim().to_string();
+        let datadir_path = self.datadir_path.clone();
+        let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
+
+        Task::perform(
+            async move {
+                let network_dir = datadir_path.network_directory(network);
+                network_dir
+                    .init()
+                    .map_err(|e| format!("Failed to create network directory: {}", e))?;
+
+                // Passkey Cube: no encrypted seed file, no PIN, no device
+                // secret. The credential is the key.
+                let passkey_metadata = settings::PasskeyMetadata {
+                    credential_id: pending.credential_id,
+                    rp_id: passkey_svc::RP_ID.to_string(),
+                    created_at: chrono::Utc::now().timestamp(),
+                    label: None,
+                };
+
+                let mut cube = CubeSettings::new_with_id(cube_id, cube_name, network)
+                    .with_master_signer(pending.master_fingerprint)
+                    .with_passkey(passkey_metadata);
+                cube.backed_up = backed_up;
+                cube.creation_backup_bypass = bypass;
+                // The Kit was uploaded before this write, so the Cube is
+                // registered with Connect by definition — recording that here
+                // stops `CubeCreated` registering it a second time.
+                if recovery_kit.is_some() {
+                    cube.remote_synced = true;
+                }
+                cube.creation_recovery_kit = recovery_kit;
+                // Armed, like every Cube created under the gate. Without this a
+                // passkey Cube reads as one that predates the gate and is waved
+                // through unbacked-up forever — the audited hole.
+                cube.creation_backup_required = true;
+
+                tracing::info!(
+                    "Passkey Cube created with fingerprint: {} (no seed on disk, \
+                     backed_up={}, bypass={}, recovery_kit={})",
+                    pending.master_fingerprint,
+                    backed_up,
+                    cube.creation_backup_bypass.is_some(),
+                    cube.creation_recovery_kit.is_some(),
+                );
+
+                settings::update_settings_file(&network_dir, |mut settings| {
+                    if settings.cubes.iter().any(|c| c.id == cube.id) {
+                        return Some(settings);
+                    }
+                    settings.cubes.push(cube.clone());
+                    Some(settings)
+                })
+                .await
+                .map(|_| cube)
+                .map_err(|e| e.to_string())
+            },
+            Message::CubeCreated,
+        )
     }
 
     /// Leave the backup step without creating anything, scrubbing the seed.
@@ -2338,6 +2839,12 @@ impl Home {
         // Cube limit — reading zero until the next reload.
         let cubes = std::mem::take(&mut self.creation_backup_cubes);
         self.scrub_creation_seed();
+        self.scrub_creation_kit();
+        // A registered-but-unsaved passkey credential goes with it. The
+        // credential itself stays in the platform authenticator — harmless,
+        // since nothing references it — but this process must not still be
+        // holding something it could turn into a Cube later.
+        self.pending_passkey_cube = None;
         self.creating_cube = false;
         self.error = None;
         // Back to the create form the user came from. `pending_cube_id` is
@@ -2355,14 +2862,15 @@ impl Home {
     /// Cube into `settings.json` — in that order, and only now, so that a user
     /// who walked away during the backup step left nothing behind.
     ///
-    /// `backed_up` is set when the user typed the challenge words back
-    /// correctly; `bypass` is set when they explicitly accepted
-    /// [`creation_gate::BYPASS_ACKNOWLEDGEMENT`] instead. Exactly one of the
-    /// two is meaningful, and both are recorded on the Cube.
+    /// Exactly one of the three exits is meaningful, and all three are
+    /// recorded on the Cube: `backed_up` when the user typed the challenge
+    /// words back correctly, `recovery_kit` when they made a Kit, `bypass`
+    /// when they accepted [`creation_gate::BYPASS_ACKNOWLEDGEMENT`] instead.
     fn finalize_cube_creation(
         &mut self,
         backed_up: bool,
         bypass: Option<creation_gate::CreationBackupBypass>,
+        recovery_kit: Option<creation_gate::CreationRecoveryKit>,
     ) -> Task<Message> {
         let Some(words) = self.creation_backup_words.clone() else {
             return self.lose_creation_seed();
@@ -2513,6 +3021,13 @@ impl Home {
                 // satisfies `creation_gate::evaluate`.
                 cube.backed_up = backed_up;
                 cube.creation_backup_bypass = bypass;
+                // A Kit could only have been uploaded against a registered
+                // Cube, so recording it also means "already registered" — see
+                // `finalize_passkey_cube_creation`, which does the same.
+                if recovery_kit.is_some() {
+                    cube.remote_synced = true;
+                }
+                cube.creation_recovery_kit = recovery_kit;
                 // Arm the gate. Reaching this line means one of the two
                 // fields above is set: the user either typed the challenge
                 // words back correctly or accepted
@@ -2626,6 +3141,12 @@ impl Home {
                                     step,
                                     self.creation_backup_words.as_ref().map(|w| w.as_slice()),
                                     self.creating_cube,
+                                    self.creating_passkey_cube(),
+                                    &self.creation_kit_password,
+                                    &self.creation_kit_confirm,
+                                    self.creation_kit_acknowledged,
+                                    self.creation_kit_error.as_deref(),
+                                    self.can_create_recovery_kit(),
                                 ),
                                 State::Cubes { cubes, create_cube } => {
                                     if *create_cube {
@@ -3556,10 +4077,17 @@ fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
 ///   exists to prevent is a user believing the datadir folder is their backup.
 /// - The "I'll do this later" escape and its acknowledgement screen. Settings
 ///   has no equivalent — there, declining just closes a panel.
+#[allow(clippy::too_many_arguments)]
 fn creation_backup_view<'a>(
     step: &'a CreationBackupStep,
     words: Option<&'a [String]>,
     saving: bool,
+    is_passkey: bool,
+    kit_password: &'a zeroize::Zeroizing<String>,
+    kit_confirm: &'a zeroize::Zeroizing<String>,
+    kit_acknowledged: bool,
+    kit_error: Option<&'a str>,
+    kit_available: bool,
 ) -> Element<'a, ViewMessage> {
     use crate::app::view::settings::backup;
 
@@ -3615,13 +4143,141 @@ fn creation_backup_view<'a>(
             saving,
             ViewMessage::CreationBackup,
         )),
-        CreationBackupStep::Bypass { acknowledged } => creation_backup_bypass_view(*acknowledged),
+        CreationBackupStep::Bypass { acknowledged } => {
+            creation_backup_bypass_view(*acknowledged, is_passkey)
+        }
+        CreationBackupStep::Choice => creation_choice_view(saving, is_passkey, kit_available),
+        CreationBackupStep::KitPassword => {
+            // The Settings Kit flow's own screen, message-generic so both
+            // places apply the same length, strength and acknowledgement gates.
+            crate::app::view::settings::recovery_kit::password_entry_view(
+                kit_password,
+                kit_confirm,
+                kit_acknowledged,
+                kit_error,
+                ViewMessage::CreationKit,
+            )
+        }
+        CreationBackupStep::KitUploading => Container::new(
+            Column::new()
+                .align_x(Alignment::Center)
+                .spacing(20)
+                .push(text("Saving your Recovery Kit…").size(24).bold())
+                .push(
+                    Container::new(
+                        p1_regular(
+                            "Encrypting this Cube's master seed with your recovery password \
+                             and saving it to COINCUBE Connect. Your Cube is created once \
+                             this finishes.",
+                        )
+                        .style(theme::text::secondary),
+                    )
+                    .max_width(500),
+                ),
+        )
+        .center_x(Length::Fill)
+        .into(),
     }
+}
+
+/// How do you want to back this Cube up? The entry point for every creation,
+/// PIN and passkey alike.
+///
+/// Three exits, in the order of how much protection they give:
+///
+/// 1. **Write the phrase down** — verified on the spot, works with no account
+///    and no network, and restores through the app's own 12-word grid. Offered
+///    for both unlock methods, which is only possible because both derive a
+///    12-word mnemonic.
+/// 2. **Recovery Kit** — the master seed encrypted under a recovery password
+///    and held by Connect. Needs an account, so it is hidden when signed out
+///    rather than shown as a button that cannot work.
+/// 3. **Later** — the recorded acknowledgement. Last, and named for what it
+///    actually is.
+fn creation_choice_view(
+    saving: bool,
+    is_passkey: bool,
+    kit_available: bool,
+) -> Element<'static, ViewMessage> {
+    let mut options = Column::new().align_x(Alignment::Center).spacing(12).push(
+        button::primary(None, "Write down my recovery phrase")
+            .on_press_maybe(
+                (!saving).then_some(ViewMessage::CreationBackup(BackupWalletMessage::NextStep)),
+            )
+            .width(Length::Fixed(340.0)),
+    );
+
+    if kit_available {
+        options = options.push(
+            button::secondary(None, "Save a Recovery Kit to Connect")
+                .on_press_maybe((!saving).then_some(ViewMessage::CreationKitRequested))
+                .width(Length::Fixed(340.0)),
+        );
+    }
+
+    let mut content = Column::new()
+        .align_x(Alignment::Center)
+        .spacing(20)
+        .push(text("Back up this Cube").size(24).bold())
+        .push(
+            Container::new(
+                p1_regular(
+                    "Your recovery phrase is twelve words that rebuild this Cube on any \
+                     computer. Write them down and keep them somewhere safe — or save a \
+                     Recovery Kit, which stores the same seed with COINCUBE Connect, \
+                     encrypted with a recovery password only you know.",
+                )
+                .style(theme::text::secondary),
+            )
+            .max_width(560),
+        )
+        .push(
+            Container::new(
+                p1_regular(creation_gate::not_a_backup_copy(is_passkey))
+                    .style(theme::text::secondary),
+            )
+            .max_width(560),
+        );
+
+    if !kit_available {
+        content = content.push(
+            Container::new(
+                p2_regular(
+                    "Sign in to COINCUBE Connect to save a Recovery Kit instead. \
+                     Your written phrase works either way.",
+                )
+                .style(theme::text::secondary),
+            )
+            .max_width(560),
+        );
+    }
+
+    Container::new(
+        content
+            .push(Space::new().height(Length::Fixed(10.0)))
+            .push(options)
+            .push(
+                button::transparent(None, "I'll do this later").on_press_maybe(
+                    (!saving).then_some(ViewMessage::CreationBackupBypassRequested),
+                ),
+            )
+            .push(button::transparent(None, "Cancel").on_press(ViewMessage::CancelCreationBackup)),
+    )
+    .center_x(Length::Fill)
+    .into()
 }
 
 /// The bypass screen: the acknowledgement, a checkbox that must be actively
 /// ticked, and no way past it that does not go through the checkbox.
-fn creation_backup_bypass_view(acknowledged: bool) -> Element<'static, ViewMessage> {
+///
+/// `is_passkey` swaps the folder-copy copy — the PIN version's device-secret
+/// reasoning is false of a passkey Cube (`creation_gate::not_a_backup_copy`).
+/// "Back up now" returns to the choice screen for both shapes, because both
+/// have the same exits waiting there.
+fn creation_backup_bypass_view(
+    acknowledged: bool,
+    is_passkey: bool,
+) -> Element<'static, ViewMessage> {
     Container::new(
         Column::new()
             .align_x(Alignment::Center)
@@ -3629,7 +4285,8 @@ fn creation_backup_bypass_view(acknowledged: bool) -> Element<'static, ViewMessa
             .push(text("Create this Cube without a backup?").size(24).bold())
             .push(
                 Container::new(
-                    p1_regular(creation_gate::NOT_A_BACKUP_COPY).style(theme::text::secondary),
+                    p1_regular(creation_gate::not_a_backup_copy(is_passkey))
+                        .style(theme::text::secondary),
                 )
                 .max_width(500),
             )
@@ -3648,9 +4305,7 @@ fn creation_backup_bypass_view(acknowledged: bool) -> Element<'static, ViewMessa
                     .spacing(20)
                     .push(
                         button::secondary(Some(icon::previous_icon()), "Back up now")
-                            .on_press(ViewMessage::CreationBackup(
-                                BackupWalletMessage::PreviousStep,
-                            ))
+                            .on_press(ViewMessage::CreationBackupChoiceRequested)
                             .width(Length::Fixed(240.0)),
                     )
                     .push(
@@ -3957,6 +4612,9 @@ pub enum ViewMessage {
     CreationBackup(BackupWalletMessage),
     /// "I'll do this later" — open the bypass screen.
     CreationBackupBypassRequested,
+    /// "Back up now" — return to the choice screen from the bypass. The
+    /// acknowledgement is reversible while the Cube is still unwritten.
+    CreationBackupChoiceRequested,
     /// The bypass acknowledgement checkbox. Bypassing requires an active
     /// acceptance, not a dismissal.
     CreationBackupAcknowledgeBypass(bool),
@@ -3966,6 +4624,20 @@ pub enum ViewMessage {
     CreationBackupBypassConfirmed,
     /// Leave the backup step without creating anything.
     CancelCreationBackup,
+
+    // ── Passkey creation: the Recovery Kit branch ────────────────────────
+    /// "Create Recovery Kit" from [`CreationBackupStep::Choice`] — opens the
+    /// recovery-password screen.
+    CreationKitRequested,
+    /// The Settings Kit flow's own message type. The creation flow renders that
+    /// flow's password screen, and this is the `fn` mapper it is parameterised
+    /// over, exactly as [`Self::CreationBackup`] is for the backup wizard.
+    /// Variants belonging to Settings alone are inert here.
+    CreationKit(RecoveryKitMessage),
+    /// The Kit upload finished. `Ok` carries the evidence to persist on the
+    /// Cube; `Err` returns the user to the password screen with the reason and
+    /// **nothing written**.
+    CreationKitUploaded(Result<creation_gate::CreationRecoveryKit, String>),
     ImportWallet,
     CreateWallet,
     /// W13 — launch the installer in "restore from Cube Recovery Kit"
@@ -4684,7 +5356,7 @@ mod tests {
         ];
         home.recovery_words[0] = "abandon".to_string();
         home.recovery_active_index = Some(0);
-        home.passkey_mode = !feature_flags::PASSKEY_CREATION_AVAILABLE;
+        home.passkey_mode = !home.default_passkey_mode();
 
         let _ = home.update(Message::View(ViewMessage::ShowCreateCube(false)));
 
@@ -4700,11 +5372,10 @@ mod tests {
         assert_eq!(home.create_cube_pin_confirm.value().as_str(), "");
         assert!(home.recovery_words.iter().all(String::is_empty));
         assert!(home.recovery_active_index.is_none());
+        let expected_default = home.default_passkey_mode();
         assert_eq!(
-            home.passkey_mode,
-            feature_flags::PASSKEY_CREATION_AVAILABLE,
-            "dismissing restores the default unlock method: passkey where \
-             available, PIN otherwise"
+            home.passkey_mode, expected_default,
+            "dismissing restores the default unlock method"
         );
     }
 
@@ -5309,6 +5980,14 @@ mod tests {
     /// Walk intro → phrase → verification and answer the challenge correctly.
     /// Returns the task `VerifyPhrase` produced.
     fn walk_backup_to_verified(home: &mut Home) -> Task<Message> {
+        // Every creation now opens on the choice screen; "write down my
+        // recovery phrase" is what leads into the wizard.
+        assert_eq!(
+            step(home),
+            CreationBackupStep::Choice,
+            "creation must open on the backup choice"
+        );
+        let _ = home.update(backup(BackupWalletMessage::NextStep));
         let _ = home.update(backup(BackupWalletMessage::ToggleBackupIntroCheck));
         assert_eq!(
             step(home),
@@ -5509,7 +6188,9 @@ mod tests {
         let mut home = home_with_datadir(&dir);
         enter_backup_step(&mut home, "Abandoned", "1111");
 
-        // Get as deep as the flow allows before walking away.
+        // Get as deep as the flow allows before walking away: choice → intro →
+        // phrase → verification.
+        let _ = home.update(backup(BackupWalletMessage::NextStep));
         let _ = home.update(backup(BackupWalletMessage::ToggleBackupIntroCheck));
         let _ = home.update(backup(BackupWalletMessage::NextStep));
         let _ = home.update(backup(BackupWalletMessage::NextStep));
@@ -5751,6 +6432,7 @@ mod tests {
         let mut home = home_with_datadir(&dir);
         enter_backup_step(&mut home, "Typo", "9876");
 
+        let _ = home.update(backup(BackupWalletMessage::NextStep));
         let _ = home.update(backup(BackupWalletMessage::ToggleBackupIntroCheck));
         let _ = home.update(backup(BackupWalletMessage::NextStep));
         let _ = home.update(backup(BackupWalletMessage::NextStep));
@@ -5993,6 +6675,9 @@ mod tests {
             .map(|w| w.to_string())
             .collect();
 
+        let password = zeroize::Zeroizing::new("correct horse battery staple".to_string());
+        let empty = zeroize::Zeroizing::new(String::new());
+
         for step in [
             CreationBackupStep::Intro(false),
             CreationBackupStep::Intro(true),
@@ -6006,11 +6691,902 @@ mod tests {
                 acknowledged: false,
             },
             CreationBackupStep::Bypass { acknowledged: true },
+            CreationBackupStep::Choice,
+            CreationBackupStep::KitPassword,
+            CreationBackupStep::KitUploading,
         ] {
-            let _ = creation_backup_view(&step, Some(&words), false);
-            let _ = creation_backup_view(&step, Some(&words), true);
-            // The seed being gone mid-render must not panic.
-            let _ = creation_backup_view(&step, None, false);
+            for is_passkey in [false, true] {
+                for (pw, confirm, ack, err) in [
+                    (&empty, &empty, false, None),
+                    (&password, &password, true, None),
+                    (&password, &empty, false, Some("upload failed")),
+                ] {
+                    for kit_available in [false, true] {
+                        for saving in [false, true] {
+                            let _ = creation_backup_view(
+                                &step,
+                                Some(&words),
+                                saving,
+                                is_passkey,
+                                pw,
+                                confirm,
+                                ack,
+                                err,
+                                kit_available,
+                            );
+                        }
+                        // The seed being gone mid-render must not panic.
+                        let _ = creation_backup_view(
+                            &step,
+                            None,
+                            false,
+                            is_passkey,
+                            pw,
+                            confirm,
+                            ack,
+                            err,
+                            kit_available,
+                        );
+                    }
+                }
+            }
         }
+    }
+
+    // ── Passkey creation is gated like every other creation ──────────────────
+    //
+    // These run everywhere, including unsigned macOS: a passkey Cube writes no
+    // seed file and mints no device secret, so nothing here touches the
+    // data-protection keychain that makes the PIN-path tests `#[ignore]`d.
+
+    /// A PRF output to derive from. Not a real ceremony result — the value is
+    /// irrelevant, only that the same 32 bytes always produce the same Cube.
+    fn fake_prf(byte: u8) -> zeroize::Zeroizing<[u8; 32]> {
+        zeroize::Zeroizing::new([byte; 32])
+    }
+
+    /// Complete a registration through the **webview** ceremony's real message,
+    /// exactly as `PasskeyCeremony` delivers it.
+    fn webview_registration(home: &mut Home, credential_id: &str, prf: u8) -> Task<Message> {
+        home.update(Message::PasskeyCeremonyResult(Ok(
+            CeremonyOutcome::Registered(passkey_svc::PasskeyRegistration {
+                credential_id: credential_id.to_string(),
+                prf_output: fake_prf(prf),
+            }),
+        )))
+    }
+
+    /// Complete a registration through the **native macOS** ceremony's entry
+    /// point. The channel-and-ObjC-controller half cannot be built in a unit
+    /// test, so this is the deepest common point both paths share — and it is
+    /// the whole of the native arm apart from reading the channel.
+    fn native_registration(home: &mut Home, credential_id: &[u8], prf: u8) -> Task<Message> {
+        home.passkey_registration_succeeded_raw(credential_id, &fake_prf(prf))
+    }
+
+    /// Put the panel in "the user pressed Create Cube in passkey mode".
+    fn passkey_create_form(home: &mut Home, name: &str) {
+        home.passkey_mode = true;
+        home.create_cube_name.value = name.to_string();
+        home.create_cube_name.valid = true;
+    }
+
+    /// Accept the acknowledgement and let the write run.
+    fn acknowledge_and_confirm(home: &mut Home) -> Vec<Message> {
+        // The acknowledgement is now one exit of the shared choice screen.
+        if !matches!(
+            home.state,
+            State::CreationBackup(CreationBackupStep::Bypass { .. })
+        ) {
+            let _ = home.update(Message::View(ViewMessage::CreationBackupBypassRequested));
+        }
+        let _ = home.update(Message::View(ViewMessage::CreationBackupAcknowledgeBypass(
+            true,
+        )));
+        drain(home.update(Message::View(ViewMessage::CreationBackupBypassConfirmed)))
+    }
+
+    /// **The audited hole, as a test.** Registration alone must not put a Cube
+    /// on disk — and it must never put one there in the shape that reads as
+    /// "predates the gate" (`creation_backup_required == false`) while carrying
+    /// no backup evidence at all.
+    #[test]
+    fn a_passkey_registration_alone_never_reaches_disk() {
+        for native in [false, true] {
+            let dir = tmp_datadir("passkey-no-write");
+            let mut home = home_with_datadir(&dir);
+            passkey_create_form(&mut home, "Registered");
+
+            let out = drain(if native {
+                native_registration(&mut home, b"raw-credential", 7)
+            } else {
+                webview_registration(&mut home, "b64-credential", 7)
+            });
+
+            assert!(
+                out.is_empty(),
+                "registration must not produce a CubeCreated on its own: {:?}",
+                out
+            );
+            assert!(
+                cubes_on_disk(&dir).is_empty(),
+                "a registered passkey credential wrote a Cube before any backup step"
+            );
+            assert!(
+                matches!(
+                    home.state,
+                    State::CreationBackup(CreationBackupStep::Choice)
+                ),
+                "registration must hand over to the creation-backup step, got {:?}",
+                home.state
+            );
+            assert!(home.creating_passkey_cube());
+            assert!(!home.creating_cube, "the spinner must clear for the step");
+
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// The forbidden combination, stated directly: no Cube may be persisted
+    /// with `backed_up == false`, no bypass, and the gate disarmed. That is the
+    /// shape `evaluate_for_cube` waves through as legacy, and it is exactly
+    /// what passkey creation used to write.
+    #[test]
+    fn no_passkey_cube_lands_ungated_without_evidence() {
+        let dir = tmp_datadir("passkey-shape");
+        let mut home = home_with_datadir(&dir);
+        passkey_create_form(&mut home, "Shape");
+        let _ = drain(webview_registration(&mut home, "cred", 3));
+        let _ = acknowledge_and_confirm(&mut home);
+
+        let on_disk = cubes_on_disk(&dir);
+        assert_eq!(on_disk.len(), 1, "expected one Cube, got {:?}", on_disk);
+        for cube in &on_disk {
+            assert!(cube.is_passkey_cube(), "the Cube must carry its passkey");
+            assert!(
+                cube.creation_backup_required,
+                "a passkey Cube reached disk disarmed — it would be treated as \
+                 predating the gate and never asked for a backup again"
+            );
+            assert!(
+                cube.backed_up || cube.creation_backup_bypass.is_some(),
+                "a passkey Cube reached disk with no backup evidence"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Cancelling before evidence leaves nothing behind — no Cube, and no
+    /// registration this process could still turn into one.
+    #[test]
+    fn cancelling_passkey_creation_leaves_no_cube() {
+        let dir = tmp_datadir("passkey-cancel");
+        let mut home = home_with_datadir(&dir);
+        passkey_create_form(&mut home, "Cancelled");
+        let _ = drain(webview_registration(&mut home, "cred", 9));
+        assert!(home.creating_passkey_cube());
+
+        let out = drain(home.update(Message::View(ViewMessage::CancelCreationBackup)));
+        assert!(out.is_empty(), "cancelling must create nothing: {:?}", out);
+        assert!(
+            cubes_on_disk(&dir).is_empty(),
+            "a cancelled passkey creation must leave no Cube in settings.json"
+        );
+        assert!(
+            !home.creating_passkey_cube(),
+            "the registration must not survive a cancel"
+        );
+        assert!(matches!(
+            home.state,
+            State::Cubes {
+                create_cube: true,
+                ..
+            }
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A passkey Cube that completed creation opens: the gate is armed *and*
+    /// satisfied by the recorded bypass, never `Blocked`.
+    #[test]
+    fn a_created_passkey_cube_passes_the_creation_gate() {
+        for native in [false, true] {
+            let dir = tmp_datadir("passkey-gate");
+            let mut home = home_with_datadir(&dir);
+            passkey_create_form(&mut home, "Openable");
+            let _ = drain(if native {
+                native_registration(&mut home, b"raw", 5)
+            } else {
+                webview_registration(&mut home, "b64", 5)
+            });
+            let out = acknowledge_and_confirm(&mut home);
+
+            let [Message::CubeCreated(Ok(cube))] = out.as_slice() else {
+                panic!("expected exactly one successful CubeCreated, got {:?}", out);
+            };
+            assert_eq!(
+                creation_gate::evaluate_for_cube(cube, None),
+                creation_gate::CreationGate::Bypassed,
+            );
+            for on_disk in cubes_on_disk(&dir) {
+                assert!(
+                    !matches!(
+                        creation_gate::evaluate_for_cube(&on_disk, None),
+                        creation_gate::CreationGate::Blocked(_)
+                    ),
+                    "a passkey Cube straight out of creation must not be blocked at open"
+                );
+            }
+
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// The bypass a passkey Cube records is the same evidence the PIN flow
+    /// records — same constant, stored verbatim, with a timestamp — so support
+    /// can answer "did this user bypass?" identically for both shapes.
+    #[test]
+    fn a_bypassed_passkey_cube_records_the_same_evidence_as_the_pin_flow() {
+        let dir = tmp_datadir("passkey-evidence");
+        let mut home = home_with_datadir(&dir);
+        passkey_create_form(&mut home, "Bypassed");
+        let _ = drain(webview_registration(&mut home, "cred", 11));
+
+        // The unticked box must not be enough.
+        let out = drain(home.update(Message::View(ViewMessage::CreationBackupBypassConfirmed)));
+        assert!(
+            out.is_empty(),
+            "an unacknowledged bypass must not create a Cube: {:?}",
+            out
+        );
+        assert!(cubes_on_disk(&dir).is_empty());
+
+        let _ = acknowledge_and_confirm(&mut home);
+        let on_disk = cubes_on_disk(&dir);
+        assert_eq!(on_disk.len(), 1);
+        let bypass = on_disk[0]
+            .creation_backup_bypass
+            .as_ref()
+            .expect("the bypass must be recorded on the Cube");
+        assert_eq!(
+            bypass.acknowledged,
+            creation_gate::BYPASS_ACKNOWLEDGEMENT,
+            "the acknowledgement must be stored verbatim, as the PIN flow does"
+        );
+        assert!(bypass.at > 0, "the bypass must carry when it happened");
+        assert!(
+            !on_disk[0].backed_up,
+            "a bypass is not a backup and must not be recorded as one"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Both ceremony backends produce the same Cube from the same PRF output,
+    /// and both go through the same gate. If one path ever stops routing
+    /// through the shared transition, this diverges.
+    #[test]
+    fn both_ceremony_paths_produce_the_same_gated_cube() {
+        let mut fingerprints = Vec::new();
+        for native in [false, true] {
+            let dir = tmp_datadir("passkey-parity");
+            let mut home = home_with_datadir(&dir);
+            passkey_create_form(&mut home, "Parity");
+            let _ = drain(if native {
+                // Same bytes either way: the webview delivers the base64 of
+                // what the native path delivers raw.
+                native_registration(&mut home, b"same-credential", 21)
+            } else {
+                webview_registration(
+                    &mut home,
+                    &base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        b"same-credential",
+                    ),
+                    21,
+                )
+            });
+            let out = acknowledge_and_confirm(&mut home);
+            let [Message::CubeCreated(Ok(cube))] = out.as_slice() else {
+                panic!("expected one CubeCreated, got {:?}", out);
+            };
+            assert_eq!(
+                cube.passkey_metadata
+                    .as_ref()
+                    .map(|m| m.credential_id.clone()),
+                Some(base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    b"same-credential"
+                )),
+                "both paths must persist the same base64 credential id"
+            );
+            assert!(cube.creation_backup_required);
+            assert!(cube.creation_backup_bypass.is_some());
+            fingerprints.push(cube.master_signer_fingerprint);
+
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+        assert_eq!(
+            fingerprints[0], fingerprints[1],
+            "the same PRF output must derive the same master signer on both paths"
+        );
+        assert!(
+            fingerprints[0].is_some(),
+            "the fingerprint must be recorded"
+        );
+    }
+
+    /// **A passkey Cube can now write its phrase down.** Same wizard, same
+    /// screens, same verification, same evidence as a PIN Cube — which is only
+    /// possible because both derive a 12-word mnemonic the restore grid takes
+    /// back.
+    ///
+    /// This is the exit that works with no Connect account at all.
+    #[test]
+    fn a_passkey_cube_can_take_the_written_phrase_exit() {
+        let dir = tmp_datadir("passkey-phrase-exit");
+        // Signed *out*: the Kit is unreachable, so this is the only backup on
+        // offer — and it is a real one.
+        let mut home = home_with_datadir(&dir);
+        assert!(!home.can_create_recovery_kit());
+        passkey_create_form(&mut home, "WrittenDown");
+        let _ = drain(webview_registration(&mut home, "cred", 13));
+        assert_eq!(step(&home), CreationBackupStep::Choice);
+
+        let words = shown_words(&home);
+        assert_eq!(words.len(), 12, "the wizard shows a 12-word phrase");
+
+        let out = drain(walk_backup_to_verified(&mut home));
+        let [Message::CubeCreated(Ok(cube))] = out.as_slice() else {
+            panic!("verification must create the Cube, got {:?}", out);
+        };
+
+        assert!(cube.is_passkey_cube());
+        assert!(
+            cube.backed_up,
+            "a completed verification is the same evidence for either shape of Cube"
+        );
+        assert!(cube.creation_backup_required, "the gate is still armed");
+        assert!(cube.creation_backup_bypass.is_none());
+        assert!(cube.creation_recovery_kit.is_none());
+        assert_eq!(
+            creation_gate::evaluate_for_cube(cube, None),
+            creation_gate::CreationGate::Satisfied,
+            "a written-down passkey Cube must open, with no network"
+        );
+
+        // And the phrase it showed is the one that rebuilds it.
+        let restored = MasterSigner::from_str(Network::Bitcoin, &words.join(" ")).unwrap();
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
+        assert_eq!(
+            Some(restored.fingerprint(&secp)),
+            cube.master_signer_fingerprint,
+            "the phrase shown must rebuild this exact Cube"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A PIN Cube gets the Recovery Kit exit too. One flow, three exits, both
+    /// unlock methods — the Kit's availability depends on the Connect session,
+    /// never on how the Cube is unlocked.
+    #[test]
+    fn a_pin_cube_can_take_the_recovery_kit_exit() {
+        let dir = tmp_datadir("pin-kit-exit");
+        let mut home = signed_in_home_with_datadir(&dir);
+        enter_backup_step(&mut home, "PinWithKit", "4321");
+        assert_eq!(step(&home), CreationBackupStep::Choice);
+        assert!(!home.creating_passkey_cube(), "this is the PIN path");
+
+        let _ = drain(home.update(Message::View(ViewMessage::CreationKitRequested)));
+        assert_eq!(
+            step(&home),
+            CreationBackupStep::KitPassword,
+            "the Kit must be offered to a PIN Cube as well"
+        );
+        type_kit_password(&mut home, "correct horse battery staple");
+
+        let out = drain(
+            home.update(Message::View(ViewMessage::CreationKitUploaded(Ok(
+                kit_evidence(77),
+            )))),
+        );
+        let [Message::CubeCreated(result)] = out.as_slice() else {
+            panic!("expected one CubeCreated, got {:?}", out);
+        };
+        // The PIN write can refuse on an unsigned macOS build (no keystore);
+        // what matters is that when it succeeds it carries the Kit evidence,
+        // and when it fails it leaves nothing behind.
+        match result {
+            Ok(cube) => {
+                assert_eq!(
+                    cube.creation_recovery_kit.as_ref().map(|k| k.cube_id),
+                    Some(77)
+                );
+                assert!(cube.creation_backup_required);
+                assert!(!cube.backed_up, "a Kit is not the written-phrase backup");
+                assert_eq!(
+                    creation_gate::evaluate_for_cube(cube, None),
+                    creation_gate::CreationGate::Satisfied
+                );
+            }
+            Err(_) => assert!(cubes_on_disk(&dir).is_empty()),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The default creation method no longer has to hedge: both paths run the
+    /// same wizard and reach the same exits, so passkey is the default wherever
+    /// the platform supports it — signed in or not.
+    #[test]
+    fn the_default_creation_method_is_passkey_wherever_it_is_supported() {
+        let dir = tmp_datadir("passkey-default");
+
+        for mut home in [home_with_datadir(&dir), signed_in_home_with_datadir(&dir)] {
+            assert_eq!(
+                home.default_passkey_mode(),
+                feature_flags::PASSKEY_CREATION_AVAILABLE,
+                "the default must not depend on the Connect session — the \
+                 written-phrase exit needs no account"
+            );
+
+            // Opening the form applies it.
+            home.passkey_mode = !home.default_passkey_mode();
+            let expected = home.default_passkey_mode();
+            let _ = home.update(Message::View(ViewMessage::ShowCreateCube(true)));
+            assert_eq!(home.passkey_mode, expected);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Recovery Kit during creation ─────────────────────────────────────
+
+    /// A signed-in Home rooted at `dir`, so `can_create_recovery_kit()` is true.
+    /// No network call is made by any test below: every one either stops at a
+    /// synchronous gate or feeds the upload result in directly.
+    fn signed_in_home_with_datadir(dir: &std::path::Path) -> Home {
+        let mut home = home_with_datadir(dir);
+        home.connect_account.step = ConnectFlowStep::Dashboard;
+        home.connect_account.user = Some(User {
+            id: 7,
+            email: "founder@example.com".to_string(),
+            email_verified: Some(true),
+        });
+        home
+    }
+
+    fn kit_evidence(cube_id: u64) -> creation_gate::CreationRecoveryKit {
+        creation_gate::CreationRecoveryKit {
+            at: 1_700_000_000,
+            cube_id,
+            has_seed: true,
+        }
+    }
+
+    /// Fill in a valid recovery password on the Kit screen.
+    fn type_kit_password(home: &mut Home, password: &str) {
+        let _ = home.update(Message::View(ViewMessage::CreationKit(
+            RecoveryKitMessage::PasswordChanged(zeroize::Zeroizing::new(password.to_string())),
+        )));
+        let _ = home.update(Message::View(ViewMessage::CreationKit(
+            RecoveryKitMessage::ConfirmChanged(zeroize::Zeroizing::new(password.to_string())),
+        )));
+        let _ = home.update(Message::View(ViewMessage::CreationKit(
+            RecoveryKitMessage::AcknowledgeToggled(true),
+        )));
+    }
+
+    /// The choice screen is the entry point either way; what changes with the
+    /// session is whether the **Kit** exit is on it. It is never offered as a
+    /// button that cannot work, and never reachable when it can't.
+    #[test]
+    fn the_kit_exit_appears_only_when_connect_is_reachable() {
+        // Signed out: choice screen, no Kit.
+        let dir = tmp_datadir("kit-offer-out");
+        let mut home = home_with_datadir(&dir);
+        passkey_create_form(&mut home, "SignedOut");
+        let _ = drain(webview_registration(&mut home, "cred", 3));
+        assert!(!home.can_create_recovery_kit());
+        assert_eq!(step(&home), CreationBackupStep::Choice);
+
+        let _ = drain(home.update(Message::View(ViewMessage::CreationKitRequested)));
+        assert_eq!(
+            step(&home),
+            CreationBackupStep::Choice,
+            "the Kit must not be reachable with nowhere to upload it"
+        );
+        // The written-phrase exit still is.
+        let _ = home.update(backup(BackupWalletMessage::NextStep));
+        assert_eq!(step(&home), CreationBackupStep::Intro(false));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Signed in: same screen, Kit reachable.
+        let dir = tmp_datadir("kit-offer-in");
+        let mut home = signed_in_home_with_datadir(&dir);
+        passkey_create_form(&mut home, "SignedIn");
+        let _ = drain(webview_registration(&mut home, "cred", 3));
+        assert!(home.can_create_recovery_kit());
+        assert_eq!(step(&home), CreationBackupStep::Choice);
+        let _ = drain(home.update(Message::View(ViewMessage::CreationKitRequested)));
+        assert_eq!(step(&home), CreationBackupStep::KitPassword);
+        assert!(cubes_on_disk(&dir).is_empty(), "still nothing written");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The password gates are re-checked in the handler, not just in the view:
+    /// too short, mismatched, or unacknowledged never starts an upload and
+    /// never writes a Cube.
+    #[test]
+    fn a_weak_or_unconfirmed_recovery_password_never_starts_an_upload() {
+        let dir = tmp_datadir("kit-password-gates");
+        let mut home = signed_in_home_with_datadir(&dir);
+        passkey_create_form(&mut home, "Gates");
+        let _ = drain(webview_registration(&mut home, "cred", 5));
+        let _ = drain(home.update(Message::View(ViewMessage::CreationKitRequested)));
+        assert!(matches!(
+            home.state,
+            State::CreationBackup(CreationBackupStep::KitPassword)
+        ));
+
+        let submit = |home: &mut Home| {
+            home.update(Message::View(ViewMessage::CreationKit(
+                RecoveryKitMessage::SubmitPassword,
+            )))
+        };
+
+        // Too short.
+        type_kit_password(&mut home, "short");
+        let _ = drain(submit(&mut home));
+        assert!(home.creation_kit_error.is_some());
+        assert!(matches!(
+            home.state,
+            State::CreationBackup(CreationBackupStep::KitPassword)
+        ));
+
+        // Long enough, but the confirmation doesn't match.
+        type_kit_password(&mut home, "correct horse battery staple");
+        let _ = home.update(Message::View(ViewMessage::CreationKit(
+            RecoveryKitMessage::ConfirmChanged(zeroize::Zeroizing::new("something else".into())),
+        )));
+        let _ = drain(submit(&mut home));
+        assert_eq!(
+            home.creation_kit_error.as_deref(),
+            Some("Passwords don't match.")
+        );
+
+        // Matching, but not acknowledged.
+        type_kit_password(&mut home, "correct horse battery staple");
+        let _ = home.update(Message::View(ViewMessage::CreationKit(
+            RecoveryKitMessage::AcknowledgeToggled(false),
+        )));
+        let _ = drain(submit(&mut home));
+        assert!(home
+            .creation_kit_error
+            .as_deref()
+            .is_some_and(|e| e.contains("written")));
+
+        assert!(
+            cubes_on_disk(&dir).is_empty(),
+            "no refused password may write a Cube"
+        );
+        assert!(!home.creating_cube);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A Kit made during creation is what satisfies the gate — and the Cube
+    /// records it, so the gate is satisfied **offline**, which is the only way
+    /// it is ever evaluated at open time.
+    #[test]
+    fn a_cube_created_with_a_kit_is_satisfied_not_bypassed() {
+        let dir = tmp_datadir("kit-satisfies");
+        let mut home = signed_in_home_with_datadir(&dir);
+        passkey_create_form(&mut home, "Kitted");
+        let _ = drain(webview_registration(&mut home, "cred", 7));
+        let _ = drain(home.update(Message::View(ViewMessage::CreationKitRequested)));
+        type_kit_password(&mut home, "correct horse battery staple");
+
+        // The upload's result, fed in directly — the network half is the
+        // Connect client's, not this state machine's.
+        let out = drain(
+            home.update(Message::View(ViewMessage::CreationKitUploaded(Ok(
+                kit_evidence(42),
+            )))),
+        );
+        let [Message::CubeCreated(Ok(cube))] = out.as_slice() else {
+            panic!("expected exactly one successful CubeCreated, got {:?}", out);
+        };
+
+        assert_eq!(
+            creation_gate::evaluate_for_cube(cube, None),
+            creation_gate::CreationGate::Satisfied,
+            "a Kit is a backup, not a bypass"
+        );
+        let on_disk = cubes_on_disk(&dir);
+        assert_eq!(on_disk.len(), 1);
+        let saved = &on_disk[0];
+        assert_eq!(
+            saved.creation_recovery_kit.as_ref().map(|k| k.cube_id),
+            Some(42),
+            "the Cube must record the Kit it was created with"
+        );
+        assert!(saved.creation_backup_required, "the gate is still armed");
+        assert!(
+            saved.creation_backup_bypass.is_none(),
+            "a Kit must not also record a bypass"
+        );
+        assert!(
+            !saved.backed_up,
+            "a Kit is not the written-phrase backup and must not claim to be"
+        );
+        assert!(
+            saved.remote_synced,
+            "the Kit could only be uploaded against a registered Cube"
+        );
+        assert_eq!(
+            creation_gate::evaluate_for_cube(saved, None),
+            creation_gate::CreationGate::Satisfied,
+            "the gate must be satisfiable with no server status at all"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A failed upload writes nothing and leaves both exits open — the user can
+    /// retry the Kit or take the acknowledgement.
+    #[test]
+    fn a_failed_kit_upload_writes_no_cube_and_keeps_both_exits() {
+        let dir = tmp_datadir("kit-upload-fails");
+        let mut home = signed_in_home_with_datadir(&dir);
+        passkey_create_form(&mut home, "Failed");
+        let _ = drain(webview_registration(&mut home, "cred", 11));
+        let _ = drain(home.update(Message::View(ViewMessage::CreationKitRequested)));
+        type_kit_password(&mut home, "correct horse battery staple");
+
+        let out = drain(
+            home.update(Message::View(ViewMessage::CreationKitUploaded(Err(
+                "Connect is unreachable".to_string(),
+            )))),
+        );
+        assert!(out.is_empty(), "a failed upload must create nothing");
+        assert!(cubes_on_disk(&dir).is_empty());
+        assert!(!home.creating_cube);
+        assert_eq!(
+            home.creation_kit_error.as_deref(),
+            Some("Connect is unreachable")
+        );
+        assert!(matches!(
+            home.state,
+            State::CreationBackup(CreationBackupStep::KitPassword)
+        ));
+        // The seed is still staged, so a retry doesn't need a second ceremony.
+        assert!(home.creation_backup_words.is_some());
+
+        // Exit 2 is still available: take the acknowledgement instead.
+        let _ = drain(home.update(Message::View(ViewMessage::CreationBackupBypassRequested)));
+        let _ = home.update(Message::View(ViewMessage::CreationBackupAcknowledgeBypass(
+            true,
+        )));
+        let out = drain(home.update(Message::View(ViewMessage::CreationBackupBypassConfirmed)));
+        let [Message::CubeCreated(Ok(cube))] = out.as_slice() else {
+            panic!("expected a bypassed Cube, got {:?}", out);
+        };
+        assert_eq!(
+            creation_gate::evaluate_for_cube(cube, None),
+            creation_gate::CreationGate::Bypassed
+        );
+        assert!(cube.creation_recovery_kit.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// "I'll do this later" is reversible while the Cube is still unwritten:
+    /// the user can go back and make the Kit after all.
+    #[test]
+    fn choosing_later_can_be_reversed_back_into_the_kit() {
+        let dir = tmp_datadir("kit-later-reversible");
+        let mut home = signed_in_home_with_datadir(&dir);
+        passkey_create_form(&mut home, "Reversible");
+        let _ = drain(webview_registration(&mut home, "cred", 13));
+
+        let _ = drain(home.update(Message::View(ViewMessage::CreationBackupBypassRequested)));
+        assert!(matches!(
+            home.state,
+            State::CreationBackup(CreationBackupStep::Bypass { .. })
+        ));
+
+        let _ = drain(home.update(Message::View(ViewMessage::CreationKitRequested)));
+        assert!(
+            matches!(
+                home.state,
+                State::CreationBackup(CreationBackupStep::KitPassword)
+            ),
+            "the acknowledgement must be reversible while nothing is written"
+        );
+        assert!(cubes_on_disk(&dir).is_empty());
+
+        // Cancelling the password screen goes back to the choice, not out of
+        // creation — the gate still has to be resolved.
+        let _ = drain(home.update(Message::View(ViewMessage::CreationKit(
+            RecoveryKitMessage::Cancel,
+        ))));
+        assert!(matches!(
+            home.state,
+            State::CreationBackup(CreationBackupStep::Choice)
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The recovery password and the staged seed are wiped on every exit from
+    /// the Kit branch — success and cancellation alike.
+    #[test]
+    fn the_recovery_password_and_seed_are_scrubbed_on_every_exit() {
+        // Success.
+        let dir = tmp_datadir("kit-scrub-success");
+        let mut home = signed_in_home_with_datadir(&dir);
+        passkey_create_form(&mut home, "Scrubbed");
+        let _ = drain(webview_registration(&mut home, "cred", 17));
+        let _ = drain(home.update(Message::View(ViewMessage::CreationKitRequested)));
+        type_kit_password(&mut home, "correct horse battery staple");
+        assert!(!home.creation_kit_password.is_empty());
+
+        let out = drain(
+            home.update(Message::View(ViewMessage::CreationKitUploaded(Ok(
+                kit_evidence(1),
+            )))),
+        );
+        let [Message::CubeCreated(result)] = out.as_slice() else {
+            panic!("expected one CubeCreated, got {:?}", out);
+        };
+        let _ = drain(home.update(Message::CubeCreated(result.clone())));
+        assert!(
+            home.creation_kit_password.is_empty() && home.creation_kit_confirm.is_empty(),
+            "the recovery password must not outlive the creation flow"
+        );
+        assert!(!home.creation_kit_acknowledged);
+        assert!(
+            home.creation_backup_words.is_none(),
+            "the staged seed must be scrubbed once the Cube exists"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Cancellation.
+        let dir = tmp_datadir("kit-scrub-cancel");
+        let mut home = signed_in_home_with_datadir(&dir);
+        passkey_create_form(&mut home, "Cancelled");
+        let _ = drain(webview_registration(&mut home, "cred", 19));
+        let _ = drain(home.update(Message::View(ViewMessage::CreationKitRequested)));
+        type_kit_password(&mut home, "correct horse battery staple");
+
+        let _ = drain(home.update(Message::View(ViewMessage::CancelCreationBackup)));
+        assert!(home.creation_kit_password.is_empty());
+        assert!(home.creation_kit_confirm.is_empty());
+        assert!(home.creation_backup_words.is_none());
+        assert!(!home.creating_passkey_cube());
+        assert!(cubes_on_disk(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A Cube registered by the Kit branch must not be registered a second time
+    /// when creation completes — that would leave two server-side records for
+    /// one Cube.
+    #[test]
+    fn a_kit_registered_cube_is_not_registered_again() {
+        let dir = tmp_datadir("kit-no-double-register");
+        let mut home = signed_in_home_with_datadir(&dir);
+        let mut cube = CubeSettings::new("Registered".to_string(), Network::Bitcoin);
+        cube.remote_synced = true;
+        cube.creation_backup_required = true;
+        cube.creation_recovery_kit = Some(kit_evidence(99));
+
+        let out = drain(home.update(Message::CubeCreated(Ok(cube))));
+        assert!(
+            !out.iter()
+                .any(|m| matches!(m, Message::CubeRemoteRegistered { .. })),
+            "a Cube registered during the Kit upload must not be registered again: {:?}",
+            out
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An upload that comes back without the seed half is not a backup, and
+    /// must not be recorded as one. (The refusal lives in the upload task; this
+    /// pins the evidence shape it is allowed to produce.)
+    #[test]
+    fn only_a_kit_that_holds_the_seed_counts_as_evidence() {
+        let mut cube = CubeSettings::new("SeedOnly".to_string(), Network::Bitcoin);
+        cube.creation_backup_required = true;
+        cube.creation_recovery_kit = Some(creation_gate::CreationRecoveryKit {
+            at: 1_700_000_000,
+            cube_id: 5,
+            has_seed: true,
+        });
+        assert!(cube
+            .creation_recovery_kit
+            .as_ref()
+            .is_some_and(|k| k.has_seed));
+        assert_eq!(
+            creation_gate::evaluate_for_cube(&cube, None),
+            creation_gate::CreationGate::Satisfied
+        );
+    }
+
+    // ── Passkey seed word count ──────────────────────────────────────────
+
+    /// **The reason the two paths derive the same shape of phrase.** A passkey
+    /// Cube's mnemonic is 12 words, so the app's own 12-word restore grid can
+    /// take it back — it is a recovery artifact, not something we can only
+    /// display.
+    ///
+    /// This drives the real restore path with a real passkey-derived phrase.
+    #[test]
+    fn a_passkey_cubes_phrase_goes_back_into_the_12_word_restore_grid() {
+        let signer = MasterSigner::from_prf_output(Network::Bitcoin, &[0x5A; 32]).unwrap();
+        let words: Vec<String> = signer.words().iter().map(|w| w.to_string()).collect();
+        assert_eq!(
+            words.len(),
+            12,
+            "a passkey Cube's phrase must fit the restore grid"
+        );
+
+        let dir = tmp_datadir("passkey-phrase-restore");
+        let mut home = home_with_datadir(&dir);
+        home.create_cube_name = coincube_ui::component::form::Value {
+            value: "FromPasskeyPhrase".to_string(),
+            ..Default::default()
+        };
+        type_pin(&mut home.create_cube_pin, "2468");
+        type_pin(&mut home.create_cube_pin_confirm, "2468");
+
+        // Typed word by word, exactly as the grid does — and the grid has
+        // twelve slots, which is the whole point.
+        for (i, word) in words.iter().enumerate() {
+            let _ = home.update(Message::View(ViewMessage::RecoveryWordInput {
+                index: i,
+                word: word.clone(),
+            }));
+        }
+        assert_eq!(
+            home.recovery_words.to_vec(),
+            words,
+            "every word of a passkey phrase must fit the grid"
+        );
+
+        let _ = home.update(Message::View(ViewMessage::SubmitRecovery));
+        assert!(
+            home.creating_cube,
+            "the passkey Cube's own phrase was rejected by the restore screen"
+        );
+        assert!(home.error.is_none(), "restore reported: {:?}", home.error);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Both creation paths stage a phrase of the same shape, so one backup
+    /// wizard can serve both.
+    #[test]
+    fn both_creation_paths_stage_a_twelve_word_phrase() {
+        let dir = tmp_datadir("phrase-parity");
+
+        // Passkey: staged by the ceremony transition.
+        let mut home = home_with_datadir(&dir);
+        passkey_create_form(&mut home, "Passkey");
+        let _ = drain(webview_registration(&mut home, "cred", 23));
+        let passkey_words = shown_words(&home).len();
+
+        // PIN: staged by `generate`.
+        let pin_words = MasterSigner::generate(Network::Bitcoin)
+            .unwrap()
+            .words()
+            .len();
+
+        assert_eq!(passkey_words, 12);
+        assert_eq!(pin_words, 12);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

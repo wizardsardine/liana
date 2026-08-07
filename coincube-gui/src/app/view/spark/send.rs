@@ -522,6 +522,67 @@ fn phase_body<'a>(
         .style(theme::card::simple)
         .into(),
 
+        // A dispatched payment with no answer. The heading is the whole point:
+        // this must never read as "failed", because the payment may well have
+        // gone through — and the only action offered before the check finishes
+        // is waiting.
+        SparkSendPhase::OutcomeUnknown {
+            message,
+            outcome,
+            checking,
+            guard,
+        } => {
+            let guard = *guard;
+            let mut content = Column::new()
+                .spacing(12)
+                .push(h4_bold("Payment status unconfirmed"))
+                .push(p1_regular(message.clone()));
+
+            let mut actions = Row::new().spacing(10);
+            match (checking, outcome) {
+                (true, _) | (_, None) => {
+                    content = content.push(p2_regular(
+                        "Checking your payment history to find out whether it went through. \
+                         Don't send it again until this finishes.",
+                    ));
+                }
+                (false, Some(outcome)) => {
+                    content = content.push(p2_regular(outcome.guidance(guard)));
+                    if outcome.may_resend(guard) {
+                        actions = actions.push(
+                            // Keeps the original idempotency key — see
+                            // `ResendAfterUnknownRequested`. Never `Reset`,
+                            // which would mint a new one and could pay twice.
+                            button::primary(None, "Send again")
+                                .on_press(Message::SparkSend(
+                                    SparkSendMessage::ResendAfterUnknownRequested,
+                                ))
+                                .width(Length::Fixed(160.0)),
+                        );
+                    }
+                    actions = actions.push(
+                        button::secondary(None, "Check again")
+                            .on_press(Message::SparkSend(SparkSendMessage::ReconcileRequested))
+                            .width(Length::Fixed(140.0)),
+                    );
+                    actions = actions.push(
+                        button::transparent_border(None, "View transactions")
+                            .on_press(Message::SparkSend(SparkSendMessage::History))
+                            .width(Length::Fixed(180.0)),
+                    );
+                }
+            }
+
+            Container::new(
+                content
+                    .push(Space::new().height(Length::Fixed(8.0)))
+                    .push(actions),
+            )
+            .padding(16)
+            .style(theme::card::simple)
+            .into()
+        }
+
         SparkSendPhase::Sent(_) => {
             // Handled by the full-screen celebration in render()
             Container::new(Column::new()).into()

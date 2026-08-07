@@ -839,8 +839,25 @@ pub enum LiquidSendMessage {
     ClearError,
     // Send flow popup messages
     PopupMessage(SendPopupMessage),
-    PrepareResponseReceived(PrepareSendResponse),
-    PrepareOnChainResponseReceived(PreparePayOnchainResponse),
+    /// A completed regular/asset prepare, carrying the [`PrepareContext`] it was
+    /// dispatched under. The context's generation is what lets the state drop a
+    /// response for a payment the user has already abandoned, and its snapshot
+    /// is what the confirmation screen renders — never the live input fields,
+    /// which may by now describe a different payment.
+    ///
+    /// [`PrepareContext`]: crate::app::state::liquid::send::PrepareContext
+    PrepareResponseReceived(
+        Box<crate::app::state::liquid::send::PrepareContext>,
+        PrepareSendResponse,
+    ),
+    /// A completed on-chain prepare. Carries the destination address resolved at
+    /// dispatch time alongside the context, so execution never re-reads the
+    /// address from an input the user may have edited since.
+    PrepareOnChainResponseReceived {
+        context: Box<crate::app::state::liquid::send::PrepareContext>,
+        address: String,
+        response: PreparePayOnchainResponse,
+    },
     SendMaxPrepared(Result<PrepareSendResponse, String>),
     SendMaxOnChainResult(u64),
     ConfirmSend,

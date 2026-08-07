@@ -139,10 +139,147 @@ pub enum Modal {
     None,
 }
 
+/// Everything about a payment that is decided the moment the user presses Done,
+/// captured before any `prepare_*` call is dispatched.
+///
+/// The screen's own fields (`amount`, `to_asset`, `comment`, `input_type`, …)
+/// stay editable while a prepare is in flight and describe *the next* payment
+/// the user is composing, not the one being prepared. Confirmation and
+/// execution must both read this snapshot instead, or the FinalCheck screen can
+/// end up describing one payment while `ConfirmSend` executes another.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrepareContext {
+    /// Which prepare round this belongs to. See [`LiquidSend::begin_prepare`].
+    pub generation: u64,
+    pub amount: Amount,
+    /// Formatted USDt amount as the user typed it; empty for L-BTC sends.
+    pub usdt_amount_display: String,
+    pub to_asset: SendAsset,
+    pub from_asset: SendAsset,
+    pub comment: Option<String>,
+    pub description: Option<String>,
+    /// Whether the user asked to pay fees in the asset. The SDK response may
+    /// override this when the preferred method isn't offered.
+    pub pay_fees_with_asset: bool,
+}
+
+/// The operation `ConfirmSend` will execute, and nothing else.
+///
+/// Replaces the two independent `Option<…Response>` fields this screen used to
+/// carry. With two options, "which payment is prepared?" was answered by
+/// checking one and falling back to the other — so a stale Lightning prepare
+/// that was never cleared won the check against a freshly prepared on-chain
+/// payment, and the wrong payment went out (audit: stale-prepare execution).
+/// One value can only describe one payment.
+#[derive(Debug, Clone)]
+pub enum PreparedPayment {
+    /// Liquid, Lightning or asset send, executed via `send_payment`.
+    Regular {
+        response: Box<breez_sdk_liquid::prelude::PrepareSendResponse>,
+        /// Resolved once, at prepare time, from the snapshot plus what the SDK
+        /// actually offered. Never recomputed from mutable screen state.
+        use_asset_fees: bool,
+    },
+    /// BTC on-chain payout, executed via `pay_onchain`.
+    ///
+    /// Carries its own destination: reading it back off `input_type` at confirm
+    /// time would take the address the user is editing now, not the one that
+    /// was prepared.
+    Onchain {
+        response: Box<breez_sdk_liquid::prelude::PreparePayOnchainResponse>,
+        address: String,
+    },
+}
+
+/// A completed prepare: the immutable payment the FinalCheck screen displays
+/// and the one `ConfirmSend` executes. The two cannot disagree because they are
+/// the same value.
+#[derive(Debug, Clone)]
+pub struct PreparedIntent {
+    context: PrepareContext,
+    payment: PreparedPayment,
+}
+
+impl PreparedIntent {
+    pub fn new(context: PrepareContext, payment: PreparedPayment) -> Self {
+        Self { context, payment }
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.context.generation
+    }
+
+    pub fn context(&self) -> &PrepareContext {
+        &self.context
+    }
+
+    pub fn payment(&self) -> &PreparedPayment {
+        &self.payment
+    }
+
+    pub fn amount(&self) -> Amount {
+        self.context.amount
+    }
+
+    pub fn to_asset(&self) -> SendAsset {
+        self.context.to_asset
+    }
+
+    pub fn from_asset(&self) -> SendAsset {
+        self.context.from_asset
+    }
+
+    pub fn usdt_amount_display(&self) -> &str {
+        &self.context.usdt_amount_display
+    }
+
+    pub fn comment(&self) -> Option<&str> {
+        self.context.comment.as_deref()
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        self.context.description.as_deref()
+    }
+
+    /// Fee paid in the asset (USDt), when the SDK quoted one. `None` means the
+    /// fee is paid in L-BTC and [`Self::fees_sat`] carries it.
+    pub fn asset_fees(&self) -> Option<f64> {
+        if self.context.to_asset != SendAsset::Usdt {
+            return None;
+        }
+        match &self.payment {
+            PreparedPayment::Regular { response, .. } => response.estimated_asset_fees,
+            PreparedPayment::Onchain { .. } => None,
+        }
+    }
+
+    /// L-BTC fee in sats. Zero when the fee is paid in the asset instead.
+    pub fn fees_sat(&self) -> u64 {
+        if self.asset_fees().is_some() {
+            return 0;
+        }
+        match &self.payment {
+            PreparedPayment::Regular { response, .. } => response.fees_sat.unwrap_or(0),
+            PreparedPayment::Onchain { response, .. } => response.total_fees_sat,
+        }
+    }
+
+    /// Amount + L-BTC fee. Saturating: an SDK-supplied fee must not be able to
+    /// wrap the displayed total.
+    pub fn total_sat(&self) -> u64 {
+        self.context.amount.to_sat().saturating_add(self.fees_sat())
+    }
+}
+
 #[derive(Debug)]
 pub enum LiquidSendFlowState {
-    Main { modal: Modal },
-    FinalCheck,
+    Main {
+        modal: Modal,
+    },
+    /// Holding the intent *in* the state is what makes the confirmation screen
+    /// and the executed payment the same object. Leaving FinalCheck drops it,
+    /// so no later screen can execute what this one displayed.
+    FinalCheck(Box<PreparedIntent>),
     Sent,
 }
 
@@ -184,8 +321,10 @@ pub struct LiquidSend {
     description: Option<String>,
     comment: Option<String>,
     error: Option<String>,
-    prepare_response: Option<breez_sdk_liquid::prelude::PrepareSendResponse>,
-    prepare_onchain_response: Option<breez_sdk_liquid::prelude::PreparePayOnchainResponse>,
+    /// Increments on every prepare, and on every event that abandons one.
+    /// A prepare response stamped with an older generation is a response to a
+    /// payment the user has already walked away from, and is dropped.
+    prepare_generation: u64,
     is_sending: bool,
     /// User preference for paying fees in the asset (USDt) vs L-BTC.
     /// `true` = pay fees in USDt, `false` = pay fees in L-BTC.
@@ -230,8 +369,7 @@ impl LiquidSend {
             onchain_limits: None,
             comment: None,
             description: None,
-            prepare_response: None,
-            prepare_onchain_response: None,
+            prepare_generation: 0,
             is_sending: false,
             pay_fees_with_asset: true,
             max_loading: false,
@@ -251,6 +389,72 @@ impl LiquidSend {
 
     pub fn btc_balance(&self) -> Amount {
         self.btc_balance
+    }
+
+    /// Open a new prepare round and return its generation token.
+    ///
+    /// Every prepare request carries the token it was dispatched under, and a
+    /// response is only accepted while its token is still the current one. That
+    /// covers both orderings the SDK can produce: a response that arrives after
+    /// the user abandoned the payment, and two responses that come back out of
+    /// order (the older one loses, whichever lands last).
+    fn begin_prepare(&mut self) -> u64 {
+        self.prepare_generation = self.prepare_generation.wrapping_add(1);
+        self.prepare_generation
+    }
+
+    /// Snapshot the payment the user just confirmed on the amount screen and
+    /// open a new prepare round for it.
+    ///
+    /// Taken once, at dispatch, so everything downstream — the confirmation
+    /// screen and the executed payment alike — reads the same frozen values.
+    fn open_prepare_context(&mut self) -> PrepareContext {
+        PrepareContext {
+            generation: self.begin_prepare(),
+            amount: self.amount,
+            usdt_amount_display: self.usdt_amount_input.value.trim().to_string(),
+            to_asset: self.to_asset,
+            from_asset: self.from_asset,
+            comment: self.comment.clone(),
+            description: self.description.clone(),
+            pay_fees_with_asset: self.pay_fees_with_asset,
+        }
+    }
+
+    /// Abandon any prepared or in-flight payment.
+    ///
+    /// Called wherever the user leaves the payment behind — closing the flow,
+    /// going home, completing a send, or editing the destination. The intent
+    /// itself lives in [`LiquidSendFlowState::FinalCheck`] and is dropped by the
+    /// state transition; this bumps the token so a response still in flight for
+    /// it cannot reopen FinalCheck afterwards.
+    fn invalidate_prepare(&mut self) {
+        self.prepare_generation = self.prepare_generation.wrapping_add(1);
+    }
+
+    /// The prepared payment currently displayed, if the flow is on FinalCheck.
+    pub fn prepared_intent(&self) -> Option<&PreparedIntent> {
+        match &self.flow_state {
+            LiquidSendFlowState::FinalCheck(intent) => Some(intent),
+            _ => None,
+        }
+    }
+
+    /// The one intent `ConfirmSend` may execute, or `None` if nothing may be
+    /// sent — the flow is not on FinalCheck, or what it is showing belongs to a
+    /// prepare round that has since been superseded.
+    ///
+    /// `ConfirmSend` goes through this and has no other path to a payment, so
+    /// "what would be sent" is answerable without dispatching anything.
+    pub fn executable_intent(&self) -> Option<&PreparedIntent> {
+        match &self.flow_state {
+            LiquidSendFlowState::FinalCheck(intent)
+                if intent.generation() == self.prepare_generation =>
+            {
+                Some(intent)
+            }
+            _ => None,
+        }
     }
 
     pub fn pay_fees_with_asset(&self) -> bool {
@@ -427,14 +631,12 @@ impl State for LiquidSend {
                 description: self.description.as_deref(),
                 lightning_limits: self.lightning_limits,
                 amount: self.amount,
-                prepare_response: self.prepare_response.as_ref(),
                 is_sending: self.is_sending,
                 menu,
                 cache,
                 input_type: &self.input_type,
                 onchain_limits: self.onchain_limits,
                 bitcoin_unit: cache.bitcoin_unit,
-                prepare_onchain_response: self.prepare_onchain_response.as_ref(),
                 error: self.error.as_deref(),
                 // Cross-asset swaps require SideSwap (mainnet only)
                 cross_asset_supported: matches!(
@@ -511,6 +713,9 @@ impl State for LiquidSend {
                     return self.load_balance();
                 }
                 view::LiquidSendMessage::InputEdited(value) => {
+                    // The destination is changing, so any prepare for the old one
+                    // is now for a payment that will never be sent.
+                    self.invalidate_prepare();
                     self.input.value = value.clone();
                     self.error = None;
                     let breez = self.breez_client.clone();
@@ -1379,6 +1584,7 @@ impl State for LiquidSend {
                                     _ => unreachable!(),
                                 };
                                 let breez_client = self.breez_client.clone();
+                                let context = Box::new(self.open_prepare_context());
                                 return Task::perform(
                                     async move {
                                         breez_client
@@ -1391,10 +1597,11 @@ impl State for LiquidSend {
                                             )
                                             .await
                                     },
-                                    |result| match result {
+                                    move |result| match result {
                                         Ok(prepare_response) => {
                                             Message::View(view::Message::LiquidSend(
                                                 view::LiquidSendMessage::PrepareResponseReceived(
+                                                    context.clone(),
                                                     prepare_response,
                                                 ),
                                             ))
@@ -1447,6 +1654,7 @@ impl State for LiquidSend {
                                 };
                                 let amount_sat = self.amount.to_sat();
                                 let breez_client = self.breez_client.clone();
+                                let context = Box::new(self.open_prepare_context());
                                 return Task::perform(
                                     async move {
                                         breez_client
@@ -1459,10 +1667,11 @@ impl State for LiquidSend {
                                             )
                                             .await
                                     },
-                                    |result| match result {
+                                    move |result| match result {
                                         Ok(prepare_response) => {
                                             Message::View(view::Message::LiquidSend(
                                                 view::LiquidSendMessage::PrepareResponseReceived(
+                                                    context.clone(),
                                                     prepare_response,
                                                 ),
                                             ))
@@ -1478,11 +1687,57 @@ impl State for LiquidSend {
                             }
 
                             let breez_client = self.breez_client.clone();
-                            let breez_clone = self.breez_client.clone();
                             let amount_sat = self.amount.to_sat();
                             let is_drain = self.is_drain;
+                            let is_onchain = matches!(input_type, InputType::BitcoinAddress { .. });
+                            let context = Box::new(self.open_prepare_context());
 
-                            let lightning_send = Task::perform(
+                            // On-chain and Lightning are prepared by different SDK
+                            // calls and executed by different ones, so exactly one
+                            // is dispatched — and whichever it is, its response
+                            // carries the address and snapshot it was built from.
+                            if is_onchain {
+                                return Task::perform(
+                                    async move {
+                                        let pay_amount = if is_drain {
+                                            breez_sdk_liquid::prelude::PayAmount::Drain
+                                        } else {
+                                            breez_sdk_liquid::prelude::PayAmount::Bitcoin {
+                                                receiver_amount_sat: amount_sat,
+                                            }
+                                        };
+                                        breez_client
+                                            .prepare_pay_onchain(
+                                                &breez_sdk_liquid::prelude::PreparePayOnchainRequest {
+                                                    amount: pay_amount,
+                                                    fee_rate_sat_per_vbyte: None,
+                                                },
+                                            )
+                                            .await
+                                    },
+                                    move |result| {
+                                        match result {
+                                        Ok(response) => {
+                                            Message::View(view::Message::LiquidSend(
+                                                view::LiquidSendMessage::PrepareOnChainResponseReceived {
+                                                    context: context.clone(),
+                                                    address: destination.clone(),
+                                                    response,
+                                                },
+                                            ))
+                                        }
+                                        Err(e) => Message::View(view::Message::LiquidSend(
+                                            view::LiquidSendMessage::Error(format!(
+                                                "Failed to prepare payment: {}",
+                                                e
+                                            )),
+                                        )),
+                                    }
+                                    },
+                                );
+                            }
+
+                            return Task::perform(
                                 async move {
                                     let pay_amount = if is_drain {
                                         breez_sdk_liquid::prelude::PayAmount::Drain
@@ -1502,10 +1757,11 @@ impl State for LiquidSend {
                                         )
                                         .await
                                 },
-                                |result| match result {
+                                move |result| match result {
                                     Ok(prepare_response) => {
                                         Message::View(view::Message::LiquidSend(
                                             view::LiquidSendMessage::PrepareResponseReceived(
+                                                context.clone(),
                                                 prepare_response,
                                             ),
                                         ))
@@ -1518,70 +1774,79 @@ impl State for LiquidSend {
                                     )),
                                 },
                             );
-
-                            let onchain_send = Task::perform(
-                                async move {
-                                    let pay_amount = if is_drain {
-                                        breez_sdk_liquid::prelude::PayAmount::Drain
-                                    } else {
-                                        breez_sdk_liquid::prelude::PayAmount::Bitcoin {
-                                            receiver_amount_sat: amount_sat,
-                                        }
-                                    };
-                                    breez_clone
-                                        .prepare_pay_onchain(
-                                            &breez_sdk_liquid::prelude::PreparePayOnchainRequest {
-                                                amount: pay_amount,
-                                                fee_rate_sat_per_vbyte: None,
-                                            },
-                                        )
-                                        .await
-                                },
-                                |result| match result {
-                                    Ok(prepare_response) => {
-                                        Message::View(view::Message::LiquidSend(
-                                            view::LiquidSendMessage::PrepareOnChainResponseReceived(
-                                                prepare_response,
-                                            ),
-                                        ))
-                                    }
-                                    Err(e) => Message::View(view::Message::LiquidSend(
-                                        view::LiquidSendMessage::Error(format!(
-                                            "Failed to prepare payment: {}",
-                                            e
-                                        )),
-                                    )),
-                                },
-                            );
-
-                            if let InputType::BitcoinAddress { .. } = input_type {
-                                return onchain_send;
-                            } else {
-                                return lightning_send;
-                            }
                         }
                     }
                 }
-                view::LiquidSendMessage::PrepareResponseReceived(prepare_response) => {
+                view::LiquidSendMessage::PrepareResponseReceived(context, prepare_response) => {
+                    // A response for an abandoned or superseded prepare. Dropping
+                    // it is the whole point of the generation token: accepting it
+                    // would reopen FinalCheck with a payment the user has already
+                    // walked away from.
+                    if context.generation != self.prepare_generation {
+                        tracing::debug!(
+                            "ignoring stale Liquid prepare response (generation {} != {})",
+                            context.generation,
+                            self.prepare_generation
+                        );
+                        return Task::none();
+                    }
+
                     // If the preferred fee method is unavailable, fall back to the
                     // other one automatically.
-                    if !self.pay_fees_with_asset
+                    let mut pay_fees_with_asset = context.pay_fees_with_asset;
+                    if !pay_fees_with_asset
                         && prepare_response.fees_sat.is_none()
                         && prepare_response.estimated_asset_fees.is_some()
                     {
-                        self.pay_fees_with_asset = true;
-                    } else if self.pay_fees_with_asset
+                        pay_fees_with_asset = true;
+                    } else if pay_fees_with_asset
                         && prepare_response.estimated_asset_fees.is_none()
                         && prepare_response.fees_sat.is_some()
                     {
-                        self.pay_fees_with_asset = false;
+                        pay_fees_with_asset = false;
                     }
-                    self.prepare_response = Some(prepare_response.clone());
-                    self.flow_state = LiquidSendFlowState::FinalCheck;
+                    self.pay_fees_with_asset = pay_fees_with_asset;
+
+                    // Cross-asset swaps cannot use asset fees per SDK constraint.
+                    // For same-asset USDt sends, respect the user's preference.
+                    // Resolved here, once, and carried by the intent — never
+                    // recomputed at confirm time from fields that have moved on.
+                    let use_asset_fees = context.from_asset == context.to_asset
+                        && matches!(context.to_asset, SendAsset::Usdt)
+                        && pay_fees_with_asset;
+
+                    let mut context = (**context).clone();
+                    context.pay_fees_with_asset = pay_fees_with_asset;
+                    self.flow_state =
+                        LiquidSendFlowState::FinalCheck(Box::new(PreparedIntent::new(
+                            context,
+                            PreparedPayment::Regular {
+                                response: Box::new(prepare_response.clone()),
+                                use_asset_fees,
+                            },
+                        )));
                 }
-                view::LiquidSendMessage::PrepareOnChainResponseReceived(prepare_response) => {
-                    self.prepare_onchain_response = Some(prepare_response.clone());
-                    self.flow_state = LiquidSendFlowState::FinalCheck;
+                view::LiquidSendMessage::PrepareOnChainResponseReceived {
+                    context,
+                    address,
+                    response,
+                } => {
+                    if context.generation != self.prepare_generation {
+                        tracing::debug!(
+                            "ignoring stale Liquid on-chain prepare response (generation {} != {})",
+                            context.generation,
+                            self.prepare_generation
+                        );
+                        return Task::none();
+                    }
+                    self.flow_state =
+                        LiquidSendFlowState::FinalCheck(Box::new(PreparedIntent::new(
+                            (**context).clone(),
+                            PreparedPayment::Onchain {
+                                response: Box::new(response.clone()),
+                                address: address.clone(),
+                            },
+                        )));
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::ToggleSendAsset) => {
                     if let LiquidSendFlowState::Main {
@@ -1913,6 +2178,10 @@ impl State for LiquidSend {
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::Close) => {
+                    // Leaving the flow abandons the payment: the intent goes with
+                    // the state transition, and the bump stops a prepare still in
+                    // flight from bringing FinalCheck back up behind the user.
+                    self.invalidate_prepare();
                     self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
                     self.error = None;
                     self.amount = Amount::ZERO;
@@ -1933,34 +2202,43 @@ impl State for LiquidSend {
                     self.from_asset = self.to_asset;
                 }
                 view::LiquidSendMessage::ConfirmSend => {
-                    if let LiquidSendFlowState::FinalCheck = &self.flow_state {
-                        if self.is_sending {
-                            return Task::none();
+                    if self.is_sending {
+                        return Task::none();
+                    }
+                    // Only ever the intent this screen is displaying: it is read
+                    // out of the flow state itself, so there is no second
+                    // candidate to fall back to and nothing else that could win.
+                    let Some(intent) = self.executable_intent().cloned() else {
+                        // On FinalCheck but superseded: fail closed and say so
+                        // rather than sending something the user didn't approve.
+                        if matches!(self.flow_state, LiquidSendFlowState::FinalCheck(_)) {
+                            self.error = Some(
+                                "This payment is no longer current. Please start again."
+                                    .to_string(),
+                            );
+                            self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
                         }
+                        return Task::none();
+                    };
 
-                        self.is_sending = true;
+                    self.is_sending = true;
+                    let breez_client = self.breez_client.clone();
 
-                        if let Some(prepare_response) = self.prepare_response.clone() {
-                            let breez_client = self.breez_client.clone();
-                            let comment = self.comment.clone();
-                            // Cross-asset swaps cannot use asset fees per SDK constraint.
-                            // For same-asset USDt sends, respect the user's fee preference.
-                            let is_cross_asset = self.from_asset != self.to_asset;
-                            let use_asset_fees = if is_cross_asset {
-                                false
-                            } else if matches!(self.to_asset, SendAsset::Usdt) {
-                                self.pay_fees_with_asset
-                            } else {
-                                false
-                            };
-
+                    match intent.payment() {
+                        PreparedPayment::Regular {
+                            response,
+                            use_asset_fees,
+                        } => {
+                            let prepare_response = (**response).clone();
+                            let payer_note = intent.comment().map(str::to_string);
+                            let use_asset_fees = *use_asset_fees;
                             return Task::perform(
                                 async move {
                                     breez_client
                                         .send_payment(
                                             &breez_sdk_liquid::prelude::SendPaymentRequest {
                                                 prepare_response,
-                                                payer_note: comment,
+                                                payer_note,
                                                 use_asset_fees: Some(use_asset_fees),
                                             },
                                         )
@@ -1978,49 +2256,42 @@ impl State for LiquidSend {
                                     )),
                                 },
                             );
-                        } else if let Some(prepare_onchain_response) =
-                            self.prepare_onchain_response.clone()
-                        {
-                            if let Some(InputType::BitcoinAddress { address }) =
-                                self.input_type.clone()
-                            {
-                                let breez_client = self.breez_client.clone();
-
-                                return Task::perform(
-                                    async move {
-                                        breez_client
-                                            .pay_onchain(
-                                                &breez_sdk_liquid::prelude::PayOnchainRequest {
-                                                    address: address.address.clone(),
-                                                    prepare_response: prepare_onchain_response,
-                                                },
-                                            )
-                                            .await
-                                    },
-                                    |result| match result {
-                                        Ok(_send_response) => {
-                                            Message::View(view::Message::LiquidSend(
-                                                view::LiquidSendMessage::SendComplete,
-                                            ))
-                                        }
-                                        Err(e) => Message::View(view::Message::LiquidSend(
-                                            view::LiquidSendMessage::Error(format!(
-                                                "Failed to send payment: {}",
-                                                e
-                                            )),
+                        }
+                        PreparedPayment::Onchain { response, address } => {
+                            let prepare_response = (**response).clone();
+                            let address = address.clone();
+                            return Task::perform(
+                                async move {
+                                    breez_client
+                                        .pay_onchain(
+                                            &breez_sdk_liquid::prelude::PayOnchainRequest {
+                                                address,
+                                                prepare_response,
+                                            },
+                                        )
+                                        .await
+                                },
+                                |result| match result {
+                                    Ok(_send_response) => Message::View(view::Message::LiquidSend(
+                                        view::LiquidSendMessage::SendComplete,
+                                    )),
+                                    Err(e) => Message::View(view::Message::LiquidSend(
+                                        view::LiquidSendMessage::Error(format!(
+                                            "Failed to send payment: {}",
+                                            e
                                         )),
-                                    },
-                                );
-                            }
-                        } else {
-                            self.error = Some("No prepare response available".to_string());
-                            self.is_sending = false;
+                                    )),
+                                },
+                            );
                         }
                     }
                 }
                 view::LiquidSendMessage::SendComplete => {
+                    // The intent has been executed; it must not be executable
+                    // again, and no in-flight prepare may resurrect FinalCheck
+                    // over the success screen.
+                    self.invalidate_prepare();
                     self.flow_state = LiquidSendFlowState::Sent;
-                    self.prepare_response = None;
                     self.is_sending = false;
                     self.is_drain = false;
                     // Compute amount display for celebration screen.
@@ -2069,6 +2340,7 @@ impl State for LiquidSend {
                     });
                 }
                 view::LiquidSendMessage::BackToHome => {
+                    self.invalidate_prepare();
                     self.input = form::Value::default();
                     self.amount = Amount::ZERO;
                     self.amount_input = form::Value::default();
@@ -2084,7 +2356,6 @@ impl State for LiquidSend {
                     self.description = None;
                     self.comment = None;
                     self.lightning_limits = None;
-                    self.prepare_response = None;
                     self.is_sending = false;
                     self.is_drain = false;
                     self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
@@ -2205,4 +2476,462 @@ fn display_abbreviated(s: String) -> String {
         s.to_string()
     };
     formatted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::state::State;
+    use breez_sdk_liquid::prelude::{
+        LiquidAddressData, PreparePayOnchainResponse, PrepareSendResponse, SendDestination,
+    };
+    use breez_sdk_liquid::BitcoinAddressData;
+
+    const NETWORK: breez_sdk_liquid::bitcoin::Network = breez_sdk_liquid::bitcoin::Network::Bitcoin;
+
+    /// A send panel wired to a disconnected client: enough to drive the state
+    /// machine without an SDK. Returned `Task`s are never executed, so no
+    /// network call is made — which is exactly the point, since these tests are
+    /// about which payment *would* be executed.
+    fn panel() -> LiquidSend {
+        let client = Arc::new(crate::app::breez_liquid::BreezClient::disconnected(NETWORK));
+        LiquidSend::new(Arc::new(LiquidBackend::new(client)))
+    }
+
+    fn cache() -> Cache {
+        Cache::default()
+    }
+
+    fn send(panel: &mut LiquidSend, msg: view::LiquidSendMessage) {
+        let _ = panel.update(
+            None,
+            &cache(),
+            Message::View(view::Message::LiquidSend(msg)),
+        );
+    }
+
+    fn liquid_input(address: &str) -> InputType {
+        InputType::LiquidAddress {
+            address: LiquidAddressData {
+                address: address.to_string(),
+                network: breez_sdk_liquid::prelude::Network::Bitcoin,
+                asset_id: None,
+                amount: None,
+                amount_sat: None,
+                label: None,
+                message: None,
+            },
+        }
+    }
+
+    fn bitcoin_input(address: &str) -> InputType {
+        InputType::BitcoinAddress {
+            address: BitcoinAddressData {
+                address: address.to_string(),
+                network: breez_sdk_liquid::prelude::Network::Bitcoin,
+                amount_sat: None,
+                label: None,
+                message: None,
+            },
+        }
+    }
+
+    fn regular_response(address: &str, fees_sat: u64) -> PrepareSendResponse {
+        PrepareSendResponse {
+            destination: SendDestination::LiquidAddress {
+                address_data: match liquid_input(address) {
+                    InputType::LiquidAddress { address } => address,
+                    _ => unreachable!(),
+                },
+                bip353_address: None,
+            },
+            amount: None,
+            fees_sat: Some(fees_sat),
+            estimated_asset_fees: None,
+            exchange_amount_sat: None,
+            disable_mrh: None,
+            payment_timeout_sec: None,
+        }
+    }
+
+    fn onchain_response(total_fees_sat: u64) -> PreparePayOnchainResponse {
+        PreparePayOnchainResponse {
+            receiver_amount_sat: 50_000,
+            claim_fees_sat: total_fees_sat / 2,
+            total_fees_sat,
+        }
+    }
+
+    /// Put the panel where the user is about to press Done for `input`.
+    fn compose(panel: &mut LiquidSend, input: InputType, amount_sat: u64) {
+        panel.flow_state = LiquidSendFlowState::Main {
+            modal: Modal::AmountInput,
+        };
+        panel.input_type = Some(input);
+        panel.amount = Amount::from_sat(amount_sat);
+        panel.to_asset = SendAsset::Lbtc;
+        panel.from_asset = SendAsset::Lbtc;
+    }
+
+    /// **The audited bug, as a test.** Prepare a Lightning/Liquid payment A,
+    /// press Back, prepare an on-chain payment B, confirm. B must be what
+    /// executes: the old code checked `prepare_response` first and would have
+    /// executed A, which the user had walked away from, while the screen showed
+    /// B's amount and fee.
+    #[test]
+    fn back_then_a_new_onchain_prepare_confirms_the_onchain_payment() {
+        let mut p = panel();
+
+        // Payment A: 1_000 sat to a Liquid address.
+        compose(&mut p, liquid_input("lq1a"), 1_000);
+        let ctx_a = Box::new(p.open_prepare_context());
+        send(
+            &mut p,
+            view::LiquidSendMessage::PrepareResponseReceived(
+                ctx_a.clone(),
+                regular_response("lq1a", 11),
+            ),
+        );
+        assert!(matches!(
+            p.executable_intent().map(PreparedIntent::payment),
+            Some(PreparedPayment::Regular { .. })
+        ));
+
+        // Back out of FinalCheck.
+        send(
+            &mut p,
+            view::LiquidSendMessage::PopupMessage(SendPopupMessage::Close),
+        );
+        assert!(p.executable_intent().is_none(), "Back must abandon A");
+
+        // Payment B: 50_000 sat to a Bitcoin address.
+        compose(&mut p, bitcoin_input("bc1b"), 50_000);
+        let ctx_b = Box::new(p.open_prepare_context());
+        send(
+            &mut p,
+            view::LiquidSendMessage::PrepareOnChainResponseReceived {
+                context: ctx_b,
+                address: "bc1b".to_string(),
+                response: onchain_response(400),
+            },
+        );
+
+        // What the screen shows and what Confirm executes are the same value.
+        let intent = p.executable_intent().expect("B is prepared").clone();
+        match intent.payment() {
+            PreparedPayment::Onchain { address, response } => {
+                assert_eq!(address, "bc1b");
+                assert_eq!(response.total_fees_sat, 400);
+            }
+            other => panic!("expected the on-chain payment, got {:?}", other),
+        }
+        assert_eq!(intent.amount(), Amount::from_sat(50_000));
+        assert_eq!(intent.fees_sat(), 400, "the displayed fee is B's fee");
+        assert_eq!(intent.total_sat(), 50_400);
+
+        // Confirm accepts it, and A is unreachable: there is no second slot.
+        send(&mut p, view::LiquidSendMessage::ConfirmSend);
+        assert!(p.is_sending, "Confirm must have dispatched B");
+        assert!(matches!(
+            p.executable_intent().map(PreparedIntent::payment),
+            Some(PreparedPayment::Onchain { .. })
+        ));
+
+        // And A, arriving late, still cannot come back.
+        send(
+            &mut p,
+            view::LiquidSendMessage::PrepareResponseReceived(ctx_a, regular_response("lq1a", 11)),
+        );
+        assert!(matches!(
+            p.executable_intent().map(PreparedIntent::payment),
+            Some(PreparedPayment::Onchain { .. })
+        ));
+    }
+
+    /// Closing while a prepare is in flight must not leave a response able to
+    /// reopen FinalCheck behind the user.
+    #[test]
+    fn a_prepare_that_lands_after_close_is_ignored() {
+        let mut p = panel();
+        compose(&mut p, liquid_input("lq1a"), 1_000);
+        let ctx = Box::new(p.open_prepare_context());
+
+        send(
+            &mut p,
+            view::LiquidSendMessage::PopupMessage(SendPopupMessage::Close),
+        );
+        send(
+            &mut p,
+            view::LiquidSendMessage::PrepareResponseReceived(ctx, regular_response("lq1a", 11)),
+        );
+
+        assert!(
+            matches!(p.flow_state, LiquidSendFlowState::Main { .. }),
+            "a late prepare must not reopen FinalCheck"
+        );
+        assert!(p.executable_intent().is_none());
+
+        // Confirm has nothing to execute and must stay silent.
+        send(&mut p, view::LiquidSendMessage::ConfirmSend);
+        assert!(!p.is_sending);
+    }
+
+    /// Two prepares in flight, responses arriving out of order: only the newest
+    /// round may enter FinalCheck, whichever lands last.
+    #[test]
+    fn out_of_order_prepares_let_only_the_newest_through() {
+        let mut p = panel();
+
+        compose(&mut p, liquid_input("lq1a"), 1_000);
+        let ctx_a = Box::new(p.open_prepare_context());
+        compose(&mut p, liquid_input("lq1b"), 2_000);
+        let ctx_b = Box::new(p.open_prepare_context());
+        assert!(ctx_b.generation > ctx_a.generation);
+
+        // Newest completes first.
+        send(
+            &mut p,
+            view::LiquidSendMessage::PrepareResponseReceived(ctx_b, regular_response("lq1b", 22)),
+        );
+        assert_eq!(
+            p.executable_intent().map(PreparedIntent::amount),
+            Some(Amount::from_sat(2_000))
+        );
+
+        // The older one lands afterwards and must be discarded.
+        send(
+            &mut p,
+            view::LiquidSendMessage::PrepareResponseReceived(ctx_a, regular_response("lq1a", 11)),
+        );
+        assert_eq!(
+            p.executable_intent().map(PreparedIntent::amount),
+            Some(Amount::from_sat(2_000)),
+            "the superseded prepare must not replace the current one"
+        );
+        assert_eq!(
+            p.executable_intent().map(PreparedIntent::fees_sat),
+            Some(22)
+        );
+    }
+
+    /// Every exit from the flow drops the prepared intent, for both variants.
+    #[test]
+    fn reset_and_send_complete_clear_every_prepared_variant() {
+        for onchain in [false, true] {
+            for reset in [
+                view::LiquidSendMessage::SendComplete,
+                view::LiquidSendMessage::BackToHome,
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::Close),
+            ] {
+                let mut p = panel();
+                if onchain {
+                    compose(&mut p, bitcoin_input("bc1b"), 50_000);
+                    let ctx = Box::new(p.open_prepare_context());
+                    send(
+                        &mut p,
+                        view::LiquidSendMessage::PrepareOnChainResponseReceived {
+                            context: ctx,
+                            address: "bc1b".to_string(),
+                            response: onchain_response(400),
+                        },
+                    );
+                } else {
+                    compose(&mut p, liquid_input("lq1a"), 1_000);
+                    let ctx = Box::new(p.open_prepare_context());
+                    send(
+                        &mut p,
+                        view::LiquidSendMessage::PrepareResponseReceived(
+                            ctx,
+                            regular_response("lq1a", 11),
+                        ),
+                    );
+                }
+                assert!(p.executable_intent().is_some());
+
+                let label = format!("{:?} (onchain={})", reset, onchain);
+                send(&mut p, reset);
+
+                assert!(
+                    p.prepared_intent().is_none(),
+                    "{} must drop the prepared intent",
+                    label
+                );
+                assert!(
+                    p.executable_intent().is_none(),
+                    "{} must leave nothing executable",
+                    label
+                );
+
+                // And Confirm afterwards is a no-op, not a re-send.
+                send(&mut p, view::LiquidSendMessage::ConfirmSend);
+                assert!(!p.is_sending, "{} must not allow a re-send", label);
+            }
+        }
+    }
+
+    /// A superseded intent still on screen fails closed with a message, rather
+    /// than executing something the user has not approved in its current form.
+    #[test]
+    fn confirm_refuses_an_intent_whose_round_has_been_superseded() {
+        let mut p = panel();
+        compose(&mut p, liquid_input("lq1a"), 1_000);
+        let ctx = Box::new(p.open_prepare_context());
+        send(
+            &mut p,
+            view::LiquidSendMessage::PrepareResponseReceived(ctx, regular_response("lq1a", 11)),
+        );
+        assert!(p.executable_intent().is_some());
+
+        // Something abandons the round while FinalCheck is still displayed.
+        p.invalidate_prepare();
+        assert!(p.prepared_intent().is_some());
+        assert!(p.executable_intent().is_none());
+
+        send(&mut p, view::LiquidSendMessage::ConfirmSend);
+        assert!(!p.is_sending, "a superseded intent must not be sent");
+        assert!(matches!(p.flow_state, LiquidSendFlowState::Main { .. }));
+        assert!(p.error.is_some(), "the user must be told to start again");
+    }
+
+    /// Editing the destination invalidates a prepare made for the old one.
+    #[test]
+    fn editing_the_destination_abandons_a_prepared_payment() {
+        let mut p = panel();
+        compose(&mut p, liquid_input("lq1a"), 1_000);
+        let ctx = Box::new(p.open_prepare_context());
+        let generation_before = ctx.generation;
+
+        send(
+            &mut p,
+            view::LiquidSendMessage::InputEdited("lq1somewhere-else".to_string()),
+        );
+        assert!(p.prepare_generation > generation_before);
+
+        send(
+            &mut p,
+            view::LiquidSendMessage::PrepareResponseReceived(ctx, regular_response("lq1a", 11)),
+        );
+        assert!(
+            p.executable_intent().is_none(),
+            "a prepare for the previous destination must not become executable"
+        );
+    }
+
+    /// The fee shown is the prepared payment's own fee, and the asset-fee
+    /// branch is preserved: a USDt send quoted in USDt shows no L-BTC fee.
+    #[test]
+    fn fee_display_follows_the_prepared_payment() {
+        let onchain = PreparedIntent::new(
+            PrepareContext {
+                generation: 1,
+                amount: Amount::from_sat(50_000),
+                usdt_amount_display: String::new(),
+                to_asset: SendAsset::Lbtc,
+                from_asset: SendAsset::Lbtc,
+                comment: None,
+                description: None,
+                pay_fees_with_asset: false,
+            },
+            PreparedPayment::Onchain {
+                response: Box::new(onchain_response(400)),
+                address: "bc1b".to_string(),
+            },
+        );
+        assert_eq!(onchain.asset_fees(), None);
+        assert_eq!(onchain.fees_sat(), 400);
+        assert_eq!(onchain.total_sat(), 50_400);
+
+        let mut asset_response = regular_response("lq1a", 11);
+        asset_response.estimated_asset_fees = Some(0.5);
+        let usdt = PreparedIntent::new(
+            PrepareContext {
+                generation: 2,
+                amount: Amount::from_sat(0),
+                usdt_amount_display: "12.34".to_string(),
+                to_asset: SendAsset::Usdt,
+                from_asset: SendAsset::Usdt,
+                comment: None,
+                description: None,
+                pay_fees_with_asset: true,
+            },
+            PreparedPayment::Regular {
+                response: Box::new(asset_response),
+                use_asset_fees: true,
+            },
+        );
+        assert_eq!(usdt.asset_fees(), Some(0.5));
+        assert_eq!(usdt.fees_sat(), 0, "fees are paid in USDt, not L-BTC");
+        assert_eq!(usdt.usdt_amount_display(), "12.34");
+    }
+
+    /// Cross-asset sends never use asset fees (SDK constraint), and the choice
+    /// is frozen into the intent rather than recomputed at confirm time from
+    /// fields the user may since have changed.
+    #[test]
+    fn asset_fee_choice_is_bound_at_prepare_time() {
+        let mut p = panel();
+        p.flow_state = LiquidSendFlowState::Main {
+            modal: Modal::AmountInput,
+        };
+        p.input_type = Some(liquid_input("lq1a"));
+        p.to_asset = SendAsset::Usdt;
+        p.from_asset = SendAsset::Usdt;
+        p.pay_fees_with_asset = true;
+        p.usdt_amount_input.value = "12.34".to_string();
+
+        let ctx = Box::new(p.open_prepare_context());
+        let mut response = regular_response("lq1a", 11);
+        response.estimated_asset_fees = Some(0.5);
+        send(
+            &mut p,
+            view::LiquidSendMessage::PrepareResponseReceived(ctx, response),
+        );
+
+        let intent = p.executable_intent().expect("prepared").clone();
+        assert!(matches!(
+            intent.payment(),
+            PreparedPayment::Regular {
+                use_asset_fees: true,
+                ..
+            }
+        ));
+
+        // The user flips assets afterwards; the intent is unmoved.
+        p.to_asset = SendAsset::Lbtc;
+        p.pay_fees_with_asset = false;
+        let intent = p.executable_intent().expect("still prepared");
+        assert_eq!(intent.to_asset(), SendAsset::Usdt);
+        assert_eq!(intent.usdt_amount_display(), "12.34");
+        assert!(matches!(
+            intent.payment(),
+            PreparedPayment::Regular {
+                use_asset_fees: true,
+                ..
+            }
+        ));
+
+        // Cross-asset: asset fees are refused regardless of the preference.
+        let mut p = panel();
+        p.flow_state = LiquidSendFlowState::Main {
+            modal: Modal::AmountInput,
+        };
+        p.input_type = Some(liquid_input("lq1a"));
+        p.to_asset = SendAsset::Usdt;
+        p.from_asset = SendAsset::Lbtc;
+        p.pay_fees_with_asset = true;
+        let ctx = Box::new(p.open_prepare_context());
+        let mut response = regular_response("lq1a", 11);
+        response.estimated_asset_fees = Some(0.5);
+        send(
+            &mut p,
+            view::LiquidSendMessage::PrepareResponseReceived(ctx, response),
+        );
+        assert!(matches!(
+            p.executable_intent().map(PreparedIntent::payment),
+            Some(PreparedPayment::Regular {
+                use_asset_fees: false,
+                ..
+            })
+        ));
+    }
 }

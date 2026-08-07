@@ -250,25 +250,32 @@ impl MasterSigner {
     /// Create a MasterSigner from a 32-byte WebAuthn PRF extension output.
     ///
     /// The PRF output is run through HKDF-SHA256 with a Coincube-specific salt
-    /// and info string, and the full 32-byte result becomes BIP39 entropy — a
-    /// deterministic 24-word mnemonic. The same PRF output always yields the
-    /// same mnemonic and master key.
+    /// and info string, and 16 bytes of the result become BIP39 entropy — a
+    /// deterministic **12-word** mnemonic, the same shape [`Self::generate`]
+    /// produces and the same shape the restore screen accepts. The same PRF
+    /// output always yields the same mnemonic and master key.
     ///
-    /// # Why not `from_entropy(&prf_output[..16])`
+    /// # The domain separation is the load-bearing part
     ///
-    /// That was the original implementation and it was wrong twice over. It
-    /// **discarded 128 bits** of a 256-bit secret for no reason, and it applied
-    /// **no domain separation**, so the same authenticator PRF output fed to
-    /// two different Coincube-family apps would derive the *same* master key.
-    /// Keychain derives from the same PRF extension; two related keys landing
-    /// in one Vault descriptor is exactly the failure that makes a multisig
-    /// quorum a single point of failure.
+    /// The original implementation was `from_entropy(&prf_output[..16])` — a
+    /// raw slice, no HKDF. It applied **no domain separation**, so the same
+    /// authenticator PRF output fed to two different Coincube-family apps
+    /// derived the *same* master key. Keychain derives from the same PRF
+    /// extension; two related keys landing in one Vault descriptor is exactly
+    /// the failure that makes a multisig quorum a single point of failure
+    /// (**I9**).
     ///
-    /// The salt and info strings below are **load-bearing wire constants**.
-    /// Changing either changes every key derived from every passkey — treat
-    /// them as stable, exactly as `keychain-app` treats its own
-    /// (`passkey_prf_entropy_source.dart`). The two must never match; there is
-    /// a cross-app negative-vector test asserting they don't.
+    /// Expanding to 16 rather than 32 bytes is **not** a return to that bug.
+    /// Every one of the PRF output's 256 bits feeds the HKDF extract step; the
+    /// 128 bits that come out are a derived key, not a truncated secret. It is
+    /// the same expansion Keychain performs for its own 12-word mnemonic, and
+    /// 128 bits is BIP39's default and secp256k1's own security level.
+    ///
+    /// The salt and info strings are **load-bearing wire constants**. Changing
+    /// either — or this length — changes every key derived from every passkey,
+    /// so treat all three as stable, exactly as `keychain-app` treats its own
+    /// (`passkey_prf_entropy_source.dart`). The two apps' domains must never
+    /// match; there is a cross-app negative-vector test asserting they don't.
     pub fn from_prf_output(
         network: bitcoin::Network,
         prf_output: &[u8; 32],
@@ -279,13 +286,14 @@ impl MasterSigner {
         Self::from_mnemonic(network, mnemonic)
     }
 
-    /// HKDF-SHA256 extract-and-expand over a WebAuthn PRF output. Split out so
-    /// the domain constants can be pinned by a known-answer test without
-    /// building a whole signer.
-    pub fn prf_entropy(prf_output: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>, SignerError> {
+    /// HKDF-SHA256 extract-and-expand over a WebAuthn PRF output, to the 16
+    /// bytes of BIP39 entropy a 12-word mnemonic needs. Split out so the domain
+    /// constants can be pinned by a known-answer test without building a whole
+    /// signer.
+    pub fn prf_entropy(prf_output: &[u8; 32]) -> Result<Zeroizing<[u8; 16]>, SignerError> {
         let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(PRF_HKDF_SALT), prf_output);
-        let mut entropy = Zeroizing::new([0u8; 32]);
-        // Only fails for an output longer than 255*32 bytes; 32 is fine.
+        let mut entropy = Zeroizing::new([0u8; 16]);
+        // Only fails for an output longer than 255*32 bytes; 16 is fine.
         hk.expand(PRF_HKDF_INFO, entropy.as_mut())
             .map_err(|_| SignerError::KeyDerivationFailed)?;
         Ok(entropy)
@@ -449,7 +457,7 @@ impl MasterSigner {
     /// The BIP39 mnemonics from which the master key of this signer is derived.
     ///
     /// Length is 12 for a generated or user-entered seed and 24 for a
-    /// passkey-derived one (`from_prf_output` feeds BIP39 the full 32 bytes of
+    /// passkey-derived one (`from_prf_output` feeds BIP39 16 bytes of
     /// HKDF output). It used to return `[&str; 12]` with an `.expect("Always
     /// 12 words")`; that would now panic on a passkey Cube.
     pub fn words(&self) -> Vec<&'static str> {
@@ -945,9 +953,7 @@ mod tests {
         let secp = secp256k1::Secp256k1::signing_only();
         assert_eq!(signer1.fingerprint(&secp), signer2.fingerprint(&secp));
 
-        // 32 bytes of HKDF output → 24 words. The old implementation truncated
-        // to 16 bytes and produced 12, discarding half the PRF secret.
-        assert_eq!(signer1.words().len(), 24);
+        assert_eq!(signer1.words().len(), 12);
 
         // Different PRF output must produce a different mnemonic.
         let other_prf: [u8; 32] = [0xff; 32];
@@ -955,25 +961,28 @@ mod tests {
         assert_ne!(signer1.words(), signer3.words());
     }
 
+    /// The word count new passkey Cubes get, and why it matters beyond tidiness:
+    /// a 12-word phrase is one the app's own 12-word restore screen can take
+    /// back, so a passkey Cube's seed phrase is a recovery artifact rather than
+    /// something we can only show.
     #[test]
-    fn changing_the_hkdf_domain_changes_the_mnemonic() {
-        // Domain separation is only real if the domain is actually mixed in.
-        // Derive with a deliberately different salt/info and require a
-        // different result — this is what fails if someone "simplifies"
-        // `prf_entropy` into a plain hash of the PRF output.
-        let ours = MasterSigner::prf_entropy(&FIXED_PRF_OUTPUT).unwrap();
+    fn a_passkey_cube_has_the_same_word_count_as_a_pin_cube() {
+        let passkey =
+            MasterSigner::from_prf_output(bitcoin::Network::Bitcoin, &FIXED_PRF_OUTPUT).unwrap();
+        let pin = MasterSigner::generate(bitcoin::Network::Bitcoin).unwrap();
+        assert_eq!(
+            passkey.words().len(),
+            pin.words().len(),
+            "the two creation paths must produce the same shape of phrase"
+        );
 
-        let mut other = [0u8; 32];
-        hkdf::Hkdf::<sha2::Sha256>::new(Some(b"coincube-tenshu/v2"), &FIXED_PRF_OUTPUT)
-            .expand(PRF_HKDF_INFO, &mut other)
-            .unwrap();
-        assert_ne!(&ours[..], &other[..], "HKDF salt is not being mixed in");
-
-        let mut other = [0u8; 32];
-        hkdf::Hkdf::<sha2::Sha256>::new(Some(PRF_HKDF_SALT), &FIXED_PRF_OUTPUT)
-            .expand(b"some-other-purpose/v1", &mut other)
-            .unwrap();
-        assert_ne!(&ours[..], &other[..], "HKDF info is not being mixed in");
+        // And it is a real BIP39 phrase: parsing it back rebuilds the identical
+        // signer, which is what the restore screen does.
+        let restored =
+            MasterSigner::from_str(bitcoin::Network::Bitcoin, passkey.mnemonic_str().as_ref())
+                .unwrap();
+        let secp = secp256k1::Secp256k1::signing_only();
+        assert_eq!(restored.fingerprint(&secp), passkey.fingerprint(&secp));
     }
 
     /// Invariant I9: no two keys in one Vault descriptor may share a
@@ -1004,10 +1013,11 @@ mod tests {
             .unwrap();
         let keychain_mnemonic = bip39::Mnemonic::from_entropy(&keychain_entropy).unwrap();
 
-        // Tenshu, this crate.
+        // Tenshu, this crate. Both apps now expand to 16 bytes and both produce
+        // 12 words, so the word count is no longer what keeps them apart —
+        // only the domain separation is, which was always the real guard.
         let tenshu =
             MasterSigner::from_prf_output(bitcoin::Network::Bitcoin, &FIXED_PRF_OUTPUT).unwrap();
-
         assert_ne!(
             keychain_mnemonic.to_string(),
             tenshu.mnemonic_str().to_string(),
@@ -1015,10 +1025,10 @@ mod tests {
              a Vault cosigner and the Vault hot key now share a root (I9)"
         );
 
-        // Also assert the entropy differs, not just the word count, so the
-        // assertion still means something if Keychain ever moves to L=32.
+        // The entropy itself, not just the phrase. With both at 16 bytes this
+        // is the assertion with teeth.
         let tenshu_entropy = MasterSigner::prf_entropy(&FIXED_PRF_OUTPUT).unwrap();
-        assert_ne!(&tenshu_entropy[..16], &keychain_entropy[..]);
+        assert_ne!(&tenshu_entropy[..], &keychain_entropy[..]);
 
         // The checked-in expected value for Keychain's side. It is here so that
         // someone "fixing" a drift has to consciously edit a constant that says
@@ -1030,7 +1040,7 @@ mod tests {
         );
         assert_eq!(
             hex(&tenshu_entropy[..]),
-            "c3f9338a02357e3ebca6185fe158dee87cf6c5c38ff0f7066a010d53bbee1750",
+            "c3f9338a02357e3ebca6185fe158dee8",
             "Tenshu's derivation changed — every passkey Cube is re-keyed"
         );
     }

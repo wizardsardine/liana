@@ -65,6 +65,76 @@ use super::config::SparkConfig;
 /// id to the oneshot sender that the caller is awaiting.
 type PendingMap = Arc<Mutex<HashMap<u64, oneshot::Sender<Response>>>>;
 
+/// Responses that arrived for a **state-changing** request whose caller had
+/// already stopped waiting, keyed by request id.
+///
+/// A send that outruns its deadline is not finished — the bridge still holds
+/// it and the SDK may still be moving money. When the answer finally arrives
+/// there is no oneshot left to deliver it to, and the reader used to log
+/// "response for unknown id — dropping". That thrown-away frame is the single
+/// most authoritative statement anyone has about whether the payment happened,
+/// so it is kept here for [`SparkClient::take_late_outcome`] to reconcile
+/// against instead.
+type LateOutcomes = Arc<Mutex<HashMap<u64, Response>>>;
+
+/// Ids of dispatched state-changing requests whose caller stopped waiting.
+/// The reader consults this to decide whether an unmatched response is a late
+/// send outcome worth keeping or genuine protocol noise.
+type AwaitingLate = Arc<Mutex<std::collections::HashSet<u64>>>;
+
+/// How long to wait for an ordinary query before giving up.
+///
+/// Plenty for connect + info + list. A query that times out changed nothing,
+/// so the caller can simply be told it failed.
+const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long to wait for a **send** before declaring the outcome unknown.
+///
+/// Deliberately longer than [`QUERY_TIMEOUT`] — an on-chain or cross-chain send
+/// can legitimately take a while — but the length is not what makes this safe.
+/// What makes it safe is that expiry produces
+/// [`SparkClientError::OutcomeUnknown`] rather than a failure: the caller must
+/// reconcile before it can send again. A send that inherited the generic query
+/// timeout was reported as an ordinary failure, and "Try again" then minted a
+/// fresh idempotency key — which is how one payment becomes two.
+const SEND_SOFT_DEADLINE: Duration = Duration::from_secs(120);
+
+/// What the reader does with a response frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseRoute {
+    /// A caller is still waiting — hand it over.
+    Deliver,
+    /// Nobody is waiting, but this was a **send** whose caller gave up. The
+    /// answer is the authoritative word on whether that payment happened, so it
+    /// is kept for reconciliation rather than dropped.
+    HoldForReconciliation,
+    /// Genuinely unmatched: no waiter and no record of a send under this id.
+    Drop,
+}
+
+/// Decide what to do with a response, given whether a caller is still waiting
+/// and whether the id belongs to a send that outran its deadline.
+///
+/// Split out from the reader loop so the decision is testable without a live
+/// subprocess — it is the difference between reconciling a late payment
+/// outcome and throwing it away.
+fn route_response(has_waiter: bool, is_unresolved_send: bool) -> ResponseRoute {
+    match (has_waiter, is_unresolved_send) {
+        (true, _) => ResponseRoute::Deliver,
+        (false, true) => ResponseRoute::HoldForReconciliation,
+        (false, false) => ResponseRoute::Drop,
+    }
+}
+
+/// Whether a method changes state, and therefore what a missing answer means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestKind {
+    /// A read. No answer means no answer; nothing moved.
+    Query,
+    /// A send. No answer means **unknown**, never "failed".
+    StateChanging,
+}
+
 /// Handle to a running `coincube-spark-bridge` subprocess.
 ///
 /// Clone-safe: the underlying state is `Arc`-shared, so multiple panels
@@ -85,6 +155,10 @@ struct SparkClientInner {
     next_id: AtomicU64,
     request_tx: mpsc::UnboundedSender<Request>,
     pending: PendingMap,
+    /// See [`LateOutcomes`].
+    late_outcomes: LateOutcomes,
+    /// See [`AwaitingLate`].
+    awaiting_late: AwaitingLate,
     /// Broadcast channel into which the reader task pushes every
     /// [`Event`] frame received from the bridge.
     event_tx: broadcast::Sender<Event>,
@@ -151,6 +225,8 @@ impl SparkClient {
         let (event_tx, _) = broadcast::channel::<Event>(64);
 
         let closed: ClosedFlag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let late_outcomes: LateOutcomes = Arc::new(Mutex::new(HashMap::new()));
+        let awaiting_late: AwaitingLate = Arc::new(Mutex::new(std::collections::HashSet::new()));
 
         spawn_writer_task(stdin, request_rx, Arc::clone(&pending), Arc::clone(&closed));
         spawn_reader_task(
@@ -158,6 +234,8 @@ impl SparkClient {
             Arc::clone(&pending),
             event_tx.clone(),
             Arc::clone(&closed),
+            Arc::clone(&late_outcomes),
+            Arc::clone(&awaiting_late),
         );
         spawn_stderr_task(stderr);
 
@@ -165,6 +243,8 @@ impl SparkClient {
             next_id: AtomicU64::new(1),
             request_tx,
             pending,
+            late_outcomes,
+            awaiting_late,
             event_tx,
             child: Mutex::new(Some(child)),
             closed,
@@ -332,16 +412,24 @@ impl SparkClient {
     /// comes from re-sending the same quote, gated by
     /// [`CrossChainQuote::retry_safe`]. Pass `None` only where a retry can't
     /// happen.
+    ///
+    /// This is a **state-changing** request, so it does not inherit the generic
+    /// query timeout: losing the transport after dispatch yields
+    /// [`SparkClientError::OutcomeUnknown`], never a failure. See
+    /// [`Self::request_with`].
     pub async fn send_payment(
         &self,
         prepare_handle: String,
         idempotency_key: Option<String>,
     ) -> Result<SendPaymentOk, SparkClientError> {
         match self
-            .request(Method::SendPayment(SendPaymentParams {
-                prepare_handle,
-                idempotency_key,
-            }))
+            .request_with(
+                Method::SendPayment(SendPaymentParams {
+                    prepare_handle,
+                    idempotency_key,
+                }),
+                RequestKind::StateChanging,
+            )
             .await?
         {
             OkPayload::SendPayment(sent) => Ok(sent),
@@ -692,6 +780,23 @@ impl SparkClient {
     /// and awaits the oneshot. Any error response is translated into
     /// [`SparkClientError::BridgeError`].
     async fn request(&self, method: Method) -> Result<OkPayload, SparkClientError> {
+        self.request_with(method, RequestKind::Query).await
+    }
+
+    /// Send a request and await its response under a per-method policy.
+    ///
+    /// The policy decides two things at once, and they belong together: how
+    /// long to wait, and what a missing answer *means*. A query that goes
+    /// unanswered changed nothing and is reported as unavailable. A **send**
+    /// that goes unanswered has already been handed to the bridge, so the only
+    /// honest report is [`SparkClientError::OutcomeUnknown`] — including when
+    /// the bridge dies mid-send, which says nothing about whether the SDK
+    /// finished the payment first.
+    async fn request_with(
+        &self,
+        method: Method,
+        kind: RequestKind,
+    ) -> Result<OkPayload, SparkClientError> {
         // Allow Shutdown through even after closed is set — shutdown()
         // flips the flag first to block new RPCs, then sends the
         // Shutdown request itself. Every other method is rejected once
@@ -708,29 +813,59 @@ impl SparkClient {
 
         let request = Request { id, method };
         if self.inner.request_tx.send(request).is_err() {
-            // Writer task exited — bridge is dead.
+            // Writer task exited before this was handed over. Nothing was
+            // dispatched, so this is a definite failure even for a send.
             self.inner.pending.lock().await.remove(&id);
             return Err(SparkClientError::BridgeUnavailable(
                 "Spark bridge writer task exited".to_string(),
             ));
         }
 
-        // 30s is plenty for connect + info + list; longer timeouts can
-        // be plumbed per-method later if we add heavy RPCs.
-        let response = match tokio::time::timeout(Duration::from_secs(30), rx).await {
+        let deadline = match kind {
+            RequestKind::Query => QUERY_TIMEOUT,
+            RequestKind::StateChanging => SEND_SOFT_DEADLINE,
+        };
+
+        let response = match tokio::time::timeout(deadline, rx).await {
             Ok(Ok(resp)) => resp,
+            // The reader closed the channel: the bridge is gone. For a query
+            // that is a plain failure; for a send in flight it is unknown.
             Ok(Err(_)) => {
                 self.inner.pending.lock().await.remove(&id);
-                return Err(SparkClientError::BridgeUnavailable(
-                    "Spark bridge reader closed the response channel".to_string(),
-                ));
+                return Err(match kind {
+                    RequestKind::Query => SparkClientError::BridgeUnavailable(
+                        "Spark bridge reader closed the response channel".to_string(),
+                    ),
+                    RequestKind::StateChanging => SparkClientError::OutcomeUnknown {
+                        request_id: id,
+                        message: "The Spark bridge stopped responding after the payment \
+                                  was sent to it."
+                            .to_string(),
+                    },
+                });
             }
             Err(_) => {
                 self.inner.pending.lock().await.remove(&id);
-                return Err(SparkClientError::BridgeUnavailable(format!(
-                    "Spark bridge did not respond within 30s (id={})",
-                    id
-                )));
+                return Err(match kind {
+                    RequestKind::Query => SparkClientError::BridgeUnavailable(format!(
+                        "Spark bridge did not respond within {}s (id={})",
+                        QUERY_TIMEOUT.as_secs(),
+                        id
+                    )),
+                    RequestKind::StateChanging => {
+                        // Keep listening: the bridge still owes an answer, and
+                        // when it arrives it is the authoritative one.
+                        self.inner.awaiting_late.lock().await.insert(id);
+                        SparkClientError::OutcomeUnknown {
+                            request_id: id,
+                            message: format!(
+                                "The Spark bridge did not answer within {}s of being \
+                                 given this payment.",
+                                SEND_SOFT_DEADLINE.as_secs()
+                            ),
+                        }
+                    }
+                });
             }
         };
 
@@ -740,6 +875,31 @@ impl SparkClient {
                 Err(SparkClientError::BridgeError { kind, message })
             }
         }
+    }
+
+    /// Take the bridge's answer to a send whose caller gave up waiting, if it
+    /// has arrived since.
+    ///
+    /// This is the first thing reconciliation should consult after an
+    /// [`SparkClientError::OutcomeUnknown`]: it is the bridge's own verdict on
+    /// that exact request, which beats any inference drawn from payment
+    /// history. `None` means the bridge still has not answered.
+    pub async fn take_late_outcome(
+        &self,
+        request_id: u64,
+    ) -> Option<Result<SendPaymentOk, SparkClientError>> {
+        let response = self.inner.late_outcomes.lock().await.remove(&request_id)?;
+        self.inner.awaiting_late.lock().await.remove(&request_id);
+        Some(match response.result {
+            ResponseResult::Ok(OkPayload::SendPayment(sent)) => Ok(sent),
+            ResponseResult::Ok(other) => Err(SparkClientError::Protocol(format!(
+                "late send outcome carried unexpected payload: {:?}",
+                other
+            ))),
+            ResponseResult::Err(ErrorPayload { kind, message }) => {
+                Err(SparkClientError::BridgeError { kind, message })
+            }
+        })
     }
 }
 
@@ -878,6 +1038,8 @@ fn spawn_reader_task(
     pending: PendingMap,
     event_tx: broadcast::Sender<Event>,
     closed: ClosedFlag,
+    late_outcomes: LateOutcomes,
+    awaiting_late: AwaitingLate,
 ) {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
@@ -899,13 +1061,31 @@ fn spawn_reader_task(
                     };
                     match frame {
                         Frame::Response(resp) => {
-                            if let Some(sender) = pending.lock().await.remove(&resp.id) {
-                                let _ = sender.send(resp);
-                            } else {
-                                warn!(
-                                    "Spark bridge response for unknown id {} — dropping",
-                                    resp.id
-                                );
+                            let waiter = pending.lock().await.remove(&resp.id);
+                            let unresolved = awaiting_late.lock().await.contains(&resp.id);
+                            match (route_response(waiter.is_some(), unresolved), waiter) {
+                                (ResponseRoute::Deliver, Some(sender)) => {
+                                    let _ = sender.send(resp);
+                                }
+                                (ResponseRoute::HoldForReconciliation, _) => {
+                                    // The late answer to a send whose caller
+                                    // stopped waiting. This is the
+                                    // authoritative word on whether that
+                                    // payment happened, so it is kept for
+                                    // reconciliation instead of dropped.
+                                    warn!(
+                                        "Spark bridge answered send id {} after its deadline \
+                                         — holding the outcome for reconciliation",
+                                        resp.id
+                                    );
+                                    late_outcomes.lock().await.insert(resp.id, resp);
+                                }
+                                (_, _) => {
+                                    warn!(
+                                        "Spark bridge response for unknown id {} — dropping",
+                                        resp.id
+                                    );
+                                }
                             }
                         }
                         Frame::Event(event) => {
@@ -1045,8 +1225,21 @@ pub enum SparkClientError {
     Config(String),
     /// Bridge subprocess couldn't be started or died unexpectedly.
     BridgeUnavailable(String),
-    /// Bridge returned an error response for a request.
+    /// Bridge returned an error response for a request. A **definite**
+    /// rejection: the bridge answered, and the answer was "no".
     BridgeError { kind: ErrorKind, message: String },
+    /// A state-changing request was dispatched and no answer came back.
+    ///
+    /// **Not a failure.** The bridge has the request and the SDK may already
+    /// have moved the money; the transport simply stopped telling us. Callers
+    /// must reconcile — [`SparkClient::take_late_outcome`] first, then the
+    /// payment history — before offering to send anything again, and must never
+    /// render this as "the payment failed".
+    OutcomeUnknown {
+        /// The request id, for [`SparkClient::take_late_outcome`].
+        request_id: u64,
+        message: String,
+    },
     /// JSON-RPC framing error (malformed response, unexpected payload).
     Protocol(String),
 }
@@ -1060,6 +1253,9 @@ impl std::fmt::Display for SparkClientError {
             }
             Self::BridgeError { kind, message } => {
                 write!(f, "Spark bridge returned {:?}: {}", kind, message)
+            }
+            Self::OutcomeUnknown { message, .. } => {
+                write!(f, "Spark payment outcome unknown: {}", message)
             }
             Self::Protocol(msg) => write!(f, "Spark protocol error: {}", msg),
         }
@@ -1136,6 +1332,68 @@ fn make_spark_event_stream(
             std::future::pending::<()>().await;
         },
     )
+}
+
+#[cfg(test)]
+mod unknown_outcome_tests {
+    use super::*;
+
+    /// A send that outran its deadline still has an answer coming, and that
+    /// answer is the most authoritative statement anyone has about whether the
+    /// payment happened. Dropping it as an "unknown id" — which is what the
+    /// reader used to do — throws that away.
+    #[test]
+    fn a_late_send_answer_is_kept_for_reconciliation_not_dropped() {
+        // Caller still waiting: straight through, as always.
+        assert_eq!(route_response(true, false), ResponseRoute::Deliver);
+        assert_eq!(route_response(true, true), ResponseRoute::Deliver);
+        // Caller gave up on a send: hold it.
+        assert_eq!(
+            route_response(false, true),
+            ResponseRoute::HoldForReconciliation
+        );
+        // Nothing knows about this id: unchanged behaviour.
+        assert_eq!(route_response(false, false), ResponseRoute::Drop);
+    }
+
+    /// A send must not inherit the query deadline, and the two deadlines mean
+    /// different things — which is the whole point of splitting them.
+    #[test]
+    fn a_send_does_not_inherit_the_query_timeout() {
+        assert!(
+            SEND_SOFT_DEADLINE > QUERY_TIMEOUT,
+            "a send must not be abandoned on the query timeout"
+        );
+        assert_ne!(RequestKind::Query, RequestKind::StateChanging);
+    }
+
+    /// An unknown outcome must not read as a failure anywhere it is rendered
+    /// or logged.
+    #[test]
+    fn the_unknown_outcome_error_never_claims_the_payment_failed() {
+        let err = SparkClientError::OutcomeUnknown {
+            request_id: 9,
+            message: "The Spark bridge did not answer within 120s of being given this \
+                      payment."
+                .to_string(),
+        };
+        let rendered = err.to_string().to_lowercase();
+        assert!(rendered.contains("unknown"), "{}", rendered);
+        for forbidden in ["failed", "rejected", "declined", "did not send"] {
+            assert!(
+                !rendered.contains(forbidden),
+                "an unknown outcome says {:?}, which asserts something nobody knows: {}",
+                forbidden,
+                rendered
+            );
+        }
+        // And it is distinguishable from a definite bridge rejection.
+        let definite = SparkClientError::BridgeError {
+            kind: coincube_spark_protocol::ErrorKind::Sdk,
+            message: "invoice expired".to_string(),
+        };
+        assert_ne!(err.to_string(), definite.to_string());
+    }
 }
 
 #[cfg(test)]
