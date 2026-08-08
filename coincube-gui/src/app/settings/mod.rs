@@ -591,6 +591,22 @@ pub struct CubeSettings {
     /// Remove-all. Back-compat is free — only the phone-seal path ever writes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_kit_last_backed_up_keychain_descriptor_fingerprint: Option<String>,
+    /// Whether a **password** Cube Recovery Kit has been pushed to Connect from
+    /// this device, independent of whether that kit carried a Wallet Descriptor.
+    ///
+    /// Exists because the two descriptor-fingerprint slots above are *drift*
+    /// signals, not *presence* signals, and a Cube with no Vault has no
+    /// descriptor to fingerprint. Keying kit-presence off them alone made a
+    /// seed-only (Cube-only) kit read as "no recovery kit" on the Home card
+    /// while the Settings card — which asks the server — read "backed up".
+    ///
+    /// Written on a successful kit upload, cleared on Remove (and on the
+    /// partial-remove path where the password kit was already torn down), and
+    /// reconciled against `/recovery-kit/status` on every status load — which
+    /// is what heals Cubes backed up by a build that predates this field, and
+    /// Cubes whose kit was created or removed on another device.
+    #[serde(default)]
+    pub recovery_kit_password_backed_up: bool,
     /// Whether the one-time "turn on recovery alerts?" consent prompt has been
     /// answered for this Cube's Vault (PLAN-recovery-alerts-cleanup PR 3). Once
     /// `true` — whether the user accepted or declined — the prompt never fires
@@ -694,6 +710,7 @@ impl CubeSettings {
             balance_masked: false,
             recovery_kit_last_backed_up_descriptor_fingerprint: None,
             recovery_kit_last_backed_up_keychain_descriptor_fingerprint: None,
+            recovery_kit_password_backed_up: false,
             recovery_alerts_prompt_answered: false,
             creation_backup_bypass: None,
             creation_recovery_kit: None,
@@ -737,21 +754,32 @@ impl CubeSettings {
     }
 
     /// True when this Cube has a Cube Recovery Kit pushed to Connect **from this
-    /// device**, by either method. We treat a recorded backed-up descriptor
-    /// fingerprint as the CRK-presence signal — set on a successful kit upload
-    /// (password slot) or phone seal (keychain slot) and cleared on delete. Both
-    /// slots count: a keychain-only backup is a recovery kit too, so keying off
-    /// the password slot alone would make the Home card read "no recovery kit"
-    /// while Settings (which reads the server per-method status) reads "backed
-    /// up" (keychain-crk-status-fixes). This stays a **local** heuristic: it
-    /// reflects backups made from this device, not the server-authoritative
-    /// state, so an other-device backup can still read `false` here — the same
-    /// limitation the password slot has always had. Distinct from
+    /// device**, by either method — password kit or phone (keychain) seal.
+    ///
+    /// The password kit is answered by its own presence flag
+    /// ([`recovery_kit_password_backed_up`](Self::recovery_kit_password_backed_up)),
+    /// *not* by its descriptor fingerprint: a Cube with no Vault backs up a
+    /// seed-only kit, which has no descriptor to fingerprint, and reading
+    /// presence off the fingerprint made those Cubes report "no recovery kit"
+    /// while Settings (which asks the server) said "backed up".
+    ///
+    /// The two descriptor-fingerprint slots still count, for two reasons: the
+    /// phone seal always seals a descriptor and has no separate presence flag,
+    /// and a Cube backed up by an older build has the password fingerprint but
+    /// not the flag — OR-ing keeps it reading "backed up" across the upgrade
+    /// with no migration.
+    ///
+    /// This is a **cached** answer, not a live one: it is written when a backup
+    /// is made from this device, and reconciled against the server whenever the
+    /// Recovery-Kit status loads. A Cube whose kit was created or removed on
+    /// another device reads stale until it is next opened here. Distinct from
     /// [`backed_up`](Self::backed_up), which tracks the *local* seed-phrase
-    /// backup, not the server-side recovery kit.
+    /// backup, not the server-side kit.
     pub fn has_recovery_kit(&self) -> bool {
-        self.recovery_kit_last_backed_up_descriptor_fingerprint
-            .is_some()
+        self.recovery_kit_password_backed_up
+            || self
+                .recovery_kit_last_backed_up_descriptor_fingerprint
+                .is_some()
             || self
                 .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
                 .is_some()
@@ -1718,6 +1746,56 @@ mod test {
         );
         assert!(restored.has_recovery_kit());
         assert_eq!(restored.connect_state(), CubeConnectState::BackedUp);
+    }
+
+    #[test]
+    fn seed_only_kit_on_a_vault_less_cube_reads_as_backed_up() {
+        use super::{CubeConnectState, CubeSettings};
+        use coincube_core::miniscript::bitcoin::Network;
+
+        // A Cube with no Vault backs up a seed-only Recovery Kit — there is no
+        // Wallet Descriptor to fingerprint, so neither drift slot is written.
+        // The kit is real and restorable, so the Home card must agree with the
+        // Settings card ("Recovery Kit backed up") rather than reporting
+        // "Registered to Connect — no recovery kit".
+        let mut cube = CubeSettings::new("Cube only".to_string(), Network::Bitcoin);
+        cube.remote_synced = true;
+        assert!(cube.vault_wallet_id.is_none());
+        cube.recovery_kit_password_backed_up = true;
+        assert!(cube.has_recovery_kit());
+        assert_eq!(cube.connect_state(), CubeConnectState::BackedUp);
+
+        // The flag has no `skip_serializing_if`, but pin the round-trip anyway:
+        // losing it on reload is exactly the regression this test exists for.
+        let json = serde_json::to_string(&cube).expect("CubeSettings must serialize");
+        let restored: CubeSettings =
+            serde_json::from_str(&json).expect("CubeSettings must deserialize");
+        assert!(restored.recovery_kit_password_backed_up);
+        assert_eq!(restored.connect_state(), CubeConnectState::BackedUp);
+    }
+
+    #[test]
+    fn pre_flag_settings_still_read_as_backed_up() {
+        use super::{CubeConnectState, CubeSettings};
+
+        // Back-compat: a Cube backed up by a build that predates
+        // `recovery_kit_password_backed_up` has only the password drift
+        // fingerprint in settings.json. `#[serde(default)]` gives the absent
+        // flag `false`, so the fingerprint has to keep carrying presence —
+        // otherwise the upgrade silently regresses those Cubes to
+        // "no recovery kit".
+        let json = r#"{
+            "id": "cube-1",
+            "name": "Legacy",
+            "network": "bitcoin",
+            "created_at": 0,
+            "remote_synced": true,
+            "recovery_kit_last_backed_up_descriptor_fingerprint": "abc123"
+        }"#;
+        let cube: CubeSettings = serde_json::from_str(json).expect("must deserialise");
+        assert!(!cube.recovery_kit_password_backed_up);
+        assert!(cube.has_recovery_kit());
+        assert_eq!(cube.connect_state(), CubeConnectState::BackedUp);
     }
 
     #[test]
