@@ -120,15 +120,28 @@ fn classify_authorization_error(code: isize, detail: String) -> super::PasskeyEr
 ///
 /// Apple's full string is "The operation couldn't be completed. The calling
 /// process does not have an application identifier. Make sure it is properly
-/// configured." Matching the whole sentence would be brittle: the apostrophe in
-/// "couldn't" is the curly U+2019, the wording is localised, and it has changed
-/// across releases. "application identifier" is the load-bearing part and is
-/// what a localised variant is most likely to keep.
+/// configured."
 ///
-/// Deliberately not keyed on the code: 1004 is the generic `Failed` bucket and
-/// carries unrelated failures too, so a code-only match would mislabel them.
+/// Matched on the **negation clause**, not on "application identifier" alone.
+/// That phrase appears in unrelated `ASAuthorizationError` details — notably
+/// "Request already in progress for specified application identifier", raised
+/// when a second ceremony starts while one is in flight, which this app can
+/// reach by double-triggering Create Cube or a passkey unlock. Classifying that
+/// as [`super::PasskeyError::AppIdentityMissing`] would tell a user with a
+/// perfectly good build to reinstall, when the real remedy is to wait for the
+/// request already on screen.
+///
+/// The whole sentence is deliberately not matched: the apostrophe in "couldn't"
+/// is the curly U+2019 and the surrounding wording has changed across releases.
+/// This clause is the narrowest span that still identifies the condition.
+///
+/// Deliberately not keyed on the code either: 1004 is the generic `Failed`
+/// bucket and carries unrelated failures too, so a code-only match would
+/// mislabel them.
 fn is_missing_app_identifier(detail: &str) -> bool {
-    detail.to_lowercase().contains("application identifier")
+    detail
+        .to_lowercase()
+        .contains("does not have an application identifier")
 }
 
 /// Whether this machine can actually run a PRF ceremony.
@@ -745,13 +758,64 @@ mod tests {
 
     #[test]
     fn detail_match_is_case_insensitive_and_substring() {
-        // Localised and reworded variants keep the load-bearing phrase; the
-        // check has to survive them.
+        // Reworded variants keep the negation clause; the check has to survive
+        // them, and has to survive the clause sitting mid-sentence.
         assert!(is_missing_app_identifier(
             "The calling process does not have an Application Identifier."
         ));
-        assert!(is_missing_app_identifier("missing application identifier"));
+        assert!(is_missing_app_identifier(
+            "this process does not have an application identifier, so the request was refused"
+        ));
         assert!(!is_missing_app_identifier("No credentials available."));
         assert!(!is_missing_app_identifier(""));
+        // "application identifier" alone is NOT enough — see the next test for
+        // the detail that made this distinction necessary.
+        assert!(!is_missing_app_identifier(
+            "resolved the application identifier successfully"
+        ));
+    }
+
+    /// A different `ASAuthorizationError` that also names the application
+    /// identifier, and must not be mistaken for a missing one.
+    ///
+    /// This is raised when a second ceremony starts while one is still in
+    /// flight — reachable here by double-triggering Create Cube, or by hitting
+    /// "Unlock with passkey" twice. Under a bare "application identifier"
+    /// substring match it classified as
+    /// [`PasskeyError::AppIdentityMissing`], whose copy tells the user their
+    /// build is broken and to reinstall from an official release. The build is
+    /// fine; the remedy is to use the prompt already on screen.
+    #[test]
+    fn a_request_already_in_progress_is_not_a_missing_identity() {
+        const IN_PROGRESS: &str =
+            "Request already in progress for specified application identifier.";
+
+        assert!(
+            !is_missing_app_identifier(IN_PROGRESS),
+            "naming the application identifier is not the same as lacking one"
+        );
+
+        // It keeps whatever its code means. 1004 is the generic `Failed`
+        // bucket, so it lands in `CredentialNotFound` — a retryable message,
+        // not "your build is broken".
+        assert_eq!(
+            classify_authorization_error(as_error::FAILED, IN_PROGRESS.to_string()),
+            PasskeyError::CredentialNotFound(IN_PROGRESS.to_string())
+        );
+
+        // And the user-facing consequence, stated directly: the copy must not
+        // send them off to reinstall the app.
+        let msg = classify_authorization_error(as_error::FAILED, IN_PROGRESS.to_string())
+            .registration_message()
+            .to_lowercase();
+        // Explicit argument, not an inline `{msg}`: this crate is on an edition
+        // where a panic format string without arguments is taken literally, so
+        // the interpolation would silently print the braces instead of the copy
+        // that failed the assertion.
+        assert!(
+            !msg.contains("reinstall") && !msg.contains("build"),
+            "a concurrent-request error must not be reported as a broken build: {}",
+            msg
+        );
     }
 }

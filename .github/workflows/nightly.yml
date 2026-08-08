@@ -363,6 +363,38 @@ jobs:
           echo "$entitlements" | grep -q '8UVR249AD5.io.coincube.tenshu' \
             || { echo "keychain access group is not 8UVR249AD5.io.coincube.tenshu"; exit 1; }
 
+          # The entitlement whose absence shipped a dead passkey path in every
+          # artifact up to 2026-08-07. AuthenticationServices refuses WebAuthn to
+          # a process carrying no application identifier and fails every ceremony
+          # with ASAuthorizationError 1004 — while codesign, notarization and
+          # spctl all pass, so nothing upstream of a user notices. The embedded
+          # profile has always GRANTED the key, but a grant is not a request: it
+          # has to be in coincube.entitlements to reach the signature.
+          #
+          # This matters most here: the nightly is the build people actually
+          # install, and it is the one that shipped the flag on with the
+          # entitlement absent.
+          #
+          # Asserted by key rather than by grep, because keychain-access-groups
+          # and com.apple.application-identifier carry the SAME value here — a
+          # substring match over the whole blob cannot tell which key it found,
+          # which also means the grep above is satisfied by either one.
+          codesign -d --entitlements - --xml Tenshu.app 2>/dev/null > entitlements.plist
+          appid=$(/usr/libexec/PlistBuddy -c "Print :com.apple.application-identifier" entitlements.plist 2>/dev/null) \
+            || { echo "com.apple.application-identifier missing from the signature — every passkey ceremony would fail with ASAuthorizationError 1004"; exit 1; }
+          [ "$appid" = "8UVR249AD5.io.coincube.tenshu" ] \
+            || { echo "com.apple.application-identifier is '$appid', expected 8UVR249AD5.io.coincube.tenshu — unlike the wildcard-granted entitlements this must match the profile exactly"; exit 1; }
+          echo "com.apple.application-identifier = $appid"
+
+          # With the value above pinned by key, pin the access group the same way
+          # so the grep further up cannot be satisfied by the app identifier alone.
+          group=$(/usr/libexec/PlistBuddy -c "Print :keychain-access-groups:0" entitlements.plist 2>/dev/null) \
+            || { echo "keychain-access-groups missing from the signature"; exit 1; }
+          [ "$group" = "8UVR249AD5.io.coincube.tenshu" ] \
+            || { echo "keychain access group is '$group', expected 8UVR249AD5.io.coincube.tenshu"; exit 1; }
+          echo "keychain-access-groups = $group"
+          rm -f entitlements.plist
+
           # The entitlement is worse than useless without a profile authorising
           # it — the app won't launch. An expired profile fails identically, and
           # neither failure is visible at sign, notarize or spctl time, so it
