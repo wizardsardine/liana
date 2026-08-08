@@ -382,6 +382,18 @@ jobs:
           [ "$group" = "8UVR249AD5.io.coincube.tenshu" ] \
             || { echo "keychain access group is '$group', expected 8UVR249AD5.io.coincube.tenshu"; exit 1; }
           echo "keychain-access-groups = $group"
+
+          # Team identity, granted by the profile alongside the application
+          # identifier. Also restricted, so a value the profile does not grant is
+          # an AMFI rejection at exec — SIGKILL on every user's machine with
+          # codesign, spctl and notarization all green
+          # (docs/MACOS_KEYCHAIN_ENTITLEMENT.md), not a graceful failure. Pinned
+          # by key for the same reason as the two above.
+          team=$(/usr/libexec/PlistBuddy -c "Print :com.apple.developer.team-identifier" entitlements.plist 2>/dev/null) \
+            || { echo "com.apple.developer.team-identifier missing from the signature"; exit 1; }
+          [ "$team" = "8UVR249AD5" ] \
+            || { echo "com.apple.developer.team-identifier is '$team', expected 8UVR249AD5 — it must match what the embedded profile grants"; exit 1; }
+          echo "com.apple.developer.team-identifier = $team"
           rm -f entitlements.plist
 
           # The entitlement is worse than useless without a profile authorising
