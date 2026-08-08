@@ -24,9 +24,15 @@
 //! # Invariant I12
 //!
 //! A failed, cancelled, or unsupported assertion is never reported as a lost or
-//! corrupt Cube. The three outcomes come back as distinct
+//! corrupt Cube. The outcomes come back as distinct
 //! [`crate::services::passkey::PasskeyError`] variants and are rendered by
 //! `PasskeyError::user_message`, which is where that copy lives.
+//!
+//! One of them is not the user's problem at all:
+//! `PasskeyError::AppIdentityMissing` means the running build carries no
+//! application identifier, so macOS refuses the ceremony outright. Its copy
+//! names the build, and deliberately does not mention the Apple ID or iCloud
+//! Keychain — see that variant for why.
 
 use iced::widget::{image, Space};
 use iced::{Alignment, Length, Task};
@@ -446,10 +452,19 @@ impl PasskeyUnlock {
                     .push(crate::loading::loading_indicator(None));
             }
             Phase::Idle { error } => {
-                content = content.push(
-                    p1_regular("This Cube is unlocked with a passkey — there's no PIN to enter.")
-                        .style(theme::text::secondary),
-                );
+                // Deliberately no explanatory line here.
+                //
+                // This used to read "This Cube is unlocked with a passkey —
+                // there's no PIN to enter." It was defensive copy: it existed to
+                // answer a question ("where is the PIN field?") by naming the
+                // thing that is absent. Raising the PIN only to deny it invites
+                // the user to wonder whether they have forgotten one, and the
+                // title and the button already say what this screen does.
+                //
+                // If context is ever wanted back, do not describe the mechanism
+                // as Touch ID: this same screen runs on Macs with no Touch ID at
+                // all, where macOS confirms with the login password or a nearby
+                // iPhone instead.
                 if let Some(error) = error {
                     content = content.push(p1_regular(error.as_str()).style(theme::text::error));
                 }
@@ -570,15 +585,19 @@ mod tests {
         );
     }
 
-    /// **I12**, stated as a test. Three outcomes, three different messages, and
+    /// **I12**, stated as a test. Four outcomes, four different messages, and
     /// not one of them tells the user their Cube is gone.
     #[test]
     fn no_passkey_failure_reads_as_a_lost_cube() {
         let cancelled = PasskeyError::Cancelled.user_message();
         let prf = PasskeyError::PrfNotSupported.user_message();
         let missing = PasskeyError::CredentialNotFound("code 1004".to_string()).user_message();
+        // A build with no application identifier. Held to I12 like the rest: the
+        // fault is in the binary, so the Cube is provably intact, and the copy
+        // has less excuse than any other arm to imply otherwise.
+        let no_app_id = PasskeyError::AppIdentityMissing("code 1004".to_string()).user_message();
 
-        for msg in [&cancelled, &prf, &missing] {
+        for msg in [&cancelled, &prf, &missing, &no_app_id] {
             let lower = msg.to_lowercase();
             for forbidden in ["lost", "gone", "corrupt", "deleted", "destroyed"] {
                 assert!(
@@ -597,6 +616,12 @@ mod tests {
         );
         assert_ne!(cancelled, missing);
         assert_ne!(prf, missing);
+        // The pair that is easiest to collapse back together: both mean "the
+        // ceremony did not happen", and they were one variant until 2026-08-07.
+        // Only one of them is the user's to act on.
+        assert_ne!(missing, no_app_id);
+        assert_ne!(cancelled, no_app_id);
+        assert_ne!(prf, no_app_id);
 
         // Cancel is the common case and must not send anyone to their Recovery
         // Kit — nothing is wrong.

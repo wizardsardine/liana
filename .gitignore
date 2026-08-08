@@ -50,3 +50,11 @@ wildcard-cleanup-plan.md
 # Bundle assembled at the repo root by the local signing procedure in
 # docs/MACOS_KEYCHAIN_ENTITLEMENT.md §4. Build output, never committed.
 /Tenshu.app/
+
+# Local build-and-sign convenience script. Deliberately not committed: it signs
+# with whatever Developer ID identity the running Mac's login keychain holds,
+# and CI stays the source of truth for shipped artifacts.
+contrib/release/macos/build-sign-local.sh
+# Its outputs, alongside the bundle above.
+/tenshu-*.dmg
+/tenshu-*-notarize.zip

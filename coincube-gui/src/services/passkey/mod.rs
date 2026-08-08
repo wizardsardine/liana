@@ -91,10 +91,17 @@ pub const RP_ID: &str = non_empty_or(option_env!("COINCUBE_PASSKEY_RP_ID"), "loc
 /// taps Cancel on a Touch ID prompt must not walk away believing their wallet
 /// is gone.
 ///
-/// Three outcomes are therefore distinct types, not one string:
-/// [`PasskeyError::Cancelled`], [`PasskeyError::PrfNotSupported`] and
-/// [`PasskeyError::CredentialNotFound`]. [`PasskeyError::user_message`] is what
+/// The distinguishable outcomes are therefore distinct types, not one string:
+/// [`PasskeyError::Cancelled`], [`PasskeyError::PrfNotSupported`],
+/// [`PasskeyError::CredentialNotFound`] and
+/// [`PasskeyError::AppIdentityMissing`]. [`PasskeyError::user_message`] is what
 /// the UI shows for each; none of them says the Cube is lost.
+///
+/// The split between the last two is the reason this is a taxonomy and not a
+/// severity scale. Both are "the ceremony did not happen", and they are told
+/// apart only by the detail string, but one asks the user to sign in to an Apple
+/// ID and the other tells them the build is at fault. Getting that backwards
+/// wastes the user's time on a machine that is working correctly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PasskeyError {
     /// The ceremony page reported an error via IPC.
@@ -122,6 +129,30 @@ pub enum PasskeyError {
     /// sign in to the Apple ID that holds the passkey, or restore from the
     /// Recovery Kit. The underlying detail is preserved for the log.
     CredentialNotFound(String),
+    /// macOS refused the ceremony because the running process carries no
+    /// application identifier: `ASAuthorizationError` 1004 with the detail
+    /// "The calling process does not have an application identifier".
+    ///
+    /// This is a **build or installation fault, never a user fault**, and it is
+    /// split out of [`Self::CredentialNotFound`] for exactly that reason. Two
+    /// distinct things produce it:
+    ///
+    /// - A bare binary: `cargo run` and `target/*/coincube` are not bundles and
+    ///   have no code-signed app identity at all.
+    /// - A signed bundle whose entitlements omit
+    ///   `com.apple.application-identifier`. The provisioning profile granting
+    ///   the key is not enough — an entitlement has to be *requested* in
+    ///   `contrib/release/macos/coincube.entitlements` to reach the signature.
+    ///   Every build before 2026-08-07 was in this state, including notarized
+    ///   release artifacts, and nothing else objected: the signature was valid,
+    ///   the hardened runtime was on, `keychain-access-groups` worked, `spctl`
+    ///   and notarization passed.
+    ///
+    /// Folding this into `CredentialNotFound` told users to check their Apple ID
+    /// and iCloud Keychain, which is advice they cannot act on and which sends
+    /// them looking for a fault on their own machine. It cost two rounds of
+    /// misdiagnosis on 2026-08-07 before the entitlement was found.
+    AppIdentityMissing(String),
 }
 
 impl PasskeyError {
@@ -150,6 +181,15 @@ impl PasskeyError {
                 "This Mac couldn't find this Cube's passkey. Sign in to the Apple ID \
                  that created it (with iCloud Keychain on), or restore this Cube from \
                  your Recovery Kit and its recovery password. The Cube itself is fine."
+                    .to_string()
+            }
+            Self::AppIdentityMissing(_) => {
+                "This copy of COINCUBE can't use passkeys: macOS requires an app identity \
+                 that this build doesn't carry, so it can't run the Touch ID check. \
+                 Nothing is wrong with this Cube and nothing on this Mac needs changing — \
+                 it takes a fixed build. Reinstall COINCUBE from an official release to \
+                 unlock with your passkey, or restore this Cube from your Recovery Kit \
+                 and its recovery password."
                     .to_string()
             }
             Self::InvalidPrfOutput => {
@@ -182,13 +222,19 @@ impl PasskeyError {
     ///
     /// # The failure a developer will hit first
     ///
-    /// On an unsigned local build every registration lands in
-    /// [`Self::CredentialNotFound`] with `ASAuthorizationError` 1004 and the
-    /// detail "The calling process does not have an application identifier".
-    /// That is macOS refusing WebAuthn to a process with no code-signed app
-    /// identity — `cargo run` produces a bare binary, not a bundle — and no
-    /// user-facing wording can fix it. The detail is preserved in the log for
-    /// exactly this case; see `contrib/release/macos/README.md`.
+    /// A build with no application identifier — a bare `cargo run` binary, or a
+    /// signed bundle whose entitlements omit
+    /// `com.apple.application-identifier` — fails every registration with
+    /// `ASAuthorizationError` 1004. That is [`Self::AppIdentityMissing`], and it
+    /// says so: the copy names the build as the fault and does not send anyone
+    /// to check their Apple ID.
+    ///
+    /// It used to land in [`Self::CredentialNotFound`], whose copy asks the user
+    /// to verify their Apple ID and iCloud Keychain. Both are irrelevant here,
+    /// and the misdirection is expensive — it cost two rounds of diagnosis on
+    /// 2026-08-07 while the real cause sat in the entitlements file. If a new
+    /// 1004 detail string appears, classify it rather than letting it fall back;
+    /// see `classify_authorization_error` in [`super::macos`].
     pub fn registration_message(&self) -> String {
         match self {
             Self::Cancelled => "Passkey setup was cancelled. Your Cube was not created — \
@@ -204,6 +250,14 @@ impl PasskeyError {
                 "This Mac couldn't create a passkey. Check that you're signed in to your \
                  Apple ID with iCloud Keychain on, then try again — or create this Cube \
                  with a PIN instead. Your Cube was not created."
+                    .to_string()
+            }
+            Self::AppIdentityMissing(_) => {
+                "This copy of COINCUBE can't create passkeys: macOS requires an app \
+                 identity that this build doesn't carry. Nothing on this Mac needs \
+                 changing and trying again won't help — it takes a fixed build. Your Cube \
+                 was not created: create it with a PIN instead, or reinstall COINCUBE from \
+                 an official release."
                     .to_string()
             }
             Self::InvalidPrfOutput => {
@@ -231,6 +285,13 @@ impl std::fmt::Display for PasskeyError {
             Self::CredentialNotFound(detail) => {
                 write!(f, "This Cube's passkey was not available: {}", detail)
             }
+            Self::AppIdentityMissing(detail) => write!(
+                f,
+                "this build carries no application identifier, so macOS refused the \
+                 passkey ceremony (fix: com.apple.application-identifier in \
+                 contrib/release/macos/coincube.entitlements): {}",
+                detail
+            ),
         }
     }
 }
@@ -509,6 +570,9 @@ mod tests {
             PasskeyError::Cancelled,
             PasskeyError::PrfNotSupported,
             PasskeyError::CredentialNotFound("code 1004".to_string()),
+            PasskeyError::AppIdentityMissing(
+                "The calling process does not have an application identifier.".to_string(),
+            ),
             PasskeyError::InvalidPrfOutput,
             PasskeyError::CeremonyFailed("boom".to_string()),
             PasskeyError::WebviewFailed("boom".to_string()),
@@ -571,6 +635,54 @@ mod tests {
                 error
             );
         }
+    }
+
+    /// A build fault must never be dressed up as something the user can fix on
+    /// their own machine.
+    ///
+    /// This is the regression guard for the 2026-08-07 misdiagnosis: the
+    /// no-application-identifier refusal was folded into `CredentialNotFound`,
+    /// whose copy asks the user to check their Apple ID and iCloud Keychain.
+    /// Both were working. The fault was a missing entitlement, and the copy sent
+    /// two rounds of debugging at the wrong machine.
+    #[test]
+    fn app_identity_failure_blames_the_build_not_the_user() {
+        let err = PasskeyError::AppIdentityMissing(
+            "The calling process does not have an application identifier.".to_string(),
+        );
+
+        for msg in [err.registration_message(), err.user_message()] {
+            let lower = msg.to_lowercase();
+            // Not even to rule them out. A first draft of this copy read "not in
+            // your Mac and not in your Apple ID", which this assertion rejected
+            // — correctly: naming the thing is what sends someone to go check
+            // it, and a reader skimming a red error block takes away the nouns,
+            // not the negations.
+            for forbidden in ["apple id", "icloud"] {
+                assert!(
+                    !lower.contains(forbidden),
+                    "copy points the user at {:?}, which is not the fault and \
+                     cannot be acted on: {}",
+                    forbidden,
+                    msg
+                );
+            }
+            assert!(
+                lower.contains("build"),
+                "copy must name the build as the fault, or the user has nothing \
+                 actionable: {}",
+                msg
+            );
+        }
+
+        // And it must not be confusable with the variant it was split out of —
+        // that identity is the whole point of the split.
+        let credential = PasskeyError::CredentialNotFound("code 1004".to_string());
+        assert_ne!(
+            err.registration_message(),
+            credential.registration_message()
+        );
+        assert_ne!(err.user_message(), credential.user_message());
     }
 
     /// Cancelling is the most common failure and the one most likely to be
