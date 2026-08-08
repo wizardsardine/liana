@@ -169,7 +169,7 @@ fn identity_block<'a>(ctx: &NavContext<'a>) -> Element<'a, Message> {
         let label = text::caption(display_addr.clone())
             .color(color::GREY_3)
             .width(Length::Fill)
-            .wrapping(Wrapping::Word);
+            .wrapping(Wrapping::WordOrGlyph);
         let btn: Button<Message> = Button::new(label)
             .width(Length::Fill)
             .style(theme::button::transparent)
