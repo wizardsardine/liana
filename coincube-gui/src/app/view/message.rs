@@ -1319,10 +1319,11 @@ pub enum RecoveryKitMessage {
 /// Failure payload from the removal flow ([`remove_backups`]). The password
 /// Recovery Kit delete runs **first and unconditionally**, so any failure
 /// *after* it (the Keychain teardown or the phone-copy verification) leaves the
-/// local `recovery_kit_last_backed_up_descriptor_fingerprint` pointing at a kit
-/// Connect no longer holds. `password_kit_deleted` lets the error handler clear
-/// just that slot so `has_recovery_kit()` / `connect_state()` don't keep
-/// reporting a password backup that's gone. No sensitive fields — `message` is
+/// local password-kit state (`recovery_kit_password_backed_up` and its
+/// descriptor fingerprint) describing a kit Connect no longer holds.
+/// `password_kit_deleted` lets the error handler clear just that method so
+/// `has_recovery_kit()` / `connect_state()` don't keep reporting a password
+/// backup that's gone. No sensitive fields — `message` is
 /// the user-facing error copy — so `Debug` is derived.
 #[derive(Clone, Debug)]
 pub struct RemoveFailure {

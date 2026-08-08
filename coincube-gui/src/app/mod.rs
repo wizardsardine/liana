@@ -2094,6 +2094,7 @@ impl App {
             recovery_kit_last_backed_up_keychain_descriptor_fingerprint: cube_settings
                 .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
                 .clone(),
+            recovery_kit_password_backed_up: cube_settings.recovery_kit_password_backed_up,
             ..Default::default()
         };
 
@@ -3776,6 +3777,13 @@ impl App {
                             .recovery_kit_last_backed_up_keychain_descriptor_fingerprint = cube
                             .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
                             .clone();
+                        // And the password kit's *presence* flag — the signal
+                        // `has_recovery_kit()` reads for that method, which a
+                        // Vault-less (seed-only) kit has no fingerprint to carry.
+                        self.cache.recovery_kit_password_backed_up =
+                            cube.recovery_kit_password_backed_up;
+                        self.cube_settings.recovery_kit_password_backed_up =
+                            cube.recovery_kit_password_backed_up;
 
                         // Clear cached fiat display price if disabled.
                         // Note: btc_usd_price is NOT cleared — it's needed for

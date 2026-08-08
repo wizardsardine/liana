@@ -3084,6 +3084,7 @@ pub fn create_app_with_remote_backend(
             recovery_kit_last_backed_up_keychain_descriptor_fingerprint: cube_settings
                 .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
                 .clone(),
+            recovery_kit_password_backed_up: cube_settings.recovery_kit_password_backed_up,
             // grpc_url isn't known yet — `Message::ConnectStreamReady`
             // backfills both fields once `get_service_config` returns.
             // Tokens we have right now (shared Arc with the REST client)
