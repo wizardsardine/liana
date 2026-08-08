@@ -29,6 +29,42 @@ use crate::{
     },
 };
 
+/// The unlock screen a Cube needs, decided in exactly one place.
+///
+/// Both routes into an unlock screen go through here: opening a Cube from the
+/// launcher, and returning to the prompt after the idle timer re-locks one.
+///
+/// They used to decide separately, and on 2026-08-07 they disagreed. Re-lock
+/// sent *every* Cube to PIN entry, so a passkey Cube that had opened correctly a
+/// minute earlier became unopenable the moment it locked: a keypad with no PIN
+/// to accept and no seed file for one to decrypt, answering every attempt with
+/// "this Cube's seed isn't on this device" and offering only Back. A third
+/// caller that forgets the branch is that same bug, so this is one function and
+/// it is tested.
+fn unlock_state(
+    cube: crate::app::settings::CubeSettings,
+    datadir_root: std::path::PathBuf,
+    on_success: crate::pin_entry::PinEntrySuccess,
+    duress_account_id: Option<String>,
+) -> State {
+    if cube.is_passkey_cube() {
+        // `duress_account_id` is deliberately dropped: a passkey Cube has no
+        // PIN, so it has no duress PIN to enrol and no duress arm to reach.
+        State::PasskeyUnlock(crate::passkey_unlock::PasskeyUnlock::new(
+            cube,
+            datadir_root,
+            on_success,
+        ))
+    } else {
+        State::PinEntry(crate::pin_entry::PinEntry::new(
+            cube,
+            datadir_root,
+            on_success,
+            duress_account_id,
+        ))
+    }
+}
+
 pub enum State {
     Home(Home),
     Installer(Installer),
@@ -684,12 +720,10 @@ impl Tab {
                     backup: None,
                     wallet_settings,
                 };
-                self.state = State::PinEntry(crate::pin_entry::PinEntry::new(
-                    cube,
-                    datadir_root,
-                    on_success,
-                    duress_account_id,
-                ));
+                // The `PASSKEY_ENABLED` guard the open path carries is
+                // deliberately not repeated here: this Cube is already open in
+                // this process, so the build plainly has the feature on.
+                self.state = unlock_state(cube, datadir_root, on_success, duress_account_id);
                 Task::none()
             }
             (State::Home(l), Message::Launch(msg)) => match msg {
@@ -846,20 +880,7 @@ impl Tab {
                         wallet_settings,
                     };
 
-                    self.state = if passkey_cube {
-                        State::PasskeyUnlock(crate::passkey_unlock::PasskeyUnlock::new(
-                            cube,
-                            datadir_root,
-                            on_success,
-                        ))
-                    } else {
-                        State::PinEntry(crate::pin_entry::PinEntry::new(
-                            cube,
-                            datadir_root,
-                            on_success,
-                            duress_account_id,
-                        ))
-                    };
+                    self.state = unlock_state(cube, datadir_root, on_success, duress_account_id);
                     Task::none()
                 }
                 home::Message::View(home::ViewMessage::ToggleTheme) => {
@@ -3807,5 +3828,81 @@ mod find_or_create_cube_tests {
             "existing fingerprint is preserved, not clobbered"
         );
         assert_eq!(cube.vault_wallet_id, None);
+    }
+}
+
+#[cfg(test)]
+mod unlock_routing_tests {
+    use super::{unlock_state, State};
+    use crate::app::settings::{CubeSettings, PasskeyMetadata};
+    use coincube_core::miniscript::bitcoin::Network;
+
+    fn on_success() -> crate::pin_entry::PinEntrySuccess {
+        crate::pin_entry::PinEntrySuccess::LoadApp {
+            datadir: crate::dir::CoincubeDirectory::new(std::path::PathBuf::from("/tmp/unused")),
+            config: crate::app::Config::new(false),
+            network: Network::Bitcoin,
+            internal_bitcoind: None,
+            backup: None,
+            wallet_settings: None,
+        }
+    }
+
+    /// The 2026-08-07 regression, stated as a test.
+    ///
+    /// A passkey Cube must never be shown PIN entry. There is no PIN to accept
+    /// and no seed file for one to decrypt, so the screen is a dead end: it
+    /// rejects every attempt and offers only Back. This is reachable from the
+    /// idle re-lock path, which is how a Cube that opened correctly became
+    /// unopenable a minute later.
+    #[test]
+    fn a_passkey_cube_never_routes_to_pin_entry() {
+        let cube = CubeSettings::new("Passkey Cube".to_string(), Network::Bitcoin).with_passkey(
+            PasskeyMetadata {
+                credential_id: "Y3JlZC1pZA==".to_string(),
+                rp_id: "coincube.io".to_string(),
+                created_at: 1_786_122_245,
+                label: None,
+            },
+        );
+        assert!(
+            cube.is_passkey_cube(),
+            "test fixture must be a passkey Cube"
+        );
+
+        let state = unlock_state(
+            cube,
+            std::path::PathBuf::from("/tmp/unused"),
+            on_success(),
+            // Non-`None` on purpose: a duress id must not drag a passkey Cube
+            // into the PIN path, which is the only place duress is honoured.
+            Some("acct-123".to_string()),
+        );
+
+        assert!(
+            matches!(state, State::PasskeyUnlock(_)),
+            "a passkey Cube must unlock with its passkey, not a PIN keypad"
+        );
+    }
+
+    /// The other half: the PIN path is untouched by the fix. Without this, a
+    /// future "just always use PasskeyUnlock" simplification passes the test
+    /// above and breaks every PIN Cube.
+    #[test]
+    fn a_pin_cube_still_routes_to_pin_entry() {
+        let cube = CubeSettings::new("PIN Cube".to_string(), Network::Bitcoin);
+        assert!(!cube.is_passkey_cube());
+
+        let state = unlock_state(
+            cube,
+            std::path::PathBuf::from("/tmp/unused"),
+            on_success(),
+            None,
+        );
+
+        assert!(
+            matches!(state, State::PinEntry(_)),
+            "a PIN Cube must still get PIN entry"
+        );
     }
 }

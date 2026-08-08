@@ -53,6 +53,45 @@
     </array>
 
     <!--
+        Application identity, required by AuthenticationServices.
+
+        Without this key, every WebAuthn registration and assertion fails with
+        ASAuthorizationError 1004, "The calling process does not have an
+        application identifier". Signing, notarization, spctl and the keychain
+        entitlement are all unaffected and all pass, and launching through
+        LaunchServices rather than exec makes no difference: the framework looks
+        for this entitlement in the signature and finds nothing.
+
+        The embedded provisioning profile has always GRANTED
+        com.apple.application-identifier, but a profile only authorises an
+        entitlement. It has to be requested here too or the signature simply
+        does not carry it, which is the state every build was in before
+        2026-08-07. That is why the passkey path could never have worked on a
+        shipped artifact, only on a developer machine that never got far enough
+        to notice.
+
+        Unlike keychain-access-groups (granted as the team wildcard
+        8UVR249AD5.*) and associated-domains (granted as *), this value must
+        match the profile EXACTLY. It is TeamID.bundleID, written literally for
+        the same reason the access group is: nothing expands Xcode's
+        $(AppIdentifierPrefix) here.
+
+        macOS uses the com.apple.application-identifier spelling. The bare
+        application-identifier key is the iOS form and is ignored here, so a
+        signature carrying only that one fails exactly as if the key were
+        absent.
+    -->
+    <key>com.apple.application-identifier</key>
+    <string>8UVR249AD5.io.coincube.tenshu</string>
+
+    <!--
+        Team identity. Granted by the profile alongside the application
+        identifier, and expected next to it by the frameworks that read one.
+    -->
+    <key>com.apple.developer.team-identifier</key>
+    <string>8UVR249AD5</string>
+
+    <!--
         WebAuthn relying party for macOS passkey unlock. Also restricted, and
         also authorised by the embedded provisioning profile (which grants
         `com.apple.developer.associated-domains` as a wildcard).

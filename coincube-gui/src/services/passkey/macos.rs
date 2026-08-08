@@ -91,8 +91,19 @@ mod as_error {
 /// they call for the same remedy, so they share
 /// [`super::PasskeyError::CredentialNotFound`], which keeps the raw detail for
 /// the log.
+///
+/// The one exception is carved out of `Failed` (1004) by its detail string: a
+/// process with no application identifier gets
+/// [`super::PasskeyError::AppIdentityMissing`] instead. `Failed` is a generic
+/// bucket, so the code alone cannot identify it — but the remedy is the opposite
+/// of every other member's. "There was nothing here to authorise with" asks the
+/// user to check their Apple ID; this one asks them to fix the build, and
+/// telling a user to check an Apple ID that is working is a dead end.
 fn classify_authorization_error(code: isize, detail: String) -> super::PasskeyError {
     use super::PasskeyError;
+    if is_missing_app_identifier(&detail) {
+        return PasskeyError::AppIdentityMissing(detail);
+    }
     match code {
         as_error::CANCELED => PasskeyError::Cancelled,
         as_error::UNKNOWN
@@ -102,6 +113,35 @@ fn classify_authorization_error(code: isize, detail: String) -> super::PasskeyEr
         as_error::INVALID_RESPONSE => PasskeyError::InvalidResponse(detail),
         _ => PasskeyError::CeremonyFailed(detail),
     }
+}
+
+/// Whether an `ASAuthorizationError` detail is the no-application-identifier
+/// refusal.
+///
+/// Apple's full string is "The operation couldn't be completed. The calling
+/// process does not have an application identifier. Make sure it is properly
+/// configured."
+///
+/// Matched on the **negation clause**, not on "application identifier" alone.
+/// That phrase appears in unrelated `ASAuthorizationError` details — notably
+/// "Request already in progress for specified application identifier", raised
+/// when a second ceremony starts while one is in flight, which this app can
+/// reach by double-triggering Create Cube or a passkey unlock. Classifying that
+/// as [`super::PasskeyError::AppIdentityMissing`] would tell a user with a
+/// perfectly good build to reinstall, when the real remedy is to wait for the
+/// request already on screen.
+///
+/// The whole sentence is deliberately not matched: the apostrophe in "couldn't"
+/// is the curly U+2019 and the surrounding wording has changed across releases.
+/// This clause is the narrowest span that still identifies the condition.
+///
+/// Deliberately not keyed on the code either: 1004 is the generic `Failed`
+/// bucket and carries unrelated failures too, so a code-only match would
+/// mislabel them.
+fn is_missing_app_identifier(detail: &str) -> bool {
+    detail
+        .to_lowercase()
+        .contains("does not have an application identifier")
 }
 
 /// Whether this machine can actually run a PRF ceremony.
@@ -157,6 +197,12 @@ define_class!(
             _controller: &ASAuthorizationController,
             authorization: &ASAuthorization,
         ) {
+            // Logged because the alternative diagnostic is unavailable: on a
+            // machine where `log show` yields nothing, the app's own log file is
+            // the only record that the delegate fired at all. Distinguishing
+            // "the system never called us back" from "it called back and we
+            // mishandled the result" is otherwise guesswork.
+            tracing::info!("passkey delegate: didCompleteWithAuthorization");
             let outcome = unsafe { extract_outcome(authorization) };
             if let Some(sender) = self.ivars().sender.get() {
                 let _ = sender.send(outcome);
@@ -173,6 +219,15 @@ define_class!(
             let msg = desc.to_string();
             let code = error.code();
             let full = format!("{} (code {})", msg, code);
+            // The raw domain and code, before classification flattens them. A
+            // code this layer does not recognise falls into `CeremonyFailed` and
+            // its identity is otherwise lost.
+            tracing::info!(
+                "passkey delegate: didCompleteWithError domain={} code={} desc={}",
+                error.domain(),
+                code,
+                msg
+            );
             let classified = classify_authorization_error(code, full);
             if let Some(sender) = self.ivars().sender.get() {
                 let _ = sender.send(NativeOutcome::Failed(classified));
@@ -195,17 +250,37 @@ define_class!(
                 use objc2::runtime::AnyObject;
 
                 let mut window: *mut AnyObject = std::ptr::null_mut();
+                // Which branch produced the anchor, tracked in Rust.
+                //
+                // This used to be read back off the window with
+                // `msg_send![[window class], name]`, which aborted the process:
+                // `-name` is not a Cocoa method on a Class (the API is the C
+                // function `class_getName`; the ObjC idiom is
+                // `NSStringFromClass`), so it raised
+                // `doesNotRecognizeSelector:` — and this function runs inside a
+                // system callback from `-[ASAuthorizationController
+                // _performAuthorizationRequests:]`, where an unhandled ObjC
+                // exception is an abort, not an error. A selector may not be
+                // sent speculatively from here.
+                //
+                // Tracking the branch in Rust is also strictly more informative:
+                // the class name cannot distinguish winit's NSWindow from the
+                // fallback below, and that distinction is the whole question.
+                let mut source = "none";
 
                 let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
                 if !app.is_null() {
                     window = msg_send![app, keyWindow];
+                    source = "keyWindow";
                     if window.is_null() {
                         window = msg_send![app, mainWindow];
+                        source = "mainWindow";
                     }
                     if window.is_null() {
                         let windows: *mut AnyObject = msg_send![app, windows];
                         if !windows.is_null() {
                             window = msg_send![windows, firstObject];
+                            source = "windows.firstObject";
                         }
                     }
                 } else {
@@ -233,6 +308,29 @@ define_class!(
                         backing: 2u64,    // NSBackingStoreBuffered
                         defer: true,
                     ];
+                    source = "fallback-hidden";
+                }
+
+                // Which window was chosen, and whether it is one the system can
+                // actually hang a sheet on. A sheet attached to an off-screen or
+                // never-ordered-front window is presented successfully and seen
+                // by nobody, which is indistinguishable at this layer from the
+                // system ignoring the request.
+                //
+                // `isVisible` and `isKeyWindow` are documented NSWindow methods
+                // and `window` is always an NSWindow here (every branch above
+                // yields one), so unlike the `-name` send this replaced, these
+                // cannot raise. Nothing speculative may be sent from this
+                // callback — see the note on `source`.
+                {
+                    let visible: bool = msg_send![window, isVisible];
+                    let is_key: bool = msg_send![window, isKeyWindow];
+                    tracing::info!(
+                        "passkey presentation anchor: source={} visible={} key={}",
+                        source,
+                        visible,
+                        is_key
+                    );
                 }
 
                 // Retain the window and return as Retained<RuntimeNSObject>
@@ -426,7 +524,20 @@ impl NativePasskeyCeremony {
             controller.setPresentationContextProvider(Some(presentation_proto));
 
             // Start the ceremony
+            //
+            // Bracketed by logs on purpose. `performRequests` returns
+            // immediately and everything after it is asynchronous, so without
+            // the second line there is no way to tell a request that was never
+            // issued from one the system accepted and never answered. The RP id
+            // is included because a mismatch against the AASA is silent here and
+            // only observable as a ceremony that never completes.
+            tracing::info!(
+                "passkey register: performRequests for rp_id={} (anchor log follows if the \
+                 system asks for one)",
+                rp_id
+            );
             controller.performRequests();
+            tracing::info!("passkey register: performRequests returned; awaiting delegate");
 
             Ok(Self {
                 controller,
@@ -569,5 +680,142 @@ impl NativePasskeyCeremony {
 impl Drop for NativePasskeyCeremony {
     fn drop(&mut self) {
         self.cancel();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::passkey::PasskeyError;
+
+    /// The real string Apple returns, curly apostrophe and all, as captured from
+    /// a 2026-08-07 log line on a build whose entitlements omitted
+    /// `com.apple.application-identifier`.
+    const APPLE_DETAIL: &str = "The operation couldn\u{2019}t be completed. The calling process \
+                                does not have an application identifier. Make sure it is \
+                                properly configured.";
+
+    #[test]
+    fn missing_app_identifier_is_not_a_missing_credential() {
+        // 1004 is `Failed`, which otherwise means "nothing here to authorise
+        // with" and asks the user to check their Apple ID. This detail means the
+        // build is broken, and must classify as such.
+        assert_eq!(
+            classify_authorization_error(as_error::FAILED, APPLE_DETAIL.to_string()),
+            PasskeyError::AppIdentityMissing(APPLE_DETAIL.to_string()),
+        );
+    }
+
+    #[test]
+    fn app_identifier_detail_wins_over_any_code() {
+        // The detail is authoritative wherever it appears: a future macOS that
+        // reports this refusal under a different code must not slip back into
+        // the Apple-ID copy. Cancellation is included deliberately — it is the
+        // one code with an unambiguous meaning, so if this ever fires for a real
+        // cancellation the guard is too broad and should key on the code too.
+        for code in [
+            as_error::UNKNOWN,
+            as_error::CANCELED,
+            as_error::NOT_HANDLED,
+            as_error::FAILED,
+            as_error::NOT_INTERACTIVE,
+            as_error::INVALID_RESPONSE,
+        ] {
+            assert!(matches!(
+                classify_authorization_error(code, APPLE_DETAIL.to_string()),
+                PasskeyError::AppIdentityMissing(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn ordinary_failures_still_classify_as_before() {
+        // The carve-out must be narrow: every other detail keeps its old
+        // meaning, or a genuine "no passkey for this RP" starts telling users to
+        // reinstall the app.
+        let detail = "No credentials available for login.".to_string();
+        assert_eq!(
+            classify_authorization_error(as_error::CANCELED, detail.clone()),
+            PasskeyError::Cancelled
+        );
+        assert_eq!(
+            classify_authorization_error(as_error::FAILED, detail.clone()),
+            PasskeyError::CredentialNotFound(detail.clone())
+        );
+        assert_eq!(
+            classify_authorization_error(as_error::NOT_HANDLED, detail.clone()),
+            PasskeyError::CredentialNotFound(detail.clone())
+        );
+        assert_eq!(
+            classify_authorization_error(as_error::INVALID_RESPONSE, detail.clone()),
+            PasskeyError::InvalidResponse(detail.clone())
+        );
+        assert_eq!(
+            classify_authorization_error(9999, detail.clone()),
+            PasskeyError::CeremonyFailed(detail)
+        );
+    }
+
+    #[test]
+    fn detail_match_is_case_insensitive_and_substring() {
+        // Reworded variants keep the negation clause; the check has to survive
+        // them, and has to survive the clause sitting mid-sentence.
+        assert!(is_missing_app_identifier(
+            "The calling process does not have an Application Identifier."
+        ));
+        assert!(is_missing_app_identifier(
+            "this process does not have an application identifier, so the request was refused"
+        ));
+        assert!(!is_missing_app_identifier("No credentials available."));
+        assert!(!is_missing_app_identifier(""));
+        // "application identifier" alone is NOT enough — see the next test for
+        // the detail that made this distinction necessary.
+        assert!(!is_missing_app_identifier(
+            "resolved the application identifier successfully"
+        ));
+    }
+
+    /// A different `ASAuthorizationError` that also names the application
+    /// identifier, and must not be mistaken for a missing one.
+    ///
+    /// This is raised when a second ceremony starts while one is still in
+    /// flight — reachable here by double-triggering Create Cube, or by hitting
+    /// "Unlock with passkey" twice. Under a bare "application identifier"
+    /// substring match it classified as
+    /// [`PasskeyError::AppIdentityMissing`], whose copy tells the user their
+    /// build is broken and to reinstall from an official release. The build is
+    /// fine; the remedy is to use the prompt already on screen.
+    #[test]
+    fn a_request_already_in_progress_is_not_a_missing_identity() {
+        const IN_PROGRESS: &str =
+            "Request already in progress for specified application identifier.";
+
+        assert!(
+            !is_missing_app_identifier(IN_PROGRESS),
+            "naming the application identifier is not the same as lacking one"
+        );
+
+        // It keeps whatever its code means. 1004 is the generic `Failed`
+        // bucket, so it lands in `CredentialNotFound` — a retryable message,
+        // not "your build is broken".
+        assert_eq!(
+            classify_authorization_error(as_error::FAILED, IN_PROGRESS.to_string()),
+            PasskeyError::CredentialNotFound(IN_PROGRESS.to_string())
+        );
+
+        // And the user-facing consequence, stated directly: the copy must not
+        // send them off to reinstall the app.
+        let msg = classify_authorization_error(as_error::FAILED, IN_PROGRESS.to_string())
+            .registration_message()
+            .to_lowercase();
+        // Explicit argument, not an inline `{msg}`: this crate is on an edition
+        // where a panic format string without arguments is taken literally, so
+        // the interpolation would silently print the braces instead of the copy
+        // that failed the assertion.
+        assert!(
+            !msg.contains("reinstall") && !msg.contains("build"),
+            "a concurrent-request error must not be reported as a broken build: {}",
+            msg
+        );
     }
 }
