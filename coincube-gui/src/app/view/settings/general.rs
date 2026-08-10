@@ -622,6 +622,82 @@ pub(crate) fn backup_overview(status: Option<&RecoveryKitStatus>) -> BackupOverv
     }
 }
 
+/// A pill row prefixed by a muted caption. The caption is what makes two pill
+/// rows legible side by side — "Password" under "Protected by:" and "Master
+/// Seed Phrase" under "Includes:" are answering different questions, and
+/// unlabelled they read as one undifferentiated set of tags.
+fn pill_row<'a>(
+    caption: impl iced::widget::text::IntoFragment<'a>,
+) -> Row<'a, Message, theme::Theme> {
+    Row::new()
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .push(text(caption).size(12).style(theme::text::secondary))
+}
+
+/// User-facing names of the halves a method holds, in a fixed order (seed
+/// first). Empty for a method holding nothing, which `backup_overview` never
+/// produces — a method with no halves is `None`, not `Some(empty)`.
+///
+/// The wording matches the rest of this card ("Add Master Seed Phrase", "Your
+/// password backup is missing the Wallet Descriptor") rather than the
+/// Cube/Vault shorthand used on the Home list, so a user reading the card top
+/// to bottom sees one name per artifact.
+pub(crate) fn half_labels(m: &MethodBackup) -> Vec<&'static str> {
+    let mut out = Vec::with_capacity(2);
+    if m.seed {
+        out.push("Master Seed Phrase");
+    }
+    if m.descriptor {
+        out.push("Wallet Descriptor");
+    }
+    out
+}
+
+/// What the card should say is *inside* the backup, as opposed to which method
+/// protects it. Method pills alone left the most important question unanswered
+/// — a kit reading "Password" tells you nothing about whether your Master Seed
+/// Phrase, your Wallet Descriptor, or both are actually recoverable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BackupContents {
+    /// Nothing backed up by any method — the card is in its Create state and
+    /// shows no pills at all.
+    Nothing,
+    /// Every enabled method holds the same halves, so one row says it for all
+    /// of them. The common case, and always true once the card reads "backed
+    /// up" on a Cube whose methods are complete for the same shape.
+    Shared(Vec<&'static str>),
+    /// The enabled methods hold *different* halves — e.g. a password kit with
+    /// both halves alongside a phone envelope carrying only the descriptor.
+    /// Listed per method, because a shared row would either overstate the
+    /// weaker method or understate the stronger one.
+    PerMethod(Vec<(&'static str, Vec<&'static str>)>),
+}
+
+/// Distill the per-method [`BackupOverview`] into what the card renders under
+/// its method pills. Method order is fixed (password first) so the rows don't
+/// reshuffle between renders.
+pub(crate) fn backup_contents(overview: &BackupOverview) -> BackupContents {
+    let mut methods: Vec<(&'static str, &MethodBackup)> = Vec::with_capacity(2);
+    if let Some(m) = overview.password.as_ref() {
+        methods.push(("Password", m));
+    }
+    if let Some(m) = overview.keychain.as_ref() {
+        methods.push(("Keychain", m));
+    }
+
+    match methods.as_slice() {
+        [] => BackupContents::Nothing,
+        [(_, only)] => BackupContents::Shared(half_labels(only)),
+        [(_, a), (_, b)] if a == b => BackupContents::Shared(half_labels(a)),
+        rest => BackupContents::PerMethod(
+            rest.iter()
+                .map(|&(label, m)| (label, half_labels(m)))
+                .collect(),
+        ),
+    }
+}
+
 /// Whether a method independently holds everything the Cube's shape requires
 /// (master §definitions: completeness is per-method):
 ///   * with a Vault — seed **and** descriptor;
@@ -927,7 +1003,7 @@ fn recovery_kit_card<'a>(
         .push(text(title).bold())
         .push(text(subtitle).size(14));
     if password_present || keychain_present {
-        let mut pills = Row::new().spacing(6).align_y(Alignment::Center);
+        let mut pills = pill_row("Protected by:");
         if password_present {
             pills = pills.push(backup_pill("Password"));
         }
@@ -937,6 +1013,31 @@ fn recovery_kit_card<'a>(
         body = body
             .push(Space::new().height(Length::Fixed(2.0)))
             .push(pills);
+    }
+    // What's actually *in* the backup. Without this the card answered "how is it
+    // protected" and left "what would I get back" to guesswork — a kit labelled
+    // "Password" looks identical whether it holds the Master Seed Phrase, the
+    // Wallet Descriptor, or both.
+    match backup_contents(&overview) {
+        BackupContents::Nothing => {}
+        BackupContents::Shared(halves) => {
+            body = body.push(
+                halves
+                    .into_iter()
+                    .fold(pill_row("Includes:"), |row, h| row.push(backup_pill(h))),
+            );
+        }
+        BackupContents::PerMethod(per_method) => {
+            for (method, halves) in per_method {
+                body = body.push(
+                    halves
+                        .into_iter()
+                        .fold(pill_row(format!("{} holds:", method)), |row, h| {
+                            row.push(backup_pill(h))
+                        }),
+                );
+            }
+        }
     }
     if drift.any() {
         body = body.push(
@@ -1420,6 +1521,97 @@ mod tests {
     /// Convenience: card state for a mnemonic-with-vault cube.
     fn mnemonic_vault_state(st: &RecoveryKitStatus) -> CardState {
         recovery_kit_card_state(&backup_overview(Some(st)), true, false, true)
+    }
+
+    // ---- what's *in* the backup, not just which method protects it ----
+
+    #[test]
+    fn contents_name_the_halves_a_vaultless_kit_holds() {
+        // The reported gap: a Vault-less Cube's card showed a lone "Password"
+        // pill, which says how the kit is protected and nothing about whether
+        // the Master Seed Phrase is actually in it.
+        let st = status(true, false, Some("2026-08-08T17:35:00Z"), None);
+        assert_eq!(
+            backup_contents(&backup_overview(Some(&st))),
+            BackupContents::Shared(vec!["Master Seed Phrase"])
+        );
+    }
+
+    #[test]
+    fn contents_name_both_halves_when_a_vault_is_backed_up() {
+        let st = status(true, true, None, None);
+        assert_eq!(
+            backup_contents(&backup_overview(Some(&st))),
+            BackupContents::Shared(vec!["Master Seed Phrase", "Wallet Descriptor"])
+        );
+    }
+
+    #[test]
+    fn contents_are_shared_when_both_methods_hold_the_same_halves() {
+        // Two methods, identical contents — one row states it for both rather
+        // than repeating the same pills under each method.
+        let st = status(true, true, None, Some(owner(&["seed", "descriptor"], None)));
+        assert_eq!(
+            backup_contents(&backup_overview(Some(&st))),
+            BackupContents::Shared(vec!["Master Seed Phrase", "Wallet Descriptor"])
+        );
+    }
+
+    #[test]
+    fn contents_split_per_method_when_the_methods_differ() {
+        // A password kit with both halves next to a descriptor-only phone
+        // envelope. A shared row would claim the phone can restore a seed it
+        // doesn't hold, so each method states its own contents.
+        let st = status(true, true, None, Some(owner(&["descriptor"], None)));
+        assert_eq!(
+            backup_contents(&backup_overview(Some(&st))),
+            BackupContents::PerMethod(vec![
+                ("Password", vec!["Master Seed Phrase", "Wallet Descriptor"]),
+                ("Keychain", vec!["Wallet Descriptor"]),
+            ])
+        );
+    }
+
+    #[test]
+    fn contents_are_nothing_when_no_method_holds_anything() {
+        // Never-backed-up (the Create state) and a bare recipient with no
+        // envelopes uploaded both render no contents row at all.
+        assert_eq!(
+            backup_contents(&backup_overview(None)),
+            BackupContents::Nothing
+        );
+        let bare = RecoveryKitStatus {
+            owner_self: Some(OwnerSelfRecoverySummary {
+                has_recipient: true,
+                tier: "full_cube".into(),
+                envelope_kinds: Vec::new(),
+                updated_at: None,
+            }),
+            ..status(false, false, None, None)
+        };
+        assert_eq!(
+            backup_contents(&backup_overview(Some(&bare))),
+            BackupContents::Nothing
+        );
+    }
+
+    #[test]
+    fn half_labels_are_ordered_seed_first() {
+        // Fixed order so the pills don't reshuffle between renders.
+        assert_eq!(
+            half_labels(&MethodBackup {
+                seed: true,
+                descriptor: true
+            }),
+            vec!["Master Seed Phrase", "Wallet Descriptor"]
+        );
+        assert_eq!(
+            half_labels(&MethodBackup {
+                seed: false,
+                descriptor: true
+            }),
+            vec!["Wallet Descriptor"]
+        );
     }
 
     // ---- method_complete truth table (all shapes) ----

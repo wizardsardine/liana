@@ -369,22 +369,37 @@ pub fn update(
                     ))));
                 }
             }
+            // Reconcile the persisted password-kit presence flag against what
+            // the server just told us. `has_recovery_kit()` — and so the Home
+            // card — is otherwise a record of backups made *from this device*,
+            // which leaves two stale cases: a Cube backed up before this flag
+            // existed, and one backed up (or removed) from another device. The
+            // status response is authoritative for the password kit, so adopt
+            // it. Only written on an actual mismatch: a settings write on every
+            // Settings-page visit would be pure churn.
+            let reconcile = presence_to_reconcile(
+                rk.status.as_ref().map(|s| s.has_recovery_kit),
+                cache.recovery_kit_password_backed_up,
+            )
+            .map(|present| persist_password_kit_presence(cache, local_cube_id, present));
             // W10 post-vault-creation nudge: fires only against a
             // freshly-loaded status so we don't nag users whose kit
             // already has a descriptor backed up. One-shot flag is
             // cleared here regardless of outcome.
-            if rk.nudge_on_next_status_load {
+            let nudge = if rk.nudge_on_next_status_load {
                 rk.nudge_on_next_status_load = false;
-                if should_nudge_for_status(rk.status.as_ref()) {
-                    return Task::done(Message::View(view::Message::ShowToast(
+                should_nudge_for_status(rk.status.as_ref()).then(|| {
+                    Task::done(Message::View(view::Message::ShowToast(
                         log::Level::Info,
                         "Your new Vault is ready — back up your Wallet Descriptor in \
                          Settings → General → Cube Recovery Kit."
                             .to_string(),
-                    )));
-                }
-            }
-            Task::none()
+                    )))
+                })
+            } else {
+                None
+            };
+            Task::batch(reconcile.into_iter().chain(nudge))
         }
 
         RecoveryKitMessage::Start(mode) => {
@@ -695,25 +710,19 @@ pub fn update(
                     let updated_at = outcome.updated_at.clone();
                     let now_has_seed = outcome.now_has_seed;
                     let now_has_descriptor = outcome.now_has_descriptor;
-                    // Only refresh the cached drift fingerprint when
-                    // *this* upload actually included a descriptor half.
-                    // Passing through `None` would wipe a previously-
-                    // stored fingerprint on a seed-only upload (e.g.
-                    // `AddSeed`), which then silently disables drift
-                    // detection for the descriptor that's still on
-                    // the server. The `Remove` path clears the
-                    // fingerprint through its own dedicated call.
-                    let fp_to_persist = next_fingerprint_to_persist(&outcome);
-                    let persist = if let Some(fp) = fp_to_persist {
-                        persist_descriptor_fingerprint(
-                            cache,
-                            local_cube_id,
-                            DescriptorFingerprintSlot::Password,
-                            Some(fp),
-                        )
-                    } else {
-                        Task::none()
-                    };
+                    // Mark the password kit present, and only refresh the
+                    // cached drift fingerprint when *this* upload actually
+                    // included a descriptor half. Passing through `None`
+                    // would wipe a previously-stored fingerprint on a
+                    // seed-only upload (e.g. `AddSeed`), which then
+                    // silently disables drift detection for the descriptor
+                    // that's still on the server. The `Remove` path clears
+                    // both through its own dedicated call.
+                    let persist = persist_password_kit_uploaded(
+                        cache,
+                        local_cube_id,
+                        next_fingerprint_to_persist(&outcome),
+                    );
                     // "Both" protection mode (PR 2): the password kit is now
                     // uploaded; chain the phone seal with the same material. Pull
                     // the unlocked mnemonic out of the `Uploading` snapshot (ends
@@ -811,10 +820,10 @@ pub fn update(
             match res {
                 Ok(()) => {
                     rk.reset_flow();
-                    // Clear both local drift fingerprint slots — Remove-all left
-                    // nothing backed up to compare against, by either method
-                    // (per-method drift, PR 3).
-                    let persist = clear_descriptor_fingerprints(cache, local_cube_id);
+                    // Clear the password presence flag and both local drift
+                    // fingerprint slots — Remove-all left nothing backed up, by
+                    // either method (per-method drift, PR 3).
+                    let persist = clear_recovery_kit_state(cache, local_cube_id);
                     let reload = load_status(rk, client, server_cube_id);
                     Task::batch([persist, reload])
                 }
@@ -835,20 +844,15 @@ pub fn update(
                     // the `PhoneSealResult` partial-failure handling.
                     let reload = load_status(rk, client, server_cube_id);
                     // `load_status` only fixes the in-memory `rk.status`; the
-                    // persisted per-method fingerprint slots drive
-                    // `has_recovery_kit()` / `connect_state()`. When the password
-                    // kit was already torn down before the failure, its local
-                    // fingerprint now points at a kit Connect no longer holds, so
-                    // clear just that slot. The keychain slot stays: its copy may
+                    // persisted per-method state drives `has_recovery_kit()` /
+                    // `connect_state()`. When the password kit was already torn
+                    // down before the failure, its local presence flag and
+                    // fingerprint now describe a kit Connect no longer holds, so
+                    // clear just that method. The keychain slot stays: its copy may
                     // well survive the failure (the very reason we failed loudly),
                     // and a retry — or the phone-seal path — reconciles it.
                     let clear_stale_password = if password_kit_deleted {
-                        persist_descriptor_fingerprint(
-                            cache,
-                            local_cube_id,
-                            DescriptorFingerprintSlot::Password,
-                            None,
-                        )
+                        clear_password_kit_state(cache, local_cube_id)
                     } else {
                         Task::none()
                     };
@@ -1927,11 +1931,14 @@ fn apply_descriptor_fingerprint(
     }
 }
 
-fn persist_descriptor_fingerprint(
+/// Apply one mutation to this Cube's entry in `settings.json`. Every
+/// Recovery-Kit bookkeeping write goes through here so a single write carries
+/// all the fields one outcome touches (presence flag *and* drift slot), rather
+/// than racing two settings updates against each other.
+fn update_cube_settings(
     cache: &Cache,
     local_cube_id: &str,
-    slot: DescriptorFingerprintSlot,
-    fingerprint: Option<String>,
+    mutate: impl FnOnce(&mut settings::CubeSettings) + Send + 'static,
 ) -> Task<Message> {
     let network_dir = cache.datadir_path.network_directory(cache.network);
     let cube_id = local_cube_id.to_string();
@@ -1939,7 +1946,7 @@ fn persist_descriptor_fingerprint(
         async move {
             update_settings_file(&network_dir, |mut s| {
                 if let Some(cube) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
-                    apply_descriptor_fingerprint(cube, slot, fingerprint.clone());
+                    mutate(cube);
                 }
                 Some(s)
             })
@@ -1953,29 +1960,93 @@ fn persist_descriptor_fingerprint(
     )
 }
 
-/// Clear **both** per-method descriptor drift slots in a single settings write —
-/// the Remove-all path leaves nothing backed up to compare against, by either
-/// method (per-method drift, PR 3).
-fn clear_descriptor_fingerprints(cache: &Cache, local_cube_id: &str) -> Task<Message> {
-    let network_dir = cache.datadir_path.network_directory(cache.network);
-    let cube_id = local_cube_id.to_string();
-    Task::perform(
-        async move {
-            update_settings_file(&network_dir, |mut s| {
-                if let Some(cube) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
-                    apply_descriptor_fingerprint(cube, DescriptorFingerprintSlot::Password, None);
-                    apply_descriptor_fingerprint(cube, DescriptorFingerprintSlot::Keychain, None);
-                }
-                Some(s)
-            })
-            .await
-            .map_err(|e| format!("Failed to update settings: {}", e))
-        },
-        |res: Result<(), String>| match res {
-            Ok(()) => Message::SettingsSaved,
-            Err(e) => Message::View(view::Message::ShowError(e)),
-        },
-    )
+fn persist_descriptor_fingerprint(
+    cache: &Cache,
+    local_cube_id: &str,
+    slot: DescriptorFingerprintSlot,
+    fingerprint: Option<String>,
+) -> Task<Message> {
+    update_cube_settings(cache, local_cube_id, move |cube| {
+        apply_descriptor_fingerprint(cube, slot, fingerprint);
+    })
+}
+
+/// Record a successful **password** kit upload: the presence flag (which is what
+/// `has_recovery_kit()` reads for this method) plus, when this upload actually
+/// carried a descriptor, the password drift slot. Both in one write.
+///
+/// The flag is separate from the fingerprint because a Cube with no Vault
+/// uploads a seed-only kit — a real, restorable Recovery Kit with no descriptor
+/// to fingerprint. Deriving presence from the fingerprint left those Cubes
+/// reading "Registered to Connect — no recovery kit" on the Home card while the
+/// Settings card, which asks the server, read "Recovery Kit backed up".
+fn persist_password_kit_uploaded(
+    cache: &Cache,
+    local_cube_id: &str,
+    fingerprint: Option<String>,
+) -> Task<Message> {
+    update_cube_settings(cache, local_cube_id, move |cube| {
+        apply_password_kit_uploaded(cube, fingerprint)
+    })
+}
+
+/// Pure half of [`persist_password_kit_uploaded`].
+fn apply_password_kit_uploaded(cube: &mut settings::CubeSettings, fingerprint: Option<String>) {
+    cube.recovery_kit_password_backed_up = true;
+    // `None` means "this upload had no descriptor" — leave the drift slot
+    // pointing at the descriptor still on the server rather than wiping it.
+    if fingerprint.is_some() {
+        apply_descriptor_fingerprint(cube, DescriptorFingerprintSlot::Password, fingerprint);
+    }
+}
+
+/// Given the server's password-kit verdict from a fresh status load and the
+/// locally-cached one, what (if anything) should be persisted? `None` means
+/// "leave it alone" — either the status never loaded, or the two already agree
+/// and a settings write would be pure churn on every Settings-page visit.
+fn presence_to_reconcile(server: Option<bool>, local: bool) -> Option<bool> {
+    server.filter(|s| *s != local)
+}
+
+/// Adopt the server's verdict on whether a password Recovery Kit exists for
+/// this Cube, without touching the descriptor drift slot.
+///
+/// Called from the status-load handler on a mismatch. Deliberately one-field:
+/// the server knows whether a *kit* exists, but the fingerprint records which
+/// descriptor **this device** last uploaded — a kit created elsewhere gives us
+/// nothing to compare against, and clobbering the slot either way would
+/// manufacture a false drift verdict. Presence and drift stay separate facts.
+fn persist_password_kit_presence(
+    cache: &Cache,
+    local_cube_id: &str,
+    present: bool,
+) -> Task<Message> {
+    update_cube_settings(cache, local_cube_id, move |cube| {
+        cube.recovery_kit_password_backed_up = present;
+    })
+}
+
+/// Clear the password kit's presence flag and drift slot — used when the
+/// password kit was torn down on the server but the overall Remove failed part
+/// way through, so the keychain copy's state must be left alone.
+fn clear_password_kit_state(cache: &Cache, local_cube_id: &str) -> Task<Message> {
+    update_cube_settings(cache, local_cube_id, apply_password_kit_cleared)
+}
+
+/// Pure half of [`clear_password_kit_state`].
+fn apply_password_kit_cleared(cube: &mut settings::CubeSettings) {
+    cube.recovery_kit_password_backed_up = false;
+    apply_descriptor_fingerprint(cube, DescriptorFingerprintSlot::Password, None);
+}
+
+/// Clear **all** local kit bookkeeping in a single settings write — the
+/// Remove-all path leaves nothing backed up, by either method, and so nothing to
+/// compare a live descriptor against (per-method drift, PR 3).
+fn clear_recovery_kit_state(cache: &Cache, local_cube_id: &str) -> Task<Message> {
+    update_cube_settings(cache, local_cube_id, |cube| {
+        apply_password_kit_cleared(cube);
+        apply_descriptor_fingerprint(cube, DescriptorFingerprintSlot::Keychain, None);
+    })
 }
 
 #[cfg(test)]
@@ -2414,10 +2485,12 @@ mod tests {
 
     #[test]
     fn remove_clears_both_slots() {
-        // `clear_descriptor_fingerprints` applies both clears in one write —
-        // Remove-all leaves nothing to drift against by either method.
+        // `clear_recovery_kit_state` applies both clears — plus the password
+        // presence flag — in one write: Remove-all leaves nothing backed up, and
+        // so nothing to drift against, by either method.
         let mut cube = cube_with_both_slots();
-        apply_descriptor_fingerprint(&mut cube, DescriptorFingerprintSlot::Password, None);
+        cube.recovery_kit_password_backed_up = true;
+        apply_password_kit_cleared(&mut cube);
         apply_descriptor_fingerprint(&mut cube, DescriptorFingerprintSlot::Keychain, None);
         assert!(cube
             .recovery_kit_last_backed_up_descriptor_fingerprint
@@ -2425,6 +2498,101 @@ mod tests {
         assert!(cube
             .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
             .is_none());
+        assert!(
+            !cube.has_recovery_kit(),
+            "Remove-all must leave the Cube reading as having no recovery kit"
+        );
+    }
+
+    // ── Password-kit presence is independent of the descriptor (Vault-less
+    //    Cubes) ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn seed_only_upload_marks_the_cube_backed_up() {
+        // A Cube with no Vault uploads a seed-only kit: a real, restorable
+        // Recovery Kit with no descriptor to fingerprint. It must still read as
+        // backed up, otherwise the Home card says "Registered to Connect — no
+        // recovery kit" while the Settings card (which asks the server) says
+        // "Recovery Kit backed up".
+        let mut cube = settings::CubeSettings::new("Cube only".to_string(), Network::Bitcoin);
+        cube.remote_synced = true;
+        assert!(cube.vault_wallet_id.is_none());
+
+        let outcome = RecoveryKitUploadOutcome {
+            updated_at: "2026-08-08T17:35:00Z".to_string(),
+            now_has_seed: true,
+            now_has_descriptor: false,
+            descriptor_fingerprint: None,
+        };
+        apply_password_kit_uploaded(&mut cube, next_fingerprint_to_persist(&outcome));
+
+        assert!(cube.recovery_kit_password_backed_up);
+        assert!(
+            cube.recovery_kit_last_backed_up_descriptor_fingerprint
+                .is_none(),
+            "a seed-only upload has no descriptor to fingerprint"
+        );
+        assert!(cube.has_recovery_kit());
+        assert_eq!(
+            cube.connect_state(),
+            settings::CubeConnectState::BackedUp,
+            "a Vault-less Cube with a kit on Connect is backed up, not merely registered"
+        );
+    }
+
+    #[test]
+    fn seed_only_upload_does_not_wipe_an_existing_descriptor_fingerprint() {
+        // `AddSeed` on a Cube that already has a descriptor half on the server
+        // uploads seed-only. The presence flag flips on, but the drift slot must
+        // keep pointing at the descriptor Connect still holds.
+        let mut cube = settings::CubeSettings::new("Add seed".to_string(), Network::Bitcoin);
+        cube.recovery_kit_last_backed_up_descriptor_fingerprint = Some("pw-fp".to_string());
+        apply_password_kit_uploaded(&mut cube, None);
+        assert_eq!(
+            cube.recovery_kit_last_backed_up_descriptor_fingerprint
+                .as_deref(),
+            Some("pw-fp"),
+            "a seed-only upload must not disable drift detection for the stored descriptor"
+        );
+        assert!(cube.recovery_kit_password_backed_up);
+    }
+
+    #[test]
+    fn status_load_reconciles_presence_only_on_a_mismatch() {
+        // Heals a Cube backed up before the presence flag existed, and one
+        // backed up from another device: the server is authoritative for the
+        // password kit, so adopt its verdict.
+        assert_eq!(presence_to_reconcile(Some(true), false), Some(true));
+        // ...and the reverse — a kit removed from another device.
+        assert_eq!(presence_to_reconcile(Some(false), true), Some(false));
+        // Agreement writes nothing: otherwise every Settings-page visit would
+        // rewrite settings.json and fire a `SettingsSaved` round-trip.
+        assert_eq!(presence_to_reconcile(Some(true), true), None);
+        assert_eq!(presence_to_reconcile(Some(false), false), None);
+        // No status loaded (a failed fetch keeps the prior cache) — leave the
+        // persisted flag alone rather than treating "unknown" as "absent".
+        assert_eq!(presence_to_reconcile(None, true), None);
+        assert_eq!(presence_to_reconcile(None, false), None);
+    }
+
+    #[test]
+    fn clearing_the_password_kit_leaves_the_phone_copy_backed_up() {
+        // Partial Remove: the password kit is gone from Connect but the phone
+        // envelope survived. The Cube still has a recovery kit.
+        let mut cube = cube_with_both_slots();
+        cube.recovery_kit_password_backed_up = true;
+        apply_password_kit_cleared(&mut cube);
+        assert!(!cube.recovery_kit_password_backed_up);
+        assert!(cube
+            .recovery_kit_last_backed_up_descriptor_fingerprint
+            .is_none());
+        assert_eq!(
+            cube.recovery_kit_last_backed_up_keychain_descriptor_fingerprint
+                .as_deref(),
+            Some("kc-fp"),
+            "clearing the password method must not touch the keychain copy"
+        );
+        assert!(cube.has_recovery_kit());
     }
 
     #[test]

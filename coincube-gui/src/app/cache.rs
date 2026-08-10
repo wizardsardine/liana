@@ -193,6 +193,13 @@ pub struct Cache {
     /// surface the phone copy's independent drift verdict (per-method drift,
     /// PR 3). `None` when never phone-sealed or after the kit is removed.
     pub recovery_kit_last_backed_up_keychain_descriptor_fingerprint: Option<String>,
+    /// Mirrors `CubeSettings::recovery_kit_password_backed_up` — whether a
+    /// password Recovery Kit is known to exist on Connect for this Cube.
+    /// Unlike the two fingerprints above this is a *presence* signal, not a
+    /// drift one, so it stays true for a seed-only kit on a Vault-less Cube.
+    /// Held here so the Recovery-Kit status load can reconcile the persisted
+    /// flag against the server without re-reading settings.json on every load.
+    pub recovery_kit_password_backed_up: bool,
     /// Connect gRPC base URL, populated once `Message::ConnectStreamReady`
     /// fires after login. `None` until then or for local-daemon installs
     /// — the Keychain "Sign via Keychain" button stays disabled while
@@ -263,6 +270,7 @@ impl std::default::Default for Cache {
             current_descriptor_fingerprint: None,
             recovery_kit_last_backed_up_descriptor_fingerprint: None,
             recovery_kit_last_backed_up_keychain_descriptor_fingerprint: None,
+            recovery_kit_password_backed_up: false,
             connect_grpc_url: None,
             connect_tokens: None,
             connect_stream_status: crate::app::ConnectionStatus::default(),
