@@ -1675,7 +1675,9 @@ mod tests {
             "Invalid address. Please check the destination and try again."
         );
         assert_eq!(
-            format_parse_input_error("Spark bridge returned Sdk: parse_input failed: Invalid input: invalid input"),
+            format_parse_input_error(
+                "Spark bridge returned Sdk: parse_input failed: Invalid input: invalid input"
+            ),
             "Invalid address. Please check the destination and try again."
         );
     }
