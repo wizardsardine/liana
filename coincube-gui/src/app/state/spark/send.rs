@@ -1446,6 +1446,20 @@ fn parse_amount_to_sats(input: &str, unit: BitcoinDisplayUnit) -> Result<u64, St
     }
 }
 
+/// Convert raw parse-input errors into clear, user-facing error messages.
+/// Known invalid-input/invalid-address errors are mapped to a consistent
+/// address validation message, while unrecognized errors are returned unchanged.
+fn format_parse_input_error(raw: &str) -> String {
+    let lower = raw.to_lowercase();
+    if lower.contains("invalid input") || lower.contains("invalid address") {
+        return "Invalid address. Please check the destination and try again.".to_string();
+    }
+    if lower.contains("parse_input failed") {
+        return "Invalid address. Please check the destination and try again.".to_string();
+    }
+    raw.to_string()
+}
+
 /// Phase 4e: classify the user-supplied destination via `parse_input`
 /// and dispatch to the right prepare RPC (`prepare_send` for
 /// BOLT11/on-chain/Other, `prepare_lnurl_pay` for LNURL/Lightning
@@ -1466,7 +1480,7 @@ async fn resolve_and_prepare(
     let parsed = backend
         .parse_input(input.clone())
         .await
-        .map_err(|e| format!("parse failed: {e}"))?;
+        .map_err(|e| format_parse_input_error(&e.to_string()))?;
 
     // Enforce the picked rail. The destination itself dictates the mechanism —
     // you can't send Lightning to an on-chain address — so a parsed rail that
@@ -1651,6 +1665,18 @@ mod tests {
         assert_eq!(
             parse_amount_to_sats("-1", BitcoinDisplayUnit::BTC).unwrap_err(),
             "Amount must be a valid BTC value."
+        );
+    }
+
+    #[test]
+    fn format_parse_input_error_maps_invalid_input_to_user_friendly_text() {
+        assert_eq!(
+            format_parse_input_error("parse failed: Invalid input"),
+            "Invalid address. Please check the destination and try again."
+        );
+        assert_eq!(
+            format_parse_input_error("Spark bridge returned Sdk: parse_input failed: Invalid input: invalid input"),
+            "Invalid address. Please check the destination and try again."
         );
     }
 
