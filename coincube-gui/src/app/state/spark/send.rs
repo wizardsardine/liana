@@ -1452,10 +1452,7 @@ fn parse_amount_to_sats(input: &str, unit: BitcoinDisplayUnit) -> Result<u64, St
 fn format_parse_input_error(raw: &str) -> String {
     let lower = raw.to_lowercase();
     if lower.contains("invalid input") || lower.contains("invalid address") {
-        return "Invalid address. Please check the destination and try again.".to_string();
-    }
-    if lower.contains("parse_input failed") {
-        return "Invalid address. Please check the destination and try again.".to_string();
+        return "Invalid destination. Please check the destination and try again.".to_string();
     }
     raw.to_string()
 }
@@ -1672,14 +1669,21 @@ mod tests {
     fn format_parse_input_error_maps_invalid_input_to_user_friendly_text() {
         assert_eq!(
             format_parse_input_error("parse failed: Invalid input"),
-            "Invalid address. Please check the destination and try again."
+            "Invalid destination. Please check the destination and try again."
         );
         assert_eq!(
             format_parse_input_error(
                 "Spark bridge returned Sdk: parse_input failed: Invalid input: invalid input"
             ),
-            "Invalid address. Please check the destination and try again."
+            "Invalid destination. Please check the destination and try again."
         );
+    }
+
+    #[test]
+    fn format_parse_input_error_preserves_non_validation_parse_input_failure() {
+        let raw = "Spark bridge returned Sdk: parse_input failed: unexpected SDK error";
+
+        assert_eq!(format_parse_input_error(raw), raw);
     }
 
     fn route() -> CrossChainRoute {
