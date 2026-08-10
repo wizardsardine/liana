@@ -212,6 +212,24 @@ impl Context {
     pub fn seed_cube_id(&self) -> &str {
         self.cube_id.as_deref().unwrap_or("")
     }
+
+    /// Whether this install ends with a Vault — a native-Bitcoin wallet that
+    /// needs a chain backend to watch.
+    ///
+    /// The descriptor *is* the Vault: [`Message::Install`](super::Message)
+    /// branches on exactly this to choose between creating a wallet and
+    /// `persist_seed_only_install`. So when it is `None`, everything the
+    /// node/backend steps configure is written and then never read.
+    ///
+    /// Safe to ask at any step that runs after the descriptor is settled, which
+    /// is every flow's node and alias steps: the fresh-install flows fix it in
+    /// `DefineDescriptor`/`ImportDescriptor`, and the restore flows in their
+    /// respective restore step — all of which precede them. Only the "Full"
+    /// restores can reach those steps with `None`, which is precisely the
+    /// seed-only (Cube, no Vault) kit this exists to detect.
+    pub fn installs_vault(&self) -> bool {
+        self.descriptor.is_some()
+    }
 }
 
 impl Context {
@@ -263,7 +281,12 @@ impl Context {
 
 #[cfg(test)]
 mod tests {
-    use super::Context;
+    use super::{Context, RemoteBackend};
+    use crate::dir::CoincubeDirectory;
+    use crate::installer::step::Step;
+    use coincube_core::miniscript::bitcoin::Network;
+    use std::path::PathBuf;
+    use std::str::FromStr;
 
     /// Compile-time pin: if anyone reverts `Context.connect_jwt` to a
     /// plain `Option<String>`, this type-level assertion stops
@@ -274,5 +297,104 @@ mod tests {
         #[allow(dead_code)]
         const _: fn(&Context) -> Option<&zeroize::Zeroizing<String>> =
             |ctx| ctx.connect_jwt.as_ref();
+    }
+
+    fn ctx() -> Context {
+        Context::new(
+            Network::Bitcoin,
+            CoincubeDirectory::new(PathBuf::new()),
+            RemoteBackend::None,
+            None,
+            None,
+        )
+    }
+
+    fn with_vault() -> Context {
+        let mut c = ctx();
+        c.descriptor = Some(
+            coincube_core::descriptors::CoincubeDescriptor::from_str(
+                "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPs\
+                 RpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),\
+                 and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRp\
+                 UrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),\
+                 older(52596))))#jz5sm0xn",
+            )
+            .expect("fixture descriptor must parse"),
+        );
+        c
+    }
+
+    #[test]
+    fn installs_vault_follows_the_descriptor() {
+        assert!(
+            !ctx().installs_vault(),
+            "no descriptor means no Vault — the same rule Message::Install uses \
+             to pick persist_seed_only_install"
+        );
+        assert!(with_vault().installs_vault());
+    }
+
+    /// The reported bug: restoring a seed-only (Cube, no Vault) Recovery Kit
+    /// walked the user through choosing a Bitcoin node. The node steps
+    /// configure a chain backend for a Vault that this install will never
+    /// create — `Message::Install` takes the seed-only branch and reads none of
+    /// it. Every one of them must drop out.
+    #[test]
+    fn a_seed_only_restore_skips_every_vault_only_step() {
+        use crate::installer::step::{
+            DefineNode, InternalBitcoindStep, SelectBitcoindTypeStep, WalletAlias,
+        };
+
+        let seed_only = ctx();
+        let dir = CoincubeDirectory::new(PathBuf::new());
+
+        let steps: Vec<(&str, Box<dyn Step>)> = vec![
+            ("SelectBitcoindType", SelectBitcoindTypeStep::new().into()),
+            ("InternalBitcoind", InternalBitcoindStep::new(&dir).into()),
+            (
+                "DefineNode",
+                DefineNode::new(crate::node::NodeType::Esplora).into(),
+            ),
+            ("WalletAlias", WalletAlias::default().into()),
+        ];
+        for (name, step) in &steps {
+            assert!(
+                step.skip(&seed_only),
+                "{} must be skipped when the restore produced no descriptor",
+                name
+            );
+        }
+    }
+
+    /// ...and the same steps must still run for a Vault, or this would quietly
+    /// strand every real wallet without a chain backend.
+    ///
+    /// `InternalBitcoindStep` is asserted separately: a default context has
+    /// `bitcoind_is_external = true`, so it skips for its own long-standing
+    /// reason. What matters is that the new Vault condition is not what's
+    /// deciding — flipping the flag brings it back.
+    #[test]
+    fn a_vault_install_still_gets_its_node_steps() {
+        use crate::installer::step::{
+            DefineNode, InternalBitcoindStep, SelectBitcoindTypeStep, WalletAlias,
+        };
+
+        let vault = with_vault();
+        let dir = CoincubeDirectory::new(PathBuf::new());
+
+        let select: Box<dyn Step> = SelectBitcoindTypeStep::new().into();
+        assert!(!select.skip(&vault), "SelectBitcoindType must still run");
+        let define: Box<dyn Step> = DefineNode::new(crate::node::NodeType::Esplora).into();
+        assert!(!define.skip(&vault), "DefineNode must still run");
+        let alias: Box<dyn Step> = WalletAlias::default().into();
+        assert!(!alias.skip(&vault), "WalletAlias must still run");
+
+        let mut managed_node = with_vault();
+        managed_node.bitcoind_is_external = false;
+        let internal: Box<dyn Step> = InternalBitcoindStep::new(&dir).into();
+        assert!(
+            !internal.skip(&managed_node),
+            "InternalBitcoind must still run for a Vault on a managed node"
+        );
     }
 }

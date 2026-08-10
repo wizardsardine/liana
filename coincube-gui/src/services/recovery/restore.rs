@@ -818,6 +818,50 @@ mod integration_tests {
         }
     }
 
+    /// The body coincube-api actually sends: `responses.ErrorWithData` puts the
+    /// code in `error` and the timestamp in a sibling snake_case `data` object.
+    ///
+    /// The sibling test below mocks the shape this client *assumed*
+    /// (`error.availableAt`) and passed for it, which is precisely why nobody
+    /// noticed production dropping every timestamp — the restore screen showed
+    /// "delayed on new devices" with no date because `available_at` was always
+    /// `None`. Both shapes are covered now; this one is the real contract.
+    #[tokio::test]
+    async fn fetch_and_decrypt_kit_423_reads_available_at_from_the_data_sibling() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(423)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": {
+                        "code": "TRUSTED_DEVICE_DELAY",
+                        "message": "This device must wait before it can download recovery material"
+                    },
+                    "data": { "available_at": "2026-06-11T00:00:00Z" }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = fetch_and_decrypt_kit(&client, 42, &pw("pw"))
+            .await
+            .expect_err("expected TrustedDeviceDelay");
+        mock.assert();
+        match err {
+            RestoreError::TrustedDeviceDelay { available_at } => {
+                assert_eq!(
+                    available_at
+                        .expect("available_at must survive the real server body")
+                        .to_rfc3339(),
+                    "2026-06-11T00:00:00+00:00"
+                );
+            }
+            other => panic!("expected TrustedDeviceDelay, got {:?}", other),
+        }
+    }
+
     #[tokio::test]
     async fn fetch_and_decrypt_kit_423_trusted_device_delay_maps_to_typed_variant() {
         let server = MockServer::start();

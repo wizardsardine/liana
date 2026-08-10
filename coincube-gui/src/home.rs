@@ -396,6 +396,109 @@ impl Home {
         )
     }
 
+    /// Fetch the full server cube list and keep the ones with no local
+    /// counterpart — the "restore from Connect" rows on the Cubes page. Both
+    /// the API call and the local settings reads run off the UI thread.
+    /// `Task::none()` when signed out; the list is Connect-only.
+    ///
+    /// Must be re-run whenever the *local* set changes, not just at sign-in.
+    /// `Message::Checked` can only prune this list (drop rows that became
+    /// local); a Cube deleted locally while its Connect copy was kept becomes
+    /// remote-only at that instant, and nothing but a re-fetch can discover it.
+    /// Without this it stayed invisible — and so unrestorable — until the next
+    /// sign-in.
+    fn fetch_remote_cubes(&self) -> Task<Message> {
+        let Some(rc_client) = self.connect_account.authenticated_client() else {
+            return Task::none();
+        };
+        let datadir = self.datadir_path.clone();
+        Task::perform(
+            async move {
+                let server_cubes = rc_client.list_cubes().await.map_err(|e| e.to_string())?;
+
+                // Collect local cube UUIDs across all networks
+                let mut local_uuids = std::collections::HashSet::new();
+                for net in &NETWORKS {
+                    let nd = datadir.network_directory(*net);
+                    if let Ok(s) = settings::Settings::from_file(&nd) {
+                        for cube in &s.cubes {
+                            local_uuids.insert(cube.id.clone());
+                        }
+                    }
+                }
+
+                // Keep only server cubes with no local counterpart
+                let remote_source: Vec<CubeResponse> = server_cubes
+                    .into_iter()
+                    .filter(|sc| !local_uuids.contains(&sc.uuid))
+                    .collect();
+
+                // Determine restorability per cube. `has_recovery_kit`
+                // comes free from `list_cubes()`, but both the seed half
+                // (what a password restore needs) and the owner-keychain
+                // "phone" envelope summary live on `/recovery-kit/status`,
+                // so probe it for *every* remote cube — a phone-only cube
+                // has `has_recovery_kit == false` yet is still recoverable
+                // via its envelope, so gating the probe on the password
+                // kit would hide it. Probes run concurrently (`join_all`)
+                // so latency is one round-trip, not N. A flaky probe must
+                // not blank the whole list — on any error we log and treat
+                // every method as absent (the row still shows, just
+                // without a restore icon). `join_all` preserves input
+                // order.
+                //
+                // Duress note: phone availability is read from the
+                // `ownerSelf` *status* summary (presence/tier, no
+                // ciphertext); the duress gate fires later, at the actual
+                // recovery attempt (`OwnerKeychainRestoreStep` →
+                // `fetch_owner_recovery_envelope`), which returns neutral
+                // "unavailable, try later" copy on a 423 (invariant I3).
+                let client_ref = &rc_client;
+                let remote_only: Vec<RemoteCube> = iced::futures::future::join_all(
+                    remote_source.into_iter().map(|sc| async move {
+                        let (has_encrypted_seed, phone_recoverable, phone_full_cube) =
+                            match client_ref.get_recovery_kit_status(sc.id).await {
+                                Ok(status) => {
+                                    let (phone_recoverable, phone_full_cube) =
+                                        derive_phone_recovery(status.owner_self.as_ref());
+                                    (
+                                        status.has_encrypted_seed,
+                                        phone_recoverable,
+                                        phone_full_cube,
+                                    )
+                                }
+                                // No kit/status yet → nothing recoverable.
+                                Err(CoincubeError::NotFound) => (false, false, false),
+                                Err(e) => {
+                                    log::warn!(
+                                        "[LAUNCHER] Recovery Kit status probe \
+                                         failed for \"{}\": {}",
+                                        sc.name,
+                                        e
+                                    );
+                                    (false, false, false)
+                                }
+                            };
+                        RemoteCube {
+                            id: sc.id,
+                            uuid: sc.uuid,
+                            name: sc.name,
+                            network: sc.network,
+                            has_recovery_kit: sc.has_recovery_kit,
+                            has_encrypted_seed,
+                            phone_recoverable,
+                            phone_full_cube,
+                        }
+                    }),
+                )
+                .await;
+
+                Ok(remote_only)
+            },
+            Message::RemoteCubesLoaded,
+        )
+    }
+
     /// Returns the effective per-network cube limit, preferring the
     /// server-authoritative value when available.
     fn cube_limit(&self) -> usize {
@@ -1126,7 +1229,12 @@ impl Home {
                     Ok(()) => log::info!("[LAUNCHER] Cube Connect backup deleted"),
                     Err(e) => log::warn!("[LAUNCHER] Failed to delete cube backup: {}", e),
                 }
-                Task::none()
+                // Either outcome changes what the restore list should show, and
+                // the delete has now settled: on success the Cube is gone from
+                // Connect and must not reappear as restorable; on failure its
+                // Connect copy survived the local delete, so it *is* restorable
+                // and has to show up. Both are one re-fetch away.
+                self.fetch_remote_cubes()
             }
             Message::RemoteCubeDeleted(result) => {
                 match result {
@@ -1380,13 +1488,22 @@ impl Home {
                     None
                 };
 
-                // Close modal and reload cubes
+                // Close modal and reload cubes.
                 self.delete_cube_modal = None;
                 let reload_task = self.reload();
+                // The deleted Cube may still exist on Connect — that's the whole
+                // point of leaving the box unchecked — in which case it just
+                // became remote-only and belongs in the restore list. `reload`
+                // alone can't discover that: `Message::Checked` only *prunes*
+                // `remote_cubes`, so without a re-fetch the Cube vanishes from
+                // the page entirely and looks unrecoverable until the next
+                // sign-in. Re-fetch after the remote delete (when there was one)
+                // so the list reflects the server's post-delete state rather
+                // than racing it.
                 if let Some(delete_task) = delete_task {
                     Task::batch([reload_task, delete_task])
                 } else {
-                    reload_task
+                    Task::batch([reload_task, self.fetch_remote_cubes()])
                 }
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::CloseModal)) => {
@@ -2134,102 +2251,8 @@ impl Home {
                     }
 
                     // Fetch full server cube list and compare with local cubes
-                    // to identify remote-only cubes. Both the API call and the
-                    // local settings reads run off the UI thread.
-                    if let Some(rc_client) = self.connect_account.authenticated_client() {
-                        let datadir = self.datadir_path.clone();
-                        tasks.push(Task::perform(
-                            async move {
-                                let server_cubes =
-                                    rc_client.list_cubes().await.map_err(|e| e.to_string())?;
-
-                                // Collect local cube UUIDs across all networks
-                                let mut local_uuids = std::collections::HashSet::new();
-                                for net in &NETWORKS {
-                                    let nd = datadir.network_directory(*net);
-                                    if let Ok(s) = settings::Settings::from_file(&nd) {
-                                        for cube in &s.cubes {
-                                            local_uuids.insert(cube.id.clone());
-                                        }
-                                    }
-                                }
-
-                                // Keep only server cubes with no local counterpart
-                                let remote_source: Vec<CubeResponse> = server_cubes
-                                    .into_iter()
-                                    .filter(|sc| !local_uuids.contains(&sc.uuid))
-                                    .collect();
-
-                                // Determine restorability per cube. `has_recovery_kit`
-                                // comes free from `list_cubes()`, but both the seed half
-                                // (what a password restore needs) and the owner-keychain
-                                // "phone" envelope summary live on `/recovery-kit/status`,
-                                // so probe it for *every* remote cube — a phone-only cube
-                                // has `has_recovery_kit == false` yet is still recoverable
-                                // via its envelope, so gating the probe on the password
-                                // kit would hide it. Probes run concurrently (`join_all`)
-                                // so latency is one round-trip, not N. A flaky probe must
-                                // not blank the whole list — on any error we log and treat
-                                // every method as absent (the row still shows, just
-                                // without a restore icon). `join_all` preserves input
-                                // order.
-                                //
-                                // Duress note: phone availability is read from the
-                                // `ownerSelf` *status* summary (presence/tier, no
-                                // ciphertext); the duress gate fires later, at the actual
-                                // recovery attempt (`OwnerKeychainRestoreStep` →
-                                // `fetch_owner_recovery_envelope`), which returns neutral
-                                // "unavailable, try later" copy on a 423 (invariant I3).
-                                let client_ref = &rc_client;
-                                let remote_only: Vec<RemoteCube> = iced::futures::future::join_all(
-                                    remote_source.into_iter().map(|sc| async move {
-                                        let (
-                                            has_encrypted_seed,
-                                            phone_recoverable,
-                                            phone_full_cube,
-                                        ) = match client_ref.get_recovery_kit_status(sc.id).await {
-                                            Ok(status) => {
-                                                let (phone_recoverable, phone_full_cube) =
-                                                    derive_phone_recovery(
-                                                        status.owner_self.as_ref(),
-                                                    );
-                                                (
-                                                    status.has_encrypted_seed,
-                                                    phone_recoverable,
-                                                    phone_full_cube,
-                                                )
-                                            }
-                                            // No kit/status yet → nothing recoverable.
-                                            Err(CoincubeError::NotFound) => (false, false, false),
-                                            Err(e) => {
-                                                log::warn!(
-                                                    "[LAUNCHER] Recovery Kit status probe \
-                                                         failed for \"{}\": {}",
-                                                    sc.name,
-                                                    e
-                                                );
-                                                (false, false, false)
-                                            }
-                                        };
-                                        RemoteCube {
-                                            id: sc.id,
-                                            uuid: sc.uuid,
-                                            name: sc.name,
-                                            network: sc.network,
-                                            has_recovery_kit: sc.has_recovery_kit,
-                                            has_encrypted_seed,
-                                            phone_recoverable,
-                                            phone_full_cube,
-                                        }
-                                    }),
-                                )
-                                .await;
-
-                                Ok(remote_only)
-                            },
-                            Message::RemoteCubesLoaded,
-                        ));
-                    }
+                    // to identify remote-only cubes.
+                    tasks.push(self.fetch_remote_cubes());
 
                     return Task::batch(tasks);
                 }

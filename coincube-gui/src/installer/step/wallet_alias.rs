@@ -15,6 +15,14 @@ pub struct WalletAlias {
 }
 
 impl Step for WalletAlias {
+    /// The alias names the *Vault wallet* ("My Vault Bitcoin wallet"), and
+    /// `ctx.wallet_alias` is only ever read by the wallet-creating install
+    /// paths. A seed-only restore has no wallet to name, so asking is a prompt
+    /// for a value that is written and then discarded.
+    fn skip(&self, ctx: &Context) -> bool {
+        !ctx.installs_vault()
+    }
+
     fn load_context(&mut self, ctx: &Context) {
         match (
             ctx.wallet_alias.is_empty(),

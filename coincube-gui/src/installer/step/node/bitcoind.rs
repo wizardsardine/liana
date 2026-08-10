@@ -651,7 +651,8 @@ impl Step for SelectBitcoindTypeStep {
     }
 
     fn skip(&self, ctx: &Context) -> bool {
-        ctx.remote_backend.is_some()
+        // No Vault, no chain to watch — see `Context::installs_vault`.
+        !ctx.installs_vault() || ctx.remote_backend.is_some()
     }
 
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
@@ -1504,7 +1505,9 @@ impl Step for InternalBitcoindStep {
     }
 
     fn skip(&self, ctx: &Context) -> bool {
-        ctx.bitcoind_is_external || ctx.remote_backend.is_some()
+        // No Vault, no chain to watch — see `Context::installs_vault`. Checked
+        // first so a seed-only install never downloads or starts a node.
+        !ctx.installs_vault() || ctx.bitcoind_is_external || ctx.remote_backend.is_some()
     }
 }
 
