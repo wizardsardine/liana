@@ -29,7 +29,7 @@ writing. It is only supported by the [Edge
 firmware](https://github.com/Coldcard/firmware?tab=readme-ov-file#long-lived-branches).
 For use in Taproot descriptors you should use version 6.3.3 or higher.
 
-WARNING: Coinkite disclosed (July 2026) a firmware flaw that reduced generated-seed entropy on Coldcard Mk2/Mk3 (firmware 4.0.1-4.1.9) and Mk4/Mk5/Q before their fixed firmware. If your seed was generated on-device with fewer than 50 independent dice rolls, update to fixed firmware, generate a new seed and move your funds. See the advisory: https://blog.coinkite.com/coldcard-mk3-seed-generation-warning/
+WARNING: Coinkite disclosed (July 2026) a firmware flaw that reduced generated-seed entropy on Coldcard Mk2/Mk3 (firmware 4.0.1-4.1.9) and Mk4/Mk5/Q before their fixed firmware. If your seed was generated on-device with fewer than 50 independent dice rolls, update to fixed firmware, generate a new seed and move your funds. See the advisory: https://blog.coinkite.com/coldcard-mk3-seed-generation-warning/ and Wizardsardine's Liana-specific write-up: https://wizardsardine.com/blog/coldcard-rng-vulnerability/
 
 
 ## [Jade and Jade Plus](https://github.com/Blockstream/Jade)
