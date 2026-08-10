@@ -2,7 +2,7 @@
 
 pub mod template;
 
-use iced::widget::{slider, Button, Space};
+use iced::widget::{container, pick_list, slider, Button, Space};
 use iced::{alignment, Alignment, Length};
 
 use coincube_ui::component::text::{p1_bold, p2_regular, H3_SIZE};
@@ -11,7 +11,7 @@ use std::str::FromStr;
 
 use coincube_ui::{
     component::{
-        button, card, form,
+        button, card, form, separation,
         text::{p1_regular, text, Text},
     },
     icon, theme,
@@ -26,14 +26,70 @@ use crate::installer::{
 
 use super::defined_threshold;
 
-// VAULT is P2WSH-only at launch: BIP-110/RDTS rule 7 invalidates tapscript
-// leaves that execute OP_IF/OP_NOTIF during the ~1-year deployment, and
-// VAULT's Miniscript recovery policies compile to exactly those opcodes in a
-// Taproot taptree. Witness-v0 (`wsh`) scripts are out of scope of rule 7, so
-// the descriptor-type selector (P2WSH vs Taproot) and its accompanying notice
-// have been removed from the creation flow. The core library still parses and
-// spends `tr(...)` descriptors for restore/import — see
-// `coincube-core/src/descriptors/analysis.rs` `from_multipath_descriptor`.
+/// Which script type a newly-created VAULT descriptor compiles to.
+///
+/// Both are offered again. Creation was P2WSH-only for a while because BIP-110
+/// rule 7 would have invalidated tapscript leaves executing `OP_IF`/`OP_NOTIF` —
+/// which VAULT's Miniscript recovery policies compile to in a taptree — for the
+/// duration of the deployment. That fork stalled and is not coming, so the
+/// freeze risk it created went with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DescriptorKind {
+    P2WSH,
+    Taproot,
+}
+
+const DESCRIPTOR_KINDS: [DescriptorKind; 2] = [DescriptorKind::P2WSH, DescriptorKind::Taproot];
+
+impl std::fmt::Display for DescriptorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::P2WSH => write!(f, "P2WSH"),
+            Self::Taproot => write!(f, "Taproot"),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a, Message> {
+    let col_wallet = Column::new()
+        .spacing(10)
+        .push(text("Descriptor type").bold())
+        .push(container(
+            pick_list(
+                &DESCRIPTOR_KINDS[..],
+                Some(if use_taproot {
+                    DescriptorKind::Taproot
+                } else {
+                    DescriptorKind::P2WSH
+                }),
+                |kind| Message::CreateTaprootDescriptor(kind == DescriptorKind::Taproot),
+            )
+            .style(theme::pick_list::primary)
+            .padding(10),
+        ));
+
+    container(
+        Column::new()
+            .spacing(20)
+            .push(Space::new().height(0))
+            .push(separation().width(500))
+            .push(Row::new().push(col_wallet))
+            // The node requirement is real and still enforced — `coincubed`
+            // refuses a Taproot descriptor below bitcoind 26.0
+            // (`MIN_TAPROOT_BITCOIND_VERSION`) — so say that, rather than the
+            // upstream app-version wording this notice used to carry.
+            .push(if use_taproot {
+                Some(
+                    p1_regular("Taproot requires Bitcoin Core or Knots 26.0 or above")
+                        .style(theme::text::secondary),
+                )
+            } else {
+                None
+            }),
+    )
+    .into()
+}
 
 pub fn path(
     color: iced::Color,

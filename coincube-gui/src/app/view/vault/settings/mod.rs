@@ -630,13 +630,16 @@ pub fn flavor_switch_confirm<'a>(target: NodeFlavor) -> Element<'a, NodeSettings
 
 /// "Chain repair" card: a manual `reconsiderblock` at the BIP-110 anchor.
 ///
-/// Bitcoin Knots records its rejections in the block index, and those marks
-/// persist when the datadir is later opened by Bitcoin Core — which would
-/// otherwise keep following the chain Knots chose rather than the one with the
-/// most work. The app repairs that automatically whenever the node starts, so this
+/// A build that enforced BIP-110 recorded its rejections in the block index, and
+/// those marks persist into whatever binary opens the datadir next — which would
+/// otherwise keep following the stalled fork rather than the chain with the most
+/// work. The app repairs that automatically whenever the node starts, so this
 /// button only matters when the state driving that check has been lost (a datadir
 /// carried between machines, a wiped sidecar). The call is idempotent and clears
 /// flags rather than discarding anything.
+///
+/// Slated for removal once every datadir is confirmed migrated — see
+/// `plans/PLAN-rdts-sunset.md`, PR 4.
 ///
 /// Not, however, safe to fire *concurrently with a chain replay*: `reconsiderblock`
 /// at the anchor clears the `BLOCK_FAILED_*` marks on its descendants, and the
@@ -657,10 +660,9 @@ pub fn chain_repair_section<'a>() -> Element<'a, NodeSettingsMessage> {
             )
             .push(
                 text(
-                    "If your node is stuck behind a chain it knows has more work — \
-                     usually after switching between Bitcoin Knots and Bitcoin Core — \
-                     this asks it to re-check those blocks. Nothing is deleted, and \
-                     it's safe to run more than once.",
+                    "If your node is stuck behind a chain it knows has more work, this \
+                     asks it to re-check those blocks. Nothing is deleted, and it's safe \
+                     to run more than once.",
                 )
                 .size(14)
                 .style(theme::text::secondary),
@@ -674,33 +676,23 @@ pub fn chain_repair_section<'a>() -> Element<'a, NodeSettingsMessage> {
     .into()
 }
 
-/// What switching *to* `target` means for the chain the node follows.
+/// What switching *to* `target` actually changes.
 ///
-/// These are not symmetric. Bitcoin Knots can enforce BIP-110 (RDTS) and Bitcoin
-/// Core cannot, so:
-///
-/// * Switching **to Core** may have to undo rejections Knots recorded in the
-///   shared block index. Those marks persist across the swap, so without it Core
-///   would keep following the chain Knots chose rather than the one with the most
-///   work. That can change which transactions are confirmed.
-/// * Switching **to Knots** starts enforcing the stricter rules *and* rewinds the
-///   chain to the BIP-110 anchor so blocks Core accepted are replayed under them.
-///   That takes hours and parks every Vault's poller while it runs, so the copy
-///   has to set both expectations. It also cannot reach below `pruneheight` —
-///   coverage is bounded by what the node still stores — so the copy says that too
-///   rather than implying the whole chain was verified.
+/// Policy only. Neither build we ship enforces consensus rules the other does
+/// not, so a swap no longer implies the node can end up on a different chain —
+/// which is what the previous, deliberately asymmetric version of this copy had
+/// to warn about. The reasoning behind that asymmetry is kept, past-tense, in
+/// `node::revalidate`'s module docs, alongside the repair machinery it justified.
 fn flavor_switch_chain_note(target: NodeFlavor) -> &'static str {
     match target {
         NodeFlavor::Core => {
-            "Core doesn't enforce BIP-110. If Knots had rejected any blocks, your node \
-             will re-check them and may switch to a different chain, so some recent \
-             transactions could change confirmation state."
+            "Core is the reference implementation and relays with its default policy. \
+             Your chain, balances, and transaction history are unaffected."
         }
         NodeFlavor::Knots => {
-            "Knots will enforce BIP-110. Your node will also re-check the recent blocks \
-             it still stores against the new rules, which can take a few hours; Vaults \
-             pause updating until it finishes. Blocks older than that were already \
-             pruned and can't be re-checked."
+            "Knots relays with stricter defaults — it limits oversized data-carrier \
+             (\"spam\") transactions. Your chain, balances, and transaction history are \
+             unaffected."
         }
     }
 }
@@ -1781,7 +1773,7 @@ pub fn node_setup_mode_picker_panel<'a>() -> Element<'a, NodeSettingsMessage> {
                     Row::new()
                         .spacing(10)
                         .push(
-                            button::primary(None, "Bitcoin Knots + RDTS →")
+                            button::primary(None, "Bitcoin Knots →")
                                 .padding([8, 14])
                                 .on_press(NodeSettingsMessage::SetupLocalNodeManagedFlavor(
                                     NodeFlavor::Knots,
@@ -1797,8 +1789,8 @@ pub fn node_setup_mode_picker_panel<'a>() -> Element<'a, NodeSettingsMessage> {
                 )
                 .push(
                     text(
-                        "Knots enforces BIP-110 (Reduced Data Temporary Softfork): it rejects \
-                         oversized data-carrier transactions. Standard sends are unaffected.",
+                        "Knots ships stricter relay defaults — it limits oversized \
+                         data-carrier (\"spam\") transactions. Standard sends are unaffected.",
                     )
                     .size(12)
                     .style(theme::text::secondary),
@@ -1831,7 +1823,6 @@ pub fn internal_node_setup_panel<'a>(
     download_progress: f32,
 ) -> Element<'a, NodeSettingsMessage> {
     let name = flavor.display_name();
-    let rdts = matches!(flavor, NodeFlavor::Knots);
     let mut col = Column::new().spacing(15);
 
     col = col.push(
@@ -1876,22 +1867,16 @@ pub fn internal_node_setup_panel<'a>(
                 ),
         );
     } else if done {
-        let mut done_col = Column::new()
-            .spacing(6)
-            .push(text(format!("{name} is running and syncing in the background.")).bold())
-            .push(
-                text("Tenshu will automatically switch to this node once syncing is complete.")
-                    .size(13)
-                    .style(theme::text::secondary),
-            );
-        if rdts {
-            done_col = done_col.push(
-                text("RDTS: enforced (BIP-110).")
-                    .size(13)
-                    .style(theme::text::secondary),
-            );
-        }
-        col = col.push(done_col);
+        col = col.push(
+            Column::new()
+                .spacing(6)
+                .push(text(format!("{name} is running and syncing in the background.")).bold())
+                .push(
+                    text("Tenshu will automatically switch to this node once syncing is complete.")
+                        .size(13)
+                        .style(theme::text::secondary),
+                ),
+        );
     } else if downloading {
         col = col.push(
             Column::new()
@@ -2550,24 +2535,47 @@ mod tests {
         let _ = chain_repair_section();
     }
 
-    // The two directions are not symmetric, and the copy must not imply they are:
-    // switching to Core can change which chain the node follows, while switching to
-    // Knots re-checks the recent blocks the node still stores. The Knots copy has to
-    // mention both halves — the re-check and the pruning bound — because claiming
-    // the re-check without its limit would promise coverage we cannot deliver.
+    // The copy names what actually differs — relay policy — and, in both
+    // directions, says the chain is untouched. It previously had to warn that a
+    // switch could move the node onto a different chain, which was true only while
+    // one of the two builds enforced consensus rules the other did not. Repeating
+    // that warning now would scare users off a choice that no longer has stakes.
     #[test]
-    fn flavor_switch_copy_is_direction_specific() {
+    fn flavor_switch_copy_is_policy_only() {
         let to_core = flavor_switch_chain_note(NodeFlavor::Core);
         let to_knots = flavor_switch_chain_note(NodeFlavor::Knots);
         assert_ne!(to_core, to_knots);
+        for (target, note) in [("Core", to_core), ("Knots", to_knots)] {
+            assert!(
+                note.contains("unaffected"),
+                "switching to {} must say the chain and balances are unaffected",
+                target
+            );
+            for dead in ["BIP-110", "RDTS", "different chain", "re-check"] {
+                assert!(
+                    !note.contains(dead),
+                    "switching to {} still mentions {:?}",
+                    target,
+                    dead
+                );
+            }
+        }
         assert!(
-            to_core.contains("different chain"),
-            "switching to Core must warn that the followed chain may change"
+            to_knots.contains("stricter"),
+            "the Knots copy must say what the choice actually changes"
         );
-        assert!(
-            to_knots.contains("re-check") && to_knots.contains("pruned"),
-            "switching to Knots must say history is re-checked AND that pruning bounds it"
-        );
+    }
+
+    // The grep gate from the sunset plan, enforced where the strings live: no copy
+    // the node settings page can render names the dead soft fork.
+    #[test]
+    fn node_settings_copy_never_names_the_soft_fork() {
+        for note in [
+            flavor_switch_chain_note(NodeFlavor::Core),
+            flavor_switch_chain_note(NodeFlavor::Knots),
+        ] {
+            assert!(!note.contains("RDTS") && !note.contains("BIP-110"));
+        }
     }
 
     #[test]

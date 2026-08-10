@@ -556,7 +556,7 @@ pub enum NodeSettingsMessage {
     SetupLocalNodeConfirm,
     // Mode picker: false = self-managed external, true = COINCUBE-managed internal
     SetupLocalNodeModeSelected(bool),
-    // COINCUBE-managed picker: choose the node flavour (Core or Knots + RDTS)
+    // COINCUBE-managed picker: choose the node flavour (Core or Knots)
     // and begin the managed download/install in one step.
     SetupLocalNodeManagedFlavor(NodeFlavor),
     // Internal (COINCUBE-managed) node setup progress

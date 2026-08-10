@@ -115,7 +115,7 @@ pub struct Context {
     pub install_node_alongside_connect: bool,
     /// Managed-node flavour chosen on the node-management step, carried to the
     /// `InternalBitcoindStep` that actually downloads/configures it. Defaults to
-    /// Knots (BIP-110 / RDTS); the user can switch to Core on that step. Only
+    /// Knots; the user can switch to Core on that step. Only
     /// consulted for a *fresh* install — an existing on-disk `bitcoin.conf`'s
     /// flavour is always preserved so we never silently swap a running node.
     pub node_flavor: NodeFlavor,

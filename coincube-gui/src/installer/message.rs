@@ -422,7 +422,7 @@ impl std::fmt::Debug for RestorePinSetupMsg {
 pub enum InternalBitcoindMsg {
     Previous,
     Reload,
-    /// Pick the managed node flavour (Bitcoin Core or Bitcoin Knots + RDTS)
+    /// Pick the managed node flavour (Bitcoin Core or Bitcoin Knots)
     /// before the download starts.
     SelectFlavor(crate::node::bitcoind::NodeFlavor),
     /// Confirm the chosen flavour on the "Start Bitcoin full node" screen and

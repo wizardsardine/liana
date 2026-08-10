@@ -1462,6 +1462,10 @@ impl BitcoinD {
     /// Status of the softfork deployment named `name` per `getdeploymentinfo`
     /// (e.g. `"reduced_data"` for BIP-110 / RDTS).
     ///
+    /// TODO(PR4): the RDTS sunset left the desktop's `rdts_abandoned` probe as the
+    /// only caller. Delete both together once the revalidation machinery goes —
+    /// see `plans/PLAN-rdts-sunset.md`, PR 4.
+    ///
     /// `None` when the RPC is unavailable or the deployment does not exist on this
     /// network — Knots only ships `reduced_data` on mainnet and testnet4, so on
     /// regtest and signet this is always `None`.

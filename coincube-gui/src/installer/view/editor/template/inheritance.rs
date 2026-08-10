@@ -3,8 +3,8 @@ use iced::{alignment, widget::Space, Alignment, Length};
 use coincube_ui::{
     color,
     component::{
-        button,
-        text::{h3, p1_regular, Text, H3_SIZE},
+        button, collapse,
+        text::{h3, p1_regular, text, Text, H3_SIZE},
     },
     icon, theme,
     widget::*,
@@ -16,7 +16,7 @@ use crate::installer::{
     message::{self, Message},
     view::{
         editor::{
-            defined_key, path,
+            define_descriptor_advanced_settings, defined_key, path,
             template::diagram::{policy_timeline, PolicyRow, Timelock},
             undefined_key,
         },
@@ -163,6 +163,29 @@ pub fn two_of_three_inheritance_template<'a>(
         Column::new()
             .align_x(Alignment::Start)
             .max_width(1000.0)
+            .push(collapse::Collapse::new(
+                || {
+                    Button::new(
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .spacing(10)
+                            .push(text("Advanced settings").small().bold())
+                            .push(icon::collapse_icon()),
+                    )
+                    .style(theme::button::transparent)
+                },
+                || {
+                    Button::new(
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .spacing(10)
+                            .push(text("Advanced settings").small().bold())
+                            .push(icon::collapsed_icon()),
+                    )
+                    .style(theme::button::transparent)
+                },
+                move || define_descriptor_advanced_settings(use_taproot),
+            ))
             .push(
                 path(
                     color::GREEN,
@@ -311,6 +334,29 @@ pub fn inheritance_template<'a>(
         Column::new()
             .align_x(Alignment::Start)
             .max_width(1000.0)
+            .push(collapse::Collapse::new(
+                || {
+                    Button::new(
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .spacing(10)
+                            .push(text("Advanced settings").small().bold())
+                            .push(icon::collapse_icon()),
+                    )
+                    .style(theme::button::transparent)
+                },
+                || {
+                    Button::new(
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .spacing(10)
+                            .push(text("Advanced settings").small().bold())
+                            .push(icon::collapsed_icon()),
+                    )
+                    .style(theme::button::transparent)
+                },
+                move || define_descriptor_advanced_settings(use_taproot),
+            ))
             .push(
                 path(
                     color::GREEN,

@@ -727,7 +727,7 @@ mod tests {
         use crate::node::bitcoind::{InternalBitcoindConfig, InternalBitcoindNetworkConfig};
 
         let datadir = temp_datadir("failsafe");
-        // A managed-node config exists (Knots, RDTS) but no tor binary is
+        // A managed-node config exists (Knots) but no tor binary is
         // installed, and the preference asks for inbound.
         let config_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(&datadir));
         std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
@@ -756,8 +756,8 @@ mod tests {
         let reloaded = InternalBitcoindConfig::from_file(&config_path).unwrap();
         assert!(!reloaded.inbound_tor, "no listen/listenonion emitted");
         assert!(reloaded.tor_control_port.is_none());
-        // The RDTS/base config is preserved.
-        assert!(reloaded.enforce_rdts);
+        // The base config is preserved.
+        assert_eq!(reloaded.networks.len(), 1);
         // The user's preference is NOT clobbered by the failure — retried next launch.
         assert!(InboundTorPreference::load(&datadir).enabled);
 
@@ -793,7 +793,7 @@ mod tests {
         assert!(!reloaded.inbound_tor, "no inbound knobs off-mainnet");
         assert!(reloaded.tor_control_port.is_none());
         // Base config preserved; preference untouched (still enabled for mainnet).
-        assert!(reloaded.enforce_rdts);
+        assert_eq!(reloaded.networks.len(), 1);
         assert!(InboundTorPreference::load(&datadir).enabled);
 
         let _ = std::fs::remove_dir_all(datadir.path());

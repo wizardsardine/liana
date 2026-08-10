@@ -590,7 +590,7 @@ pub struct SelectBitcoindTypeStep {
     network: Network,
     connect_authenticated: bool,
     /// Managed-node flavour to install when a node is installed. Defaults to
-    /// Knots (BIP-110 / RDTS); the user can switch to Core. Carried into
+    /// Knots; the user can switch to Core. Carried into
     /// `Context::node_flavor` by `apply`.
     node_flavor: NodeFlavor,
     /// The flavour of the managed node already configured on disk, if any. The
@@ -912,8 +912,8 @@ pub struct InternalBitcoindStep {
     coincube_datadir: CoincubeDirectory,
     bitcoind_datadir: PathBuf,
     network: Network,
-    /// Which managed node flavour to install. Defaults to Core; Knots is the
-    /// opt-in that enforces BIP-110 (RDTS).
+    /// Which managed node flavour to install. Defaults to Core; the
+    /// node-management step's picker defaults to Knots and overrides it.
     flavor: NodeFlavor,
     /// For Knots, the fetched `(SHA256SUMS, SHA256SUMS.asc)` the download is
     /// verified against. `None` for Core (verified by a code-pinned hash).
@@ -1020,15 +1020,12 @@ impl Step for InternalBitcoindStep {
         // config written by an earlier (pre-picker) Core install would silently
         // override an explicit Knots pick — installing Core for a user who asked
         // for Knots. `DefineConfig` reuses a matching on-disk config (ports /
-        // RDTS) and rebuilds it on a flavour change.
+        // ports) and rebuilds it on a flavour change.
         self.flavor = ctx.node_flavor;
         // Flavour already configured on disk (if any) — drives the picker's
         // "…switches every Vault" warning when the user changes it.
-        self.existing_flavor = InternalBitcoindConfig::from_file(
-            &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
-        )
-        .ok()
-        .map(|c| c.flavor);
+        self.existing_flavor =
+            crate::node::bitcoind::configured_managed_flavor(&self.coincube_datadir);
         if self.exe_path.is_none() {
             // Check if current managed bitcoind version is already installed.
             // For new installations, we ignore any previous managed bitcoind versions that might be installed.
@@ -1165,17 +1162,19 @@ impl Step for InternalBitcoindStep {
                         // An existing managed node is shared by every Vault, so
                         // flavour is global. Keep its ports/datadir (so every
                         // Vault keeps connecting to the same RPC endpoint) and
-                        // apply the chosen flavour in place — a Core→Knots switch
-                        // just flips the binary and toggles `consensusrules=rdts`,
-                        // and `maybe_start` stops the old-flavour node so the
-                        // configured binary takes over the same port.
+                        // apply the chosen flavour in place — a switch just flips
+                        // the binary, and `maybe_start` stops the old-flavour node
+                        // so the configured binary takes over the same port.
                         Ok(mut conf) => {
                             conf.flavor = self.flavor;
-                            conf.enforce_rdts = matches!(self.flavor, NodeFlavor::Knots);
+                            // Drop any legacy `consensusrules=rdts`: no build we
+                            // ship enforces BIP-110, and the write below rebuilds
+                            // the file from this struct.
+                            conf.enforce_rdts = false;
                             conf
                         }
                         // Fresh install: build for the chosen flavour (ports are
-                        // allocated below); `for_flavor` enables RDTS only for Knots.
+                        // allocated below).
                         Err(InternalBitcoindConfigError::FileNotFound) => {
                             InternalBitcoindConfig::for_flavor(self.flavor)
                         }
@@ -1244,6 +1243,13 @@ impl Step for InternalBitcoindStep {
                     network_conf.prune = resources.prune_mb;
                     conf.networks.insert(self.network, network_conf);
                     conf.max_mempool_mb = resources.max_mempool_mb;
+                    // The file itself cannot say which flavour it is for, so the
+                    // ledger has to — recorded before the write that would drop a
+                    // legacy `consensusrules` marker.
+                    crate::node::revalidate::ManagedNodeState::record_configured(
+                        &self.coincube_datadir,
+                        self.flavor,
+                    );
                     if let Err(e) = conf.to_file(&bitcoind::internal_bitcoind_config_path(
                         &self.bitcoind_datadir,
                     )) {
@@ -1517,7 +1523,7 @@ mod tests {
         sha256::Hash::hash(bytes).to_string()
     }
 
-    /// The managed-node install must default to Knots (BIP-110 / RDTS); Core is
+    /// The managed-node install must default to Knots; Core is
     /// the opt-out. Guards against the default silently reverting to Core.
     #[test]
     fn installer_defaults_to_knots() {
@@ -1713,7 +1719,7 @@ mod tests {
     #[test]
     fn manifest_hash_listing() {
         let archive = b"the bitcoin knots archive".to_vec();
-        let filename = "bitcoin-29.3.knots20260508-x86_64-linux-gnu.tar.gz";
+        let filename = "bitcoin-29.3.knots20260507-x86_64-linux-gnu.tar.gz";
         let sums = format!(
             "0000000000000000000000000000000000000000000000000000000000000000  decoy.tar.gz\n\
              {}  {}\n",
@@ -1726,7 +1732,7 @@ mod tests {
         // Right hash but a different filename: rejected.
         assert!(!hash_listed_in_manifest(
             &archive,
-            "bitcoin-29.3.knots20260508-arm64-apple-darwin.tar.gz",
+            "bitcoin-29.3.knots20260507-arm64-apple-darwin.tar.gz",
             &sums
         ));
     }
@@ -1738,7 +1744,7 @@ mod tests {
         // Signature valid, but our (arbitrary) archive isn't in the real
         // manifest -> reaches and fails the checksum step.
         let manifest = DownloadVerification::ReleaseManifest {
-            archive_filename: "bitcoin-29.3.knots20260508-x86_64-linux-gnu.tar.gz".to_string(),
+            archive_filename: "bitcoin-29.3.knots20260507-x86_64-linux-gnu.tar.gz".to_string(),
             sha256sums: REAL_SUMS.to_string(),
             sha256sums_asc: REAL_ASC.to_string(),
             signing_key_asc: bitcoind::KNOTS_SIGNING_KEY_ASC,

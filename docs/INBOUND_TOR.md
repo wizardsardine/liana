@@ -1,11 +1,11 @@
 # Inbound connectivity over Tor for the managed node
 
-COINCUBE's managed Bitcoin node (Knots default, `consensusrules=rdts`, pruned)
-can make itself **reachable** as a Tor v3 onion service — no port-forwarding, no
-public IP exposure. A reachable, RDTS-enforcing node relays valid blocks and
-transactions to more peers, extending the enforcing surface of the gossip
-network. This is "Level 2 of the wedge": *run an enforcing node* → *make it
-reachable and defend the network*.
+COINCUBE's managed Bitcoin node (Knots default, pruned) can make itself
+**reachable** as a Tor v3 onion service — no port-forwarding, no public IP
+exposure. A reachable node validates and relays blocks and transactions for
+peers instead of only consuming them, which is what makes running your own node
+worth something to the network as well as to you. This is "Level 2": *run your
+own node* → *make it reachable and help decentralise the network*.
 
 This doc covers only the **Vault**'s managed native-Bitcoin node. It is unrelated
 to the Liquid wallet (see [BREEZ_BTC_RECEIVE.md](BREEZ_BTC_RECEIVE.md)).
@@ -29,8 +29,8 @@ Clearnet inbound, UPnP/NAT-PMP, and I2P are **out of scope** for v1.
 ## Default ON, with a one-click opt-out
 
 Inbound-over-Tor is **enabled by default** for a freshly set-up Knots managed
-node (early adopters skew unmetered NA/EU; more enforcing nodes is the point of
-the wedge). Safeguards replace the opt-in:
+node (early adopters skew unmetered NA/EU; more reachable sovereign nodes is the
+point). Safeguards replace the opt-in:
 
 - The **~1 GB/day upload cap is always on by default** (`maxuploadtarget`).
 - It is **disclosed at node setup** and can be turned off in Settings → Node →
@@ -38,7 +38,7 @@ the wedge). Safeguards replace the opt-in:
 - On platforms with no Tor build (Linux/Windows **aarch64**), the feature is
   hidden and the node runs outbound-only.
 
-It is **mainnet-only**: the managed enforcing node exists to defend mainnet, and
+It is **mainnet-only**: the managed node exists to serve mainnet, and
 onion reachability has no value on test networks. On signet/testnet/regtest the
 Settings section is hidden, no default-ON preference is written, and the runtime
 never starts Tor (see `prepare_inbound_tor`).
