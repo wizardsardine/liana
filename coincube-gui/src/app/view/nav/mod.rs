@@ -32,7 +32,7 @@ use coincube_ui::{
     widget::{Button, Column, Element, Row},
 };
 use iced::{
-    widget::{column, container, row, Space},
+    widget::{column, container, row, text::Wrapping, Space},
     Alignment, Length,
 };
 
@@ -166,10 +166,15 @@ fn identity_block<'a>(ctx: &NavContext<'a>) -> Element<'a, Message> {
         } else {
             format!("{}@coincube.io", addr)
         };
-        let btn: Button<Message> =
-            Button::new(text::caption(display_addr.clone()).color(color::GREY_3))
-                .style(theme::button::transparent)
-                .on_press(Message::Clipboard(display_addr));
+        let label = text::caption(display_addr.clone())
+            .color(color::GREY_3)
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph);
+        let btn: Button<Message> = Button::new(label)
+            .width(Length::Fill)
+            .style(theme::button::transparent)
+            .on_press(Message::Clipboard(display_addr));
+
         col = col.push(btn);
     }
 
