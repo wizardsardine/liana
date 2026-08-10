@@ -299,6 +299,18 @@ pub struct Home {
     pending_remote_rename: Option<PendingRemoteRename>,
     /// Cubes that exist on the Connect server but not locally on this machine.
     remote_cubes: Vec<RemoteCube>,
+    /// Generation counter identifying the newest *valid* remote-cube fetch.
+    ///
+    /// `fetch_remote_cubes` has three independent triggers (sign-in, local
+    /// delete, remote-delete settled) with nothing serialising them, and each
+    /// call is a `list_cubes()` plus one status probe per remote cube — so two
+    /// fetches can be in flight and finish in either order. Without a
+    /// generation, `RemoteCubesLoaded` is last-writer-wins by *arrival*, and a
+    /// slow older fetch overwrites a newer one with a stale list.
+    ///
+    /// Logout bumps this too (see `invalidate_remote_cubes`), so a fetch issued
+    /// for the previous account cannot repopulate the list after it is cleared.
+    remote_cubes_request: u64,
     /// Modal for deleting a remote-only cube from the Connect server.
     delete_remote_cube_modal: Option<DeleteRemoteCubeModal>,
     /// Recovery-method picker, shown when a remote cube can be recovered by
@@ -370,6 +382,7 @@ impl Home {
                 rename_cube_modal: None,
                 pending_remote_rename: None,
                 remote_cubes: Vec::new(),
+                remote_cubes_request: 0,
                 delete_remote_cube_modal: None,
                 recovery_method_modal: None,
                 welcome_quote: coincube_ui::component::quote_display::random_quote("first-launch"),
@@ -407,7 +420,17 @@ impl Home {
     /// remote-only at that instant, and nothing but a re-fetch can discover it.
     /// Without this it stayed invisible — and so unrestorable — until the next
     /// sign-in.
-    fn fetch_remote_cubes(&self) -> Task<Message> {
+    ///
+    /// Claims a fresh [`remote_cubes_request`](Self::remote_cubes_request)
+    /// generation and carries it through to `RemoteCubesLoaded`, so a result
+    /// that lands after a newer fetch (or after logout) is discarded rather
+    /// than applied. Takes `&mut self` for that reason.
+    fn fetch_remote_cubes(&mut self) -> Task<Message> {
+        // Bump unconditionally, before the signed-out bail: a fetch starting
+        // while signed out still means "anything older is superseded", and
+        // leaving the generation untouched here would let an in-flight result
+        // from a prior session land afterwards.
+        let request_id = self.invalidate_remote_cubes();
         let Some(rc_client) = self.connect_account.authenticated_client() else {
             return Task::none();
         };
@@ -495,8 +518,22 @@ impl Home {
 
                 Ok(remote_only)
             },
-            Message::RemoteCubesLoaded,
+            move |result| Message::RemoteCubesLoaded { request_id, result },
         )
+    }
+
+    /// Supersede every in-flight remote-cube fetch and return the new
+    /// generation. Callers that are *starting* a fetch keep the returned id;
+    /// callers that only need to discard (logout) ignore it.
+    ///
+    /// Logout must do this. It clears `remote_cubes`, but a fetch issued for
+    /// the previous account is still running and its `RemoteCubesLoaded` would
+    /// otherwise repopulate the list — putting the prior account's Cubes back
+    /// on screen after sign-out. The neighbouring `recover_vault` reset and
+    /// `recovery_method_modal` drop guard the same hazard for their surfaces.
+    fn invalidate_remote_cubes(&mut self) -> u64 {
+        self.remote_cubes_request = self.remote_cubes_request.wrapping_add(1);
+        self.remote_cubes_request
     }
 
     /// Returns the effective per-network cube limit, preferring the
@@ -1187,7 +1224,18 @@ impl Home {
             }
             #[cfg(not(target_os = "macos"))]
             Message::NativePasskeyTick => Task::none(),
-            Message::RemoteCubesLoaded(result) => {
+            Message::RemoteCubesLoaded { request_id, result } => {
+                // Superseded by a newer fetch, or invalidated by logout. Drop
+                // it: applying it would either roll the list back to an older
+                // server view or restore the previous account's Cubes.
+                if request_id != self.remote_cubes_request {
+                    log::debug!(
+                        "[LAUNCHER] Discarding stale remote-cube fetch #{} (current #{})",
+                        request_id,
+                        self.remote_cubes_request
+                    );
+                    return Task::none();
+                }
                 match result {
                     Ok(remote_only) => {
                         self.remote_cubes = remote_only;
@@ -2069,6 +2117,11 @@ impl Home {
                     if !now_authenticated {
                         self.server_cube_limit = None;
                         self.remote_cubes.clear();
+                        // Clearing alone isn't enough: a fetch issued for the
+                        // account we just left is still in flight and would
+                        // repopulate the list. Bump the generation so its
+                        // result is discarded on arrival.
+                        self.invalidate_remote_cubes();
                         // Reset the heir discovery surface back to Idle so the
                         // next sign-in re-fetches: otherwise its `Loaded` state
                         // (and `is_loaded()` re-fetch guard) would persist and a
@@ -4634,7 +4687,13 @@ pub enum Message {
     /// Result of renaming a cube locally (settings file updated).
     CubeRenamed(Result<(), String>),
     /// Remote-only cubes (on server but not local) computed off the UI thread.
-    RemoteCubesLoaded(Result<Vec<RemoteCube>, String>),
+    /// Completion of a `fetch_remote_cubes`. `request_id` is the generation the
+    /// fetch claimed; the handler drops anything that isn't the current one, so
+    /// out-of-order completions and post-logout stragglers can't apply.
+    RemoteCubesLoaded {
+        request_id: u64,
+        result: Result<Vec<RemoteCube>, String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -5569,10 +5628,17 @@ mod tests {
         assert_eq!(home.server_cube_limit, Some(4));
 
         let remote = remote_cube("local-a", "Remote A", Network::Bitcoin);
-        let _ = home.update(Message::RemoteCubesLoaded(Ok(vec![remote.clone()])));
+        let current = home.remote_cubes_request;
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: current,
+            result: Ok(vec![remote.clone()]),
+        });
         assert_eq!(home.remote_cubes.len(), 1);
 
-        let _ = home.update(Message::RemoteCubesLoaded(Err("offline".to_string())));
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: current,
+            result: Err("offline".to_string()),
+        });
         assert_eq!(home.remote_cubes.len(), 1);
 
         let _ = home.update(Message::Checked(Ok(State::Cubes {
@@ -5582,6 +5648,80 @@ mod tests {
 
         assert!(home.remote_cubes.is_empty());
         assert!(matches!(home.state, State::Cubes { .. }));
+    }
+
+    /// Two fetches in flight, the newer one finishing first. The older result
+    /// must not be applied: `fetch_remote_cubes` has three unsynchronised
+    /// triggers and each call's latency scales with the number of remote cubes
+    /// to probe, so arrival order is not issue order. Applying by arrival rolls
+    /// the list back to a stale server view.
+    #[test]
+    fn a_late_remote_cube_fetch_does_not_clobber_a_newer_one() {
+        let mut home = signed_in_home();
+
+        // Two overlapping fetches, each claiming its own generation.
+        let _ = home.fetch_remote_cubes();
+        let older = home.remote_cubes_request;
+        let _ = home.fetch_remote_cubes();
+        let newer = home.remote_cubes_request;
+        assert_ne!(older, newer, "each fetch must claim its own generation");
+
+        // The newer fetch lands first and is applied.
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: newer,
+            result: Ok(vec![remote_cube("newer", "Newer", Network::Bitcoin)]),
+        });
+        assert_eq!(home.remote_cubes.len(), 1);
+        assert_eq!(home.remote_cubes[0].uuid, "newer");
+
+        // The older one straggles in afterwards and must be dropped.
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: older,
+            result: Ok(vec![
+                remote_cube("stale-a", "Stale A", Network::Bitcoin),
+                remote_cube("stale-b", "Stale B", Network::Bitcoin),
+            ]),
+        });
+        assert_eq!(
+            home.remote_cubes.len(),
+            1,
+            "a superseded fetch must not overwrite the newer server view"
+        );
+        assert_eq!(home.remote_cubes[0].uuid, "newer");
+    }
+
+    /// Logging out while a fetch is in flight. The logout branch clears
+    /// `remote_cubes`, but the running fetch belongs to the account just left —
+    /// if its result still applied, the previous account's Cubes would reappear
+    /// on screen after sign-out.
+    #[test]
+    fn a_fetch_in_flight_at_logout_cannot_repopulate_the_list() {
+        use crate::app::view::ConnectAccountMessage;
+
+        let mut home = signed_in_home();
+        let _ = home.fetch_remote_cubes();
+        let inflight = home.remote_cubes_request;
+
+        // Real logout path, not a direct poke at the generation: this is the
+        // branch that clears the list, and it has to invalidate too.
+        let _ = home.update(Message::View(ViewMessage::ConnectAccount(
+            ConnectAccountMessage::LogOut,
+        )));
+        assert!(!home.connect_account.is_authenticated());
+        assert!(home.remote_cubes.is_empty());
+
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: inflight,
+            result: Ok(vec![remote_cube(
+                "prior-account",
+                "Prior Account Cube",
+                Network::Bitcoin,
+            )]),
+        });
+        assert!(
+            home.remote_cubes.is_empty(),
+            "a fetch issued for the signed-out account must not repopulate the list"
+        );
     }
 
     #[test]
