@@ -459,9 +459,9 @@ pub fn managed_tor_ports() -> Option<TorPorts> {
 /// will host an onion service. The user's preference sidecar is never modified
 /// here, so a transient failure is retried next launch.
 ///
-/// Inbound-over-Tor is **mainnet-only**: the managed enforcing node exists to
-/// defend mainnet, and onion reachability has no value on test networks, so we
-/// run outbound-only on anything but [`Network::Bitcoin`].
+/// Inbound-over-Tor is **mainnet-only**: the managed node exists to serve
+/// mainnet, and onion reachability has no value on test networks, so we run
+/// outbound-only on anything but [`Network::Bitcoin`].
 pub fn prepare_inbound_tor(coincube_datadir: &CoincubeDirectory, network: Network) -> bool {
     // Any prior managed tor from this process is replaced.
     stop_managed_tor();

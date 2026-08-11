@@ -64,8 +64,8 @@ pub const KNOTS_VERSION: &str = KNOTS_VERSIONS[0];
 
 /// First Knots build date that enforces BIP-110 (RDTS).
 ///
-/// Knots subversions carry a `knots<YYYYMMDD>` build tag
-/// (`/Satoshi:29.3.0(knots20260508)/`). Enforcement shipped in mainline from
+/// Knots subversions carry a `Knots:<YYYYMMDD>` build segment
+/// (`/Satoshi:29.3.0/Knots:20260508/`). Enforcement shipped in mainline from
 /// `knots20260508`; every earlier build — including the pinned
 /// [`KNOTS_VERSION`] — and every Bitcoin Core build ignore RDTS entirely.
 ///
@@ -189,7 +189,7 @@ impl NodeFlavor {
     }
 
     /// Infer the flavour from a running node's `getnetworkinfo.subversion`
-    /// (e.g. `/Satoshi:29.3.0(knots20260507)/`). Knots embeds `knots`; Core
+    /// (e.g. `/Satoshi:29.3.0/Knots:20260507/`). Knots embeds `Knots`; Core
     /// never does. Used to decide whether a reachable managed node already
     /// matches the configured flavour or must be replaced.
     pub fn from_subversion(subversion: &str) -> Self {
@@ -282,25 +282,93 @@ impl NodeFlavor {
 /// Enforcement is a build property, not a configuration one: `consensusrules=rdts`
 /// only ever recorded the user's consent, and an enforcing build enforces with or
 /// without it. So the only honest way to ask the question of a *running* node is
-/// to read the build tag out of its `getnetworkinfo.subversion` —
-/// `/Satoshi:29.3.0(knots20260508)/` → `20260508` → enforcing.
+/// to read the build date out of its `getnetworkinfo.subversion`. Knots publishes
+/// that as its own segment — `/Satoshi:29.3.0/Knots:20260508/` → `20260508` →
+/// enforcing.
 ///
-/// Core is never enforcing. A Knots build whose tag we cannot parse is treated as
-/// enforcing, which is the conservative answer: the caller uses this to decide
-/// whether a node trailing the most-work chain should be dragged back onto it, and
-/// doing that to a genuinely enforcing node just re-rejects the same blocks on
-/// every start, forever.
+/// The separator between `Knots` and the date is skipped rather than assumed:
+/// getting it wrong reads every Knots build as undatable, and the fallback below
+/// then calls all of them enforcing — which silently disables the repair this
+/// exists to trigger *and* makes every start replace a perfectly good binary.
+///
+/// Core is never enforcing. A Knots build whose date we cannot read is treated as
+/// enforcing, which is the conservative answer for the one caller that moves a
+/// chain: dragging a genuinely enforcing node back onto the majority chain just
+/// re-rejects the same blocks on every start, forever.
 pub fn build_enforces_rdts(subversion: &str) -> bool {
-    let subversion = subversion.to_lowercase();
-    let Some(tag) = subversion.split_once("knots") else {
+    if !matches!(NodeFlavor::from_subversion(subversion), NodeFlavor::Knots) {
         return false;
-    };
-    let build: String = tag.1.chars().take_while(char::is_ascii_digit).collect();
-    match build.parse::<u32>() {
-        Ok(build) => build >= RDTS_ENFORCING_KNOTS_BUILD,
-        // A Knots build we can't date. Assume the worst and leave its chain alone.
-        Err(_) => true,
     }
+    match knots_build_date(subversion) {
+        Some(build) => build >= RDTS_ENFORCING_KNOTS_BUILD,
+        // A Knots build we can't date. Assume the worst and leave its chain alone.
+        None => true,
+    }
+}
+
+/// The `YYYYMMDD` build date out of a Knots subversion, or `None` for Core and
+/// for a Knots build that doesn't carry one where we can find it.
+///
+/// The separator between `Knots` and the date is skipped rather than assumed:
+/// `Knots:20260508`, `knots20260508` and `Knots-20260508` all mean the same
+/// thing, and only the date does any work.
+fn knots_build_date(subversion: &str) -> Option<u32> {
+    let subversion = subversion.to_lowercase();
+    let (_, after) = subversion.split_once("knots")?;
+    let build: String = after
+        .trim_start_matches([':', '-', '_', ' ', '(', '/'])
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    build.parse().ok()
+}
+
+/// The client a subversion identifies, or `None` when it is not one we recognise.
+///
+/// Unlike [`NodeFlavor::from_subversion`], which answers `Core` for anything that
+/// is not Knots, this one refuses to guess. That default is right where the
+/// question is "which of our two managed binaries is this" — it is asked about a
+/// node we downloaded ourselves — but wrong for naming a node to the user: an
+/// *external* backend can be any client that speaks the RPC, and calling an
+/// unrecognised one "Bitcoin Core" states something we do not know.
+///
+/// Recognition is by the client segment: Knots advertises `Knots:<date>`
+/// alongside Core's `Satoshi:<version>`, and Core advertises `Satoshi` alone.
+pub fn recognized_flavor(subversion: &str) -> Option<NodeFlavor> {
+    if subversion.to_lowercase().contains("knots") {
+        return Some(NodeFlavor::Knots);
+    }
+    subversion
+        .trim_matches('/')
+        .split('/')
+        .next()?
+        .split_once(':')
+        .filter(|(client, _)| client.eq_ignore_ascii_case("Satoshi"))
+        .map(|_| NodeFlavor::Core)
+}
+
+/// How to name the build a node is running, from its `getnetworkinfo.subversion`.
+///
+/// `/Satoshi:29.3.0/Knots:20260507/` → `29.3.0 (build 20260507)`, and
+/// `/Satoshi:29.0.0/` → `29.0.0`. The flavour is deliberately left out: every
+/// surface that shows this already names Core or Knots beside it, and repeating
+/// it reads as a stutter.
+///
+/// `None` when the subversion is not the `/Client:version/…/` shape at all —
+/// better to show nothing than to present a string we did not understand as a
+/// version.
+pub fn node_version_label(subversion: &str) -> Option<String> {
+    let version = subversion
+        .trim_matches('/')
+        .split('/')
+        .next()?
+        .split_once(':')
+        .map(|(_, version)| version.trim())
+        .filter(|version| !version.is_empty())?;
+    Some(match knots_build_date(subversion) {
+        Some(build) => format!("{version} (build {build})"),
+        None => version.to_string(),
+    })
 }
 
 /// What a running managed node actually *is*, as opposed to what it was
@@ -2438,30 +2506,98 @@ mod tests {
     #[test]
     fn the_pinned_knots_build_does_not_enforce_rdts() {
         assert_eq!(KNOTS_VERSION, "29.3.knots20260507");
+        // Built the way the real binary reports it, so the pin and the parser are
+        // checked against each other rather than against a hand-written string.
         assert!(!build_enforces_rdts(&format!(
-            "/Satoshi:29.3.0({})/",
-            KNOTS_VERSION.rsplit('.').next().unwrap()
+            "/Satoshi:29.3.0/Knots:{}/",
+            KNOTS_VERSION.trim_start_matches("29.3.knots")
         )));
         // No enforcing build is offered for installation or reuse, so an
         // already-installed one never satisfies the Knots flavour.
         assert!(!KNOTS_VERSIONS.contains(&"29.3.knots20260508"));
     }
 
-    // Enforcement is read off the build tag, not the flavour: the two Knots
+    // Enforcement is read off the build date, not the flavour: the two Knots
     // builds either side of the RDTS release answer differently.
+    //
+    // The two verbatim strings are what the real binaries report — captured from
+    // `getnetworkinfo` on both builds. They are the point of this test: an earlier
+    // version of the parser assumed `(knots20260508)` and so could not read the
+    // date out of *either* real subversion, which made every Knots build look
+    // enforcing — no repair would ever run, and every start would stop and replace
+    // a correctly-pinned node.
     #[test]
     fn rdts_enforcement_is_read_from_the_subversion() {
-        assert!(!build_enforces_rdts("/Satoshi:29.3.0(knots20260507)/"));
-        assert!(build_enforces_rdts("/Satoshi:29.3.0(knots20260508)/"));
+        assert!(!build_enforces_rdts("/Satoshi:29.3.0/Knots:20260507/"));
+        assert!(build_enforces_rdts("/Satoshi:29.3.0/Knots:20260508/"));
         // Later builds keep enforcing.
-        assert!(build_enforces_rdts("/Satoshi:29.4.0(knots20260601)/"));
+        assert!(build_enforces_rdts("/Satoshi:29.4.0/Knots:20260601/"));
         // Core never does, whatever the version.
         assert!(!build_enforces_rdts("/Satoshi:29.0.0/"));
+        // Other ways the date could be attached, so a future Knots build that
+        // punctuates it differently doesn't silently disable the repair again.
+        assert!(!build_enforces_rdts("/Satoshi:29.3.0(knots20260507)/"));
+        assert!(!build_enforces_rdts("/Satoshi:29.3.0/Knots-20260507/"));
         // A Knots build we cannot date is assumed enforcing: the cost of being
         // wrong the other way is a repair that loops on every start.
-        assert!(build_enforces_rdts("/Satoshi:29.3.0(knots-custom)/"));
+        assert!(build_enforces_rdts("/Satoshi:29.3.0/Knots:custom/"));
         // Case is not load-bearing.
-        assert!(build_enforces_rdts("/Satoshi:29.3.0(KNOTS20260508)/"));
+        assert!(build_enforces_rdts("/SATOSHI:29.3.0/KNOTS:20260508/"));
+    }
+
+    // Naming a node to the user requires recognising its client, which is a
+    // stricter question than `from_subversion`'s "which of our two binaries is
+    // this". An external backend can be any client that speaks the RPC.
+    #[test]
+    fn an_unrecognised_client_is_not_named_bitcoin_core() {
+        assert_eq!(
+            recognized_flavor("/Satoshi:29.3.0/Knots:20260507/"),
+            Some(NodeFlavor::Knots)
+        );
+        assert_eq!(
+            recognized_flavor("/Satoshi:29.0.0/"),
+            Some(NodeFlavor::Core)
+        );
+
+        // The cases that matter: another implementation, or nothing readable at
+        // all. `from_subversion` answers Core for every one of these — correctly,
+        // for picking between our own binaries; not for telling the user what
+        // they are running.
+        for unknown in [
+            "/btcd:0.24.2/",
+            "/bcoin:2.2.0/",
+            "/libbitcoin:3.0/",
+            "",
+            "/Satoshi/",
+        ] {
+            assert_eq!(recognized_flavor(unknown), None, "{unknown:?}");
+            assert_eq!(NodeFlavor::from_subversion(unknown), NodeFlavor::Core);
+        }
+    }
+
+    // The version shown beside the node card's flavour switcher, from the same
+    // real subversions.
+    #[test]
+    fn node_version_labels_name_the_running_build() {
+        assert_eq!(
+            node_version_label("/Satoshi:29.3.0/Knots:20260507/").as_deref(),
+            Some("29.3.0 (build 20260507)")
+        );
+        // Core carries no build date, so the label is just the version.
+        assert_eq!(
+            node_version_label("/Satoshi:29.0.0/").as_deref(),
+            Some("29.0.0")
+        );
+        // An external node running something else still gets its version read.
+        assert_eq!(
+            node_version_label("/Satoshi:28.1.0/").as_deref(),
+            Some("28.1.0")
+        );
+        // Nothing we recognise as a version: show nothing rather than echoing an
+        // unparsed string back at the user as if it were one.
+        assert_eq!(node_version_label("/Satoshi/"), None);
+        assert_eq!(node_version_label(""), None);
+        assert_eq!(node_version_label("/Satoshi:/"), None);
     }
 
     // `consensusrules` is never written again — not for either flavour, and not

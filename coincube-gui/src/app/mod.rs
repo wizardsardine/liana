@@ -1595,10 +1595,11 @@ pub(crate) async fn reconcile_duress_orphan(datadir: CoincubeDirectory) -> Resul
 }
 
 /// Poll the local bitcoind's IBD progress via its JSON-RPC interface.
-/// Returns `(verificationprogress, initialblockdownload)` or an error string.
+/// Returns `(verificationprogress, initialblockdownload, subversion)` or an error
+/// string. The subversion is `None` when the node would not say what it is.
 async fn check_bitcoind_sync_progress(
     cfg: coincubed::config::BitcoindConfig,
-) -> Result<(f64, bool), String> {
+) -> Result<(f64, bool, Option<String>), String> {
     use coincubed::config::BitcoindRpcAuth;
 
     let (user, pass) = match &cfg.rpc_auth {
@@ -1623,10 +1624,11 @@ async fn check_bitcoind_sync_progress(
         "id": 1
     });
 
-    let resp: serde_json::Value = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
-        .map_err(|e| format!("bitcoind RPC client build failed: {}", e))?
+        .map_err(|e| format!("bitcoind RPC client build failed: {}", e))?;
+    let resp: serde_json::Value = client
         .post(&url)
         .basic_auth(&user, Some(&pass))
         .json(&body)
@@ -1644,7 +1646,33 @@ async fn check_bitcoind_sync_progress(
     let ibd = result["initialblockdownload"]
         .as_bool()
         .ok_or_else(|| "Missing initialblockdownload in bitcoind response".to_string())?;
-    Ok((progress, ibd))
+    // Which build is actually syncing, so the progress copy can name it instead of
+    // assuming Core. Read from the node's own subversion — the same source every
+    // other flavour decision uses — and best-effort: an unreadable answer costs a
+    // less specific sentence, not the progress report the user is waiting on.
+    let subversion = subversion(&client, &url, &user, &pass).await;
+    Ok((progress, ibd, subversion))
+}
+
+/// A node's `getnetworkinfo.subversion`, or `None` if it cannot be read.
+async fn subversion(client: &reqwest::Client, url: &str, user: &str, pass: &str) -> Option<String> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "getnetworkinfo",
+        "params": [],
+        "id": 1
+    });
+    let resp: serde_json::Value = client
+        .post(url)
+        .basic_auth(user, Some(pass))
+        .json(&body)
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    resp["result"]["subversion"].as_str().map(str::to_string)
 }
 
 /// Poll the active managed node's network participation stats — connection
@@ -1729,6 +1757,7 @@ async fn check_bitcoind_net_stats(
         upload_used,
         upload_target,
         onion_address,
+        subversion: ni["subversion"].as_str().map(str::to_string),
     })
 }
 
@@ -3695,9 +3724,13 @@ impl App {
                 self.bitcoind_sync_probe_in_progress = false;
                 match res {
                     Err(e) => tracing::warn!("Bitcoind sync check failed: {}", e),
-                    Ok((progress, ibd)) => {
+                    Ok((progress, ibd, subversion)) => {
                         self.cache.node_bitcoind_sync_progress = Some(progress);
                         self.cache.node_bitcoind_ibd = Some(ibd);
+                        // Keep the last good answer if this poll couldn't read it.
+                        if subversion.is_some() {
+                            self.cache.node_bitcoind_subversion = subversion;
+                        }
                         // Auto-switch to the pending node once it's synced, but
                         // only if the user *adopted* it (`auto_switch_to_pending`).
                         // This fires even for a node that reused an existing
@@ -4212,6 +4245,7 @@ impl App {
                 if result.is_ok() {
                     self.cache.node_bitcoind_sync_progress = None;
                     self.cache.node_bitcoind_ibd = None;
+                    self.cache.node_bitcoind_subversion = None;
                     self.cache.node_bitcoind_last_log = None;
                 }
                 let cfg_task = self.update_dispatch(Message::DaemonConfigLoaded(result));
