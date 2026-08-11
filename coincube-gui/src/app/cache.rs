@@ -32,6 +32,9 @@ pub struct NodeNetStats {
     pub upload_target: u64,
     /// The v3 onion address bitcoind advertises, if reachable over Tor.
     pub onion_address: Option<String>,
+    /// `getnetworkinfo.subversion` — which client and build is actually serving
+    /// this backend. The one authority on that; configuration can disagree.
+    pub subversion: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +46,12 @@ pub struct Cache {
     /// Whether the pending local Bitcoind is currently in initial block download.
     /// `None` when no local node is pending.
     pub node_bitcoind_ibd: Option<bool>,
+    /// `getnetworkinfo.subversion` of the pending local Bitcoind, read on the same
+    /// poll that reports progress. `None` until the first poll, or when the node
+    /// would not say what it is — the syncing copy then names no build rather
+    /// than guessing one. Kept raw so both the flavour and the version can be
+    /// derived from the one source.
+    pub node_bitcoind_subversion: Option<String>,
     /// Mirror of `App::daemon_switch_in_progress` so the stateless Node
     /// settings view can reflect an in-flight backend switch (disable the
     /// switch buttons and show a "switching…" status) instead of offering a
@@ -241,6 +250,7 @@ impl std::default::Default for Cache {
             datadir_path: CoincubeDirectory::new(std::path::PathBuf::new()),
             node_bitcoind_sync_progress: None,
             node_bitcoind_ibd: None,
+            node_bitcoind_subversion: None,
             daemon_switch_in_progress: false,
             node_bitcoind_last_log: None,
             node_net_stats: None,

@@ -3058,6 +3058,7 @@ pub fn create_app_with_remote_backend(
             .unwrap_or_default(),
             node_bitcoind_sync_progress: None,
             node_bitcoind_ibd: None,
+            node_bitcoind_subversion: None,
             daemon_switch_in_progress: false,
             node_bitcoind_last_log: None,
             node_net_stats: None,

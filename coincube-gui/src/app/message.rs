@@ -189,8 +189,10 @@ pub enum Message {
     /// Fired by the bitcoind-sync subscription to trigger a progress probe.
     PollBitcoindSync,
     /// Result of polling the pending local bitcoind's IBD sync progress.
-    /// Carries `(verificationprogress, initialblockdownload)`.
-    BitcoindSyncProgress(Result<(f64, bool), String>),
+    /// Carries `(verificationprogress, initialblockdownload, subversion)`, the
+    /// subversion read from the node itself so the syncing copy can name the
+    /// build that is actually running.
+    BitcoindSyncProgress(Result<(f64, bool, Option<String>), String>),
     /// Result of polling the *active* managed node's network stats (connection
     /// counts, upload used vs. cap, onion address) for the Node settings.
     BitcoindNetStats(Result<crate::app::cache::NodeNetStats, String>),

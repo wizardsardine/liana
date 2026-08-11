@@ -76,7 +76,7 @@ const MIN_TAPROOT_BITCOIND_VERSION: u64 = 260000;
 /// it is compared directly — there is no other scale to normalize from. We gate
 /// on this number alone: Bitcoin Knots 29.x reports `290000` exactly like Core
 /// 29.x, so Knots (a Core superset) is accepted without special-casing its
-/// `(knots…)` subversion string.
+/// `/Knots:…/` subversion segment.
 fn is_supported_bitcoind_version(version: u64, is_taproot: bool) -> bool {
     version >= MIN_BITCOIND_VERSION && (!is_taproot || version >= MIN_TAPROOT_BITCOIND_VERSION)
 }
@@ -766,7 +766,7 @@ impl BitcoinD {
     }
 
     /// The node's self-reported build string, e.g. `/Satoshi:29.0.0/` for
-    /// Bitcoin Core or `/Satoshi:29.3.0(knots20260508)/` for Bitcoin Knots.
+    /// Bitcoin Core or `/Satoshi:29.3.0/Knots:20260508/` for Bitcoin Knots.
     /// Informational only — we gate compatibility on the numeric `version`, not
     /// this string, so Knots (a Core superset) is accepted like any other build.
     fn get_bitcoind_subversion(&self) -> String {
@@ -1745,7 +1745,7 @@ impl BitcoinD {
     }
 
     /// The running node's `getnetworkinfo.subversion` (e.g.
-    /// `/Satoshi:29.3.0(knots20260508)/`), or `None` if the request fails.
+    /// `/Satoshi:29.3.0/Knots:20260508/`), or `None` if the request fails.
     /// Fallible (never panics) because the desktop calls it to decide whether a
     /// reachable managed node is Core or Knots, possibly while it is shutting
     /// down. Distinct from the internal [`Self::get_bitcoind_subversion`], which
@@ -2283,7 +2283,7 @@ mod tests {
 
     // Bitcoin Knots 29.x shares Core's numeric `getnetworkinfo.version` scheme:
     // the 29.x base reports 290000. Compatibility is gated on that number, not
-    // on the `(knots…)` subversion string, so a Knots node clears both the
+    // on the `/Knots:…/` subversion segment, so a Knots node clears both the
     // baseline and the Taproot-descriptor minimums exactly like Core 29.x.
     #[test]
     fn knots_numeric_version_is_supported() {

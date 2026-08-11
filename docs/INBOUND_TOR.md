@@ -3,9 +3,8 @@
 COINCUBE's managed Bitcoin node (Knots default, pruned) can make itself
 **reachable** as a Tor v3 onion service — no port-forwarding, no public IP
 exposure. A reachable node validates and relays blocks and transactions for
-peers instead of only consuming them, which is what makes running your own node
-worth something to the network as well as to you. This is "Level 2": *run your
-own node* → *make it reachable and help decentralise the network*.
+peers instead of only consuming them — the node serves the network as well as
+serving you.
 
 This doc covers only the **Vault**'s managed native-Bitcoin node. It is unrelated
 to the Liquid wallet (see [BREEZ_BTC_RECEIVE.md](BREEZ_BTC_RECEIVE.md)).
@@ -29,12 +28,11 @@ Clearnet inbound, UPnP/NAT-PMP, and I2P are **out of scope** for v1.
 ## Default ON, with a one-click opt-out
 
 Inbound-over-Tor is **enabled by default** for a freshly set-up Knots managed
-node (early adopters skew unmetered NA/EU; more reachable sovereign nodes is the
-point). Safeguards replace the opt-in:
+node (early adopters skew unmetered NA/EU). Safeguards replace the opt-in:
 
 - The **~1 GB/day upload cap is always on by default** (`maxuploadtarget`).
 - It is **disclosed at node setup** and can be turned off in Settings → Node →
-  **"Help defend the network"** at any time.
+  **"Inbound connections"** at any time.
 - On platforms with no Tor build (Linux/Windows **aarch64**), the feature is
   hidden and the node runs outbound-only.
 
@@ -132,7 +130,7 @@ means a separate machine/host running `tor` + a Bitcoin client, or
 | # | Scenario | Steps | Expected |
 | --- | --- | --- | --- |
 | 1 | **Enable → reachable** | Fresh Knots setup (default ON) → let Tor bootstrap and `bitcoind` start | `bitcoin-cli getnetworkinfo` shows a `.onion` in `localaddresses`; the onion is reachable from an external Tor client; `getpeerinfo` eventually shows peers with `inbound: true` |
-| 2 | **Disable → listen off** | Settings → "Help defend the network" → toggle off → restart node | `bitcoin.conf` has no `listen`/`listenonion`/`torcontrol`/`proxy`; `getnetworkinfo.localaddresses` has no onion; no managed `tor` process; node runs outbound-only |
+| 2 | **Disable → listen off** | Settings → "Inbound connections" → toggle off → restart node | `bitcoin.conf` has no `listen`/`listenonion`/`torcontrol`/`proxy`; `getnetworkinfo.localaddresses` has no onion; no managed `tor` process; node runs outbound-only |
 | 3 | **Tor crash → fail-safe** | With inbound on, kill the `tor` process (or point the binary at a bad path) → restart node | `bitcoind` still starts and syncs (outbound-only); logs show "inbound unavailable, running outbound-only"; the preference sidecar still says enabled (retried next launch) |
 | 4 | **Bandwidth cap honoured** | Inbound on, default cap | `getnetworkinfo.uploadtarget.target_bytes` ≈ the configured MiB/day; `getnettotals` upload stays bounded. Toggle "Limit upload" off → `maxuploadtarget` omitted → `uploadtarget.target_bytes = 0` |
 | 5 | **Outbound-via-Tor sub-toggle** | Toggle the sub-toggle, restart | On: `bitcoin.conf` has `proxy=127.0.0.1:<socks>`, outbound peers are `.onion`/via Tor. Off: no `proxy` line, outbound is clearnet |
@@ -140,7 +138,7 @@ means a separate machine/host running `tor` + a Bitcoin client, or
 | 7 | **Unsupported platform** | Linux/Windows aarch64 | Settings section shows "Not available on this platform"; node runs outbound-only; no download attempted |
 | 8 | **Duress wipe** | Enable, let the onion key + `tor-data` exist, trigger a duress wipe | `bitcoind/tor-data` and `bitcoind/datadir[/**]/onion_v3_private_key` are gone; the blockchain (`blocks`/`chainstate`) survives |
 | 9 | **Signature failure refused** | Point the Tor download at a tampered archive/manifest (or wrong key) | Install fails with a signature/checksum error; no `tor` binary is written; inbound stays unavailable (fail-safe) |
-| 10 | **Signet/regtest (mainnet-only)** | Set up a managed node on a non-mainnet network | The "Help defend the network" section is **hidden**; no default-ON preference is written; `prepare_inbound_tor` no-ops to outbound-only regardless of the sidecar. Only `Network::Bitcoin` runs Tor inbound. |
+| 10 | **Signet/regtest (mainnet-only)** | Set up a managed node on a non-mainnet network | The "Inbound connections" section is **hidden**; no default-ON preference is written; `prepare_inbound_tor` no-ops to outbound-only regardless of the sidecar. Only `Network::Bitcoin` runs Tor inbound. |
 
 ### Automated coverage
 

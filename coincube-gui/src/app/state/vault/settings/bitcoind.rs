@@ -137,8 +137,8 @@ pub struct BitcoindSettingsState {
     bitcoind_settings: Option<BitcoindSettings>,
     electrum_settings: Option<ElectrumSettings>,
     rescan_settings: RescanSetting,
-    /// Cached inbound-over-Tor preference (from the sidecar), driving the "Help
-    /// defend the network" toggles. Persisted on every change.
+    /// Cached inbound-over-Tor preference (from the sidecar), driving the
+    /// "Inbound connections" toggles. Persisted on every change.
     inbound_tor_pref: crate::node::tor::InboundTorPreference,
     /// A managed-node flavour the user picked from the node-card dropdown but
     /// hasn't confirmed yet — while `Some`, a confirmation panel is shown.
@@ -783,7 +783,7 @@ impl State for BitcoindSettingsState {
                             }
                         }
                     }
-                    // "Help defend the network": persist the preference sidecar.
+                    // "Inbound connections": persist the preference sidecar.
                     // The change takes effect the next time the managed node
                     // starts (see `node::tor::prepare_inbound_tor`), so there's
                     // nothing to restart here.
@@ -1189,6 +1189,7 @@ impl State for BitcoindSettingsState {
                         active_icon,
                         cache.node_bitcoind_sync_progress,
                         cache.node_bitcoind_ibd,
+                        cache.node_bitcoind_subversion.as_deref(),
                         cache.node_bitcoind_last_log.as_deref(),
                         can_switch_to_connect,
                         can_switch_to_bitcoind,
@@ -1210,7 +1211,7 @@ impl State for BitcoindSettingsState {
                     ));
                 }
 
-                // "Help defend the network": inbound-over-Tor controls, placed
+                // "Inbound connections": inbound-over-Tor controls, placed
                 // directly below the node card. Shown only for the managed local
                 // node on mainnet (the feature is mainnet-only), and hidden
                 // during a node setup/flavour switch.
@@ -1572,8 +1573,7 @@ pub struct BitcoindSettings {
     daemon_is_external: bool,
     bitcoind_is_internal: bool,
     /// Flavour of the internal managed node — `Some` only when the node is the
-    /// internal managed one — read from the on-disk `bitcoin.conf`. Drives the
-    /// Core/Knots dropdown on the node card.
+    /// internal managed one. Drives the Core/Knots dropdown on the node card.
     managed_flavor: Option<NodeFlavor>,
 }
 
@@ -1620,14 +1620,27 @@ impl BitcoindSettings {
         } else {
             String::default()
         };
-        // For the internal managed node, recover its flavour from the on-disk
-        // config so the node card can show a Core/Knots switcher.
+        // For the internal managed node, recover its flavour so the node card can
+        // show a Core/Knots switcher.
+        //
+        // Deliberately *not* from the on-disk `bitcoin.conf`: that file no longer
+        // records the flavour at all (the `consensusrules=rdts` line it used to be
+        // inferred from is not written any more), so reading `conf.flavor` reports
+        // Core for every managed node, Knots included.
+        //
+        // Observed before configured. The card states what the node *is*, and the
+        // two can honestly disagree: `select_managed_bitcoind_exe` falls back to
+        // the other flavour's binary when the configured one isn't installed, so a
+        // datadir configured for Knots with only Core on disk really is running
+        // Core, and saying "Knots" there would be the same lie in reverse. The
+        // ledger's configured value is the fallback for a node that has not been
+        // observed running yet.
         let managed_flavor = if bitcoind_is_internal {
             CoincubeDirectory::active().ok().and_then(|dir| {
-                let cfg_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(&dir));
-                InternalBitcoindConfig::from_file(&cfg_path)
-                    .ok()
-                    .map(|c| c.flavor)
+                let ledger = crate::node::revalidate::ManagedNodeState::load(&dir);
+                ledger
+                    .last_run_flavor
+                    .or_else(|| crate::node::bitcoind::configured_managed_flavor(&dir))
             })
         } else {
             None
@@ -1757,6 +1770,10 @@ impl BitcoindSettings {
                 Some(cache.blockheight() != 0),
                 can_edit && !self.daemon_is_external && !self.bitcoind_is_internal,
                 self.managed_flavor,
+                cache
+                    .node_net_stats
+                    .as_ref()
+                    .and_then(|s| s.subversion.as_deref()),
             )
         }
     }
@@ -2835,13 +2852,20 @@ mod tests {
         assert_eq!(net.p2p_port, 45002); // preserved
         assert_eq!(net.rpc_auth, Some(rpc_auth)); // preserved
         assert_eq!(after.max_mempool_mb, Some(100)); // updated
-                                                     // No `consensusrules` is written, and the flavour is kept in the ledger
-                                                     // instead of the file — a write must not leave the legacy line behind.
+
+        // No `consensusrules` is written, and the flavour is kept in the ledger
+        // instead of the file — a write must not leave the legacy line behind.
         assert!(!after.enforce_rdts);
         assert_eq!(
             crate::node::bitcoind::configured_managed_flavor(&datadir),
             Some(NodeFlavor::Knots),
         );
+        // The trap this replaced: a config parsed back off disk reports the
+        // placeholder `Core` for a Knots node, because nothing in the file says
+        // otherwise. Anything that needs the managed flavour must ask the ledger,
+        // never `conf.flavor` — reading the latter is what made the node card
+        // show "Bitcoin Core" for a node the user installed as Knots.
+        assert_eq!(after.flavor, NodeFlavor::Core);
 
         let _ = fs::remove_dir_all(&base);
     }

@@ -432,6 +432,7 @@ pub fn bitcoind_edit<'a>(
     .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn bitcoind<'a>(
     is_configured_node_type: bool,
     network: Network,
@@ -442,6 +443,10 @@ pub fn bitcoind<'a>(
     // `Some(flavour)` for the internal managed node (renders a Core/Knots
     // switcher); `None` for an external node (flavour unknown/not switchable).
     managed_flavor: Option<NodeFlavor>,
+    // `getnetworkinfo.subversion` of the node actually serving this backend,
+    // polled alongside its network stats. `None` before the first poll, or when
+    // the backend isn't a local node.
+    subversion: Option<&'a str>,
 ) -> Element<'a, SettingsEditMessage> {
     let mut col = Column::new().spacing(20);
     if is_configured_node_type && blockheight != 0 {
@@ -538,8 +543,15 @@ pub fn bitcoind<'a>(
         .style(theme::pick_list::primary)
         .padding(8)
         .into(),
+        // An external node's flavour isn't ours to switch, but the version below
+        // still names it, so this stays a generic label rather than a guess.
         None => text("Bitcoin node").bold().into(),
     };
+    // What is actually running, straight from the node. Worth showing next to the
+    // switcher precisely because the two can disagree — a datadir configured for
+    // one flavour falls back to the other flavour's binary when the configured one
+    // isn't installed.
+    let version_label = subversion.and_then(crate::node::bitcoind::node_version_label);
 
     card::simple(Container::new(
         Column::new()
@@ -549,6 +561,10 @@ pub fn bitcoind<'a>(
                         Row::new()
                             .push(badge::badge(icon::bitcoin_icon()))
                             .push(flavor_header)
+                            .push(
+                                version_label
+                                    .map(|v| text(v).small().style(theme::text::secondary)),
+                            )
                             .push(if is_configured_node_type {
                                 Some(is_running_label(is_running))
                             } else {
@@ -1395,6 +1411,9 @@ pub fn node_backend_status<'a>(
     active_icon: coincube_ui::widget::Text<'static>,
     pending_progress: Option<f64>,
     pending_ibd: Option<bool>,
+    // `getnetworkinfo.subversion` of the syncing node, when it has told us.
+    // `None` leaves the build unnamed rather than asserting one.
+    pending_subversion: Option<&'a str>,
     pending_bitcoind_log: Option<&'a str>,
     can_switch_to_connect: bool,
     can_switch_to_bitcoind: bool,
@@ -1467,11 +1486,23 @@ pub fn node_backend_status<'a>(
         // Mirror the wording from `internal_node_setup_panel` so the user
         // sees the same promise from both entry points: a freshly installed
         // managed node, and a pending node we previously set aside when
-        // toggling to Connect.
+        // toggling to Connect. Including the *name*: this said "Bitcoin Core"
+        // unconditionally, which told every Knots user their node choice had
+        // been ignored.
+        let name = match pending_subversion {
+            Some(sv) => {
+                let flavor = NodeFlavor::from_subversion(sv).display_name();
+                match crate::node::bitcoind::node_version_label(sv) {
+                    Some(version) => format!("{flavor} {version}"),
+                    None => flavor.to_string(),
+                }
+            }
+            None => "Your local node".to_string(),
+        };
         let desc = format!(
-            "Bitcoin Core is running and syncing in the background. \
+            "{} is running and syncing in the background. \
              Tenshu will automatically switch to this node once syncing is complete. {}",
-            pace,
+            name, pace,
         );
 
         let mut sync_col = Column::new()
@@ -1904,8 +1935,8 @@ pub fn internal_node_setup_panel<'a>(
     card::simple(Container::new(col).padding(15).width(Length::Fill)).into()
 }
 
-/// The "Help defend the network" panel: opt in/out of inbound-over-Tor and tune
-/// it. Each control persists the preference sidecar; the change takes effect the
+/// The "Inbound connections" panel: opt in/out of inbound-over-Tor and tune it.
+/// Each control persists the preference sidecar; the change takes effect the
 /// next time the managed node starts.
 /// Format a byte count for display (`45 MB`, `1.0 GB`).
 fn human_bytes(bytes: u64) -> String {
@@ -1934,12 +1965,13 @@ pub fn inbound_tor_section<'a>(
 ) -> Element<'a, NodeSettingsMessage> {
     let mut col = Column::new()
         .spacing(15)
-        .push(text("Help defend the network").bold().size(18))
+        .push(text("Inbound connections").bold().size(18))
         .push(
             text(
-                "Make your enforcing node reachable over Tor — a private onion \
-                 service, no port-forwarding — so it can relay valid blocks and \
-                 transactions to more peers and defend the network.",
+                "Let other peers reach your node over Tor — a private onion \
+                 service, no port-forwarding needed. Your node then serves blocks \
+                 and transactions to them, instead of only downloading from \
+                 others.",
             )
             .size(13)
             .style(theme::text::secondary),
@@ -1958,7 +1990,11 @@ pub fn inbound_tor_section<'a>(
         Row::new()
             .spacing(20)
             .align_y(Alignment::Center)
-            .push(text("Share and defend over Tor").bold().width(Length::Fill))
+            .push(
+                text("Accept inbound connections over Tor")
+                    .bold()
+                    .width(Length::Fill),
+            )
             .push(
                 Toggler::new(enabled)
                     .on_toggle(NodeSettingsMessage::InboundTorToggled)
@@ -1971,7 +2007,7 @@ pub fn inbound_tor_section<'a>(
         col = col
             .push(
                 text(
-                    "Sharing up to ~1 GB/day. Turn off the limit only if your \
+                    "Uploads up to ~1 GB/day. Turn off the limit only if your \
                      internet connection isn't metered.",
                 )
                 .size(12)
@@ -2393,6 +2429,7 @@ mod tests {
             Some(true),
             true,
             Some(NodeFlavor::Knots),
+            Some("/Satoshi:29.3.0/Knots:20260507/"),
         );
         let _ = bitcoind(
             true,
@@ -2401,6 +2438,8 @@ mod tests {
             0,
             Some(false),
             false,
+            None,
+            // Version unknown (no poll yet) — the card must simply omit it.
             None,
         );
         let _ = bitcoind_edit(
@@ -2501,6 +2540,7 @@ mod tests {
             upload_used: 45 * 1024 * 1024,
             upload_target: 1024 * 1024 * 1024,
             onion_address: Some("abc123.onion".to_string()),
+            subversion: Some("/Satoshi:29.3.0/Knots:20260507/".to_string()),
         };
 
         let _ = node_backend_status(
@@ -2508,6 +2548,7 @@ mod tests {
             icon::network_icon(),
             Some(0.91),
             Some(true),
+            Some("/Satoshi:29.3.0/Knots:20260507/"),
             Some("UpdateTip: headers progress"),
             true,
             true,
@@ -2521,6 +2562,8 @@ mod tests {
             icon::bitcoin_icon(),
             Some(0.995),
             Some(false),
+            // Flavour unknown: the copy must fall back rather than name a build.
+            None,
             None,
             false,
             true,
