@@ -1489,16 +1489,20 @@ pub fn node_backend_status<'a>(
         // toggling to Connect. Including the *name*: this said "Bitcoin Core"
         // unconditionally, which told every Knots user their node choice had
         // been ignored.
-        let name = match pending_subversion {
-            Some(sv) => {
-                let flavor = NodeFlavor::from_subversion(sv).display_name();
-                match crate::node::bitcoind::node_version_label(sv) {
+        // A pending node is not necessarily one of ours: switching to Connect parks
+        // whichever Bitcoind backend was active, and that can be an external node
+        // running any client. So the name is only used for a subversion we
+        // actually recognise — naming an unknown client "Bitcoin Core" would be
+        // the same kind of invention this sentence used to make unconditionally.
+        let name = pending_subversion
+            .and_then(|sv| {
+                let flavor = crate::node::bitcoind::recognized_flavor(sv)?.display_name();
+                Some(match crate::node::bitcoind::node_version_label(sv) {
                     Some(version) => format!("{flavor} {version}"),
                     None => flavor.to_string(),
-                }
-            }
-            None => "Your local node".to_string(),
-        };
+                })
+            })
+            .unwrap_or_else(|| "Your local node".to_string());
         let desc = format!(
             "{} is running and syncing in the background. \
              Tenshu will automatically switch to this node once syncing is complete. {}",

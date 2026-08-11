@@ -323,6 +323,30 @@ fn knots_build_date(subversion: &str) -> Option<u32> {
     build.parse().ok()
 }
 
+/// The client a subversion identifies, or `None` when it is not one we recognise.
+///
+/// Unlike [`NodeFlavor::from_subversion`], which answers `Core` for anything that
+/// is not Knots, this one refuses to guess. That default is right where the
+/// question is "which of our two managed binaries is this" — it is asked about a
+/// node we downloaded ourselves — but wrong for naming a node to the user: an
+/// *external* backend can be any client that speaks the RPC, and calling an
+/// unrecognised one "Bitcoin Core" states something we do not know.
+///
+/// Recognition is by the client segment: Knots advertises `Knots:<date>`
+/// alongside Core's `Satoshi:<version>`, and Core advertises `Satoshi` alone.
+pub fn recognized_flavor(subversion: &str) -> Option<NodeFlavor> {
+    if subversion.to_lowercase().contains("knots") {
+        return Some(NodeFlavor::Knots);
+    }
+    subversion
+        .trim_matches('/')
+        .split('/')
+        .next()?
+        .split_once(':')
+        .filter(|(client, _)| client.eq_ignore_ascii_case("Satoshi"))
+        .map(|_| NodeFlavor::Core)
+}
+
 /// How to name the build a node is running, from its `getnetworkinfo.subversion`.
 ///
 /// `/Satoshi:29.3.0/Knots:20260507/` → `29.3.0 (build 20260507)`, and
@@ -2519,6 +2543,36 @@ mod tests {
         assert!(build_enforces_rdts("/Satoshi:29.3.0/Knots:custom/"));
         // Case is not load-bearing.
         assert!(build_enforces_rdts("/SATOSHI:29.3.0/KNOTS:20260508/"));
+    }
+
+    // Naming a node to the user requires recognising its client, which is a
+    // stricter question than `from_subversion`'s "which of our two binaries is
+    // this". An external backend can be any client that speaks the RPC.
+    #[test]
+    fn an_unrecognised_client_is_not_named_bitcoin_core() {
+        assert_eq!(
+            recognized_flavor("/Satoshi:29.3.0/Knots:20260507/"),
+            Some(NodeFlavor::Knots)
+        );
+        assert_eq!(
+            recognized_flavor("/Satoshi:29.0.0/"),
+            Some(NodeFlavor::Core)
+        );
+
+        // The cases that matter: another implementation, or nothing readable at
+        // all. `from_subversion` answers Core for every one of these — correctly,
+        // for picking between our own binaries; not for telling the user what
+        // they are running.
+        for unknown in [
+            "/btcd:0.24.2/",
+            "/bcoin:2.2.0/",
+            "/libbitcoin:3.0/",
+            "",
+            "/Satoshi/",
+        ] {
+            assert_eq!(recognized_flavor(unknown), None, "{unknown:?}");
+            assert_eq!(NodeFlavor::from_subversion(unknown), NodeFlavor::Core);
+        }
     }
 
     // The version shown beside the node card's flavour switcher, from the same
