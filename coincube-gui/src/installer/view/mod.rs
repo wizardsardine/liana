@@ -1174,10 +1174,6 @@ pub fn define_coincube_connect<'a>(
     )
 }
 
-/// Knots / Core picker shown on the node-management step when the user opts to
-/// install a managed node. Knots is the default; the selected flavour is
-/// primary-styled. The one-line blurb describes the only thing the choice
-/// changes — relay policy.
 /// Node-resource controls (prune target + mempool cap) shared by the installer's
 /// advanced disclosure and the Vault node settings, so the two surfaces never
 /// drift. Presets are a thin setter layer over the two custom MB fields:
@@ -1356,6 +1352,13 @@ where
         )
 }
 
+/// Knots / Core picker shown on the node-management step when the user opts to
+/// install a managed node. Knots is the default; the selected flavour is
+/// primary-styled.
+///
+/// The choice determines both which node software COINCUBE downloads and runs
+/// and, with it, the relay policy that node applies — which is what the one-line
+/// blurb describes, since the two builds follow the same consensus rules.
 fn node_flavor_selector<'a>(
     selected: crate::node::bitcoind::NodeFlavor,
     existing: Option<crate::node::bitcoind::NodeFlavor>,

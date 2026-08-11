@@ -115,9 +115,13 @@ pub struct Context {
     pub install_node_alongside_connect: bool,
     /// Managed-node flavour chosen on the node-management step, carried to the
     /// `InternalBitcoindStep` that actually downloads/configures it. Defaults to
-    /// Knots; the user can switch to Core on that step. Only
-    /// consulted for a *fresh* install — an existing on-disk `bitcoin.conf`'s
-    /// flavour is always preserved so we never silently swap a running node.
+    /// Knots; the user can switch to Core on that step.
+    ///
+    /// Authoritative. An existing on-disk `bitcoin.conf` does **not** override
+    /// it: the managed-node directory is shared and survives a Cube delete, so a
+    /// config left by an earlier install would otherwise silently install Core
+    /// for a user who asked for Knots. `InternalBitcoindStep::DefineConfig`
+    /// reuses that config's ports and rebuilds the rest on a flavour change.
     pub node_flavor: NodeFlavor,
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
     pub internal_bitcoind: Option<Bitcoind>,
