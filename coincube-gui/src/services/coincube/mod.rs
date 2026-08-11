@@ -2056,11 +2056,28 @@ impl std::fmt::Display for DownloadError {
 impl std::error::Error for DownloadError {}
 
 /// `423 Locked` body shape, used to discriminate `DURESS_LOCKED` from
-/// `TRUSTED_DEVICE_DELAY`. Both timestamp fields are optional — the
-/// duress case carries `unlock_at`, the trusted-device case `available_at`.
+/// `TRUSTED_DEVICE_DELAY` and to recover the "wait until" timestamp.
+///
+/// The server (`responses.ErrorWithData`) puts the code and message in `error`
+/// and the timestamp in a **sibling `data` object, snake_case**:
+///
+/// ```json
+/// { "success": false,
+///   "error": { "code": "TRUSTED_DEVICE_DELAY", "message": "…" },
+///   "data":  { "available_at": "2026-08-09T14:00:00Z" } }
+/// ```
+///
+/// This client used to look for `error.availableAt` / `error.unlockAt` — wrong
+/// object *and* wrong casing — so the timestamp silently parsed as `None` on
+/// every lock, and the UI showed a bare "delayed on new devices" with no
+/// indication of how long. The `error`-object fields are still read as a
+/// fallback so a server that adopts that shape keeps working.
 #[derive(Debug, Deserialize)]
 struct DuressLockEnvelope {
     error: DuressLockBody,
+    /// `null` on locks that carry no timestamp (e.g. a zero `unlock_at`).
+    #[serde(default)]
+    data: Option<DuressLockData>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2073,6 +2090,17 @@ struct DuressLockBody {
     available_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// The `data` sibling of `error`. Snake_case on the wire, matching the Go
+/// handlers' literal map keys (`available_at`, `duress_unlock_at`) rather than
+/// the camelCase convention the rest of the API uses.
+#[derive(Debug, Deserialize)]
+struct DuressLockData {
+    #[serde(default)]
+    available_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    duress_unlock_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 impl DownloadError {
     /// Parses a `423 Locked` body into the discriminated variant. Falls back
     /// to `DuressLocked { unlock_at: None }` when the body can't be parsed —
@@ -2082,11 +2110,19 @@ impl DownloadError {
         match serde_json::from_str::<DuressLockEnvelope>(body) {
             Ok(env) if env.error.code == "TRUSTED_DEVICE_DELAY" => {
                 DownloadError::TrustedDeviceDelay {
-                    available_at: env.error.available_at,
+                    available_at: env
+                        .data
+                        .as_ref()
+                        .and_then(|d| d.available_at)
+                        .or(env.error.available_at),
                 }
             }
             Ok(env) => DownloadError::DuressLocked {
-                unlock_at: env.error.unlock_at,
+                unlock_at: env
+                    .data
+                    .as_ref()
+                    .and_then(|d| d.duress_unlock_at)
+                    .or(env.error.unlock_at),
             },
             Err(_) => DownloadError::DuressLocked { unlock_at: None },
         }
@@ -3184,6 +3220,106 @@ mod features_response_duress_tests {
         let resp: FeaturesResponse =
             serde_json::from_value(features_json(json!({ "duress_enabled": true }))).unwrap();
         assert_eq!(resp.duress_enabled, Some(true));
+    }
+}
+
+#[cfg(test)]
+mod locked_body_tests {
+    //! The `423 Locked` bodies here are byte-for-byte what
+    //! `responses.ErrorWithData` emits in coincube-api — code and message in
+    //! `error`, timestamp in a sibling snake_case `data` object. Pinning the
+    //! real shape is the point: the client previously read
+    //! `error.availableAt` (wrong object, wrong casing), which parsed as
+    //! `None` on every lock, so the restore screen said "Recovery kit download
+    //! is delayed on new devices." with no hint of *how long* — and the UI code
+    //! that formats "Available at …" was unreachable.
+    use super::DownloadError;
+
+    /// `enforceTrustedDeviceDelay` → `responses.ErrorWithData(..., map[string]
+    /// string{"available_at": …})`.
+    const TRUSTED_DEVICE_DELAY: &str = r#"{
+        "data": { "available_at": "2026-08-09T14:00:00Z" },
+        "success": false,
+        "error": { "code": "TRUSTED_DEVICE_DELAY",
+                   "message": "This device must wait before it can download recovery material" }
+    }"#;
+
+    /// `writeDuressLocked` → `map[string]string{"duress_unlock_at": …}`.
+    const DURESS_LOCKED: &str = r#"{
+        "data": { "duress_unlock_at": "2026-08-10T09:30:00Z" },
+        "success": false,
+        "error": { "code": "DURESS_LOCKED", "message": "Account is under duress lock" }
+    }"#;
+
+    #[test]
+    fn trusted_device_delay_recovers_available_at() {
+        match DownloadError::from_locked_body(TRUSTED_DEVICE_DELAY) {
+            DownloadError::TrustedDeviceDelay {
+                available_at: Some(at),
+            } => assert_eq!(at.to_rfc3339(), "2026-08-09T14:00:00+00:00"),
+            other => panic!("expected a dated TrustedDeviceDelay, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn duress_locked_recovers_unlock_at() {
+        match DownloadError::from_locked_body(DURESS_LOCKED) {
+            DownloadError::DuressLocked {
+                unlock_at: Some(at),
+            } => assert_eq!(at.to_rfc3339(), "2026-08-10T09:30:00+00:00"),
+            other => panic!("expected a dated DuressLocked, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn a_lock_with_no_data_object_still_discriminates() {
+        // `writeDuressLocked` omits `data` entirely when the unlock time is
+        // zero, and a `null` data is equally legal JSON. Neither may turn the
+        // typed variant back into an opaque error — we just lose the hint.
+        for body in [
+            r#"{"success":false,"error":{"code":"TRUSTED_DEVICE_DELAY","message":"x"}}"#,
+            r#"{"data":null,"success":false,"error":{"code":"TRUSTED_DEVICE_DELAY","message":"x"}}"#,
+        ] {
+            assert!(
+                matches!(
+                    DownloadError::from_locked_body(body),
+                    DownloadError::TrustedDeviceDelay { available_at: None }
+                ),
+                "body {} should stay a timeless TrustedDeviceDelay",
+                body
+            );
+        }
+    }
+
+    #[test]
+    fn an_error_object_timestamp_is_still_honoured() {
+        // Back-compat with the shape this client always believed in, so a
+        // server that moves the field into `error` doesn't regress the hint.
+        match DownloadError::from_locked_body(
+            r#"{"success":false,"error":{"code":"TRUSTED_DEVICE_DELAY","message":"x",
+                "availableAt":"2026-08-09T14:00:00Z"}}"#,
+        ) {
+            DownloadError::TrustedDeviceDelay {
+                available_at: Some(_),
+            } => {}
+            other => panic!("expected a dated TrustedDeviceDelay, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn an_opaque_body_fails_closed_to_duress() {
+        // An unparseable 423 must never be read as the milder trusted-device
+        // delay — the safe default is the duress lock.
+        for body in ["not json", "{}", r#"{"error":{}}"#] {
+            assert!(
+                matches!(
+                    DownloadError::from_locked_body(body),
+                    DownloadError::DuressLocked { unlock_at: None }
+                ),
+                "body {:?} must fail closed to DuressLocked",
+                body
+            );
+        }
     }
 }
 

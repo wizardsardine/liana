@@ -108,9 +108,14 @@ fn error_code(body: &str) -> Option<String> {
 
 /// Body of a `423 DURESS_LOCKED` response. The handler attaches the optional
 /// unlock hint via `ErrorWithData`, so the timestamp rides on `data`
-/// (snake-case `duress_unlock_at`) alongside the `error` envelope — a
-/// different shape from the recovery-kit download's `423` body, so we parse it
-/// here rather than reusing `DownloadError::from_locked_body`.
+/// (snake-case `duress_unlock_at`) alongside the `error` envelope.
+///
+/// This is the *same* envelope the recovery-kit download's `423` uses; only the
+/// variants it discriminates differ, which is why this parses just the hint
+/// rather than reusing `DownloadError::from_locked_body`. The comment here used
+/// to claim the two shapes differed — they never did, and that claim is how
+/// `from_locked_body` kept reading a non-existent `error.availableAt` and
+/// dropping every timestamp on the floor.
 #[derive(serde::Deserialize)]
 struct DuressLockEnvelope {
     #[serde(default)]
