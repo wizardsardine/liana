@@ -1174,11 +1174,6 @@ pub fn define_coincube_connect<'a>(
     )
 }
 
-/// Knots / Core picker shown on the node-management step when the user opts to
-/// install a managed node. Knots is the default (enforces BIP-110 / RDTS); the
-/// selected flavour is primary-styled. Because the headless node never shows
-/// Knots' own confirmation prompt, this one-line blurb is where the user
-/// consents to RDTS enforcement.
 /// Node-resource controls (prune target + mempool cap) shared by the installer's
 /// advanced disclosure and the Vault node settings, so the two surfaces never
 /// drift. Presets are a thin setter layer over the two custom MB fields:
@@ -1357,6 +1352,13 @@ where
         )
 }
 
+/// Knots / Core picker shown on the node-management step when the user opts to
+/// install a managed node. Knots is the default; the selected flavour is
+/// primary-styled.
+///
+/// The choice determines both which node software COINCUBE downloads and runs
+/// and, with it, the relay policy that node applies — which is what the one-line
+/// blurb describes, since the two builds follow the same consensus rules.
 fn node_flavor_selector<'a>(
     selected: crate::node::bitcoind::NodeFlavor,
     existing: Option<crate::node::bitcoind::NodeFlavor>,
@@ -1376,9 +1378,12 @@ fn node_flavor_selector<'a>(
     };
     let blurb = match selected {
         NodeFlavor::Knots => {
-            "Bitcoin Knots enforces BIP-110 (Reduced Data Temporary Softfork). Recommended."
+            "Bitcoin Knots — stricter relay defaults; it limits oversized data-carrier \
+             (\"spam\") transactions. Standard sends are unaffected. Recommended."
         }
-        NodeFlavor::Core => "Bitcoin Core — the reference implementation; no RDTS enforcement.",
+        NodeFlavor::Core => {
+            "Bitcoin Core — the reference implementation, with its default relay policy."
+        }
     };
     let mut col = Column::new()
         .spacing(10)

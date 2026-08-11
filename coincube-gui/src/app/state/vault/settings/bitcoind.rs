@@ -60,7 +60,7 @@ struct PendingNodeSetup {
     selected_auth_type: RpcAuthType,
     processing: bool,
     // Internal (COINCUBE-managed) setup fields
-    /// Which managed node flavour to install (Core or Knots + RDTS).
+    /// Which managed node flavour to install (Core or Knots).
     flavor: NodeFlavor,
     internal_stage: InternalSetupStage,
     internal_error: Option<String>,
@@ -545,12 +545,9 @@ impl State for BitcoindSettingsState {
                             // already configured, else Knots (matching the
                             // installer). Switching it restarts the node for all
                             // Vaults (handled by `maybe_start`).
-                            flavor: InternalBitcoindConfig::from_file(
-                                &internal_bitcoind_config_path(&internal_bitcoind_datadir(
-                                    &cache.datadir_path,
-                                )),
+                            flavor: crate::node::bitcoind::configured_managed_flavor(
+                                &cache.datadir_path,
                             )
-                            .map(|c| c.flavor)
                             .unwrap_or(NodeFlavor::Knots),
                             internal_stage: InternalSetupStage::Idle,
                             internal_error: None,
@@ -558,10 +555,10 @@ impl State for BitcoindSettingsState {
                         });
                     }
                     NodeSettingsMessage::SetupLocalNodeManagedFlavor(flavor) => {
-                        // Pick the managed flavour (Core or Knots + RDTS) and
-                        // begin the download/install in one step. This is where
-                        // the user consents to RDTS enforcement: the headless
-                        // node can't show Knots' own confirmation prompt.
+                        // Pick the managed flavour (Core or Knots) and begin the
+                        // download/install in one step. The choice is relay
+                        // policy only; both builds follow the same consensus
+                        // rules.
                         if let Some(ref mut setup) = self.pending_node_setup {
                             setup.flavor = flavor;
                         }
@@ -1135,8 +1132,8 @@ impl State for BitcoindSettingsState {
                         }
                         Some(BitcoinBackend::Bitcoind(_)) => {
                             // Flavour-neutral: the exact build (Core vs Knots)
-                            // and RDTS status come from the node's runtime
-                            // subversion, surfaced separately below.
+                            // comes from the node's runtime subversion,
+                            // surfaced separately below.
                             ("Local Node", icon::bitcoin_icon())
                         }
                         Some(BitcoinBackend::Electrum(_)) => ("Electrum", icon::network_icon()),
@@ -1241,7 +1238,7 @@ impl State for BitcoindSettingsState {
                 }
 
                 // "Chain repair": manual `reconsiderblock` at the BIP-110 anchor.
-                // Managed node, mainnet only (that's where RDTS is deployed), and
+                // Managed node, mainnet only (the only chain the fork reached), and
                 // hidden during a setup/flavour switch. The automatic check on node
                 // start covers the normal case; this is the escape hatch for when
                 // the state that drives it has been lost.
@@ -1357,7 +1354,7 @@ impl From<BitcoindSettingsState> for Box<dyn State> {
 /// (verified against the manifest) and `None` for Core (verified by code hash).
 type ManagedNodeInstall = (Vec<u8>, Option<(String, String)>);
 
-/// Load-or-create the managed `bitcoin.conf`, apply `flavor` (RDTS enforcement),
+/// Load-or-create the managed `bitcoin.conf`, apply `flavor`,
 /// ensure ports, apply any node-`resources` override, and write it back —
 /// returning the `BitcoindConfig` (RPC endpoint) to connect to. Pure with respect
 /// to process start (no `Bitcoind::maybe_start`), so the config-rewrite rules are
@@ -1383,10 +1380,13 @@ fn write_internal_bitcoind_config(
         Err(InternalBitcoindConfigError::FileNotFound) => InternalBitcoindConfig::new(),
         Err(e) => return Err(e.to_string()),
     };
-    // The chosen flavour drives RDTS enforcement: Knots emits
-    // `consensusrules=rdts`, Core never does.
     conf.flavor = flavor;
-    conf.enforce_rdts = matches!(flavor, NodeFlavor::Knots);
+    // Nothing in the file records the flavour any more, and rebuilding it from the
+    // struct drops any legacy `consensusrules=rdts` a previous release wrote — so
+    // the ledger is where the choice has to be kept, and it has to be kept before
+    // the write that erases the old marker.
+    crate::node::revalidate::ManagedNodeState::record_configured(coincube_datadir, flavor);
+    conf.enforce_rdts = false;
 
     let existing = conf.networks.get(&network).cloned();
     let (rpc_port, p2p_port) = if let Some(ref nc) = existing {
@@ -1448,9 +1448,8 @@ fn repair_managed_node_chain(
     cfg: &BitcoindConfig,
     network: Network,
 ) -> Result<String, String> {
-    let anchor_height = crate::node::revalidate::rdts_anchor_height(network).ok_or_else(|| {
-        "BIP-110 isn't deployed on this network, so there is nothing to repair.".to_string()
-    })?;
+    let anchor_height = crate::node::revalidate::rdts_anchor_height(network)
+        .ok_or_else(|| "There is nothing to repair on this network.".to_string())?;
     // An unreadable state sidecar is set aside by `clear_failure_flags` itself, once it
     // owns the node and knows the repair is going ahead — not here. Doing it before the
     // identity is settled would discard the one record telling the next start that
@@ -1492,14 +1491,13 @@ fn configure_and_start_internal_bitcoind(
         install_bitcoind(&install_dir, &bytes, &verification).map_err(|e| format!("{:?}", e))?;
     }
 
-    // Load-or-create + rewrite the managed `bitcoin.conf` (flavour/RDTS, ports,
-    // and any resource override) and get the RPC endpoint to connect to.
+    // Load-or-create + rewrite the managed `bitcoin.conf` (ports and any
+    // resource override) and get the RPC endpoint to connect to.
     let bitcoind_config =
         write_internal_bitcoind_config(&coincube_datadir, network, flavor, resources)?;
 
-    // Default-ON inbound-over-Tor for a freshly set-up enforcing (Knots) node on
-    // mainnet — the point of the wedge is more reachable RDTS-enforcing nodes,
-    // and it's mainnet-only. Only write the sidecar when the user hasn't already
+    // Default-ON inbound-over-Tor for a freshly set-up Knots node on mainnet —
+    // the point is more reachable sovereign nodes, and it's mainnet-only. Only write the sidecar when the user hasn't already
     // made a choice, so an existing opt-out survives a reconfigure. The binary is
     // provisioned lazily on the next node start (see
     // `node::tor::ensure_tor_installed_if_wanted`).
@@ -2777,9 +2775,9 @@ mod tests {
     }
 
     // A node-resources apply on a pre-existing datadir must overwrite prune and
-    // the mempool cap while preserving the network section's ports and rpc_auth
-    // (and the flavour/RDTS marker) — the "sharp edge" the settings path fixes. A
-    // `None` apply must leave every value untouched.
+    // the mempool cap while preserving the network section's ports and rpc_auth —
+    // the "sharp edge" the settings path fixes. A `None` apply must leave every
+    // value untouched.
     #[test]
     fn node_resources_apply_preserves_ports_and_rpcauth() {
         use std::fs;
@@ -2789,8 +2787,8 @@ mod tests {
         let datadir = CoincubeDirectory::new(base.clone());
         let config_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(&datadir));
 
-        // Seed a pre-existing managed conf: Knots (RDTS on), fixed ports + a
-        // user/pass rpc_auth, prune 15000, and an explicit 300 MB mempool.
+        // Seed a pre-existing managed conf: Knots, fixed ports + a user/pass
+        // rpc_auth, prune 15000, and an explicit 300 MB mempool.
         let rpc_auth: RpcAuth = "myuser:mysalt$myhmac".parse().unwrap();
         let mut seed = InternalBitcoindConfig::for_flavor(NodeFlavor::Knots);
         seed.max_mempool_mb = Some(300);
@@ -2818,7 +2816,7 @@ mod tests {
         assert_eq!(net_none.rpc_auth, Some(rpc_auth.clone()));
         assert_eq!(after_none.max_mempool_mb, Some(300));
 
-        // A resource apply updates prune + mempool, keeps ports + rpc_auth + RDTS.
+        // A resource apply updates prune + mempool, keeps ports + rpc_auth.
         let cfg = write_internal_bitcoind_config(
             &datadir,
             Network::Bitcoin,
@@ -2837,7 +2835,13 @@ mod tests {
         assert_eq!(net.p2p_port, 45002); // preserved
         assert_eq!(net.rpc_auth, Some(rpc_auth)); // preserved
         assert_eq!(after.max_mempool_mb, Some(100)); // updated
-        assert!(after.enforce_rdts); // flavour/RDTS preserved
+                                                     // No `consensusrules` is written, and the flavour is kept in the ledger
+                                                     // instead of the file — a write must not leave the legacy line behind.
+        assert!(!after.enforce_rdts);
+        assert_eq!(
+            crate::node::bitcoind::configured_managed_flavor(&datadir),
+            Some(NodeFlavor::Knots),
+        );
 
         let _ = fs::remove_dir_all(&base);
     }

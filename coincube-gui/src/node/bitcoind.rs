@@ -21,16 +21,15 @@ use crate::utils::now_fallible;
 /// The flavour of managed Bitcoin node COINCUBE downloads, configures, and runs.
 ///
 /// Only affects the managed local-node backend; the Esplora and Electrum
-/// backends never touch a local binary. `Core` is the historical default;
-/// `Knots` is opt-in and is the flavour that can enforce BIP-110 (RDTS) — see
-/// [`InternalBitcoindConfig::enforce_rdts`].
+/// backends never touch a local binary. Both flavours follow the same consensus
+/// rules; they differ in *relay policy* — Knots ships stricter data-carrier
+/// defaults. Knots is the default for new setups.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum NodeFlavor {
     /// Bitcoin Core, fetched from bitcoincore.org.
     #[default]
     Core,
-    /// Bitcoin Knots, fetched from bitcoinknots.org. Ships RDTS (BIP-110)
-    /// enforcement in mainline from `29.3.knots20260508`.
+    /// Bitcoin Knots, fetched from bitcoinknots.org.
     Knots,
 }
 
@@ -42,14 +41,38 @@ pub const CORE_VERSION: &str = CORE_VERSIONS[0];
 
 /// Current and previous managed Bitcoin Knots versions, in order of descending version.
 ///
-/// RDTS (BIP-110) enforcement ships in mainline Knots from `29.3.knots20260508`;
-/// older Knots builds are intentionally not offered. Pinned — bumping is a
-/// deliberate follow-up (the `SHA256SUMS`-based verification in the installer
-/// means a bump is not checksum-locked in code).
-pub const KNOTS_VERSIONS: [&str; 1] = ["29.3.knots20260508"];
+/// Deliberately pinned to the **last non-enforcing** Knots release. Builds from
+/// `29.3.knots20260508` on enforce BIP-110 (RDTS) on their own deployment
+/// schedule — enforcement is a property of the build, with no runtime
+/// off-switch — and that fork stalled two blocks in. A node running one of those
+/// builds follows a dead chain, so they are not offered: see
+/// [`RDTS_ENFORCING_KNOTS_BUILD`] and `node::revalidate` for the repair that
+/// un-strands datadirs they left behind.
+///
+/// Listing only the pinned build is also what makes an update *replace* an
+/// installed enforcing binary rather than reuse it: every "is it installed?"
+/// check keys on this list (or on [`NodeFlavor::version`]), so a
+/// `29.3.knots20260508` directory on disk no longer satisfies the Knots flavour
+/// and the pinned build is downloaded instead.
+///
+/// Bumping is a deliberate follow-up (the `SHA256SUMS`-based verification in the
+/// installer means a bump is not checksum-locked in code).
+pub const KNOTS_VERSIONS: [&str; 1] = ["29.3.knots20260507"];
 
 /// Current managed Bitcoin Knots version for new installations.
 pub const KNOTS_VERSION: &str = KNOTS_VERSIONS[0];
+
+/// First Knots build date that enforces BIP-110 (RDTS).
+///
+/// Knots subversions carry a `knots<YYYYMMDD>` build tag
+/// (`/Satoshi:29.3.0(knots20260508)/`). Enforcement shipped in mainline from
+/// `knots20260508`; every earlier build — including the pinned
+/// [`KNOTS_VERSION`] — and every Bitcoin Core build ignore RDTS entirely.
+///
+/// This is the *observable* property the chain-repair planner keys on, because
+/// it, not the flavour, decides whether a node trailing the most-work chain is
+/// doing so deliberately. See [`build_enforces_rdts`].
+pub const RDTS_ENFORCING_KNOTS_BUILD: u32 = 20_260_508;
 
 // Pinned SHA-256 of the Bitcoin Core archive for the current `CORE_VERSION`, per
 // platform. Knots is verified against its published `SHA256SUMS` manifest instead
@@ -72,7 +95,7 @@ pub const CORE_SHA256SUM: &str = "4c1780532031129fcacfc0e393c8430b3cea414c9f8c5e
 /// PGP key fingerprint that signs Bitcoin Knots' `SHA256SUMS.asc`.
 ///
 /// Confirmed from the issuer-fingerprint subpacket of the live
-/// `…/29.3.knots20260508/SHA256SUMS.asc` — Luke Dashjr's canonical Knots
+/// `…/29.3.knots20260507/SHA256SUMS.asc` — Luke Dashjr's canonical Knots
 /// release key. Pinning the *fingerprint* lets us recognise the signing key;
 /// full cryptographic verification of the detached signature additionally
 /// requires vendoring the key's public material, tracked as an open item for
@@ -166,7 +189,7 @@ impl NodeFlavor {
     }
 
     /// Infer the flavour from a running node's `getnetworkinfo.subversion`
-    /// (e.g. `/Satoshi:29.3.0(knots20260508)/`). Knots embeds `knots`; Core
+    /// (e.g. `/Satoshi:29.3.0(knots20260507)/`). Knots embeds `knots`; Core
     /// never does. Used to decide whether a reachable managed node already
     /// matches the configured flavour or must be replaced.
     pub fn from_subversion(subversion: &str) -> Self {
@@ -218,7 +241,7 @@ impl NodeFlavor {
                 format!("https://bitcoincore.org/bin/bitcoin-core-{version}/{filename}")
             }
             NodeFlavor::Knots => {
-                // e.g. "29.3.knots20260508" -> major "29" -> ".../29.x/29.3.knots20260508/".
+                // e.g. "29.3.knots20260507" -> major "29" -> ".../29.x/29.3.knots20260507/".
                 let major = version.split('.').next().unwrap_or(version);
                 format!("https://bitcoinknots.org/files/{major}.x/{version}/{filename}")
             }
@@ -250,6 +273,67 @@ impl NodeFlavor {
                     format!("{base}/SHA256SUMS.asc"),
                 ))
             }
+        }
+    }
+}
+
+/// Whether the build behind `subversion` enforces BIP-110 (RDTS).
+///
+/// Enforcement is a build property, not a configuration one: `consensusrules=rdts`
+/// only ever recorded the user's consent, and an enforcing build enforces with or
+/// without it. So the only honest way to ask the question of a *running* node is
+/// to read the build tag out of its `getnetworkinfo.subversion` —
+/// `/Satoshi:29.3.0(knots20260508)/` → `20260508` → enforcing.
+///
+/// Core is never enforcing. A Knots build whose tag we cannot parse is treated as
+/// enforcing, which is the conservative answer: the caller uses this to decide
+/// whether a node trailing the most-work chain should be dragged back onto it, and
+/// doing that to a genuinely enforcing node just re-rejects the same blocks on
+/// every start, forever.
+pub fn build_enforces_rdts(subversion: &str) -> bool {
+    let subversion = subversion.to_lowercase();
+    let Some(tag) = subversion.split_once("knots") else {
+        return false;
+    };
+    let build: String = tag.1.chars().take_while(char::is_ascii_digit).collect();
+    match build.parse::<u32>() {
+        Ok(build) => build >= RDTS_ENFORCING_KNOTS_BUILD,
+        // A Knots build we can't date. Assume the worst and leave its chain alone.
+        Err(_) => true,
+    }
+}
+
+/// What a running managed node actually *is*, as opposed to what it was
+/// configured to be: its flavour and whether its build enforces BIP-110.
+///
+/// The two travel together because the chain-repair planner needs both and they
+/// come from the same one source of truth — the node's own subversion. Splitting
+/// them across parameters is how a caller ends up pairing one node's flavour with
+/// another's enforcement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObservedBuild {
+    pub flavor: NodeFlavor,
+    /// Whether this build enforces RDTS. See [`build_enforces_rdts`].
+    pub enforces_rdts: bool,
+}
+
+impl ObservedBuild {
+    /// Read both facts off a node's `getnetworkinfo.subversion`.
+    pub fn from_subversion(subversion: &str) -> Self {
+        Self {
+            flavor: NodeFlavor::from_subversion(subversion),
+            enforces_rdts: build_enforces_rdts(subversion),
+        }
+    }
+
+    /// Fall back to the configured flavour when the node would not tell us what it
+    /// is. Knots is assumed enforcing here for the same reason an undatable Knots
+    /// build is: with no evidence, the option that cannot loop is to leave the
+    /// chain alone.
+    pub fn assumed(flavor: NodeFlavor) -> Self {
+        Self {
+            flavor,
+            enforces_rdts: matches!(flavor, NodeFlavor::Knots),
         }
     }
 }
@@ -912,14 +996,24 @@ const TOR_LOOPBACK_HOST: &str = "127.0.0.1";
 #[derive(Debug, Clone)]
 pub struct InternalBitcoindConfig {
     pub networks: BTreeMap<Network, InternalBitcoindNetworkConfig>,
-    /// Which managed node flavour this config is for. Recovered on load from
-    /// `enforce_rdts` (and, at runtime, from the binary's subversion); it is
-    /// not written as its own key because bitcoind rejects unknown options.
+    /// Which managed node flavour this config is for.
+    ///
+    /// **Not persisted here.** bitcoind rejects unknown options, so the file has
+    /// no room for a key of our own, and the one marker it used to be recovered
+    /// from (`consensusrules=rdts`) is no longer written. A config parsed off
+    /// disk therefore only reports `Knots` when it still carries that legacy
+    /// line; the durable answer lives in the flavour ledger
+    /// (`revalidate::ManagedNodeState::configured_flavor`) and, once a node is
+    /// up, in its subversion. See [`configured_managed_flavor`].
     pub flavor: NodeFlavor,
-    /// When true (Knots only), [`Self::to_ini`] emits `consensusrules=rdts`,
-    /// making the node enforce BIP-110. This is the only persisted marker of
-    /// RDTS enforcement. Never emitted for Core, which rejects the key and
-    /// refuses to start.
+    /// Legacy: a `consensusrules=rdts` line left in the file by a release that
+    /// still asked the node to enforce BIP-110.
+    ///
+    /// Parsed, never written. It survives only so an existing datadir can be
+    /// recognised as Knots' once, on the first start after the update, and have
+    /// the line stripped — the pinned build does not enforce RDTS, and a key it
+    /// may not even accept has no business staying in the file. Deleted once no
+    /// datadir can still carry it.
     pub enforce_rdts: bool,
     /// Opt-in inbound connectivity over Tor. When true, [`Self::to_ini`] emits
     /// `listen=1`, `listenonion=1`, `discover=0` (and `torcontrol` once
@@ -1016,10 +1110,7 @@ impl InternalBitcoindConfig {
         }
     }
 
-    /// A config for the given managed-node flavour. For Knots, RDTS (BIP-110)
-    /// enforcement defaults on — that is the reason a user opts into Knots —
-    /// while staying a distinct field so "Knots without RDTS" remains
-    /// expressible. For Core, RDTS is never enforced.
+    /// A config for the given managed-node flavour.
     ///
     /// Inbound-over-Tor stays off here: the config-layer default is all-off for
     /// backward compatibility. The product default (ON for new installs) is
@@ -1029,7 +1120,7 @@ impl InternalBitcoindConfig {
         Self {
             networks: BTreeMap::new(),
             flavor,
-            enforce_rdts: matches!(flavor, NodeFlavor::Knots),
+            enforce_rdts: false,
             inbound_tor: false,
             outbound_via_tor: false,
             max_upload_target_mb_day: None,
@@ -1106,13 +1197,16 @@ impl InternalBitcoindConfig {
                     },
                 );
             } else {
-                // The general (section-less) part of the file. We write
-                // `consensusrules=rdts` (Knots RDTS enforcement) and, when
-                // inbound-over-Tor is on, the global listen/proxy/bandwidth
-                // options. Recover each preference from its persisted marker;
-                // anything else is unexpected.
+                // The general (section-less) part of the file. We write the
+                // global listen/proxy/bandwidth options when inbound-over-Tor is
+                // on. Recover each preference from its persisted marker; anything
+                // else is unexpected.
                 for (key, value) in prop.iter() {
                     match key {
+                        // Read-only legacy: written by releases that asked Knots
+                        // to enforce BIP-110. Parsed so an existing datadir still
+                        // loads (and so the line can be recognised and dropped on
+                        // the next write), never emitted again.
                         "consensusrules" => {
                             enforce_rdts = value.split(',').any(|rule| rule.trim() == "rdts");
                         }
@@ -1156,9 +1250,11 @@ impl InternalBitcoindConfig {
                 }
             }
         }
-        // A persisted `consensusrules=rdts` is the marker that this is a Knots
-        // RDTS node; absent it, we assume Core. The runtime subversion is the
-        // authoritative source once the node is up (see settings UI).
+        // A legacy `consensusrules=rdts` still identifies the file as a Knots
+        // node's, and nothing else in it can. Absent the line the answer is
+        // simply not in this file — callers resolve it from the flavour ledger
+        // instead (see [`configured_managed_flavor`]), so the `Core` here is a
+        // placeholder, not a finding.
         let flavor = if enforce_rdts {
             NodeFlavor::Knots
         } else {
@@ -1191,22 +1287,16 @@ impl InternalBitcoindConfig {
     pub fn to_ini(&self) -> ini::Ini {
         let mut conf_ini = ini::Ini::new();
 
-        // RDTS (BIP-110) enforcement is a global, non-network-scoped option and
-        // is only valid on Knots — Core rejects the key and refuses to start, so
-        // gating on `enforce_rdts` (only ever true for Knots) keeps Core safe.
-        // We run bitcoind headless, so Knots' native GUI confirmation prompt
-        // never fires; writing this line is both necessary and sufficient to
-        // enforce. Written before the network sections so it lands in the
-        // section-less general part of the file.
-        if self.enforce_rdts {
-            conf_ini
-                .with_general_section()
-                .set("consensusrules", "rdts");
-        }
+        // No `consensusrules` line: we ship no build that enforces BIP-110, the
+        // key only ever recorded consent, and the pinned build may not accept it
+        // at all. Because the file is rebuilt from this struct rather than
+        // edited, every rewrite also *strips* a legacy line an older release
+        // left behind — which is the point. `self.enforce_rdts` is read-only
+        // legacy state and is deliberately not consulted here.
 
         // Inbound-over-Tor. All of these are global (non-network-scoped)
         // bitcoind options, so they belong in the section-less general part of
-        // the file, like `consensusrules`. Emitted only when the feature is on;
+        // the file. Emitted only when the feature is on;
         // when off, the general section is untouched (so existing datadirs, and
         // the default no-op state, produce a byte-identical file).
         if self.inbound_tor {
@@ -1320,13 +1410,82 @@ pub struct Bitcoind {
     lock: LockFile,
 }
 
+/// The flavour the managed node is configured to run as, or `None` when nothing
+/// on disk answers the question.
+///
+/// There is no flavour key in `bitcoin.conf` — bitcoind rejects options it does
+/// not know — so the answer is assembled from what does persist, most
+/// authoritative first:
+///
+/// 1. the flavour ledger's `configured_flavor`, written by whichever surface last
+///    wrote the managed config;
+/// 2. a legacy `consensusrules=rdts` line, the marker releases before the RDTS
+///    sunset used (see [`migrate_legacy_rdts_conf`], which converts it to 1 and
+///    removes it);
+/// 3. the flavour the node was last *observed* running as, for a datadir whose
+///    ledger predates `configured_flavor`.
+///
+/// A `None` is now cheap: with no `consensusrules` in the file, either binary can
+/// open either datadir, so the fallback in [`select_managed_bitcoind_exe`] is free
+/// to launch whatever is installed. That was not true while the config carried a
+/// Knots-only key.
+pub fn configured_managed_flavor(coincube_datadir: &CoincubeDirectory) -> Option<NodeFlavor> {
+    let state = crate::node::revalidate::ManagedNodeState::load(coincube_datadir);
+    if let Some(flavor) = state.configured_flavor {
+        return Some(flavor);
+    }
+    let conf_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(coincube_datadir));
+    if InternalBitcoindConfig::from_file(&conf_path).is_ok_and(|conf| conf.enforce_rdts) {
+        return Some(NodeFlavor::Knots);
+    }
+    state.last_run_flavor
+}
+
+/// Strip a legacy `consensusrules=rdts` line from the managed `bitcoin.conf`,
+/// recording the flavour it stood for in the ledger first so nothing is lost.
+///
+/// Runs on the start path rather than only where the config is rewritten, because
+/// the loader starts the managed node without going through a rewrite: a datadir
+/// set up by a release that enforced RDTS would otherwise hand the key straight to
+/// the pinned build. Whether that build ignores or rejects the key is exactly the
+/// kind of thing not worth depending on.
+///
+/// Best-effort and idempotent — a file we cannot read or write is left alone and
+/// retried on the next start.
+fn migrate_legacy_rdts_conf(coincube_datadir: &CoincubeDirectory) {
+    let conf_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(coincube_datadir));
+    let Ok(mut conf) = InternalBitcoindConfig::from_file(&conf_path) else {
+        return;
+    };
+    if !conf.enforce_rdts {
+        return;
+    }
+    info!(
+        "managed bitcoin.conf still carries `consensusrules=rdts`; recording the node as \
+         Bitcoin Knots and removing the line — no build we ship enforces BIP-110"
+    );
+    // Ledger first: losing the line before its meaning is recorded would leave the
+    // datadir with no flavour at all.
+    crate::node::revalidate::ManagedNodeState::record_configured(
+        coincube_datadir,
+        NodeFlavor::Knots,
+    );
+    conf.flavor = NodeFlavor::Knots;
+    conf.enforce_rdts = false;
+    if let Err(e) = conf.to_file(&conf_path) {
+        warn!("could not strip `consensusrules` from the managed bitcoin.conf: {e}");
+    }
+}
+
 /// Pick the managed `bitcoind` binary to launch for `configured_flavor`,
 /// preferring that flavour's versions (newest first) and falling back to the
 /// other flavour's only if none are installed. Returns the first existing
 /// `bitcoin-<version>/bin/bitcoind[.exe]` under the managed directory, or `None`
-/// when nothing is installed. Preferring the configured flavour keeps the binary
-/// consistent with the `bitcoin.conf` — critical because a Knots `bitcoin.conf`
-/// (with `consensusrules=rdts`) cannot be started by a Core binary.
+/// when nothing is installed.
+///
+/// Only versions in [`CORE_VERSIONS`] / [`KNOTS_VERSIONS`] are candidates, so a
+/// Knots build we no longer ship — the RDTS-enforcing `29.3.knots20260508` — is
+/// never launched, however it got onto the disk.
 fn select_managed_bitcoind_exe(
     coincube_datadir: &CoincubeDirectory,
     configured_flavor: NodeFlavor,
@@ -1403,16 +1562,16 @@ impl Bitcoind {
         // is waiting for. What it does cost is chain reconciliation — every repair path
         // declines while the answer is provisional, and the next start tries again.
         let identity = establish_node_identity(&config);
-        // Launch a binary consistent with the on-disk `bitcoin.conf`. A conf
-        // carrying `consensusrules=rdts` *requires* a Knots binary — starting
-        // Core against it makes Core reject the unknown option and exit — so we
-        // prefer the configured flavour's binary, not just the first one we find.
-        // A machine that still has Core installed after a Knots setup would
-        // otherwise launch Core against a Knots conf and fail to start.
+        // Drop any `consensusrules=rdts` an earlier release persisted before the
+        // node — of either flavour — is handed the file.
+        migrate_legacy_rdts_conf(coincube_datadir);
+        // Launch the binary the user asked for. Nothing in the conf forces our
+        // hand any more (it no longer carries a Knots-only key), but the choice
+        // is still theirs: a machine with both flavours installed must launch the
+        // configured one rather than whichever is found first.
         let configured_flavor =
-            InternalBitcoindConfig::from_file(&internal_bitcoind_config_path(&bitcoind_datadir))
-                .map(|conf| conf.flavor)
-                .unwrap_or(NodeFlavor::Core);
+            configured_managed_flavor(coincube_datadir).unwrap_or(NodeFlavor::Core);
+        let selected_exe = select_managed_bitcoind_exe(coincube_datadir, configured_flavor);
 
         // Is a managed node already running on this RPC endpoint?
         if let Ok(running) =
@@ -1424,11 +1583,31 @@ impl Bitcoind {
             // existing Vaults and the user just picked Knots), stop it so we can
             // relaunch the configured binary on the same datadir/port; every
             // Vault then reconnects to the new flavour on the same RPC port.
-            let running_flavor = running
-                .subversion()
-                .map(|sv| NodeFlavor::from_subversion(&sv))
+            let running_subversion = running.subversion();
+            let running_flavor = running_subversion
+                .as_deref()
+                .map(NodeFlavor::from_subversion)
                 .unwrap_or(configured_flavor);
-            if running_flavor == configured_flavor {
+            // A matching flavour is not enough on its own: an RDTS-enforcing Knots
+            // build left over from before the sunset is still "Knots", and reusing
+            // it would keep the node on the stalled BIP-110 fork indefinitely —
+            // the auto-repair declines to drag an enforcing node anywhere. Replace
+            // it, but only if there is something to replace it *with*; stopping the
+            // only node on the machine to then find no binary would be worse than
+            // running the wrong one, and the download path can supply the pinned
+            // build on the next attempt.
+            let running_enforces_rdts = running_subversion
+                .as_deref()
+                .is_some_and(build_enforces_rdts);
+            let replaceable = running_enforces_rdts && selected_exe.is_some();
+            if running_flavor == configured_flavor && !replaceable {
+                if running_enforces_rdts {
+                    warn!(
+                        "Managed node is running an RDTS-enforcing build and no replacement \
+                         binary is installed; reusing it. Its chain cannot be repaired until \
+                         the pinned build is downloaded."
+                    );
+                }
                 info!("Internal bitcoind is already running ({running_flavor:?})");
                 // Reconcile here too: this vault may be attaching to a node another
                 // vault swapped the flavour of, so this is a start path like any
@@ -1439,7 +1618,10 @@ impl Bitcoind {
                     &config,
                     &identity,
                     network,
-                    running_flavor,
+                    ObservedBuild {
+                        flavor: running_flavor,
+                        enforces_rdts: running_enforces_rdts,
+                    },
                 );
                 return Ok(Bitcoind {
                     config,
@@ -1447,15 +1629,23 @@ impl Bitcoind {
                         .map_err(|e| StartInternalBitcoindError::Lock(format!("{:?}", e)))?,
                 });
             }
-            info!(
-                "Managed node flavour switch {running_flavor:?} → {configured_flavor:?}; \
-                 stopping the running node so the configured binary can take over"
-            );
+            if replaceable {
+                info!(
+                    "Managed node is running an RDTS-enforcing build ({}); stopping it so the \
+                     pinned {KNOTS_VERSION} build can take over",
+                    running_subversion.as_deref().unwrap_or("unknown"),
+                );
+            } else {
+                info!(
+                    "Managed node flavour switch {running_flavor:?} → {configured_flavor:?}; \
+                     stopping the running node so the configured binary can take over"
+                );
+            }
             running.stop();
             wait_for_internal_bitcoind_shutdown(&config);
         }
-        let bitcoind_exe_path = select_managed_bitcoind_exe(coincube_datadir, configured_flavor)
-            .ok_or(StartInternalBitcoindError::ExecutableNotFound)?;
+        let bitcoind_exe_path =
+            selected_exe.ok_or(StartInternalBitcoindError::ExecutableNotFound)?;
         info!(
             "Found bitcoind executable at '{}'.",
             bitcoind_exe_path.to_string_lossy()
@@ -1538,17 +1728,17 @@ impl Bitcoind {
                     // `configured_flavor`: `select_managed_bitcoind_exe` falls back to
                     // the other flavour's binary when the preferred one isn't
                     // installed, so the two can legitimately disagree.
-                    let observed_flavor = started
+                    let observed = started
                         .subversion()
-                        .map(|sv| NodeFlavor::from_subversion(&sv))
-                        .unwrap_or(configured_flavor);
+                        .map(|sv| ObservedBuild::from_subversion(&sv))
+                        .unwrap_or_else(|| ObservedBuild::assumed(configured_flavor));
                     crate::node::revalidate::reconcile_after_start(
                         coincube_datadir,
                         &started,
                         &config,
                         &identity,
                         network,
-                        observed_flavor,
+                        observed,
                     );
                     return Ok(Self {
                         config,
@@ -2202,20 +2392,22 @@ mod tests {
         // Knots, arm64 macOS.
         assert_eq!(
             NodeFlavor::Knots.asset_url(KNOTS_VERSION, NodeOs::MacOs, NodeArch::Aarch64),
-            "https://bitcoinknots.org/files/29.x/29.3.knots20260508/\
-             bitcoin-29.3.knots20260508-arm64-apple-darwin.tar.gz"
+            "https://bitcoinknots.org/files/29.x/29.3.knots20260507/\
+             bitcoin-29.3.knots20260507-arm64-apple-darwin.tar.gz"
         );
         // Knots, x86_64 Linux.
         assert_eq!(
             NodeFlavor::Knots.asset_url(KNOTS_VERSION, NodeOs::Linux, NodeArch::X86_64),
-            "https://bitcoinknots.org/files/29.x/29.3.knots20260508/\
-             bitcoin-29.3.knots20260508-x86_64-linux-gnu.tar.gz"
+            "https://bitcoinknots.org/files/29.x/29.3.knots20260507/\
+             bitcoin-29.3.knots20260507-x86_64-linux-gnu.tar.gz"
         );
-        // Knots, Windows — note the `-pgpverifiable` suffix that Core lacks.
+        // Knots, Windows — the `-pgpverifiable` suffix Core lacks, confirmed
+        // against the live 20260507 directory listing rather than carried over
+        // from the 20260508 release.
         assert_eq!(
             NodeFlavor::Knots.asset_url(KNOTS_VERSION, NodeOs::Windows, NodeArch::X86_64),
-            "https://bitcoinknots.org/files/29.x/29.3.knots20260508/\
-             bitcoin-29.3.knots20260508-win64-pgpverifiable.zip"
+            "https://bitcoinknots.org/files/29.x/29.3.knots20260507/\
+             bitcoin-29.3.knots20260507-win64-pgpverifiable.zip"
         );
         // Core path is byte-for-byte the historical shape.
         assert_eq!(
@@ -2234,16 +2426,49 @@ mod tests {
         );
         // Flavour is recoverable from a managed-binary directory name.
         assert_eq!(
-            NodeFlavor::from_version("29.3.knots20260508"),
+            NodeFlavor::from_version("29.3.knots20260507"),
             NodeFlavor::Knots
         );
         assert_eq!(NodeFlavor::from_version("29.0"), NodeFlavor::Core);
     }
 
-    // `consensusrules=rdts` is emitted for Knots-with-enforcement only, and
-    // round-trips through `to_ini`/`from_ini`.
+    // The pin is the last non-enforcing Knots release, and the enforcement
+    // predicate agrees with it. If these two ever disagree, the managed node
+    // enforces a stalled fork and the repair path refuses to pull it back off.
     #[test]
-    fn rdts_consensusrules_emission() {
+    fn the_pinned_knots_build_does_not_enforce_rdts() {
+        assert_eq!(KNOTS_VERSION, "29.3.knots20260507");
+        assert!(!build_enforces_rdts(&format!(
+            "/Satoshi:29.3.0({})/",
+            KNOTS_VERSION.rsplit('.').next().unwrap()
+        )));
+        // No enforcing build is offered for installation or reuse, so an
+        // already-installed one never satisfies the Knots flavour.
+        assert!(!KNOTS_VERSIONS.contains(&"29.3.knots20260508"));
+    }
+
+    // Enforcement is read off the build tag, not the flavour: the two Knots
+    // builds either side of the RDTS release answer differently.
+    #[test]
+    fn rdts_enforcement_is_read_from_the_subversion() {
+        assert!(!build_enforces_rdts("/Satoshi:29.3.0(knots20260507)/"));
+        assert!(build_enforces_rdts("/Satoshi:29.3.0(knots20260508)/"));
+        // Later builds keep enforcing.
+        assert!(build_enforces_rdts("/Satoshi:29.4.0(knots20260601)/"));
+        // Core never does, whatever the version.
+        assert!(!build_enforces_rdts("/Satoshi:29.0.0/"));
+        // A Knots build we cannot date is assumed enforcing: the cost of being
+        // wrong the other way is a repair that loops on every start.
+        assert!(build_enforces_rdts("/Satoshi:29.3.0(knots-custom)/"));
+        // Case is not load-bearing.
+        assert!(build_enforces_rdts("/Satoshi:29.3.0(KNOTS20260508)/"));
+    }
+
+    // `consensusrules` is never written again — not for either flavour, and not
+    // even for a config parsed from a file that still carries it. Parsing it back
+    // is retained only so such a file is still recognised as a Knots node's.
+    #[test]
+    fn consensusrules_is_read_but_never_written() {
         let net = InternalBitcoindNetworkConfig {
             rpc_port: 12345,
             p2p_port: 12346,
@@ -2251,46 +2476,41 @@ mod tests {
             rpc_auth: None,
         };
 
-        // Core: never emits consensusrules.
-        let mut core = InternalBitcoindConfig::for_flavor(NodeFlavor::Core);
-        core.networks.insert(Network::Bitcoin, net.clone());
-        assert!(core
+        for flavor in [NodeFlavor::Core, NodeFlavor::Knots] {
+            let mut conf = InternalBitcoindConfig::for_flavor(flavor);
+            assert!(!conf.enforce_rdts, "{:?} must not opt into RDTS", flavor);
+            conf.networks.insert(Network::Bitcoin, net.clone());
+            assert!(
+                conf.to_ini()
+                    .general_section()
+                    .get("consensusrules")
+                    .is_none(),
+                "{:?} emitted consensusrules",
+                flavor
+            );
+        }
+
+        // A legacy file still parses, and still identifies itself as Knots'.
+        let legacy = "consensusrules=rdts\n[main]\nrpcport=12345\nport=12346\nprune=15000\n";
+        let parsed = InternalBitcoindConfig::from_ini(
+            &ini::Ini::load_from_str(legacy).expect("legacy conf parses"),
+        )
+        .expect("legacy conf loads");
+        assert!(parsed.enforce_rdts);
+        assert_eq!(parsed.flavor, NodeFlavor::Knots);
+
+        // …and rewriting it drops the line, because the file is rebuilt from the
+        // struct rather than edited. That is what keeps the key away from a build
+        // that may not accept it.
+        assert!(parsed
             .to_ini()
             .general_section()
             .get("consensusrules")
             .is_none());
-
-        // Knots with enforcement (the default for the flavour): emits the line.
-        let mut knots = InternalBitcoindConfig::for_flavor(NodeFlavor::Knots);
-        assert!(knots.enforce_rdts);
-        knots.networks.insert(Network::Bitcoin, net.clone());
-        let knots_ini = knots.to_ini();
-        assert_eq!(
-            knots_ini.general_section().get("consensusrules"),
-            Some("rdts")
-        );
-
-        // Round-trip preserves the flag and recovers the flavour.
-        let parsed = InternalBitcoindConfig::from_ini(&knots_ini).expect("parse rdts conf");
-        assert!(parsed.enforce_rdts);
-        assert_eq!(parsed.flavor, NodeFlavor::Knots);
-
-        // "Knots without RDTS" stays expressible and emits nothing.
-        let mut knots_off = InternalBitcoindConfig::for_flavor(NodeFlavor::Knots);
-        knots_off.enforce_rdts = false;
-        knots_off.networks.insert(Network::Bitcoin, net);
-        let off_ini = knots_off.to_ini();
-        assert!(off_ini.general_section().get("consensusrules").is_none());
-        assert!(
-            !InternalBitcoindConfig::from_ini(&off_ini)
-                .expect("parse non-rdts conf")
-                .enforce_rdts
-        );
     }
 
     // Inbound-over-Tor global options are emitted only when enabled, and every
-    // preference round-trips through `to_ini`/`from_ini`. Mirrors
-    // `rdts_consensusrules_emission`.
+    // preference round-trips through `to_ini`/`from_ini`.
     #[test]
     fn tor_inbound_emission() {
         let net = InternalBitcoindNetworkConfig {
@@ -2300,8 +2520,8 @@ mod tests {
             rpc_auth: None,
         };
 
-        // Off by default: a Knots config emits none of the Tor keys, and the
-        // general section holds only `consensusrules`.
+        // Off by default: a Knots config emits none of the Tor keys, leaving the
+        // general section empty.
         let mut off = InternalBitcoindConfig::for_flavor(NodeFlavor::Knots);
         off.networks.insert(Network::Bitcoin, net.clone());
         assert!(!off.inbound_tor);
@@ -2347,9 +2567,10 @@ mod tests {
         assert_eq!(parsed.max_connections, Some(20));
         assert_eq!(parsed.tor_control_port, Some(9151));
         assert_eq!(parsed.tor_socks_port, Some(9150));
-        // RDTS still round-trips alongside the new keys.
-        assert!(parsed.enforce_rdts);
-        assert_eq!(parsed.flavor, NodeFlavor::Knots);
+        // Nothing in the file marks the flavour any more, so a Knots config that
+        // round-trips comes back reporting the placeholder — the flavour ledger is
+        // what carries it (see `configured_managed_flavor`).
+        assert!(!parsed.enforce_rdts);
 
         // "Unlimited" upload omits the cap key and parses back to `None`.
         let mut unlimited =
@@ -2451,7 +2672,6 @@ mod tests {
         let parsed = InternalBitcoindConfig::from_ini(&both_ini).expect("parse combined conf");
         assert_eq!(parsed.max_mempool_mb, Some(300));
         assert!(parsed.inbound_tor);
-        assert!(parsed.enforce_rdts);
         assert_eq!(parsed.max_upload_target_mb_day, Some(1000));
     }
 
@@ -2482,8 +2702,8 @@ mod tests {
     }
 
     // When both flavours are installed, the launched binary must match the
-    // configured flavour — a Knots conf (`consensusrules=rdts`) cannot be
-    // started by a Core binary, so Core must never be preferred over Knots.
+    // configured flavour — a machine that kept Core around after a Knots setup
+    // would otherwise launch the wrong one.
     #[test]
     fn managed_binary_prefers_configured_flavor() {
         use std::fs;
@@ -2524,6 +2744,104 @@ mod tests {
             select_managed_bitcoind_exe(&datadir, NodeFlavor::Core),
             Some(internal_bitcoind_exe_path(&datadir, KNOTS_VERSION))
         );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    // An RDTS-enforcing Knots build already on disk must not satisfy the Knots
+    // flavour, or the update would keep running the binary that stranded the node
+    // instead of downloading the pinned one. Both "is it installed?" checks — the
+    // launcher's and the installer's — key on the pinned version list, so a
+    // 20260508 directory is simply not a candidate.
+    #[test]
+    fn an_installed_enforcing_build_does_not_satisfy_knots() {
+        use std::fs;
+
+        let base = std::env::temp_dir().join(format!(
+            "coincube-enforcing-bin-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        let datadir = CoincubeDirectory::new(base.clone());
+
+        // The stranded dev machine: the enforcing build, and nothing else.
+        const ENFORCING: &str = "29.3.knots20260508";
+        let stale = internal_bitcoind_exe_path(&datadir, ENFORCING);
+        fs::create_dir_all(stale.parent().unwrap()).unwrap();
+        fs::write(&stale, b"fake enforcing bitcoind").unwrap();
+
+        // Not launchable: nothing is installed as far as the launcher is
+        // concerned, for either flavour.
+        assert_eq!(
+            select_managed_bitcoind_exe(&datadir, NodeFlavor::Knots),
+            None
+        );
+        assert_eq!(
+            select_managed_bitcoind_exe(&datadir, NodeFlavor::Core),
+            None
+        );
+        // And not "already installed" for the installer / settings setup, which
+        // both test this exact path before deciding to download.
+        assert!(!internal_bitcoind_exe_path(&datadir, NodeFlavor::Knots.version()).exists());
+
+        // Install the pinned build alongside it: now Knots resolves, and to the
+        // pinned build rather than the newer-looking one.
+        let pinned = internal_bitcoind_exe_path(&datadir, KNOTS_VERSION);
+        fs::create_dir_all(pinned.parent().unwrap()).unwrap();
+        fs::write(&pinned, b"fake bitcoind").unwrap();
+        assert_eq!(
+            select_managed_bitcoind_exe(&datadir, NodeFlavor::Knots),
+            Some(pinned)
+        );
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    // The flavour survives the loss of its only marker in `bitcoin.conf`: a
+    // datadir written by a release that enforced RDTS is recognised as Knots',
+    // recorded in the ledger, and the legacy line is stripped from the file.
+    #[test]
+    fn a_legacy_rdts_conf_is_migrated_to_the_flavour_ledger() {
+        use std::fs;
+
+        let base =
+            std::env::temp_dir().join(format!("coincube-rdts-migration-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let datadir = CoincubeDirectory::new(base.clone());
+        let config_path = internal_bitcoind_config_path(&internal_bitcoind_datadir(&datadir));
+        fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        fs::write(
+            &config_path,
+            "consensusrules=rdts\n[main]\nrpcport=12345\nport=12346\nprune=15000\n",
+        )
+        .unwrap();
+
+        // Before: the legacy line is the only thing saying "Knots".
+        assert_eq!(configured_managed_flavor(&datadir), Some(NodeFlavor::Knots));
+
+        migrate_legacy_rdts_conf(&datadir);
+
+        // After: the line is gone from the file the node will be handed…
+        let migrated = InternalBitcoindConfig::from_file(&config_path).expect("conf still loads");
+        assert!(!migrated.enforce_rdts);
+        assert!(!fs::read_to_string(&config_path)
+            .unwrap()
+            .contains("consensusrules"));
+        // …the ports it carried are untouched…
+        assert_eq!(
+            migrated.networks.get(&Network::Bitcoin).map(|n| n.rpc_port),
+            Some(12345)
+        );
+        // …and the flavour it stood for survives in the ledger.
+        assert_eq!(
+            crate::node::revalidate::ManagedNodeState::load(&datadir).configured_flavor,
+            Some(NodeFlavor::Knots)
+        );
+        assert_eq!(configured_managed_flavor(&datadir), Some(NodeFlavor::Knots));
+
+        // Idempotent: running it again on the migrated datadir changes nothing.
+        migrate_legacy_rdts_conf(&datadir);
+        assert_eq!(configured_managed_flavor(&datadir), Some(NodeFlavor::Knots));
 
         let _ = fs::remove_dir_all(&base);
     }

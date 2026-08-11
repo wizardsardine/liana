@@ -1966,6 +1966,16 @@ impl App {
                 .reload(Some(daemon.clone()), Some(wallet.clone())),
         );
         tasks.push(panels.connect.ensure_session_check());
+        // A managed node that came up stranded on the stalled BIP-110 fork was
+        // repaired during startup, long before any of this existed to say so. The
+        // sidecar carried the fact across; collect it here, where there is finally
+        // a UI to show it in. Self-clearing, so it appears exactly once.
+        if crate::node::revalidate::ManagedNodeState::take_repair_notice(&data_dir) {
+            tasks.push(Task::done(Message::View(view::Message::ShowToast(
+                log::Level::Info,
+                crate::node::revalidate::CHAIN_REPAIRED_NOTICE.to_string(),
+            ))));
+        }
         let (connect_auth_arc, connect_email) = match connect_auth {
             Some((a, e)) => (Some(a), Some(e)),
             None => (None, None),

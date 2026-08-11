@@ -1,14 +1,13 @@
 """Broadcast-path regression tests under the node's relay policy.
 
-Bitcoin Knots `20260508` tightens relay defaults (e.g. `subdustfeepenalty` on,
-`datacarrier` changes) and, on the Knots CI leg, runs with `consensusrules=rdts`
-(BIP-110) enforced. COINCUBE only ever emits standard P2WPKH / P2TR payments, so
-those must keep relaying. These tests build, sign, and broadcast such sends
-through the node via `sendrawtransaction` — a raw broadcast is rejected with an
-RpcError if policy refuses it, so a clean broadcast is the assertion.
+Bitcoin Knots tightens relay defaults (e.g. `subdustfeepenalty` on, `datacarrier`
+changes). COINCUBE only ever emits standard P2WPKH / P2TR payments, so those must
+keep relaying. These tests build, sign, and broadcast such sends through the node
+via `sendrawtransaction` — a raw broadcast is rejected with an RpcError if policy
+refuses it, so a clean broadcast is the assertion.
 
 The tests use only the `bitcoind` fixture, so they run on every backend leg; the
-Knots + RDTS matrix entry is where they actually exercise the stricter policy.
+Knots matrix entry is where they actually exercise the stricter policy.
 """
 
 from decimal import Decimal

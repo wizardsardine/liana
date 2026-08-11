@@ -1,32 +1,40 @@
-//! Revalidating the managed node's chain state after a Core↔Knots flavour swap.
+//! Getting the managed node back onto the majority chain after a build that
+//! enforced BIP-110 / RDTS has left marks on its block index.
 //!
-//! Bitcoin Knots can enforce BIP-110 / RDTS (`consensusrules=rdts`); Bitcoin Core
-//! cannot. Both flavours of the managed node share one datadir, and swapping
-//! between them leaves stale rule-enforcement state behind in **both** directions:
+//! # What happened
 //!
-//! * **Core → Knots.** Knots adopts the inherited chainstate as-is — verified on
-//!   the shipped binaries, it emits zero `UpdateTip` lines on startup — so history
-//!   Core accepted is never checked against RDTS rules.
-//! * **Knots → Core.** `BLOCK_FAILED_VALID` marks are persisted in the block index
-//!   and survive a binary swap, so Core inherits Knots' rejections and stays on a
-//!   minority chain while the most-work branch remains flagged `invalid`. Core
-//!   never reconsiders those blocks on its own.
+//! Bitcoin Knots builds from `knots20260508` on enforce BIP-110 (RDTS); Bitcoin
+//! Core and earlier Knots builds do not. Enforcement is a property of the *build*
+//! — `consensusrules=rdts` only ever recorded the user's consent — and the fork
+//! those builds enforce stalled two blocks in, at 961,632. A node running one of
+//! them is therefore parked on a dead minority branch, and stays there after the
+//! binary is swapped: `BLOCK_FAILED_VALID` marks live in the shared block index,
+//! survive the swap, and a non-enforcing binary that inherits them keeps following
+//! the branch it is left on. It never reconsiders on its own.
 //!
-//! The two are not equally cheap. Knots → Core is a single idempotent
-//! `reconsiderblock` that disconnects nothing and needs no block data. Core → Knots
-//! has to *rewind* the chain with `invalidateblock` so Knots can replay it, which
-//! manufactures a deep reorg under every Vault's poller and can only reach as far
-//! back as pruning has left block data. It therefore comes with a prune floor, a
-//! maintenance pause, and a durable record of the rewind — see [`execute_replay`].
+//! The repair is a single idempotent `reconsiderblock` at the anchor
+//! ([`RDTS_ANCHOR_MAINNET`]), which disconnects nothing and needs no block data:
+//! [`RevalidationPlan::ClearFailureFlags`]. It is keyed on **enforcement, not
+//! flavour** — see [`plan`] — because "Knots" alone no longer says whether a node
+//! trailing the most-work chain is doing so deliberately.
 //!
-//! # Unverified premise
+//! # Historical: the Core → Knots direction
 //!
-//! The rewind assumes that blocks reconnected by `reconsiderblock` are re-checked
-//! against RDTS rather than fast-tracked on cached block-index validity. That has
-//! **not** been demonstrated: RDTS does not exist on regtest, testnet4 activation
-//! cannot be forced, and mainnet has not reached the window. Confirm it on a real
-//! chain before RDTS locks in — until then the deployment gate keeps all of this
-//! inert. See `plans/PLAN-rdts-flavor-swap-revalidation.md`, Task 0.
+//! While an enforcing build was shipped, the other direction mattered too: Knots
+//! adopted an inherited chainstate as-is, so history Core had accepted was never
+//! checked against RDTS rules. Correcting that meant *rewinding* the chain with
+//! `invalidateblock` so Knots could replay it — a deep reorg under every Vault's
+//! poller, bounded by how far pruning had left block data, hence the prune floor,
+//! the maintenance pause, and the durable record of the rewind
+//! ([`execute_replay`]).
+//!
+//! With no enforcing build shippable there is nothing stricter to replay under, so
+//! that path is now unreachable in practice: no plan produces
+//! [`RevalidationPlan::ReplayUnderRdts`] for a build we ship. It survives only
+//! until every datadir is confirmed migrated, and is deleted then — along with the
+//! premise it always rested on, never demonstrated, that blocks reconnected by
+//! `reconsiderblock` are re-checked rather than fast-tracked on cached block-index
+//! validity. See `plans/PLAN-rdts-sunset.md`, PR 4.
 
 use std::{
     io,
@@ -42,7 +50,7 @@ use tracing::{info, warn};
 
 use crate::{
     dir::CoincubeDirectory,
-    node::bitcoind::{internal_bitcoind_directory, NodeFlavor, NodeIdentity},
+    node::bitcoind::{internal_bitcoind_directory, NodeFlavor, NodeIdentity, ObservedBuild},
 };
 
 /// Name of the BIP-110 / RDTS deployment in `getdeploymentinfo`.
@@ -66,6 +74,18 @@ pub const RDTS_DEPLOYMENT: &str = "reduced_data";
 /// retarget period. See [`RDTS_DEPLOYMENT`] for the runtime liveness gate that
 /// keeps this height from being acted on before the fork is real.
 pub const RDTS_ANCHOR_MAINNET: i32 = 961_631;
+
+/// What the user is told, once, after an automatic repair has moved their node
+/// back onto the majority chain.
+///
+/// Names the fork rather than talking around it: the balances and confirmation
+/// counts in front of them are about to change, and "your node re-checked some
+/// blocks" would not explain why. Shown through the same toast the manual
+/// "Re-check chain" button reports through — see
+/// [`ManagedNodeState::take_repair_notice`].
+pub const CHAIN_REPAIRED_NOTICE: &str =
+    "Your node had been following the BIP-110 fork chain, which has stalled. It is now back \
+     on the majority Bitcoin chain; your history and balances are up to date.";
 
 /// Blocks of headroom we refuse to rewind into above `pruneheight`.
 ///
@@ -105,8 +125,25 @@ pub struct ChainFacts {
     pub network: Network,
     /// The flavour the node ran as last time we observed it, if we ever did.
     pub previous_flavor: Option<NodeFlavor>,
+    /// Whether the build behind that run enforced RDTS — i.e. whether it could
+    /// have left `BLOCK_FAILED_VALID` marks behind for this run to inherit.
+    ///
+    /// This, not the previous flavour, is what makes a swap worth acting on when
+    /// the node is not visibly stranded. See
+    /// [`ManagedNodeState::previous_run_enforced_rdts`] for how an older record
+    /// with no answer is read.
+    pub previous_build_enforced_rdts: bool,
     /// The flavour it is running as now.
     pub current_flavor: NodeFlavor,
+    /// Whether the build it is running as now enforces RDTS.
+    ///
+    /// The distinction the flavour cannot make. A stranded node running an
+    /// enforcing build is working as designed and must be left alone; a stranded
+    /// node running a build that does *not* enforce is stuck on marks an earlier
+    /// build left behind, and can only be freed by clearing them — and that is
+    /// true whether it calls itself Knots or Core. See
+    /// [`crate::node::bitcoind::build_enforces_rdts`].
+    pub current_build_enforces_rdts: bool,
     /// Blocks validated toward the best known tip.
     pub blocks: i32,
     /// Highest block on ANY branch the node knows of, including ones it rejected or
@@ -137,9 +174,14 @@ pub enum SkipReason {
     /// flavours can diverge. Until mainnet passes 961,632 this is the universal
     /// answer.
     NothingAboveAnchor,
-    /// The node follows the best chain it knows of and did not just come from
-    /// Knots. Nothing to clear.
+    /// The node follows the best chain it knows of and did not just come off an
+    /// enforcing build. Nothing to clear.
     NothingToClear,
+    /// The node is trailing the most-work chain, but the build it is running
+    /// enforces RDTS — so that is the enforcement working, not a fault. Clearing
+    /// the flags would re-validate and re-reject the same blocks on every start,
+    /// forever.
+    EnforcingBuild,
     /// Core → Knots, but pruning has already discarded everything above the
     /// anchor, so there is nothing left we are able to re-check.
     NothingRetainedAboveAnchor,
@@ -206,27 +248,45 @@ pub fn plan(facts: ChainFacts) -> RevalidationPlan {
     // rather than a stored flag so a swap we failed to record still surfaces.
     let node_stranded = facts.best_known_height > facts.blocks;
 
+    // The question that decides everything below is "does the build now running
+    // enforce RDTS?", not "which flavour is it?". While the shipped Knots build
+    // enforced, the two were interchangeable and this was keyed on flavour — which
+    // is exactly what stranded the fleet when the pin moved back to a Knots build
+    // that does not enforce: Knots → Knots hit the never-repair branch and the node
+    // followed the dead fork forever.
+    if !facts.current_build_enforces_rdts {
+        // Two independent triggers. The ledger notices the swap off an enforcing
+        // build immediately, even if the marks it left have not stranded the node
+        // visibly; the stranded check catches one we failed to record — a swap made
+        // through the installer, a lost or corrupt sidecar, a datadir moved between
+        // machines, or (the incident this exists for) a binary replaced under a
+        // datadir with no flavour change at all to notice.
+        //
+        // Note what the ledger trigger is *not* keyed on: the previous flavour. A
+        // non-enforcing Knots run followed by another one would satisfy that on
+        // every start, and re-run the repair — claim, authorisation, reorg watch —
+        // forever.
+        return if facts.previous_build_enforced_rdts || node_stranded {
+            RevalidationPlan::ClearFailureFlags { anchor_height }
+        } else {
+            RevalidationPlan::Skip(SkipReason::NothingToClear)
+        };
+    }
+
     match facts.current_flavor {
-        NodeFlavor::Core => {
-            // Two independent triggers. The ledger notices the swap immediately;
-            // the stranded check catches one we failed to record — a swap made
-            // through the installer, a lost or corrupt sidecar, a datadir moved
-            // between machines.
-            let came_from_knots = facts.previous_flavor == Some(NodeFlavor::Knots);
-            if came_from_knots || node_stranded {
-                RevalidationPlan::ClearFailureFlags { anchor_height }
-            } else {
-                RevalidationPlan::Skip(SkipReason::NothingToClear)
-            }
-        }
+        // An enforcing build that reports itself as Core is a contradiction we have
+        // no reading for; the enforcement claim is the load-bearing one, so honour
+        // it and leave the chain alone.
+        NodeFlavor::Core => RevalidationPlan::Skip(SkipReason::EnforcingBuild),
         NodeFlavor::Knots => {
-            // A Knots node trailing the most-work chain is not a bug — that is
-            // precisely what enforcing RDTS against a non-compliant majority looks
-            // like. Never "repair" it: clearing the flags would only re-validate
-            // and re-reject the same blocks, every startup, forever. So the only
-            // trigger here is an actual swap from Core, never `node_stranded`.
+            // A node running an enforcing build and trailing the most-work chain is
+            // not a bug — that is what enforcing RDTS against a non-compliant
+            // majority looks like. Never "repair" it. We ship no such build, so in
+            // practice this is only reachable via a leftover binary still running
+            // from before the pin moved back. The only trigger here is an actual
+            // swap from Core, never `node_stranded`.
             if facts.previous_flavor != Some(NodeFlavor::Core) {
-                return RevalidationPlan::Skip(SkipReason::NothingToClear);
+                return RevalidationPlan::Skip(SkipReason::EnforcingBuild);
             }
             // We can only disconnect blocks we still have. `pruneheight` climbs
             // forever while the anchor stays put, so past roughly the prune window
@@ -274,6 +334,36 @@ pub fn plan(facts: ChainFacts) -> RevalidationPlan {
 pub struct ManagedNodeState {
     /// Flavour the node was observed running as, last time it started.
     pub last_run_flavor: Option<NodeFlavor>,
+    /// Whether the build behind that run enforced RDTS.
+    ///
+    /// Recorded separately from the flavour because the flavour stopped answering
+    /// the question the moment a non-enforcing Knots build was pinned. `None` means
+    /// the record predates this field — see [`Self::previous_run_enforced_rdts`],
+    /// which reads that as "yes", since every Knots build any release ever ran
+    /// enforced.
+    #[serde(default)]
+    pub last_run_enforced_rdts: Option<bool>,
+    /// Flavour the node is *configured* to run as — what the user picked, as
+    /// opposed to [`Self::last_run_flavor`], which is what actually came up.
+    ///
+    /// This one has to be durable because there is nowhere else to put it:
+    /// bitcoind rejects options it doesn't recognise, so the managed
+    /// `bitcoin.conf` cannot carry a flavour key of ours, and the marker it was
+    /// previously inferred from (`consensusrules=rdts`) is no longer written.
+    /// Written by every surface that writes the managed config; read by
+    /// [`crate::node::bitcoind::configured_managed_flavor`].
+    #[serde(default)]
+    pub configured_flavor: Option<NodeFlavor>,
+    /// Set when an automatic repair has pulled the node back onto the majority
+    /// chain and the user has not been told yet.
+    ///
+    /// The repair runs deep inside node startup, with no UI in reach, and the app
+    /// that would show the notice may not even be constructed yet — so the fact is
+    /// parked here and collected once by [`Self::take_repair_notice`]. Durable so
+    /// a crash between the repair and the notice does not swallow it, and cleared
+    /// on collection so it is shown exactly once.
+    #[serde(default)]
+    pub repair_notice_pending: bool,
     /// Set while an `invalidateblock` has been issued and not yet undone.
     ///
     /// Unlike [`Self::last_run_flavor`] this one *is* load-bearing. The failure
@@ -441,7 +531,7 @@ impl ManagedNodeState {
     /// Reads with `try_load` rather than `load`: defaulting on an unreadable sidecar
     /// would write back a state with no `rewind`, silently erasing the only record
     /// that can release a parked node. Skipping the update is the safe failure.
-    pub fn record_run(coincube_datadir: &CoincubeDirectory, flavor: NodeFlavor) {
+    pub fn record_run(coincube_datadir: &CoincubeDirectory, observed: ObservedBuild) {
         let mut state = match Self::try_load(coincube_datadir) {
             Ok(state) => state,
             Err(e) => {
@@ -449,10 +539,90 @@ impl ManagedNodeState {
                 return;
             }
         };
-        state.last_run_flavor = Some(flavor);
+        state.last_run_flavor = Some(observed.flavor);
+        state.last_run_enforced_rdts = Some(observed.enforces_rdts);
         if let Err(e) = state.save(coincube_datadir) {
             warn!("could not record managed-node flavour: {e}");
         }
+    }
+
+    /// Whether the build the node last ran under enforced RDTS.
+    ///
+    /// A record with no answer is read as "yes": the field was added when the pin
+    /// moved back to a non-enforcing build, so every run it could be missing from
+    /// was made by a release whose Knots build enforced. Reading it the other way
+    /// would decline to repair precisely the datadirs the repair exists for. It
+    /// self-corrects on the first run under this release, which writes the field.
+    pub fn previous_run_enforced_rdts(&self) -> bool {
+        self.last_run_enforced_rdts
+            .unwrap_or(matches!(self.last_run_flavor, Some(NodeFlavor::Knots)))
+    }
+
+    /// Record the flavour the managed node is configured to run as.
+    ///
+    /// Called wherever the managed `bitcoin.conf` is written, because that file
+    /// can no longer hold the answer itself. Same `try_load` discipline as
+    /// [`Self::record_run`]: a sidecar we cannot read is left alone rather than
+    /// overwritten with a default that would erase an in-flight rewind.
+    pub fn record_configured(coincube_datadir: &CoincubeDirectory, flavor: NodeFlavor) {
+        let mut state = match Self::try_load(coincube_datadir) {
+            Ok(state) => state,
+            Err(e) => {
+                warn!("not recording the configured managed-node flavour: state unreadable ({e})");
+                return;
+            }
+        };
+        if state.configured_flavor == Some(flavor) {
+            return;
+        }
+        state.configured_flavor = Some(flavor);
+        if let Err(e) = state.save(coincube_datadir) {
+            warn!("could not record the configured managed-node flavour: {e}");
+        }
+    }
+
+    /// Note that an automatic chain repair has run, so the user can be told once.
+    ///
+    /// Best-effort: an unreported repair is a missing reassurance, not a
+    /// correctness problem, and the repair itself has already happened.
+    pub fn flag_repair_notice(coincube_datadir: &CoincubeDirectory) {
+        let mut state = match Self::try_load(coincube_datadir) {
+            Ok(state) => state,
+            Err(e) => {
+                warn!("not recording the chain-repair notice: state unreadable ({e})");
+                return;
+            }
+        };
+        if state.repair_notice_pending {
+            return;
+        }
+        state.repair_notice_pending = true;
+        if let Err(e) = state.save(coincube_datadir) {
+            warn!("could not record the chain-repair notice: {e}");
+        }
+    }
+
+    /// Collect a pending repair notice, clearing it so it is shown exactly once.
+    ///
+    /// Clears *before* the caller displays anything: a notice shown twice is worse
+    /// than one lost to a crash in the microsecond between, and the sidecar is the
+    /// only thing that can enforce "once" across restarts.
+    pub fn take_repair_notice(coincube_datadir: &CoincubeDirectory) -> bool {
+        let mut state = match Self::try_load(coincube_datadir) {
+            Ok(state) => state,
+            Err(_) => return false,
+        };
+        if !state.repair_notice_pending {
+            return false;
+        }
+        state.repair_notice_pending = false;
+        if let Err(e) = state.save(coincube_datadir) {
+            // Not cleared on disk, so it would show again. Better to skip it now
+            // than to repeat it on every start.
+            warn!("could not clear the chain-repair notice ({e}); not showing it");
+            return false;
+        }
+        true
     }
 
     /// Record (or clear) an in-flight rewind, preserving the flavour ledger.
@@ -489,7 +659,7 @@ impl ManagedNodeState {
     /// `last_run_flavor` still Core, so the next start plans the whole hours-long
     /// replay again. One `save` makes the completion as atomic as the rename
     /// underneath it.
-    pub fn finish_rewind(coincube_datadir: &CoincubeDirectory, flavor: NodeFlavor) -> bool {
+    pub fn finish_rewind(coincube_datadir: &CoincubeDirectory, observed: ObservedBuild) -> bool {
         let mut state = match Self::try_load(coincube_datadir) {
             Ok(state) => state,
             Err(e) => {
@@ -498,7 +668,8 @@ impl ManagedNodeState {
             }
         };
         state.rewind = None;
-        state.last_run_flavor = Some(flavor);
+        state.last_run_flavor = Some(observed.flavor);
+        state.last_run_enforced_rdts = Some(observed.enforces_rdts);
         match state.save(coincube_datadir) {
             Ok(()) => true,
             Err(e) => {
@@ -1116,9 +1287,9 @@ pub fn best_known_height(tips: &[coincubed::ChainTipEntry]) -> Option<i32> {
 ///
 /// Called from every managed-node start path, because `Bitcoind::maybe_start` is
 /// the one funnel the loader, the installer, and the settings switch all pass
-/// through. `observed_flavor` must come from the node's own
-/// `getnetworkinfo.subversion` — not from configuration, which can disagree with
-/// what actually launched.
+/// through. `observed` must come from the node's own `getnetworkinfo.subversion`
+/// — not from configuration, which can disagree with what actually launched, and
+/// which cannot answer the enforcement question at all.
 ///
 /// Best-effort throughout: a node that just started is more important than this
 /// check, so every failure is logged and swallowed rather than blocking startup.
@@ -1133,8 +1304,9 @@ pub fn reconcile_after_start(
     config: &coincubed::config::BitcoindConfig,
     identity: &NodeIdentity,
     network: Network,
-    observed_flavor: NodeFlavor,
+    observed: ObservedBuild,
 ) {
+    let observed_flavor = observed.flavor;
     // Nothing here may run against a provisional identity. Every branch below either
     // records a repair, arms an authorisation, or advances the flavour ledger on the
     // strength of one — and all three would be written against an identity that changes
@@ -1186,31 +1358,26 @@ pub fn reconcile_after_start(
     // a planner fed it draws exactly the wrong conclusion — a node parked at the
     // floor looks like "nothing left above the anchor", which records the current
     // flavour and retires the very swap the recovery is still working on.
-    if !resume_pending_rewind(
-        coincube_datadir,
-        bitcoind,
-        config,
-        identity,
-        observed_flavor,
-    )
-    .may_plan()
-    {
+    if !resume_pending_rewind(coincube_datadir, bitcoind, config, identity, observed).may_plan() {
         return;
     }
 
-    let previous_flavor = ManagedNodeState::load(coincube_datadir).last_run_flavor;
+    // Re-read: the recovery above may have retired a rewind and advanced the ledger.
+    let ledger = ManagedNodeState::load(coincube_datadir);
+    let previous_flavor = ledger.last_run_flavor;
+    let previous_build_enforced_rdts = ledger.previous_run_enforced_rdts();
 
     // Networks without an anchor cost us nothing: no RPCs at all. Nothing can be
     // planned there, so the flavour record is safe to advance immediately.
     if rdts_anchor_height(network).is_none() {
-        ManagedNodeState::record_run(coincube_datadir, observed_flavor);
+        ManagedNodeState::record_run(coincube_datadir, observed);
         return;
     }
 
     let status = match bitcoind.chain_status() {
         Ok(status) => status,
         Err(e) => {
-            warn!("could not read chain status for the RDTS flavour check: {e}");
+            warn!("could not read chain status for the managed-node chain check: {e}");
             return;
         }
     };
@@ -1224,7 +1391,7 @@ pub fn reconcile_after_start(
     let best_known = match bitcoind.chain_tips() {
         Ok(tips) => best_known_height(&tips).unwrap_or(status.blocks),
         Err(e) => {
-            warn!("could not read chain tips for the RDTS flavour check: {e}");
+            warn!("could not read chain tips for the managed-node chain check: {e}");
             status.blocks
         }
     };
@@ -1232,7 +1399,9 @@ pub fn reconcile_after_start(
     let plan = plan(ChainFacts {
         network,
         previous_flavor,
+        previous_build_enforced_rdts,
         current_flavor: observed_flavor,
+        current_build_enforces_rdts: observed.enforces_rdts,
         blocks: status.blocks,
         best_known_height: best_known.max(status.blocks),
         rdts_abandoned,
@@ -1240,17 +1409,24 @@ pub fn reconcile_after_start(
     });
     match plan {
         RevalidationPlan::Skip(reason) => {
-            tracing::debug!("No RDTS revalidation needed ({reason:?}).");
-            ManagedNodeState::record_run(coincube_datadir, observed_flavor);
+            tracing::debug!("No chain repair needed ({reason:?}).");
+            ManagedNodeState::record_run(coincube_datadir, observed);
         }
         RevalidationPlan::ClearFailureFlags { .. } => {
             // Idempotent and cheap, so advancing the record is safe even if it fails:
             // a node still following less work than it knows about is caught again by
             // the height comparison on the next start, with no reliance on the ledger.
-            if let Err(e) = clear_failure_flags(coincube_datadir, config, identity, plan) {
-                warn!("RDTS revalidation failed: {e}");
+            match clear_failure_flags(coincube_datadir, config, identity, plan) {
+                // The user's Vaults are about to reorg off the dead fork under them,
+                // with balances and confirmation states moving as a result. Park a
+                // one-shot notice explaining it; the app collects it once the UI
+                // exists. Only for the automatic path — the manual "Re-check chain"
+                // button reports to the user directly.
+                Ok(Some(_)) => ManagedNodeState::flag_repair_notice(coincube_datadir),
+                Ok(None) => {}
+                Err(e) => warn!("chain repair failed: {e}"),
             }
-            ManagedNodeState::record_run(coincube_datadir, observed_flavor);
+            ManagedNodeState::record_run(coincube_datadir, observed);
         }
         RevalidationPlan::ReplayUnderRdts {
             floor_height,
@@ -1267,7 +1443,7 @@ pub fn reconcile_after_start(
                 coincube_datadir.clone(),
                 config.clone(),
                 identity,
-                observed_flavor,
+                observed,
                 floor_height,
                 target_height,
             );
@@ -1288,7 +1464,7 @@ fn spawn_replay(
     coincube_datadir: CoincubeDirectory,
     config: coincubed::config::BitcoindConfig,
     identity: &NodeIdentity,
-    observed_flavor: NodeFlavor,
+    observed: ObservedBuild,
     floor_height: i32,
     target_height: i32,
 ) {
@@ -1341,7 +1517,7 @@ fn spawn_replay(
                 // Core, and the next start would plan the whole replay over again —
                 // hours of disconnect and reconnect, against a chain already re-checked.
                 Ok(()) => {
-                    ManagedNodeState::finish_rewind(&coincube_datadir, observed_flavor);
+                    ManagedNodeState::finish_rewind(&coincube_datadir, observed);
                 }
                 Err(e) => warn!("RDTS replay failed: {e}"),
             }
@@ -1396,7 +1572,7 @@ pub fn resume_pending_rewind(
     bitcoind: &coincubed::BitcoinD,
     config: &coincubed::config::BitcoindConfig,
     identity: &NodeIdentity,
-    observed_flavor: NodeFlavor,
+    observed: ObservedBuild,
 ) -> RecoveryState {
     // `try_load`, not `load`: an unreadable sidecar must not read as "nothing
     // pending". If a rewind really is in flight, defaulting here would leave the
@@ -1522,7 +1698,7 @@ pub fn resume_pending_rewind(
                         );
                     }
                     confirm_and_publish(&coincube_datadir, &floor.operation_id);
-                    ManagedNodeState::finish_rewind(&coincube_datadir, observed_flavor);
+                    ManagedNodeState::finish_rewind(&coincube_datadir, observed);
                 }
                 // Still reconnecting when we stopped watching. The record stays, so
                 // the next start picks the recovery up rather than losing both it and
@@ -2493,11 +2669,20 @@ mod tests {
         }
     }
 
+    /// Facts for a node now running a build that does **not** enforce RDTS —
+    /// Core, or the pinned `29.3.knots20260507`. That is every build we ship, so
+    /// it is the default here; the third case (an enforcing Knots build, only
+    /// reachable now via a leftover binary or an external node) is spelled out by
+    /// wrapping a test's facts in [`enforcing`].
     fn facts(network: Network, from: NodeFlavor, to: NodeFlavor) -> ChainFacts {
         ChainFacts {
             network,
             previous_flavor: Some(from),
+            // Every Knots build any earlier release ran enforced, so a remembered
+            // Knots run is a remembered enforcing one.
+            previous_build_enforced_rdts: matches!(from, NodeFlavor::Knots),
             current_flavor: to,
+            current_build_enforces_rdts: false,
             // Comfortably past the anchor, so the height gate isn't what's under test.
             blocks: RDTS_ANCHOR_MAINNET + 5_000,
             best_known_height: RDTS_ANCHOR_MAINNET + 5_000,
@@ -2506,6 +2691,12 @@ mod tests {
             // hidden variable in the cases that aren't about it.
             prune_state: coincubed::PruneState::NotPruned,
         }
+    }
+
+    /// The same node, but running a build from `knots20260508` on.
+    fn enforcing(mut f: ChainFacts) -> ChainFacts {
+        f.current_build_enforces_rdts = true;
+        f
     }
 
     /// The node follows less work than it knows about — a rejected or headers-only
@@ -2626,26 +2817,122 @@ mod tests {
         );
     }
 
-    // The most important negative case. A Knots node trailing the most-work chain
-    // is doing its job — enforcing RDTS against a non-compliant majority. Clearing
-    // its flags would re-validate and re-reject the same blocks on every startup.
+    // The most important negative case. A node running an *enforcing* build and
+    // trailing the most-work chain is doing its job. Clearing its flags would
+    // re-validate and re-reject the same blocks on every startup.
     #[test]
-    fn a_stranded_knots_node_is_never_repaired() {
-        let f = stranded_by(
+    fn a_stranded_enforcing_node_is_never_repaired() {
+        let f = enforcing(stranded_by(
             facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Knots),
             10,
-        );
-        assert_eq!(plan(f), RevalidationPlan::Skip(SkipReason::NothingToClear));
+        ));
+        assert_eq!(plan(f), RevalidationPlan::Skip(SkipReason::EnforcingBuild));
 
         // Not even right after a Core -> Knots swap. That swap does trigger work,
         // but it must be a replay under RDTS — never a "repair" that clears the
         // rejections and drags the node back onto the chain the user just opted out
         // of following.
-        let f = stranded_by(
+        let f = enforcing(stranded_by(
             facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots),
             10,
-        );
+        ));
         assert!(matches!(plan(f), RevalidationPlan::ReplayUnderRdts { .. }));
+    }
+
+    // The incident, exactly. A managed node that consented to RDTS was stranded on
+    // the fork by an enforcing build; the pin then moved back to a Knots build that
+    // does not enforce. Nothing about the *flavour* changed — Knots to Knots — so
+    // the old flavour-keyed planner sent it down the never-repair branch and it
+    // followed the dead chain forever. Keyed on enforcement, it is repaired.
+    #[test]
+    fn a_stranded_node_on_a_non_enforcing_knots_build_is_repaired() {
+        let f = stranded_by(
+            facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Knots),
+            2,
+        );
+        assert_eq!(
+            plan(f),
+            RevalidationPlan::ClearFailureFlags {
+                anchor_height: RDTS_ANCHOR_MAINNET
+            },
+        );
+
+        // The ledger alone is enough, even before the node visibly trails: coming
+        // off an enforcing build means marks may be waiting whether or not the
+        // heavier branch is known yet.
+        let f = facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Knots);
+        assert!(f.previous_build_enforced_rdts);
+        assert_eq!(
+            plan(f),
+            RevalidationPlan::ClearFailureFlags {
+                anchor_height: RDTS_ANCHOR_MAINNET
+            },
+        );
+
+        // But once that repair has happened and the ledger records a *non*-enforcing
+        // run, a healthy restart is quiet. Without this the repair would re-run —
+        // claim, authorisation, reorg watch — on every single start, forever.
+        let mut f = facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Knots);
+        f.previous_build_enforced_rdts = false;
+        assert_eq!(plan(f), RevalidationPlan::Skip(SkipReason::NothingToClear));
+    }
+
+    // The full matrix the sunset introduced: three builds (Core, the pinned
+    // non-enforcing Knots, an enforcing Knots) × stranded or not × what the ledger
+    // remembers. Enforcement decides; flavour only picks between the two remedies
+    // once a build *is* enforcing.
+    #[test]
+    fn the_planner_is_keyed_on_enforcement_not_flavour() {
+        let repair = RevalidationPlan::ClearFailureFlags {
+            anchor_height: RDTS_ANCHOR_MAINNET,
+        };
+        let previous_runs = [
+            (None, false),                    // no ledger at all
+            (Some(NodeFlavor::Core), false),  // last ran Core
+            (Some(NodeFlavor::Knots), true),  // last ran a pre-sunset Knots
+            (Some(NodeFlavor::Knots), false), // last ran the pinned Knots
+        ];
+        for (previous, previously_enforcing) in previous_runs {
+            for current in [NodeFlavor::Core, NodeFlavor::Knots] {
+                let base = {
+                    let mut f = facts(Network::Bitcoin, NodeFlavor::Core, current);
+                    f.previous_flavor = previous;
+                    f.previous_build_enforced_rdts = previously_enforcing;
+                    f
+                };
+                let case = format!("{current:?}, previous={previous:?}/{previously_enforcing}");
+
+                // Non-enforcing build, stranded: always repaired, whatever it calls
+                // itself and whatever we remember.
+                assert_eq!(plan(stranded_by(base, 3)), repair, "stranded: {case}");
+
+                // Non-enforcing build, on the best chain it knows of: only a
+                // remembered *enforcing* run is left to act on.
+                let expected = if previously_enforcing {
+                    repair
+                } else {
+                    RevalidationPlan::Skip(SkipReason::NothingToClear)
+                };
+                assert_eq!(plan(base), expected, "on best chain: {case}");
+
+                // Enforcing build: never dragged anywhere. The one exception is the
+                // historical Core -> Knots replay, which is not a repair.
+                let planned = plan(enforcing(stranded_by(base, 3)));
+                if current == NodeFlavor::Knots && previous == Some(NodeFlavor::Core) {
+                    assert!(
+                        matches!(planned, RevalidationPlan::ReplayUnderRdts { .. }),
+                        "enforcing: {}",
+                        case
+                    );
+                } else {
+                    assert_eq!(
+                        planned,
+                        RevalidationPlan::Skip(SkipReason::EnforcingBuild),
+                        "enforcing: {case}"
+                    );
+                }
+            }
+        }
     }
 
     // The first rejection is the whole point. A Knots node that rejected the block
@@ -2666,10 +2953,11 @@ mod tests {
     }
 
     // Core -> Knots on an unpruned node: rewind all the way to the anchor, which is
-    // the deepest point the two flavours must agree on.
+    // the deepest point the two builds must agree on. Historical — only an
+    // enforcing build has anything stricter to replay under, and we ship none.
     #[test]
     fn core_to_knots_replays_from_the_anchor() {
-        let f = facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots);
+        let f = enforcing(facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots));
         let p = plan(f);
         assert_eq!(
             p,
@@ -2687,7 +2975,7 @@ mod tests {
     // disconnecting into pruned data aborts the node outright.
     #[test]
     fn pruning_raises_the_floor_and_makes_coverage_partial() {
-        let mut f = facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots);
+        let mut f = enforcing(facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots));
         let prune_height = RDTS_ANCHOR_MAINNET + 2_000;
         f.prune_state = coincubed::PruneState::Pruned(prune_height);
         let p = plan(f);
@@ -2720,7 +3008,7 @@ mod tests {
     // decline rather than rewind into data we don't have.
     #[test]
     fn a_fully_pruned_window_is_declined() {
-        let mut f = facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots);
+        let mut f = enforcing(facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots));
         f.prune_state = coincubed::PruneState::Pruned(f.blocks);
         assert_eq!(
             plan(f),
@@ -2741,7 +3029,7 @@ mod tests {
     // data is gone, which aborts bitcoind rather than returning an error.
     #[test]
     fn an_unreadable_prune_height_declines_rather_than_assuming_unpruned() {
-        let mut f = facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots);
+        let mut f = enforcing(facts(Network::Bitcoin, NodeFlavor::Core, NodeFlavor::Knots));
         f.prune_state = coincubed::PruneState::PrunedUnknown;
         assert_eq!(
             plan(f),
@@ -2755,18 +3043,22 @@ mod tests {
     }
 
     // A rewind is only ever justified by an actual swap from Core. Restarting a
-    // Knots node must not re-run it every time.
+    // node on an enforcing build must not re-run it every time.
     #[test]
-    fn a_restarting_knots_node_does_not_replay() {
-        let f = stranded_by(
+    fn a_restarting_enforcing_node_does_not_replay() {
+        let f = enforcing(stranded_by(
             facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Knots),
             10,
-        );
-        assert_eq!(plan(f), RevalidationPlan::Skip(SkipReason::NothingToClear));
+        ));
+        assert_eq!(plan(f), RevalidationPlan::Skip(SkipReason::EnforcingBuild));
 
-        let mut f = facts(Network::Bitcoin, NodeFlavor::Knots, NodeFlavor::Knots);
+        let mut f = enforcing(facts(
+            Network::Bitcoin,
+            NodeFlavor::Knots,
+            NodeFlavor::Knots,
+        ));
         f.previous_flavor = None;
-        assert_eq!(plan(f), RevalidationPlan::Skip(SkipReason::NothingToClear));
+        assert_eq!(plan(f), RevalidationPlan::Skip(SkipReason::EnforcingBuild));
     }
 
     #[test]
@@ -2785,7 +3077,7 @@ mod tests {
             target_height: RDTS_ANCHOR_MAINNET + 100,
         };
         assert!(ManagedNodeState::set_rewind(&datadir, Some(rewind.clone())));
-        ManagedNodeState::record_run(&datadir, NodeFlavor::Knots);
+        ManagedNodeState::record_run(&datadir, ObservedBuild::assumed(NodeFlavor::Knots));
 
         // Recording the flavour must not drop the rewind: losing it would strand the
         // node below the invalidated block with nothing left to undo it.
@@ -2816,7 +3108,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let datadir = CoincubeDirectory::new(dir.clone());
 
-        ManagedNodeState::record_run(&datadir, NodeFlavor::Core);
+        ManagedNodeState::record_run(&datadir, ObservedBuild::assumed(NodeFlavor::Core));
         assert!(ManagedNodeState::set_rewind(
             &datadir,
             Some(RewindInFlight {
@@ -2826,7 +3118,10 @@ mod tests {
             })
         ));
 
-        assert!(ManagedNodeState::finish_rewind(&datadir, NodeFlavor::Knots));
+        assert!(ManagedNodeState::finish_rewind(
+            &datadir,
+            ObservedBuild::assumed(NodeFlavor::Knots)
+        ));
         let loaded = ManagedNodeState::load(&datadir);
         assert_eq!(loaded.rewind, None);
         assert_eq!(loaded.last_run_flavor, Some(NodeFlavor::Knots));
@@ -2836,7 +3131,7 @@ mod tests {
         std::fs::write(ManagedNodeState::path(&datadir), b"{ not json").unwrap();
         assert!(!ManagedNodeState::finish_rewind(
             &datadir,
-            NodeFlavor::Knots
+            ObservedBuild::assumed(NodeFlavor::Knots)
         ));
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -2998,7 +3293,10 @@ mod tests {
         assert!(coincubed::sanctioned_rollback().is_none());
 
         // Once the rewind retires, the same record does re-arm.
-        assert!(ManagedNodeState::finish_rewind(&datadir, NodeFlavor::Knots));
+        assert!(ManagedNodeState::finish_rewind(
+            &datadir,
+            ObservedBuild::assumed(NodeFlavor::Knots)
+        ));
         let recorded = ManagedNodeState::load(&datadir);
         if recorded.rewind.is_none() {
             publish_sanctioned_rollback(recorded.sanctioned_rollback.as_ref());
@@ -3581,7 +3879,7 @@ mod tests {
         //    nothing to do with repairs and must survive untouched.
         let previous = a_floor();
         assert!(previous.confirmed);
-        ManagedNodeState::record_run(&datadir, NodeFlavor::Knots);
+        ManagedNodeState::record_run(&datadir, ObservedBuild::assumed(NodeFlavor::Knots));
         let rewind = RewindInFlight {
             invalidated_hash: "11".repeat(32),
             floor_height: RDTS_ANCHOR_MAINNET,
@@ -4226,14 +4524,14 @@ mod tests {
         // Absent sidecar reads as "never observed", not as an error.
         assert_eq!(ManagedNodeState::load(&datadir).last_run_flavor, None);
 
-        ManagedNodeState::record_run(&datadir, NodeFlavor::Knots);
+        ManagedNodeState::record_run(&datadir, ObservedBuild::assumed(NodeFlavor::Knots));
         assert_eq!(
             ManagedNodeState::load(&datadir).last_run_flavor,
             Some(NodeFlavor::Knots),
         );
 
         // Overwriting must replace, not append or corrupt.
-        ManagedNodeState::record_run(&datadir, NodeFlavor::Core);
+        ManagedNodeState::record_run(&datadir, ObservedBuild::assumed(NodeFlavor::Core));
         assert_eq!(
             ManagedNodeState::load(&datadir).last_run_flavor,
             Some(NodeFlavor::Core),
@@ -4250,7 +4548,7 @@ mod tests {
 
         // A write must not clobber state it could not read: better to skip the
         // update than to erase a pending rewind.
-        ManagedNodeState::record_run(&datadir, NodeFlavor::Core);
+        ManagedNodeState::record_run(&datadir, ObservedBuild::assumed(NodeFlavor::Core));
         assert!(ManagedNodeState::try_load(&datadir).is_err());
         assert!(!ManagedNodeState::set_rewind(&datadir, None));
 
