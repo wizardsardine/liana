@@ -1290,7 +1290,17 @@ impl Home {
                         log::info!("[LAUNCHER] Remote cube deleted");
                         if let Some(modal) = self.delete_remote_cube_modal.take() {
                             self.remote_cubes.retain(|rc| rc.uuid != modal.cube.uuid);
-                            return self.reload();
+                            let reload_task = self.reload();
+                            // Dropping the row locally is not enough: a fetch
+                            // issued before the delete settled is still in
+                            // flight, and its pre-delete list still contains
+                            // this Cube. `Message::Checked` only *prunes*
+                            // `remote_cubes`, so nothing in `reload` would stop
+                            // that result from putting the deleted row back on
+                            // screen. Re-fetching claims a new generation,
+                            // which discards the in-flight result, and replaces
+                            // it with the server's post-delete state.
+                            return Task::batch([reload_task, self.fetch_remote_cubes()]);
                         }
                     }
                     Err(e) => {
@@ -5688,6 +5698,76 @@ mod tests {
             "a superseded fetch must not overwrite the newer server view"
         );
         assert_eq!(home.remote_cubes[0].uuid, "newer");
+    }
+
+    /// Deleting a remote Cube while a fetch is in flight. The fetch was issued
+    /// before the delete settled, so its list still contains the deleted Cube —
+    /// applying it would put the row the user just deleted back on screen. The
+    /// delete branch must invalidate it and re-fetch.
+    #[test]
+    fn a_fetch_in_flight_at_remote_delete_cannot_restore_the_deleted_cube() {
+        let mut home = signed_in_home();
+        home.remote_cubes = vec![
+            remote_cube("remote-a", "Remote A", Network::Bitcoin),
+            remote_cube("remote-b", "Remote B", Network::Bitcoin),
+        ];
+
+        // A fetch starts, then the delete for "remote-a" confirms and settles
+        // before that fetch's response arrives.
+        let _ = home.fetch_remote_cubes();
+        let inflight = home.remote_cubes_request;
+
+        let _ = home.update(Message::View(ViewMessage::DeleteCube(
+            DeleteCubeMessage::ShowRemoteModal("remote-a".to_string()),
+        )));
+        let _ = home.update(Message::RemoteCubeDeleted(Ok(())));
+
+        assert!(
+            home.delete_remote_cube_modal.is_none(),
+            "a settled delete must close its modal"
+        );
+        assert_eq!(
+            home.remote_cubes
+                .iter()
+                .map(|rc| rc.uuid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["remote-b"],
+        );
+        assert_ne!(
+            home.remote_cubes_request, inflight,
+            "the delete must supersede the pre-delete fetch"
+        );
+
+        // The pre-delete response straggles in, still listing the deleted Cube.
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: inflight,
+            result: Ok(vec![
+                remote_cube("remote-a", "Remote A", Network::Bitcoin),
+                remote_cube("remote-b", "Remote B", Network::Bitcoin),
+            ]),
+        });
+        assert_eq!(
+            home.remote_cubes
+                .iter()
+                .map(|rc| rc.uuid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["remote-b"],
+            "a fetch issued before the delete must not restore the deleted Cube"
+        );
+
+        // The refreshed fetch the delete kicked off is authoritative.
+        let refreshed = home.remote_cubes_request;
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: refreshed,
+            result: Ok(vec![remote_cube("remote-b", "Remote B", Network::Bitcoin)]),
+        });
+        assert_eq!(
+            home.remote_cubes
+                .iter()
+                .map(|rc| rc.uuid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["remote-b"],
+        );
     }
 
     /// Logging out while a fetch is in flight. The logout branch clears
