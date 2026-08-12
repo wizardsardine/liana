@@ -136,7 +136,7 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
                 None,
                 advisory.file_import,
                 "Read the rotation guide",
-                None::<Message>,
+                Some(ImportExportMessage::OpenAdvisoryUrl(advisory.url.to_string()).into()),
                 None,
             ))
             .push(Space::new().width(20))

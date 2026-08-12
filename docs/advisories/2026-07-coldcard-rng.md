@@ -55,7 +55,7 @@ notices:
 | What the device reports | What Coincube says |
 |---|---|
 | Firmware inside an affected range, or a version it can't read | **Update and rotate** — update the firmware, then rotate the key |
-| Firmware at or past the fix | **Rotate recommended** — the firmware is current; rotate if the seed predates the fix |
+| Firmware outside every affected range — at or past the fix, or on a track the advisory doesn't name | **Rotate recommended** — no firmware update needed; rotate if the seed predates the fix |
 
 The second tier is not an all-clear, and Coincube never shows one. Patched
 firmware says nothing about when the seed on the device was created.
@@ -69,6 +69,13 @@ Affected ranges by product line, per Coinkite's advisory:
 | Mk4 / Mk5 (Edge) | below `6.6.0X` | `6.6.0X` |
 | Q | below `1.5.0Q` | `1.5.0Q` |
 | Q (Edge) | below `6.6.0QX` | `6.6.0QX` |
+
+Coincube treats **`4.0.0` as affected too**. Coinkite's advisory names `4.0.1` as
+the first affected release; [Block's
+analysis](https://engineering.block.xyz/blog/predictable-rng-fallback-and-32-bit-reseed-in-coldcard-firmware)
+of the same bug puts it at `4.0.0`. Coincube takes the wider bound, so a device
+on `4.0.0` gets the **Update and rotate** notice — over-warning is the safe
+direction, and the procedure below is the same either way.
 
 A Coldcard Q on mainline firmware reports a version string (`1.5.0Q`) that isn't
 valid semver, so Coincube can't read it and shows the stronger notice. That is

@@ -90,6 +90,10 @@ pub enum ImportExportMessage {
     /// flow that receives the key can keep showing the advisory after the
     /// import modal has closed.
     DeviceAdvisory(async_hwi::DeviceKind),
+    /// Opens the rotation guide linked from the advisory panel. The modal is
+    /// generic over its message type and so cannot reach the app's own
+    /// `OpenUrl`; this variant is how that link gets out.
+    OpenAdvisoryUrl(String),
 }
 
 impl From<ImportExportMessage> for view::Message {

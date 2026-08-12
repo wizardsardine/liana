@@ -294,6 +294,14 @@ impl VaultExportModal {
             ImportExportMessage::UpdateAliases(_) => { /* unexpected */ }
             ImportExportMessage::Xpub(_) => { /* unexpected */ }
             ImportExportMessage::DeviceAdvisory(_) => { /* unexpected */ }
+            // The advisory panel's link to the rotation guide. Opened here
+            // rather than handed up, because the modal's message type is
+            // generic and has no route to the app's `OpenUrl`.
+            ImportExportMessage::OpenAdvisoryUrl(url) => {
+                if let Err(e) = open::that_detached(&url) {
+                    tracing::error!("Error opening '{}': {}", url, e);
+                }
+            }
         }
         Task::none()
     }

@@ -207,13 +207,14 @@ const COLDCARD_RNG: Advisory = Advisory {
                         a multisig Cube cannot move funds on its own, so you have time to do \
                         this properly. Seeds created with 50 or more of your own dice rolls \
                         are not affected.",
-    rotate_recommended: "This Coldcard reports firmware at or past the fix for Coinkite's \
-                         advisory of 30 July 2026. Updating firmware does not repair a seed \
-                         that already exists: if this device's seed was created on earlier \
-                         firmware, generate a new seed on the device and rotate this key out \
-                         of your Cube. A single key in a multisig Cube cannot move funds on \
-                         its own, so you have time to do this properly. Seeds created with \
-                         50 or more of your own dice rolls are not affected.",
+    rotate_recommended: "This Coldcard reports firmware outside every range named by \
+                         Coinkite's advisory of 30 July 2026. That is not an all-clear: \
+                         updating firmware does not repair a seed that already exists, so if \
+                         this device's seed was created on affected firmware, generate a new \
+                         seed on the device and rotate this key out of your Cube. A single \
+                         key in a multisig Cube cannot move funds on its own, so you have \
+                         time to do this properly. Seeds created with 50 or more of your own \
+                         dice rolls are not affected.",
     file_import: "This key was exported from a Coldcard. A file carries no firmware \
                   information, so Coincube cannot tell which firmware generated the seed \
                   behind it. If that seed was created on firmware covered by Coinkite's \
