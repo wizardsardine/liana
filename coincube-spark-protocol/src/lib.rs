@@ -816,6 +816,23 @@ pub struct PrepareSendOk {
     /// path pointer-sized and only allocates when a quote is actually present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cross_chain: Option<Box<CrossChainQuote>>,
+    /// Whether the prepared payment carries a **token-transfer leg** — a direct
+    /// token send, or an AMM conversion feeding the send.
+    ///
+    /// This exists because the bridge *drops the caller's idempotency key* on
+    /// any send with such a leg: the SDK rejects the two together (see
+    /// `execute_regular_send`, and `orchestrate_send` in the SDK). A retry of
+    /// one of these is therefore unguarded, and the gui has to know that to
+    /// pick the right [retry guard](../../coincube-gui/src/app/state/spark/send.rs).
+    ///
+    /// The gui cannot infer it from [`Self::cross_chain`]. Stable Balance can
+    /// auto-attach a token→BTC conversion to an *ordinary sats send* whenever
+    /// the sat balance can't cover amount + fee — no cross-chain quote in
+    /// sight. Before this field existed, the gui reported "protected by an
+    /// idempotency key" for exactly those sends while the bridge had already
+    /// dropped the key.
+    #[serde(default)]
+    pub has_token_leg: bool,
 }
 
 /// Result of a successful [`Method::SendPayment`].
@@ -1074,6 +1091,12 @@ mod tests {
     fn cross_chain_prepare_frame_with_integer_amounts_parses() {
         // Before the fix this returned Err("u128 is not supported").
         let prep = prepare_ok_from_frame(CROSS_CHAIN_PREPARE_FRAME);
+        // Predates `has_token_leg`, so it also pins that field's `serde(default)`:
+        // an older frame must still parse rather than fail the whole send. The
+        // resulting `false` is why `retry_guard_for` keeps checking `cross_chain`
+        // as well — on this frame that check is the only thing left saying
+        // "unguarded".
+        assert!(!prep.has_token_leg);
         let quote = prep.cross_chain.expect("cross_chain quote present");
         assert_eq!(quote.estimated_out, 6_499_079);
         assert_eq!(quote.fee_amount, 102_531);
@@ -1108,6 +1131,7 @@ mod tests {
                     expires_at: "1784180130".into(),
                     retry_safe: true,
                 })),
+                has_token_leg: true,
             })),
         });
 

@@ -232,12 +232,22 @@ fn payment_matches_intent(
 /// Which guard protects a retry of this prepared payment.
 ///
 /// Decided from the prepare itself rather than from a method-name string, so a
-/// new payment method cannot quietly default to "guarded": the presence of a
-/// cross-chain quote *is* the presence of a token/conversion leg, which is
-/// exactly the condition under which the bridge drops the idempotency key
-/// (`execute_regular_send`'s `has_token_leg` gate mirrors the SDK's own).
+/// new payment method cannot quietly default to "guarded".
+///
+/// `has_token_leg` is the authoritative half: the bridge reports it from the
+/// *same* condition that makes `execute_regular_send` drop the idempotency key
+/// (which mirrors the SDK's own gate), so the two cannot drift. It used to be
+/// inferred from `cross_chain.is_some()` instead, on the assumption that a
+/// cross-chain quote was the only way to get a token leg. It isn't: Stable
+/// Balance auto-attaches a token→BTC conversion to an ordinary sats send when
+/// the sat balance can't cover amount + fee, and that send reported itself as
+/// idempotency-guarded while the bridge had already dropped the key.
+///
+/// `cross_chain` is still checked, and still means unguarded, so that a
+/// cross-chain prepare that somehow arrives without a token leg cannot come
+/// back as "safe to retry".
 pub fn retry_guard_for(prepare: &PrepareSendOk) -> RetryGuard {
-    if prepare.cross_chain.is_some() {
+    if prepare.has_token_leg || prepare.cross_chain.is_some() {
         RetryGuard::None
     } else {
         RetryGuard::IdempotencyKey
@@ -2150,6 +2160,7 @@ mod tests {
                 expires_at: expires_at.to_string(),
                 retry_safe: true,
             })),
+            has_token_leg: true,
         }
     }
 
@@ -2739,6 +2750,7 @@ mod tests {
                 fee_sat: 1,
                 method: method.to_string(),
                 cross_chain: None,
+                has_token_leg: false,
             };
             let guard = retry_guard_for(&prepare);
             assert_eq!(
@@ -2780,5 +2792,26 @@ mod tests {
             .as_deref()
             .map(cross_chain::RetryPolicy::for_quote)
             .is_some_and(|p| p.may_retry()));
+    }
+
+    /// Stable Balance can auto-attach a token→BTC conversion to an ordinary
+    /// sats send when the sat balance can't cover amount + fee. That send has
+    /// no cross-chain quote, but the bridge still drops its idempotency key —
+    /// so it must not come back reported as guarded.
+    #[test]
+    fn auto_attached_conversion_leg_is_unguarded_without_a_cross_chain_quote() {
+        let prepare = PrepareSendOk {
+            handle: "h".to_string(),
+            amount_sat: 1_000,
+            fee_sat: 1,
+            method: "BitcoinAddress".to_string(),
+            cross_chain: None,
+            has_token_leg: true,
+        };
+        assert_eq!(retry_guard_for(&prepare), RetryGuard::None);
+        assert!(
+            !ReconcileOutcome::NoTrace.may_resend(retry_guard_for(&prepare)),
+            "a send whose key the bridge dropped must never be blind-retried"
+        );
     }
 }
