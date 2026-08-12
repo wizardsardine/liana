@@ -706,7 +706,7 @@ async fn handle_prepare_send(
                     // Regular sends carry no cross-chain quote — those come
                     // from `prepare_cross_chain`.
                     cross_chain: None,
-                    has_token_leg,
+                    has_token_leg: Some(has_token_leg),
                 }),
             )
         }
@@ -1141,7 +1141,7 @@ async fn handle_prepare_cross_chain(
                     fee_sat,
                     method: "CrossChainAddress".to_string(),
                     cross_chain: Some(Box::new(quote)),
-                    has_token_leg,
+                    has_token_leg: Some(has_token_leg),
                 }),
             )
         }
@@ -1613,7 +1613,7 @@ async fn handle_prepare_lnurl_pay(
                     method,
                     // LNURL-pay is a Lightning send; never cross-chain.
                     cross_chain: None,
-                    has_token_leg,
+                    has_token_leg: Some(has_token_leg),
                 }),
             )
         }

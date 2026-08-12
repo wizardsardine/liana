@@ -243,14 +243,22 @@ fn payment_matches_intent(
 /// the sat balance can't cover amount + fee, and that send reported itself as
 /// idempotency-guarded while the bridge had already dropped the key.
 ///
+/// Only an explicit `Some(false)` earns the guarded verdict. `None` means the
+/// bridge is older than the field and its answer is *unknown* — and an unknown
+/// here has to read as "assume the key was dropped", because the failure it
+/// gates is paying twice. That case is reachable without any release-version
+/// skew: the bridge is a separate cargo workspace, so rebuilding just the gui
+/// leaves the previously-built bridge binary in place for the gui to spawn.
+///
 /// `cross_chain` is still checked, and still means unguarded, so that a
 /// cross-chain prepare that somehow arrives without a token leg cannot come
 /// back as "safe to retry".
 pub fn retry_guard_for(prepare: &PrepareSendOk) -> RetryGuard {
-    if prepare.has_token_leg || prepare.cross_chain.is_some() {
-        RetryGuard::None
-    } else {
-        RetryGuard::IdempotencyKey
+    match prepare.has_token_leg {
+        Some(false) if prepare.cross_chain.is_none() => RetryGuard::IdempotencyKey,
+        // Some(true): a token leg, so the bridge dropped the key.
+        // None: an older bridge that can't tell us — same conservative answer.
+        _ => RetryGuard::None,
     }
 }
 
@@ -2160,7 +2168,7 @@ mod tests {
                 expires_at: expires_at.to_string(),
                 retry_safe: true,
             })),
-            has_token_leg: true,
+            has_token_leg: Some(true),
         }
     }
 
@@ -2750,7 +2758,7 @@ mod tests {
                 fee_sat: 1,
                 method: method.to_string(),
                 cross_chain: None,
-                has_token_leg: false,
+                has_token_leg: Some(false),
             };
             let guard = retry_guard_for(&prepare);
             assert_eq!(
@@ -2806,12 +2814,26 @@ mod tests {
             fee_sat: 1,
             method: "BitcoinAddress".to_string(),
             cross_chain: None,
-            has_token_leg: true,
+            has_token_leg: Some(true),
         };
         assert_eq!(retry_guard_for(&prepare), RetryGuard::None);
         assert!(
             !ReconcileOutcome::NoTrace.may_resend(retry_guard_for(&prepare)),
             "a send whose key the bridge dropped must never be blind-retried"
+        );
+
+        // A bridge too old to report the field is *not* evidence of no token
+        // leg. Resolving that silence to "guarded" is what would let this very
+        // send be blind-retried. The bridge is a separate cargo workspace, so
+        // rebuilding only the gui reaches this case without any release skew.
+        let legacy = PrepareSendOk {
+            has_token_leg: None,
+            ..prepare
+        };
+        assert_eq!(retry_guard_for(&legacy), RetryGuard::None);
+        assert!(
+            !ReconcileOutcome::NoTrace.may_resend(retry_guard_for(&legacy)),
+            "an unknown token-leg answer must never permit a blind retry"
         );
     }
 }

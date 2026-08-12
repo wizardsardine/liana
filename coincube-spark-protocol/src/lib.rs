@@ -831,8 +831,19 @@ pub struct PrepareSendOk {
     /// sight. Before this field existed, the gui reported "protected by an
     /// idempotency key" for exactly those sends while the bridge had already
     /// dropped the key.
+    ///
+    /// **`None` means "the bridge didn't say", not "no token leg."** A plain
+    /// `bool` would collapse those two, and `serde`'s default would resolve the
+    /// silence to `false` — the *unguarded* reading — reintroducing the exact
+    /// double-pay this field exists to prevent. The bridge is a separate cargo
+    /// workspace ([`exclude`d from the root one](../../Cargo.toml)) built by its
+    /// own `cargo build --manifest-path` invocation, and the gui will happily
+    /// spawn whatever binary it finds in `coincube-spark-bridge/target/` or at
+    /// `COINCUBE_SPARK_BRIDGE_PATH`. Rebuilding only the gui after touching this
+    /// crate leaves a bridge behind that has never heard of this field. Callers
+    /// must treat `None` as "assume a token leg" — see `retry_guard_for`.
     #[serde(default)]
-    pub has_token_leg: bool,
+    pub has_token_leg: Option<bool>,
 }
 
 /// Result of a successful [`Method::SendPayment`].
@@ -1092,11 +1103,11 @@ mod tests {
         // Before the fix this returned Err("u128 is not supported").
         let prep = prepare_ok_from_frame(CROSS_CHAIN_PREPARE_FRAME);
         // Predates `has_token_leg`, so it also pins that field's `serde(default)`:
-        // an older frame must still parse rather than fail the whole send. The
-        // resulting `false` is why `retry_guard_for` keeps checking `cross_chain`
-        // as well — on this frame that check is the only thing left saying
-        // "unguarded".
-        assert!(!prep.has_token_leg);
+        // an older frame must still parse rather than fail the whole send, and
+        // must land on `None` — "the bridge didn't say" — never on `Some(false)`,
+        // which is the reading that would let the gui offer a blind retry of a
+        // send whose idempotency key the bridge had dropped.
+        assert_eq!(prep.has_token_leg, None);
         let quote = prep.cross_chain.expect("cross_chain quote present");
         assert_eq!(quote.estimated_out, 6_499_079);
         assert_eq!(quote.fee_amount, 102_531);
@@ -1131,7 +1142,7 @@ mod tests {
                     expires_at: "1784180130".into(),
                     retry_safe: true,
                 })),
-                has_token_leg: true,
+                has_token_leg: Some(true),
             })),
         });
 
