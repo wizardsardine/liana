@@ -1025,6 +1025,12 @@ impl SelectKeySource {
             };
             self.focus = Focus::None;
 
+            // The advisory belongs to the key the file import produced. Leaving
+            // Details abandons that key, so the notice goes with it — otherwise
+            // it would follow the user onto whatever source they pick next,
+            // which may not be a file at all.
+            self.import_advisory = None;
+
             self.form_safety_net_token.value = "".to_string();
             self.form_safety_net_token.valid = true;
             self.form_safety_net_token.warning = None;
@@ -3045,6 +3051,30 @@ mod tests {
         picker.form_account = Some(ChildNumber::from_hardened_idx(7).unwrap());
         let _ = picker.on_retry();
         assert!(picker.details_error.is_none());
+    }
+
+    #[test]
+    fn import_advisory_does_not_outlive_the_details_step() {
+        let mut picker = empty_picker();
+
+        // An xpub file exported from a Coldcard: the advisory is set while the
+        // file is parsed and deliberately outlives the import modal, so it is
+        // still there on the details screen.
+        let _ = picker.on_import_message(ImportExportMessage::DeviceAdvisory(DeviceKind::Coldcard));
+        assert!(picker.import_advisory.is_some());
+        picker.step = Step::Details;
+
+        // Back: the imported key is abandoned, and its advisory with it.
+        let _ = picker.on_previous();
+        assert_eq!(picker.step, Step::Grid);
+        assert!(picker.import_advisory.is_none());
+
+        // A source that isn't a file must not inherit the file-import notice —
+        // a connected device carries its own, tiered on the firmware it reports.
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        let _ = picker.on_select_device(fg);
+        assert_eq!(picker.step, Step::Details);
+        assert!(picker.import_advisory.is_none());
     }
 
     #[test]
