@@ -3,14 +3,37 @@ use iced::Length;
 use coincube_ui::{
     component::hw,
     theme,
-    widget::{Button, Element},
+    widget::{Button, Column, Element},
 };
 
 use crate::{
     app::view::message::*,
     hw::{HardwareWallet, UnsupportedReason},
+    hw_advisory,
 };
 use async_hwi::DeviceKind;
+
+/// Attach the advisory to a rendered device row: an amber badge, and — until
+/// the user collapses it — an expandable panel with the tiered copy and a link
+/// to the rotation guide.
+///
+/// The row itself is passed through untouched. Nothing here gates selection,
+/// signing or registration; an advisory only ever adds information.
+fn with_advisory<'a>(hw: &HardwareWallet, row: Element<'a, Message>) -> Element<'a, Message> {
+    let Some(hit) = hw_advisory::view::hit(hw) else {
+        return row;
+    };
+    // Dismissal is keyed by fingerprint, so the control is only offered for
+    // devices that reported one; the rest keep the panel expandable.
+    let fingerprint = hw.fingerprint();
+    let advisory = hw_advisory::view::section(
+        &hit,
+        fingerprint,
+        Message::OpenUrl(hit.url().to_string()),
+        fingerprint.map(|fingerprint| Message::DismissHwAdvisory(fingerprint, hit.id())),
+    );
+    Column::new().push(row).push(advisory).into()
+}
 
 pub fn hw_list_view(
     i: usize,
@@ -97,7 +120,7 @@ pub fn hw_list_view(
             }
         }
     }
-    bttn.into()
+    with_advisory(hw, bttn.into())
 }
 
 pub fn hw_list_view_for_registration(
@@ -160,7 +183,7 @@ pub fn hw_list_view_for_registration(
     if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::SelectHardwareWallet(i));
     }
-    bttn.into()
+    with_advisory(hw, bttn.into())
 }
 
 pub fn hw_list_view_verify_address(
@@ -244,5 +267,5 @@ pub fn hw_list_view_verify_address(
     if selectable && hw.is_supported() {
         bttn = bttn.on_press(Message::SelectHardwareWallet(i));
     }
-    bttn.into()
+    with_advisory(hw, bttn.into())
 }

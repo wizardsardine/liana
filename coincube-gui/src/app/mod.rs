@@ -4552,6 +4552,12 @@ impl App {
                     },
                 );
             }
+            // Collapses the advisory detail panel for one device and persists
+            // that choice. The badge on the row is unaffected — an advisory is
+            // never dismissed away entirely.
+            Message::View(view::Message::DismissHwAdvisory(fingerprint, advisory_id)) => {
+                crate::hw_advisory::dismissals::dismiss(&fingerprint, advisory_id);
+            }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);

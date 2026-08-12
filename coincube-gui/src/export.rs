@@ -86,6 +86,10 @@ pub enum ImportExportMessage {
     Ignore,
     UpdateAliases(HashMap<Fingerprint, settings::KeySetting>),
     Xpub(String),
+    /// See [`Progress::DeviceAdvisory`]. Forwarded out of the modal so the
+    /// flow that receives the key can keep showing the advisory after the
+    /// import modal has closed.
+    DeviceAdvisory(async_hwi::DeviceKind),
 }
 
 impl From<ImportExportMessage> for view::Message {
@@ -255,6 +259,10 @@ pub enum Progress {
     Psbt(Psbt),
     Descriptor(CoincubeDescriptor),
     Xpub(String),
+    /// The key just parsed came out of a file exported by this device kind,
+    /// which is covered by a firmware advisory. Purely informational — it is
+    /// emitted *before* the key itself and never changes what is imported.
+    DeviceAdvisory(async_hwi::DeviceKind),
     LabelsConflict(Sender<bool>),
     KeyAliasesConflict(Sender<bool>),
     UpdateAliases(HashMap<Fingerprint, settings::KeySetting>),
@@ -977,13 +985,24 @@ pub async fn import_xpub(
     file.read_to_string(&mut xpub_str)?;
     let xpub_str = xpub_str.trim().to_string();
 
-    let (descriptor_pubkey, key) =
+    // `from_device` names the signer this file came out of, when the format
+    // identifies it. It only drives the advisory notice below; the key is
+    // imported identically either way.
+    let (descriptor_pubkey, key, from_device) =
         if let Some(DescriptorPublicKey::XPub(key)) = parse_raw_xpub(&xpub_str) {
-            (DescriptorPublicKey::XPub(key.clone()), key)
+            (DescriptorPublicKey::XPub(key.clone()), key, None)
         } else if let Some(DescriptorPublicKey::XPub(key)) = parse_coldcard_xpub_json(&xpub_str) {
-            (DescriptorPublicKey::XPub(key.clone()), key)
+            (
+                DescriptorPublicKey::XPub(key.clone()),
+                key,
+                Some(async_hwi::DeviceKind::Coldcard),
+            )
         } else if let Some(DescriptorPublicKey::XPub(key)) = parse_coldcard_xpub_ccxp(&xpub_str) {
-            (DescriptorPublicKey::XPub(key.clone()), key)
+            (
+                DescriptorPublicKey::XPub(key.clone()),
+                key,
+                Some(async_hwi::DeviceKind::Coldcard),
+            )
         } else {
             return Err(Error::ParseXpub);
         };
@@ -996,6 +1015,14 @@ pub async fn import_xpub(
     };
     if valid {
         send_progress!(sender, Progress(100.0));
+        // Emitted before the key so the receiving flow has the advisory in
+        // hand by the time it acts on the import. A file carries no firmware
+        // version, so the copy it resolves to is the generic one.
+        if let Some(kind) = from_device {
+            if crate::hw_advisory::evaluate_file_import(&kind).is_some() {
+                send_progress!(sender, DeviceAdvisory(kind));
+            }
+        }
         send_progress!(sender, Xpub(xpub_str));
     } else {
         return Err(Error::XpubNetwork);
@@ -1818,6 +1845,69 @@ mod tests {
         assert!(parse_coldcard_xpub_json("{bad json").is_none());
         assert!(parse_coldcard_xpub_ccxp("{bad json").is_none());
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Drain an `import_xpub` run into (advisory kind, imported xpub).
+    async fn run_import_xpub(asset: &str) -> (Option<async_hwi::DeviceKind>, Option<String>) {
+        let (sender, mut receiver) = unbounded_channel();
+        let path = env::current_dir().unwrap().join("test_assets").join(asset);
+        import_xpub(&sender, path, Network::Testnet)
+            .await
+            .expect("import succeeds");
+
+        let (mut advisory, mut xpub) = (None, None);
+        while let Ok(progress) = receiver.try_recv() {
+            match progress {
+                Progress::DeviceAdvisory(kind) => advisory = Some(kind),
+                Progress::Xpub(x) => xpub = Some(x),
+                _ => {}
+            }
+        }
+        (advisory, xpub)
+    }
+
+    #[tokio::test]
+    async fn coldcard_ccxp_import_reports_an_advisory_and_still_returns_the_xpub() {
+        let (advisory, xpub) = run_import_xpub("ccxp-C658B283.json").await;
+        assert_eq!(advisory, Some(async_hwi::DeviceKind::Coldcard));
+        assert_eq!(
+            xpub.expect("import still yields the key"),
+            "[c658b283/48'/1'/0'/2']tpubDFL5wzgPBYK5pZ2Kh1T8qrxnp43kjE5CXfguZHHBrZSWpkfASy5rVfj7prh11XdqkC1P3kRwUPBeX7AHN8XBNx8UwiprnFnEm5jyswiRD4p"
+        );
+    }
+
+    #[tokio::test]
+    async fn coldcard_json_import_reports_an_advisory_and_still_returns_the_xpub() {
+        let (advisory, xpub) = run_import_xpub("coldcard-export.json").await;
+        assert_eq!(advisory, Some(async_hwi::DeviceKind::Coldcard));
+        assert!(xpub
+            .expect("import still yields the key")
+            .starts_with("[c658b283/48'/1'/0'/2']"));
+    }
+
+    #[tokio::test]
+    async fn a_plain_xpub_file_carries_no_advisory() {
+        let (root, path) = unique_temp_dir("plain-xpub.txt");
+        fs::create_dir_all(path.parent().expect("test path has parent")).unwrap();
+        let raw = "[c658b283/48'/1'/0'/2']tpubDFL5wzgPBYK5pZ2Kh1T8qrxnp43kjE5CXfguZHHBrZSWpkfASy5rVfj7prh11XdqkC1P3kRwUPBeX7AHN8XBNx8UwiprnFnEm5jyswiRD4p";
+        fs::write(&path, raw).unwrap();
+
+        let (sender, mut receiver) = unbounded_channel();
+        import_xpub(&sender, path, Network::Testnet)
+            .await
+            .expect("import succeeds");
+
+        let mut saw_xpub = false;
+        while let Ok(progress) = receiver.try_recv() {
+            match progress {
+                // Nothing in the file says which signer produced it.
+                Progress::DeviceAdvisory(kind) => panic!("unexpected advisory for {}", kind),
+                Progress::Xpub(_) => saw_xpub = true,
+                _ => {}
+            }
+        }
+        assert!(saw_xpub);
         let _ = fs::remove_dir_all(root);
     }
 

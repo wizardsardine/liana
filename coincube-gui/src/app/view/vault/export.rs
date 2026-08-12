@@ -1,6 +1,6 @@
 use coincube_ui::{
     component::{
-        button, card,
+        button, card, hw,
         text::{h4_bold, text},
     },
     icon,
@@ -21,6 +21,7 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
     error: Option<&'a Error>,
     title: &'a str,
     import_export_type: &ImportExportType,
+    advisory: Option<&'static crate::hw_advisory::Advisory>,
 ) -> Element<'a, Message> {
     let cancel = match state {
         ImportExportState::Started | ImportExportState::Progress(_) => {
@@ -123,6 +124,23 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
         .push(Space::new().width(30))
         .push(progress_bar(0.0..=100.0, p))
         .push(Space::new().width(30));
+
+    // Firmware advisory for the signer this file came from. Informational
+    // only: the import has already succeeded by the time it appears.
+    let has_advisory = advisory.is_some();
+    let advisory = advisory.map(|advisory| {
+        Row::new()
+            .push(Space::new().width(20))
+            .push(hw::advisory_panel(
+                advisory.headline,
+                None,
+                advisory.file_import,
+                "Read the rotation guide",
+                None::<Message>,
+                None,
+            ))
+            .push(Space::new().width(20))
+    });
     card::simple(
         Column::new()
             .spacing(10)
@@ -138,11 +156,18 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
             .push(progress_bar_row)
             .push(Space::new().height(Length::Fill))
             .push(Row::new().push(text(msg)))
+            .push(advisory)
             .push(Space::new().height(Length::Fill))
             .push(button)
             .push(Space::new().height(5)),
     )
     .width(Length::Fixed(500.0))
-    .height(Length::Fixed(300.0))
+    // The fixed height is what every other import/export modal uses; an
+    // advisory adds a paragraph, so that one case sizes to its content.
+    .height(if has_advisory {
+        Length::Shrink
+    } else {
+        Length::Fixed(300.0)
+    })
     .into()
 }

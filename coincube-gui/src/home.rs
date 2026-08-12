@@ -46,6 +46,21 @@ use crate::{
 };
 use coincube_core::signer::{MasterSigner, MASTER_SEED_LABEL};
 
+/// The firmware advisory whose one-time incident notice this install still
+/// owes the user, if any.
+///
+/// One notice per advisory id, recorded in the app-wide global settings. If
+/// the settings file can't be read the notice shows: a security notice seen
+/// twice costs a click, one never seen costs the whole point of shipping it.
+fn pending_advisory_notice(
+    datadir_path: &CoincubeDirectory,
+) -> Option<&'static crate::hw_advisory::Advisory> {
+    let path = GlobalSettings::path(datadir_path);
+    crate::hw_advisory::ADVISORIES
+        .iter()
+        .find(|advisory| !GlobalSettings::advisory_notice_seen(&path, advisory.id))
+}
+
 const NETWORKS: [Network; 5] = [
     Network::Bitcoin,
     Network::Testnet,
@@ -316,6 +331,15 @@ pub struct Home {
     /// Recovery-method picker, shown when a remote cube can be recovered by
     /// *both* a password Recovery Kit and a phone envelope.
     recovery_method_modal: Option<RecoveryMethodModal>,
+    /// One-time, app-wide incident notice for a firmware advisory, shown on
+    /// the first launch after the update that introduced it and dismissed for
+    /// good once acknowledged. `None` once seen — or if there is no advisory
+    /// to announce.
+    ///
+    /// It is shown to *everyone*, not only to people holding the affected
+    /// device: a descriptor key records no source device, so there is nothing
+    /// to target on. The copy self-selects instead.
+    advisory_notice: Option<&'static crate::hw_advisory::Advisory>,
     #[allow(dead_code)]
     welcome_quote: coincube_ui::component::quote_display::Quote,
     #[allow(dead_code)]
@@ -385,6 +409,7 @@ impl Home {
                 remote_cubes_request: 0,
                 delete_remote_cube_modal: None,
                 recovery_method_modal: None,
+                advisory_notice: pending_advisory_notice(&datadir_path),
                 welcome_quote: coincube_ui::component::quote_display::random_quote("first-launch"),
                 welcome_image_handle:
                     coincube_ui::component::quote_display::image_handle_for_context("first-launch"),
@@ -2323,6 +2348,18 @@ impl Home {
                 task
             }
 
+            Message::View(ViewMessage::DismissAdvisoryNotice) => {
+                if let Some(advisory) = self.advisory_notice.take() {
+                    if let Err(e) = GlobalSettings::mark_advisory_notice_seen(
+                        &GlobalSettings::path(&self.datadir_path),
+                        advisory.id,
+                    ) {
+                        log::error!("[LAUNCHER] Failed to persist advisory notice: {}", e);
+                    }
+                }
+                Task::none()
+            }
+
             Message::View(ViewMessage::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     log::error!("[LAUNCHER] Error opening '{}': {}", url, e);
@@ -3555,10 +3592,53 @@ impl Home {
             Modal::new(Container::new(layout).height(Length::Fill), modal_content)
                 .on_blur(Some(Message::View(ViewMessage::RenameCubeCancel)))
                 .into()
+        } else if let Some(advisory) = self.advisory_notice {
+            // Last in the chain: every other modal is something the user just
+            // asked for, and this one waits its turn. No `on_blur` — it is
+            // dismissed by the button, once, and then never again.
+            Modal::new(
+                Container::new(layout).height(Length::Fill),
+                advisory_notice_modal(advisory),
+            )
+            .into()
         } else {
             layout
         }
     }
+}
+
+/// The one-time incident notice. Deliberately says what happened, what it does
+/// and doesn't mean for a multisig Cube, and what to do — and then gets out of
+/// the way. It is not a warning about anything the app is currently doing.
+fn advisory_notice_modal(
+    advisory: &'static crate::hw_advisory::Advisory,
+) -> Element<'static, Message> {
+    Container::new(
+        Column::new()
+            .spacing(15)
+            .padding(25)
+            .width(Length::Fixed(560.0))
+            .push(h4_bold(advisory.headline))
+            .push(p1_regular(advisory.notice))
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .push(
+                        button::secondary(Some(icon::link_icon()), "Read the rotation guide")
+                            .on_press(Message::View(ViewMessage::OpenUrl(
+                                advisory.url.to_string(),
+                            )))
+                            .width(Length::Fill),
+                    )
+                    .push(
+                        button::primary(Some(icon::check_icon()), "Got it")
+                            .on_press(Message::View(ViewMessage::DismissAdvisoryNotice))
+                            .width(Length::Fill),
+                    ),
+            ),
+    )
+    .style(theme::card::modal)
+    .into()
 }
 
 fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
@@ -4809,6 +4889,9 @@ pub enum ViewMessage {
     TogglePasskeyMode(bool),
     /// Open a URL in the default browser
     OpenUrl(String),
+    /// Acknowledge the one-time firmware-advisory incident notice. Persisted,
+    /// so the notice never fires again on this install.
+    DismissAdvisoryNotice,
 }
 
 #[derive(Debug, Clone)]
@@ -5373,6 +5456,43 @@ mod tests {
             email_verified: Some(true),
         });
         home
+    }
+
+    /// A fresh, empty datadir — see the same helper in
+    /// `phone_signer::pairing_store`.
+    fn fresh_datadir() -> CoincubeDirectory {
+        let mut path = std::env::temp_dir();
+        path.push(format!("coincube-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path).expect("mkdir tempdir");
+        CoincubeDirectory::new(path)
+    }
+
+    #[test]
+    fn advisory_notice_fires_once_per_install() {
+        let datadir = fresh_datadir();
+
+        // First launch after the update: the notice is owed.
+        let advisory = pending_advisory_notice(&datadir).expect("notice pending");
+        assert_eq!(advisory.id, crate::hw_advisory::COLDCARD_RNG_2026_07);
+        assert!(!advisory.notice.is_empty());
+
+        // Acknowledging it is what `ViewMessage::DismissAdvisoryNotice` does.
+        GlobalSettings::mark_advisory_notice_seen(&GlobalSettings::path(&datadir), advisory.id)
+            .expect("persist");
+
+        // Every launch after that, including a fresh `Home`.
+        assert!(pending_advisory_notice(&datadir).is_none());
+        let home = Home::new(datadir, Some(Network::Bitcoin)).0;
+        assert!(home.advisory_notice.is_none());
+    }
+
+    #[test]
+    fn advisory_notice_is_owed_on_a_brand_new_install() {
+        // Nothing about the notice is conditional on owning the device: a
+        // descriptor key doesn't record where it came from, so everyone sees
+        // it and the copy self-selects.
+        let home = Home::new(fresh_datadir(), Some(Network::Bitcoin)).0;
+        assert!(home.advisory_notice.is_some());
     }
 
     fn cube(id: &str, name: &str, network: Network) -> CubeSettings {

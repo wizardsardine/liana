@@ -771,3 +771,129 @@ pub fn unsaved_provider_key<'a, T: 'a, F: Display>(
     )
     .padding(10)
 }
+
+/// Amber pill marking a signing device covered by a firmware advisory.
+///
+/// Deliberately not a warning triangle: the advisory is information the user
+/// should act on at their own pace, not a failure of the device or of the
+/// operation in front of them. The device stays selectable everywhere this
+/// badge appears.
+pub fn advisory_badge<'a, T: 'a>(label: &'static str, tip: &'static str) -> Container<'a, T> {
+    Container::new(
+        tooltip::Tooltip::new(
+            Container::new(text::caption(label))
+                .padding([4, 10])
+                .style(theme::pill::warning),
+            Container::new(text::p2_regular(tip))
+                .padding(10)
+                .style(theme::card::simple),
+            tooltip::Position::Top,
+        )
+        .style(theme::card::simple),
+    )
+}
+
+/// The expanded advisory detail: headline, tiered body copy, and a link to the
+/// rotation guide. `line` names the product line the firmware places the
+/// device on ("Mk4/Mk5") when we could work it out.
+///
+/// `on_dismiss` is optional — where it is absent the panel simply has no
+/// dismiss control, and the caller is expected to keep showing it.
+pub fn advisory_panel<'a, T: 'a + Clone>(
+    headline: &'static str,
+    line: Option<&'static str>,
+    body: &'static str,
+    guide_label: &'static str,
+    on_guide: Option<T>,
+    on_dismiss: Option<T>,
+) -> Container<'a, T> {
+    let title = match line {
+        Some(line) => format!("{headline} — {line}"),
+        None => headline.to_string(),
+    };
+
+    let actions = Row::new()
+        .spacing(10)
+        .push(on_guide.map(|m| {
+            crate::component::button::link(Some(icon::link_icon()), guide_label).on_press(m)
+        }))
+        .push(
+            on_dismiss.map(|m| crate::component::button::transparent(None, "Dismiss").on_press(m)),
+        );
+
+    Container::new(
+        Row::new()
+            .spacing(10)
+            .push(icon::warning_icon().style(theme::text::warning))
+            .push(
+                iced::widget::Column::new()
+                    .spacing(5)
+                    .push(text::p1_bold(title).style(theme::text::warning))
+                    .push(text::p2_regular(body))
+                    .push(actions)
+                    .width(Length::Fill),
+            )
+            .align_y(Alignment::Start),
+    )
+    .padding(10)
+    .width(Length::Fill)
+    .style(theme::card::warning)
+}
+
+/// The whole advisory surface for one device row: an always-visible amber
+/// badge, and the detail panel behind a collapse toggle.
+///
+/// `dismissed` collapses the panel away permanently, leaving the badge as a
+/// small persistent marker — a firmware advisory can be quietened, never
+/// hidden. `on_dismiss` is what offers that control in the first place; pass
+/// `None` where there's nothing stable to key a dismissal on (a device that
+/// hasn't reported a fingerprint) or where the surface is too transient to be
+/// worth dismissing.
+#[allow(clippy::too_many_arguments)]
+pub fn advisory_section<'a, T: 'a + Clone>(
+    badge_label: &'static str,
+    badge_tip: &'static str,
+    headline: &'static str,
+    line: Option<&'static str>,
+    body: &'static str,
+    guide_label: &'static str,
+    on_guide: Option<T>,
+    on_dismiss: Option<T>,
+    dismissed: bool,
+) -> crate::widget::Element<'a, T> {
+    if dismissed {
+        return Row::new()
+            .push(advisory_badge(badge_label, badge_tip))
+            .padding([0, 10])
+            .into();
+    }
+
+    let header = move |chevron: crate::widget::Text<'a>| {
+        crate::widget::Button::new(
+            Row::new()
+                .spacing(5)
+                .align_y(Vertical::Center)
+                .push(advisory_badge(badge_label, badge_tip))
+                .push(text::p2_regular("What this means"))
+                .push(chevron),
+        )
+        .style(theme::button::transparent)
+    };
+
+    crate::component::collapse::Collapse::new(
+        move || header(icon::collapsed_icon()),
+        move || header(icon::collapse_icon()),
+        move || {
+            advisory_panel(
+                headline,
+                line,
+                body,
+                guide_label,
+                on_guide.clone(),
+                on_dismiss.clone(),
+            )
+            .into()
+        },
+    )
+    .into()
+}

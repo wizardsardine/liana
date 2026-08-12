@@ -1237,6 +1237,16 @@ pub mod global {
         pub theme_mode: coincube_ui::theme::palette::ThemeMode,
         #[serde(default = "default_true")]
         pub show_direction_badges: bool,
+        /// Hardware-advisory badges the user has collapsed, as
+        /// `"<fingerprint>:<advisory id>"` (see
+        /// [`crate::hw_advisory::dismissals`]). Dismissal only collapses the
+        /// detail panel — the badge itself stays on the device row.
+        #[serde(default)]
+        pub dismissed_hw_advisories: Vec<String>,
+        /// Advisory ids whose one-time, app-wide incident notice has been
+        /// shown and acknowledged on this install.
+        #[serde(default)]
+        pub seen_advisory_notices: Vec<String>,
     }
 
     fn default_true() -> bool {
@@ -1335,6 +1345,67 @@ pub mod global {
             Self::update(path, |s| s.theme_mode = mode, true)
         }
 
+        /// Advisory-badge dismissals, as `"<fingerprint>:<advisory id>"`.
+        /// Read once at startup into the in-process mirror — see
+        /// [`crate::hw_advisory::dismissals`].
+        pub fn load_dismissed_hw_advisories(path: &PathBuf) -> Vec<String> {
+            let mut ret = Vec::new();
+            if let Err(e) =
+                Self::update(path, |s| ret.clone_from(&s.dismissed_hw_advisories), false)
+            {
+                tracing::error!("Failed to load dismissed hardware advisories: {e}");
+            }
+            ret
+        }
+
+        /// Record one dismissal. Idempotent, so a repeated dismiss of the same
+        /// device/advisory pair doesn't grow the file.
+        pub fn dismiss_hw_advisory(
+            path: &PathBuf,
+            key: String,
+        ) -> Result<(), super::SettingsError> {
+            Self::update(
+                path,
+                |s| {
+                    if !s.dismissed_hw_advisories.contains(&key) {
+                        s.dismissed_hw_advisories.push(key.clone());
+                    }
+                },
+                true,
+            )
+        }
+
+        /// Whether the one-time incident notice for `advisory_id` has already
+        /// been acknowledged on this install.
+        pub fn advisory_notice_seen(path: &PathBuf, advisory_id: &str) -> bool {
+            let mut ret = false;
+            if let Err(e) = Self::update(
+                path,
+                |s| ret = s.seen_advisory_notices.iter().any(|id| id == advisory_id),
+                false,
+            ) {
+                tracing::error!("Failed to load seen advisory notices: {e}");
+            }
+            ret
+        }
+
+        /// Mark the one-time incident notice for `advisory_id` acknowledged.
+        pub fn mark_advisory_notice_seen(
+            path: &PathBuf,
+            advisory_id: &str,
+        ) -> Result<(), super::SettingsError> {
+            let advisory_id = advisory_id.to_string();
+            Self::update(
+                path,
+                |s| {
+                    if !s.seen_advisory_notices.contains(&advisory_id) {
+                        s.seen_advisory_notices.push(advisory_id.clone());
+                    }
+                },
+                true,
+            )
+        }
+
         pub fn update_bitbox_settings(
             path: &PathBuf,
             bitbox: &BitboxSettings,
@@ -1391,6 +1462,8 @@ pub mod global {
                 && !global_settings.developer_mode
                 && global_settings.account_tier == AccountTier::Free
                 && global_settings.theme_mode == coincube_ui::theme::palette::ThemeMode::default()
+                && global_settings.dismissed_hw_advisories.is_empty()
+                && global_settings.seen_advisory_notices.is_empty()
             {
                 write = false;
             }

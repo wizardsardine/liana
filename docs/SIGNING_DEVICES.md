@@ -28,6 +28,12 @@ writing. It is only supported by the [Edge
 firmware](https://github.com/Coldcard/firmware?tab=readme-ov-file#long-lived-branches).
 For use in Taproot descriptors you should use version 6.3.3 or higher.
 
+**Firmware advisory (July 2026).** Coinkite published an advisory about seed
+generation on Coldcard firmware. Coincube flags every connected Coldcard with a
+notice; connecting, signing and importing are unaffected. See [the rotation
+guide](advisories/2026-07-coldcard-rng.md) for which firmware versions are
+covered and how to rotate a key out of a Cube.
+
 ## [Jade and Jade Plus](https://github.com/Blockstream/Jade)
 
 Version 1.0.30 of the firmware is supported for use in P2WSH descriptors.

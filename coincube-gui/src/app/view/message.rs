@@ -177,6 +177,9 @@ pub enum Message {
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
+    /// Collapse the firmware-advisory detail panel on one device row. Carries
+    /// the device fingerprint and the advisory id; the badge itself stays.
+    DismissHwAdvisory(Fingerprint, &'static str),
     Home(HomeMessage),
     LiquidOverview(LiquidOverviewMessage),
     LiquidTransactions(LiquidTransactionsMessage),
