@@ -1350,6 +1350,16 @@ pub(crate) async fn persist_duress_enrollment(
 pub(crate) const DURESS_STEP_UP_BAD_PIN_MSG: &str =
     "That PIN doesn't match any of your Cubes' unlock PINs.";
 
+/// User-facing message when no Cube on this device has a PIN-protected seed, so
+/// there is no local secret to check the step-up against. Fails closed: this is
+/// precisely the device profile an attacker who has only the Connect account
+/// would arrive on — a fresh install, or one holding Cubes restored nowhere —
+/// and letting the disable through there would hand them the whole control.
+pub(crate) const DURESS_STEP_UP_NO_PIN_MSG: &str =
+    "No Cube on this device is protected by an unlock PIN, so there's no way to \
+     confirm it's you. Turn duress mode off from a device where you unlock a \
+     Cube with its PIN.";
+
 /// Step-up re-auth for the duress *disable* flow: verify `pin` is the REAL
 /// unlock PIN of at least one Cube.
 ///
@@ -1362,9 +1372,9 @@ pub(crate) const DURESS_STEP_UP_BAD_PIN_MSG: &str =
 /// **Blocking** — one Argon2id pass per Cube until a match. Callers must run it
 /// on a blocking pool.
 ///
-/// `Ok` when a Cube's regular PIN matches, or when no Cube has a PIN-protected
-/// seed at all (no second factor to demand). `Err` on an empty PIN, a mismatch,
-/// no Cubes, or when settings can't be read.
+/// `Ok` only when a Cube's regular PIN matches. `Err` on an empty PIN, a
+/// mismatch, no Cubes, no PIN-protected Cube on this device, or when settings
+/// can't be read.
 pub(crate) fn verify_regular_cube_pin_blocking(
     root: &std::path::Path,
     pin: &str,
@@ -1403,9 +1413,13 @@ pub(crate) fn verify_regular_cube_pin_blocking(
         }
     }
     if !any_pin {
-        // No PIN-protected Cube on this device — there's no second factor to
-        // demand, so let the disable proceed.
-        return Ok(());
+        // No PIN-protected Cube on this device — there is no local secret to
+        // check against, so the step-up cannot be satisfied. Fail closed: an
+        // "Ok" here would let ANY non-empty string disarm duress on every
+        // device, which is exactly what a Connect-account-only attacker (fresh
+        // install, no seed restored) would be holding. Distinct from a wrong
+        // PIN, because the user can't fix it by typing a different one.
+        return Err(DURESS_STEP_UP_NO_PIN_MSG.to_string());
     }
     Err(DURESS_STEP_UP_BAD_PIN_MSG.to_string())
 }
@@ -6139,8 +6153,12 @@ mod tests {
         );
     }
 
+    /// With no PIN-protected Cube on the device there is nothing to check the
+    /// step-up against, so it must FAIL — never pass. Passing would let any
+    /// non-empty string disarm duress everywhere, which is the one thing this
+    /// step-up exists to prevent.
     #[test]
-    fn verify_regular_cube_pin_allows_when_cubes_have_no_regular_pin() {
+    fn verify_regular_cube_pin_refuses_when_no_cube_has_a_regular_pin() {
         let root = TempRoot::new("regular-pinless");
         write_settings_dir(
             root.path(),
@@ -6151,7 +6169,10 @@ mod tests {
             },
         );
 
-        assert!(verify_regular_cube_pin_blocking(root.path(), "any pin").is_ok());
+        assert_eq!(
+            verify_regular_cube_pin_blocking(root.path(), "any pin").unwrap_err(),
+            DURESS_STEP_UP_NO_PIN_MSG
+        );
     }
 
     /// A failed enrollment must not claim "no changes were kept" when a marker

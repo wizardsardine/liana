@@ -120,8 +120,10 @@ pub fn recovery_ux<'a>(
 
 /// The "Disable Duress Mode" step-up dialog. Takes over the duress panel (like
 /// the enrollment wizard) while `ConnectAccountPanel::duress_disable` is `Some`.
-/// The user re-enters their regular Cube unlock PIN — not the duress PIN — to
-/// authorize turning duress off on every device.
+/// The user re-enters the regular unlock PIN of any Cube on this device — not
+/// the duress PIN — to authorize turning duress off on every device. Any Cube
+/// anchors it because duress arms and disarms across all of them at once, so
+/// there is no canonical Cube to name.
 pub fn disable_ux(state: &DuressDisableState) -> Element<'_, ConnectAccountMessage> {
     let confirm: Element<ConnectAccountMessage> = if state.submitting {
         button::primary(None, "Disabling…")
@@ -140,17 +142,18 @@ pub fn disable_ux(state: &DuressDisableState) -> Element<'_, ConnectAccountMessa
         .push(text::h4_bold("Disable Duress Mode").style(theme::text::primary))
         .push(card(
             Column::new()
-                .push(text::p1_bold("Confirm with your Cube PIN").style(theme::text::primary))
+                .push(text::p1_bold("Confirm with a Cube unlock PIN").style(theme::text::primary))
                 .push(
                     text::p2_regular(
-                        "Turning off duress disarms it on all your devices. Re-enter your \
-                         regular Cube unlock PIN to confirm — not your duress PIN.",
+                        "Turning off duress disarms it on all your devices. Enter the \
+                         regular unlock PIN of any Cube on this device to confirm — \
+                         not your duress PIN.",
                     )
                     .color(color::GREY_3),
                 )
                 .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
                 .push(
-                    TextInput::new("Cube unlock PIN", &state.pin)
+                    TextInput::new("Unlock PIN for any of your Cubes", &state.pin)
                         .on_input(|v| msg(DuressMessage::DisablePinChanged(v)))
                         .on_submit(msg(DuressMessage::DisableSubmit))
                         .secure(true)
