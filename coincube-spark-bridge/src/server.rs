@@ -21,9 +21,9 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use breez_sdk_spark::{
-    CheckLightningAddressRequest, ClaimDepositRequest, CrossChainAddressDetails,
-    CrossChainAddressFamily, CrossChainRouteFilter, CrossChainRoutePair, EventListener,
-    GetInfoRequest, InputType, LightningAddressInfo as SdkLightningAddressInfo,
+    CheckLightningAddressRequest, ClaimDepositRequest, ConversionEstimate, ConversionType,
+    CrossChainAddressDetails, CrossChainAddressFamily, CrossChainRouteFilter, CrossChainRoutePair,
+    EventListener, GetInfoRequest, InputType, LightningAddressInfo as SdkLightningAddressInfo,
     ListPaymentsRequest, ListUnclaimedDepositsRequest, LnurlPayRequest, MaxFee,
     OnchainConfirmationSpeed, PaymentDetails, PaymentRequest, PrepareLnurlPayRequest,
     PrepareLnurlPayResponse, PrepareSendPaymentRequest, PrepareSendPaymentResponse,
@@ -546,6 +546,91 @@ fn payment_to_summary(p: breez_sdk_spark::Payment) -> PaymentSummary {
 // Phase 4c write-path handlers
 // ---------------------------------------------------------------------------
 
+/// Rejects a prepare that came back carrying a token-conversion leg the wallet
+/// cannot actually fund. `None` means the prepare is fine to hand to the gui.
+///
+/// **Why a plain sats send can grow a conversion leg at all.** Both
+/// [`handle_prepare_send`] and [`handle_prepare_lnurl_pay`] pass
+/// `conversion_options: None` and `token_identifier: None`, so any conversion on
+/// the response was auto-attached by the SDK. Stable Balance does that: when it
+/// is active and the sat balance is below `amount + fee`,
+/// `stable_balance::get_conversion_options` silently fills in a
+/// `ToBitcoin { <stable token> }` conversion so the shortfall can be covered by
+/// swapping Stable Balance back to bitcoin (SDK 0.19.0,
+/// `crates/breez-sdk/core/src/stable_balance/mod.rs`). That is a *feature*, and
+/// this function deliberately lets it through when it can work.
+///
+/// **Why it needs a guard.** The SDK validates that auto-attached conversion
+/// against the AMM pool, not against the wallet's own token balance. A wallet
+/// with Stable Balance on and no stable token prepares cleanly, shows a fee, and
+/// then dies inside Flashnet at send time with
+/// `Wallet: Service error: generic error: Token outputs not found` — an
+/// insufficient-funds condition wearing an unreadable disguise, arriving after
+/// the user has already pressed Confirm and Send. Checking the holding here
+/// turns it into a plain-language refusal on the amount screen instead.
+///
+/// The balance read forces a sync: a stale cache that under-reports the holding
+/// would reject a send that would have worked, which is the worse mistake of the
+/// two. It only runs on the rare prepare that actually carries a conversion.
+async fn unfundable_conversion_error(
+    id: u64,
+    sdk: &SdkHandle,
+    estimate: Option<&ConversionEstimate>,
+) -> Option<Response> {
+    let estimate = estimate?;
+    let ConversionType::ToBitcoin {
+        from_token_identifier,
+    } = &estimate.options.conversion_type
+    else {
+        // `FromBitcoin` cannot legitimately appear on these paths — the gui
+        // never requests one, and Stable Balance only ever auto-attaches
+        // `ToBitcoin`. Refuse rather than pass an unrecognised leg through to
+        // the AMM on the user's behalf.
+        return Some(Response::err(
+            id,
+            ErrorKind::Sdk,
+            "prepare returned an unexpected token-conversion leg",
+        ));
+    };
+
+    let held = match sdk
+        .sdk
+        .get_info(GetInfoRequest {
+            ensure_synced: Some(true),
+        })
+        .await
+    {
+        Ok(info) => info
+            .token_balances
+            .get(from_token_identifier)
+            .map_or(0u128, |tb| tb.balance),
+        Err(e) => {
+            return Some(Response::err(
+                id,
+                ErrorKind::Sdk,
+                format!("could not read the Stable Balance holding to price this send: {e}"),
+            ));
+        }
+    };
+
+    if held >= estimate.amount_in {
+        return None;
+    }
+
+    // Deliberately no token figures in the message. `amount_in` is in token
+    // base units, and printing "2500000" at a user who holds "2.50 USDB" reads
+    // as a different order of magnitude entirely.
+    Some(Response::err(
+        id,
+        ErrorKind::BadRequest,
+        "Not enough bitcoin in this Spark wallet to cover the amount and its fee. \
+         Stable Balance is on, so the wallet tried to make up the difference by \
+         converting Stable Balance back to bitcoin — but the Stable Balance holding \
+         is too small to cover it. Send a smaller amount, top up the Spark bitcoin \
+         balance, or turn Stable Balance off in Spark settings.",
+    ))
+}
+
 async fn handle_prepare_send(
     id: u64,
     params: coincube_spark_protocol::PrepareSendParams,
@@ -578,6 +663,15 @@ async fn handle_prepare_send(
 
     match sdk.sdk.prepare_send_payment(request).await {
         Ok(prepare) => {
+            // Stable Balance can auto-attach a token→BTC conversion here even
+            // though we asked for none. Fail now, in the user's terms, if the
+            // wallet can't fund it — see `unfundable_conversion_error`.
+            if let Some(response) =
+                unfundable_conversion_error(id, &sdk, prepare.conversion_estimate.as_ref()).await
+            {
+                return response;
+            }
+
             // Extract display-friendly fields before stashing the full
             // struct. `amount` + method-specific fees are u128 in the
             // SDK (Spark tokens can exceed sat precision); we saturate
@@ -588,6 +682,12 @@ async fn handle_prepare_send(
             // at — both read `selected_onchain_speed()`.
             let (fee_sat, method_tag) =
                 fee_and_method(&prepare.payment_method, &selected_onchain_speed());
+            // Read before the insert below moves `prepare`. Mirrors
+            // `execute_regular_send`'s `has_token_leg` — the same condition that
+            // makes it drop the idempotency key, which is exactly what the gui
+            // needs to know.
+            let has_token_leg =
+                prepare.token_identifier.is_some() || prepare.conversion_estimate.is_some();
 
             let handle = Uuid::new_v4().to_string();
             state
@@ -606,6 +706,7 @@ async fn handle_prepare_send(
                     // Regular sends carry no cross-chain quote — those come
                     // from `prepare_cross_chain`.
                     cross_chain: None,
+                    has_token_leg: Some(has_token_leg),
                 }),
             )
         }
@@ -1009,6 +1110,11 @@ async fn handle_prepare_cross_chain(
             // Copy every field we still need out of the borrow before handing
             // `prepare` to the pending map — the insert moves it.
             let fee_sat = *source_transfer_fee_sats;
+            // Unlike the two plain-send paths, a conversion leg here is exactly
+            // what was asked for: a v1 cross-chain route funds a stablecoin from
+            // BTC. So it is reported, not refused.
+            let has_token_leg =
+                prepare.token_identifier.is_some() || prepare.conversion_estimate.is_some();
             let quote = coincube_spark_protocol::CrossChainQuote {
                 route: sdk_route_to_protocol(route),
                 estimated_out: *estimated_out,
@@ -1035,6 +1141,7 @@ async fn handle_prepare_cross_chain(
                     fee_sat,
                     method: "CrossChainAddress".to_string(),
                     cross_chain: Some(Box::new(quote)),
+                    has_token_leg: Some(has_token_leg),
                 }),
             )
         }
@@ -1470,6 +1577,17 @@ async fn handle_prepare_lnurl_pay(
 
     match sdk.sdk.prepare_lnurl_pay(request).await {
         Ok(prepare) => {
+            // Same Stable Balance auto-attach as the regular send path, and the
+            // same refusal when the holding can't fund it. This path has a
+            // second failure mode the check also heads off: `execute_lnurl_send`
+            // forwards the idempotency key, and the SDK rejects a key on a
+            // payment with a token leg outright.
+            if let Some(response) =
+                unfundable_conversion_error(id, &sdk, prepare.conversion_estimate.as_ref()).await
+            {
+                return response;
+            }
+
             // Preview fields come straight out of the SDK's
             // `PrepareLnurlPayResponse` — it already exposes top-level
             // `amount_sats` and `fee_sats` in u64, so no u128 clamping
@@ -1477,6 +1595,7 @@ async fn handle_prepare_lnurl_pay(
             let amount_sat = prepare.amount_sats;
             let fee_sat = prepare.fee_sats;
             let method = "LnurlPay".to_string();
+            let has_token_leg = prepare.conversion_estimate.is_some();
 
             let handle = Uuid::new_v4().to_string();
             state
@@ -1494,6 +1613,7 @@ async fn handle_prepare_lnurl_pay(
                     method,
                     // LNURL-pay is a Lightning send; never cross-chain.
                     cross_chain: None,
+                    has_token_leg: Some(has_token_leg),
                 }),
             )
         }
