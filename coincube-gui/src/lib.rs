@@ -10,6 +10,7 @@ pub mod gui;
 pub mod help;
 pub mod home;
 pub mod hw;
+pub mod hw_advisory;
 pub mod installer;
 pub mod loader;
 pub mod loading;

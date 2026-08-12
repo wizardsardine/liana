@@ -25,6 +25,10 @@ pub struct VaultExportModal {
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     breez_client: Option<Arc<crate::app::breez_liquid::BreezClient>>,
     import_export_type: ImportExportType,
+    /// Firmware advisory for the signer the imported file came from, when the
+    /// file format identifies one. Shown in the modal; also forwarded to the
+    /// owning flow, which outlives the modal.
+    advisory: Option<&'static crate::hw_advisory::Advisory>,
 }
 
 impl app::state::vault::psbt::Modal for VaultExportModal {
@@ -69,6 +73,7 @@ impl VaultExportModal {
             daemon,
             breez_client: None,
             import_export_type: export_type,
+            advisory: None,
         }
     }
 
@@ -181,6 +186,12 @@ impl VaultExportModal {
                     self.error = Some(e.clone());
                 }
                 Progress::None => {}
+                Progress::DeviceAdvisory(kind) => {
+                    self.advisory = crate::hw_advisory::evaluate_file_import(&kind);
+                    return Task::perform(async {}, move |_| {
+                        ImportExportMessage::DeviceAdvisory(kind).into()
+                    });
+                }
                 Progress::Xpub(xpub_str) => {
                     if matches!(self.import_export_type, ImportExportType::ExportXpub(_)) {
                         self.state = ImportExportState::Ended;
@@ -282,6 +293,15 @@ impl VaultExportModal {
             }
             ImportExportMessage::UpdateAliases(_) => { /* unexpected */ }
             ImportExportMessage::Xpub(_) => { /* unexpected */ }
+            ImportExportMessage::DeviceAdvisory(_) => { /* unexpected */ }
+            // The advisory panel's link to the rotation guide. Opened here
+            // rather than handed up, because the modal's message type is
+            // generic and has no route to the app's `OpenUrl`.
+            ImportExportMessage::OpenAdvisoryUrl(url) => {
+                if let Err(e) = open::that_detached(&url) {
+                    tracing::error!("Error opening '{}': {}", url, e);
+                }
+            }
         }
         Task::none()
     }
@@ -297,6 +317,7 @@ impl VaultExportModal {
                 self.error.as_ref(), // Export modal shows error inline
                 self.modal_title(),
                 &self.import_export_type,
+                self.advisory,
             ),
         );
         match self.state {

@@ -113,6 +113,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let global_config_path = GlobalSettings::path(&config.coincube_directory);
+
+    // Load the persisted hardware-advisory dismissals before any view runs.
+    // Device rows read this mirror synchronously while rendering; until it is
+    // loaded nothing reads as dismissed, so an advisory can only ever show
+    // more than the user asked for, never less.
+    coincube_gui::hw_advisory::dismissals::init(global_config_path.clone());
+
     let initial_size = if let Some(WindowConfig { width, height }) =
         GlobalSettings::load_window_config(&global_config_path)
     {

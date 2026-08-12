@@ -251,6 +251,18 @@ pub struct PathData {
     pub token_kind: Vec<KeyKind>,
 }
 
+/// One device the hardware poller has surfaced, reduced to what the key
+/// picker renders: display alias, fingerprint (when the device reported one),
+/// connection state, whether it can sign tap-miniscript, and any firmware
+/// advisory covering it.
+pub type DetectedHw = (
+    String, /* alias */
+    Option<Fingerprint>,
+    HwState,
+    bool, /* support taproot */
+    Option<crate::hw_advisory::AdvisoryHit>,
+);
+
 pub enum HwState {
     Supported,
     Locked { pairing_code: Option<String> },
@@ -320,6 +332,11 @@ pub struct SelectKeySource {
     error: Option<String>,
     details_error: Option<String>,
     import_xpub_error: Option<String>,
+    /// Firmware advisory for the signer an imported xpub file came from. Set
+    /// while the file is parsed and kept after the import modal closes, so the
+    /// notice survives onto the key-details screen where the user finishes
+    /// adding the key. Never blocks the import.
+    import_advisory: Option<&'static crate::hw_advisory::Advisory>,
 
     // fields
     form_alias: form::Value<String>,
@@ -370,6 +387,7 @@ impl SelectKeySource {
             error: None,
             details_error: None,
             import_xpub_error: None,
+            import_advisory: None,
             form_alias: Default::default(),
             form_xpub: Default::default(),
             form_safety_net_token: Default::default(),
@@ -404,15 +422,7 @@ impl SelectKeySource {
             })
             .collect()
     }
-    fn detected_hws(
-        &self,
-        hws: &HardwareWallets,
-    ) -> Vec<(
-        String, /* alias */
-        Option<Fingerprint>,
-        HwState,
-        bool, /* support taproot */
-    )> {
+    fn detected_hws(&self, hws: &HardwareWallets) -> Vec<DetectedHw> {
         hws.list
             .iter()
             .filter_map(|hw| {
@@ -479,7 +489,13 @@ impl SelectKeySource {
                         first.make_ascii_uppercase();
                     }
 
-                    Some(out)
+                    Some((
+                        out.0,
+                        out.1,
+                        out.2,
+                        out.3,
+                        crate::hw_advisory::view::hit(hw),
+                    ))
                 } else {
                     None
                 }
@@ -621,6 +637,7 @@ impl SelectKeySource {
     fn on_select_load_xpub(&mut self) -> Task<Message> {
         self.focus = Focus::LoadXpubFromFile;
         self.import_xpub_error = None;
+        self.import_advisory = None;
         if self.modal.is_none() {
             let modal = VaultExportModal::new(None, ImportExportType::ImportXpub(self.network));
             let launch = modal.launch(false);
@@ -631,6 +648,7 @@ impl SelectKeySource {
     }
     fn on_select_enter_xpub(&mut self) -> Task<Message> {
         self.focus = Focus::EnterXpub;
+        self.import_advisory = None;
         // Card-grid redesign: route into the dedicated paste-entry
         // sub-screen (previously this just flipped a focus flag that
         // revealed a collapsible input inside the old flat layout).
@@ -1007,6 +1025,12 @@ impl SelectKeySource {
             };
             self.focus = Focus::None;
 
+            // The advisory belongs to the key the file import produced. Leaving
+            // Details abandons that key, so the notice goes with it — otherwise
+            // it would follow the user onto whatever source they pick next,
+            // which may not be a file at all.
+            self.import_advisory = None;
+
             self.form_safety_net_token.value = "".to_string();
             self.form_safety_net_token.valid = true;
             self.form_safety_net_token.warning = None;
@@ -1022,6 +1046,14 @@ impl SelectKeySource {
             ImportExportMessage::Close => {
                 if self.modal.is_some() {
                     self.modal = None;
+                }
+            }
+            // Arrives just before `Xpub`, and is handled whether or not the
+            // modal is still up so the notice can't be lost in the handover.
+            ImportExportMessage::DeviceAdvisory(kind) => {
+                self.import_advisory = crate::hw_advisory::evaluate_file_import(&kind);
+                if let Some(modal) = self.modal.as_mut() {
+                    return modal.update(ImportExportMessage::DeviceAdvisory(kind));
                 }
             }
             ImportExportMessage::Xpub(xpub_str) => {
@@ -1543,12 +1575,7 @@ impl SelectKeySource {
         // `hws` is unused on the grid screen — hardware listing lives
         // on the dedicated Hardware Device sub-screen. Kept as a
         // parameter because the view dispatcher already resolves it.
-        _hws: Vec<(
-            String, /* alias */
-            Option<Fingerprint>,
-            HwState,
-            bool, /* support taproot */
-        )>,
+        _hws: Vec<DetectedHw>,
     ) -> Element<Message> {
         let only_safety_net = self.actual_path.token_kind.contains(&KeyKind::SafetyNet)
             && self.actual_path.token_kind.len() == 1;
@@ -1755,15 +1782,7 @@ impl SelectKeySource {
         btn.into()
     }
 
-    fn view_hardware_listen(
-        &self,
-        hws: Vec<(
-            String, /* alias */
-            Option<Fingerprint>,
-            HwState,
-            bool, /* support taproot */
-        )>,
-    ) -> Element<Message> {
+    fn view_hardware_listen(&self, hws: Vec<DetectedHw>) -> Element<Message> {
         let header = modal::header(Some("Hardware Device".to_string()), Some(|| Message::Close));
 
         // Present the "waiting for a device" prompt as its own full-width
@@ -1974,7 +1993,7 @@ impl SelectKeySource {
 
         let pick_account = edit_account.then_some(pick_account);
 
-        details_view(
+        let details = details_view(
             header,
             pick_account,
             &self.form_alias,
@@ -1984,17 +2003,33 @@ impl SelectKeySource {
             Some(Self::route(SelectKeySourceMessage::Retry)),
             None,
             Some(Self::route(SelectKeySourceMessage::Previous)),
-        )
+        );
+
+        // Advisory for a key that arrived from a signer's export file. It sits
+        // above the details card rather than inside it — the key is already
+        // parsed and Apply stays enabled; this is something to act on later,
+        // not a condition on finishing here.
+        match self.import_advisory {
+            Some(advisory) => Column::new()
+                .spacing(10)
+                .push(
+                    Container::new(coincube_ui::component::hw::advisory_panel(
+                        advisory.headline,
+                        None,
+                        advisory.file_import,
+                        "Read the rotation guide",
+                        Some(Message::OpenUrl(advisory.url.to_string())),
+                        None,
+                    ))
+                    .width(modal::MODAL_WIDTH),
+                )
+                .push(details)
+                .align_x(Horizontal::Center)
+                .into(),
+            None => details,
+        }
     }
-    fn view_signing_devices(
-        &self,
-        hws: &Vec<(
-            String, /* alias */
-            Option<Fingerprint>,
-            HwState,
-            bool, /* support taproot */
-        )>,
-    ) -> Element<Message> {
+    fn view_signing_devices(&self, hws: &[DetectedHw]) -> Element<Message> {
         // Full width so the heading and device rows sit flush-left,
         // lining up with the "Already used sources" section below
         // (which also uses a full-width column).
@@ -2032,15 +2067,7 @@ impl SelectKeySource {
     fn cosigner_enabled(&self) -> bool {
         self.actual_path.token_kind.contains(&KeyKind::Cosigner)
     }
-    fn widget_signing_device(
-        &self,
-        device: &(
-            String, /* alias */
-            Option<Fingerprint>,
-            HwState,
-            bool, /* support taproot */
-        ),
-    ) -> Element<Message> {
+    fn widget_signing_device(&self, device: &DetectedHw) -> Element<Message> {
         let alias = device.0.clone();
         let fg = device.1;
         let state = &device.2;
@@ -2092,7 +2119,7 @@ impl SelectKeySource {
             }
         }
         let fingerprint = fg.map(|fg| format!("#{fg}"));
-        modal::key_entry(
+        let entry = modal::key_entry(
             Some(icon::usb_drive_icon()),
             alias,
             fingerprint,
@@ -2100,7 +2127,22 @@ impl SelectKeySource {
             None,
             message,
             msg,
-        )
+        );
+        // Firmware advisory, if this device has one. It sits under the entry
+        // and changes nothing about it: `enabled` above is untouched, so a
+        // flagged device is picked exactly like any other.
+        match &device.4 {
+            Some(hit) => Column::new()
+                .push(entry)
+                .push(crate::hw_advisory::view::section(
+                    hit,
+                    fg,
+                    Message::OpenUrl(hit.url().to_string()),
+                    None,
+                ))
+                .into(),
+            None => entry,
+        }
     }
     fn widget_key(
         &self,
@@ -3009,6 +3051,30 @@ mod tests {
         picker.form_account = Some(ChildNumber::from_hardened_idx(7).unwrap());
         let _ = picker.on_retry();
         assert!(picker.details_error.is_none());
+    }
+
+    #[test]
+    fn import_advisory_does_not_outlive_the_details_step() {
+        let mut picker = empty_picker();
+
+        // An xpub file exported from a Coldcard: the advisory is set while the
+        // file is parsed and deliberately outlives the import modal, so it is
+        // still there on the details screen.
+        let _ = picker.on_import_message(ImportExportMessage::DeviceAdvisory(DeviceKind::Coldcard));
+        assert!(picker.import_advisory.is_some());
+        picker.step = Step::Details;
+
+        // Back: the imported key is abandoned, and its advisory with it.
+        let _ = picker.on_previous();
+        assert_eq!(picker.step, Step::Grid);
+        assert!(picker.import_advisory.is_none());
+
+        // A source that isn't a file must not inherit the file-import notice —
+        // a connected device carries its own, tiered on the firmware it reports.
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        let _ = picker.on_select_device(fg);
+        assert_eq!(picker.step, Step::Details);
+        assert!(picker.import_advisory.is_none());
     }
 
     #[test]

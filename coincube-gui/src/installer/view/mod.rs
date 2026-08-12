@@ -2236,7 +2236,22 @@ pub fn hw_list_view<'a>(
     if !processing && hw.is_supported() && !unrelated {
         bttn = bttn.on_press(Message::Select(i));
     }
-    bttn.into()
+    // A firmware advisory rides along under the row. It never gates
+    // selection — the device above stays exactly as clickable as it was.
+    match crate::hw_advisory::view::hit(hw) {
+        Some(hit) => Column::new()
+            .push(bttn)
+            .push(crate::hw_advisory::view::section(
+                &hit,
+                hw.fingerprint(),
+                Message::OpenUrl(hit.url().to_string()),
+                // Dismissal belongs to the app's device list, where the row is
+                // long-lived; here the picker is on screen for a moment.
+                None,
+            ))
+            .into(),
+        None => bttn.into(),
+    }
 }
 
 pub fn backup_mnemonic<'a>(
