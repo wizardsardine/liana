@@ -76,7 +76,15 @@ pub enum State {
         cubes: Vec<CubeSettings>,
         create_cube: bool,
     },
-    NoCube,
+    /// No Cube on this device. Carries the same `create_cube` flag as
+    /// [`State::Cubes`] because this screen is not always empty: remote Cubes
+    /// registered in Connect are listed here for restore, and that list needs
+    /// the same "Create Cube" button → dedicated form navigation rather than a
+    /// form stacked underneath it. When there is genuinely nothing to list the
+    /// view shows the form directly, so a first run still lands on it.
+    NoCube {
+        create_cube: bool,
+    },
     RecoveryInput,
     /// The creation-time backup step, between "Create Cube" and the Cube
     /// actually existing. See [`CreationBackupStep`].
@@ -577,13 +585,57 @@ impl Home {
         } else {
             0
         };
-        let network_str = settings::network_to_api_string(self.network);
+        let network_str = settings::network_to_api_str(self.network);
         let remote_count = self
             .remote_cubes
             .iter()
             .filter(|rc| rc.network == network_str)
             .count();
         local_count + remote_count
+    }
+
+    /// Whether this screen has any Cubes to list — local ones, or remote ones
+    /// registered in Connect for the selected network. False only on a genuinely
+    /// fresh device, where there is no list to navigate back to.
+    fn has_cube_list(&self) -> bool {
+        if let State::Cubes { cubes, .. } = &self.state {
+            if !cubes.is_empty() {
+                return true;
+            }
+        }
+        let network_str = settings::network_to_api_str(self.network);
+        self.remote_cubes.iter().any(|rc| rc.network == network_str)
+    }
+
+    /// Whether the create-Cube form is the screen currently being shown, as
+    /// opposed to a Cube list. Single source of truth for the three things that
+    /// have to agree about it: which body the view renders, whether the "Back
+    /// to Cube list" button appears, and whether the top-level error is drawn
+    /// here or left to the form (which renders `self.error` itself — deciding
+    /// this twice would print it twice).
+    ///
+    /// Whether the user has put anything into the create-Cube form. Used to
+    /// tell an untouched implicit form (safe to replace with a list that just
+    /// loaded) from one being filled in (replacing it would steal input the
+    /// user can no longer see).
+    fn create_form_has_input(&self) -> bool {
+        !self.create_cube_name.value.is_empty()
+            || !self.create_cube_pin.value().is_empty()
+            || !self.create_cube_pin_confirm.value().is_empty()
+    }
+
+    /// The form is shown when the user navigated to it, and also when there is
+    /// nothing to list: a first run should land on the form directly rather
+    /// than on an empty list behind a button.
+    fn showing_create_form(&self) -> bool {
+        match &self.state {
+            State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
+                *create_cube || !self.has_cube_list()
+            }
+            // Transient, pre-check: nothing is known to list yet.
+            State::Unchecked => true,
+            _ => false,
+        }
     }
 
     pub fn stop(&mut self) {}
@@ -689,24 +741,31 @@ impl Home {
                     // Connect session, which can change between visits.
                     self.passkey_mode = self.default_passkey_mode();
                 }
-                if let State::Cubes { create_cube, .. } = &mut self.state {
-                    *create_cube = show;
-                    if !show {
-                        self.create_cube_name = coincube_ui::component::form::Value::default();
-                        self.create_cube_pin = pin_input::PinInput::new();
-                        self.create_cube_pin_confirm = pin_input::PinInput::new();
-                        // Back to the default unlock method — dismissing the
-                        // form discards the custody choice along with the rest
-                        // of the inputs, so reopening it starts from the same
-                        // state a first-time user sees.
-                        self.passkey_mode = self.default_passkey_mode();
-                        // Clear recovery words when exiting create cube flow
-                        for word in &mut self.recovery_words {
-                            word.clear();
-                            word.shrink_to_fit();
-                        }
-                        self.recovery_active_index = None;
+                // Both list screens navigate to the same form, so both carry
+                // the flag — `NoCube` is a list screen too whenever Connect
+                // holds remote Cubes to restore.
+                let toggled = match &mut self.state {
+                    State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
+                        *create_cube = show;
+                        true
                     }
+                    _ => false,
+                };
+                if toggled && !show {
+                    self.create_cube_name = coincube_ui::component::form::Value::default();
+                    self.create_cube_pin = pin_input::PinInput::new();
+                    self.create_cube_pin_confirm = pin_input::PinInput::new();
+                    // Back to the default unlock method — dismissing the
+                    // form discards the custody choice along with the rest
+                    // of the inputs, so reopening it starts from the same
+                    // state a first-time user sees.
+                    self.passkey_mode = self.default_passkey_mode();
+                    // Clear recovery words when exiting create cube flow
+                    for word in &mut self.recovery_words {
+                        word.clear();
+                        word.shrink_to_fit();
+                    }
+                    self.recovery_active_index = None;
                 }
                 Task::none()
             }
@@ -1263,6 +1322,25 @@ impl Home {
                 }
                 match result {
                     Ok(remote_only) => {
+                        // On a device with nothing to list, the create form is
+                        // the landing screen *implicitly* — `create_cube` is
+                        // still false. This fetch can hand us a list (it has
+                        // three unsynchronised triggers, sign-in among them),
+                        // which would flip that screen to the list underneath
+                        // a user who is mid-way through typing, stranding the
+                        // input where they can no longer see it. Promote the
+                        // implicit form to an explicit one first, so the fetch
+                        // adds a "Back to Cube list" route instead of taking
+                        // the form away. Only when there IS input: an
+                        // untouched form should still yield to the list, which
+                        // is the screen that user wants.
+                        if self.showing_create_form() && self.create_form_has_input() {
+                            match &mut self.state {
+                                State::Cubes { create_cube, .. }
+                                | State::NoCube { create_cube } => *create_cube = true,
+                                _ => {}
+                            }
+                        }
                         self.remote_cubes = remote_only;
                     }
                     Err(e) => {
@@ -3198,10 +3276,10 @@ impl Home {
                 // Developer mode controls — right-aligned at top
                 .push(
                     Row::new()
-                        .push(if let State::Cubes {
-                            create_cube: true, ..
-                        } = &self.state
-                        {
+                        // Only offered when there is a list to go back to —
+                        // on a fresh device the form IS the screen, and a back
+                        // button that returns to the same form is a dead end.
+                        .push(if self.showing_create_form() && self.has_cube_list() {
                             Some(
                                 button::secondary(Some(icon::previous_icon()), "Back to Cube list")
                                     .on_press_maybe(if self.creating_cube {
@@ -3248,22 +3326,21 @@ impl Home {
                         Column::new()
                             .align_x(Alignment::Center)
                             .spacing(20)
-                            // "Your Cubes" heading
-                            .push(if matches!(self.state, State::Cubes { create_cube: false, .. }) {
-                                Some(text("Your Cubes").size(24).bold())
-                            } else {
-                                None
-                            })
+                            // "Your Cubes" heading — over any list screen,
+                            // including the one that lists only remote Cubes.
+                            .push(
+                                if matches!(self.state, State::Cubes { .. } | State::NoCube { .. })
+                                    && !self.showing_create_form()
+                                {
+                                    Some(text("Your Cubes").size(24).bold())
+                                } else {
+                                    None
+                                },
+                            )
                             .push({
-                                // Only show error at top if not in create cube form
-                                let in_create_form = matches!(
-                                    self.state,
-                                    State::Cubes {
-                                        create_cube: true,
-                                        ..
-                                    } | State::NoCube
-                                );
-                                if !in_create_form {
+                                // Only show error at top if not in create cube
+                                // form — the form renders `self.error` itself.
+                                if !self.showing_create_form() {
                                     self.error.as_ref().map(|e| card::simple(text(e)))
                                 } else {
                                     None
@@ -3361,7 +3438,7 @@ impl Home {
                                         col.into()
                                     }
                                 }
-                                State::NoCube | State::Unchecked => {
+                                State::NoCube { .. } | State::Unchecked => {
                                     let current_net_str =
                                         settings::network_to_api_string(self.network);
                                     let remote_for_net: Vec<_> = self
@@ -3369,47 +3446,90 @@ impl Home {
                                         .iter()
                                         .filter(|rc| rc.network == current_net_str)
                                         .collect();
+                                    let total_count = self.total_cube_count();
+                                    let at_limit = total_count >= self.cube_limit();
 
-                                    // Center the children: the create form below
-                                    // is a `center_x(Fill)` container, so without
-                                    // this the form spans/centers full width while
-                                    // the shrink-width remote-cube rows default to
-                                    // the left edge — leaving the list and form
+                                    // Center the children: the create form is a
+                                    // `center_x(Fill)` container, so without this
+                                    // the form spans/centers full width while the
+                                    // shrink-width remote-cube rows default to the
+                                    // left edge — leaving the list and form
                                     // misaligned.
                                     let mut col =
                                         Column::new().spacing(20).align_x(Alignment::Center);
-                                    for rc in &remote_for_net {
-                                        col = col.push(remote_cube_list_item(rc));
-                                    }
 
-                                    let total_count = self.total_cube_count();
-                                    let at_limit = total_count >= self.cube_limit();
-                                    if at_limit && !remote_for_net.is_empty() {
-                                        col = col.push(
-                                            Container::new(
-                                                p1_regular(format!(
-                                                    "Cube limit reached ({}/{}) on the {} plan. \
-                                                     Upgrade your Connect account or delete a remote Cube to create one here.",
-                                                    total_count,
-                                                    self.cube_limit(),
-                                                    self.account_tier.display_name(),
-                                                ))
-                                                .style(theme::text::secondary),
-                                            )
-                                            .max_width(500),
-                                        );
+                                    // The form owns the whole screen when it is
+                                    // shown — never stacked under the remote-Cube
+                                    // list, which is what made this screen read as
+                                    // two pages crammed into one.
+                                    if self.showing_create_form() {
+                                        if at_limit && !remote_for_net.is_empty() {
+                                            col = col.push(
+                                                Container::new(
+                                                    p1_regular(format!(
+                                                        "Cube limit reached ({}/{}) on the {} plan. \
+                                                         Upgrade your Connect account or delete a remote Cube to create one here.",
+                                                        total_count,
+                                                        self.cube_limit(),
+                                                        self.account_tier.display_name(),
+                                                    ))
+                                                    .style(theme::text::secondary),
+                                                )
+                                                .max_width(500),
+                                            );
+                                        } else {
+                                            col = col.push(create_cube_form(
+                                                &self.create_cube_name,
+                                                &self.create_cube_pin,
+                                                &self.create_cube_pin_confirm,
+                                                &self.error,
+                                                self.creating_cube,
+                                                self.passkey_mode,
+                                                self.connect_account
+                                                    .authenticated_client()
+                                                    .is_some(),
+                                            ));
+                                        }
+                                        col.into()
                                     } else {
-                                        col = col.push(create_cube_form(
-                                            &self.create_cube_name,
-                                            &self.create_cube_pin,
-                                            &self.create_cube_pin_confirm,
-                                            &self.error,
-                                            self.creating_cube,
-                                            self.passkey_mode,
-                                            self.connect_account.authenticated_client().is_some(),
-                                        ));
+                                        for rc in &remote_for_net {
+                                            col = col.push(remote_cube_list_item(rc));
+                                        }
+                                        // Same affordance the local-Cube list uses:
+                                        // a button to a dedicated form screen,
+                                        // greyed with an explanation at the limit.
+                                        let create_button = button::secondary(
+                                            Some(icon::plus_icon()),
+                                            "Create Cube",
+                                        )
+                                        .on_press_maybe(
+                                            (!at_limit)
+                                                .then_some(ViewMessage::ShowCreateCube(true)),
+                                        )
+                                        .padding(10)
+                                        .width(Length::Fixed(500.0));
+                                        col = col.push(if at_limit {
+                                            Column::new()
+                                                .spacing(8)
+                                                .push(create_button)
+                                                .push(
+                                                    Container::new(
+                                                        p1_regular(format!(
+                                                            "Cube limit reached ({}/{}) on the {} plan. \
+                                                             Upgrade your Connect account or delete a remote Cube to create one here.",
+                                                            total_count,
+                                                            self.cube_limit(),
+                                                            self.account_tier.display_name(),
+                                                        ))
+                                                        .style(theme::text::secondary),
+                                                    )
+                                                    .max_width(500),
+                                                )
+                                        } else {
+                                            Column::new().push(create_button)
+                                        });
+                                        col.into()
                                     }
-                                    col.into()
                                 }
                             })
                             .align_x(Alignment::Center),
@@ -4230,10 +4350,18 @@ fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
         )
     });
 
+    // The restore slot is always occupied — by the button when a restore is
+    // possible, by empty space of the same width when it isn't. Pushing
+    // nothing would shorten the row, and since the list is centre-aligned a
+    // shorter row slides inward: a Cube with no Recovery Kit would sit visibly
+    // offset from its neighbours and its delete button would land under their
+    // restore button. `bootstrap_icon` fixes the glyph at 20.0 and both
+    // buttons pad by 10, so 40.0 is the exact width being reserved.
     let mut row = Row::new().align_y(Alignment::Center).spacing(20).push(card);
-    if let Some(restore_button) = restore_button {
-        row = row.push(restore_button);
-    }
+    row = row.push(match restore_button {
+        Some(restore_button) => Element::from(restore_button),
+        None => Space::new().width(Length::Fixed(40.0)).into(),
+    });
     row = row.push(
         Button::new(icon::trash_icon())
             .style(theme::button::secondary)
@@ -5364,7 +5492,7 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
             if let Err(e) = default_config.to_file(&config_path) {
                 return Err(format!("Failed to create default GUI config file: {}", e));
             }
-            return Ok(State::NoCube);
+            return Ok(State::NoCube { create_cube: false });
         } else {
             return Err(format!(
                 "Failed to read GUI configuration file in the directory: {}",
@@ -5410,7 +5538,7 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
         Ok(s) => {
             // All cubes are required to have PINs
             if s.cubes.is_empty() {
-                Ok(State::NoCube)
+                Ok(State::NoCube { create_cube: false })
             } else {
                 Ok(State::Cubes {
                     cubes: s.cubes,
@@ -5418,7 +5546,7 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
                 })
             }
         }
-        Err(settings::SettingsError::NotFound) => Ok(State::NoCube),
+        Err(settings::SettingsError::NotFound) => Ok(State::NoCube { create_cube: false }),
         Err(e) => Err(format!("Failed to read settings: {}", e)),
     }
 }
@@ -5603,6 +5731,117 @@ mod tests {
             home.passkey_mode, expected_default,
             "dismissing restores the default unlock method"
         );
+    }
+
+    /// With no local Cube but remote ones to restore, `NoCube` is a list
+    /// screen: it shows the list plus a "Create Cube" button, and the form is
+    /// only reached by pressing it. Stacking the form under the list is what
+    /// made this screen read as two pages at once.
+    #[test]
+    fn no_cube_with_remote_cubes_lists_them_instead_of_showing_the_form() {
+        let mut home = home();
+        home.state = State::NoCube { create_cube: false };
+        home.remote_cubes = vec![remote_cube("remote-a", "Remote A", Network::Bitcoin)];
+
+        assert!(home.has_cube_list());
+        assert!(
+            !home.showing_create_form(),
+            "the list, not the form, is the landing screen when there is something to list"
+        );
+
+        let _ = home.update(Message::View(ViewMessage::ShowCreateCube(true)));
+        assert!(matches!(home.state, State::NoCube { create_cube: true }));
+        assert!(home.showing_create_form());
+
+        let _ = home.update(Message::View(ViewMessage::ShowCreateCube(false)));
+        assert!(matches!(home.state, State::NoCube { create_cube: false }));
+        assert!(!home.showing_create_form());
+        home.view();
+    }
+
+    /// A fresh device has no list to put behind a button, so the form stays the
+    /// landing screen — and offers no "Back to Cube list" button, which would
+    /// only lead back to itself.
+    #[test]
+    fn no_cube_with_nothing_to_list_still_lands_on_the_form() {
+        let mut home = home();
+        home.state = State::NoCube { create_cube: false };
+
+        assert!(!home.has_cube_list());
+        assert!(home.showing_create_form());
+        home.view();
+    }
+
+    /// A remote-cube fetch landing while the user types into the implicit form
+    /// must not swap that form out for the list it just loaded. The input is
+    /// still in state but invisible, so it reads as the app having eaten it.
+    #[test]
+    fn a_remote_cube_fetch_does_not_steal_a_create_form_being_filled_in() {
+        let mut home = home();
+        home.state = State::NoCube { create_cube: false };
+        // Nothing to list yet: the form is the landing screen, implicitly.
+        assert!(home.showing_create_form());
+        assert!(matches!(home.state, State::NoCube { create_cube: false }));
+
+        let _ = home.update(Message::View(ViewMessage::CubeNameEdited(
+            "Half typed".to_string(),
+        )));
+
+        let current = home.remote_cubes_request;
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: current,
+            result: Ok(vec![remote_cube("remote-a", "Remote A", Network::Bitcoin)]),
+        });
+
+        assert!(home.has_cube_list(), "the fetch did land a list");
+        assert!(
+            matches!(home.state, State::NoCube { create_cube: true }),
+            "the implicit form is promoted to an explicit one"
+        );
+        assert!(
+            home.showing_create_form(),
+            "the user keeps the form they were filling in"
+        );
+        assert_eq!(home.create_cube_name.value, "Half typed");
+    }
+
+    /// The converse: an untouched implicit form has nothing to protect, so a
+    /// fetch that lands restorable Cubes should surface them. That list is the
+    /// screen a user with remote Cubes actually wants.
+    #[test]
+    fn a_remote_cube_fetch_replaces_an_untouched_create_form() {
+        let mut home = home();
+        home.state = State::NoCube { create_cube: false };
+        assert!(home.showing_create_form());
+
+        let current = home.remote_cubes_request;
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: current,
+            result: Ok(vec![remote_cube("remote-a", "Remote A", Network::Bitcoin)]),
+        });
+
+        assert!(matches!(home.state, State::NoCube { create_cube: false }));
+        assert!(
+            !home.showing_create_form(),
+            "nothing was typed, so the freshly-loaded list takes the screen"
+        );
+        home.view();
+    }
+
+    /// A remote Cube on another network doesn't count as a list on this one —
+    /// the network picker must not strand the user on an empty list screen.
+    #[test]
+    fn remote_cubes_on_another_network_do_not_count_as_a_list() {
+        let mut home = home();
+        home.state = State::NoCube { create_cube: false };
+        home.remote_cubes = vec![remote_cube(
+            "remote-signet",
+            "Remote Signet",
+            Network::Signet,
+        )];
+
+        assert!(!home.has_cube_list());
+        assert!(home.showing_create_form());
     }
 
     #[test]
@@ -5984,7 +6223,7 @@ mod tests {
         let mut home = home();
         home.view();
 
-        home.state = State::NoCube;
+        home.state = State::NoCube { create_cube: false };
         home.error = Some("create error".to_string());
         home.view();
 
@@ -6424,7 +6663,7 @@ mod tests {
         );
         assert_eq!(
             step(&home),
-            CreationBackupStep::Intro(false),
+            CreationBackupStep::Choice,
             "creation must land on the backup step, not on a finished Cube"
         );
         assert!(

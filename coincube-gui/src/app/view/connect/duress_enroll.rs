@@ -120,43 +120,114 @@ pub fn recovery_ux<'a>(
 
 /// The "Disable Duress Mode" step-up dialog. Takes over the duress panel (like
 /// the enrollment wizard) while `ConnectAccountPanel::duress_disable` is `Some`.
-/// The user re-enters their regular Cube unlock PIN — not the duress PIN — to
-/// authorize turning duress off on every device.
+/// Which factor is asked for depends on the device — see
+/// [`crate::app::DuressStepUpMethod`], probed once when the dialog opens:
+///
+/// * **PIN** — re-enter the regular unlock PIN of any PIN-protected Cube here,
+///   never the duress PIN. Any such Cube anchors it because duress arms and
+///   disarms across all of them at once, so there is no canonical one to name.
+/// * **Passkey** — a device whose Cubes are all passkey Cubes has no PIN to
+///   re-enter, so a fresh assertion stands in. Same class of proof: this
+///   machine plus the user's biometric, neither of which a stolen Connect
+///   session carries.
+/// * **Unavailable** — neither, so the disable is refused here.
+///
+/// The dialog therefore has four shapes, including the one where the probe has
+/// not landed yet. It opens neutral rather than defaulting to the PIN field,
+/// which would flicker into a passkey button on the device that needs it most.
 pub fn disable_ux(state: &DuressDisableState) -> Element<'_, ConnectAccountMessage> {
-    let confirm: Element<ConnectAccountMessage> = if state.submitting {
-        button::primary(None, "Disabling…")
-            .width(Length::Fixed(220.0))
-            .into()
-    } else {
-        button::primary(None, "Disable Duress Mode")
-            .width(Length::Fixed(220.0))
-            .on_press_maybe((!state.pin.is_empty()).then(|| msg(DuressMessage::DisableSubmit)))
-            .into()
+    use crate::app::DuressStepUpMethod;
+
+    // (card body, confirm button) per factor. The confirm button is absent where
+    // there is nothing to confirm with — a dead button on a device that cannot
+    // proceed just invites repeated pressing.
+    let (body, confirm): (
+        Column<ConnectAccountMessage>,
+        Option<Element<ConnectAccountMessage>>,
+    ) = match &state.method {
+        // The probe is still running. Say so plainly rather than showing a
+        // PIN field that might be replaced by a passkey button a moment
+        // later.
+        None => (
+            Column::new()
+                .push(text::p1_bold("Checking this device…").style(theme::text::primary))
+                .push(
+                    text::p2_regular("Looking for a Cube here that can confirm it's you.")
+                        .color(color::GREY_3),
+                ),
+            None,
+        ),
+        Some(DuressStepUpMethod::Pin) => (
+            Column::new()
+                .push(text::p1_bold("Confirm with a Cube unlock PIN").style(theme::text::primary))
+                .push(
+                    text::p2_regular(
+                        "Turning off duress disarms it on all your devices. Enter the \
+                             regular unlock PIN of any PIN-protected Cube on this device — \
+                             not your duress PIN.",
+                    )
+                    .color(color::GREY_3),
+                )
+                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                .push(
+                    TextInput::new("Unlock PIN for a PIN-protected Cube", &state.pin)
+                        .on_input(|v| msg(DuressMessage::DisablePinChanged(v)))
+                        .on_submit(msg(DuressMessage::DisableSubmit))
+                        .secure(true)
+                        .padding(15),
+                ),
+            Some(if state.submitting {
+                button::primary(None, "Disabling…")
+                    .width(Length::Fixed(220.0))
+                    .into()
+            } else {
+                button::primary(None, "Disable Duress Mode")
+                    .width(Length::Fixed(220.0))
+                    .on_press_maybe(
+                        (!state.pin.is_empty()).then(|| msg(DuressMessage::DisableSubmit)),
+                    )
+                    .into()
+            }),
+        ),
+        // Deliberately not named "Touch ID": this same ceremony runs on Macs
+        // without it, where macOS confirms with the login password or a
+        // nearby iPhone instead — the reasoning `passkey_unlock` records for
+        // its own copy.
+        Some(DuressStepUpMethod::Passkey(cube)) => (
+            Column::new()
+                .push(text::p1_bold("Confirm with your passkey").style(theme::text::primary))
+                .push(
+                    text::p2_regular(format!(
+                        "Turning off duress disarms it on all your devices. No Cube here \
+                             uses an unlock PIN, so confirm with the passkey for '{}' instead.",
+                        cube.name
+                    ))
+                    .color(color::GREY_3),
+                ),
+            Some(if state.submitting {
+                button::primary(None, "Waiting for passkey…")
+                    .width(Length::Fixed(220.0))
+                    .into()
+            } else {
+                button::primary(None, "Confirm with passkey")
+                    .width(Length::Fixed(220.0))
+                    .on_press(msg(DuressMessage::DisablePasskeySubmit))
+                    .into()
+            }),
+        ),
+        Some(DuressStepUpMethod::Unavailable) => (
+            Column::new()
+                .push(text::p1_bold("Can't confirm on this device").style(theme::text::primary))
+                .push(text::p2_regular(crate::app::DURESS_STEP_UP_NO_PIN_MSG).color(color::GREY_3)),
+            None,
+        ),
     };
 
     let mut col = Column::new()
         .spacing(16)
         .max_width(560)
         .push(text::h4_bold("Disable Duress Mode").style(theme::text::primary))
-        .push(card(
-            Column::new()
-                .push(text::p1_bold("Confirm with your Cube PIN").style(theme::text::primary))
-                .push(
-                    text::p2_regular(
-                        "Turning off duress disarms it on all your devices. Re-enter your \
-                         regular Cube unlock PIN to confirm — not your duress PIN.",
-                    )
-                    .color(color::GREY_3),
-                )
-                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(
-                    TextInput::new("Cube unlock PIN", &state.pin)
-                        .on_input(|v| msg(DuressMessage::DisablePinChanged(v)))
-                        .on_submit(msg(DuressMessage::DisableSubmit))
-                        .secure(true)
-                        .padding(15),
-                ),
-        ));
+        .push(card(body));
 
     if let Some(err) = &state.error {
         col = col.push(text::p2_regular(err.clone()).color(color::RED));
@@ -173,7 +244,7 @@ pub fn disable_ux(state: &DuressDisableState) -> Element<'_, ConnectAccountMessa
                     .on_press_maybe((!state.submitting).then(|| msg(DuressMessage::DisableCancel))),
             )
             .push(iced::widget::Space::new().width(Length::Fill))
-            .push(confirm),
+            .push_maybe(confirm),
     );
 
     col.width(Length::Fill).into()

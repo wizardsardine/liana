@@ -1350,6 +1350,85 @@ pub(crate) async fn persist_duress_enrollment(
 pub(crate) const DURESS_STEP_UP_BAD_PIN_MSG: &str =
     "That PIN doesn't match any of your Cubes' unlock PINs.";
 
+/// User-facing message when no Cube on this device has a PIN-protected seed, so
+/// there is no local secret to check the step-up against. Fails closed: this is
+/// precisely the device profile an attacker who has only the Connect account
+/// would arrive on — a fresh install, or one holding Cubes restored nowhere —
+/// and letting the disable through there would hand them the whole control.
+pub(crate) const DURESS_STEP_UP_NO_PIN_MSG: &str =
+    "No Cube on this device is protected by an unlock PIN, so there's no way to \
+     confirm it's you. Turn duress mode off from a device where you unlock a \
+     Cube with its PIN.";
+
+/// How this device can prove it's the owner asking, for the duress-disable
+/// step-up.
+///
+/// The step-up needs a secret the Connect account alone cannot supply, so it has
+/// to come from something local. Which local thing depends on how the Cubes here
+/// were made, and that is not knowable without touching the filesystem — hence
+/// [`duress_step_up_method_blocking`], run once when the dialog opens so the
+/// dialog can ask for the right thing instead of guessing.
+// `pub`, not `pub(crate)`: it rides in `DuressMessage`, which is public, and a
+// private type inside a public variant is a `private_interfaces` warning — an
+// error under CI's `-D warnings`.
+#[derive(Debug, Clone)]
+pub enum DuressStepUpMethod {
+    /// At least one Cube here has a PIN-protected seed. Re-enter its unlock PIN.
+    Pin,
+    /// No PIN-protected Cube, but a passkey Cube is here. A fresh WebAuthn
+    /// assertion is the equivalent proof: it needs this machine plus the user's
+    /// biometric/Apple ID, neither of which a stolen Connect session carries.
+    /// Boxed because `CubeSettings` is comparatively large and this rides in a
+    /// message iced clones freely.
+    Passkey(Box<crate::app::settings::CubeSettings>),
+    /// Neither. Nothing here can anchor a step-up, so the disable is refused and
+    /// the user is pointed at a device that can.
+    Unavailable,
+}
+
+/// Classify what this device can offer as a disable step-up factor.
+///
+/// PIN wins when both are present: it is the path that already existed, it costs
+/// no system prompt, and a user with a PIN Cube here is expecting to be asked
+/// for a PIN. The passkey branch exists for the device profile that has no PIN
+/// at all — which, since passkey is the default creation method on macOS, is an
+/// ordinary user rather than an edge case.
+///
+/// **Blocking** — reads settings and stats seed files for every Cube. Cheap next
+/// to [`verify_regular_cube_pin_blocking`] (no Argon2 pass), but still I/O, so
+/// callers run it off the UI thread.
+pub(crate) fn duress_step_up_method_blocking(
+    root: &std::path::Path,
+) -> Result<DuressStepUpMethod, String> {
+    use crate::services::unlock;
+
+    let network_dirs = duress_enroll_network_dirs(root)?;
+    if network_dirs.is_empty() {
+        return Err(DURESS_NO_CUBES_MSG.to_string());
+    }
+    let mut passkey_cube: Option<crate::app::settings::CubeSettings> = None;
+    for network_dir in &network_dirs {
+        let settings = crate::app::settings::Settings::from_file(network_dir)
+            .map_err(|e| format!("Couldn't read your Cube settings to verify your PIN: {e}"))?;
+        for cube in &settings.cubes {
+            let loc = unlock::CubeLocation::new(root, cube);
+            if unlock::pin_requirement(&loc) == unlock::PinRequirement::Required {
+                return Ok(DuressStepUpMethod::Pin);
+            }
+            // First one wins. Any passkey Cube proves the same two things
+            // (this machine, this Apple ID), so there is no better choice to
+            // make — the same reason the PIN path accepts any Cube's PIN.
+            if passkey_cube.is_none() && cube.is_passkey_cube() {
+                passkey_cube = Some(cube.clone());
+            }
+        }
+    }
+    Ok(match passkey_cube {
+        Some(cube) => DuressStepUpMethod::Passkey(Box::new(cube)),
+        None => DuressStepUpMethod::Unavailable,
+    })
+}
+
 /// Step-up re-auth for the duress *disable* flow: verify `pin` is the REAL
 /// unlock PIN of at least one Cube.
 ///
@@ -1362,9 +1441,24 @@ pub(crate) const DURESS_STEP_UP_BAD_PIN_MSG: &str =
 /// **Blocking** — one Argon2id pass per Cube until a match. Callers must run it
 /// on a blocking pool.
 ///
-/// `Ok` when a Cube's regular PIN matches, or when no Cube has a PIN-protected
-/// seed at all (no second factor to demand). `Err` on an empty PIN, a mismatch,
-/// no Cubes, or when settings can't be read.
+/// # A passkey-only device never reaches this
+///
+/// A passkey Cube has no seed file, so `master_seed_path` finds nothing and
+/// `pin_requirement` reports `NoLocalSeed` — it is skipped here, and a device
+/// holding only passkey Cubes could never satisfy a PIN check whatever was
+/// typed. Since duress enrollment does not require a PIN Cube
+/// (`duress_pin_collision_check_blocking` skips `NoPinConfigured` Cubes and
+/// proceeds), that would have been a one-way door: enrolled, and unable to
+/// disable from the only device you own.
+///
+/// Such a device is therefore routed to the passkey step-up instead of this
+/// function — see [`DuressStepUpMethod`], chosen once when the dialog opens.
+/// [`DURESS_STEP_UP_NO_PIN_MSG`] is now reserved for a device with neither
+/// factor, where refusing really is the only honest answer.
+///
+/// `Ok` only when a Cube's regular PIN matches. `Err` on an empty PIN, a
+/// mismatch, no Cubes, no PIN-protected Cube on this device, or when settings
+/// can't be read.
 pub(crate) fn verify_regular_cube_pin_blocking(
     root: &std::path::Path,
     pin: &str,
@@ -1403,9 +1497,13 @@ pub(crate) fn verify_regular_cube_pin_blocking(
         }
     }
     if !any_pin {
-        // No PIN-protected Cube on this device — there's no second factor to
-        // demand, so let the disable proceed.
-        return Ok(());
+        // No PIN-protected Cube on this device — there is no local secret to
+        // check against, so the step-up cannot be satisfied. Fail closed: an
+        // "Ok" here would let ANY non-empty string disarm duress on every
+        // device, which is exactly what a Connect-account-only attacker (fresh
+        // install, no seed restored) would be holding. Distinct from a wrong
+        // PIN, because the user can't fix it by typing a different one.
+        return Err(DURESS_STEP_UP_NO_PIN_MSG.to_string());
     }
     Err(DURESS_STEP_UP_BAD_PIN_MSG.to_string())
 }
@@ -6139,8 +6237,12 @@ mod tests {
         );
     }
 
+    /// With no PIN-protected Cube on the device there is nothing to check the
+    /// step-up against, so it must FAIL — never pass. Passing would let any
+    /// non-empty string disarm duress everywhere, which is the one thing this
+    /// step-up exists to prevent.
     #[test]
-    fn verify_regular_cube_pin_allows_when_cubes_have_no_regular_pin() {
+    fn verify_regular_cube_pin_refuses_when_no_cube_has_a_regular_pin() {
         let root = TempRoot::new("regular-pinless");
         write_settings_dir(
             root.path(),
@@ -6151,7 +6253,93 @@ mod tests {
             },
         );
 
-        assert!(verify_regular_cube_pin_blocking(root.path(), "any pin").is_ok());
+        assert_eq!(
+            verify_regular_cube_pin_blocking(root.path(), "any pin").unwrap_err(),
+            DURESS_STEP_UP_NO_PIN_MSG
+        );
+    }
+
+    fn passkey_cube(id: &str, name: &str, network: Network) -> CubeSettings {
+        cube(id, name, network).with_passkey(crate::app::settings::PasskeyMetadata {
+            credential_id: "Y3JlZA==".to_string(),
+            rp_id: "coincube.io".to_string(),
+            created_at: 0,
+            label: None,
+        })
+    }
+
+    /// A device whose only Cube is a passkey Cube must be routed to the passkey
+    /// step-up. Before this existed it landed on the PIN check, which such a
+    /// device can never satisfy — so an enrolled user had no way to turn duress
+    /// off at all.
+    #[test]
+    fn a_passkey_only_device_is_offered_the_passkey_step_up() {
+        let root = TempRoot::new("stepup-passkey-only");
+        write_settings_dir(
+            root.path(),
+            "bitcoin",
+            Settings {
+                cubes: vec![passkey_cube("cube-a", "Passkey Cube", Network::Bitcoin)],
+                ..Settings::default()
+            },
+        );
+
+        match duress_step_up_method_blocking(root.path()).expect("classified") {
+            DuressStepUpMethod::Passkey(cube) => assert_eq!(cube.name, "Passkey Cube"),
+            other => panic!(
+                "a passkey-only device must offer the passkey step-up, got {:?}",
+                other
+            ),
+        }
+    }
+
+    /// A PIN-protected Cube anywhere on the device wins, even alongside passkey
+    /// Cubes: it is the path that already existed and costs no system prompt.
+    #[test]
+    fn a_pin_cube_takes_priority_over_a_passkey_cube() {
+        let root = TempRoot::new("stepup-mixed");
+        let mut pin_cube = cube("cube-pin", "PIN Cube", Network::Bitcoin);
+        store_seed(root.path(), &pin_cube, "1234");
+        pin_cube.duress_slot_file = None;
+
+        write_settings_dir(
+            root.path(),
+            "bitcoin",
+            Settings {
+                cubes: vec![
+                    passkey_cube("cube-pk", "Passkey Cube", Network::Bitcoin),
+                    pin_cube,
+                ],
+                ..Settings::default()
+            },
+        );
+
+        assert!(matches!(
+            duress_step_up_method_blocking(root.path()).expect("classified"),
+            DuressStepUpMethod::Pin
+        ));
+    }
+
+    /// Neither factor: a Cube registered in Connect but never restored here has
+    /// no seed to check a PIN against and no passkey to assert. Refusing is the
+    /// only honest answer, and it is the one case
+    /// [`DURESS_STEP_UP_NO_PIN_MSG`] is still for.
+    #[test]
+    fn a_device_with_neither_factor_can_offer_no_step_up() {
+        let root = TempRoot::new("stepup-neither");
+        write_settings_dir(
+            root.path(),
+            "bitcoin",
+            Settings {
+                cubes: vec![cube("cube-a", "Elsewhere", Network::Bitcoin)],
+                ..Settings::default()
+            },
+        );
+
+        assert!(matches!(
+            duress_step_up_method_blocking(root.path()).expect("classified"),
+            DuressStepUpMethod::Unavailable
+        ));
     }
 
     /// A failed enrollment must not claim "no changes were kept" when a marker
