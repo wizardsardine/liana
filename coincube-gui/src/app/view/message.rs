@@ -1747,7 +1747,25 @@ impl std::fmt::Debug for DuressMessage {
             StateLoaded(s, gen) => write!(f, "StateLoaded({:?}, {})", s, gen),
             EnrollmentPersisted => write!(f, "EnrollmentPersisted"),
             DisableStart => write!(f, "DisableStart"),
-            DisableMethodProbed(res, gen) => write!(f, "DisableMethodProbed({:?}, {})", res, gen),
+            // Only which method was chosen — never the `CubeSettings` inside
+            // `Passkey`. That is a whole settings struct: the passkey credential
+            // id, the master-seed fingerprint, and the Cube's random duress
+            // marker filename, which is the only thing that locates the marker
+            // on disk. This impl is the redaction boundary for duress messages,
+            // so a struct dump through it is exactly what it exists to stop.
+            DisableMethodProbed(Ok(method), gen) => {
+                let method = match method {
+                    crate::app::DuressStepUpMethod::Pin => "Pin",
+                    crate::app::DuressStepUpMethod::Passkey(_) => "Passkey",
+                    crate::app::DuressStepUpMethod::Unavailable => "Unavailable",
+                };
+                write!(f, "DisableMethodProbed(Ok({}), {})", method, gen)
+            }
+            // The error is a user-facing string carrying no secret, so it
+            // formats normally — same as every other `Result`-bearing arm here.
+            DisableMethodProbed(Err(e), gen) => {
+                write!(f, "DisableMethodProbed(Err({:?}), {})", e, gen)
+            }
             DisableCancel => write!(f, "DisableCancel"),
             DisableSubmit => write!(f, "DisableSubmit"),
             DisablePasskeySubmit => write!(f, "DisablePasskeySubmit"),
@@ -2461,6 +2479,68 @@ mod duress_message_debug_tests {
         assert_eq!(
             format!("{:?}", DuressMessage::MemorizedToggled(true)),
             "MemorizedToggled(true)"
+        );
+    }
+
+    /// The probed method names itself and nothing else. `DuressStepUpMethod`
+    /// derives `Debug`, so rendering the `Result` wholesale would print the
+    /// entire `CubeSettings` inside `Passkey` — including `duress_slot_file`,
+    /// the random filename that is the only way to locate this Cube's duress
+    /// marker on disk.
+    #[test]
+    fn a_probed_passkey_method_does_not_print_the_cube() {
+        const MARKER: &str = "canary-marker-XYZZY.mnemonic";
+
+        let mut cube = crate::app::settings::CubeSettings::new_with_id(
+            uuid::Uuid::nil(),
+            "Passkey Cube".to_string(),
+            coincube_core::miniscript::bitcoin::Network::Bitcoin,
+        );
+        cube.duress_slot_file = Some(MARKER.to_string());
+
+        let rendered = format!(
+            "{:?}",
+            DuressMessage::DisableMethodProbed(
+                Ok(crate::app::DuressStepUpMethod::Passkey(Box::new(cube))),
+                7,
+            )
+        );
+        assert!(
+            !rendered.contains(MARKER),
+            "the duress marker filename reached a log line: {}",
+            rendered
+        );
+        assert_eq!(rendered, "DisableMethodProbed(Ok(Passkey), 7)");
+    }
+
+    /// The other two methods and the failure still say what happened — the
+    /// redaction must not cost the generation or the error text, which is what
+    /// makes these lines worth logging at all.
+    #[test]
+    fn the_other_probe_outcomes_still_carry_their_detail() {
+        assert_eq!(
+            format!(
+                "{:?}",
+                DuressMessage::DisableMethodProbed(Ok(crate::app::DuressStepUpMethod::Pin), 3)
+            ),
+            "DisableMethodProbed(Ok(Pin), 3)"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                DuressMessage::DisableMethodProbed(
+                    Ok(crate::app::DuressStepUpMethod::Unavailable),
+                    4,
+                )
+            ),
+            "DisableMethodProbed(Ok(Unavailable), 4)"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                DuressMessage::DisableMethodProbed(Err("settings unreadable".to_string()), 5)
+            ),
+            "DisableMethodProbed(Err(\"settings unreadable\"), 5)"
         );
     }
 }
