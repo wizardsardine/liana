@@ -246,7 +246,7 @@ pub(crate) fn payment_summary_to_recent_tx(
     let fees_sat = Amount::from_sat(p.fees_sat);
     let fiat_amount = fiat_converter.map(|c| c.convert(amount));
 
-    let description = p.description.clone().unwrap_or_else(|| match method {
+    let description = p.description.clone().filter(|d| !d.trim().is_empty()).unwrap_or_else(|| match method {
         SparkPaymentMethod::Lightning => "Lightning payment".to_string(),
         SparkPaymentMethod::OnChainBitcoin => {
             if is_incoming {
@@ -313,6 +313,7 @@ fn token_payment_to_recent_tx(
     let description = p
         .description
         .clone()
+        .filter(|d| !d.trim().is_empty())
         .unwrap_or_else(|| "Stable Balance".to_string());
 
     SparkRecentTransaction {

@@ -413,6 +413,9 @@ impl SelectKeySource {
                 if self.actual_path.keys.iter().any(|key_fg| key_fg == fg) {
                     available = false;
                 }
+                if self.key_placed_elsewhere(*fg) {
+                    available = false;
+                }
                 if let KeySource::Token(kind, _) = key.source {
                     if !self.actual_path.token_kind.contains(&kind) {
                         available = false;
@@ -1804,7 +1807,6 @@ impl SelectKeySource {
         // Reuse the existing detected-devices rendering.
         let devices =
             (!hws.is_empty() || !self.keys.is_empty()).then(|| self.view_signing_devices(&hws));
-        let already_used = (!self.keys.is_empty()).then(|| self.view_keys());
 
         // Footer Back button — left-aligned, standalone (no primary
         // action on this screen; the user picks a device from the list
@@ -1821,7 +1823,6 @@ impl SelectKeySource {
             .push(header)
             .push(listening)
             .push(devices)
-            .push(already_used)
             .push(footer)
             .align_x(Horizontal::Center)
             .width(modal::MODAL_WIDTH);
