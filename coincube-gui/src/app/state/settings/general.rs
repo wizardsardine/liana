@@ -1254,13 +1254,31 @@ pub(super) fn load_mnemonic_words(
     pin: &str,
     cube_id: &str,
 ) -> Result<Vec<String>, SignerError> {
-    let signer = MasterSigner::from_datadir_by_fingerprint(
-        datadir,
-        network,
-        fingerprint,
-        Some(pin),
-        cube_id,
-    )?;
+    let signer_result = match crate::app::session::unlocked_signer(cube_id, fingerprint) {
+        Some(signer) => {
+            // Because the session signer is already decrypted, we MUST manually
+            // verify the provided PIN matches the session PIN to authorize the backup.
+            let current_pin =
+                crate::app::session::current_pin().ok_or(SignerError::PasswordRequired)?;
+            if pin != current_pin.as_str() {
+                Err(SignerError::InvalidPassword)
+            } else {
+                Ok(signer)
+            }
+        }
+        None => {
+            // Fallback for v1/v2 cubes if somehow missing from the session cache
+            MasterSigner::from_datadir_by_fingerprint(
+                datadir,
+                network,
+                fingerprint,
+                Some(pin),
+                cube_id,
+            )
+        }
+    };
+
+    let signer = signer_result?;
     Ok(signer.words().iter().map(|w| (*w).to_string()).collect())
 }
 
