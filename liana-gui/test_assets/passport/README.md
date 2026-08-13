@@ -4,6 +4,12 @@ These deterministic, public-only fixtures lock Passport air-gap protocol v1.
 They contain no private key material and must remain stable unless the protocol
 version changes.
 
+The account decoder intentionally accepts Passport's legacy BCR-2020-015
+`crypto-account` profile; newer Blockchain Commons account types are not
+silently treated as equivalent. The policy, verification, and identity JSON
+fixtures cover Foundation-specific envelopes documented in
+`doc/passport-airgap-protocol.md`.
+
 | Fixture | Purpose |
 | --- | --- |
 | `account-mainnet.txt` | Mainnet BIP48 native-SegWit microSD key export |

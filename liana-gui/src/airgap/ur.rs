@@ -6,9 +6,10 @@ use liana::miniscript::bitcoin::psbt::Psbt;
 
 use super::Error;
 
-// Passport Core and Passport Prime share Foundation's bounded BC-UR decoder.
-// Keep the encoded registry message within the device's 24 KiB ceiling; larger
-// binary PSBTs remain available through the bounded microSD path.
+// Match Passport Core's bounded BC-UR decoder. Keep the encoded registry
+// message within the device's 24 KiB ceiling; larger binary PSBTs remain
+// available through the bounded microSD path. Other compatible signers may
+// impose smaller limits.
 const PASSPORT_MAX_UR_MESSAGE_BYTES: usize = 24 * 1024;
 const PASSPORT_MAX_UR_FRAGMENTS: u32 = 128;
 

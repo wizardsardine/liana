@@ -75,8 +75,9 @@ enum Phase {
     Done,
 }
 
-/// Reusable QR/microSD exchange state for registration, address verification,
-/// and PSBT signing. It owns and releases the camera and animated QR material.
+/// Reusable QR exchange state for registration, address verification, and PSBT
+/// signing, with file transport where the signer workflow supports it. It owns
+/// and releases the camera and animated QR material.
 pub struct AirgapModal {
     title: String,
     request: AirgappedRequest,
@@ -178,6 +179,10 @@ impl AirgapModal {
                 }
             }
             AirgapAction::ExportFile => {
+                if !self.request.supports_file_transport() {
+                    self.error = Some("This exchange supports QR codes only".to_owned());
+                    return Task::none();
+                }
                 let filename = self.filename.clone();
                 let bytes = match self.request_file_bytes() {
                     Ok(bytes) => bytes,
@@ -212,6 +217,10 @@ impl AirgapModal {
                 Err(error) => self.error = Some(error),
             },
             AirgapAction::ImportResponse => {
+                if !self.request.supports_file_transport() {
+                    self.error = Some("This exchange supports QR codes only".to_owned());
+                    return Task::none();
+                }
                 let Some(expected) = self.expected else {
                     return Task::none();
                 };
@@ -304,20 +313,28 @@ impl AirgapModal {
             body = body.push(card::error("Air-gapped signer", error.clone()));
         }
         body = match self.phase {
-            Phase::Choose => body
-                .push(p1_regular(
-                    "Choose how to exchange this request with your air-gapped signer.",
-                ))
-                .push(
-                    button::primary(None, "Show animated QR code")
-                        .width(Length::Fill)
-                        .on_press(msg(AirgapAction::ShowQr)),
-                )
-                .push(
-                    button::secondary(None, "Export to microSD")
-                        .width(Length::Fill)
-                        .on_press(msg(AirgapAction::ExportFile)),
-                ),
+            Phase::Choose => {
+                let body = body
+                    .push(p1_regular(if self.request.supports_file_transport() {
+                        "Choose how to exchange this request with your air-gapped signer."
+                    } else {
+                        "Exchange this request with your air-gapped signer using QR codes."
+                    }))
+                    .push(
+                        button::primary(None, "Show animated QR code")
+                            .width(Length::Fill)
+                            .on_press(msg(AirgapAction::ShowQr)),
+                    );
+                if self.request.supports_file_transport() {
+                    body.push(
+                        button::secondary(None, "Export to microSD")
+                            .width(Length::Fill)
+                            .on_press(msg(AirgapAction::ExportFile)),
+                    )
+                } else {
+                    body
+                }
+            }
             Phase::DisplayQr => {
                 let mut controls = Column::new().spacing(12).align_x(Horizontal::Center);
                 if let Some(data) = &self.qr_data {
@@ -442,12 +459,14 @@ impl AirgapModal {
                     ),
                 ]
                 .spacing(10),
-            )
-            .push(
+            );
+        if self.request.supports_file_transport() {
+            controls = controls.push(
                 button::secondary(None, "Use microSD instead")
                     .width(Length::Fill)
                     .on_press(msg(AirgapAction::ExportFile)),
             );
+        }
         self.response_buttons(controls, msg)
     }
 
@@ -463,16 +482,20 @@ impl AirgapModal {
                     .on_press(msg(AirgapAction::Finish)),
             );
         }
-        body.push(
+        let body = body.push(
             button::primary(None, "Scan signer response")
                 .width(Length::Fill)
                 .on_press(msg(AirgapAction::ScanResponse)),
-        )
-        .push(
-            button::secondary(None, "Import response from microSD")
-                .width(Length::Fill)
-                .on_press(msg(AirgapAction::ImportResponse)),
-        )
+        );
+        if self.request.supports_file_transport() {
+            body.push(
+                button::secondary(None, "Import response from microSD")
+                    .width(Length::Fill)
+                    .on_press(msg(AirgapAction::ImportResponse)),
+            )
+        } else {
+            body
+        }
     }
 
     fn refresh_qr(&mut self) {
@@ -504,15 +527,23 @@ impl AirgapModal {
                         continue;
                     }
                     self.error = Some(
-                        "This request needs too many animated QR frames. Export it to microSD instead."
-                            .to_owned(),
+                        if self.request.supports_file_transport() {
+                            "This request needs too many animated QR frames. Export it to microSD instead."
+                        } else {
+                            "This request needs too many animated QR frames."
+                        }
+                        .to_owned(),
                     );
                     return;
                 }
                 Err(crate::airgap::Error::PayloadTooLarge { .. }) => {
                     self.error = Some(
-                        "This request is too large for animated QR. Export it to microSD instead."
-                            .to_owned(),
+                        if self.request.supports_file_transport() {
+                            "This request is too large for animated QR. Export it to microSD instead."
+                        } else {
+                            "This request is too large for animated QR."
+                        }
+                        .to_owned(),
                     );
                     return;
                 }
@@ -534,8 +565,12 @@ impl AirgapModal {
             }
             Err(crate::airgap::Error::TooManyFragments { .. }) => {
                 self.error = Some(
-                    "This request needs too many frames at that density. Choose a denser setting or use microSD."
-                        .to_owned(),
+                    if self.request.supports_file_transport() {
+                        "This request needs too many frames at that density. Choose a denser setting or use microSD."
+                    } else {
+                        "This request needs too many frames at that density. Choose a denser setting."
+                    }
+                    .to_owned(),
                 );
             }
             Err(error) => self.error = Some(error.to_string()),
@@ -711,7 +746,7 @@ impl Drop for AirgapModal {
 mod tests {
     use std::{fs, time::SystemTime};
 
-    use crate::airgap::PolicyRegistration;
+    use crate::airgap::{AddressVerificationRequest, PolicyRegistration};
 
     use super::*;
 
@@ -792,5 +827,27 @@ mod tests {
 
         assert_eq!(modal.phase, Phase::Choose);
         assert!(modal.error.is_none());
+    }
+
+    #[test]
+    fn address_verification_rejects_file_transport() {
+        let registration = PolicyRegistration::from_json(include_bytes!(
+            "../../../test_assets/passport/policy-registration-mainnet.json"
+        ))
+        .unwrap();
+        let request = AddressVerificationRequest::new(&registration, 0, 0).unwrap();
+        let mut modal = AirgapModal::new(
+            "Verify address",
+            AirgappedRequest::VerifyAddress(request),
+            "liana-address-0.json",
+        );
+
+        let _ = modal.update(AirgapAction::ExportFile);
+
+        assert_eq!(modal.phase, Phase::Choose);
+        assert_eq!(
+            modal.error.as_deref(),
+            Some("This exchange supports QR codes only")
+        );
     }
 }

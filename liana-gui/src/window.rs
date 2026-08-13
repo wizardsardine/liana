@@ -34,7 +34,7 @@ pub fn load_initial_size(liana_directory: &LianaDirectory, default_size: Option<
 
 /// Create iced window Settings.
 #[allow(unused_mut)]
-pub fn create_window_settings(_app_id: &str, initial_size: Size) -> iced::window::Settings {
+pub fn create_window_settings(app_id: &str, initial_size: Size) -> iced::window::Settings {
     let mut window_settings = iced::window::Settings {
         size: initial_size,
         icon: Some(image::liana_app_icon()),
@@ -50,7 +50,7 @@ pub fn create_window_settings(_app_id: &str, initial_size: Size) -> iced::window
     #[cfg(target_os = "linux")]
     {
         window_settings.platform_specific = PlatformSpecific {
-            application_id: _app_id.to_string(),
+            application_id: app_id.to_string(),
             ..Default::default()
         };
     }

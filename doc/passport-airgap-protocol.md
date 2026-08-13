@@ -14,12 +14,13 @@ an `async-hwi` USB device.
 | --- | --- | --- |
 | Passport account import | `ur:crypto-account` | UTF-8 descriptor key |
 | Wallet-policy registration | `ur:bytes` containing UTF-8 JSON | UTF-8 JSON |
-| Address-verification request/response | `ur:bytes` containing UTF-8 JSON | UTF-8 JSON |
+| Address-verification request/response | `ur:bytes` containing UTF-8 JSON | Not supported |
 | PSBT request/response | `ur:crypto-psbt` | binary PSBT |
 
 BC-UR uses bytewords and fountain encoding. Single-part and multipart values
 carry the same registry CBOR. `bytes` and `crypto-psbt` wrap their value in a
-CBOR byte string. `crypto-account` uses the BCR-2020-015 account map and the
+CBOR byte string. For compatibility with Passport exports, `crypto-account`
+uses the legacy BCR-2020-015 account map (superseded by BCR-2023-019) and the
 following deliberately narrow profile:
 
 - one top-level master fingerprint;
@@ -29,7 +30,7 @@ following deliberately narrow profile:
 - matching Bitcoin network in `crypto-coin-info` and the origin coin type;
 - no child derivation expression and no private key material.
 
-The current Passport microSD fallback is one line:
+The Passport account-import microSD fallback is one line:
 
 ```text
 [fingerprint/48'/coin_type'/account'/2']xpub-or-tpub
@@ -80,6 +81,9 @@ checksum. No second descriptor hash is introduced.
 
 ## Address verification
 
+Address verification is QR-only. The reference signer does not expose a
+file-based request/response workflow for this operation.
+
 Request:
 
 ```json
@@ -126,7 +130,7 @@ new signatures for keys expected by the wallet.
 ## Decoder resource limits
 
 The default limits intentionally match Passport Core's own UR decoder where
-possible:
+possible. They are interoperability limits, not general BC-UR limits:
 
 | Resource | Limit |
 | --- | ---: |
@@ -154,7 +158,7 @@ success, cancellation, timeout, and error. They are downstream consumers of
 this module and may apply smaller limits, never larger ones without a protocol
 review.
 
-The QR ceiling is the shared Passport decoder limit, not a PSBT-format limit.
+The QR ceiling is the Passport Core decoder limit, not a PSBT-format limit.
 When a PSBT cannot fit, Liana rejects QR presentation before generating an
 unscannable sequence and keeps the bounded binary microSD workflow available.
 
@@ -207,16 +211,61 @@ and the transitive dependency graph remain locked in `Cargo.lock`.
 
 | Dependency | License | Scope | Reason |
 | --- | --- | --- | --- |
-| `foundation-ur` | MIT | all desktop targets | BC-UR bytewords and fountain encoding/decoding |
-| `minicbor` | BlueOak-1.0.0 | all desktop targets | bounded registry-CBOR parsing and encoding |
-| `nokhwa` | Apache-2.0 | all desktop targets | camera enumeration, permission handling, and native Windows/Linux capture |
-| `quircs` | MIT | all desktop targets | fast in-memory QR detection and decoding |
-| `rxing` | Apache-2.0 | all desktop targets | robust inverted and difficult-image QR fallback |
-| `zeroize` | Apache-2.0 OR MIT | all desktop targets | overwrite owned animated PSBT QR strings on release |
-| `nokhwa-bindings-macos` | Apache-2.0 | macOS only | negotiated AVFoundation capture |
-| `flume` | Apache-2.0 OR MIT | macOS only | AVFoundation callback transport |
-| `objc` | MIT | macOS only | two typed AVFoundation session-preset messages |
-| `qrcode` | MIT OR Apache-2.0 | tests only | deterministic synthetic camera frames |
+| [`foundation-ur` 0.4.0](https://github.com/Foundation-Devices/foundation-rs) | MIT | all desktop targets | BC-UR bytewords and fountain encoding/decoding |
+| [`minicbor` 0.24.4](https://crates.io/crates/minicbor/0.24.4) | BlueOak-1.0.0 | all desktop targets | bounded registry-CBOR parsing and encoding |
+| [`nokhwa` 0.10.11](https://crates.io/crates/nokhwa/0.10.11) | Apache-2.0 | all desktop targets | camera enumeration, permission handling, and native Windows/Linux capture |
+| [`quircs` 0.10.3](https://crates.io/crates/quircs/0.10.3) | MIT | all desktop targets | fast in-memory QR detection and decoding |
+| [`rxing` 0.9.2](https://crates.io/crates/rxing/0.9.2) | Apache-2.0 | all desktop targets | robust inverted and difficult-image QR fallback |
+| [`zeroize` 1.8.1](https://crates.io/crates/zeroize/1.8.1) | Apache-2.0 OR MIT | all desktop targets | overwrite owned animated PSBT QR strings on release |
+| [`nokhwa-bindings-macos` 0.2.4](https://crates.io/crates/nokhwa-bindings-macos/0.2.4) | Apache-2.0 | macOS only | negotiated AVFoundation capture |
+| [`flume` 0.11.1](https://crates.io/crates/flume/0.11.1) | Apache-2.0 OR MIT | macOS only | AVFoundation callback transport |
+| [`objc` 0.2.7](https://crates.io/crates/objc/0.2.7) | MIT | macOS only | two typed AVFoundation session-preset messages |
+| [`qrcode` 0.14.1](https://crates.io/crates/qrcode/0.14.1) | MIT OR Apache-2.0 | tests only | deterministic synthetic camera frames |
+
+## Specifications and compatibility status
+
+The wire formats build on the following published specifications:
+
+- [ISO/IEC 18004:2024](https://www.iso.org/standard/83389.html) for QR symbols;
+- [RFC 8949](https://www.rfc-editor.org/rfc/rfc8949.html) for CBOR;
+- [BIP 174](https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki)
+  and [BIP 371](https://github.com/bitcoin/bips/blob/master/bip-0371.mediawiki)
+  for PSBT;
+- [BIP 48](https://github.com/bitcoin/bips/blob/master/bip-0048.mediawiki)
+  for multisig account derivation and
+  [BIP 388](https://github.com/bitcoin/bips/blob/master/bip-0388.mediawiki)
+  for wallet-policy terminology;
+- Blockchain Commons' [UR v2](https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2020-005-ur.md),
+  [registry types](https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2020-006-urtypes.md),
+  [HD key](https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2020-007-hdkey.md),
+  [Bytewords](https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2020-012-bytewords.md),
+  legacy [crypto-account](https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2020-015-account.md),
+  legacy [crypto-psbt](https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2021-001-request.md),
+  and [multipart UR](https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2024-001-multipart-ur.md)
+  research specifications. Blockchain Commons [explicitly describes
+  BCRs](https://github.com/BlockchainCommons/Research) as interoperability
+  research rather than formal standards; the two legacy types are retained
+  only for compatibility with current Passport firmware.
+
+The `passport-wallet-policy` and `passport-address-verification` JSON envelopes,
+including `policy_id`, are Foundation-specific protocols defined completely in
+this document and locked by public fixtures. They are not BIPs or Blockchain
+Commons registry types.
+
+Camera capture uses the operating-system APIs behind Nokhwa:
+[AVFoundation](https://developer.apple.com/documentation/avfoundation/setting-up-a-capture-session)
+on macOS, [Media Foundation](https://learn.microsoft.com/en-us/windows/win32/medfound/audio-video-capture-in-media-foundation)
+on Windows, and [V4L2](https://docs.kernel.org/userspace-api/media/v4l/v4l2.html)
+on Linux.
+
+Automated tests cover encoding, decoding, resource limits, policy identity,
+response binding, PSBT invariants, scanner progress, and scanner lifecycle.
+The complete physical workflow and built-in camera have been exercised on
+Passport Core and macOS. Passport Prime protocol compatibility is implemented
+but has not yet been exercised on physical hardware. Windows and Linux use the
+same scanner state machine and decoders and are compile/CI targets, but their
+native camera backends still require physical runtime testing before this
+feature can be described as validated on those platforms.
 
 ## Threat model
 

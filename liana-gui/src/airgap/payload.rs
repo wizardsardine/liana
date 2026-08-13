@@ -239,6 +239,13 @@ impl AirgappedRequest {
             Self::SignPsbt(_) => Some(ExpectedResponse::SignedPsbt),
         }
     }
+
+    /// Whether the signer-side workflow supports exchanging this request by
+    /// file. Address verification is QR-only: unlike policy registration and
+    /// PSBT signing, the reference signer does not expose a file-based flow.
+    pub fn supports_file_transport(&self) -> bool {
+        !matches!(self, Self::VerifyAddress(_))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

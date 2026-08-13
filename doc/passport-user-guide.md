@@ -1,8 +1,10 @@
 # Using Passport with Liana
 
-Liana supports Passport Core and Passport Prime as air-gapped signers. The
-workflow uses animated QR codes or microSD and never requires USB, copying an
-xpub, or editing a descriptor by hand.
+Liana supports compatible air-gapped signers through animated QR codes and
+microSD without requiring USB, copying an xpub, or editing a descriptor by
+hand. Passport Core is the physically validated reference device. Passport
+Prime support uses the same protocol but still requires validation on a
+physical Prime before release.
 
 ## Add a Passport key
 
@@ -47,10 +49,10 @@ policy to be registered again.
 
 1. Reveal a receive address in Liana and select **Verify**.
 2. Select the configured Passport.
-3. Show the request as an animated QR or save it to microSD.
+3. Show the request as an animated QR.
 4. Passport looks up the registered policy, independently derives the selected
    branch and index, and displays the complete address.
-5. Compare the address and return Passport's confirmation by QR or microSD.
+5. Compare the address and return Passport's confirmation by QR.
 
 Liana accepts the confirmation only when the network, policy identity,
 checksum, branch, index, address, and Passport fingerprint all match.
@@ -83,8 +85,9 @@ Animated QR codes reveal the public wallet policy or transaction details to
 anyone who can see them. Use microSD in environments where displaying those
 details is inappropriate.
 
-If camera access is denied or unavailable, use the microSD actions on the same
-screen. If a Passport is replaced or restored with a different seed or
+If camera access is denied or unavailable, use the microSD actions where they
+are offered. Address verification is QR-only. If a Passport is replaced or
+restored with a different seed or
 passphrase, import its account again and verify the full master fingerprint
 and BIP48 xpub before registering the policy. A restored Passport with the same
 seed and passphrase can reuse the public account key, but the wallet policy must
