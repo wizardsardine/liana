@@ -175,6 +175,48 @@ pub fn unlocked_signer(cube_id: &str, fingerprint: Fingerprint) -> Option<Master
         .and_then(|(_, signer)| signer.try_clone().ok())
 }
 
+/// The already-decrypted signer for `cube_id`, verified against the provided `pin`
+/// atomically under a single session lock. This prevents TOCTOU races where the session
+/// changes between checking the PIN and cloning the signer.
+pub fn unlocked_signer_with_pin_verification(
+    cube_id: &str,
+    fingerprint: Fingerprint,
+    pin: &str,
+) -> Result<MasterSigner, coincube_core::signer::SignerError> {
+    let guard = lock_session();
+    let session = guard
+        .as_ref()
+        .filter(|s| s.cube_id == cube_id)
+        .ok_or(coincube_core::signer::SignerError::PasswordRequired)?;
+
+    let current_pin = session
+        .pin
+        .as_ref()
+        .ok_or(coincube_core::signer::SignerError::PasswordRequired)?;
+
+    if current_pin.as_str() != pin {
+        return Err(coincube_core::signer::SignerError::InvalidPassword);
+    }
+
+    let (fp, signer) =
+        session
+            .signer
+            .as_ref()
+            .ok_or(coincube_core::signer::SignerError::SignerNotFound(
+                fingerprint,
+            ))?;
+
+    if *fp != fingerprint {
+        return Err(coincube_core::signer::SignerError::SignerNotFound(
+            fingerprint,
+        ));
+    }
+
+    signer
+        .try_clone()
+        .map_err(|_| coincube_core::signer::SignerError::SignerNotFound(fingerprint))
+}
+
 /// The open Cube's PIN, if `cube_id` is the Cube that is actually open **and**
 /// that Cube has a PIN at all. A passkey Cube answers `None`.
 pub fn pin_for(cube_id: &str) -> Option<Zeroizing<String>> {
