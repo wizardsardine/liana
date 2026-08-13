@@ -612,6 +612,7 @@ impl std::fmt::Debug for DuressDisableState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DuressDisableState")
             .field("pin", &"<redacted>")
+            .field("method", &self.method)
             .field("submitting", &self.submitting)
             .field("error", &self.error)
             .finish()
@@ -635,12 +636,20 @@ impl DuressEnrollState {
 }
 
 /// Step-up re-auth dialog for the "Disable Duress Mode" control (Issue 2).
-/// `None` when the dialog is closed. The user must re-enter their regular Cube
-/// unlock PIN — NOT the duress PIN — to authorize turning duress off.
+/// `None` when the dialog is closed.
+///
+/// The factor demanded depends on the device: the regular Cube unlock PIN —
+/// never the duress PIN — or, on a device whose Cubes are all passkey Cubes, a
+/// fresh passkey assertion. See [`crate::app::DuressStepUpMethod`].
 #[derive(Default)]
 pub struct DuressDisableState {
-    /// The regular Cube unlock PIN re-entered to authorize the disable.
+    /// The regular Cube unlock PIN re-entered to authorize the disable. Unused
+    /// on the passkey path.
     pub pin: String,
+    /// Which factor this device can offer. `None` while the probe is in flight,
+    /// which is why the dialog opens in a neutral "checking" state rather than
+    /// showing a PIN field it might have to take away.
+    pub method: Option<crate::app::DuressStepUpMethod>,
     /// True while the server `disable_duress` and the subsequent local disarm
     /// are in flight; disables the dialog's confirm button.
     pub submitting: bool,
@@ -3123,6 +3132,58 @@ impl ConnectAccountPanel {
                 // Open the step-up re-auth dialog. The trigger is only surfaced
                 // when enrolled & inactive (see `duress_ux`).
                 self.duress_disable = Some(DuressDisableState::default());
+                // Which factor to demand depends on what is on this disk, so
+                // ask before drawing the form. Filesystem work, hence the
+                // blocking pool.
+                let dir = match crate::dir::CoincubeDirectory::active() {
+                    Ok(dir) => dir,
+                    Err(err) => {
+                        if let Some(d) = &mut self.duress_disable {
+                            d.method = Some(crate::app::DuressStepUpMethod::Unavailable);
+                            d.error = Some(format!(
+                                "Couldn't access your Cube data to verify it's you: {err}"
+                            ));
+                        }
+                        return iced::Task::none();
+                    }
+                };
+                let gen = self.session_generation;
+                return iced::Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            crate::app::duress_step_up_method_blocking(dir.path())
+                        })
+                        .await
+                        .unwrap_or_else(|err| {
+                            Err(format!("Couldn't check how to verify it's you: {err}"))
+                        })
+                    },
+                    move |res| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Duress(DuressMessage::DisableMethodProbed(
+                                res, gen,
+                            )),
+                        ))
+                    },
+                );
+            }
+            DuressMessage::DisableMethodProbed(res, gen) => {
+                if gen != self.session_generation {
+                    return iced::Task::none();
+                }
+                if let Some(d) = &mut self.duress_disable {
+                    match res {
+                        Ok(method) => d.method = Some(method),
+                        Err(msg) => {
+                            // Can't classify the device, so can't ask for the
+                            // right thing. Refuse rather than guess: guessing
+                            // PIN would strand a passkey user, and guessing
+                            // passkey would raise a prompt that cannot help.
+                            d.method = Some(crate::app::DuressStepUpMethod::Unavailable);
+                            d.error = Some(msg);
+                        }
+                    }
+                }
             }
             DuressMessage::DisablePinChanged(v) => {
                 if let Some(d) = &mut self.duress_disable {
@@ -3131,6 +3192,10 @@ impl ConnectAccountPanel {
                 }
             }
             DuressMessage::DisableCancel => {
+                // Drops the parked ceremony, which cancels the system sheet and
+                // wakes the waiting task — otherwise a dismissed dialog leaves a
+                // Touch ID prompt on screen with nothing behind it.
+                crate::services::passkey::reauth::cancel();
                 if let Some(mut d) = self.duress_disable.take() {
                     d.zeroize_secrets();
                 }
@@ -3142,6 +3207,13 @@ impl ConnectAccountPanel {
                 // Re-entrancy guard: the confirm button is disabled while
                 // submitting, but two presses can queue in one frame.
                 if d.submitting {
+                    return iced::Task::none();
+                }
+                // Only the PIN branch may run the PIN check. On a passkey device
+                // it would fail with "use a device where you unlock a Cube with
+                // its PIN" — advice that is wrong here, since this device can
+                // authorize with its passkey.
+                if !matches!(d.method, Some(crate::app::DuressStepUpMethod::Pin)) {
                     return iced::Task::none();
                 }
                 // Step-up: the entered PIN must match a Cube's REAL unlock PIN
@@ -3179,6 +3251,53 @@ impl ConnectAccountPanel {
                         ))
                     },
                 );
+            }
+            DuressMessage::DisablePasskeySubmit => {
+                let Some(d) = &mut self.duress_disable else {
+                    return iced::Task::none();
+                };
+                if d.submitting {
+                    return iced::Task::none();
+                }
+                // Only the passkey branch may raise a prompt. A stale press on
+                // any other method must not, or a PIN device would get a system
+                // sheet no credential can answer.
+                let Some(crate::app::DuressStepUpMethod::Passkey(cube)) = d.method.clone() else {
+                    return iced::Task::none();
+                };
+                d.submitting = true;
+                d.error = None;
+                let gen = self.session_generation;
+                // Started on the UI thread — `NativePasskeyCeremony` is
+                // main-thread-only. `reauth::begin` parks it and hands back a
+                // plain future, so no polling subscription is needed here.
+                match crate::services::passkey::reauth::begin(&cube) {
+                    Ok(fut) => {
+                        return iced::Task::perform(
+                            async move {
+                                // The words are dropped (and zeroized) right
+                                // here. What authorizes the disable is that the
+                                // assertion succeeded AND derived this Cube's
+                                // own fingerprint — `reauth::begin` enforces the
+                                // latter. The seed itself is not wanted, and
+                                // must not ride in a message iced will clone.
+                                fut.await.map(drop).map_err(|e| e.user_message())
+                            },
+                            move |res| {
+                                Message::View(view::Message::ConnectAccount(
+                                    ConnectAccountMessage::Duress(
+                                        DuressMessage::DisableStepUpDone(res, gen),
+                                    ),
+                                ))
+                            },
+                        );
+                    }
+                    Err(e) => {
+                        d.submitting = false;
+                        d.error = Some(e.user_message());
+                        return iced::Task::none();
+                    }
+                }
             }
             DuressMessage::DisableStepUpDone(res, gen) => {
                 if gen != self.session_generation {
@@ -6813,6 +6932,7 @@ mod plan_lifecycle_tests {
         panel.duress_enroll.as_mut().unwrap().duress_pin = "1234".to_string();
         panel.duress_disable = Some(DuressDisableState {
             pin: "5678".to_string(),
+            method: Some(crate::app::DuressStepUpMethod::Pin),
             submitting: false,
             error: None,
         });

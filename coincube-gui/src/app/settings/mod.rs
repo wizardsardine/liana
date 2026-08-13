@@ -870,7 +870,9 @@ impl CubeSettings {
 }
 
 /// Convert a `Network` to the API network string used by the Connect backend.
-pub fn network_to_api_string(network: Network) -> String {
+/// Borrowing form — prefer it where an owned `String` isn't needed, such as a
+/// comparison inside a predicate the view calls per render.
+pub fn network_to_api_str(network: Network) -> &'static str {
     match network {
         Network::Bitcoin => "mainnet",
         Network::Testnet => "testnet",
@@ -878,7 +880,11 @@ pub fn network_to_api_string(network: Network) -> String {
         Network::Signet => "signet",
         Network::Regtest => "regtest",
     }
-    .to_string()
+}
+
+/// Convert a `Network` to the API network string used by the Connect backend.
+pub fn network_to_api_string(network: Network) -> String {
+    network_to_api_str(network).to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

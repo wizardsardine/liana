@@ -3112,10 +3112,43 @@ mod renewal_banner_tests {
         });
         let _ = duress_ux(&account);
 
+        // Every shape of the step-up dialog: still probing, PIN, passkey, and
+        // the device that can offer neither. Each renders a different body and
+        // a different confirm affordance, so each is built here.
+        for method in [
+            None,
+            Some(crate::app::DuressStepUpMethod::Pin),
+            Some(crate::app::DuressStepUpMethod::Passkey(Box::new(
+                crate::app::settings::CubeSettings::new_with_id(
+                    uuid::Uuid::nil(),
+                    "Passkey Cube".to_string(),
+                    coincube_core::miniscript::bitcoin::Network::Bitcoin,
+                ),
+            ))),
+            Some(crate::app::DuressStepUpMethod::Unavailable),
+        ] {
+            account.duress_disable = Some(DuressDisableState {
+                pin: "1234".to_string(),
+                method,
+                submitting: false,
+                error: Some("bad pin".to_string()),
+            });
+            let _ = duress_ux(&account);
+        }
+
+        // Mid-flight: both confirm buttons swap to their waiting label and the
+        // Cancel button goes inert.
         account.duress_disable = Some(DuressDisableState {
             pin: "1234".to_string(),
-            submitting: false,
-            error: Some("bad pin".to_string()),
+            method: Some(crate::app::DuressStepUpMethod::Passkey(Box::new(
+                crate::app::settings::CubeSettings::new_with_id(
+                    uuid::Uuid::nil(),
+                    "Passkey Cube".to_string(),
+                    coincube_core::miniscript::bitcoin::Network::Bitcoin,
+                ),
+            ))),
+            submitting: true,
+            error: None,
         });
         let _ = duress_ux(&account);
     }

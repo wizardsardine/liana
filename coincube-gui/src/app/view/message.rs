@@ -1663,8 +1663,13 @@ pub enum DuressMessage {
 
     // ── Disable (Issue 2 — turn duress off) ──
     /// User tapped "Disable Duress Mode" in Settings → opens the step-up
-    /// re-auth dialog (re-enter the regular Cube PIN).
+    /// re-auth dialog. Which factor it asks for is not known yet; the dialog
+    /// opens in a probing state and [`Self::DisableMethodProbed`] settles it.
     DisableStart,
+    /// Which step-up factor this device can offer, from
+    /// `duress_step_up_method_blocking`. Decides whether the dialog shows a PIN
+    /// field, a passkey button, or a refusal.
+    DisableMethodProbed(Result<crate::app::DuressStepUpMethod, String>, u64),
     /// The step-up regular-PIN input changed.
     DisablePinChanged(String),
     /// Dismiss the step-up dialog without disabling.
@@ -1672,6 +1677,10 @@ pub enum DuressMessage {
     /// Confirm the step-up: verify the regular Cube PIN locally, then call
     /// `disable_duress()` on the server.
     DisableSubmit,
+    /// Confirm the step-up on a passkey-only device: raise the system passkey
+    /// prompt. Converges on [`Self::DisableStepUpDone`] like the PIN path, so
+    /// both factors share one route to the server call.
+    DisablePasskeySubmit,
     /// Result of the local step-up PIN check, which now runs off the UI thread
     /// for the same reason as [`Self::EnrollPreflightDone`]. `Ok(())` proceeds
     /// to the server `disable_duress()` call.
@@ -1738,8 +1747,10 @@ impl std::fmt::Debug for DuressMessage {
             StateLoaded(s, gen) => write!(f, "StateLoaded({:?}, {})", s, gen),
             EnrollmentPersisted => write!(f, "EnrollmentPersisted"),
             DisableStart => write!(f, "DisableStart"),
+            DisableMethodProbed(res, gen) => write!(f, "DisableMethodProbed({:?}, {})", res, gen),
             DisableCancel => write!(f, "DisableCancel"),
             DisableSubmit => write!(f, "DisableSubmit"),
+            DisablePasskeySubmit => write!(f, "DisablePasskeySubmit"),
             DisableStepUpDone(res, gen) => write!(f, "DisableStepUpDone({:?}, {})", res, gen),
             DisableResult(res, gen) => write!(f, "DisableResult({:?}, {})", res, gen),
             DisarmComplete(res, gen) => write!(f, "DisarmComplete({:?}, {})", res, gen),

@@ -585,7 +585,7 @@ impl Home {
         } else {
             0
         };
-        let network_str = settings::network_to_api_string(self.network);
+        let network_str = settings::network_to_api_str(self.network);
         let remote_count = self
             .remote_cubes
             .iter()
@@ -603,7 +603,7 @@ impl Home {
                 return true;
             }
         }
-        let network_str = settings::network_to_api_string(self.network);
+        let network_str = settings::network_to_api_str(self.network);
         self.remote_cubes.iter().any(|rc| rc.network == network_str)
     }
 
@@ -614,6 +614,16 @@ impl Home {
     /// here or left to the form (which renders `self.error` itself — deciding
     /// this twice would print it twice).
     ///
+    /// Whether the user has put anything into the create-Cube form. Used to
+    /// tell an untouched implicit form (safe to replace with a list that just
+    /// loaded) from one being filled in (replacing it would steal input the
+    /// user can no longer see).
+    fn create_form_has_input(&self) -> bool {
+        !self.create_cube_name.value.is_empty()
+            || !self.create_cube_pin.value().is_empty()
+            || !self.create_cube_pin_confirm.value().is_empty()
+    }
+
     /// The form is shown when the user navigated to it, and also when there is
     /// nothing to list: a first run should land on the form directly rather
     /// than on an empty list behind a button.
@@ -1312,6 +1322,25 @@ impl Home {
                 }
                 match result {
                     Ok(remote_only) => {
+                        // On a device with nothing to list, the create form is
+                        // the landing screen *implicitly* — `create_cube` is
+                        // still false. This fetch can hand us a list (it has
+                        // three unsynchronised triggers, sign-in among them),
+                        // which would flip that screen to the list underneath
+                        // a user who is mid-way through typing, stranding the
+                        // input where they can no longer see it. Promote the
+                        // implicit form to an explicit one first, so the fetch
+                        // adds a "Back to Cube list" route instead of taking
+                        // the form away. Only when there IS input: an
+                        // untouched form should still yield to the list, which
+                        // is the screen that user wants.
+                        if self.showing_create_form() && self.create_form_has_input() {
+                            match &mut self.state {
+                                State::Cubes { create_cube, .. }
+                                | State::NoCube { create_cube } => *create_cube = true,
+                                _ => {}
+                            }
+                        }
                         self.remote_cubes = remote_only;
                     }
                     Err(e) => {
@@ -5740,6 +5769,62 @@ mod tests {
 
         assert!(!home.has_cube_list());
         assert!(home.showing_create_form());
+        home.view();
+    }
+
+    /// A remote-cube fetch landing while the user types into the implicit form
+    /// must not swap that form out for the list it just loaded. The input is
+    /// still in state but invisible, so it reads as the app having eaten it.
+    #[test]
+    fn a_remote_cube_fetch_does_not_steal_a_create_form_being_filled_in() {
+        let mut home = home();
+        home.state = State::NoCube { create_cube: false };
+        // Nothing to list yet: the form is the landing screen, implicitly.
+        assert!(home.showing_create_form());
+        assert!(matches!(home.state, State::NoCube { create_cube: false }));
+
+        let _ = home.update(Message::View(ViewMessage::CubeNameEdited(
+            "Half typed".to_string(),
+        )));
+
+        let current = home.remote_cubes_request;
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: current,
+            result: Ok(vec![remote_cube("remote-a", "Remote A", Network::Bitcoin)]),
+        });
+
+        assert!(home.has_cube_list(), "the fetch did land a list");
+        assert!(
+            matches!(home.state, State::NoCube { create_cube: true }),
+            "the implicit form is promoted to an explicit one"
+        );
+        assert!(
+            home.showing_create_form(),
+            "the user keeps the form they were filling in"
+        );
+        assert_eq!(home.create_cube_name.value, "Half typed");
+    }
+
+    /// The converse: an untouched implicit form has nothing to protect, so a
+    /// fetch that lands restorable Cubes should surface them. That list is the
+    /// screen a user with remote Cubes actually wants.
+    #[test]
+    fn a_remote_cube_fetch_replaces_an_untouched_create_form() {
+        let mut home = home();
+        home.state = State::NoCube { create_cube: false };
+        assert!(home.showing_create_form());
+
+        let current = home.remote_cubes_request;
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: current,
+            result: Ok(vec![remote_cube("remote-a", "Remote A", Network::Bitcoin)]),
+        });
+
+        assert!(matches!(home.state, State::NoCube { create_cube: false }));
+        assert!(
+            !home.showing_create_form(),
+            "nothing was typed, so the freshly-loaded list takes the screen"
+        );
         home.view();
     }
 
