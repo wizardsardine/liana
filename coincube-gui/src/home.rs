@@ -6663,7 +6663,7 @@ mod tests {
         );
         assert_eq!(
             step(&home),
-            CreationBackupStep::Intro(false),
+            CreationBackupStep::Choice,
             "creation must land on the backup step, not on a finished Cube"
         );
         assert!(
