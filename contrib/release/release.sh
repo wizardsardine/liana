@@ -128,6 +128,7 @@ if [ "$TARGET" = "liana" ]; then
 
         unzip ../contrib/release/macos/Liana.app.zip
         sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
+        sed -i '/<\/dict>/i\        <key>NSCameraUsageDescription</key>\n        <string>Liana uses the camera only to scan QR codes from air-gapped signing devices.</string>\n' ./Liana.app/Contents/Info.plist
         cp "$NIX_BUILD_DIR/universal2-apple-darwin/liana-gui" ./Liana.app/Contents/MacOS/Liana
         zip_archive "$LIANA_PREFIX-macos-noncodesigned.zip" Liana.app
         mv "$LIANA_PREFIX-macos-noncodesigned.zip" "$RELEASE_DIR/"

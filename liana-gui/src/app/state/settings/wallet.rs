@@ -15,12 +15,17 @@ use liana_ui::{
 };
 
 use crate::{
+    airgap::{AirgappedRequest, AirgappedSignerConfig, PolicyRegistration, RegistrationState},
     app::{
         cache::Cache,
         error::Error,
         message::Message,
         settings::{self, update_settings_file, LianaSettings},
-        state::{export::ExportModal, State},
+        state::{
+            airgap::{AirgapModal, AirgapOutcome},
+            export::ExportModal,
+            State,
+        },
         view,
         wallet::Wallet,
         Config,
@@ -36,6 +41,7 @@ use crate::{
 enum Modal {
     None,
     RegisterWallet(RegisterWalletModal),
+    RegisterAirgappedSigner(AirgappedRegistrationModal),
     ImportExport(ExportModal),
 }
 
@@ -124,6 +130,9 @@ impl State for WalletSettingsState {
             Modal::RegisterWallet(m) => modal::Modal::new(content, m.view())
                 .on_blur(Some(view::Message::Close))
                 .into(),
+            Modal::RegisterAirgappedSigner(m) => {
+                modal::Modal::new(content, m.exchange.view()).into()
+            }
             Modal::ImportExport(m) => m.view(content),
         }
     }
@@ -132,6 +141,7 @@ impl State for WalletSettingsState {
         match &self.modal {
             Modal::None => Subscription::none(),
             Modal::RegisterWallet(modal) => modal.subscription(),
+            Modal::RegisterAirgappedSigner(modal) => modal.exchange.subscription(),
             Modal::ImportExport(modal) => {
                 if let Some(sub) = modal.subscription() {
                     sub.map(|m| {
@@ -234,6 +244,60 @@ impl State for WalletSettingsState {
                 ));
                 Task::none()
             }
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::RegisterAirgappedSigner(fingerprint),
+            )) => {
+                match AirgappedRegistrationModal::new(
+                    self.wallet.clone(),
+                    cache.network,
+                    fingerprint,
+                ) {
+                    Ok(modal) => self.modal = Modal::RegisterAirgappedSigner(modal),
+                    Err(error) => self.warning = Some(Error::Unexpected(error)),
+                }
+                Task::none()
+            }
+            Message::View(view::Message::Airgap(action)) => {
+                let Modal::RegisterAirgappedSigner(modal) = &mut self.modal else {
+                    return Task::none();
+                };
+                let command = modal.exchange.update(action);
+                let Some(outcome) = modal.exchange.take_outcome() else {
+                    return command;
+                };
+                let registration = modal.registration.clone();
+                let signer = modal.signer.clone();
+                let state = match outcome {
+                    AirgapOutcome::Exported => RegistrationState::Exported {
+                        descriptor_checksum: registration
+                            .descriptor_checksum()
+                            .expect("validated registration has a checksum"),
+                    },
+                    AirgapOutcome::Cancelled => {
+                        self.modal = Modal::None;
+                        return Task::none();
+                    }
+                    _ => {
+                        self.warning = Some(Error::Unexpected(
+                            "Signer returned the wrong response".to_owned(),
+                        ));
+                        self.modal = Modal::None;
+                        return Task::none();
+                    }
+                };
+                self.processing = true;
+                self.modal = Modal::None;
+                Task::perform(
+                    update_airgapped_registration(
+                        self.data_dir.clone(),
+                        cache.network,
+                        self.wallet.clone(),
+                        signer,
+                        state,
+                    ),
+                    Message::WalletUpdated,
+                )
+            }
 
             Message::View(view::Message::ImportExport(ImportExportMessage::UpdateAliases(
                 aliases,
@@ -289,6 +353,7 @@ impl State for WalletSettingsState {
             }
             _ => match &mut self.modal {
                 Modal::RegisterWallet(m) => m.update(daemon, cache, message),
+                Modal::RegisterAirgappedSigner(_) => Task::none(),
                 _ => Task::none(),
             },
         }
@@ -309,6 +374,87 @@ impl State for WalletSettingsState {
     }
 }
 
+struct AirgappedRegistrationModal {
+    exchange: AirgapModal,
+    registration: PolicyRegistration,
+    signer: AirgappedSignerConfig,
+}
+
+impl AirgappedRegistrationModal {
+    fn new(
+        wallet: Arc<Wallet>,
+        network: Network,
+        fingerprint: Fingerprint,
+    ) -> Result<Self, String> {
+        let signer = wallet
+            .airgapped_signer_candidates(network)
+            .into_iter()
+            .find(|signer| signer.fingerprint == fingerprint)
+            .ok_or_else(|| "Air-gapped signer is not configured for this wallet".to_owned())?;
+        let registration = PolicyRegistration::from_descriptor(
+            wallet.name.clone(),
+            network,
+            &wallet.main_descriptor,
+        )
+        .map_err(|error| error.to_string())?;
+        let filename = format!("liana-{}-policy.json", wallet.descriptor_checksum);
+        Ok(Self {
+            exchange: AirgapModal::new(
+                "Register wallet policy on air-gapped signer",
+                AirgappedRequest::RegisterPolicy(registration.clone()),
+                filename,
+            ),
+            registration,
+            signer,
+        })
+    }
+}
+
+async fn update_airgapped_registration(
+    data_dir: LianaDirectory,
+    network: Network,
+    wallet: Arc<Wallet>,
+    signer: AirgappedSignerConfig,
+    registration: RegistrationState,
+) -> Result<Arc<Wallet>, Error> {
+    let mut wallet = wallet.as_ref().clone();
+    apply_airgapped_registration(&mut wallet, signer, registration);
+    let signers: Vec<AirgappedSignerConfig> = wallet.airgapped_signers.clone();
+    let wallet_id = wallet.id();
+    let network_dir = data_dir.network_directory(network);
+    update_settings_file(&network_dir, |mut settings: LianaSettings| {
+        if let Some(wallet_setting) = settings
+            .wallets
+            .iter_mut()
+            .find(|candidate| candidate.wallet_id() == wallet_id)
+        {
+            wallet_setting.airgapped_signers = signers.clone();
+        }
+        settings
+    })
+    .await?;
+    Ok(Arc::new(wallet))
+}
+
+fn apply_airgapped_registration(
+    wallet: &mut Wallet,
+    mut signer: AirgappedSignerConfig,
+    registration: RegistrationState,
+) {
+    if let Some(existing) = wallet
+        .airgapped_signers
+        .iter_mut()
+        .find(|existing| existing.fingerprint == signer.fingerprint)
+    {
+        existing.registration = registration;
+    } else {
+        // Legacy wallets are migrated only after the user confirms that the
+        // policy was registered, keeping cancellation side-effect free.
+        signer.registration = registration;
+        wallet.airgapped_signers.push(signer);
+    }
+}
+
 impl From<WalletSettingsState> for Box<dyn State> {
     fn from(s: WalletSettingsState) -> Box<dyn State> {
         Box::new(s)
@@ -321,6 +467,7 @@ pub struct RegisterWalletModal {
     warning: Option<Error>,
     chosen_hw: Option<usize>,
     hws: HardwareWallets,
+    airgapped_signers: Vec<AirgappedSignerConfig>,
     registered: HashSet<Fingerprint>,
     processing: bool,
 }
@@ -331,11 +478,13 @@ impl RegisterWalletModal {
         for hw in &wallet.hardware_wallets {
             registered.insert(hw.fingerprint);
         }
+        let airgapped_signers = wallet.airgapped_signer_candidates(network);
         Self {
             data_dir: data_dir.clone(),
             warning: None,
             chosen_hw: None,
             hws: HardwareWallets::new(data_dir, network).with_wallet(wallet.clone()),
+            airgapped_signers,
             wallet,
             processing: false,
             registered,
@@ -348,6 +497,8 @@ impl RegisterWalletModal {
         view::settings::register_wallet_modal(
             self.warning.as_ref(),
             &self.hws.list,
+            &self.airgapped_signers,
+            &self.wallet.main_descriptor,
             self.processing,
             self.chosen_hw,
             &self.registered,
@@ -386,6 +537,7 @@ impl RegisterWalletModal {
                         for hw in &wallet.hardware_wallets {
                             self.registered.insert(hw.fingerprint);
                         }
+                        self.airgapped_signers = wallet.airgapped_signer_candidates(cache.network);
                         self.wallet = wallet;
                     }
                     Err(e) => {
@@ -549,4 +701,74 @@ pub async fn update_aliases(
         .await?;
 
     Ok(Arc::new(wallet))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+
+    const LEGACY_DESCRIPTOR: &str = "wsh(or_d(multi(2,[f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<0;1>/*,[2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<0;1>/*),and_v(v:thresh(1,pkh([f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<2;3>/*),a:pkh([2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<2;3>/*)),older(65535))))#9s8ekrce";
+
+    fn legacy_wallet() -> Wallet {
+        Wallet::new(LianaDescriptor::from_str(LEGACY_DESCRIPTOR).unwrap())
+    }
+
+    #[test]
+    fn legacy_bip48_keys_are_offered_as_qr_signer_candidates() {
+        let mut wallet = legacy_wallet();
+        let fingerprint = Fingerprint::from_str("f714c228").unwrap();
+        wallet
+            .keys_aliases
+            .insert(fingerprint, "Legacy QR signer".to_owned());
+
+        let signers = wallet.airgapped_signer_candidates(Network::Testnet4);
+
+        assert_eq!(signers.len(), 2);
+        assert_eq!(
+            signers
+                .iter()
+                .find(|signer| signer.fingerprint == fingerprint)
+                .and_then(|signer| signer.alias.as_deref()),
+            Some("Legacy QR signer")
+        );
+    }
+
+    #[test]
+    fn known_usb_keys_are_not_migrated_to_qr_signers() {
+        let mut wallet = legacy_wallet();
+        let fingerprint = Fingerprint::from_str("f714c228").unwrap();
+        wallet.hardware_wallets.push(HardwareWalletConfig {
+            kind: "ledger".to_owned(),
+            fingerprint,
+            token: String::new(),
+        });
+
+        let signers = wallet.airgapped_signer_candidates(Network::Testnet4);
+
+        assert_eq!(signers.len(), 1);
+        assert_ne!(signers[0].fingerprint, fingerprint);
+    }
+
+    #[test]
+    fn confirmed_legacy_candidate_is_added_without_duplicates() {
+        let mut wallet = legacy_wallet();
+        let signer = wallet
+            .airgapped_signer_candidates(Network::Testnet4)
+            .into_iter()
+            .next()
+            .unwrap();
+        let fingerprint = signer.fingerprint;
+        let registration = RegistrationState::Exported {
+            descriptor_checksum: wallet.descriptor_checksum.clone(),
+        };
+
+        apply_airgapped_registration(&mut wallet, signer.clone(), registration.clone());
+        apply_airgapped_registration(&mut wallet, signer, registration.clone());
+
+        assert_eq!(wallet.airgapped_signers.len(), 1);
+        assert_eq!(wallet.airgapped_signers[0].fingerprint, fingerprint);
+        assert_eq!(wallet.airgapped_signers[0].registration, registration);
+    }
 }

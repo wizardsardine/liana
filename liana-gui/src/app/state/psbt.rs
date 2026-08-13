@@ -16,11 +16,15 @@ use liana_ui::{widget::modal, widget::Element};
 use crate::daemon::model::LabelsLoader;
 use crate::export::{ImportExportMessage, ImportExportType, Progress};
 use crate::{
+    airgap::{validate_and_merge_psbt, AirgappedRequest, AirgappedResponse, AirgappedSignerConfig},
     app::{
         cache::Cache,
         error::Error,
         message::Message,
-        state::label::{label_item_from_str, LabelsEdited},
+        state::{
+            airgap::{AirgapModal, AirgapOutcome},
+            label::{label_item_from_str, LabelsEdited},
+        },
         view,
         wallet::{Wallet, WalletError},
     },
@@ -454,6 +458,7 @@ impl Modal for DeleteModal {
 
 pub struct SignModal {
     wallet: Arc<Wallet>,
+    airgapped_signers: Vec<AirgappedSignerConfig>,
     hws: HardwareWallets,
     error: Option<Error>,
     signing: HashSet<Fingerprint>,
@@ -461,6 +466,7 @@ pub struct SignModal {
     is_saved: bool,
     display_modal: bool,
     recovery_timelock: Option<u16>,
+    airgap_exchange: Option<AirgappedSignExchange>,
 }
 
 impl SignModal {
@@ -472,15 +478,18 @@ impl SignModal {
         is_saved: bool,
         recovery_timelock: Option<u16>,
     ) -> Self {
+        let airgapped_signers = wallet.airgapped_signer_candidates(network);
         Self {
             signing: HashSet::new(),
             hws: HardwareWallets::new(datadir_path, network).with_wallet(wallet.clone()),
             wallet,
+            airgapped_signers,
             error: None,
             signed,
             is_saved,
             display_modal: true,
             recovery_timelock,
+            airgap_exchange: None,
         }
     }
 
@@ -491,7 +500,11 @@ impl SignModal {
 
 impl Modal for SignModal {
     fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        if let Some(exchange) = &self.airgap_exchange {
+            exchange.exchange.subscription()
+        } else {
+            self.hws.refresh().map(Message::HardwareWallets)
+        }
     }
 
     fn update(
@@ -501,6 +514,93 @@ impl Modal for SignModal {
         tx: &mut SpendTx,
     ) -> Task<Message> {
         match message {
+            Message::View(view::Message::Spend(view::SpendTxMessage::SignWithAirgappedSigner(
+                fingerprint,
+            ))) => {
+                let Some(signer) = self
+                    .airgapped_signers
+                    .iter()
+                    .find(|signer| signer.fingerprint == fingerprint)
+                else {
+                    self.error = Some(Error::Unexpected(
+                        "Air-gapped signer is not configured".to_owned(),
+                    ));
+                    return Task::none();
+                };
+                if !signer
+                    .registration
+                    .is_current(&self.wallet.descriptor_checksum)
+                {
+                    self.error = Some(Error::Unexpected(
+                        "Register this wallet policy on the signer first".to_owned(),
+                    ));
+                    return Task::none();
+                }
+                if !self
+                    .wallet
+                    .main_descriptor
+                    .contains_fingerprint_in_path(fingerprint, self.recovery_timelock)
+                {
+                    self.error = Some(Error::Unexpected(
+                        "The signer is not part of the selected spending path".to_owned(),
+                    ));
+                    return Task::none();
+                }
+                let original = tx.psbt.clone();
+                let txid = original.unsigned_tx.compute_txid();
+                self.error = None;
+                self.airgap_exchange = Some(AirgappedSignExchange {
+                    exchange: AirgapModal::new(
+                        "Sign transaction with air-gapped signer",
+                        AirgappedRequest::SignPsbt(original.clone()),
+                        format!("liana-{txid}.psbt"),
+                    ),
+                    fingerprint,
+                    original,
+                });
+                return Task::none();
+            }
+            Message::View(view::Message::Airgap(action)) => {
+                let Some(exchange) = &mut self.airgap_exchange else {
+                    return Task::none();
+                };
+                let command = exchange.exchange.update(action);
+                let Some(outcome) = exchange.exchange.take_outcome() else {
+                    return command;
+                };
+                let fingerprint = exchange.fingerprint;
+                let result = match outcome {
+                    AirgapOutcome::Response(AirgappedResponse::SignedPsbt(returned)) => {
+                        validate_and_merge_psbt(&exchange.original, &returned)
+                            .map_err(|error| Error::Unexpected(error.to_string()))
+                            .and_then(|merged| {
+                                if response_added_signature_for(
+                                    &exchange.original,
+                                    &merged,
+                                    fingerprint,
+                                ) {
+                                    Ok(merged)
+                                } else {
+                                    Err(Error::Unexpected(format!(
+                                        "Signer {fingerprint} did not add a signature"
+                                    )))
+                                }
+                            })
+                    }
+                    AirgapOutcome::Cancelled => {
+                        self.airgap_exchange = None;
+                        return Task::none();
+                    }
+                    _ => Err(Error::Unexpected(
+                        "Signer returned the wrong signing response".to_owned(),
+                    )),
+                };
+                self.airgap_exchange = None;
+                if result.is_ok() {
+                    self.display_modal = false;
+                }
+                return Task::done(Message::Signed(fingerprint, result));
+            }
             Message::View(view::Message::SelectHardwareWallet(i)) => {
                 if let Some(HardwareWallet::Supported {
                     fingerprint,
@@ -589,6 +689,9 @@ impl Modal for SignModal {
             view::psbt::sign_action_toasts(self.error.as_ref(), &self.hws.list, &self.signing),
         )
         .into();
+        if let Some(exchange) = &self.airgap_exchange {
+            return modal::Modal::new(content, exchange.exchange.view()).into();
+        }
         if self.display_modal {
             modal::Modal::new(
                 content,
@@ -603,6 +706,8 @@ impl Modal for SignModal {
                         .and_then(|signer| self.wallet.keys_aliases.get(&signer.fingerprint)),
                     &self.signed,
                     &self.signing,
+                    &self.airgapped_signers,
+                    &self.wallet.descriptor_checksum,
                     self.recovery_timelock,
                 ),
             )
@@ -612,6 +717,39 @@ impl Modal for SignModal {
             content
         }
     }
+}
+
+struct AirgappedSignExchange {
+    exchange: AirgapModal,
+    fingerprint: Fingerprint,
+    original: Psbt,
+}
+
+fn response_added_signature_for(original: &Psbt, merged: &Psbt, fingerprint: Fingerprint) -> bool {
+    original
+        .inputs
+        .iter()
+        .zip(&merged.inputs)
+        .any(|(before, after)| {
+            after.partial_sigs.keys().any(|public_key| {
+                !before.partial_sigs.contains_key(public_key)
+                    && before
+                        .bip32_derivation
+                        .get(&public_key.inner)
+                        .is_some_and(|source| source.0 == fingerprint)
+            }) || after.tap_script_sigs.keys().any(|key @ (public_key, _)| {
+                !before.tap_script_sigs.contains_key(key)
+                    && before
+                        .tap_key_origins
+                        .get(public_key)
+                        .is_some_and(|(_, source)| source.0 == fingerprint)
+            }) || (before.tap_key_sig.is_none()
+                && after.tap_key_sig.is_some()
+                && before
+                    .tap_internal_key
+                    .and_then(|key| before.tap_key_origins.get(&key))
+                    .is_some_and(|(_, source)| source.0 == fingerprint))
+        })
 }
 
 fn merge_signatures(psbt: &mut Psbt, signed_psbt: &Psbt) {
@@ -707,9 +845,25 @@ mod tests {
 
     use liana::descriptors::LianaDescriptor;
     use serde_json::json;
-    use std::str::FromStr;
+    use std::{path::PathBuf, str::FromStr};
 
     const DESC: &str = "wsh(or_d(multi(2,[f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<0;1>/*,[2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<0;1>/*),and_v(v:thresh(1,pkh([f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<2;3>/*),a:pkh([2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<2;3>/*)),older(65535))))#9s8ekrce";
+
+    #[test]
+    fn legacy_qr_signers_are_available_in_sign_modal() {
+        let wallet = Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap()));
+
+        let modal = SignModal::new(
+            HashSet::new(),
+            wallet,
+            LianaDirectory::new(PathBuf::new()),
+            Network::Testnet4,
+            true,
+            None,
+        );
+
+        assert_eq!(modal.airgapped_signers.len(), 2);
+    }
 
     #[tokio::test]
     async fn test_update_psbt() {

@@ -49,7 +49,7 @@ tar -xzf apple-codesign-0.22.0-x86_64-unknown-linux-musl.tar.gz
 Sign the packaged application using the `sign` command (mind `--code-signature-flags for the
 necessary hardened runtime):
 ```
-./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign sign --code-signature-flags runtime --pem-source wizardsardine_liana.key --der-source antoine_devid_liana_codesigning.cer Liana.app
+./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign sign --code-signature-flags runtime --entitlements-xml-file entitlements.plist --pem-source wizardsardine_liana.key --der-source antoine_devid_liana_codesigning.cer Liana.app
 ```
 You can see the chain of certificates was applied using the `diff-signatures` command against
 another bundle. The best way to verify the signature is by using the `codesign` command on a Mac.

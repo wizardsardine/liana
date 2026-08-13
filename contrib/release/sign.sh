@@ -129,12 +129,22 @@ sign_with_rcodesign() {
         chmod u+w "./$APP_BUNDLE/Contents/MacOS/LianaBusiness"
     fi
 
-    rcodesign sign \
-        --digest sha256 \
-        --code-signature-flags runtime \
-        --pem-source "$CODESIGN_KEY" \
-        --der-source "$CODESIGN_CERT" \
-        "$APP_BUNDLE/"
+    if [ "$TARGET" = "liana" ]; then
+        rcodesign sign \
+            --digest sha256 \
+            --code-signature-flags runtime \
+            --entitlements-xml-file ../contrib/release/macos/entitlements.plist \
+            --pem-source "$CODESIGN_KEY" \
+            --der-source "$CODESIGN_CERT" \
+            "$APP_BUNDLE/"
+    else
+        rcodesign sign \
+            --digest sha256 \
+            --code-signature-flags runtime \
+            --pem-source "$CODESIGN_KEY" \
+            --der-source "$CODESIGN_CERT" \
+            "$APP_BUNDLE/"
+    fi
 
     rcodesign notary-submit \
         --max-wait-seconds 600 \

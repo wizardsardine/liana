@@ -24,6 +24,7 @@ use liana::miniscript::bitcoin;
 use lianad::commands::ListCoinsResult;
 
 use crate::{
+    airgap::AirgappedSignerConfig,
     app::{self, state::State},
     backup::{Key, KeyRole, KeyType},
     dir::{LianaDirectory, NetworkDirectory},
@@ -102,6 +103,10 @@ pub trait WalletSettingsTrait: Clone + Serialize + DeserializeOwned + Send + 'st
     fn keys(&self) -> &[KeySetting];
     /// Get the list of hardware wallet configurations registered with this wallet.
     fn hardware_wallets(&self) -> &[HardwareWalletConfig];
+    /// Get persisted asynchronous air-gapped signers for this wallet.
+    fn airgapped_signers(&self) -> &[AirgappedSignerConfig] {
+        &[]
+    }
     /// Get the remote backend authentication config, if this wallet uses a remote backend.
     fn remote_backend_auth(&self) -> Option<&AuthConfig>;
     /// Get the fiat price conversion settings for this wallet.
@@ -280,6 +285,9 @@ pub struct LianaWalletSettings {
     // wallet metadata
     #[serde(default)]
     pub hardware_wallets: Vec<HardwareWalletConfig>,
+    /// Public-only asynchronous signers. Kept separate from live USB devices.
+    #[serde(default)]
+    pub airgapped_signers: Vec<AirgappedSignerConfig>,
     pub remote_backend_auth: Option<AuthConfig>,
     /// Start internal bitcoind executable.
     /// if None, the app must refer to the gui.toml start_internal_bitcoind field.
@@ -375,6 +383,10 @@ impl WalletSettingsTrait for LianaWalletSettings {
 
     fn hardware_wallets(&self) -> &[HardwareWalletConfig] {
         &self.hardware_wallets
+    }
+
+    fn airgapped_signers(&self) -> &[AirgappedSignerConfig] {
+        &self.airgapped_signers
     }
 
     fn remote_backend_auth(&self) -> Option<&AuthConfig> {
@@ -755,6 +767,7 @@ pub mod global {
 #[cfg(test)]
 mod test {
     use super::global::{GlobalSettings, WindowConfig};
+    use super::LianaSettings;
     use std::env;
 
     const RAW_GLOBAL_SETTINGS: &str = r#"{
@@ -841,6 +854,27 @@ mod test {
     #[test]
     fn test_parse_global_config() {
         let _ = serde_json::from_str::<GlobalSettings>(RAW_GLOBAL_SETTINGS).unwrap();
+    }
+
+    #[test]
+    fn legacy_wallet_settings_default_to_no_airgapped_signers() {
+        let settings: LianaSettings = serde_json::from_str(
+            r#"{
+                "wallets": [{
+                    "name": "Legacy",
+                    "alias": null,
+                    "descriptor_checksum": "u768v50p",
+                    "pinned_at": null,
+                    "keys": [],
+                    "hardware_wallets": [],
+                    "remote_backend_auth": null,
+                    "start_internal_bitcoind": null,
+                    "fiat_price": null
+                }]
+            }"#,
+        )
+        .unwrap();
+        assert!(settings.wallets[0].airgapped_signers.is_empty());
     }
 
     #[test]

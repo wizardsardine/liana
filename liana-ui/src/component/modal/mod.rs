@@ -548,6 +548,21 @@ where
     )
 }
 
+/// Entry importing a compatible signer's account through a public air-gap transport.
+pub fn import_airgapped_signer_entry<'a, Message, M>(on_press: Option<M>) -> Element<'a, Message>
+where
+    M: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    button_entry(
+        Tile::Device,
+        "Air-gapped signer (QR code or key file)",
+        Some("Imports only the public account key; no USB connection is used"),
+        None,
+        on_press,
+    )
+}
+
 /// Entry generating a key stored on this computer.
 pub fn generate_hot_key_entry<'a, Message, M>(on_press: Option<M>) -> Element<'a, Message>
 where
