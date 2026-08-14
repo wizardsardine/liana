@@ -1355,10 +1355,9 @@ impl SelectKeySource {
             if owner.primary_owner_id() != primary_owner_id {
                 return false;
             }
-            coords.is_empty()
-                || coords
-                    .iter()
-                    .any(|c| !self.actual_path.coordinates.contains(c))
+            coords
+                .iter()
+                .any(|c| !self.actual_path.coordinates.contains(c))
         })
     }
 
@@ -1374,10 +1373,9 @@ impl SelectKeySource {
             if k.fingerprint != candidate_fingerprint {
                 return false;
             }
-            coords.is_empty()
-                || coords
-                    .iter()
-                    .any(|c| !self.actual_path.coordinates.contains(c))
+            coords
+                .iter()
+                .any(|c| !self.actual_path.coordinates.contains(c))
         })
     }
 
@@ -2154,7 +2152,7 @@ impl SelectKeySource {
             bool, /* available */
         ),
     ) -> Element<Message> {
-        let (source, alias, fg, available) = key;
+        let (source, alias, fg, _available) = key;
         let icon = match source {
             KeySource::Device(..) => icon::usb_drive_icon(),
             KeySource::MasterSigner => icon::round_key_icon().color(color::RED),
@@ -2169,8 +2167,12 @@ impl SelectKeySource {
             } else {
                 None
             }
+        } else if self.actual_path.keys.iter().any(|key_fg| key_fg == &fg) {
+            Some("Key already used in this path".to_string())
+        } else if self.key_placed_elsewhere(fg) {
+            Some("This Keychain key is already used elsewhere in this Vault.".to_string())
         } else {
-            (!available).then_some("Key already used in this path".to_string())
+            None
         };
         let fg_str = format!("#{}", fg);
         let on_press = message
@@ -2860,11 +2862,11 @@ mod tests {
     }
 
     #[test]
-    fn key_placed_elsewhere_blocks_when_placed_without_coordinates() {
+    fn key_placed_elsewhere_allows_unplaced_key() {
         let fg = Fingerprint::from_str("8a550171").unwrap();
-        // A placement carrying no coordinates is treated as used elsewhere.
+        // A key with no coordinates has not been placed, so it remains available.
         let picker = picker_with_placed_key(vec![(0, 0)], vec![], fg);
-        assert!(picker.key_placed_elsewhere(fg));
+        assert!(!picker.key_placed_elsewhere(fg));
     }
 
     fn raw_key(id: u64, fingerprint: &str, owner_id: u64) -> CubeKeyRaw {
