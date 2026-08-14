@@ -1059,14 +1059,7 @@ fn recovery_kit_card<'a>(
 }
 
 fn network_row<'a>(network: coincube_core::miniscript::bitcoin::Network) -> Element<'a, Message> {
-    use coincube_core::miniscript::bitcoin::Network;
-    let label = match network {
-        Network::Bitcoin => "Mainnet",
-        Network::Regtest => "Regtest",
-        Network::Testnet => "Testnet",
-        Network::Signet => "Signet",
-        _ => "Unknown",
-    };
+    let label = crate::app::features::net_label(network);
     card::simple(
         Row::new()
             .spacing(20)

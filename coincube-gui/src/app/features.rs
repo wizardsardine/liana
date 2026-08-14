@@ -209,8 +209,10 @@ impl DuressGate {
     }
 }
 
-/// Display name for a network, used in popover text.
-fn net_label(n: Network) -> &'static str {
+/// Display name for a network. Shared by popover text and the settings
+/// "Network:" row — deliberately exhaustive so a new variant is a compile
+/// error rather than a silently wrong label.
+pub(crate) fn net_label(n: Network) -> &'static str {
     match n {
         Network::Bitcoin => "Mainnet",
         Network::Testnet => "Testnet",
