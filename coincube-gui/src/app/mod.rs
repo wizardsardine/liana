@@ -4440,19 +4440,35 @@ impl App {
                     // this very load. The `is_status_load` branch in the
                     // RecoveryAlerts dispatch offers the prompt once the load
                     // lands with the new Vault's keyholders in hand.
-                    let alerts_load_task = Task::done(Message::View(view::Message::Settings(
-                        view::SettingsMessage::RecoveryAlerts(
-                            view::RecoveryAlertsMessage::LoadStatus,
-                        ),
-                    )));
+                    //
+                    // Gated on an authenticated session with a resolved Connect
+                    // cube, like the Recovery-Kit nudge above. Dispatching it
+                    // without both doesn't merely waste a queue hop: the
+                    // handler's early return still marks the monitoring config
+                    // `loaded_once`, and that permanently disables the lazy
+                    // hydrator in `recovery_heartbeat_task` (gated on
+                    // `!loaded_once`) for the rest of the session — so a Vault
+                    // built before signing in to Connect would neither
+                    // heartbeat nor prompt until Settings was opened by hand.
+                    let alerts_load_task: Option<Task<Message>> =
+                        (self.panels.connect.account.is_authenticated()
+                            && self.panels.connect.cube.server_cube_id.is_some())
+                        .then(|| {
+                            Task::done(Message::View(view::Message::Settings(
+                                view::SettingsMessage::RecoveryAlerts(
+                                    view::RecoveryAlertsMessage::LoadStatus,
+                                ),
+                            )))
+                        });
 
                     // Fold the re-report, the optional duress nudge and the
-                    // alerts load into a single extra task so the return arms
-                    // below stay simple.
-                    let report_task = match duress_nudge_task {
-                        Some(nudge) => Task::batch([report_task, nudge, alerts_load_task]),
-                        None => Task::batch([report_task, alerts_load_task]),
-                    };
+                    // optional alerts load into a single extra task so the
+                    // return arms below stay simple.
+                    let report_task = Task::batch(
+                        std::iter::once(report_task)
+                            .chain(duress_nudge_task)
+                            .chain(alerts_load_task),
+                    );
                     // Forward to the current panel; batch the nudge and the
                     // has_vault re-report in when present.
                     if let (Some(daemon), Some(panel)) =

@@ -1792,10 +1792,16 @@ mod recovery_recipients_tests {
         // (coincube-api/services/connect/vault/types/types.go:35 and
         // services/connect/types/types.go:10) — a rename on either side breaks
         // this test rather than silently emptying the card.
+        //
+        // It's the *whole* server payload, including `fingerprint`, which
+        // `ConnectVaultResponse` deliberately doesn't model: the point is that
+        // this deserializes as the API actually sends it, not as a
+        // desktop-shaped subset would.
         let vault: ConnectVaultResponse = serde_json::from_str(
             r#"{
                 "id": 42,
                 "cubeId": 7,
+                "fingerprint": "1a2b3c4d",
                 "timelockDays": 90,
                 "timelockExpiresAt": "2026-11-01T00:00:00Z",
                 "lastResetAt": "2026-08-01T00:00:00Z",
