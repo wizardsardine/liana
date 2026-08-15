@@ -293,6 +293,15 @@ impl ConnectCubePanel {
     pub fn clear_client(&mut self) {
         self.client = None;
         self.server_cube_id = None;
+        // The latch means "already sent to *this* server cube row", so it dies
+        // with the row id above. Signing in as a different account re-registers
+        // the same local Cube UUID under a new user, producing a new cube (and
+        // vault) row whose fingerprint is blank — and `CubeRegistered` only ever
+        // *sets* this flag, never clears it. Left stale, the assertion would
+        // early-return and strand the new account's Vault with no id in Keychain
+        // until relaunch. Re-opening it costs at most one redundant PATCH, which
+        // the server no-ops.
+        self.vault_fingerprint_asserted = false;
         self.registration_error = None;
         self.lightning_address = None;
         self.ln_username_input.clear();

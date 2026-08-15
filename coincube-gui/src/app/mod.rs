@@ -2501,8 +2501,14 @@ impl App {
     /// and the desktop is the only party that can supply one — the server holds
     /// no plaintext descriptor and by design never can. Wallet load is where
     /// the descriptor *is* in scope, so that is where the identity is computed,
-    /// persisted to [`settings::CubeSettings::vault_fingerprint`], and seeded
-    /// into the Connect panel for its PATCH once the server cube id resolves.
+    /// persisted to [`settings::CubeSettings::vault_fingerprint`], and asserted
+    /// to Connect.
+    ///
+    /// Both halves run on every wallet load, including the mid-session one
+    /// where a Vault is built inside an already-registered Cube — the Connect
+    /// panel's own assertion triggers have both already passed by then, so
+    /// leaving the PATCH to them would strand the new Vault's identity until
+    /// the next launch.
     ///
     /// One-shot per Cube and idempotent: the persist is skipped when settings
     /// already carry the right value, and the PATCH self-latches. It also
@@ -2521,21 +2527,28 @@ impl App {
             return Task::none();
         };
         let fingerprint = wallet.id_fingerprint().to_string();
-        // Seed the assertion wave regardless of whether the local settings
-        // already agree: the server half converges independently of the disk
-        // half, and a Cube can have been persisted here but never PATCHed.
+        // Seed *and* fire the assertion wave regardless of whether the local
+        // settings already agree: the server half converges independently of
+        // the disk half, and a Cube can have been persisted here but never
+        // PATCHed. Firing it here rather than leaving it to the Connect panel
+        // is what covers a Vault built **mid-session** — the panel's own
+        // triggers (`CubeRegistered`, `ensure_cube_registered`) have both
+        // already passed by then on a registered Cube, so the identity would
+        // otherwise wait for a relaunch. A no-op until there is a client and a
+        // server cube id, and self-latching once sent.
         self.panels
             .connect
             .set_vault_fingerprint(Some(fingerprint.clone()));
+        let assert_task = self.panels.connect.assert_vault_fingerprint();
         if !self.cube_settings.adopt_vault_fingerprint(&fingerprint) {
-            return Task::none();
+            return assert_task;
         }
         let network_dir = self
             .cache
             .datadir_path
             .network_directory(self.cache.network);
         let cube_id = self.cube_settings.id.clone();
-        Task::perform(
+        let persist_task = Task::perform(
             async move {
                 settings::update_settings_file(&network_dir, |mut s| {
                     if let Some(cube) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
@@ -2556,7 +2569,8 @@ impl App {
                     Message::SettingsSaved
                 }
             },
-        )
+        );
+        Task::batch([persist_task, assert_task])
     }
 
     /// Persist this Cube's "answered the consent prompt" flag to the settings
