@@ -491,6 +491,22 @@ pub struct CubeSettings {
     /// The Vault wallet for this Cube (optional - may not be set up yet)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vault_wallet_id: Option<WalletId>,
+    /// The vault's descriptor fingerprint
+    /// ([`crate::app::wallet::descriptor_id_fingerprint`]), 8 lowercase hex.
+    /// The user-facing vault identity — the same value shown in vault
+    /// settings, sent in the pairing QR as `wfp`, and displayed by Keychain.
+    ///
+    /// Persisted because the home cube list has no descriptor in scope: it
+    /// holds only [`Self::vault_wallet_id`], and the descriptor lives in the
+    /// wallet's `daemon.toml` (absent entirely for remote-backend wallets).
+    /// `None` on cubes created before this field existed; those converge the
+    /// first time the Cube is opened, via
+    /// [`crate::app::App::vault_fingerprint_backfill_task`].
+    ///
+    /// Always written and cleared together with `vault_wallet_id` — see
+    /// [`VaultIdentity`], which is what the assignment sites pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault_fingerprint: Option<String>,
     // `security_pin_hash` and `duress_pin_hash` used to live here. Both are
     // gone.
     //
@@ -691,6 +707,7 @@ impl CubeSettings {
             network,
             created_at: chrono::Utc::now().timestamp(),
             vault_wallet_id: None,
+            vault_fingerprint: None,
             // Unknown until `/connect/features` answers for this account. A new
             // cube is not granted Liquid; if the account is, the flag lands on
             // the next features fetch and takes effect at the next cube open.
@@ -733,9 +750,46 @@ impl CubeSettings {
         Self::new_with_id(uuid::Uuid::new_v4(), name, network)
     }
 
-    pub fn with_vault(mut self, wallet_id: WalletId) -> Self {
-        self.vault_wallet_id = Some(wallet_id);
+    pub fn with_vault(mut self, vault: VaultIdentity) -> Self {
+        self.set_vault(vault);
         self
+    }
+
+    /// Attach a Vault to this Cube: both halves of its identity, together.
+    ///
+    /// The pairing is the point — see [`VaultIdentity`]. A caller that set the
+    /// wallet id and forgot the fingerprint would leave the Cube rendering
+    /// "Vault configured" with no id until the next backfill.
+    pub fn set_vault(&mut self, vault: VaultIdentity) {
+        self.vault_wallet_id = Some(vault.wallet_id);
+        self.vault_fingerprint = vault.fingerprint;
+    }
+
+    /// Adopt `live` — the fingerprint just computed from the loaded wallet's
+    /// descriptor — as this Cube's Vault identity, returning whether anything
+    /// changed and so whether the settings file needs rewriting.
+    ///
+    /// This is the D4 backfill's decision, in one place so it can be pinned:
+    /// it writes once on a Cube that predates the field, no-ops on every open
+    /// after that, and rewrites if the descriptor changed underneath (key
+    /// rotation, membership change) — a new descriptor genuinely *is* a new
+    /// identity, which is why the human-facing name lives on the Cube.
+    pub fn adopt_vault_fingerprint(&mut self, live: &str) -> bool {
+        if self.vault_fingerprint.as_deref() == Some(live) {
+            return false;
+        }
+        self.vault_fingerprint = Some(live.to_string());
+        true
+    }
+
+    /// Detach this Cube's Vault, clearing both halves of its identity.
+    ///
+    /// Same rationale as the recovery-kit descriptor fingerprint being cleared
+    /// on vault deletion: a stale fingerprint outliving the vault it named
+    /// would have the home list advertise an id for a Vault that is gone.
+    pub fn clear_vault(&mut self) {
+        self.vault_wallet_id = None;
+        self.vault_fingerprint = None;
     }
 
     pub fn with_master_signer(mut self, fingerprint: Fingerprint) -> Self {
@@ -994,10 +1048,62 @@ impl WalletSettings {
     }
 }
 
+/// Local storage key for a wallet: the descriptor's BIP-380 checksum plus the
+/// moment it was pinned.
+///
+/// **Not a vault identity.** `descriptor_checksum` names things on disk — the
+/// wallet's `coincubed` directory, its `mnemonic-…` files (`crate::signer`) —
+/// and changing it would strand that data, so it stays as it is. What it must
+/// never do again is appear in the UI as the vault's id; that is
+/// [`CubeSettings::vault_fingerprint`]
+/// (`plans/PLAN-vault-identity-unification.md` D5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WalletId {
     pub timestamp: Option<i64>,
     pub descriptor_checksum: String,
+}
+
+/// The two halves of a Cube's Vault association, carried as one value so a
+/// caller cannot set the storage key and forget the identity.
+///
+/// `fingerprint` is `None` only where the descriptor genuinely isn't in scope
+/// at attach time (an import path that never saw one). Those Cubes render
+/// "Vault configured" until the backfill on first open supplies it — the
+/// deliberate choice over showing the checksum, which is what
+/// `plans/PLAN-vault-identity-unification.md` exists to stop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultIdentity {
+    /// Storage key — see [`WalletId`].
+    pub wallet_id: WalletId,
+    /// 8 lowercase hex, from
+    /// [`crate::app::wallet::descriptor_id_fingerprint`].
+    pub fingerprint: Option<String>,
+}
+
+impl VaultIdentity {
+    /// Both halves derived from the descriptor that is about to become this
+    /// Cube's Vault. `WalletId::generate` stamps `timestamp` with now, so this
+    /// is for a *newly pinned* wallet; use the struct literal to re-express an
+    /// existing `WalletId`.
+    pub fn generate(descriptor: &CoincubeDescriptor) -> Self {
+        Self {
+            wallet_id: WalletId::generate(descriptor),
+            fingerprint: Some(
+                crate::app::wallet::descriptor_id_fingerprint(descriptor).to_string(),
+            ),
+        }
+    }
+
+    /// Pair an already-minted [`WalletId`] with the descriptor it came from.
+    /// The descriptor is optional because several attach sites are handed a
+    /// `WalletId` by an upstream step that may not have kept the descriptor.
+    pub fn new(wallet_id: WalletId, descriptor: Option<&CoincubeDescriptor>) -> Self {
+        Self {
+            wallet_id,
+            fingerprint: descriptor
+                .map(|d| crate::app::wallet::descriptor_id_fingerprint(d).to_string()),
+        }
+    }
 }
 
 impl WalletId {
@@ -1825,6 +1931,122 @@ mod test {
         );
         assert!(restored.has_recovery_kit());
         assert_eq!(restored.connect_state(), CubeConnectState::BackedUp);
+    }
+
+    /// D1: the Vault's identity survives a settings round-trip. The home cube
+    /// list reads this field and nothing else — if it were dropped on reload,
+    /// every Cube would silently regress to "Vault configured" with no id.
+    #[test]
+    fn vault_fingerprint_round_trips_through_settings() {
+        use super::{CubeSettings, VaultIdentity, WalletId};
+        use coincube_core::miniscript::bitcoin::Network;
+
+        let cube =
+            CubeSettings::new("Family".to_string(), Network::Bitcoin).with_vault(VaultIdentity {
+                wallet_id: WalletId::new("njhdtwde".to_string(), Some(1_700_000_000)),
+                fingerprint: Some("8099ee80".to_string()),
+            });
+        assert_eq!(cube.vault_fingerprint.as_deref(), Some("8099ee80"));
+
+        let json = serde_json::to_string(&cube).expect("CubeSettings must serialize");
+        let restored: CubeSettings =
+            serde_json::from_str(&json).expect("CubeSettings must deserialize");
+        assert_eq!(
+            restored.vault_fingerprint.as_deref(),
+            Some("8099ee80"),
+            "vault fingerprint must persist across a serialize/deserialize round-trip"
+        );
+        assert_eq!(
+            restored
+                .vault_wallet_id
+                .as_ref()
+                .map(|w| &w.descriptor_checksum),
+            Some(&"njhdtwde".to_string()),
+            "the storage key is a separate value and must not be overwritten by the identity"
+        );
+    }
+
+    /// D1 back-compat: a `settings.json` written before `vault_fingerprint`
+    /// existed must still deserialize, with the field absent rather than
+    /// failing the whole file. Those Cubes are what the D4 backfill converges.
+    #[test]
+    fn pre_field_settings_deserialize_without_a_vault_fingerprint() {
+        use super::CubeSettings;
+
+        let json = r#"{
+            "id": "cube-1",
+            "name": "Legacy",
+            "network": "bitcoin",
+            "created_at": 0,
+            "vault_wallet_id": {
+                "timestamp": 1700000000,
+                "descriptor_checksum": "njhdtwde"
+            }
+        }"#;
+        let cube: CubeSettings =
+            serde_json::from_str(json).expect("pre-field settings must still deserialize");
+        assert!(cube.vault_wallet_id.is_some());
+        assert_eq!(
+            cube.vault_fingerprint, None,
+            "an absent field reads as `not asserted yet`, not as an error"
+        );
+    }
+
+    /// D4: the backfill writes once and is a no-op on a Cube that already
+    /// carries the right identity — it runs on every wallet load, so a
+    /// settings rewrite per open would be pure churn. It does rewrite when the
+    /// descriptor changed underneath, which is a genuinely new identity.
+    #[test]
+    fn adopting_a_vault_fingerprint_writes_once_then_no_ops() {
+        use super::{CubeSettings, VaultIdentity, WalletId};
+        use coincube_core::miniscript::bitcoin::Network;
+
+        let mut cube =
+            CubeSettings::new("Family".to_string(), Network::Bitcoin).with_vault(VaultIdentity {
+                wallet_id: WalletId::new("njhdtwde".to_string(), Some(1)),
+                // The pre-backfill state: a Vault with no identity.
+                fingerprint: None,
+            });
+
+        assert!(
+            cube.adopt_vault_fingerprint("8099ee80"),
+            "the first open must persist the freshly computed identity"
+        );
+        assert_eq!(cube.vault_fingerprint.as_deref(), Some("8099ee80"));
+
+        assert!(
+            !cube.adopt_vault_fingerprint("8099ee80"),
+            "every later open must be a no-op — no settings rewrite"
+        );
+
+        assert!(
+            cube.adopt_vault_fingerprint("deadbeef"),
+            "a changed descriptor is a changed identity and must be re-persisted"
+        );
+        assert_eq!(cube.vault_fingerprint.as_deref(), Some("deadbeef"));
+    }
+
+    /// D1: the two halves of the Vault association are written and cleared
+    /// together. A fingerprint outliving the Vault it named would have the home
+    /// list advertise an id for a Vault that is gone.
+    #[test]
+    fn clearing_a_vault_clears_both_halves_of_its_identity() {
+        use super::{CubeSettings, VaultIdentity, WalletId};
+        use coincube_core::miniscript::bitcoin::Network;
+
+        let mut cube =
+            CubeSettings::new("Family".to_string(), Network::Bitcoin).with_vault(VaultIdentity {
+                wallet_id: WalletId::new("njhdtwde".to_string(), Some(1)),
+                fingerprint: Some("8099ee80".to_string()),
+            });
+        assert!(cube.vault_wallet_id.is_some() && cube.vault_fingerprint.is_some());
+
+        cube.clear_vault();
+        assert_eq!(cube.vault_wallet_id, None);
+        assert_eq!(
+            cube.vault_fingerprint, None,
+            "a stale fingerprint must not survive its Vault"
+        );
     }
 
     #[test]

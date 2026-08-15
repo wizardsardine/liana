@@ -1927,6 +1927,12 @@ pub enum ConnectCubeMessage {
     /// D2). `false` means the call failed and will be retried next launch —
     /// background hygiene, never surfaced to the user.
     EncryptionKeyRegistered(bool),
+    /// Outcome of asserting this Vault's descriptor fingerprint
+    /// (`PATCH /connect/cubes/{id}/vault`,
+    /// `plans/PLAN-vault-identity-unification.md` D3/D4). `false` means the
+    /// call failed and will be retried next launch — background hygiene, never
+    /// surfaced to the user.
+    VaultFingerprintAsserted(bool),
     CopyToClipboard(String),
     Error(String),
     Avatar(AvatarMessage),

@@ -12,7 +12,7 @@ use crate::{
     },
     services::coincube::{
         AvatarGenerateRequest, AvatarSelectRequest, AvatarUserTraits, CoincubeClient,
-        LightningAddress, RegisterCubeRequest, UpdateCubeRequest,
+        LightningAddress, PatchConnectVaultRequest, RegisterCubeRequest, UpdateCubeRequest,
     },
 };
 
@@ -140,6 +140,15 @@ pub struct ConnectCubePanel {
     /// Connect. The endpoint is idempotent, so this only avoids a redundant
     /// round-trip per launch — correctness doesn't depend on it.
     pub(super) enc_pubkey_registered: bool,
+    /// This Cube's Vault descriptor fingerprint (8 lowercase hex), read from
+    /// `CubeSettings::vault_fingerprint`. `None` when this device holds no
+    /// Vault for the Cube, or holds one whose fingerprint hasn't been computed
+    /// yet — either way there is nothing to assert.
+    pub vault_fingerprint: Option<String>,
+    /// True once this session has asserted [`Self::vault_fingerprint`] to
+    /// Connect. The endpoint no-ops an unchanged value, so this only avoids a
+    /// redundant round-trip per launch — correctness doesn't depend on it.
+    pub(super) vault_fingerprint_asserted: bool,
     /// The server-side numeric ID — set after registering with the backend.
     /// Used in API paths: /connect/cubes/{server_cube_id}/...
     pub server_cube_id: Option<u64>,
@@ -213,6 +222,8 @@ impl ConnectCubePanel {
             cube_has_vault,
             cube_encryption_pubkey: None,
             enc_pubkey_registered: false,
+            vault_fingerprint: None,
+            vault_fingerprint_asserted: false,
             server_cube_id: None,
             registration_error: None,
             lightning_address: None,
@@ -512,6 +523,68 @@ impl ConnectCubePanel {
         )
     }
 
+    /// Asserts this Vault's descriptor fingerprint to Connect
+    /// (`plans/PLAN-vault-identity-unification.md` D3/D4) — the id Keychain
+    /// renders for the vault on its Cubes list and its paired-desktops row.
+    ///
+    /// The desktop is the only party that can supply it: the server holds no
+    /// plaintext descriptor and by design never can. So every vault that
+    /// predates this has a blank identity until the device holding it opens the
+    /// Cube once, which is what this call converges.
+    ///
+    /// PATCH rather than a create-time field alone, because the common case is
+    /// a vault shell that already exists. Re-asserting the same value is a
+    /// server-side no-op that writes no audit row, so it is safe to fire on
+    /// every launch without reading the current value back first.
+    ///
+    /// No-ops without a live client, a server cube id, or a fingerprint. A
+    /// failure is logged and retried next launch: a 404 here just means this
+    /// Cube's Vault is local-only (never registered with Connect), and a
+    /// 403 means the account's Estate entitlement lapsed — the vault then keeps
+    /// whatever identity it already had. Neither is worth a toast.
+    pub fn assert_vault_fingerprint(&mut self) -> iced::Task<Message> {
+        if self.vault_fingerprint_asserted {
+            return iced::Task::none();
+        }
+        let (Some(client), Some(server_id), Some(fingerprint)) = (
+            self.client.clone(),
+            self.server_cube_id,
+            self.vault_fingerprint.clone(),
+        ) else {
+            return iced::Task::none();
+        };
+        self.vault_fingerprint_asserted = true;
+        iced::Task::perform(
+            async move {
+                let req = PatchConnectVaultRequest {
+                    fingerprint: Some(fingerprint.clone()),
+                };
+                match client.patch_connect_vault(server_id, req).await {
+                    Ok(_) => {
+                        log::info!(
+                            "[CONNECT-CUBE] asserted vault fingerprint {} for cube {}",
+                            fingerprint,
+                            server_id
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[CONNECT-CUBE] asserting vault fingerprint for cube {} failed: {e}",
+                            server_id
+                        );
+                        false
+                    }
+                }
+            },
+            |ok| {
+                Message::View(view::Message::ConnectCube(
+                    ConnectCubeMessage::VaultFingerprintAsserted(ok),
+                ))
+            },
+        )
+    }
+
     /// Re-report this Cube's Vault presence to the server when a Vault is
     /// created mid-session on an already-registered Cube, so its `hasVault`
     /// flips without waiting for a fresh registration (the duress vault gate;
@@ -577,7 +650,17 @@ impl ConnectCubePanel {
                             self.enc_pubkey_registered = true;
                         }
                         let enc_key_task = self.register_encryption_pubkey();
-                        let mut tasks = vec![enc_key_task];
+                        // Same trigger, same reason: the server cube id was the
+                        // only thing the vault-fingerprint PATCH was waiting on.
+                        // Skip it when the registration response already carries
+                        // the value we'd send.
+                        if cube_resp.vault.as_ref().is_some_and(|v| {
+                            Some(&v.fingerprint) == self.vault_fingerprint.as_ref()
+                        }) {
+                            self.vault_fingerprint_asserted = true;
+                        }
+                        let vault_fp_task = self.assert_vault_fingerprint();
+                        let mut tasks = vec![enc_key_task, vault_fp_task];
                         tasks.extend(reconcile_task);
                         tasks.extend(avatar_task);
                         return iced::Task::batch(tasks);
@@ -595,6 +678,15 @@ impl ConnectCubePanel {
                 // retry rather than waiting for a relaunch.
                 if !ok {
                     self.enc_pubkey_registered = false;
+                }
+            }
+
+            ConnectCubeMessage::VaultFingerprintAsserted(ok) => {
+                // Same background-hygiene contract as the encryption pubkey:
+                // clear the in-session latch on failure so a later trigger can
+                // retry without waiting for a relaunch.
+                if !ok {
+                    self.vault_fingerprint_asserted = false;
                 }
             }
 

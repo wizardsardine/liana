@@ -6,9 +6,9 @@ use super::{
     CubeEncryptionPubkeyResponse, CubeInviteOrAddResult, CubeKeyRaw, CubeLimitsResponse,
     CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData, Invite, LightningAddress,
     LightningAddressAvailability, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
-    PublicAvatarData, PutCubeEncryptionPubkeyRequest, ReceivedInvite, RecoveryKit,
-    RecoveryKitStatus, RedeemCampaignRequest, RedeemCampaignResponse, RefreshTokenRequest,
-    RegenerationData, RegisterCubeRequest, ReportEnvelopeInvalidRequest,
+    PatchConnectVaultRequest, PublicAvatarData, PutCubeEncryptionPubkeyRequest, ReceivedInvite,
+    RecoveryKit, RecoveryKitStatus, RedeemCampaignRequest, RedeemCampaignResponse,
+    RefreshTokenRequest, RegenerationData, RegisterCubeRequest, ReportEnvelopeInvalidRequest,
     ReserveLightningAddressRequest, SaveQuoteRequest, SaveQuoteResponse, StatsPeriod,
     TimeseriesResponse, TodayStats, UpdateCubeRequest, UpdateLightningAddressRequest,
     UpsertRecoveryKitRequest, User, VaultMemberResponse, VerifiedDevice,
@@ -1058,6 +1058,29 @@ impl CoincubeClient {
     ) -> Result<ConnectVaultResponse, CoincubeError> {
         let url = format!("{}/api/v1/connect/cubes/{}/vault", self.base_url, cube_id);
         let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<ConnectVaultResponse> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// PATCH /api/v1/connect/cubes/{cubeId}/vault — assert this vault's
+    /// descriptor fingerprint, the identity Keychain shows for it.
+    ///
+    /// Separate from create because a vault shell can already exist without one
+    /// (re-registration, and every vault that predates the field — see the
+    /// backfill in `App::vault_fingerprint_backfill_task`). Re-asserting an
+    /// unchanged value is a server-side no-op, so callers need not check first.
+    ///
+    /// Same Estate + duress gating as POST/DELETE vault: a lapsed-Estate
+    /// account cannot re-assert, so its vault keeps whatever identity it
+    /// already had.
+    pub async fn patch_connect_vault(
+        &self,
+        cube_id: u64,
+        req: PatchConnectVaultRequest,
+    ) -> Result<ConnectVaultResponse, CoincubeError> {
+        let url = format!("{}/api/v1/connect/cubes/{}/vault", self.base_url, cube_id);
+        let res = self.client.patch(&url).json(&req).send().await?;
         let res = res.check_success().await?;
         let resp: ApiResponse<ConnectVaultResponse> = res.json().await?;
         Ok(resp.data)
@@ -2851,7 +2874,17 @@ mod cube_member_tests {
 
         let client = CoincubeClient::for_test(server.base_url());
         let vault = client
-            .create_connect_vault(42, CreateConnectVaultRequest { timelock_days: 180 })
+            .create_connect_vault(
+                42,
+                CreateConnectVaultRequest {
+                    timelock_days: 180,
+                    // No descriptor in scope: the request must omit
+                    // `fingerprint` entirely rather than send null, and the
+                    // response — from a server that predates the field —
+                    // must still deserialise.
+                    fingerprint: None,
+                },
+            )
             .await
             .expect("create_connect_vault should succeed");
         mock.assert();
@@ -2859,6 +2892,100 @@ mod cube_member_tests {
         assert_eq!(vault.cube_id, 42);
         assert_eq!(vault.timelock_days, 180);
         assert!(vault.members.is_empty());
+        assert!(
+            vault.fingerprint.is_empty(),
+            "a response omitting `fingerprint` must read as never-asserted"
+        );
+    }
+
+    /// The vault registration carries the descriptor fingerprint when one is in
+    /// hand, camelCase like every other field
+    /// (`plans/PLAN-vault-identity-unification.md` D3). Pinned because the
+    /// server treats the field as client-asserted — it has no plaintext
+    /// descriptor and so can never recompute what the desktop failed to send.
+    #[tokio::test]
+    async fn create_connect_vault_sends_the_fingerprint_as_camel_case() {
+        use crate::services::coincube::CreateConnectVaultRequest;
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/cubes/42/vault")
+                .json_body(json!({ "timelockDays": 180, "fingerprint": "8099ee80" }));
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 5,
+                        "cubeId": 42,
+                        "timelockDays": 180,
+                        "timelockExpiresAt": "2026-10-15T00:00:00Z",
+                        "lastResetAt": "2026-04-18T00:00:00Z",
+                        "status": "active",
+                        "members": [],
+                        "fingerprint": "8099ee80",
+                        "createdAt": "2026-04-18T00:00:00Z",
+                        "updatedAt": "2026-04-18T00:00:00Z"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let vault = client
+            .create_connect_vault(
+                42,
+                CreateConnectVaultRequest {
+                    timelock_days: 180,
+                    fingerprint: Some("8099ee80".to_string()),
+                },
+            )
+            .await
+            .expect("create_connect_vault should succeed");
+        mock.assert();
+        assert_eq!(vault.fingerprint, "8099ee80");
+    }
+
+    /// The backfill path: a vault shell that already exists gets its identity
+    /// asserted by PATCH.
+    #[tokio::test]
+    async fn patch_connect_vault_asserts_the_fingerprint() {
+        use crate::services::coincube::PatchConnectVaultRequest;
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::PATCH)
+                .path("/api/v1/connect/cubes/42/vault")
+                .json_body(json!({ "fingerprint": "8099ee80" }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 5,
+                        "cubeId": 42,
+                        "timelockDays": 180,
+                        "timelockExpiresAt": "2026-10-15T00:00:00Z",
+                        "lastResetAt": "2026-04-18T00:00:00Z",
+                        "status": "active",
+                        "members": [],
+                        "fingerprint": "8099ee80",
+                        "createdAt": "2026-04-18T00:00:00Z",
+                        "updatedAt": "2026-04-18T00:00:00Z"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let vault = client
+            .patch_connect_vault(
+                42,
+                PatchConnectVaultRequest {
+                    fingerprint: Some("8099ee80".to_string()),
+                },
+            )
+            .await
+            .expect("patch_connect_vault should succeed");
+        mock.assert();
+        assert_eq!(vault.fingerprint, "8099ee80");
     }
 
     #[tokio::test]

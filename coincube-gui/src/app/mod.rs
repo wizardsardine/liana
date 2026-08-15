@@ -2081,6 +2081,13 @@ impl App {
         panels
             .connect
             .set_cube_encryption_pubkey(cube_settings.connect_encryption_pubkey.clone());
+        // The Vault's identity, for the assertion wave that fires once the
+        // server cube id resolves (PLAN-vault-identity-unification D3/D4).
+        // Seeded from settings here; the backfill below overwrites it on a Cube
+        // whose settings predate the field.
+        panels
+            .connect
+            .set_vault_fingerprint(cube_settings.vault_fingerprint.clone());
         let mut tasks = vec![];
         if let Some(vault_overview) = panels.vault_overview.as_mut() {
             tasks.push(vault_overview.reload(Some(daemon.clone()), Some(wallet.clone())));
@@ -2145,45 +2152,48 @@ impl App {
             .p2p
             .as_ref()
             .is_some_and(|p| p.has_test_coordinator());
-        (
-            Self {
-                panels,
-                cache: cache_with_vault,
-                daemon: Some(daemon),
-                wallet: Some(wallet),
-                breez_client,
-                wallet_registry,
-                internal_bitcoind,
-                cube_settings,
-                config: config_arc,
-                datadir: data_dir,
-                errors: Vec::with_capacity(8),
-                current_error_id: 256,
-                bitcoind_sync_probe_in_progress: false,
-                node_net_stats_probe_in_progress: false,
-                daemon_switch_in_progress: false,
-                auto_switch_suppressed: false,
-                show_received_celebration: false,
-                show_recovery_alerts_prompt: false,
-                received_celebration_amount: String::new(),
-                received_celebration_context: "transaction-received".to_string(),
-                received_celebration_quote: coincube_ui::component::quote_display::random_quote(
+        let mut app = Self {
+            panels,
+            cache: cache_with_vault,
+            daemon: Some(daemon),
+            wallet: Some(wallet),
+            breez_client,
+            wallet_registry,
+            internal_bitcoind,
+            cube_settings,
+            config: config_arc,
+            datadir: data_dir,
+            errors: Vec::with_capacity(8),
+            current_error_id: 256,
+            bitcoind_sync_probe_in_progress: false,
+            node_net_stats_probe_in_progress: false,
+            daemon_switch_in_progress: false,
+            auto_switch_suppressed: false,
+            show_received_celebration: false,
+            show_recovery_alerts_prompt: false,
+            received_celebration_amount: String::new(),
+            received_celebration_context: "transaction-received".to_string(),
+            received_celebration_quote: coincube_ui::component::quote_display::random_quote(
+                "transaction-received",
+            ),
+            received_celebration_image:
+                coincube_ui::component::quote_display::image_handle_for_context(
                     "transaction-received",
                 ),
-                received_celebration_image:
-                    coincube_ui::component::quote_display::image_handle_for_context(
-                        "transaction-received",
-                    ),
-                toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
-                last_refundables_fetch: None,
-                refundables_fetch_in_flight: false,
-                pending_switch_to_connect_after_login: false,
-                connect_auth: connect_auth_arc,
-                connect_email,
-                connect_stream_config: None,
-            },
-            cmd,
-        )
+            toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
+            last_refundables_fetch: None,
+            refundables_fetch_in_flight: false,
+            pending_switch_to_connect_after_login: false,
+            connect_auth: connect_auth_arc,
+            connect_email,
+            connect_stream_config: None,
+        };
+        // A Cube opened for the first time on a build that persists the Vault's
+        // identity: compute it now, while the descriptor is in scope, and
+        // converge both the local settings and Connect
+        // (PLAN-vault-identity-unification D4).
+        let backfill = app.vault_fingerprint_backfill_task();
+        (app, Task::batch([cmd, backfill]))
     }
 
     pub fn new_without_wallet(
@@ -2249,6 +2259,9 @@ impl App {
         panels
             .connect
             .set_cube_encryption_pubkey(cube_settings.connect_encryption_pubkey.clone());
+        panels
+            .connect
+            .set_vault_fingerprint(cube_settings.vault_fingerprint.clone());
         let mut cache = cache;
         cache.cube_encryption_key = derive_cube_encryption_key(&breez_client, network);
         cache.connect_transport_key =
@@ -2479,6 +2492,71 @@ impl App {
         ) {
             self.show_recovery_alerts_prompt = true;
         }
+    }
+
+    /// Backfill this Cube's Vault identity
+    /// (`plans/PLAN-vault-identity-unification.md` D4).
+    ///
+    /// Every Vault that predates the scheme has no fingerprint on either side,
+    /// and the desktop is the only party that can supply one — the server holds
+    /// no plaintext descriptor and by design never can. Wallet load is where
+    /// the descriptor *is* in scope, so that is where the identity is computed,
+    /// persisted to [`settings::CubeSettings::vault_fingerprint`], and seeded
+    /// into the Connect panel for its PATCH once the server cube id resolves.
+    ///
+    /// One-shot per Cube and idempotent: the persist is skipped when settings
+    /// already carry the right value, and the PATCH self-latches. It also
+    /// self-heals a fingerprint that drifted — a descriptor change (key
+    /// rotation, membership change) mints a new identity, which is correct for
+    /// a binding and is exactly why the *name* lives on the Cube instead.
+    ///
+    /// Until a Cube is opened here, both this list and Keychain show
+    /// "Vault configured" with no id. That is the deliberate choice over
+    /// showing a wrong or leaky one.
+    ///
+    /// Best-effort: a failed write costs one more launch before the id appears,
+    /// and never blocks or affects anything the user is doing.
+    fn vault_fingerprint_backfill_task(&mut self) -> Task<Message> {
+        let Some(wallet) = self.wallet.as_ref() else {
+            return Task::none();
+        };
+        let fingerprint = wallet.id_fingerprint().to_string();
+        // Seed the assertion wave regardless of whether the local settings
+        // already agree: the server half converges independently of the disk
+        // half, and a Cube can have been persisted here but never PATCHed.
+        self.panels
+            .connect
+            .set_vault_fingerprint(Some(fingerprint.clone()));
+        if !self.cube_settings.adopt_vault_fingerprint(&fingerprint) {
+            return Task::none();
+        }
+        let network_dir = self
+            .cache
+            .datadir_path
+            .network_directory(self.cache.network);
+        let cube_id = self.cube_settings.id.clone();
+        Task::perform(
+            async move {
+                settings::update_settings_file(&network_dir, |mut s| {
+                    if let Some(cube) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
+                        cube.vault_fingerprint = Some(fingerprint);
+                    }
+                    Some(s)
+                })
+                .await
+                .map_err(|e| e.to_string())
+            },
+            |res: Result<(), String>| match res {
+                Ok(()) => Message::SettingsSaved,
+                Err(e) => {
+                    // Deliberately not an error toast: the Cube is fully usable
+                    // without the persisted id, and it is recomputed at the
+                    // next open.
+                    log::warn!("failed to persist vault fingerprint: {e}");
+                    Message::SettingsSaved
+                }
+            },
+        )
     }
 
     /// Persist this Cube's "answered the consent prompt" flag to the settings
@@ -4356,6 +4434,13 @@ impl App {
                 self.wallet = Some(wallet.clone());
                 self.cache.has_vault = true;
 
+                // A Vault attached mid-session never passes through `App::new`,
+                // so run the same identity backfill here — otherwise a Vault
+                // created in this session would render "Vault configured" with
+                // no id until the next relaunch
+                // (PLAN-vault-identity-unification D4).
+                let vault_fp_task = self.vault_fingerprint_backfill_task();
+
                 // If we didn't have a vault before, rebuild all vault panels
                 if was_vaultless {
                     if let Some(daemon) = &self.daemon {
@@ -4443,13 +4528,15 @@ impl App {
                             Message::WalletUpdated(Ok(wallet)),
                         );
                         return match nudge_task {
-                            Some(nudge) => Task::batch([panel_task, nudge, report_task]),
-                            None => Task::batch([panel_task, report_task]),
+                            Some(nudge) => {
+                                Task::batch([panel_task, nudge, report_task, vault_fp_task])
+                            }
+                            None => Task::batch([panel_task, report_task, vault_fp_task]),
                         };
                     }
                     return match nudge_task {
-                        Some(nudge) => Task::batch([nudge, report_task]),
-                        None => report_task,
+                        Some(nudge) => Task::batch([nudge, report_task, vault_fp_task]),
+                        None => Task::batch([report_task, vault_fp_task]),
                     };
                 }
 
@@ -4457,12 +4544,14 @@ impl App {
                 if let (Some(daemon), Some(panel)) =
                     (self.daemon.clone(), self.panels.current_mut())
                 {
-                    return panel.update(
+                    let panel_task = panel.update(
                         Some(daemon),
                         &self.cache,
                         Message::WalletUpdated(Ok(wallet)),
                     );
+                    return Task::batch([panel_task, vault_fp_task]);
                 }
+                return vault_fp_task;
             }
             Message::View(view::Message::Menu(menu)) => {
                 // Always honor the navigation even when the current

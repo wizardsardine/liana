@@ -1464,6 +1464,27 @@ impl std::fmt::Display for VaultMemberRole {
 #[serde(rename_all = "camelCase")]
 pub struct CreateConnectVaultRequest {
     pub timelock_days: i32,
+    /// The vault's descriptor fingerprint (8 lowercase hex,
+    /// [`crate::app::wallet::descriptor_id_fingerprint`]) — the identity
+    /// Keychain renders for this vault. Client-asserted: the server never sees
+    /// a plaintext descriptor and so cannot derive it.
+    ///
+    /// Omitted when the descriptor wasn't in scope at registration; the vault
+    /// then has no identity until a later
+    /// [`PatchConnectVaultRequest`] supplies one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+}
+
+/// `PATCH /connect/cubes/{cubeId}/vault`. An absent field leaves the stored
+/// value unchanged; an explicit `""` clears it. Re-asserting the same value is
+/// a server-side no-op and writes no audit row, which is what makes the
+/// backfill safe to fire unconditionally.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchConnectVaultRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1577,6 +1598,12 @@ pub struct ConnectVaultResponse {
     pub status: VaultStatus,
     #[serde(default)]
     pub members: Vec<VaultMemberResponse>,
+    /// Client-asserted descriptor fingerprint, 8 lowercase hex. Empty string
+    /// means "never asserted" — a vault registered before this existed, or one
+    /// whose desktop hasn't been opened since. `#[serde(default)]` so a server
+    /// that predates the field still deserialises.
+    #[serde(default)]
+    pub fingerprint: String,
     pub created_at: String,
     pub updated_at: String,
 }

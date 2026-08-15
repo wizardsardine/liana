@@ -375,6 +375,7 @@ mod tests {
             last_reset_at: created_at.to_string(),
             status: VaultStatus::Active,
             members: vec![],
+            fingerprint: String::new(),
             created_at: created_at.to_string(),
             updated_at: created_at.to_string(),
         }
