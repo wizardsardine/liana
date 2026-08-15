@@ -422,6 +422,91 @@ fn open_seed(
     MasterSigner::from_str(loc.network, &phrase)
 }
 
+/// Decrypt a seed **by fingerprint**, supplying the device secret a v3 file
+/// needs. Blocking: one Argon2id pass, so never call it from `update()`.
+///
+/// [`open_seed`] is the unlock path's version and wants a whole
+/// [`CubeLocation`]. This is the version for the *post*-unlock seed-reveal
+/// surfaces — Backup Master Seed, Recovery Kit, Full-Cube escrow — which hold a
+/// fingerprint and a Cube id and nothing else.
+///
+/// # Why they cannot just call `MasterSigner::from_datadir_by_fingerprint`
+///
+/// Because `coincube-core` has no keystore access, so it answers
+/// `DeviceSecretRequired` for **every** `ENCRYPTED_V3` file — and after the
+/// Tier 1 migration that is every Cube. Those surfaces read the session cache
+/// first (`app::session::unlocked_signer_with_pin_verification`) and only reach
+/// disk when there is no session to answer from: a Cube the installer just
+/// restored lands in the app without one, and it is written v3 whenever the
+/// keystore already holds a secret for its id. A fallback that fails on the only
+/// format we still write is not a fallback.
+///
+/// An unreachable or unusable keystore is reported as `DecryptionFailed`
+/// carrying the keystore's own user-facing sentence. That variant matters:
+/// `is_wrong_pin` answers `false` for it, so a locked keychain costs the user
+/// nothing against the shared unlock throttle (invariant I7).
+pub(crate) fn open_seed_by_fingerprint(
+    datadir_root: &Path,
+    network: Network,
+    fingerprint: Fingerprint,
+    pin: &str,
+    cube_id: &str,
+) -> Result<MasterSigner, SignerError> {
+    use coincube_core::miniscript::bitcoin::secp256k1::Secp256k1;
+    use coincube_core::signer::MnemonicFileName;
+
+    // "No entry for this Cube" is `None`, not an error — a v2 file needs no
+    // secret and must keep opening without one.
+    let secret = device_secret::load_optional(cube_id)
+        .map_err(|e| SignerError::DecryptionFailed(e.to_string()))?;
+
+    let folder = MasterSigner::mnemonics_folder(datadir_root, network);
+    let entries = std::fs::read_dir(&folder).map_err(SignerError::MnemonicStorage)?;
+
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        let Ok(parsed) = MnemonicFileName::from_str(name) else {
+            continue;
+        };
+        // The duress marker deliberately shares this filename grammar, but its
+        // fingerprint field is random rather than derived (unit 6a), so it will
+        // not collide with the Cube's real fingerprint. Same independent filter
+        // `master_seed_path` leans on, and the reason this can take the
+        // fingerprint route without also being told the marker's name.
+        if parsed.fingerprint != fingerprint {
+            continue;
+        }
+
+        let data = std::fs::read(entry.path()).map_err(SignerError::MnemonicStorage)?;
+        let phrase = if MasterSigner::is_encrypted(&data) {
+            let plaintext = seed_crypt::decrypt_with(&data, pin, cube_id, secret.as_ref())?;
+            Zeroizing::new(
+                String::from_utf8(plaintext.to_vec()).map_err(|_| SignerError::InvalidPassword)?,
+            )
+        } else {
+            // Plaintext, written by a pre-hardening build. `migrate_seed_files`
+            // re-encrypts these on the first unlock, so one reaching here means
+            // the migration has not run yet — read it rather than refuse, which
+            // is what `read_mnemonic_bytes` did on the path this replaces.
+            Zeroizing::new(String::from_utf8(data).map_err(|_| SignerError::InvalidFileFormat)?)
+        };
+
+        let signer = MasterSigner::from_str(network, &phrase)?;
+        // The filename is a label; the key is the truth. Verify before handing
+        // it back, exactly as `from_datadir_by_fingerprint` did — handing a
+        // caller the wrong seed produces a valid-looking wallet that is not the
+        // one it asked for.
+        if signer.fingerprint(&Secp256k1::signing_only()) == fingerprint {
+            return Ok(signer);
+        }
+    }
+
+    Err(SignerError::SignerNotFound(fingerprint))
+}
+
 /// Re-seal every openable mnemonic file in this Cube's folder at the current
 /// wire version, returning how many were rewritten.
 ///
@@ -2248,6 +2333,110 @@ mod tests {
             let _ = device_secret::delete(&cube_id);
             std::fs::remove_dir_all(dir).unwrap();
         }
+    }
+
+    /// The fingerprint-addressed fallback the seed-reveal surfaces use when no
+    /// session can answer. v2 half — runs everywhere, no keystore needed.
+    #[test]
+    fn the_fingerprint_fallback_opens_a_v2_seed_and_keeps_its_guards() {
+        let dir = tmp_dir("fp-fallback-v2");
+        let cube_id = format!("cube-fp-v2-{}", std::process::id());
+        let fp = make_cube(&dir, &cube_id, 1000, "1234");
+        let (other_fp, _) = {
+            let s = MasterSigner::generate(NET).unwrap();
+            let f = s.fingerprint(&Secp256k1::signing_only());
+            (f, s)
+        };
+
+        let words = open_seed_by_fingerprint(&dir, NET, fp, "1234", &cube_id)
+            .expect("a v2 seed must still open through the fallback")
+            .words();
+        assert!(!words.is_empty());
+
+        // A wrong PIN has to stay `InvalidPassword`: it is the only variant
+        // `settings::general::is_wrong_pin` charges to the unlock throttle, and
+        // the seed-reveal surfaces share that counter with the PIN screen.
+        assert!(
+            matches!(
+                open_seed_by_fingerprint(&dir, NET, fp, "9999", &cube_id),
+                Err(SignerError::InvalidPassword)
+            ),
+            "a wrong PIN through the fallback must be reported as one"
+        );
+
+        // A fingerprint with no file is not a PIN problem, and must not be
+        // reported as one — that would spend a guess on a fault no PIN fixes.
+        assert!(matches!(
+            open_seed_by_fingerprint(&dir, NET, other_fp, "1234", &cube_id),
+            Err(SignerError::SignerNotFound(_))
+        ));
+
+        // The AAD binds the file to its Cube, so a different id cannot open it.
+        assert!(matches!(
+            open_seed_by_fingerprint(&dir, NET, fp, "1234", "some-other-cube"),
+            Err(SignerError::InvalidPassword)
+        ));
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// **The gap this function closes.** `MasterSigner::from_datadir_by_fingerprint`
+    /// cannot open a v3 file — `coincube-core` has no keystore access, so it
+    /// answers `DeviceSecretRequired` for every one of them, and after the
+    /// Tier 1 migration that is every Cube. Backup Master Seed, Recovery Kit
+    /// and Full-Cube escrow all failed with a keychain error because of it.
+    ///
+    /// This asserts both halves: core still cannot, and the fallback can.
+    #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "needs a code-signed binary (data-protection keychain returns -34018 unsigned)"
+    )]
+    fn the_fingerprint_fallback_opens_a_v3_seed_that_core_cannot() {
+        let dir = tmp_dir("fp-fallback-v3");
+        let cube_id = format!("cube-fp-v3-{}", std::process::id());
+        let secret = device_secret::get_or_create(&dir, &cube_id).unwrap();
+
+        let secp = Secp256k1::signing_only();
+        let signer = MasterSigner::generate(NET).unwrap();
+        let fp = signer.fingerprint(&secp);
+        let words = signer.words();
+        signer
+            .store_encrypted(
+                &dir,
+                NET,
+                &secp,
+                Some((format!("{}{}", MASTER_SEED_LABEL, 1000), 1000)),
+                "1234",
+                &cube_id,
+                Some(&secret),
+            )
+            .unwrap();
+        assert_eq!(
+            seed_versions(&dir, None),
+            vec![Some(3)],
+            "fixture did not produce a v3 file"
+        );
+
+        assert!(
+            matches!(
+                MasterSigner::from_datadir_by_fingerprint(&dir, NET, fp, Some("1234"), &cube_id),
+                Err(SignerError::DeviceSecretRequired)
+            ),
+            "core learned to reach the keystore — if this is now true, the \
+             fallback in `settings::general::load_mnemonic_words` can go back \
+             to using it"
+        );
+
+        assert_eq!(
+            open_seed_by_fingerprint(&dir, NET, fp, "1234", &cube_id)
+                .expect("the fallback must open a v3 seed")
+                .words(),
+            words
+        );
+
+        let _ = device_secret::delete(&cube_id);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// A keystore that is present-but-unreachable aborts rather than silently
