@@ -4149,6 +4149,29 @@ fn create_cube_form<'a>(
         .into()
 }
 
+/// The Vault line under a Cube's name on the Cubes list.
+///
+/// Three states, matching Keychain's cubes list character for character
+/// (`plans/PLAN-vault-identity-unification.md` D2):
+///
+/// - no Vault → `No Vault configured`
+/// - a Vault whose fingerprint is known → `Vault 8099ee80`, the same id shown
+///   in Vault settings, sent in the pairing QR, and displayed by Keychain
+/// - a Vault predating [`CubeSettings::vault_fingerprint`] → `Vault
+///   configured`, no id, until the backfill runs on its first open
+///
+/// The last case deliberately shows nothing rather than falling back to
+/// `WalletId::descriptor_checksum` or `wallet_name()`. Neither identifies the
+/// vault — the checksum is a storage key and the name is a placeholder — and
+/// rendering one as if it did is the bug this replaced.
+fn vault_subtitle(cube: &CubeSettings) -> String {
+    match (&cube.vault_wallet_id, &cube.vault_fingerprint) {
+        (None, _) => "No Vault configured".to_string(),
+        (Some(_), None) => "Vault configured".to_string(),
+        (Some(_), Some(fp)) => format!("Vault {}", fp),
+    }
+}
+
 fn cubes_list_item<'a>(
     cube: &'a CubeSettings,
     i: usize,
@@ -4205,19 +4228,7 @@ fn cubes_list_item<'a>(
                                     .push(p1_bold(&cube.name))
                                     .push(sync_indicator),
                             )
-                            .push(if let Some(vault_id) = &cube.vault_wallet_id {
-                                Some(
-                                    p1_regular(format!(
-                                        "Vault: Coincube-{}",
-                                        vault_id.descriptor_checksum
-                                    ))
-                                    .style(theme::text::secondary),
-                                )
-                            } else {
-                                Some(
-                                    p1_regular("No Vault configured").style(theme::text::secondary),
-                                )
-                            }),
+                            .push(p1_regular(vault_subtitle(cube)).style(theme::text::secondary)),
                     )
                     .on_press(ViewMessage::Run(i))
                     .padding(15)
@@ -5569,6 +5580,44 @@ mod tests {
 
     fn test_datadir() -> CoincubeDirectory {
         CoincubeDirectory::new(PathBuf::new())
+    }
+
+    /// D2 (`plans/PLAN-vault-identity-unification.md`): the Cubes list shows
+    /// the vault's *fingerprint* — the same id as Vault settings, the pairing
+    /// QR, and Keychain — and shows **no** id rather than falling back to the
+    /// descriptor checksum when it isn't known yet. The checksum fallback
+    /// (`Vault: Coincube-njhdtwde`) is the bug this replaced: it rendered a
+    /// local storage key as though it identified the vault.
+    #[test]
+    fn the_cubes_list_shows_the_vault_fingerprint_and_never_the_checksum() {
+        use crate::app::settings::{VaultIdentity, WalletId};
+
+        let no_vault = CubeSettings::new("Empty".to_string(), Network::Bitcoin);
+        assert_eq!(vault_subtitle(&no_vault), "No Vault configured");
+
+        // A Cube attached before `vault_fingerprint` existed: known Vault,
+        // unknown id, until the backfill runs on its first open.
+        let checksum = "njhdtwde".to_string();
+        let pre_backfill =
+            CubeSettings::new("Legacy".to_string(), Network::Bitcoin).with_vault(VaultIdentity {
+                wallet_id: WalletId::new(checksum.clone(), Some(1)),
+                fingerprint: None,
+            });
+        let subtitle = vault_subtitle(&pre_backfill);
+        assert_eq!(subtitle, "Vault configured");
+        assert!(
+            !subtitle.contains(&checksum),
+            "the descriptor checksum is a storage key and must never be shown as a vault id"
+        );
+
+        let identified =
+            CubeSettings::new("Family".to_string(), Network::Bitcoin).with_vault(VaultIdentity {
+                wallet_id: WalletId::new(checksum.clone(), Some(1)),
+                fingerprint: Some("8099ee80".to_string()),
+            });
+        let subtitle = vault_subtitle(&identified);
+        assert_eq!(subtitle, "Vault 8099ee80");
+        assert!(!subtitle.contains(&checksum));
     }
 
     fn home() -> Home {

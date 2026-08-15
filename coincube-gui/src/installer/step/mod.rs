@@ -94,6 +94,11 @@ pub struct Final {
     network: String,
     connect_vault_members: Vec<ConnectVaultMemberPayload>,
     connect_vault_timelock_days: Option<i32>,
+    /// This vault's descriptor fingerprint, 8 lowercase hex — the identity
+    /// Keychain shows for it. Derived from `Context::descriptor`, which is the
+    /// last point in the install where the descriptor is in hand
+    /// (`plans/PLAN-vault-identity-unification.md` D3).
+    vault_fingerprint: Option<String>,
     /// `Some` once the vault-create round-trip resolves. Drives the
     /// success caption in the Final view.
     connect_vault_outcome: Option<ConnectVaultOutcome>,
@@ -113,6 +118,7 @@ impl Final {
             network: String::new(),
             connect_vault_members: Vec::new(),
             connect_vault_timelock_days: None,
+            vault_fingerprint: None,
             connect_vault_outcome: None,
         }
     }
@@ -142,6 +148,10 @@ impl Step for Final {
         self.connect_vault_members
             .clone_from(&ctx.connect_vault_members);
         self.connect_vault_timelock_days = ctx.connect_vault_timelock_days;
+        self.vault_fingerprint = ctx
+            .descriptor
+            .as_ref()
+            .map(|d| crate::app::wallet::descriptor_id_fingerprint(d).to_string());
     }
     fn load(&self) -> Task<Message> {
         if self.generating {
@@ -214,9 +224,16 @@ impl Step for Final {
                     let network = self.network.clone();
                     let members = self.connect_vault_members.clone();
                     let timelock = self.connect_vault_timelock_days;
+                    let fingerprint = self.vault_fingerprint.clone();
                     return Task::perform(
                         connect_vault::create_connect_vault(
-                            client, cube_uuid, cube_name, network, members, timelock,
+                            client,
+                            cube_uuid,
+                            cube_name,
+                            network,
+                            members,
+                            timelock,
+                            fingerprint,
                         ),
                         Message::ConnectVaultCreated,
                     );

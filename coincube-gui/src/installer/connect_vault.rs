@@ -99,6 +99,12 @@ pub async fn create_connect_vault(
     network: String,
     members: Vec<ConnectVaultMemberPayload>,
     timelock_days: Option<i32>,
+    // This vault's descriptor fingerprint (8 lowercase hex), asserted at
+    // creation so Keychain has an id to show for it from the first sync
+    // (`plans/PLAN-vault-identity-unification.md` D3). `None` only when the
+    // Final step had no descriptor in context; the desktop's backfill supplies
+    // it on the next open.
+    fingerprint: Option<String>,
 ) -> Result<ConnectVaultOutcome, ConnectVaultError> {
     let (Some(client), Some(cube_uuid), Some(cube_name)) = (client, cube_uuid, cube_name) else {
         return Err(ConnectVaultError::NotApplicable);
@@ -132,7 +138,13 @@ pub async fn create_connect_vault(
 
     // 2. Create the vault shell.
     let vault: ConnectVaultResponse = client
-        .create_connect_vault(cube.id, CreateConnectVaultRequest { timelock_days })
+        .create_connect_vault(
+            cube.id,
+            CreateConnectVaultRequest {
+                timelock_days,
+                fingerprint,
+            },
+        )
         .await
         .map_err(|e| ConnectVaultError::Other(format!("Failed to create Connect vault: {}", e)))?;
 
@@ -231,6 +243,7 @@ mod tests {
             "mainnet".to_string(),
             vec![sample_member("deadbeef", 1, None)],
             Some(180),
+            Some("8099ee80".to_string()),
         )
         .await
         .expect_err("should short-circuit");
@@ -248,6 +261,7 @@ mod tests {
             "mainnet".to_string(),
             vec![],
             Some(180),
+            Some("8099ee80".to_string()),
         )
         .await
         .expect_err("should short-circuit");
@@ -279,7 +293,12 @@ mod tests {
         let create_vault = server.mock(|when, then| {
             when.method(Method::POST)
                 .path("/api/v1/connect/cubes/42/vault")
-                .json_body(json!({ "timelockDays": 180 }));
+                // The vault's identity rides along with the create — pinned
+                // here so a caller that stops threading it through fails the
+                // route match rather than silently registering an
+                // identity-less vault
+                // (`plans/PLAN-vault-identity-unification.md` D3).
+                .json_body(json!({ "timelockDays": 180, "fingerprint": "8099ee80" }));
             then.status(201)
                 .header("content-type", "application/json")
                 .json_body(json!({
@@ -292,6 +311,7 @@ mod tests {
                         "lastResetAt": "2026-04-18T00:00:00Z",
                         "status": "active",
                         "members": [],
+                        "fingerprint": "8099ee80",
                         "createdAt": "2026-04-18T00:00:00Z",
                         "updatedAt": "2026-04-18T00:00:00Z"
                     }
@@ -322,6 +342,7 @@ mod tests {
             "mainnet".to_string(),
             vec![sample_member("deadbeef", 99, None)],
             Some(180),
+            Some("8099ee80".to_string()),
         )
         .await
         .expect("happy path");
@@ -411,6 +432,7 @@ mod tests {
             "mainnet".to_string(),
             vec![sample_member("deadbeef", 99, None)],
             Some(180),
+            Some("8099ee80".to_string()),
         )
         .await
         .expect_err("expected W9 409 error");
@@ -503,6 +525,7 @@ mod tests {
             "mainnet".to_string(),
             vec![sample_member("deadbeef", 99, None)],
             Some(180),
+            Some("8099ee80".to_string()),
         )
         .await
         .expect_err("expected I2 409 error");

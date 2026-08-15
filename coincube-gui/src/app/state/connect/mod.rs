@@ -205,11 +205,16 @@ impl ConnectPanel {
         }
         self.sync_client();
         if self.cube.server_cube_id.is_some() {
-            // Already registered — but the Connect-blinding encryption pubkey
-            // still needs publishing on Cubes registered before that field
-            // existed (PLAN-connect-blinding PR D2). Self-latching and
-            // idempotent, so this is a no-op once it has succeeded.
-            return self.cube.register_encryption_pubkey();
+            // Already registered — but two pieces of per-Cube identity still
+            // need publishing on Cubes registered before their fields existed:
+            // the Connect-blinding encryption pubkey (PLAN-connect-blinding PR
+            // D2) and the Vault's descriptor fingerprint
+            // (PLAN-vault-identity-unification D4). Both are self-latching and
+            // idempotent, so this is a no-op once they have succeeded.
+            return iced::Task::batch([
+                self.cube.register_encryption_pubkey(),
+                self.cube.assert_vault_fingerprint(),
+            ]);
         }
         self.cube.register_cube()
     }
@@ -223,6 +228,39 @@ impl ConnectPanel {
     /// building the panels.
     pub fn set_cube_encryption_pubkey(&mut self, pubkey: Option<String>) {
         self.cube.cube_encryption_pubkey = pubkey;
+    }
+
+    /// Seeds the Vault's descriptor fingerprint from
+    /// `CubeSettings::vault_fingerprint`, so the assertion wave has something
+    /// to send once the server cube id resolves
+    /// (`plans/PLAN-vault-identity-unification.md` D4).
+    ///
+    /// Also called mid-session by the backfill, which computes the fingerprint
+    /// from the loaded wallet on a Cube whose settings predate the field —
+    /// clearing the in-session latch so the freshly-known value is actually
+    /// sent rather than swallowed by an earlier no-op.
+    pub fn set_vault_fingerprint(&mut self, fingerprint: Option<String>) {
+        if self.cube.vault_fingerprint != fingerprint {
+            self.cube.vault_fingerprint_asserted = false;
+        }
+        self.cube.vault_fingerprint = fingerprint;
+    }
+
+    /// Assert the seeded fingerprint to Connect, syncing the API client first.
+    ///
+    /// The App calls this straight after [`Self::set_vault_fingerprint`],
+    /// because the two triggers inside this panel are not enough for a Vault
+    /// created **mid-session**: `CubeRegistered` already fired at startup (when
+    /// there was no Vault, so nothing to send), and `ensure_cube_registered` is
+    /// only reached while the Cube is still unregistered. Without this the
+    /// freshly built Vault's identity would sit locally until the next launch,
+    /// and Keychain would keep showing "Vault configured" with no id.
+    ///
+    /// Self-latching and idempotent — see
+    /// [`ConnectCubePanel::assert_vault_fingerprint`].
+    pub fn assert_vault_fingerprint(&mut self) -> iced::Task<Message> {
+        self.sync_client();
+        self.cube.assert_vault_fingerprint()
     }
 
     /// React to a mid-session Vault creation (PLAN-duress-vault-gate PR 3):
@@ -436,6 +474,130 @@ mod tests {
         // Unauthenticated → still a no-op (no client to call with).
         let _ = panel.ensure_cube_registered();
         assert!(!panel.cube.enc_pubkey_registered);
+    }
+
+    /// D4: the backfill's server half. A fingerprint the panel can't send yet
+    /// must leave the latch open so a later trigger still fires, and a
+    /// fingerprint that *changes* mid-session (the backfill computing one on a
+    /// Cube whose settings predate the field) must re-open a latch an earlier
+    /// no-op closed — otherwise the freshly-known id is never asserted.
+    #[test]
+    fn set_vault_fingerprint_seeds_and_reopens_the_assertion_wave() {
+        let mut panel = ConnectPanel::new(
+            None,
+            "cube-uuid".to_string(),
+            "Family Vault".to_string(),
+            "regtest".to_string(),
+            true,
+        );
+        assert_eq!(panel.cube.vault_fingerprint, None);
+
+        panel.set_vault_fingerprint(Some("8099ee80".to_string()));
+        assert_eq!(panel.cube.vault_fingerprint.as_deref(), Some("8099ee80"));
+
+        // No client and no server cube id → nothing to assert yet, and the
+        // latch must stay open.
+        let _ = panel.cube.assert_vault_fingerprint();
+        assert!(!panel.cube.vault_fingerprint_asserted);
+
+        // A latch closed by a successful assertion re-opens only when the
+        // value actually changes; re-seeding the same value leaves it closed.
+        panel.cube.vault_fingerprint_asserted = true;
+        panel.set_vault_fingerprint(Some("8099ee80".to_string()));
+        assert!(panel.cube.vault_fingerprint_asserted);
+        panel.set_vault_fingerprint(Some("deadbeef".to_string()));
+        assert!(
+            !panel.cube.vault_fingerprint_asserted,
+            "a changed fingerprint must be re-asserted, not swallowed by the latch"
+        );
+    }
+
+    /// D4, mid-session Vault creation. The Cube was registered at startup, when
+    /// it had no Vault and so nothing to assert — `CubeRegistered` has already
+    /// fired and `ensure_cube_registered` short-circuits on a registered Cube.
+    /// So the App drives the assertion itself off the backfill, and the panel
+    /// must honour it with a `server_cube_id` already set: otherwise the
+    /// freshly built Vault keeps a blank identity in Keychain until relaunch.
+    #[test]
+    fn a_registered_cube_asserts_a_fingerprint_that_arrives_mid_session() {
+        let mut panel = ConnectPanel::new(
+            None,
+            "cube-uuid".to_string(),
+            "Family Vault".to_string(),
+            "regtest".to_string(),
+            // No Vault at startup — this is the Cube the user is about to
+            // build one inside.
+            false,
+        );
+        // Startup: registered, but nothing to send.
+        panel.cube.server_cube_id = Some(42);
+        let _ = panel.assert_vault_fingerprint();
+        assert!(
+            !panel.cube.vault_fingerprint_asserted,
+            "an absent fingerprint must not close the latch"
+        );
+
+        // Mid-session: the Vault is built and the backfill seeds its identity.
+        panel.set_vault_fingerprint(Some("8099ee80".to_string()));
+        let _ = panel.assert_vault_fingerprint();
+        // Unauthenticated in this test, so there is no client to call with and
+        // the latch stays open for a later retry. What is pinned here is that
+        // the path is reachable at all on an already-registered Cube — the
+        // route `ensure_cube_registered` cannot provide.
+        assert_eq!(panel.cube.vault_fingerprint.as_deref(), Some("8099ee80"));
+        assert!(!panel.cube.vault_fingerprint_asserted);
+    }
+
+    /// D4: the assertion latch is scoped to a server cube row, so logging out
+    /// must re-open it. Signing in as a different account re-registers the same
+    /// local Cube UUID under a new user — a new cube and vault row, whose
+    /// fingerprint is blank — and `CubeRegistered` only ever *sets* the latch.
+    /// A stale `true` would therefore suppress the PATCH for the whole session,
+    /// leaving the new account's Vault with no id in Keychain.
+    #[test]
+    fn logging_out_reopens_the_vault_fingerprint_latch() {
+        let mut panel = ConnectPanel::new(
+            None,
+            "cube-uuid".to_string(),
+            "Family Vault".to_string(),
+            "regtest".to_string(),
+            true,
+        );
+        // Account A: registered, identity asserted.
+        panel.cube.server_cube_id = Some(42);
+        panel.set_vault_fingerprint(Some("8099ee80".to_string()));
+        panel.cube.vault_fingerprint_asserted = true;
+
+        panel.cube.clear_client();
+
+        assert_eq!(panel.cube.server_cube_id, None);
+        assert!(
+            !panel.cube.vault_fingerprint_asserted,
+            "the latch must not outlive the server cube row it refers to"
+        );
+        // The fingerprint itself is Cube-scoped, not session-scoped: it comes
+        // from the local descriptor and stays put for the next account.
+        assert_eq!(panel.cube.vault_fingerprint.as_deref(), Some("8099ee80"));
+    }
+
+    /// D4: a Cube that is *already* registered still needs its Vault identity
+    /// asserted — every Vault predating the scheme has a blank one server-side,
+    /// and only the desktop can supply it.
+    #[test]
+    fn ensure_cube_registered_still_asserts_the_vault_fingerprint() {
+        let mut panel = ConnectPanel::new(
+            None,
+            "cube-uuid".to_string(),
+            "Family Vault".to_string(),
+            "regtest".to_string(),
+            true,
+        );
+        panel.cube.server_cube_id = Some(42);
+        panel.set_vault_fingerprint(Some("8099ee80".to_string()));
+
+        // Unauthenticated → still a no-op (no client to call with), latch open.
+        let _ = panel.ensure_cube_registered();
+        assert!(!panel.cube.vault_fingerprint_asserted);
     }
 
     #[test]

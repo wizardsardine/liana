@@ -18,6 +18,18 @@ use super::settings::{WalletId, WalletSettings};
 
 const DEFAULT_WALLET_NAME: &str = "Coincube";
 
+/// The default *display name* for a wallet the user never named:
+/// `Coincube-<descriptor checksum>`.
+///
+/// **Not a vault identity.** The checksum half is the descriptor's BIP-380
+/// checksum, whose real job is keying local storage (wallet directories,
+/// [`crate::app::settings::WalletId`], the `mnemonic-…` files in
+/// `crate::signer`). It was once rendered on the home cube list as if it
+/// identified the vault, which is what
+/// `plans/PLAN-vault-identity-unification.md` set out to fix: a vault's human
+/// identity is its Cube's name, and its technical identity is
+/// [`descriptor_id_fingerprint`]. Do not present this string — or the bare
+/// checksum — as a vault id again.
 pub fn wallet_name(main_descriptor: &CoincubeDescriptor) -> String {
     let desc = main_descriptor.to_string();
     let checksum = desc
@@ -30,6 +42,25 @@ pub fn wallet_name(main_descriptor: &CoincubeDescriptor) -> String {
         if checksum.is_empty() { "" } else { "-" },
         checksum
     )
+}
+
+/// The vault's technical identity: `sha256(descriptor)[..4]`, rendered as 8
+/// lowercase hex. Same descriptor → same id; distinct from any individual
+/// signer's BIP-32 master fingerprint.
+///
+/// This is the value shown in Vault settings, sent in the pairing QR as `wfp`,
+/// displayed by Keychain, and persisted into
+/// [`crate::app::settings::CubeSettings::vault_fingerprint`]. It is a free
+/// function rather than only a [`Wallet`] method because the sites that must
+/// assert it — the installer's Connect vault registration, and the
+/// `CubeSettings` write the home cube list reads back — hold a descriptor but
+/// no `Wallet` (`plans/PLAN-vault-identity-unification.md` D1/D3).
+pub fn descriptor_id_fingerprint(main_descriptor: &CoincubeDescriptor) -> Fingerprint {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(main_descriptor.to_string().as_bytes());
+    let mut bytes = [0u8; 4];
+    bytes.copy_from_slice(&digest[..4]);
+    Fingerprint::from(bytes)
 }
 
 /// In-memory record of a transaction the user has just broadcast from
@@ -338,11 +369,7 @@ impl Wallet {
     /// would conflate the wallet with one of its signers — so the
     /// identifier is hashed from the descriptor string itself.
     pub fn id_fingerprint(&self) -> Fingerprint {
-        use sha2::Digest;
-        let digest = sha2::Sha256::digest(self.main_descriptor.to_string().as_bytes());
-        let mut bytes = [0u8; 4];
-        bytes.copy_from_slice(&digest[..4]);
-        Fingerprint::from(bytes)
+        descriptor_id_fingerprint(&self.main_descriptor)
     }
 
     pub fn descriptor_keys(&self) -> HashSet<Fingerprint> {

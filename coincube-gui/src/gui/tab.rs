@@ -13,7 +13,7 @@ use crate::{
     app::{
         self, breez_liquid,
         cache::{Cache, DaemonCache},
-        settings::{update_settings_file, WalletId, WalletSettings},
+        settings::{update_settings_file, VaultIdentity, WalletSettings},
         wallet::Wallet,
         App,
     },
@@ -966,7 +966,20 @@ impl Tab {
                     // error path and hang on "Starting daemon…".
                     let network_dir = i.datadir.network_directory(i.network);
                     let datadir = i.datadir.clone();
-                    let wallet_id = settings_opt.as_ref().map(|s| s.wallet_id());
+                    // The Vault's identity, both halves. The installer context
+                    // is the only place the descriptor is in hand at exit —
+                    // `WalletSettings` carries the checksum but not the
+                    // descriptor, and for a remote-backend wallet it is never
+                    // written to disk here at all. Persisting the fingerprint
+                    // now is what lets the home cube list render a vault id
+                    // without parsing a descriptor per row
+                    // (`plans/PLAN-vault-identity-unification.md` D1).
+                    let vault = settings_opt.as_ref().map(|s| {
+                        app::settings::VaultIdentity::new(
+                            s.wallet_id(),
+                            i.context.descriptor.as_ref(),
+                        )
+                    });
                     let wallet_alias = settings_opt.as_ref().and_then(|s| s.alias.clone());
                     let network = i.network;
                     let originating_cube_id = i.cube_settings.as_ref().map(|c| c.id.clone());
@@ -1014,7 +1027,7 @@ impl Tab {
                         async move {
                             let cube = find_or_create_cube(
                                 &network_dir,
-                                wallet_id.as_ref(),
+                                vault.as_ref(),
                                 &wallet_alias,
                                 network,
                                 originating_cube_id,
@@ -2682,9 +2695,25 @@ struct RestoreCubeIdentity {
     name: String,
 }
 
+/// Attach `vault` to `cube`, or leave the Cube vaultless when the installer
+/// exited without one. The `Option` mirrors the old `vault_wallet_id =
+/// wallet_id.cloned()` assignment, minus the chance of writing one half of the
+/// identity without the other.
+fn attach_vault(cube: &mut app::settings::CubeSettings, vault: Option<&VaultIdentity>) {
+    match vault {
+        Some(v) => cube.set_vault(v.clone()),
+        None => cube.clear_vault(),
+    }
+}
+
 async fn find_or_create_cube(
     network_dir: &NetworkDirectory,
-    wallet_id: Option<&WalletId>,
+    // Both halves of the Vault's identity, or `None` when the installer exited
+    // without one. Deliberately not a bare `WalletId`: every attach site below
+    // has to write the fingerprint too, and a two-argument signature is how
+    // one of them ends up not doing so
+    // (`plans/PLAN-vault-identity-unification.md` D1).
+    vault: Option<&VaultIdentity>,
     wallet_alias: &Option<String>,
     network: bitcoin::Network,
     originating_cube_id: Option<String>,
@@ -2737,7 +2766,7 @@ async fn find_or_create_cube(
             // are its source of truth. The restore flow only overwrites
             // Cube-level credentials when we're actually minting a new
             // Cube for the restored wallet.
-            if let Some(w_id) = wallet_id {
+            if let Some(w_id) = vault.map(|v| &v.wallet_id) {
                 if let Some(existing_idx) = settings_data
                     .cubes
                     .iter()
@@ -2789,25 +2818,25 @@ async fn find_or_create_cube(
                         ));
                     }
                     let mut cube = settings_data.cubes[idx].clone();
-                    cube.vault_wallet_id = wallet_id.cloned();
+                    attach_vault(&mut cube, vault);
                     let cube = decorate_new(cube)?;
                     settings_data.cubes[idx] = cube.clone();
 
                     info!(
                         "Reactivating recovered cube '{}' ({}) with wallet {:?} on {} network",
-                        cube.name, uuid, wallet_id, network
+                        cube.name, uuid, cube.vault_wallet_id, network
                     );
 
                     return save_cube_settings(network_dir, cube, network, settings_data).await;
                 }
 
                 let mut base_cube = new_cube_base();
-                base_cube.vault_wallet_id = wallet_id.cloned();
+                attach_vault(&mut base_cube, vault);
                 let cube = decorate_new(base_cube)?;
 
                 info!(
                     "Re-minting recovered cube '{}' ({}) for wallet {:?} on {} network",
-                    cube.name, uuid, wallet_id, network
+                    cube.name, uuid, cube.vault_wallet_id, network
                 );
 
                 settings_data.cubes.push(cube.clone());
@@ -2821,14 +2850,14 @@ async fn find_or_create_cube(
                     .iter_mut()
                     .find(|c| c.id == target_cube_id)
                 {
-                    if let Some(w_id) = wallet_id {
+                    if let Some(v) = vault {
                         if target_cube.vault_wallet_id.is_some() {
                             return Err(format!(
                                 "Cube '{}' already has a vault. Remove the existing vault before creating a new one.",
                                 target_cube.name
                             ));
                         }
-                        target_cube.vault_wallet_id = Some(w_id.clone());
+                        target_cube.set_vault(v.clone());
                     }
                     // Apply restore-flow credentials (PIN hash + fingerprint) if
                     // restoring to this cube — same rationale as the empty-cube
@@ -2839,7 +2868,7 @@ async fn find_or_create_cube(
 
                     info!(
                         "Associating wallet {:?} with originating cube '{}' on {} network",
-                        wallet_id, cube_name, network
+                        cube_clone.vault_wallet_id, cube_name, network
                     );
 
                     return save_cube_settings(network_dir, cube_clone, network, settings_data)
@@ -2863,7 +2892,7 @@ async fn find_or_create_cube(
                 .position(|c| c.vault_wallet_id.is_none())
             {
                 let mut empty_cube = settings_data.cubes[empty_idx].clone();
-                empty_cube.vault_wallet_id = wallet_id.cloned();
+                attach_vault(&mut empty_cube, vault);
                 // Reuse `decorate_new` so the fingerprint + PIN-hash
                 // path matches the brand-new-Cube branches below. If
                 // the Cube had its own `security_pin_hash`, `with_pin`
@@ -2878,7 +2907,7 @@ async fn find_or_create_cube(
 
                 info!(
                     "Associating wallet {:?} with existing cube '{}' on {} network",
-                    wallet_id, cube_name, network
+                    empty_cube.vault_wallet_id, cube_name, network
                 );
 
                 return save_cube_settings(network_dir, empty_cube, network, settings_data).await;
@@ -2888,13 +2917,13 @@ async fn find_or_create_cube(
             // `None` here (the restore branch above returns early), so
             // `new_cube_base` yields the alias-based fresh-UUID cube.
             let mut base_cube = new_cube_base();
-            base_cube.vault_wallet_id = wallet_id.cloned();
+            attach_vault(&mut base_cube, vault);
             let cube = decorate_new(base_cube)?;
             let cube_name = cube.name.clone();
 
             info!(
                 "Creating new cube '{}' for wallet {:?} on {} network",
-                cube_name, wallet_id, network
+                cube_name, cube.vault_wallet_id, network
             );
 
             settings_data.cubes.push(cube.clone());
@@ -2904,13 +2933,13 @@ async fn find_or_create_cube(
             // No settings file yet, create first cube. On the restore path
             // `new_cube_base` reuses the deleted Cube's original UUID + name.
             let mut base_cube = new_cube_base();
-            base_cube.vault_wallet_id = wallet_id.cloned();
+            attach_vault(&mut base_cube, vault);
             let cube = decorate_new(base_cube)?;
             let cube_name = cube.name.clone();
 
             info!(
                 "Creating first cube '{}' for wallet {:?} on {} network",
-                cube_name, wallet_id, network
+                cube_name, cube.vault_wallet_id, network
             );
 
             let mut new_settings = app::settings::Settings::default();
@@ -3327,6 +3356,7 @@ mod find_or_create_cube_tests {
     //! rather than minting a brand-new Cube (which left the original still
     //! listed as recoverable and let the flow be repeated indefinitely).
     use super::*;
+    use app::settings::WalletId;
 
     const ORIG_UUID: &str = "11111111-2222-3333-4444-555555555555";
 
@@ -3347,6 +3377,25 @@ mod find_or_create_cube_tests {
 
     fn wallet_id() -> WalletId {
         WalletId::new("abcd1234".to_string(), Some(1_700_000_000))
+    }
+
+    /// The fingerprint the installer derives from the descriptor it just
+    /// sealed. Distinct from the wallet id's checksum on purpose: the two are
+    /// different things, and a test that reused one for the other would not
+    /// catch them being confused again.
+    const VAULT_FP: &str = "8099ee80";
+
+    fn vault_identity() -> VaultIdentity {
+        VaultIdentity {
+            wallet_id: wallet_id(),
+            fingerprint: Some(VAULT_FP.to_string()),
+        }
+    }
+
+    /// An unrelated Cube's Vault — identified only by its storage key, as a
+    /// Cube attached before `vault_fingerprint` existed would be.
+    fn other_vault(checksum: &str, timestamp: i64) -> VaultIdentity {
+        VaultIdentity::new(WalletId::new(checksum.to_string(), Some(timestamp)), None)
     }
 
     /// Reload settings written earlier in the test, tolerating the transient
@@ -3370,10 +3419,11 @@ mod find_or_create_cube_tests {
     #[tokio::test]
     async fn restore_on_wiped_install_reuses_original_uuid() {
         let nd = temp_network_dir("wiped");
-        let wid = wallet_id();
+        let v = vault_identity();
+        let wid = v.wallet_id.clone();
         let cube = find_or_create_cube(
             &nd,
-            Some(&wid),
+            Some(&v),
             &Some("Ignored Alias".to_string()),
             bitcoin::Network::Bitcoin,
             None, // originating_cube_id
@@ -3406,15 +3456,15 @@ mod find_or_create_cube_tests {
         let mut settings = app::settings::Settings::default();
         let other =
             app::settings::CubeSettings::new("Other".to_string(), bitcoin::Network::Bitcoin)
-                .with_vault(WalletId::new("otherchk".to_string(), Some(1)));
+                .with_vault(other_vault("otherchk", 1));
         let other_id = other.id.clone();
         settings.cubes.push(other);
         update_settings_file(&nd, |_| Some(settings)).await.unwrap();
 
-        let wid = wallet_id();
+        let v = vault_identity();
         let cube = find_or_create_cube(
             &nd,
-            Some(&wid),
+            Some(&v),
             &None,
             bitcoin::Network::Bitcoin,
             None,
@@ -3445,10 +3495,11 @@ mod find_or_create_cube_tests {
         settings.cubes.push(shell);
         update_settings_file(&nd, |_| Some(settings)).await.unwrap();
 
-        let wid = wallet_id();
+        let v = vault_identity();
+        let wid = v.wallet_id.clone();
         let cube = find_or_create_cube(
             &nd,
-            Some(&wid),
+            Some(&v),
             &None,
             bitcoin::Network::Bitcoin,
             None,
@@ -3471,14 +3522,118 @@ mod find_or_create_cube_tests {
         );
     }
 
+    /// D1 (`plans/PLAN-vault-identity-unification.md`): every branch that
+    /// attaches a Vault must persist *both* halves of its identity. The home
+    /// cube list reads the fingerprint back from `settings.json` and has no
+    /// descriptor in scope to recompute it, so a branch that wrote only the
+    /// wallet id would leave that Cube identity-less until the next open.
+    ///
+    /// Exercises the three attach branches that mint or reuse a Cube — fresh
+    /// install, originating cube, empty-cube reuse — and re-reads the file
+    /// rather than trusting the returned value.
+    #[tokio::test]
+    async fn every_attach_branch_persists_the_vault_fingerprint() {
+        // Fresh install: mint a new Cube.
+        let nd = temp_network_dir("fp-fresh");
+        let v = vault_identity();
+        let cube = find_or_create_cube(
+            &nd,
+            Some(&v),
+            &None,
+            bitcoin::Network::Bitcoin,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("install should succeed");
+        assert_eq!(cube.vault_fingerprint.as_deref(), Some(VAULT_FP));
+        assert_eq!(
+            reload(&nd).cubes[0].vault_fingerprint.as_deref(),
+            Some(VAULT_FP),
+            "a minted Cube's identity must reach settings.json"
+        );
+
+        // Originating cube: attach to a Cube the caller named.
+        let nd = temp_network_dir("fp-originating");
+        let mut settings = app::settings::Settings::default();
+        let shell =
+            app::settings::CubeSettings::new("Shell".to_string(), bitcoin::Network::Bitcoin);
+        let shell_id = shell.id.clone();
+        settings.cubes.push(shell);
+        update_settings_file(&nd, |_| Some(settings)).await.unwrap();
+        let cube = find_or_create_cube(
+            &nd,
+            Some(&v),
+            &None,
+            bitcoin::Network::Bitcoin,
+            Some(shell_id),
+            None,
+            None,
+        )
+        .await
+        .expect("originating cube should be updated");
+        assert_eq!(cube.vault_fingerprint.as_deref(), Some(VAULT_FP));
+        assert_eq!(
+            reload(&nd).cubes[0].vault_fingerprint.as_deref(),
+            Some(VAULT_FP)
+        );
+
+        // Empty-cube reuse: adopt the first vault-less Cube.
+        let nd = temp_network_dir("fp-empty");
+        let mut settings = app::settings::Settings::default();
+        settings.cubes.push(app::settings::CubeSettings::new(
+            "Empty".to_string(),
+            bitcoin::Network::Bitcoin,
+        ));
+        update_settings_file(&nd, |_| Some(settings)).await.unwrap();
+        let cube = find_or_create_cube(
+            &nd,
+            Some(&v),
+            &None,
+            bitcoin::Network::Bitcoin,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("empty cube should be reused");
+        assert_eq!(cube.vault_fingerprint.as_deref(), Some(VAULT_FP));
+        assert_eq!(
+            reload(&nd).cubes[0].vault_fingerprint.as_deref(),
+            Some(VAULT_FP)
+        );
+    }
+
+    /// A seed-only restore attaches no Vault, so it must leave both halves
+    /// empty — not just the wallet id.
+    #[tokio::test]
+    async fn a_vault_less_attach_leaves_no_stale_fingerprint() {
+        let nd = temp_network_dir("fp-none");
+        let cube = find_or_create_cube(
+            &nd,
+            None,
+            &None,
+            bitcoin::Network::Bitcoin,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("vault-less install should succeed");
+        assert_eq!(cube.vault_wallet_id, None);
+        assert_eq!(cube.vault_fingerprint, None);
+    }
+
     /// Non-restore install is unchanged: a fresh UUID and the wallet alias.
     #[tokio::test]
     async fn non_restore_install_mints_fresh_uuid() {
         let nd = temp_network_dir("fresh");
-        let wid = wallet_id();
+        let v = vault_identity();
+        let wid = v.wallet_id.clone();
         let cube = find_or_create_cube(
             &nd,
-            Some(&wid),
+            Some(&v),
             &Some("My Alias".to_string()),
             bitcoin::Network::Bitcoin,
             None,
@@ -3496,18 +3651,18 @@ mod find_or_create_cube_tests {
     #[tokio::test]
     async fn existing_wallet_match_returns_its_cube_without_rewriting_settings() {
         let nd = temp_network_dir("existing-wallet");
-        let wid = wallet_id();
+        let v = vault_identity();
         let mut settings = app::settings::Settings::default();
         let existing =
             app::settings::CubeSettings::new("Existing".to_string(), bitcoin::Network::Bitcoin)
-                .with_vault(wid.clone());
+                .with_vault(v.clone());
         let existing_id = existing.id.clone();
         settings.cubes.push(existing);
         update_settings_file(&nd, |_| Some(settings)).await.unwrap();
 
         let cube = find_or_create_cube(
             &nd,
-            Some(&wid),
+            Some(&v),
             &Some("Ignored Alias".to_string()),
             bitcoin::Network::Bitcoin,
             None,
@@ -3526,20 +3681,20 @@ mod find_or_create_cube_tests {
     #[tokio::test]
     async fn restore_fails_when_original_cube_already_has_a_vault() {
         let nd = temp_network_dir("restore-conflict");
-        let wid = wallet_id();
+        let v = vault_identity();
         let mut settings = app::settings::Settings::default();
         let mut restored = app::settings::CubeSettings::new(
             "Already Restored".to_string(),
             bitcoin::Network::Bitcoin,
         )
-        .with_vault(WalletId::new("otherwallet".to_string(), Some(9)));
+        .with_vault(other_vault("otherwallet", 9));
         restored.id = ORIG_UUID.to_string();
         settings.cubes.push(restored);
         update_settings_file(&nd, |_| Some(settings)).await.unwrap();
 
         let err = find_or_create_cube(
             &nd,
-            Some(&wid),
+            Some(&v),
             &None,
             bitcoin::Network::Bitcoin,
             None,
@@ -3558,7 +3713,8 @@ mod find_or_create_cube_tests {
     #[tokio::test]
     async fn originating_cube_attaches_wallet_and_restore_credentials() {
         let nd = temp_network_dir("originating");
-        let wid = wallet_id();
+        let v = vault_identity();
+        let wid = v.wallet_id.clone();
         let fp = bitcoin::bip32::Fingerprint::from([0xaa, 0xbb, 0xcc, 0xdd]);
         let seed = RestoreCubeSeed {
             pin: zeroize::Zeroizing::new("135790".to_string()),
@@ -3573,7 +3729,7 @@ mod find_or_create_cube_tests {
 
         let cube = find_or_create_cube(
             &nd,
-            Some(&wid),
+            Some(&v),
             &None,
             bitcoin::Network::Bitcoin,
             Some(shell_id.clone()),
@@ -3593,18 +3749,18 @@ mod find_or_create_cube_tests {
     #[tokio::test]
     async fn originating_cube_errors_when_missing_or_already_vaulted() {
         let nd = temp_network_dir("originating-errors");
-        let wid = wallet_id();
+        let v = vault_identity();
         let mut settings = app::settings::Settings::default();
         let occupied =
             app::settings::CubeSettings::new("Occupied".to_string(), bitcoin::Network::Bitcoin)
-                .with_vault(WalletId::new("otherwallet".to_string(), Some(2)));
+                .with_vault(other_vault("otherwallet", 2));
         let occupied_id = occupied.id.clone();
         settings.cubes.push(occupied);
         update_settings_file(&nd, |_| Some(settings)).await.unwrap();
 
         let occupied_err = find_or_create_cube(
             &nd,
-            Some(&wid),
+            Some(&v),
             &None,
             bitcoin::Network::Bitcoin,
             Some(occupied_id),
@@ -3617,7 +3773,7 @@ mod find_or_create_cube_tests {
 
         let missing_err = find_or_create_cube(
             &nd,
-            Some(&wid),
+            Some(&v),
             &None,
             bitcoin::Network::Bitcoin,
             Some("missing-cube".to_string()),
@@ -3632,7 +3788,8 @@ mod find_or_create_cube_tests {
     #[tokio::test]
     async fn empty_cube_fallback_attaches_wallet_before_minting_new_cube() {
         let nd = temp_network_dir("empty-cube");
-        let wid = wallet_id();
+        let v = vault_identity();
+        let wid = v.wallet_id.clone();
         let mut settings = app::settings::Settings::default();
         let empty =
             app::settings::CubeSettings::new("Empty".to_string(), bitcoin::Network::Bitcoin);
@@ -3642,7 +3799,7 @@ mod find_or_create_cube_tests {
 
         let cube = find_or_create_cube(
             &nd,
-            Some(&wid),
+            Some(&v),
             &Some("Should Not Mint".to_string()),
             bitcoin::Network::Bitcoin,
             None,
@@ -3661,11 +3818,12 @@ mod find_or_create_cube_tests {
     #[tokio::test]
     async fn first_non_restore_cube_uses_default_alias_when_none_is_given() {
         let nd = temp_network_dir("first-default");
-        let wid = wallet_id();
+        let v = vault_identity();
+        let wid = v.wallet_id.clone();
 
         let cube = find_or_create_cube(
             &nd,
-            Some(&wid),
+            Some(&v),
             &None,
             bitcoin::Network::Signet,
             None,
@@ -3690,14 +3848,15 @@ mod find_or_create_cube_tests {
     #[tokio::test]
     async fn restore_reconciles_wallet_off_a_duplicate_uuid() {
         let nd = temp_network_dir("dup-uuid");
-        let wid = wallet_id();
+        let v = vault_identity();
+        let wid = v.wallet_id.clone();
 
         // The exact state the old bug produced: a duplicate Cube (its own,
         // different UUID) already holds the wallet.
         let mut settings = app::settings::Settings::default();
         let dup =
             app::settings::CubeSettings::new("Duplicate".to_string(), bitcoin::Network::Bitcoin)
-                .with_vault(wid.clone());
+                .with_vault(v.clone());
         let dup_id = dup.id.clone();
         assert_ne!(
             dup_id, ORIG_UUID,
@@ -3708,7 +3867,7 @@ mod find_or_create_cube_tests {
 
         let cube = find_or_create_cube(
             &nd,
-            Some(&wid),
+            Some(&v),
             &None,
             bitcoin::Network::Bitcoin,
             None,

@@ -316,6 +316,7 @@ mod tests {
             last_reset_at: "2026-06-22T00:00:00Z".into(),
             status: VaultStatus::Active,
             members,
+            fingerprint: String::new(),
             created_at: "2026-06-22T00:00:00Z".into(),
             updated_at: "2026-06-22T00:00:00Z".into(),
         }
