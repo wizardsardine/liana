@@ -209,8 +209,10 @@ impl DuressGate {
     }
 }
 
-/// Display name for a network, used in popover text.
-fn net_label(n: Network) -> &'static str {
+/// Display name for a network. Shared by popover text and the settings
+/// "Network:" row — deliberately exhaustive so a new variant is a compile
+/// error rather than a silently wrong label.
+pub(crate) fn net_label(n: Network) -> &'static str {
     match n {
         Network::Bitcoin => "Mainnet",
         Network::Testnet => "Testnet",
@@ -636,5 +638,35 @@ mod tests {
             Some("P2P trading on Testnet needs a test Mostro coordinator and a connected Spark wallet.")
         );
         assert_eq!(spark(Network::Bitcoin).reason(), None);
+    }
+
+    /// Pins every label, not just the ones a reason string happens to
+    /// exercise. The settings "Network:" row used to keep its own copy of
+    /// this match with an `_ => "Unknown"` arm, which is how Testnet4 ended
+    /// up displayed as "Unknown" there.
+    #[test]
+    fn net_labels_are_exhaustive_and_stable() {
+        let expected = [
+            (Network::Bitcoin, "Mainnet"),
+            (Network::Testnet, "Testnet"),
+            (Network::Testnet4, "Testnet4"),
+            (Network::Signet, "Signet"),
+            (Network::Regtest, "Regtest"),
+        ];
+
+        for (net, label) in expected {
+            assert_eq!(net_label(net), label, "label for {}", net);
+        }
+
+        // Every network the launcher offers has a label above — keeps this
+        // table honest if `NETWORKS` grows.
+        assert_eq!(expected.len(), NETWORKS.len());
+        for net in NETWORKS {
+            assert!(
+                expected.iter().any(|(n, _)| *n == net),
+                "{} missing from the label table",
+                net
+            );
+        }
     }
 }
