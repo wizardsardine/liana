@@ -402,25 +402,38 @@ impl SelectKeySource {
         KeySource,
         String, /* alias */
         Fingerprint,
-        bool, /* available */
+        Option<String>, /* why it can't be picked, if it can't */
     )> {
         self.keys
             .iter()
             .map(|(fg, (_, key))| {
-                let source = key.source.clone();
-                let alias = key.name.clone();
-                let mut available = true;
-                if self.actual_path.keys.iter().any(|key_fg| key_fg == fg) {
-                    available = false;
-                }
-                if let KeySource::Token(kind, _) = key.source {
-                    if !self.actual_path.token_kind.contains(&kind) {
-                        available = false;
-                    }
-                }
-                (source, alias, *fg, available)
+                let unavailable = self.key_unavailable_reason(*fg, &key.source);
+                (key.source.clone(), key.name.clone(), *fg, unavailable)
             })
             .collect()
+    }
+    /// Why an entry of the "already used sources" list can't be picked for
+    /// the slot being edited, or `None` when it can. Single source of truth
+    /// for both the row's disabled state and the caption explaining it —
+    /// deriving those separately let them drift apart.
+    fn key_unavailable_reason(&self, fg: Fingerprint, source: &KeySource) -> Option<String> {
+        if let KeySource::Token(kind, _) = source {
+            if !self.actual_path.token_kind.contains(kind) {
+                return Some("Token type not allowed in this path".to_string());
+            }
+        }
+        if self.actual_path.keys.iter().any(|key_fg| key_fg == &fg) {
+            return Some("Key already used in this path".to_string());
+        }
+        // "One Keychain key per owner per Vault" is a Keychain-only rule, so
+        // only Keychain keys are barred from a second spending path. Every
+        // other source may legitimately be reused across paths — the
+        // expanding-multisig inheritance template is built on exactly that,
+        // mirroring the primary keys into the 2-of-6 recovery path.
+        if matches!(source, KeySource::KeychainKey { .. }) && self.key_placed_elsewhere(fg) {
+            return Some("This Keychain key is already used elsewhere in this Vault.".to_string());
+        }
+        None
     }
     fn detected_hws(&self, hws: &HardwareWallets) -> Vec<DetectedHw> {
         hws.list
@@ -1352,10 +1365,9 @@ impl SelectKeySource {
             if owner.primary_owner_id() != primary_owner_id {
                 return false;
             }
-            coords.is_empty()
-                || coords
-                    .iter()
-                    .any(|c| !self.actual_path.coordinates.contains(c))
+            coords
+                .iter()
+                .any(|c| !self.actual_path.coordinates.contains(c))
         })
     }
 
@@ -1371,10 +1383,9 @@ impl SelectKeySource {
             if k.fingerprint != candidate_fingerprint {
                 return false;
             }
-            coords.is_empty()
-                || coords
-                    .iter()
-                    .any(|c| !self.actual_path.coordinates.contains(c))
+            coords
+                .iter()
+                .any(|c| !self.actual_path.coordinates.contains(c))
         })
     }
 
@@ -1801,10 +1812,11 @@ impl SelectKeySource {
         .padding(25)
         .style(theme::card::border);
 
-        // Reuse the existing detected-devices rendering.
-        let devices =
-            (!hws.is_empty() || !self.keys.is_empty()).then(|| self.view_signing_devices(&hws));
-        let already_used = (!self.keys.is_empty()).then(|| self.view_keys());
+        // Reuse the existing detected-devices rendering. Gated on `hws`
+        // alone: this screen no longer carries the "Already used sources"
+        // section, and with no device plugged in the listening prompt above
+        // already is the empty state.
+        let devices = (!hws.is_empty()).then(|| self.view_signing_devices(&hws));
 
         // Footer Back button — left-aligned, standalone (no primary
         // action on this screen; the user picks a device from the list
@@ -1821,7 +1833,6 @@ impl SelectKeySource {
             .push(header)
             .push(listening)
             .push(devices)
-            .push(already_used)
             .push(footer)
             .align_x(Horizontal::Center)
             .width(modal::MODAL_WIDTH);
@@ -2030,9 +2041,9 @@ impl SelectKeySource {
         }
     }
     fn view_signing_devices(&self, hws: &[DetectedHw]) -> Element<Message> {
-        // Full width so the heading and device rows sit flush-left,
-        // lining up with the "Already used sources" section below
-        // (which also uses a full-width column).
+        // Full width so the heading and device rows sit flush-left rather
+        // than shrinking to the button width and being centred by the
+        // parent modal column's `align_x(Center)`.
         let mut col = column![p1_bold("Detected hardware")]
             .spacing(5)
             .width(Length::Fill);
@@ -2150,10 +2161,10 @@ impl SelectKeySource {
             KeySource,
             String, /* alias */
             Fingerprint,
-            bool, /* available */
+            Option<String>, /* why it can't be picked, if it can't */
         ),
     ) -> Element<Message> {
-        let (source, alias, fg, available) = key;
+        let (source, alias, fg, message) = key;
         let icon = match source {
             KeySource::Device(..) => icon::usb_drive_icon(),
             KeySource::MasterSigner => icon::round_key_icon().color(color::RED),
@@ -2161,15 +2172,6 @@ impl SelectKeySource {
             KeySource::Token(..) => icon::hdd_icon(),
             KeySource::BorderWallet => icon::round_key_icon(),
             KeySource::KeychainKey { .. } => icon::round_key_icon(),
-        };
-        let message = if let KeySource::Token(kind, _) = source {
-            if !self.actual_path.token_kind.contains(&kind) {
-                Some("Token type not allowed in this path".to_string())
-            } else {
-                None
-            }
-        } else {
-            (!available).then_some("Key already used in this path".to_string())
         };
         let fg_str = format!("#{}", fg);
         let on_press = message
@@ -2859,11 +2861,78 @@ mod tests {
     }
 
     #[test]
-    fn key_placed_elsewhere_blocks_when_placed_without_coordinates() {
+    fn key_placed_elsewhere_allows_unplaced_key() {
         let fg = Fingerprint::from_str("8a550171").unwrap();
-        // A placement carrying no coordinates is treated as used elsewhere.
+        // A key with no coordinates has not been placed, so it remains available.
         let picker = picker_with_placed_key(vec![(0, 0)], vec![], fg);
+        assert!(!picker.key_placed_elsewhere(fg));
+    }
+
+    // ── key_unavailable_reason: what the "already used sources" rows say ──
+
+    #[test]
+    fn a_key_already_in_the_edited_path_is_blocked_whatever_its_source() {
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        let mut picker = picker_with_placed_key(vec![(0, 0)], vec![(0, 0)], fg);
+        picker.actual_path.keys = vec![fg];
+        assert_eq!(
+            picker.key_unavailable_reason(fg, &KeySource::Manual),
+            Some("Key already used in this path".to_string())
+        );
+    }
+
+    #[test]
+    fn a_non_keychain_key_may_be_reused_in_another_path() {
+        // Reuse across spending paths is a supported descriptor shape — the
+        // expanding-multisig inheritance template mirrors the primary keys
+        // into its recovery path — so only Keychain keys are barred from it.
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        // Placed at (1, 0); we're editing (0, 0), a slot in another path.
+        let picker = picker_with_placed_key(vec![(0, 0)], vec![(1, 0)], fg);
         assert!(picker.key_placed_elsewhere(fg));
+        for source in [
+            KeySource::Manual,
+            KeySource::MasterSigner,
+            KeySource::BorderWallet,
+        ] {
+            assert_eq!(picker.key_unavailable_reason(fg, &source), None);
+        }
+    }
+
+    #[test]
+    fn a_keychain_key_placed_in_another_path_is_blocked() {
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        let mut picker = picker_with_placed_key(vec![(0, 0)], vec![(1, 0)], fg);
+        let source = keychain_key(fg, 42, 7).source;
+        picker
+            .keys
+            .insert(fg, (vec![(1, 0)], keychain_key(fg, 42, 7)));
+        assert_eq!(
+            picker.key_unavailable_reason(fg, &source),
+            Some("This Keychain key is already used elsewhere in this Vault.".to_string())
+        );
+    }
+
+    #[test]
+    fn a_token_kind_the_path_forbids_outranks_the_reuse_reasons() {
+        let fg = Fingerprint::from_str("8a550171").unwrap();
+        let picker = picker_with_placed_key(vec![(0, 0)], vec![], fg);
+        // `actual_path.token_kind` is empty, so no token kind is allowed here.
+        let token = KeySource::Token(
+            KeyKind::Cosigner,
+            ProviderKey {
+                uuid: "uuid".to_string(),
+                token: "token".to_string(),
+                provider: crate::app::settings::Provider {
+                    uuid: "provider-uuid".to_string(),
+                    name: "Provider".to_string(),
+                },
+            },
+        );
+        assert_eq!(
+            picker.key_unavailable_reason(fg, &token),
+            Some("Token type not allowed in this path".to_string())
+        );
     }
 
     fn raw_key(id: u64, fingerprint: &str, owner_id: u64) -> CubeKeyRaw {

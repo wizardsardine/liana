@@ -246,18 +246,22 @@ pub(crate) fn payment_summary_to_recent_tx(
     let fees_sat = Amount::from_sat(p.fees_sat);
     let fiat_amount = fiat_converter.map(|c| c.convert(amount));
 
-    let description = p.description.clone().unwrap_or_else(|| match method {
-        SparkPaymentMethod::Lightning => "Lightning payment".to_string(),
-        SparkPaymentMethod::OnChainBitcoin => {
-            if is_incoming {
-                "On-chain deposit".to_string()
-            } else {
-                "On-chain withdrawal".to_string()
+    let description = p
+        .description
+        .clone()
+        .filter(|d| !d.trim().is_empty())
+        .unwrap_or_else(|| match method {
+            SparkPaymentMethod::Lightning => "Lightning payment".to_string(),
+            SparkPaymentMethod::OnChainBitcoin => {
+                if is_incoming {
+                    "On-chain deposit".to_string()
+                } else {
+                    "On-chain withdrawal".to_string()
+                }
             }
-        }
-        SparkPaymentMethod::Spark => "Spark transfer".to_string(),
-        SparkPaymentMethod::StableBalance => "Stable Balance".to_string(),
-    });
+            SparkPaymentMethod::Spark => "Spark transfer".to_string(),
+            SparkPaymentMethod::StableBalance => "Stable Balance".to_string(),
+        });
 
     SparkRecentTransaction {
         id: p.id.clone(),
@@ -313,6 +317,7 @@ fn token_payment_to_recent_tx(
     let description = p
         .description
         .clone()
+        .filter(|d| !d.trim().is_empty())
         .unwrap_or_else(|| "Stable Balance".to_string());
 
     SparkRecentTransaction {

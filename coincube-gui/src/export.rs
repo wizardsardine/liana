@@ -575,14 +575,10 @@ pub async fn export_transactions(
         let date_time = tx
             .time
             .map(|t| {
-                let mut str = DateTime::from_timestamp(t as i64, 0)
+                let dt = DateTime::from_timestamp(t as i64, 0)
                     .expect("bitcoin timestamp")
-                    .to_rfc3339();
-                //str has the form `1996-12-19T16:39:57-08:00`
-                //                            ^        ^^^^^^
-                //          replace `T` by ` `|           | drop this part
-                str = str.replace("T", " ");
-                str[0..(str.len() - 6)].to_string()
+                    .with_timezone(&chrono::Local);
+                dt.format("%Y-%m-%d %H:%M:%S").to_string()
             })
             .unwrap_or("".to_string());
 
@@ -656,7 +652,11 @@ pub async fn export_spark_payments(
     for payment in list.payments {
         let date_time = DateTime::from_timestamp(payment.timestamp as i64, 0)
             .or_else(|| DateTime::from_timestamp_millis(payment.timestamp as i64))
-            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+            .map(|dt| {
+                dt.with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            })
             .unwrap_or_default();
 
         let is_send = payment.direction.eq_ignore_ascii_case("Send");
@@ -760,7 +760,11 @@ pub async fn export_liquid_payments(
     for payment in payments {
         let date_time = DateTime::from_timestamp(payment.timestamp as i64, 0)
             .or_else(|| DateTime::from_timestamp_millis(payment.timestamp as i64))
-            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+            .map(|dt| {
+                dt.with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            })
             .unwrap_or_default();
 
         let is_send = !payment.is_incoming();
