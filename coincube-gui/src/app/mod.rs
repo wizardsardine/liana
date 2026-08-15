@@ -2463,9 +2463,12 @@ impl App {
     /// Connect cube with keyholders, so gate on the local wallet or it would
     /// consent on behalf of a Vault it doesn't hold. Idempotent within a
     /// session (the overlay flag guards re-entry); the durable answer lives in
-    /// `CubeSettings::recovery_alerts_prompt_answered`. Called both at Vault
-    /// setup completion and after each monitoring-status load (the post-sync
-    /// hydration path), whichever reaches an eligible state first.
+    /// `CubeSettings::recovery_alerts_prompt_answered`.
+    ///
+    /// Only ever called off the back of a monitoring-status load, because that
+    /// load is what resolves the recipient list this gates on. Calling it any
+    /// earlier reads an empty list and silently declines to prompt — which is
+    /// exactly how the prompt used to be unreachable in every build.
     fn maybe_show_recovery_alerts_prompt(&mut self) {
         if should_show_recovery_alerts_prompt(
             self.show_recovery_alerts_prompt,
@@ -2473,7 +2476,13 @@ impl App {
             self.panels.connect.account.is_authenticated(),
             self.panels.connect.cube.server_cube_id.is_some(),
             self.panels.connect.account.is_recovery_alerts_entitled(),
-            !self.panels.connect.cube.members.members.is_empty(),
+            !self
+                .panels
+                .global_settings
+                .recovery_alerts
+                .recipients
+                .notified
+                .is_empty(),
             self.panels.global_settings.recovery_alerts.alerts_on(),
             self.wallet.is_some(),
         ) {
@@ -4421,17 +4430,29 @@ impl App {
                         } else {
                             None
                         };
-                    // Fold the re-report and the optional duress nudge into a
-                    // single extra task so the return arms below stay simple.
-                    let report_task = match duress_nudge_task {
-                        Some(nudge) => Task::batch([report_task, nudge]),
-                        None => report_task,
-                    };
-
                     // Vault-setup-completion trigger (PR 3): the new Vault has a
                     // keyholder set and a Connect session — offer the one-time
                     // recovery-alerts consent prompt (alerts pre-selected on).
-                    self.maybe_show_recovery_alerts_prompt();
+                    //
+                    // Dispatched as a status load rather than a direct
+                    // `maybe_show_recovery_alerts_prompt()` because the prompt
+                    // gates on the recipient list, and that list is resolved by
+                    // this very load. The `is_status_load` branch in the
+                    // RecoveryAlerts dispatch offers the prompt once the load
+                    // lands with the new Vault's keyholders in hand.
+                    let alerts_load_task = Task::done(Message::View(view::Message::Settings(
+                        view::SettingsMessage::RecoveryAlerts(
+                            view::RecoveryAlertsMessage::LoadStatus,
+                        ),
+                    )));
+
+                    // Fold the re-report, the optional duress nudge and the
+                    // alerts load into a single extra task so the return arms
+                    // below stay simple.
+                    let report_task = match duress_nudge_task {
+                        Some(nudge) => Task::batch([report_task, nudge, alerts_load_task]),
+                        None => Task::batch([report_task, alerts_load_task]),
+                    };
                     // Forward to the current panel; batch the nudge and the
                     // has_vault re-report in when present.
                     if let (Some(daemon), Some(panel)) =
@@ -5210,15 +5231,15 @@ impl App {
             // Vault Recovery Alerts dispatch (Estate Notifications — PR 2).
             // Like the Recovery Kit above, the handler needs the
             // authenticated client, the Connect cube id, the live wallet
-            // descriptor, the keyholder list, and the `recovery_alerts`
-            // entitlement — none plumbed through `State::update`.
+            // descriptor, and the `recovery_alerts` entitlement — none plumbed
+            // through `State::update`. The keyholder list is *not* injected:
+            // it's derived from the vault the handler's own load fetches.
             Message::View(view::Message::Settings(view::SettingsMessage::RecoveryAlerts(msg))) => {
                 let client = self.authenticated_coincube_client();
                 let server_cube_id = self.panels.connect.cube.server_cube_id;
                 let wallet = self.wallet.clone();
                 let entitled = self.panels.connect.account.is_recovery_alerts_entitled();
                 let escrow_entitled = self.panels.connect.account.is_inheritance_escrow_entitled();
-                let members = self.panels.connect.cube.members.members.clone();
                 let session_generation = self.panels.connect.account.session_generation();
                 let local_cube_id = self.cube_settings.id.clone();
                 // A *successful, current-session* status load is the only message
@@ -5257,7 +5278,6 @@ impl App {
                     wallet,
                     entitled,
                     escrow_entitled,
-                    &members,
                     session_generation,
                     &self.cache,
                     &local_cube_id,
@@ -5557,8 +5577,8 @@ impl App {
 /// must never consent on its behalf), it isn't already up, it hasn't been
 /// answered for this Cube, there's an authenticated Connect session with a
 /// resolved cube, alerts are available on the plan (defense-in-depth; universal
-/// after API PR 3), the Cube has ≥1 keyholder (someone to alert), and this
-/// Vault isn't already monitored.
+/// after API PR 3), the Vault has ≥1 reachable recovery recipient (someone the
+/// server can actually email), and this Vault isn't already monitored.
 #[allow(clippy::too_many_arguments)]
 fn should_show_recovery_alerts_prompt(
     already_showing: bool,
@@ -5566,7 +5586,7 @@ fn should_show_recovery_alerts_prompt(
     authenticated: bool,
     has_server_cube: bool,
     entitled: bool,
-    has_keyholders: bool,
+    has_recipients: bool,
     alerts_on: bool,
     has_vault: bool,
 ) -> bool {
@@ -5576,7 +5596,7 @@ fn should_show_recovery_alerts_prompt(
         && authenticated
         && has_server_cube
         && entitled
-        && has_keyholders
+        && has_recipients
         && !alerts_on
 }
 
@@ -5789,7 +5809,7 @@ mod tests {
     // Baseline: every gating precondition satisfied → prompt shows.
     fn prompt_args_all_go() -> (bool, bool, bool, bool, bool, bool, bool, bool) {
         // (already_showing, answered, authenticated, has_server_cube, entitled,
-        //  has_keyholders, alerts_on, has_vault)
+        //  has_recipients, alerts_on, has_vault)
         (false, false, true, true, true, true, false, true)
     }
 
@@ -5821,7 +5841,7 @@ mod tests {
         assert!(!should_show_recovery_alerts_prompt(
             false, false, true, true, false, true, false, true
         ));
-        // No keyholders → nobody to alert.
+        // No reachable recipients → nobody to alert.
         assert!(!should_show_recovery_alerts_prompt(
             false, false, true, true, true, false, false, true
         ));

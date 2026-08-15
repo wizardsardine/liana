@@ -18,7 +18,7 @@ use crate::app::state::settings::recovery_alerts::RecoveryAlerts;
 use crate::app::state::settings::recovery_kit::RecoveryKit;
 use crate::app::view::dashboard;
 use crate::app::view::message::*;
-use crate::services::coincube::RecoveryKitStatus;
+use crate::services::coincube::{RecoveryKitStatus, VaultMemberRole};
 use crate::services::fiat::{Currency, ALL_PRICE_SOURCES};
 use crate::services::inheritance::EscrowTier;
 
@@ -241,7 +241,7 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
     // Residual nudge (PR 3): with keyholders present but alerts off, they'd
     // never be told when the recovery window opens. Not a re-prompt — the
     // one-time consent card is durable — just a standing warning on the card.
-    if !alerts_on && !ra.keyholders.is_empty() {
+    if !alerts_on && !ra.recipients.notified.is_empty() {
         body = body.push(
             text(
                 "Your keyholders will NOT be alerted when this Vault's recovery window opens. \
@@ -292,17 +292,52 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
     if alerts_on {
         body = body.push(Space::new().height(Length::Fixed(4.0)));
         body = body.push(text("Keyholders who'd be notified").bold().size(14));
-        if ra.keyholders.is_empty() {
+        if ra.recipients.notified.is_empty() {
+            // Deliberately does *not* say "add keyholders": a Vault's
+            // keyholders are its signers, fixed when the descriptor is sealed
+            // at build time, and the backend rejects adding one to an active
+            // Vault. Pointing at an action with no button — and no backend
+            // path — is what this copy used to do.
             body = body.push(
-                text("No keyholders on this Cube yet — add keyholders so someone is alerted.")
-                    .size(13),
+                text(
+                    "No one would be alerted for this Vault. Alert recipients are this Vault's \
+                     keyholders and beneficiaries; its keyholders are fixed when the Vault is \
+                     built, so they can't be added to an existing Vault.",
+                )
+                .size(13),
             );
         } else {
             let mut who = Column::new().spacing(2);
-            for email in &ra.keyholders {
-                who = who.push(text(email.as_str()).size(13));
+            for r in &ra.recipients.notified {
+                // Tag beneficiaries so a mixed list stays honest under a
+                // heading that says "keyholders". Keyholders read plain.
+                let line = match r.role {
+                    VaultMemberRole::Keyholder => r.email.clone(),
+                    role => format!("{} — {}", r.email, role),
+                };
+                who = who.push(text(line).size(13));
             }
             body = body.push(who);
+        }
+        // Members who hold a notifiable role but have no address on file. The
+        // server skips these silently (they're keyholders added by key alone,
+        // with no contact row), so without this line a Vault can look covered
+        // while nobody is actually reachable.
+        if ra.recipients.unreachable > 0 {
+            let n = ra.recipients.unreachable;
+            let (noun, verb) = if n == 1 {
+                ("member", "has")
+            } else {
+                ("members", "have")
+            };
+            body = body.push(
+                text(format!(
+                    "{} {} of this Vault {} no email on file, so COINCUBE can't alert them.",
+                    n, noun, verb,
+                ))
+                .size(13)
+                .style(theme::text::secondary),
+            );
         }
     }
 
@@ -447,13 +482,18 @@ fn escrow_button<'a>(
     // `active == None` (tier on but unknown on this device) highlights nothing,
     // leaving every tier pressable so the owner can confirm/change it.
     let is_active = active == Some(this);
-    let on_press = (!busy && !is_active).then_some(
+    // Every tier keeps a press handler unless a change is in flight. The active
+    // one is a no-op — `SelectEscrow` returns early on a re-select of the known
+    // current tier — and that matters for appearance: iced paints a button with
+    // no `on_press` using `Status::Disabled`, so withholding it here made the
+    // *selected* tier read as greyed-out and unavailable rather than chosen.
+    let on_press = (!busy).then_some(
         SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::SelectEscrow(this)).into(),
     );
     if is_active {
         button::primary(None, label)
             .padding([8, 14])
-            .on_press_maybe(None)
+            .on_press_maybe(on_press)
             .into()
     } else {
         button::secondary(None, label)

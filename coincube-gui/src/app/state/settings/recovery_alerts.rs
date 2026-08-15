@@ -4,9 +4,15 @@
 //! Per-vault opt-in for recovery-path monitoring. Modeled on the Cube Recovery
 //! Kit card (`recovery_kit.rs`): the state container lives on the outer
 //! `SettingsState` so `App::update` can inject the authenticated
-//! `CoincubeClient`, the Connect cube id, the live wallet descriptor, the
-//! keyholder list, and the entitlements — none of which are plumbed through
-//! `State::update`.
+//! `CoincubeClient`, the Connect cube id, the live wallet descriptor, and the
+//! entitlements — none of which are plumbed through `State::update`.
+//!
+//! The keyholder list is **not** injected. It's derived from this card's own
+//! `GET .../vault` fetch via
+//! [`recovery_recipients`](crate::services::coincube::recovery_recipients),
+//! which mirrors the API's recipient query — so "who'd be notified" is the set
+//! the server's sweep will actually mail, not some adjacent notion of
+//! membership.
 //!
 //! The card exposes **two independent controls** backed by two server records:
 //!
@@ -30,7 +36,10 @@ use zeroize::Zeroizing;
 
 use crate::{
     app::{cache::Cache, message::Message, settings, view, wallet::Wallet},
-    services::coincube::{CoincubeClient, CubeMember, VaultMonitoringLevel, VaultMonitoringStatus},
+    services::coincube::{
+        recovery_recipients, CoincubeClient, RecoveryRecipients, VaultMonitoringLevel,
+        VaultMonitoringStatus,
+    },
     services::inheritance::{
         disable_alerts, disable_escrow, enable_alerts, enroll_escrow, EscrowTier,
     },
@@ -52,9 +61,13 @@ pub struct RecoveryAlerts {
     pub loading: bool,
     pub submitting: bool,
     pub error: Option<String>,
-    /// Keyholder emails (the cube members who'd be notified), snapshotted on
-    /// each load so the card can show exactly who would receive alerts.
-    pub keyholders: Vec<String>,
+    /// The people the server's recovery sweep would email — this Vault's
+    /// keyholder and beneficiary members, resolved from the same `GET
+    /// .../vault` response that resolves [`Self::vault_id`] and refreshed on
+    /// every load. Derived by [`recovery_recipients`], which mirrors the API's
+    /// own recipient query, so the card lists exactly the set that will be
+    /// mailed — never a different notion of "member".
+    pub recipients: RecoveryRecipients,
     /// Whether the account carries the `recovery_alerts` entitlement (gates the
     /// alerts toggle / unlocks the card). Universal after API PR 3; kept as a
     /// defense-in-depth check.
@@ -96,7 +109,7 @@ impl RecoveryAlerts {
             loading: false,
             submitting: false,
             error: None,
-            keyholders: Vec::new(),
+            recipients: RecoveryRecipients::default(),
             entitled: false,
             escrow_entitled: false,
             no_vault: false,
@@ -196,12 +209,28 @@ impl RecoveryAlerts {
     /// Fold a successful `LoadStatus` into state. The status carries the
     /// server-reported `escrowed_artifacts`, so caching it is enough — both the
     /// alerts state and the escrow tier are derived from it. No session tier to
-    /// reset.
-    fn apply_status_loaded(&mut self, vault_id: u64, status: VaultMonitoringStatus) {
+    /// reset. The recipients ride along from the same fetch, so the "who'd be
+    /// notified" list can never drift from the vault the status describes.
+    fn apply_status_loaded(
+        &mut self,
+        vault_id: u64,
+        recipients: RecoveryRecipients,
+        status: VaultMonitoringStatus,
+    ) {
         self.vault_id = Some(vault_id);
+        self.recipients = recipients;
         self.status = Some(status);
         self.no_vault = false;
         self.error = None;
+    }
+
+    /// Forget the resolved vault: no vault id, no status, nobody to notify.
+    /// Used by the two "there's nothing to monitor" paths so a stale recipient
+    /// list can't outlive the vault it came from.
+    fn clear_vault(&mut self) {
+        self.vault_id = None;
+        self.status = None;
+        self.recipients = RecoveryRecipients::default();
     }
 }
 
@@ -210,7 +239,7 @@ fn ra_msg(m: RecoveryAlertsMessage) -> Message {
     Message::View(view::Message::Settings(SettingsMessage::RecoveryAlerts(m)))
 }
 
-/// App-level dispatcher. `client` / `server_cube_id` / `wallet` / `members`
+/// App-level dispatcher. `client` / `server_cube_id` / `wallet`
 /// are injected by `App::update`; `entitled` is the account's `recovery_alerts`
 /// entitlement (alerts toggle) and `escrow_entitled` the `inheritanceEscrow` one
 /// (escrow tier selector). `session_generation` is the connect account's current
@@ -227,7 +256,6 @@ pub fn update(
     wallet: Option<Arc<Wallet>>,
     entitled: bool,
     escrow_entitled: bool,
-    members: &[CubeMember],
     session_generation: u64,
     cache: &Cache,
     local_cube_id: &str,
@@ -236,9 +264,6 @@ pub fn update(
     ra.escrow_entitled = escrow_entitled;
     match msg {
         RecoveryAlertsMessage::LoadStatus => {
-            // Refresh the keyholder snapshot every load so the card reflects
-            // the current cube membership.
-            ra.keyholders = members.iter().map(|m| m.user.email.clone()).collect();
             ra.error = None;
 
             let (Some(client), Some(cube_id)) = (client, server_cube_id) else {
@@ -249,8 +274,7 @@ pub fn update(
                 // after a fetch), and a stale id + non-Off level would keep
                 // `recovery_heartbeat_task` POSTing to a vault that's gone.
                 ra.no_vault = server_cube_id.is_none();
-                ra.vault_id = None;
-                ra.status = None;
+                ra.clear_vault();
                 ra.loaded_once = true;
                 return Task::none();
             };
@@ -280,11 +304,16 @@ pub fn update(
                         .get_connect_vault(cube_id)
                         .await
                         .map_err(|e| e.to_string())?;
+                    // Same fetch, two answers: the vault id the monitoring
+                    // record hangs off, and the member rows the server would
+                    // mail. The API preloads the members' contacts on this
+                    // endpoint, so the emails are already in hand.
+                    let recipients = recovery_recipients(&vault.members);
                     let status = client
                         .get_vault_monitoring(cube_id)
                         .await
                         .map_err(|e| e.to_string())?;
-                    Ok((vault.id, status))
+                    Ok((vault.id, recipients, status))
                 },
                 move |res| ra_msg(RecoveryAlertsMessage::StatusLoaded(res, session_generation)),
             )
@@ -299,12 +328,12 @@ pub fn update(
             ra.loading = false;
             ra.loaded_once = true;
             match res {
-                Ok((vid, status)) => {
+                Ok((vid, recipients, status)) => {
                     // Cache the freshly-loaded status. Both the alerts state and
                     // the escrow tier derive from its `escrowed_artifacts`, so
                     // the reload reflects the true server selection (including
                     // changes made on another device). See `escrow_tier`.
-                    ra.apply_status_loaded(vid, status);
+                    ra.apply_status_loaded(vid, recipients, status);
                 }
                 Err(e) => {
                     // A missing Connect vault (the cube has no vault yet, or a
@@ -318,8 +347,7 @@ pub fn update(
                     // monitor. A later successful load re-resolves both.
                     if e.to_lowercase().contains("not found") {
                         ra.no_vault = true;
-                        ra.vault_id = None;
-                        ra.status = None;
+                        ra.clear_vault();
                     } else {
                         ra.error = Some(e);
                     }
@@ -421,6 +449,14 @@ pub fn update(
             )
         }
         RecoveryAlertsMessage::SelectEscrow(tier) => {
+            // Re-picking the tier whose PIN we're already collecting is a
+            // no-op. Returning before the reset below matters: the card
+            // highlights Full Cube while `awaiting_pin`, and that highlighted
+            // button is pressable, so without this a stray click would wipe the
+            // digits typed so far and hide the field.
+            if ra.awaiting_pin && matches!(tier, EscrowTier::FullCube) {
+                return Task::none();
+            }
             ra.awaiting_pin = false;
             ra.pin.clear();
             if !escrow_entitled {
@@ -740,6 +776,21 @@ mod tests {
         ra
     }
 
+    /// A recipient set with `n` keyholders and `unreachable` members the
+    /// server couldn't mail.
+    fn recipients(n: usize, unreachable: usize) -> RecoveryRecipients {
+        use crate::services::coincube::{RecoveryRecipient, VaultMemberRole};
+        RecoveryRecipients {
+            notified: (0..n)
+                .map(|i| RecoveryRecipient {
+                    email: format!("kh{}@example.com", i),
+                    role: VaultMemberRole::Keyholder,
+                })
+                .collect(),
+            unreachable,
+        }
+    }
+
     // ── Server-derived escrow tier: the PR-1 derivation matrix ──────────────
 
     #[test]
@@ -873,7 +924,11 @@ mod tests {
         // Vault-only straight from the server — no stale Full-Cube assertion.
         let mut ra = with_status(monitoring_on_with(Some(vec!["descriptor", "seed"])));
         assert_eq!(ra.escrow_tier(), Some(EscrowTier::FullCube));
-        ra.apply_status_loaded(7, monitoring_on_with(Some(vec!["descriptor"])));
+        ra.apply_status_loaded(
+            7,
+            RecoveryRecipients::default(),
+            monitoring_on_with(Some(vec!["descriptor"])),
+        );
         assert_eq!(ra.escrow_tier(), Some(EscrowTier::VaultOnly));
         assert_eq!(ra.vault_id, Some(7));
         assert!(!ra.no_vault);
@@ -885,7 +940,7 @@ mod tests {
         // report `None` ("on, tier unknown") — the fallback banner — rather than
         // asserting whatever this device last enrolled.
         let mut ra = with_status(monitoring_on_with(Some(vec!["descriptor", "seed"])));
-        ra.apply_status_loaded(7, monitoring_on_with(None));
+        ra.apply_status_loaded(7, RecoveryRecipients::default(), monitoring_on_with(None));
         assert_eq!(ra.escrow_tier(), None);
     }
 
@@ -894,6 +949,7 @@ mod tests {
         let mut ra = with_status(monitoring_on_with(Some(vec!["descriptor", "seed"])));
         ra.apply_status_loaded(
             7,
+            RecoveryRecipients::default(),
             VaultMonitoringStatus {
                 level: VaultMonitoringLevel::Off,
                 ..VaultMonitoringStatus::default()
@@ -901,5 +957,71 @@ mod tests {
         );
         assert_eq!(ra.escrow_tier(), Some(EscrowTier::Off));
         assert!(!ra.alerts_on());
+    }
+
+    // ── Who'd be notified: sourced from the vault, never stale ──────────────
+
+    #[test]
+    fn a_load_populates_the_recipient_list() {
+        // The regression this whole change exists for: before, the list came
+        // from a cube-member vector that no shipped build ever filled, so the
+        // card claimed "no keyholders" on a vault that had them.
+        let mut ra = RecoveryAlerts::new();
+        assert!(ra.recipients.notified.is_empty());
+        ra.apply_status_loaded(7, recipients(2, 1), monitoring_on_with(Some(vec![])));
+        assert_eq!(ra.recipients.notified.len(), 2);
+        assert_eq!(ra.recipients.unreachable, 1);
+    }
+
+    #[test]
+    fn a_reload_replaces_rather_than_accumulates() {
+        // Membership can shrink (a member removed on another device); the list
+        // must track the latest fetch, not union with it.
+        let mut ra = RecoveryAlerts::new();
+        ra.apply_status_loaded(7, recipients(3, 0), monitoring_on_with(Some(vec![])));
+        ra.apply_status_loaded(7, recipients(1, 0), monitoring_on_with(Some(vec![])));
+        assert_eq!(ra.recipients.notified.len(), 1);
+    }
+
+    #[test]
+    fn re_picking_full_cube_during_pin_entry_keeps_the_typed_pin() {
+        // The card highlights Full Cube while collecting the PIN, and that
+        // highlighted button is pressable (so the selected tier doesn't render
+        // with the disabled paint). A stray click on it must not wipe the
+        // digits typed so far.
+        let mut ra = RecoveryAlerts::new();
+        ra.awaiting_pin = true;
+        ra.pin = EscrowPin::from("12".to_string());
+
+        let cache = Cache::default();
+        let _ = update(
+            &mut ra,
+            RecoveryAlertsMessage::SelectEscrow(EscrowTier::FullCube),
+            None,
+            None,
+            None,
+            true,
+            true,
+            0,
+            &cache,
+            "cube-1",
+        );
+
+        assert!(ra.awaiting_pin, "the PIN field must stay open");
+        assert_eq!(ra.pin.as_str(), "12", "the typed PIN must survive");
+    }
+
+    #[test]
+    fn losing_the_vault_clears_the_recipient_list() {
+        // `clear_vault` backs both "nothing to monitor" paths (no Connect cube,
+        // and a not-found vault). A stale list would keep naming people who'd
+        // be alerted for a vault the server no longer has.
+        let mut ra = RecoveryAlerts::new();
+        ra.apply_status_loaded(7, recipients(2, 0), monitoring_on_with(Some(vec![])));
+        ra.clear_vault();
+        assert!(ra.recipients.notified.is_empty());
+        assert_eq!(ra.recipients.unreachable, 0);
+        assert_eq!(ra.vault_id, None);
+        assert!(ra.status.is_none());
     }
 }
