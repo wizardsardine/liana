@@ -439,13 +439,24 @@ pub enum RecoveryAlertsMessage {
     /// then GETs `/vaults/{id}/monitoring`). Fired on entering General
     /// settings and after a successful change.
     LoadStatus,
-    /// Async result of `LoadStatus`: `(connectVaultId, status)`. The trailing
-    /// `u64` is the `session_generation` captured when the load was spawned;
-    /// the handler drops the result if the session has since changed (logout /
-    /// account switch) so a prior account's vault id + status can't be written
-    /// into the reset state.
+    /// Async result of `LoadStatus`: `(connectVaultId, recipients, status)`.
+    /// The recipients are derived from the same `GET .../vault` response that
+    /// resolves the vault id — they're the people the server's recovery sweep
+    /// would email, so the card can list exactly that set (see
+    /// `services::coincube::recovery_recipients`). The trailing `u64` is the
+    /// `session_generation` captured when the load was spawned; the handler
+    /// drops the result if the session has since changed (logout / account
+    /// switch) so a prior account's vault id + status can't be written into the
+    /// reset state.
     StatusLoaded(
-        Result<(u64, crate::services::coincube::VaultMonitoringStatus), String>,
+        Result<
+            (
+                u64,
+                crate::services::coincube::RecoveryRecipients,
+                crate::services::coincube::VaultMonitoringStatus,
+            ),
+            String,
+        >,
         u64,
     ),
     /// Flip the standalone **Recovery alerts** toggle (monitoring on/off),

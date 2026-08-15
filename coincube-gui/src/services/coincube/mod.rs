@@ -1620,6 +1620,236 @@ pub fn member_joined_after_vault(member_joined_at: &str, vault_created_at: &str)
     }
 }
 
+/// A person the API's recovery sweep would email when this Vault's recovery
+/// window approaches or opens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryRecipient {
+    pub email: String,
+    pub role: VaultMemberRole,
+}
+
+/// Outcome of [`recovery_recipients`]: who'd be emailed, plus how many Vault
+/// members hold a notifiable role but can't be reached.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecoveryRecipients {
+    /// The distinct people the sweep would email, keyholders first.
+    pub notified: Vec<RecoveryRecipient>,
+    /// Keyholder/beneficiary members with no contact email on file. The server
+    /// skips these silently, so they're counted rather than listed — a Vault
+    /// whose keyholders were all added by key alone has nobody to alert even
+    /// though the member rows exist.
+    pub unreachable: usize,
+}
+
+/// The people the API would email about this Vault's recovery window, derived
+/// from its member rows.
+///
+/// Mirrors the server's own resolution in
+/// `coincube-api/services/connect/vault/monitoring/repository.go`
+/// (`Repository.RecoveryRecipients`) so the desktop shows exactly the set the
+/// sweep will mail, and nothing else:
+///
+/// - only `keyholder` and `beneficiary` roles (observers are never notified);
+/// - the address is the member's contact's user email — a member with no
+///   contact row, or a contact with no email, is skipped;
+/// - deduped by email, with the **keyholder** row winning a role conflict
+///   (the server's `role DESC, id ASC` ordering puts "keyholder" first).
+///
+/// Note this is a different set from the escrow recipients that
+/// `services::inheritance::escrow::keyholders_from_vault` builds: escrow seals
+/// only to keyholders with a *registered key*, whereas alerts go to anyone with
+/// a reachable email. A beneficiary is alerted but holds no envelope.
+pub fn recovery_recipients(members: &[VaultMemberResponse]) -> RecoveryRecipients {
+    let mut out = RecoveryRecipients::default();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Two passes rather than a sort, so keyholders win a duplicate email
+    // regardless of the order the server listed the rows in.
+    for role in [VaultMemberRole::Keyholder, VaultMemberRole::Beneficiary] {
+        for m in members.iter().filter(|m| m.role == role) {
+            let email = m
+                .contact
+                .as_ref()
+                .and_then(|c| c.contact_user.as_ref())
+                .map(|u| u.email.as_str())
+                .unwrap_or("");
+            if email.is_empty() {
+                out.unreachable += 1;
+                continue;
+            }
+            if seen.insert(email.to_string()) {
+                out.notified.push(RecoveryRecipient {
+                    email: email.to_string(),
+                    role,
+                });
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod recovery_recipients_tests {
+    use super::*;
+
+    /// A member row with the given role and, optionally, a contact email.
+    fn member(id: u64, role: VaultMemberRole, email: Option<&str>) -> VaultMemberResponse {
+        VaultMemberResponse {
+            id,
+            contact_id: email.map(|_| id),
+            key_id: None,
+            role,
+            contact: email.map(|e| VaultMemberContactSummary {
+                id,
+                contact_user: Some(VaultMemberContactUserSummary {
+                    id,
+                    email: e.to_string(),
+                }),
+            }),
+            key: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn lists_keyholders_and_beneficiaries_keyholders_first() {
+        let got = recovery_recipients(&[
+            member(1, VaultMemberRole::Beneficiary, Some("bea@example.com")),
+            member(2, VaultMemberRole::Keyholder, Some("kay@example.com")),
+        ]);
+        assert_eq!(
+            got.notified,
+            vec![
+                RecoveryRecipient {
+                    email: "kay@example.com".into(),
+                    role: VaultMemberRole::Keyholder,
+                },
+                RecoveryRecipient {
+                    email: "bea@example.com".into(),
+                    role: VaultMemberRole::Beneficiary,
+                },
+            ]
+        );
+        assert_eq!(got.unreachable, 0);
+    }
+
+    #[test]
+    fn observers_are_never_notified() {
+        // The server's role filter is `IN (keyholder, beneficiary)` — an
+        // observer is neither listed nor counted as unreachable.
+        let got = recovery_recipients(&[member(
+            1,
+            VaultMemberRole::Observer,
+            Some("obs@example.com"),
+        )]);
+        assert!(got.notified.is_empty());
+        assert_eq!(got.unreachable, 0);
+    }
+
+    #[test]
+    fn duplicate_email_keeps_the_keyholder_row() {
+        // One person invited under two roles is one recipient, and the
+        // more-capable role wins (it selects the escrow-aware alert copy).
+        let got = recovery_recipients(&[
+            member(1, VaultMemberRole::Beneficiary, Some("same@example.com")),
+            member(2, VaultMemberRole::Keyholder, Some("same@example.com")),
+        ]);
+        assert_eq!(got.notified.len(), 1);
+        assert_eq!(got.notified[0].role, VaultMemberRole::Keyholder);
+        // The de-duplicated row is not "unreachable" — that person IS alerted.
+        assert_eq!(got.unreachable, 0);
+    }
+
+    #[test]
+    fn members_without_a_contact_email_are_counted_not_listed() {
+        // A keyholder added by key alone (the Vault Builder's `contact_id:
+        // None` path) has no address, so the sweep skips it silently.
+        let mut no_email_contact = member(3, VaultMemberRole::Keyholder, Some("x@example.com"));
+        no_email_contact.contact = Some(VaultMemberContactSummary {
+            id: 3,
+            contact_user: None,
+        });
+        let got = recovery_recipients(&[
+            member(1, VaultMemberRole::Keyholder, None),
+            member(2, VaultMemberRole::Beneficiary, None),
+            no_email_contact,
+        ]);
+        assert!(got.notified.is_empty());
+        assert_eq!(got.unreachable, 3);
+    }
+
+    #[test]
+    fn a_vault_with_no_members_notifies_nobody() {
+        let got = recovery_recipients(&[]);
+        assert!(got.notified.is_empty());
+        assert_eq!(got.unreachable, 0);
+    }
+
+    #[test]
+    fn recipients_survive_a_round_trip_through_the_real_wire_shape() {
+        // Guards the contract this whole feature rests on: the emails must
+        // actually arrive on `GET /connect/cubes/{id}/vault`. Payload mirrors
+        // the API's `VaultMemberResponse` / `ContactSummary` json tags
+        // (coincube-api/services/connect/vault/types/types.go:35 and
+        // services/connect/types/types.go:10) — a rename on either side breaks
+        // this test rather than silently emptying the card.
+        //
+        // It's the *whole* server payload, including `fingerprint`, which
+        // `ConnectVaultResponse` deliberately doesn't model: the point is that
+        // this deserializes as the API actually sends it, not as a
+        // desktop-shaped subset would.
+        let vault: ConnectVaultResponse = serde_json::from_str(
+            r#"{
+                "id": 42,
+                "cubeId": 7,
+                "fingerprint": "1a2b3c4d",
+                "timelockDays": 90,
+                "timelockExpiresAt": "2026-11-01T00:00:00Z",
+                "lastResetAt": "2026-08-01T00:00:00Z",
+                "status": "active",
+                "createdAt": "2026-08-01T00:00:00Z",
+                "updatedAt": "2026-08-01T00:00:00Z",
+                "members": [
+                    {
+                        "id": 1,
+                        "contactId": 11,
+                        "keyId": 21,
+                        "role": "keyholder",
+                        "contact": {
+                            "id": 11,
+                            "contactUser": { "id": 101, "email": "kay@example.com" }
+                        },
+                        "createdAt": "2026-08-01T00:00:00Z"
+                    },
+                    {
+                        "id": 2,
+                        "keyId": 22,
+                        "role": "keyholder",
+                        "createdAt": "2026-08-01T00:00:00Z"
+                    },
+                    {
+                        "id": 3,
+                        "contactId": 13,
+                        "role": "observer",
+                        "contact": {
+                            "id": 13,
+                            "contactUser": { "id": 103, "email": "obs@example.com" }
+                        },
+                        "createdAt": "2026-08-01T00:00:00Z"
+                    }
+                ]
+            }"#,
+        )
+        .expect("the vault payload must deserialize");
+
+        let got = recovery_recipients(&vault.members);
+        assert_eq!(got.notified.len(), 1);
+        assert_eq!(got.notified[0].email, "kay@example.com");
+        // The key-only keyholder (no contact) is unreachable; the observer is
+        // simply not a recipient.
+        assert_eq!(got.unreachable, 1);
+    }
+}
+
 /// Error code string returned by the backend's W9 guard. Public so callers
 /// can match on it when routing 409s.
 pub const ERR_KEY_ALREADY_USED_IN_VAULT: &str = "KEY_ALREADY_USED_IN_VAULT";
