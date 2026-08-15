@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Network};
-use coincube_core::signer::{MasterSigner, SignerError};
+use coincube_core::signer::SignerError;
 use coincube_ui::widget::Element;
 use iced::Task;
 use rand::seq::SliceRandom;
@@ -948,11 +948,12 @@ impl GeneralSettingsState {
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            // The decryption *is* the PIN check — a wrong PIN
-                            // fails the seed file's GCM tag. The
-                            // `verify_pin` call that used to gate this was the
-                            // cheap Argon2 oracle (m=19 MiB vs the seed file's
-                            // 256 MiB) and is gone; see
+                            // `load_mnemonic_words` is the PIN check: the PIN
+                            // the unlock authenticated when a session can
+                            // answer, the seed file's GCM tag when it cannot.
+                            // The `verify_pin` call that used to gate this was
+                            // the cheap Argon2 oracle (m=19 MiB vs the seed
+                            // file's 256 MiB) and is gone; see
                             // PLAN-cube-unlock-hardening I1.
                             let mut throttle =
                                 unlock::throttle::ThrottleState::load(&throttle_root);
@@ -1239,14 +1240,41 @@ impl GeneralSettingsState {
     }
 }
 
-/// Load the encrypted mnemonic from the datadir and return the 12 words
-/// as a `Vec<String>`. The password is verified by the decryption step —
-/// if the PIN is wrong, decryption returns an error.
+/// This Cube's master seed words, gated on `pin`.
 ///
-/// Visible to sibling modules under `settings::` (specifically
-/// `recovery_kit.rs`, which reuses this helper for the same PIN →
-/// mnemonic path). Kept here rather than hoisted to `mod.rs` because
-/// this is where the backup flow's PIN gate already lives.
+/// # Where the words come from
+///
+/// The session cache first, exactly as the Liquid and Spark loaders do. The
+/// unlock that opened this Cube already paid the ~831 ms Argon2id pass and is
+/// holding the decrypted signer, so re-reading the seed file buys nothing.
+/// Reading from disk is the fallback for the entry points that have no session
+/// — a Cube the installer just restored lands in the app without one.
+///
+/// # What checks the PIN
+///
+/// Not the decryption, on the fast path: there is no decryption on it.
+/// `session::unlocked_signer_with_pin_verification` compares against the PIN the
+/// unlock authenticated, under the session lock, which proves the same thing —
+/// nothing is handed back without the PIN that opened this Cube. What it does
+/// *not* do is cost 831 ms a guess, so the escalating lockout in
+/// `services::unlock::throttle` is what rate-limits this surface. Every caller
+/// checks it before calling here and charges it on every wrong PIN; see
+/// [`is_wrong_pin`].
+///
+/// A wrong PIN short-circuits rather than falling through to disk. Falling
+/// through would pay a full Argon2id pass to re-derive an answer the session has
+/// already given, and would report `InvalidPassword` either way.
+///
+/// The disk fallback goes through `services::unlock`, **not**
+/// `MasterSigner::from_datadir_by_fingerprint`: `coincube-core` has no keystore
+/// access, so it answers `DeviceSecretRequired` for every `ENCRYPTED_V3` file —
+/// which, once the Tier 1 migration has run, is every Cube. Using it here is
+/// what made every one of these flows fail with a keychain error.
+///
+/// Visible to sibling modules under `settings::` — `recovery_kit.rs` and
+/// `recovery_alerts.rs` reuse it for the same PIN → mnemonic path. Kept here
+/// rather than hoisted to `mod.rs` because this is where the backup flow's PIN
+/// gate already lives.
 pub(super) fn load_mnemonic_words(
     datadir: &std::path::Path,
     network: Network,
@@ -1254,13 +1282,24 @@ pub(super) fn load_mnemonic_words(
     pin: &str,
     cube_id: &str,
 ) -> Result<Vec<String>, SignerError> {
-    let signer = MasterSigner::from_datadir_by_fingerprint(
-        datadir,
-        network,
-        fingerprint,
-        Some(pin),
-        cube_id,
-    )?;
+    let signer =
+        crate::app::session::unlocked_signer_with_pin_verification(cube_id, fingerprint, pin)
+            .or_else(|e| {
+                // A wrong PIN is a wrong PIN. Keep it, so the caller's throttle
+                // records the guess rather than reporting an operational fault.
+                if matches!(e, SignerError::InvalidPassword) {
+                    return Err(e);
+                }
+                // No session, or none holding this key.
+                crate::services::unlock::open_seed_by_fingerprint(
+                    datadir,
+                    network,
+                    fingerprint,
+                    pin,
+                    cube_id,
+                )
+            })?;
+
     Ok(signer.words().iter().map(|w| (*w).to_string()).collect())
 }
 

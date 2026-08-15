@@ -46,7 +46,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
-use coincube_core::signer::MasterSigner;
+use coincube_core::signer::{MasterSigner, SignerError};
+use subtle::ConstantTimeEq as _;
 use zeroize::Zeroizing;
 
 struct Session {
@@ -175,6 +176,80 @@ pub fn unlocked_signer(cube_id: &str, fingerprint: Fingerprint) -> Option<Master
         .and_then(|(_, signer)| signer.try_clone().ok())
 }
 
+/// The already-decrypted signer for `cube_id`, released only to a caller that
+/// can produce the PIN this session was opened with.
+///
+/// This is the seed-*reveal* surfaces' door to the cache — `load_mnemonic_words`
+/// and its three callers (Backup Master Seed, Recovery Kit, Full-Cube escrow).
+/// [`unlocked_signer`] is not usable there: it asks only "is this the open
+/// Cube?", which is the right question for the Liquid and Spark loaders (they
+/// run *because* an unlock just succeeded) and the wrong one for a screen that
+/// puts the permanent secret in front of the user. Those screens have their own
+/// PIN prompt, and it has to actually mean something.
+///
+/// Both guards and the clone happen under **one** acquisition of the session
+/// lock. Reading the PIN with [`pin_for`] and then fetching the signer with
+/// [`unlocked_signer`] would be two, with an idle auto-lock or a Cube switch
+/// able to land in between.
+///
+/// # This is not a cheap Argon2 oracle, but it is a cheap check
+///
+/// It runs no Argon2id, so a guess here costs microseconds where
+/// trial-decrypting the seed file costs ~831 ms. That is not the failure
+/// `PLAN-cube-unlock-hardening` I1 is about — nothing is written to disk for an
+/// offline attacker to grind, and reaching this code at all means the Cube is
+/// already open in a live process. What *does* rate-limit these surfaces is the
+/// escalating lockout in `services::unlock::throttle`, which every caller checks
+/// before it gets here and charges on every `InvalidPassword` below.
+///
+/// The comparison is constant-time for the same belt-and-braces reason the
+/// pairing code is: `==` on a secret short-circuits at the first differing byte,
+/// and that is free to get right here and awkward to notice later.
+///
+/// # Errors
+///
+/// - `PasswordRequired` — no session, a session belonging to a different Cube,
+///   or a **passkey** Cube (no PIN at all; those flows re-derive through a
+///   WebAuthn assertion instead, and must not be handed the seed for the empty
+///   string).
+/// - `InvalidPassword` — the PIN is wrong. The only variant callers charge to
+///   the throttle; see `is_wrong_pin`.
+/// - `SignerNotFound` — the session holds no signer, or holds one for a
+///   different key. A Cube can hold both a master seed and a Vault hot signer.
+///
+/// Everything except `InvalidPassword` means "this cache cannot answer" and the
+/// caller should read the seed file instead.
+pub fn unlocked_signer_with_pin_verification(
+    cube_id: &str,
+    fingerprint: Fingerprint,
+    pin: &str,
+) -> Result<MasterSigner, SignerError> {
+    let guard = lock_session();
+    let session = guard
+        .as_ref()
+        .filter(|s| s.cube_id == cube_id)
+        .ok_or(SignerError::PasswordRequired)?;
+
+    let current_pin = session.pin.as_ref().ok_or(SignerError::PasswordRequired)?;
+
+    if !bool::from(current_pin.as_bytes().ct_eq(pin.as_bytes())) {
+        return Err(SignerError::InvalidPassword);
+    }
+
+    let (fp, signer) = session
+        .signer
+        .as_ref()
+        .ok_or(SignerError::SignerNotFound(fingerprint))?;
+
+    if *fp != fingerprint {
+        return Err(SignerError::SignerNotFound(fingerprint));
+    }
+
+    signer
+        .try_clone()
+        .map_err(|_| SignerError::SignerNotFound(fingerprint))
+}
+
 /// The open Cube's PIN, if `cube_id` is the Cube that is actually open **and**
 /// that Cube has a PIN at all. A passkey Cube answers `None`.
 pub fn pin_for(cube_id: &str) -> Option<Zeroizing<String>> {
@@ -294,6 +369,137 @@ mod tests {
         // And again — it is a cache, not a one-shot handoff. Liquid and Spark
         // both need one.
         assert_eq!(unlocked_signer("cube-a", fp).unwrap().words(), words);
+        close();
+    }
+
+    #[test]
+    fn the_pin_verified_signer_round_trips() {
+        let _g = guard();
+        close();
+        let (fp, s) = signer();
+        let words = s.words();
+
+        store_unlocked_signer("cube-a", fp, s);
+        open("cube-a", Zeroizing::new("1234".to_string()));
+
+        let got = unlocked_signer_with_pin_verification("cube-a", fp, "1234")
+            .expect("the unlock's own PIN opens the cache");
+        assert_eq!(got.words(), words);
+        // A cache, not a one-shot: the Recovery Kit flow can be run twice in
+        // one session without re-unlocking the Cube.
+        assert_eq!(
+            unlocked_signer_with_pin_verification("cube-a", fp, "1234")
+                .unwrap()
+                .words(),
+            words
+        );
+        close();
+    }
+
+    #[test]
+    fn a_wrong_pin_never_reaches_the_cached_signer() {
+        // The whole reason this function exists rather than `unlocked_signer`.
+        // The seed-reveal screens prompt for a PIN; if the cache answered
+        // regardless, that prompt would be decoration and anyone at an
+        // unattended open Cube would get the permanent secret for free.
+        let _g = guard();
+        close();
+        let (fp, s) = signer();
+
+        store_unlocked_signer("cube-a", fp, s);
+        open("cube-a", Zeroizing::new("1234".to_string()));
+
+        assert!(
+            matches!(
+                unlocked_signer_with_pin_verification("cube-a", fp, "1235"),
+                Err(SignerError::InvalidPassword)
+            ),
+            "a wrong PIN must be `InvalidPassword` — it is the only variant \
+             `is_wrong_pin` charges to the unlock throttle, so anything else \
+             gives an attacker unlimited free guesses at this surface"
+        );
+        close();
+    }
+
+    #[test]
+    fn a_passkey_session_refuses_the_pin_door_rather_than_matching_nothing() {
+        // A passkey Cube has `pin: None`. This must be `PasswordRequired` —
+        // "the cache cannot answer, ask the disk" — and never a match. The
+        // callers re-derive through a WebAuthn assertion instead.
+        let _g = guard();
+        close();
+        let (fp, s) = signer();
+
+        store_unlocked_signer("cube-passkey", fp, s);
+        open_without_pin("cube-passkey");
+
+        for pin in ["", "1234"] {
+            assert!(
+                matches!(
+                    unlocked_signer_with_pin_verification("cube-passkey", fp, pin),
+                    Err(SignerError::PasswordRequired)
+                ),
+                "a passkey Cube handed out its seed for {:?}",
+                pin
+            );
+        }
+        close();
+    }
+
+    #[test]
+    fn the_pin_door_keeps_the_cube_and_fingerprint_guards() {
+        // Same two guards as `unlocked_signer`, and they must not be weakened
+        // just because a PIN was also presented. The error *kind* matters as
+        // much as the refusal: neither of these is a wrong PIN, so neither may
+        // cost the user a throttle penalty for a fault no PIN can fix.
+        let _g = guard();
+        close();
+        let (fp, s) = signer();
+        let (other_fp, _other) = signer();
+
+        store_unlocked_signer("cube-a", fp, s);
+        open("cube-a", Zeroizing::new("1234".to_string()));
+
+        assert!(
+            matches!(
+                unlocked_signer_with_pin_verification("cube-b", fp, "1234"),
+                Err(SignerError::PasswordRequired)
+            ),
+            "wrong Cube — even with cube-a's PIN"
+        );
+        assert!(
+            matches!(
+                unlocked_signer_with_pin_verification("cube-a", other_fp, "1234"),
+                Err(SignerError::SignerNotFound(_))
+            ),
+            "wrong fingerprint — a Cube can hold a master seed and a Vault hot signer"
+        );
+
+        close();
+        assert!(
+            matches!(
+                unlocked_signer_with_pin_verification("cube-a", fp, "1234"),
+                Err(SignerError::PasswordRequired)
+            ),
+            "a locked Cube must not reveal its seed to the PIN it was opened with"
+        );
+    }
+
+    #[test]
+    fn a_session_holding_no_signer_asks_the_caller_to_read_the_disk() {
+        // The restore path opens a Cube without ever storing a signer. The
+        // right answer is `SignerNotFound` — not a wrong PIN — so the caller
+        // falls through to the seed file instead of telling the user their
+        // correct PIN was wrong.
+        let _g = guard();
+        close();
+        let (fp, _s) = signer();
+
+        open("cube-a", Zeroizing::new("1234".to_string()));
+        assert!(matches!(
+            unlocked_signer_with_pin_verification("cube-a", fp, "1234"),
+            Err(SignerError::SignerNotFound(_))
+        ));
         close();
     }
 

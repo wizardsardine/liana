@@ -969,8 +969,10 @@ fn verify_pin(rk: &mut RecoveryKit, cache: &Cache, local_cube_id: &str) -> Task<
             // state field); here we promote at the earliest
             // reachable point.
             tokio::task::spawn_blocking(move || {
-                // Decrypting the seed file *is* the PIN check (I1); the cheap
-                // `verify_pin` hash that used to gate this is gone.
+                // `load_mnemonic_words` is the PIN check: the PIN the unlock
+                // authenticated when a session can answer, the seed file's GCM
+                // tag when it cannot. The cheap `verify_pin` hash that used to
+                // gate this is gone (I1).
                 let mut throttle =
                     crate::services::unlock::throttle::ThrottleState::load(&throttle_root);
                 match super::general::load_mnemonic_words(

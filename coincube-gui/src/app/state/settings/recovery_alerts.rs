@@ -707,8 +707,9 @@ fn seed_blob_cube(cache: &Cache, local_cube_id: &str) -> Result<SeedBlobCube, St
 }
 
 /// Verifies the PIN, unlocks the mnemonic, and serialises the full seed blob
-/// JSON for Full-Cube escrow. Runs on a blocking thread (Argon2 PIN verify +
-/// disk read). The mnemonic is wiped (`Zeroizing`) as soon as the phrase string
+/// JSON for Full-Cube escrow. Runs on a blocking thread: the session usually
+/// answers immediately, but with no session this is an Argon2 pass plus a disk
+/// read. The mnemonic is wiped (`Zeroizing`) as soon as the phrase string
 /// is built, and the serialised JSON — which itself contains the plaintext seed
 /// — is returned in a `Zeroizing` buffer so it's wiped once escrow sealing is
 /// done rather than lingering on the heap.
@@ -730,8 +731,9 @@ fn build_seed_blob_json(
     let fingerprint = cube_settings
         .master_signer_fingerprint
         .ok_or("This Cube has no master signer.")?;
-    // Decrypting the seed file *is* the PIN check (I1) — the cheap
-    // `verify_pin` hash that used to gate this is gone.
+    // `load_mnemonic_words` is the PIN check: the PIN the unlock authenticated
+    // when a session can answer, the seed file's GCM tag when it cannot. The
+    // cheap `verify_pin` hash that used to gate this is gone (I1).
     let words =
         super::general::load_mnemonic_words(datadir, network, fingerprint, pin, local_cube_id)
             .map_err(|e| {
