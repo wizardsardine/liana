@@ -80,14 +80,11 @@ impl State for AboutSettingsState {
                 self.reregister_status = None;
                 let app_version = env!("CARGO_PKG_VERSION").to_string();
                 let os_version = std::env::consts::OS.to_string();
-                // Match the device label format used at first launch
-                // (see `services/connect/login.rs::device_name_for_this_host`)
-                // so re-register produces a consistent name.
-                let device_name = std::env::var("HOSTNAME")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-                    .or_else(|| std::env::var("COMPUTERNAME").ok().filter(|s| !s.is_empty()))
-                    .unwrap_or_else(|| format!("Coincube Desktop ({})", std::env::consts::OS));
+                // Match the device label used at first launch (see
+                // `services/connect/login.rs::device_name_for_this_host`) so
+                // re-register produces a consistent name. Both now call the
+                // same helper rather than each keeping their own copy.
+                let device_name = crate::utils::device::device_label();
                 return Task::perform(
                     async move {
                         // Remember the currently-registered id so a failed

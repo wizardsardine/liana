@@ -20,6 +20,7 @@ use crate::{
     },
     daemon::DaemonError,
     dir::{CoincubeDirectory, NetworkDirectory},
+    utils::device::device_label,
 };
 
 use super::client::{
@@ -29,22 +30,16 @@ use super::client::{
 };
 use super::grpc::bootstrap::ensure_device_registered_best_effort;
 
-/// Identify this host for the `SignerDevice.device_name` field. Reads
-/// the standard `HOSTNAME` / `COMPUTERNAME` env vars when set, otherwise
-/// falls back to a generic OS-tagged label. The user can rename the
-/// device later from the Connect settings UI (Phase 4 polish).
+/// Identify this host for the `SignerDevice.device_name` field.
+///
+/// Delegates to [`device_label`] so the signer-device list and the Security
+/// page's verified-device list name this machine identically. They used to
+/// disagree — this read the bare `HOSTNAME`/`COMPUTERNAME` env vars (usually
+/// unset on macOS, so it fell through to a generic `Coincube Desktop (macos)`)
+/// while the REST header sent `hostname (macOS)`, so one machine could appear
+/// under two different names in two different lists.
 fn device_name_for_this_host() -> String {
-    if let Ok(h) = std::env::var("HOSTNAME") {
-        if !h.is_empty() {
-            return h;
-        }
-    }
-    if let Ok(h) = std::env::var("COMPUTERNAME") {
-        if !h.is_empty() {
-            return h;
-        }
-    }
-    format!("Coincube Desktop ({})", std::env::consts::OS)
+    device_label()
 }
 
 /// Best-effort `RegisterDevice` after a successful login. No-op if
