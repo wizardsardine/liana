@@ -9363,7 +9363,7 @@ dependencies = [
 [[package]]
 name = "sdk-common"
 version = "0.7.1"
-source = "git+https://github.com/breez/breez-sdk?rev=113749fd36dd7a20358dc40526c4a30147f8c1a8#113749fd36dd7a20358dc40526c4a30147f8c1a8"
+source = "git+https://github.com/coincubetech/breez-sdk?rev=113749fd36dd7a20358dc40526c4a30147f8c1a8#113749fd36dd7a20358dc40526c4a30147f8c1a8"
 dependencies = [
  "aes 0.8.4",
  "anyhow",
@@ -9408,7 +9408,7 @@ dependencies = [
 [[package]]
 name = "sdk-macros"
 version = "0.7.1"
-source = "git+https://github.com/breez/breez-sdk?rev=113749fd36dd7a20358dc40526c4a30147f8c1a8#113749fd36dd7a20358dc40526c4a30147f8c1a8"
+source = "git+https://github.com/coincubetech/breez-sdk?rev=113749fd36dd7a20358dc40526c4a30147f8c1a8#113749fd36dd7a20358dc40526c4a30147f8c1a8"
 dependencies = [
  "proc-macro2",
  "quote",
