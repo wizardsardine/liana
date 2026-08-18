@@ -9,14 +9,25 @@ is the authority on what is affected and which firmware fixes it.
 
 ## The short version
 
-**Update the firmware. That is the whole job.** BitBox states plainly that
-existing wallet seeds are not affected by any of these issues, so — unlike the
-[Coldcard advisory](2026-07-coldcard-rng.md) from last month — there is no key
-to rotate, no new Vault to build and no funds to move. Plug the device in, open
-the BitBoxApp, and update from **Manage device**. The notice in Coincube clears
-by itself once the device reports 9.26.5 or later.
+**Update the firmware. For almost everyone that is the whole job.** None of
+these issues weakens the seed your BitBox already generated — unlike the
+[Coldcard advisory](2026-07-coldcard-rng.md) from last month, where the seeds
+themselves came out badly. So there is normally no key to rotate, no new Vault
+to build and no funds to move. Plug the device in, open the BitBoxApp, and
+update from **Manage device**. The notice in Coincube clears by itself once the
+device reports 9.26.5 or later.
 
-BitBox reports no evidence that any of the three issues was ever exploited.
+**The exception is a device that was actually attacked, rather than merely
+vulnerable.** Two of the three issues end in an attacker running their own code
+on the device, and code running on a BitBox can reach the seed it holds — which
+no later firmware update undoes. Both require something specific to have
+happened to you: being phished into a counterfeit BitBoxApp, or setting the
+device up while it was attached to a machine you should not have trusted. If
+either might describe you, read [what this means for a
+Cube](#what-this-means-for-a-cube) before deciding the update is enough.
+
+BitBox reports no evidence that any of the three issues was ever exploited, so
+for most owners the first paragraph is the whole of it.
 
 ## What was fixed
 
@@ -39,18 +50,24 @@ your particular device. Updating settles all three either way.
 
 ## What this means for a Cube
 
-**Your recovery words are unaffected.** No part of this touches how the device
-generated your seed, so the key this device holds in your Vault stays exactly as
-good as it was.
+**None of this weakens the seed your device generated.** Nothing here touches
+how the BitBox produced your recovery words — so on a device that was not itself
+attacked, the key it holds in your Vault is exactly as good as it was.
 
-Three narrower points, in case they apply to you:
+That qualifier is doing real work, because two of the three issues end in an
+attacker running code on the device, and that is a different situation from a
+device that was merely running vulnerable firmware. Three narrower points, in
+case they apply to you:
 
-- **The memory-corruption issue only concerns a device that has not been set up
-  yet.** If you set your BitBox up on a computer you trust, it was never
-  reachable. If you set one up on a machine you had reason to distrust and
-  before updating, treat that device's seed as suspect and move to a new key —
-  the [Coldcard rotation guide](2026-07-coldcard-rng.md#rotating-the-key)
-  describes that procedure, and it is the same one.
+- **The memory-corruption issue needs three things at once:** a BitBox02 Multi
+  edition, still uninitialised, connected to a malicious host. Miss any one of
+  them and it never applied to you. The Bitcoin-only edition was never affected
+  at all, and neither was any device that already had a wallet on it. If you set
+  your Multi up on a computer you trust, it was never reachable either. Only if
+  you set one up on a machine you had reason to distrust, and before updating,
+  should you treat that device's seed as suspect and move to a new key — the
+  [Coldcard rotation guide](2026-07-coldcard-rng.md#rotating-the-key) describes
+  that procedure, and it is the same one.
 - **The bootloader issue required you to be phished first** — specifically, into
   installing a counterfeit BitBoxApp and unlocking the device for it. If you
   believe that happened to you, the same applies: the seed on that device should

@@ -326,18 +326,22 @@ const BITBOX_FIRMWARE: Advisory = Advisory {
                     attacker code on an uninitialised device, a Silent Payments issue that \
                     could lock funds to an unintended address, and — for devices still below \
                     9.26.2 — a bootloader issue that could be used to install malicious \
-                    firmware after a successful phishing attack. Your recovery words are not \
-                    affected and there is no key to rotate: update the firmware from the \
-                    BitBoxApp and this notice goes away. Download it only from \
-                    bitbox.swiss/download or the link inside the app you already have.",
+                    firmware after a successful phishing attack. None of this weakens the seed \
+                    already on the device, so for almost everyone the fix is simply to update \
+                    the firmware from the BitBoxApp — this notice then goes away. The exception \
+                    is a device that was actually attacked rather than merely vulnerable, where \
+                    the key should be replaced too; the guide covers when that applies. \
+                    Download the app only from bitbox.swiss/download or the link inside the app \
+                    you already have.",
     // Unreachable today: `export::import_xpub` only recognises Coldcard's two
     // export formats, so no file import ever names a BitBox. Written anyway so
     // the row is complete the day one is added.
     file_import: "This key was exported from a BitBox02. A file carries no firmware \
                   information, so Coincube cannot tell which version the device is running. \
                   If it is below 9.26.5 — the release BitBox published on 17 August 2026 — \
-                  update it from the BitBoxApp. Your recovery words are not affected by any \
-                  of the issues that release fixes, and there is no key to rotate.",
+                  update it from the BitBoxApp. None of the issues that release fixes weakens \
+                  the seed the device generated, so updating is normally the whole remedy; a \
+                  device that was actually attacked is the exception the guide covers.",
     notice: "On 17 August 2026 BitBox released firmware 9.26.5 for the BitBox02, fixing three \
              security issues: a memory-corruption issue that could run attacker code on a \
              device that has not been set up yet, a Silent Payments issue that could lock \
@@ -345,11 +349,16 @@ const BITBOX_FIRMWARE: Advisory = Advisory {
              issue that could be used to install malicious firmware on a genuine device after \
              a successful phishing attack. BitBox has no evidence any of them was exploited. \
              If any key in one of your Cubes lives on a BitBox02, this concerns you.\n\n\
-             Your recovery words are not affected, so unlike the Coldcard advisory there is \
-             nothing to rotate and no funds to move. Plug the device in, open the BitBoxApp, \
-             and update it from Manage device. Coincube flags every connected BitBox02 below \
-             9.26.5 with the same notice, and the flag clears once the device reports the new \
-             firmware.\n\n\
+             None of this weakens the seed already on your device, so unlike the Coldcard \
+             advisory there is normally nothing to rotate and no funds to move: plug the \
+             device in, open the BitBoxApp, and update it from Manage device. Coincube flags \
+             every connected BitBox02 below 9.26.5 with the same notice, and the flag clears \
+             once the device reports the new firmware.\n\n\
+             The exception is a device that was actually attacked rather than merely \
+             vulnerable — phished into counterfeit firmware, or set up while attached to a \
+             machine you should not have trusted. Code running on a BitBox can reach the seed \
+             it holds, and no later update undoes that, so such a device needs its key \
+             replaced as well. The guide covers how to tell and what to do.\n\n\
              Get the BitBoxApp only from bitbox.swiss/download or from the update link inside \
              the app you already have. Announcements like this one attract phishing, and \
              BitBox will never ask you for your recovery words — no genuine update ever needs \
@@ -800,9 +809,13 @@ mod tests {
             let hit = bitbox(Some(v(9, 26, 4))).expect("flagged");
             assert!(hit.body().contains("9.26.5"));
             assert!(hit.body().contains("update the firmware"));
-            // BitBox states existing seeds are unaffected. Telling a keyholder
-            // to rotate would invent work the vendor never asked for.
-            assert!(!hit.body().contains("rotate this key"));
+            // None of these issues weakens a seed by itself, so the copy must
+            // not send every keyholder off to rotate a key the way the Coldcard
+            // copy does. It must still leave room for the device that was
+            // actually exploited, where the key does need replacing — hence
+            // "exception", not silence.
+            assert!(!hit.body().contains("rotate this key out of your Cube"));
+            assert!(hit.body().contains("exception"));
             assert!(hit.guide_label().contains("update"));
         }
     }
