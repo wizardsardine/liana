@@ -931,11 +931,7 @@ impl BitcoinD {
         while self.list_wallets().contains(&watchonly_wallet_path) {
             log::info!("Found a leftover watchonly wallet loaded on bitcoind. Removing it.");
             if let Some(e) = self.unload_wallet(watchonly_wallet_path.clone()) {
-                log::error!(
-                    "Unloading wallet '{}': '{}'",
-                    &self.watchonly_wallet_path,
-                    e
-                );
+                log::error!("Unloading wallet '{}': '{}'", self.watchonly_wallet_path, e);
             }
         }
     }
@@ -1289,7 +1285,7 @@ impl BitcoinD {
                         .and_then(Json::as_array)
                         .expect("A valid list of wallet conflicts must always be present.");
                     if confs == 0 && !conflicts.is_empty() && !self.is_in_mempool(&spending_txid) {
-                        log::debug!("Noticed '{}' as spending '{}', but is unconfirmed with conflicts and is not in mempool anymore. Discarding it.", &spending_txid, &spent_outpoint);
+                        log::debug!("Noticed '{}' as spending '{}', but is unconfirmed with conflicts and is not in mempool anymore. Discarding it.", spending_txid, spent_outpoint);
                         break;
                     }
 
@@ -1308,7 +1304,7 @@ impl BitcoinD {
         ) {
             Ok(res) => res,
             Err(e) => {
-                log::warn!("Error when fetching block header {}: {}", &blockhash, e);
+                log::warn!("Error when fetching block header {}: {}", blockhash, e);
                 return None;
             }
         };

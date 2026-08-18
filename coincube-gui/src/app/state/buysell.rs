@@ -470,7 +470,7 @@ impl State for BuySellPanel {
                         BuySellFlowState::OtpVerification { .. } | BuySellFlowState::Login { .. },
                         view::BuySellMessage::LoginSuccess { login },
                     ) => {
-                        log::info!("Successfully logged in user: {}", &login.user.email);
+                        log::info!("Successfully logged in user: {}", login.user.email);
 
                         self.step = BuySellFlowState::ModeSelect { buy_or_sell: None };
 

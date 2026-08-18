@@ -862,21 +862,19 @@ impl DescriptorEditModal for EditSequenceModal {
                     }
                     self.sequence.value = seq;
                 }
-                message::ThresholdSequenceModal::Confirm => {
-                    if self.sequence.valid {
-                        if let Ok(sequence) = u16::from_str(&self.sequence.value) {
-                            let path_index = self.path_index;
-                            return Task::perform(
-                                async move { (path_index, sequence) },
-                                |(path_index, sequence)| {
-                                    message::DefineDescriptor::Path(
-                                        path_index,
-                                        message::DefinePath::SequenceEdited(sequence),
-                                    )
-                                },
-                            )
-                            .map(Message::DefineDescriptor);
-                        }
+                message::ThresholdSequenceModal::Confirm if self.sequence.valid => {
+                    if let Ok(sequence) = u16::from_str(&self.sequence.value) {
+                        let path_index = self.path_index;
+                        return Task::perform(
+                            async move { (path_index, sequence) },
+                            |(path_index, sequence)| {
+                                message::DefineDescriptor::Path(
+                                    path_index,
+                                    message::DefinePath::SequenceEdited(sequence),
+                                )
+                            },
+                        )
+                        .map(Message::DefineDescriptor);
                     }
                 }
                 _ => {}

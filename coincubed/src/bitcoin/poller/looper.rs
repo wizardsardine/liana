@@ -97,8 +97,8 @@ fn update_coins(
                     // TODO: maybe we could try out something here? Like bruteforcing the next 200 indexes?
                     log::error!(
                         "Could not get derivation index for coin '{}' (address: '{}')",
-                        &utxo.outpoint,
-                        &address
+                        utxo.outpoint,
+                        address
                     );
                     continue;
                 }
@@ -514,11 +514,11 @@ fn updates(
                     return;
                 }
                 db_conn.rollback_tip(&reorg_common_ancestor);
-                log::info!("Tip was rolled back to '{}'.", &reorg_common_ancestor);
+                log::info!("Tip was rolled back to '{}'.", reorg_common_ancestor);
             } else {
                 log::info!(
                     "Tip was already earlier than common ancestor '{}'.",
-                    &reorg_common_ancestor
+                    reorg_common_ancestor
                 );
             }
             return updates(db_conn, bit, descs, secp, reorg_alert);

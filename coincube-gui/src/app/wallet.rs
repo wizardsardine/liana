@@ -375,11 +375,11 @@ impl Wallet {
     pub fn descriptor_keys(&self) -> HashSet<Fingerprint> {
         let info = self.main_descriptor.policy();
         let mut descriptor_keys = HashSet::new();
-        for (fingerprint, _) in info.primary_path().thresh_origins().1.iter() {
+        for fingerprint in info.primary_path().thresh_origins().1.keys() {
             descriptor_keys.insert(*fingerprint);
         }
-        for (_, path_info) in info.recovery_paths().iter() {
-            for (fingerprint, _) in path_info.thresh_origins().1.iter() {
+        for path_info in info.recovery_paths().values() {
+            for fingerprint in path_info.thresh_origins().1.keys() {
                 descriptor_keys.insert(*fingerprint);
             }
         }

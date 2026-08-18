@@ -140,11 +140,11 @@ impl Step for RecoverMnemonic {
         if let Some(descriptor) = &ctx.descriptor {
             let info = descriptor.policy();
             let mut descriptor_keys = HashSet::new();
-            for (fingerprint, _) in info.primary_path().thresh_origins().1.iter() {
+            for fingerprint in info.primary_path().thresh_origins().1.keys() {
                 descriptor_keys.insert(*fingerprint);
             }
-            for (_, path) in info.recovery_paths().iter() {
-                for (fingerprint, _) in path.thresh_origins().1.iter() {
+            for path in info.recovery_paths().values() {
+                for fingerprint in path.thresh_origins().1.keys() {
                     descriptor_keys.insert(*fingerprint);
                 }
             }

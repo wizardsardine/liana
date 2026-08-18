@@ -415,7 +415,7 @@ pub fn spend_header<'a>(
                         )
                         .push(text(" ").size(H3_SIZE))
                         .push(tx.min_feerate_vb().map(|rate| {
-                            text(format!("(~{} sats/vbyte)", &rate))
+                            text(format!("(~{} sats/vbyte)", rate))
                                 .size(H4_SIZE)
                                 .style(theme::text::secondary)
                         })),

@@ -314,19 +314,19 @@ impl State for ImportExportSettingsState {
                     launch!(self, modal, true);
                 }
             }
-            Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
-                if self.modal.is_none() {
-                    let modal = VaultExportModal::new(
-                        Some(daemon.clone()),
-                        ImportExportType::ImportBackup {
-                            network_dir: cache.datadir_path.network_directory(cache.network),
-                            wallet: self.wallet.clone(),
-                            overwrite_labels: None,
-                            overwrite_aliases: None,
-                        },
-                    );
-                    launch!(self, modal, false);
-                }
+            Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet))
+                if self.modal.is_none() =>
+            {
+                let modal = VaultExportModal::new(
+                    Some(daemon.clone()),
+                    ImportExportType::ImportBackup {
+                        network_dir: cache.datadir_path.network_directory(cache.network),
+                        wallet: self.wallet.clone(),
+                        overwrite_labels: None,
+                        overwrite_aliases: None,
+                    },
+                );
+                launch!(self, modal, false);
             }
             _ => {}
         }

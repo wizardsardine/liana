@@ -101,7 +101,7 @@ impl WalletSettingsState {
             }
         }
 
-        keys_aliases.sort_by(|(fg1, _), (fg2, _)| fg1.cmp(fg2));
+        keys_aliases.sort_by_key(|(fg1, _)| *fg1);
         keys_aliases
     }
 }

@@ -124,7 +124,7 @@ fn main() {
     socket
         .write_all(&[request.to_string().as_bytes(), b"\n"].concat())
         .unwrap_or_else(|e| {
-            eprintln!("Writing to {:?}: '{}'", &socket_file, e);
+            eprintln!("Writing to {:?}: '{}'", socket_file, e);
             process::exit(1);
         });
 
@@ -133,7 +133,7 @@ fn main() {
         let n = socket
             .read(&mut raw_response[total_read..])
             .unwrap_or_else(|e| {
-                eprintln!("Reading from {:?}: '{}'", &socket_file, e);
+                eprintln!("Reading from {:?}: '{}'", socket_file, e);
                 process::exit(1);
             });
         total_read += n;

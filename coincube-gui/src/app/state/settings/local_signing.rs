@@ -286,10 +286,10 @@ impl LocalSigningState {
             PairingFlow::PhonePicker { discovered } => {
                 *discovered = crate::phone_signer::mdns::browse();
             }
-            PairingFlow::Waiting { offer, .. } => {
-                if crate::phone_signer::pairing::is_expired(offer) {
-                    waiting_expired = true;
-                }
+            PairingFlow::Waiting { offer, .. }
+                if crate::phone_signer::pairing::is_expired(offer) =>
+            {
+                waiting_expired = true;
             }
             _ => {}
         }

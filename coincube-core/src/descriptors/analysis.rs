@@ -155,13 +155,7 @@ fn key_origins(
             xpub.origin.as_ref().map(|(fg, orig_path)| {
                 let mut der_paths = HashSet::with_capacity(xpub.derivation_paths.paths().len());
                 for der_path in xpub.derivation_paths.paths() {
-                    der_paths.insert(
-                        orig_path
-                            .into_iter()
-                            .chain(der_path.into_iter())
-                            .copied()
-                            .collect(),
-                    );
+                    der_paths.insert(orig_path.into_iter().chain(der_path).copied().collect());
                 }
                 (*fg, der_paths)
             })
