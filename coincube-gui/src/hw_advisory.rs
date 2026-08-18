@@ -282,10 +282,12 @@ const COLDCARD_RNG: Advisory = Advisory {
 //   * a bootloader flaw (firmware through 9.26.1) that let an attacker who had
 //     already phished the user into running a fake BitBoxApp install malicious
 //     firmware on a genuine device — fixed back in 9.26.2 ("Oeschinen"); the
-//     BitBox02 Nova was never affected;
+//     BitBox02 Nova is exempt, by the age of the bootloader versions the
+//     exploit needs, and *only* from this one of the three;
 //   * a memory-corruption flaw (through 9.26.4) allowing arbitrary code
-//     execution on an *uninitialised* BitBox02 Multi attached to a malicious
-//     host — the Bitcoin-only edition is not affected;
+//     execution on an *uninitialised* Multi-edition device attached to a
+//     malicious host — the Bitcoin-only edition is not affected. The qualifier
+//     is the edition, not the model, so a Nova on Multi firmware is in scope;
 //   * a Silent Payments implementation flaw (9.21.0 through 9.26.4) that could
 //     lock funds to an unintended address.
 //

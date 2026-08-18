@@ -59,15 +59,19 @@ attacker running code on the device, and that is a different situation from a
 device that was merely running vulnerable firmware. Three narrower points, in
 case they apply to you:
 
-- **The memory-corruption issue needs three things at once:** a BitBox02 Multi
-  edition, still uninitialised, connected to a malicious host. Miss any one of
-  them and it never applied to you. The Bitcoin-only edition was never affected
-  at all, and neither was any device that already had a wallet on it. If you set
-  your Multi up on a computer you trust, it was never reachable either. Only if
-  you set one up on a machine you had reason to distrust, and before updating,
-  should you treat that device's seed as suspect and move to a new key — the
-  [Coldcard rotation guide](2026-07-coldcard-rng.md#rotating-the-key) describes
-  that procedure, and it is the same one.
+- **The memory-corruption issue needs three things at once:** a Multi-edition
+  BitBox on firmware `9.26.4` or below, still uninitialised, connected to a
+  malicious host. Miss any one of them and it never applied to you. The
+  Bitcoin-only edition was never affected at all, and neither was any device
+  that already had a wallet on it. Note that what matters here is the
+  **edition, not the model** — the Nova's exemption above covers the bootloader
+  issue only, so a Nova running Multi-edition firmware is in scope like any
+  other Multi. If you set your Multi up on a computer you trust, it was never
+  reachable either. Only if you set one up on a machine you had reason to
+  distrust, and before updating, should you treat that device's seed as suspect
+  and move to a new key — the [Coldcard rotation
+  guide](2026-07-coldcard-rng.md#rotating-the-key) describes that procedure, and
+  it is the same one.
 - **The bootloader issue required you to be phished first** — specifically, into
   installing a counterfeit BitBoxApp and unlocking the device for it. If you
   believe that happened to you, the same applies: the seed on that device should
