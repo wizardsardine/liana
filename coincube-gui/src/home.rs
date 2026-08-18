@@ -2428,11 +2428,26 @@ impl Home {
 
             Message::View(ViewMessage::DismissAdvisoryNotice) => {
                 if let Some(advisory) = self.advisory_notice.take() {
-                    if let Err(e) = GlobalSettings::mark_advisory_notice_seen(
+                    match GlobalSettings::mark_advisory_notice_seen(
                         &GlobalSettings::path(&self.datadir_path),
                         advisory.id,
                     ) {
-                        log::error!("[LAUNCHER] Failed to persist advisory notice: {}", e);
+                        // Re-ask rather than just clearing: a fresh install
+                        // owes a notice for every advisory we ship, and
+                        // deferring the second one to the next launch would
+                        // let someone who opens the app rarely sit on it for
+                        // weeks.
+                        Ok(()) => {
+                            self.advisory_notice = pending_advisory_notice(&self.datadir_path)
+                        }
+                        // This modal has no other way out — no blur dismiss,
+                        // one button. A settings file we cannot write must
+                        // therefore not re-ask, or "Got it" would reopen the
+                        // same notice forever. Stay quiet for this session and
+                        // let the next launch owe it again.
+                        Err(e) => {
+                            log::error!("[LAUNCHER] Failed to persist advisory notice: {}", e)
+                        }
                     }
                 }
                 Task::none()
@@ -3744,7 +3759,7 @@ fn advisory_notice_modal(
                 Row::new()
                     .spacing(10)
                     .push(
-                        button::secondary(Some(icon::link_icon()), "Read the rotation guide")
+                        button::secondary(Some(icon::link_icon()), advisory.guide_label)
                             .on_press(Message::View(ViewMessage::OpenUrl(
                                 advisory.url.to_string(),
                             )))
@@ -5645,21 +5660,41 @@ mod tests {
     }
 
     #[test]
-    fn advisory_notice_fires_once_per_install() {
+    fn each_advisory_notice_fires_once_per_install() {
         let datadir = fresh_datadir();
 
-        // First launch after the update: the notice is owed.
-        let advisory = pending_advisory_notice(&datadir).expect("notice pending");
-        assert_eq!(advisory.id, crate::hw_advisory::COLDCARD_RNG_2026_07);
-        assert!(!advisory.notice.is_empty());
+        // A fresh install owes one notice per advisory we ship, in table
+        // order, and each is acknowledged exactly once.
+        for expected in crate::hw_advisory::ADVISORIES {
+            let advisory = pending_advisory_notice(&datadir).expect("notice pending");
+            assert_eq!(advisory.id, expected.id);
+            assert!(!advisory.notice.is_empty());
 
-        // Acknowledging it is what `ViewMessage::DismissAdvisoryNotice` does.
-        GlobalSettings::mark_advisory_notice_seen(&GlobalSettings::path(&datadir), advisory.id)
-            .expect("persist");
+            // Acknowledging is what `ViewMessage::DismissAdvisoryNotice` does.
+            GlobalSettings::mark_advisory_notice_seen(&GlobalSettings::path(&datadir), advisory.id)
+                .expect("persist");
+        }
 
         // Every launch after that, including a fresh `Home`.
         assert!(pending_advisory_notice(&datadir).is_none());
         let home = Home::new(datadir, Some(Network::Bitcoin)).0;
+        assert!(home.advisory_notice.is_none());
+    }
+
+    #[test]
+    fn acknowledging_one_notice_surfaces_the_next_without_a_relaunch() {
+        let datadir = fresh_datadir();
+        let mut home = Home::new(datadir, Some(Network::Bitcoin)).0;
+
+        // Walk the whole queue through the message the button sends, and
+        // check it drains in one session rather than one notice per launch.
+        for expected in crate::hw_advisory::ADVISORIES {
+            assert_eq!(
+                home.advisory_notice.expect("notice pending").id,
+                expected.id
+            );
+            let _ = home.update(Message::View(ViewMessage::DismissAdvisoryNotice));
+        }
         assert!(home.advisory_notice.is_none());
     }
 

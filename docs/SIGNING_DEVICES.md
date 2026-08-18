@@ -21,6 +21,12 @@ supported for use in Taproot descriptors starting with version 2.2.1.
 Version 9.15.0 of the firmware is supported for use in P2WSH descriptors.
 Version 9.21.0 of the firmware is supported for use in Taproot descriptors.
 
+**Firmware advisory (August 2026).** BitBox released firmware 9.26.5 fixing
+three security issues. Coincube flags every connected BitBox02 below that
+version; connecting, signing and importing are unaffected, and the flag clears
+once the device reports the new firmware. Existing seeds are not affected —
+see [the update guide](advisories/2026-08-bitbox-firmware.md).
+
 ## [Coldcard](https://github.com/Coldcard/firmware)
 
 Support for use in both P2WSH and Taproot descriptors has only been released in Beta as of this

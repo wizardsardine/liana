@@ -9,14 +9,19 @@
 //!   importing behave exactly as they do without an advisory. Everything in
 //!   this module is a pure, total function over data we already read from the
 //!   device; no I/O, no `Result`, nothing that can fail a device path.
-//! * **It never says "you're clear".** Firmware can be patched; a seed that
-//!   was *generated* on affected firmware cannot be. So the weakest tier a
-//!   flagged device can reach is [`AdvisoryTier::RotateRecommended`] — an
-//!   up-to-date device still gets the rotate advice, just without the
-//!   "update first" step.
+//! * **An unreadable firmware version is never a clean bill of health.** A
+//!   device that won't say what it is running gets the strongest tier the
+//!   advisory has.
+//! * **Whether patched firmware ends the matter is the advisory's own call.**
+//!   Some flaws firmware cannot undo: a seed *generated* by a broken RNG stays
+//!   broken after the update that fixes the RNG, so the Coldcard advisory keeps
+//!   speaking to an up-to-date device via [`Advisory::residual`]. Others the
+//!   update genuinely closes — the BitBox advisory sets `residual: None` and
+//!   disappears from a device on fixed firmware, because a badge that can never
+//!   be cleared is a badge nobody reads.
 //!
 //! The table below is the wire shape a future Connect-served advisory feed
-//! would fill in; today it is a `const` seeded with the one Coldcard row.
+//! would fill in; today it is a `const` with one row per vendor incident.
 //!
 //! ## Model lines and version strings
 //!
@@ -37,6 +42,9 @@
 //! Each affected range is therefore expressed as a half-open interval whose
 //! bounds share a major, which keeps the lines from bleeding into each other.
 //! A version we cannot read or cannot compare is treated as affected.
+//!
+//! The BitBox02 needs none of that: it reports plain semver on a single `9.x`
+//! track, so its advisory is one row.
 
 use async_hwi::{DeviceKind, Version};
 
@@ -45,18 +53,22 @@ use async_hwi::{DeviceKind, Version};
 /// once a feed exists, as the feed's row id.
 pub const COLDCARD_RNG_2026_07: &str = "CC-2026-07-RNG";
 
+/// Stable identifier for the August 2026 BitBox02 firmware advisory. Same
+/// double duty as [`COLDCARD_RNG_2026_07`].
+pub const BITBOX_FIRMWARE_2026_08: &str = "BB-2026-08-FIRMWARE";
+
 /// How urgent the advice is for one device.
 ///
 /// Ordered weakest → strongest so `max` picks the stronger of two tiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AdvisoryTier {
     /// Firmware is at or past the fix, or is on a track the advisory does not
-    /// name. The advisory still applies to any seed *generated* before the
-    /// fix, so the rotate advice stands.
-    RotateRecommended,
+    /// name — so there is nothing left to *update*. Whether the advisory still
+    /// has something to say here is per-advisory: see [`Advisory::residual`].
+    Residual,
     /// Firmware is inside (or below) an affected range — or we could not read
-    /// it at all. Update the firmware *and* rotate the key.
-    UpdateAndRotate,
+    /// it at all. The device is running something the vendor has since fixed.
+    Affected,
 }
 
 /// One product line's affected firmware window, half-open: `[introduced, patched)`.
@@ -80,14 +92,21 @@ pub struct Advisory {
     pub device_kind: DeviceKind,
     /// Affected-version matrix, one row per product line.
     pub affected: &'static [AffectedRange],
-    /// Where the rotation guide lives.
+    /// Where the guide for this incident lives.
     pub url: &'static str,
     /// Short line shown next to the badge.
     pub headline: &'static str,
-    /// Body for [`AdvisoryTier::UpdateAndRotate`].
-    pub update_and_rotate: &'static str,
-    /// Body for [`AdvisoryTier::RotateRecommended`].
-    pub rotate_recommended: &'static str,
+    /// Label for the link to [`Advisory::url`]. Named per advisory because
+    /// what the guide asks of the user differs: the Coldcard incident needs a
+    /// key rotated, the BitBox one needs a firmware update and nothing more.
+    pub guide_label: &'static str,
+    /// Body for [`AdvisoryTier::Affected`].
+    pub affected_copy: &'static str,
+    /// Body for [`AdvisoryTier::Residual`], or `None` when firmware at or past
+    /// the fix genuinely ends the exposure — the advisory then stops showing
+    /// on that device altogether, rather than lingering as a badge with no
+    /// remaining instruction behind it.
+    pub residual: Option<&'static str>,
     /// Body used where no firmware version is knowable at all — an xpub
     /// parsed out of a file carries no firmware information.
     pub file_import: &'static str,
@@ -99,16 +118,21 @@ pub struct Advisory {
 }
 
 impl Advisory {
-    /// The tiered body copy.
-    pub fn body(&self, tier: AdvisoryTier) -> &'static str {
+    /// The tiered body copy, or `None` where this advisory has nothing left to
+    /// say at `tier` — the one case being [`AdvisoryTier::Residual`] on an
+    /// advisory whose fix is complete.
+    pub fn body(&self, tier: AdvisoryTier) -> Option<&'static str> {
         match tier {
-            AdvisoryTier::UpdateAndRotate => self.update_and_rotate,
-            AdvisoryTier::RotateRecommended => self.rotate_recommended,
+            AdvisoryTier::Affected => Some(self.affected_copy),
+            AdvisoryTier::Residual => self.residual,
         }
     }
 }
 
 /// An advisory matched against a specific device.
+///
+/// Only ever constructed where there is copy to show, so every getter returns
+/// something renderable.
 #[derive(Debug, Clone)]
 pub struct AdvisoryHit {
     pub advisory: &'static Advisory,
@@ -116,6 +140,8 @@ pub struct AdvisoryHit {
     /// Which product line matched, when the version placed the device on one.
     /// `None` when the version was unreadable or on no named line.
     pub line: Option<&'static str>,
+    /// The tier's body copy, resolved at construction.
+    copy: &'static str,
 }
 
 impl AdvisoryHit {
@@ -128,7 +154,11 @@ impl AdvisoryHit {
     }
 
     pub fn body(&self) -> &'static str {
-        self.advisory.body(self.tier)
+        self.copy
+    }
+
+    pub fn guide_label(&self) -> &'static str {
+        self.advisory.guide_label
     }
 
     pub fn url(&self) -> &'static str {
@@ -194,27 +224,32 @@ const COLDCARD_RNG_RANGES: &[AffectedRange] = &[
 // appear on every surface: seeds created with at least 50 independent private
 // dice rolls are not at risk from this issue, and a strong unique BIP-39
 // passphrase is an independent barrier — but it does not repair the seed.
+/// Coldcard [`AdvisoryTier::Residual`] copy. Pulled out of the struct literal
+/// only so the `Option` around it stays readable.
+const COLDCARD_RNG_RESIDUAL: &str = "This Coldcard reports firmware outside every range named by \
+     Coinkite's advisory of 30 July 2026. That is not an all-clear: updating firmware does not \
+     repair a seed that already exists, so if this device's seed was created on affected \
+     firmware, generate a new seed on the device and rotate this key out of your Cube. A single \
+     key in a multisig Cube cannot move funds on its own, so you have time to do this properly. \
+     Seeds created with 50 or more of your own dice rolls are not affected.";
+
 const COLDCARD_RNG: Advisory = Advisory {
     id: COLDCARD_RNG_2026_07,
     device_kind: DeviceKind::Coldcard,
     affected: COLDCARD_RNG_RANGES,
     url: "https://coincube.io/advisories/2026-07-coldcard-rng",
     headline: "Coldcard firmware advisory",
-    update_and_rotate: "This Coldcard reports firmware covered by Coinkite's advisory of \
+    guide_label: "Read the rotation guide",
+    // Patched firmware never clears this one: the flaw was in seed generation,
+    // and an update cannot regenerate a seed that already exists.
+    residual: Some(COLDCARD_RNG_RESIDUAL),
+    affected_copy: "This Coldcard reports firmware covered by Coinkite's advisory of \
                         30 July 2026: seeds generated on it may have far less randomness \
                         than intended. Update the device firmware, then generate a new seed \
                         on the device and rotate this key out of your Cube. A single key in \
                         a multisig Cube cannot move funds on its own, so you have time to do \
                         this properly. Seeds created with 50 or more of your own dice rolls \
                         are not affected.",
-    rotate_recommended: "This Coldcard reports firmware outside every range named by \
-                         Coinkite's advisory of 30 July 2026. That is not an all-clear: \
-                         updating firmware does not repair a seed that already exists, so if \
-                         this device's seed was created on affected firmware, generate a new \
-                         seed on the device and rotate this key out of your Cube. A single \
-                         key in a multisig Cube cannot move funds on its own, so you have \
-                         time to do this properly. Seeds created with 50 or more of your own \
-                         dice rolls are not affected.",
     file_import: "This key was exported from a Coldcard. A file carries no firmware \
                   information, so Coincube cannot tell which firmware generated the seed \
                   behind it. If that seed was created on firmware covered by Coinkite's \
@@ -241,8 +276,91 @@ const COLDCARD_RNG: Advisory = Advisory {
              has changed.",
 };
 
-/// Every advisory we ship. One row today; the shape is the feed's.
-pub const ADVISORIES: &[Advisory] = &[COLDCARD_RNG];
+// BitBox published firmware 9.26.5 ("Dixence") on 17 August 2026, closing three
+// issues:
+//
+//   * a bootloader flaw (firmware through 9.26.1) that let an attacker who had
+//     already phished the user into running a fake BitBoxApp install malicious
+//     firmware on a genuine device — fixed back in 9.26.2 ("Oeschinen"); the
+//     BitBox02 Nova was never affected;
+//   * a memory-corruption flaw (through 9.26.4) allowing arbitrary code
+//     execution on an *uninitialised* BitBox02 Multi attached to a malicious
+//     host — the Bitcoin-only edition is not affected;
+//   * a Silent Payments implementation flaw (9.21.0 through 9.26.4) that could
+//     lock funds to an unintended address.
+//
+// BitBox reports no evidence any of them was exploited, and states plainly that
+// existing wallet seeds are unaffected.
+//
+// One range, not three. We cannot tell a Multi from a Bitcoin-only edition or a
+// Nova from a BitBox02 through `async_hwi` — every one of them arrives as
+// `DeviceKind::BitBox02` — so splitting the window per issue would mean
+// guessing which issues reach the device in front of the user. Anything below
+// 9.26.5 gets one instruction that settles all three.
+const BITBOX_FIRMWARE_RANGES: &[AffectedRange] = &[AffectedRange {
+    line: "BitBox02",
+    // Below the oldest firmware Coincube works with at all (9.15.0), so this
+    // bound is really "every version we can encounter".
+    introduced: v(9, 0, 0),
+    patched: v(9, 26, 5),
+}];
+
+// Copy discipline as for the Coldcard row: vendor-verifiable facts, one
+// instruction. The instruction is *update the firmware* and stops there —
+// BitBox states that existing wallet seeds are unaffected, so telling a user to
+// rotate a key would invent work that the vendor's own advisory does not ask
+// for, and would drown the one action that does matter.
+const BITBOX_FIRMWARE: Advisory = Advisory {
+    id: BITBOX_FIRMWARE_2026_08,
+    device_kind: DeviceKind::BitBox02,
+    affected: BITBOX_FIRMWARE_RANGES,
+    url: "https://coincube.io/advisories/2026-08-bitbox-firmware",
+    headline: "BitBox02 firmware advisory",
+    guide_label: "Read the update guide",
+    // Unlike the Coldcard incident, the update is the whole remedy: nothing
+    // here reaches a seed, so a device on 9.26.5 or later has nothing left to
+    // act on and shows no advisory at all.
+    residual: None,
+    affected_copy: "This BitBox02 reports firmware below 9.26.5, the release BitBox published \
+                    on 17 August 2026. It closes a memory-corruption issue that could run \
+                    attacker code on an uninitialised device, a Silent Payments issue that \
+                    could lock funds to an unintended address, and — for devices still below \
+                    9.26.2 — a bootloader issue that could be used to install malicious \
+                    firmware after a successful phishing attack. Your recovery words are not \
+                    affected and there is no key to rotate: update the firmware from the \
+                    BitBoxApp and this notice goes away. Download it only from \
+                    bitbox.swiss/download or the link inside the app you already have.",
+    // Unreachable today: `export::import_xpub` only recognises Coldcard's two
+    // export formats, so no file import ever names a BitBox. Written anyway so
+    // the row is complete the day one is added.
+    file_import: "This key was exported from a BitBox02. A file carries no firmware \
+                  information, so Coincube cannot tell which version the device is running. \
+                  If it is below 9.26.5 — the release BitBox published on 17 August 2026 — \
+                  update it from the BitBoxApp. Your recovery words are not affected by any \
+                  of the issues that release fixes, and there is no key to rotate.",
+    notice: "On 17 August 2026 BitBox released firmware 9.26.5 for the BitBox02, fixing three \
+             security issues: a memory-corruption issue that could run attacker code on a \
+             device that has not been set up yet, a Silent Payments issue that could lock \
+             funds to an unintended address, and — for devices below 9.26.2 — a bootloader \
+             issue that could be used to install malicious firmware on a genuine device after \
+             a successful phishing attack. BitBox has no evidence any of them was exploited. \
+             If any key in one of your Cubes lives on a BitBox02, this concerns you.\n\n\
+             Your recovery words are not affected, so unlike the Coldcard advisory there is \
+             nothing to rotate and no funds to move. Plug the device in, open the BitBoxApp, \
+             and update it from Manage device. Coincube flags every connected BitBox02 below \
+             9.26.5 with the same notice, and the flag clears once the device reports the new \
+             firmware.\n\n\
+             Get the BitBoxApp only from bitbox.swiss/download or from the update link inside \
+             the app you already have. Announcements like this one attract phishing, and \
+             BitBox will never ask you for your recovery words — no genuine update ever needs \
+             them typed anywhere but on the device itself.\n\n\
+             Nothing about how Coincube connects to, signs with, or imports from a BitBox02 \
+             has changed.",
+};
+
+/// Every advisory we ship, in the order their one-time notices are owed. The
+/// shape is the feed's.
+pub const ADVISORIES: &[Advisory] = &[COLDCARD_RNG, BITBOX_FIRMWARE];
 
 /// The advisory covering `kind`, if any.
 pub fn advisory_for_kind(kind: &DeviceKind) -> Option<&'static Advisory> {
@@ -255,22 +373,27 @@ pub fn advisory_for_kind(kind: &DeviceKind) -> Option<&'static Advisory> {
 /// no advisory for yields `None`. A `None` or uncomparable version resolves to
 /// the strongest tier rather than to "no advisory" — an unknown firmware is
 /// not a clean bill of health.
+///
+/// The one way a *matched* device comes back `None` is [`AdvisoryTier::Residual`]
+/// on an advisory whose fix is complete (`residual: None`): the update closed
+/// it, so there is nothing to show.
 pub fn evaluate(kind: &DeviceKind, version: Option<&Version>) -> Option<AdvisoryHit> {
     let advisory = advisory_for_kind(kind)?;
     let (tier, line) = match version {
         // Firmware unreadable (a locked device, a `get_version` failure, or a
         // version string async_hwi can't parse — Coldcard Q mainline `1.5.0Q`
         // among them). Assume the worst.
-        None => (AdvisoryTier::UpdateAndRotate, None),
+        None => (AdvisoryTier::Affected, None),
         Some(version) => match affected_range(advisory, version) {
-            Some(range) => (AdvisoryTier::UpdateAndRotate, Some(range.line)),
-            None => (AdvisoryTier::RotateRecommended, line_for(advisory, version)),
+            Some(range) => (AdvisoryTier::Affected, Some(range.line)),
+            None => (AdvisoryTier::Residual, line_for(advisory, version)),
         },
     };
     Some(AdvisoryHit {
         advisory,
         tier,
         line,
+        copy: advisory.body(tier)?,
     })
 }
 
@@ -414,7 +537,6 @@ pub mod view {
     const BADGE: &str = "Firmware advisory";
     const BADGE_TIP: &str = "This device is covered by a firmware advisory. It stays fully \
                              usable — expand the notice for what to do.";
-    const GUIDE_LABEL: &str = "Read the rotation guide";
 
     /// The advisory covering a connected device, if any.
     ///
@@ -447,7 +569,7 @@ pub mod view {
             hit.headline(),
             hit.line,
             hit.body(),
-            GUIDE_LABEL,
+            hit.guide_label(),
             Some(on_guide),
             on_dismiss,
             dismissed,
@@ -475,12 +597,15 @@ mod tests {
         async_hwi::parse_version(s).expect("parseable")
     }
 
+    fn bitbox(version: Option<Version>) -> Option<AdvisoryHit> {
+        evaluate(&DeviceKind::BitBox02, version.as_ref())
+    }
+
     #[test]
-    fn non_coldcard_kinds_have_no_advisory() {
+    fn kinds_with_no_advisory_are_never_flagged() {
         for kind in [
             DeviceKind::Ledger,
             DeviceKind::LedgerSimulator,
-            DeviceKind::BitBox02,
             DeviceKind::Jade,
             DeviceKind::Specter,
             DeviceKind::SpecterSimulator,
@@ -492,7 +617,7 @@ mod tests {
 
     #[test]
     fn unknown_version_takes_the_strongest_tier() {
-        assert_eq!(tier(None), AdvisoryTier::UpdateAndRotate);
+        assert_eq!(tier(None), AdvisoryTier::Affected);
     }
 
     #[test]
@@ -506,40 +631,40 @@ mod tests {
 
     #[test]
     fn mk2_mk3_boundary() {
-        assert_eq!(tier(Some(v(4, 0, 0))), AdvisoryTier::UpdateAndRotate);
-        assert_eq!(tier(Some(v(4, 1, 9))), AdvisoryTier::UpdateAndRotate);
-        assert_eq!(tier(Some(v(4, 2, 0))), AdvisoryTier::RotateRecommended);
+        assert_eq!(tier(Some(v(4, 0, 0))), AdvisoryTier::Affected);
+        assert_eq!(tier(Some(v(4, 1, 9))), AdvisoryTier::Affected);
+        assert_eq!(tier(Some(v(4, 2, 0))), AdvisoryTier::Residual);
     }
 
     #[test]
     fn mk4_mk5_boundary() {
-        assert_eq!(tier(Some(v(5, 5, 9))), AdvisoryTier::UpdateAndRotate);
-        assert_eq!(tier(Some(v(5, 6, 0))), AdvisoryTier::RotateRecommended);
-        assert_eq!(tier(Some(v(5, 6, 1))), AdvisoryTier::RotateRecommended);
+        assert_eq!(tier(Some(v(5, 5, 9))), AdvisoryTier::Affected);
+        assert_eq!(tier(Some(v(5, 6, 0))), AdvisoryTier::Residual);
+        assert_eq!(tier(Some(v(5, 6, 1))), AdvisoryTier::Residual);
     }
 
     #[test]
     fn q_boundary() {
-        assert_eq!(tier(Some(v(1, 4, 9))), AdvisoryTier::UpdateAndRotate);
-        assert_eq!(tier(Some(v(1, 5, 0))), AdvisoryTier::RotateRecommended);
+        assert_eq!(tier(Some(v(1, 4, 9))), AdvisoryTier::Affected);
+        assert_eq!(tier(Some(v(1, 5, 0))), AdvisoryTier::Residual);
     }
 
     #[test]
     fn edge_boundary_from_device_strings() {
         // Mk4 Edge and Q Edge suffixes are stripped by the parser.
-        assert_eq!(tier(Some(parse("6.5.9X"))), AdvisoryTier::UpdateAndRotate);
-        assert_eq!(tier(Some(parse("6.6.0X"))), AdvisoryTier::RotateRecommended);
+        assert_eq!(tier(Some(parse("6.5.9X"))), AdvisoryTier::Affected);
+        assert_eq!(tier(Some(parse("6.6.0X"))), AdvisoryTier::Residual);
         assert_eq!(
             tier(Some(parse("6.6.0QX"))),
-            AdvisoryTier::RotateRecommended
+            AdvisoryTier::Residual
         );
-        assert_eq!(tier(Some(parse("6.2.1"))), AdvisoryTier::UpdateAndRotate);
+        assert_eq!(tier(Some(parse("6.2.1"))), AdvisoryTier::Affected);
     }
 
     #[test]
     fn a_version_below_every_named_range_is_still_flagged() {
         // 3.x predates the named windows: not "affected", but never cleared.
-        assert_eq!(tier(Some(v(3, 0, 0))), AdvisoryTier::RotateRecommended);
+        assert_eq!(tier(Some(v(3, 0, 0))), AdvisoryTier::Residual);
     }
 
     #[test]
@@ -564,8 +689,8 @@ mod tests {
             patch: 0,
             prerelease: Some("rc1".to_string()),
         };
-        assert_eq!(tier(Some(pre(5))), AdvisoryTier::UpdateAndRotate);
-        assert_eq!(tier(Some(pre(9))), AdvisoryTier::RotateRecommended);
+        assert_eq!(tier(Some(pre(5))), AdvisoryTier::Affected);
+        assert_eq!(tier(Some(pre(9))), AdvisoryTier::Residual);
     }
 
     #[test]
@@ -586,24 +711,103 @@ mod tests {
     }
 
     #[test]
-    fn every_tier_carries_copy_and_a_link() {
-        let hit = evaluate(&DeviceKind::Coldcard, None).expect("hit");
-        assert_eq!(hit.id(), COLDCARD_RNG_2026_07);
-        for tier in [
-            AdvisoryTier::UpdateAndRotate,
-            AdvisoryTier::RotateRecommended,
-        ] {
-            assert!(!hit.advisory.body(tier).is_empty());
+    fn every_shipped_advisory_is_renderable() {
+        for advisory in ADVISORIES {
+            assert!(!advisory.id.is_empty());
+            assert!(advisory.url.starts_with("https://"));
+            assert!(!advisory.headline.is_empty());
+            assert!(!advisory.guide_label.is_empty());
+            assert!(!advisory.notice.is_empty());
+            assert!(!advisory.file_import.is_empty());
+            // Whatever copy a tier offers at all must be non-empty: a hit is
+            // only built where `body` returned `Some`, so an empty string would
+            // render an advisory panel with nothing in it.
+            for tier in [AdvisoryTier::Affected, AdvisoryTier::Residual] {
+                assert!(advisory.body(tier).is_none_or(|copy| !copy.is_empty()));
+            }
+            // Every advisory says something on the strongest tier — otherwise
+            // it could never fire.
+            assert!(advisory.body(AdvisoryTier::Affected).is_some());
         }
-        assert!(hit.url().starts_with("https://"));
-        assert!(!hit.headline().is_empty());
     }
 
     #[test]
-    fn file_import_copy_exists_for_coldcard_only() {
-        let advisory = evaluate_file_import(&DeviceKind::Coldcard).expect("hit");
-        assert!(!advisory.file_import.is_empty());
+    fn advisory_ids_are_unique() {
+        // Ids key both dismissals and the seen-notice list, so a collision
+        // would silence one advisory the first time the other is acknowledged.
+        for (i, a) in ADVISORIES.iter().enumerate() {
+            for b in &ADVISORIES[i + 1..] {
+                assert_ne!(a.id, b.id);
+                // One advisory per kind: `advisory_for_kind` takes the first
+                // match, so a second row for the same device would be dead.
+                assert_ne!(a.device_kind, b.device_kind);
+            }
+        }
+    }
+
+    #[test]
+    fn coldcard_hits_carry_the_coldcard_id() {
+        let hit = evaluate(&DeviceKind::Coldcard, None).expect("hit");
+        assert_eq!(hit.id(), COLDCARD_RNG_2026_07);
+    }
+
+    #[test]
+    fn file_import_copy_is_offered_only_for_kinds_we_have_an_advisory_for() {
+        for kind in [DeviceKind::Coldcard, DeviceKind::BitBox02] {
+            let advisory = evaluate_file_import(&kind).expect("advisory");
+            assert!(!advisory.file_import.is_empty());
+        }
         assert!(evaluate_file_import(&DeviceKind::Ledger).is_none());
+    }
+
+    /// The BitBox row. Its defining difference from the Coldcard row: the
+    /// firmware update *is* the whole remedy, so a device past the fix stops
+    /// being flagged instead of dropping to a weaker tier.
+    mod bitbox {
+        use super::*;
+
+        #[test]
+        fn firmware_below_the_fix_is_flagged() {
+            for version in [v(9, 15, 0), v(9, 21, 0), v(9, 26, 1), v(9, 26, 4)] {
+                let hit = bitbox(Some(version.clone())).expect("flagged");
+                assert_eq!(hit.tier, AdvisoryTier::Affected);
+                assert_eq!(hit.id(), BITBOX_FIRMWARE_2026_08);
+                assert_eq!(hit.line, Some("BitBox02"));
+            }
+        }
+
+        #[test]
+        fn the_fix_clears_the_advisory_outright() {
+            // Unlike the Coldcard rows, which never reach a cleared state.
+            for version in [v(9, 26, 5), v(9, 26, 6), v(9, 27, 0), v(10, 0, 0)] {
+                assert!(
+                    bitbox(Some(version.clone())).is_none(),
+                    "{:?} should be clear",
+                    version
+                );
+            }
+        }
+
+        #[test]
+        fn unreadable_firmware_is_still_flagged() {
+            // A BitBox02 that hasn't been unlocked yet reports no version. It
+            // gets the notice until it says otherwise — same safe direction as
+            // everywhere else, and self-correcting once the device unlocks.
+            let hit = bitbox(None).expect("flagged");
+            assert_eq!(hit.tier, AdvisoryTier::Affected);
+            assert_eq!(hit.line, None);
+        }
+
+        #[test]
+        fn the_copy_asks_for_an_update_and_not_a_rotation() {
+            let hit = bitbox(Some(v(9, 26, 4))).expect("flagged");
+            assert!(hit.body().contains("9.26.5"));
+            assert!(hit.body().contains("update the firmware"));
+            // BitBox states existing seeds are unaffected. Telling a keyholder
+            // to rotate would invent work the vendor never asked for.
+            assert!(!hit.body().contains("rotate this key"));
+            assert!(hit.guide_label().contains("update"));
+        }
     }
 
     /// The view-model side: which rows get a badge, and with what copy.
@@ -626,11 +830,11 @@ mod tests {
         #[test]
         fn a_flagged_row_is_badged_on_every_tier() {
             let affected = view::hit(&coldcard_row(Some(v(5, 5, 0)))).expect("badge");
-            assert_eq!(affected.tier, AdvisoryTier::UpdateAndRotate);
+            assert_eq!(affected.tier, AdvisoryTier::Affected);
             assert_eq!(affected.line, Some("Mk4/Mk5"));
 
             let patched = view::hit(&coldcard_row(Some(v(5, 6, 0)))).expect("badge");
-            assert_eq!(patched.tier, AdvisoryTier::RotateRecommended);
+            assert_eq!(patched.tier, AdvisoryTier::Residual);
 
             // The two tiers say different things, and neither says "clear".
             assert_ne!(affected.body(), patched.body());
@@ -642,7 +846,7 @@ mod tests {
         #[test]
         fn a_row_with_no_readable_firmware_is_still_badged() {
             let hit = view::hit(&coldcard_row(None)).expect("badge");
-            assert_eq!(hit.tier, AdvisoryTier::UpdateAndRotate);
+            assert_eq!(hit.tier, AdvisoryTier::Affected);
         }
 
         #[test]
@@ -753,15 +957,22 @@ mod tests {
 
     #[test]
     fn affected_ranges_do_not_overlap() {
-        for a in COLDCARD_RNG_RANGES {
-            assert!(
-                a.introduced.major == a.patched.major,
-                "{} spans majors; the line matching in `line_for` assumes it doesn't",
-                a.line
-            );
-            for b in COLDCARD_RNG_RANGES {
-                if a.line != b.line {
-                    assert_ne!(a.patched.major, b.patched.major, "{} vs {}", a.line, b.line);
+        for advisory in ADVISORIES {
+            for a in advisory.affected {
+                assert!(
+                    a.introduced.major == a.patched.major,
+                    "{} spans majors; the line matching in `line_for` assumes it doesn't",
+                    a.line
+                );
+                assert!(
+                    a.introduced < a.patched,
+                    "{} has an empty affected window",
+                    a.line
+                );
+                for b in advisory.affected {
+                    if a.line != b.line {
+                        assert_ne!(a.patched.major, b.patched.major, "{} vs {}", a.line, b.line);
+                    }
                 }
             }
         }
