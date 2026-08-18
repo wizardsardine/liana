@@ -29,6 +29,15 @@ default-members = [
 # Resolve secp256k1-zkp MuSig2 types needed by boltz-client (Breez SDK dependency)
 secp256k1-zkp = { git = "https://github.com/breez/rust-secp256k1-zkp.git", rev = "eac2e479255a6e32b5588bc25ee53c642fdd8395" }
 
+# breez/breez-sdk was deleted upstream in 2026, but breez-sdk-liquid still pins
+# sdk-common/sdk-macros to rev 113749fd from it (0.12.2 through current main),
+# so every from-source build fails to fetch it. coincubetech/breez-sdk is a
+# byte-identical mirror of that commit (MIT, full history) pushed from a local
+# cargo cache. Drop this block if upstream restores the repo or repoints the dep.
+[patch."https://github.com/breez/breez-sdk"]
+sdk-common = { git = "https://github.com/coincubetech/breez-sdk", rev = "113749fd36dd7a20358dc40526c4a30147f8c1a8" }
+sdk-macros = { git = "https://github.com/coincubetech/breez-sdk", rev = "113749fd36dd7a20358dc40526c4a30147f8c1a8" }
+
 [patch."https://github.com/breez/rusqlite_migration"]
 rusqlite_migration = { git = "https://github.com/sokorototo/rusqlite_migration", branch = "rusqlite-v0.38.0" }
 
