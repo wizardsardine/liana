@@ -223,6 +223,17 @@ pub(super) fn format_datetime(iso: &str) -> String {
         .unwrap_or_else(|_| iso.to_string())
 }
 
+/// Treat a blank device name as absent.
+///
+/// The API can return an empty string for device rows written before device
+/// naming was fixed. `Option::unwrap_or` alone does not catch that — `Some("")`
+/// is "present" as far as the option is concerned, so the fallback never fires
+/// and the row renders nameless (or, in login activity, as a dangling
+/// `"1.2.3.4 - "`).
+pub(super) fn non_blank(name: Option<&str>) -> Option<&str> {
+    name.map(str::trim).filter(|s| !s.is_empty())
+}
+
 fn card_style(t: &theme::Theme) -> container::Style {
     container::Style {
         background: Some(iced::Background::Color(t.colors.cards.simple.background)),
@@ -1407,7 +1418,7 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
             let mut col = Column::new().spacing(6);
 
             for d in devices {
-                let name = d.device_name.as_deref().unwrap_or("Unknown Device");
+                let name = non_blank(d.device_name.as_deref()).unwrap_or("Unknown Device");
                 let suffix = if d.is_current { " (this device)" } else { "" };
                 let label = format!("{name}{suffix}");
 
@@ -1462,8 +1473,8 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                 let status = if ok { "✓" } else { "✗" };
                 let status_color = if ok { color::ORANGE } else { color::RED };
 
-                let ip = a.ip_address.as_deref();
-                let ua = a.device_name.as_deref();
+                let ip = non_blank(a.ip_address.as_deref());
+                let ua = non_blank(a.device_name.as_deref());
                 let ip_and_ua = match (ip, ua) {
                     (Some(i), Some(u)) => {
                         let short_u = if u.chars().count() > 60 {
@@ -2979,6 +2990,15 @@ mod renewal_banner_tests {
                 last_used_at: None,
                 is_current: false,
             },
+            // Rows written before device naming was fixed come back with an
+            // empty (not absent) name.
+            VerifiedDevice {
+                id: 3,
+                device_name: Some(String::new()),
+                created_at: "2026-05-01T00:00:00Z".to_string(),
+                last_used_at: Some("2026-05-02T00:00:00Z".to_string()),
+                is_current: false,
+            },
         ]);
         account.verified_devices_state.deleting_ids.insert(2);
         account.login_activity = Some(vec![
@@ -2999,12 +3019,40 @@ mod renewal_banner_tests {
                 created_at: "2026-07-04T00:00:00Z".to_string(),
                 success: Some(false),
             },
+            LoginActivity {
+                id: 3,
+                ip_address: Some("104.28.154.80".to_string()),
+                device_name: Some(String::new()),
+                created_at: "2026-05-02T00:00:00Z".to_string(),
+                success: Some(false),
+            },
         ]);
         let _ = connect_account_panel(&account);
 
         account.verified_devices = Some(Vec::new());
         account.login_activity = Some(Vec::new());
         let _ = connect_account_panel(&account);
+    }
+
+    /// The API returns an empty `deviceName` for device rows written before
+    /// device naming was fixed. `Some("")` must be treated as "no name" so the
+    /// caller's fallback fires — otherwise the Security page renders a nameless
+    /// device row, and a login-activity line that trails off as `"1.2.3.4 - "`.
+    #[test]
+    fn blank_device_names_are_treated_as_absent() {
+        assert_eq!(super::non_blank(Some("MacBook Pro")), Some("MacBook Pro"));
+        assert_eq!(super::non_blank(Some("  Dart  ")), Some("Dart"));
+
+        assert_eq!(super::non_blank(None), None);
+        assert_eq!(super::non_blank(Some("")), None);
+        assert_eq!(super::non_blank(Some("   ")), None);
+        assert_eq!(super::non_blank(Some("\t\n")), None);
+
+        // The fallbacks the view applies on top of it.
+        assert_eq!(
+            super::non_blank(Some("")).unwrap_or("Unknown Device"),
+            "Unknown Device"
+        );
     }
 
     #[test]

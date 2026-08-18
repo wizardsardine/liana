@@ -3648,12 +3648,12 @@ impl App {
                         if let Some(grpc_url) =
                             crate::services::connect::client::resolve_connect_grpc_url().await
                         {
-                            let device_name = std::env::var("HOSTNAME")
-                                .ok()
-                                .filter(|s| !s.is_empty())
-                                .unwrap_or_else(|| {
-                                    format!("Coincube Desktop ({})", std::env::consts::OS)
-                                });
+                            // Same helper as every other registration path.
+                            // `ensure_device_registered` short-circuits on a
+                            // cached device_id, so whichever path registers
+                            // first owns this machine's name permanently —
+                            // all four call sites must derive it identically.
+                            let device_name = crate::utils::device::device_label();
                             ensure_device_registered_best_effort(
                                 &grpc_url,
                                 tokens_arc.clone(),
@@ -3848,12 +3848,9 @@ impl App {
                             );
                         };
 
-                        let device_name = std::env::var("HOSTNAME")
-                            .ok()
-                            .filter(|s| !s.is_empty())
-                            .unwrap_or_else(|| {
-                                format!("Coincube Desktop ({})", std::env::consts::OS)
-                            });
+                        // Same helper as every other registration path — see
+                        // the note on the in-app login path above.
+                        let device_name = crate::utils::device::device_label();
                         let Some(_device_id) = ensure_device_registered_best_effort(
                             &grpc_url,
                             tokens_arc.clone(),
