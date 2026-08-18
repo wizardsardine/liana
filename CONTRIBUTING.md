@@ -63,13 +63,29 @@ query).
 
 # Code
 
-## Minimum Supported Rust Version
+## Rust version
 
-`coincubed` should always compile and pass tests using **Rust 1.63**. The rationale behind this is
-support something reasonable, and preferably supported by all of:
-- [Guix](https://guix.gnu.org/)
-- Popular distributions' packages (especially Debian which is the most conservative)
-- [Mrustc](https://github.com/thepowersgang/mrustc)
+The Rust toolchain is pinned in [`rust-toolchain.toml`](rust-toolchain.toml), currently **1.97.1**.
+`rustup` selects it automatically when you build anywhere in this repository, and CI lints and tests
+with that same version. Treat that file as the source of truth rather than the number quoted here.
+
+There is no separately supported older Rust version: the crates do not declare a `rust-version` in
+their manifests and CI does not exercise one, so building with an older toolchain is untested.
+
+When bumping the pin, note that `rust-toolchain.toml` is not the only place the version appears: CI
+jobs that install a toolchain explicitly carry their own copy, and those copies do not follow the
+file. Find every one of them before you start:
+
+```
+git grep -n 'toolchain: [0-9]' .github/workflows/
+```
+
+Update them together with `rust-toolchain.toml`, then run `cargo fmt -- --check` and
+`cargo clippy --all-targets -- -D warnings`. A new stable routinely adds default lints, and clippy is
+a hard CI gate, so expect to fix some.
+
+`.github/workflows/coverage.yml` is deliberately excluded from that sweep: it pins its own nightly
+for `cargo-llvm-cov` and is independent of the stable pin.
 
 ## Style
 

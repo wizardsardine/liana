@@ -2859,25 +2859,24 @@ impl App {
                                 });
                             }
                         }
-                        menu::VaultSubMenu::Recovery => {
+                        menu::VaultSubMenu::Recovery
                             if self
                                 .panels
                                 .recovery
                                 .as_ref()
-                                .is_none_or(|p| !p.keep_state())
-                            {
-                                self.panels.recovery = Some(new_recovery_panel(
-                                    wallet.clone(),
-                                    &self.cache,
-                                    sync_status(
-                                        self.daemon_backend(),
-                                        self.cache.blockheight(),
-                                        self.cache.sync_progress(),
-                                        self.cache.last_poll_timestamp(),
-                                        self.cache.last_poll_at_startup,
-                                    ),
-                                ));
-                            }
+                                .is_none_or(|p| !p.keep_state()) =>
+                        {
+                            self.panels.recovery = Some(new_recovery_panel(
+                                wallet.clone(),
+                                &self.cache,
+                                sync_status(
+                                    self.daemon_backend(),
+                                    self.cache.blockheight(),
+                                    self.cache.sync_progress(),
+                                    self.cache.last_poll_timestamp(),
+                                    self.cache.last_poll_at_startup,
+                                ),
+                            ));
                         }
                         _ => {}
                     }

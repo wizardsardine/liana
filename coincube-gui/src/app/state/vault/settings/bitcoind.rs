@@ -1861,10 +1861,8 @@ impl ElectrumSettings {
                 }
             }
             view::SettingsEditMessage::Clipboard(text) => return clipboard::write(text),
-            view::SettingsEditMessage::ValidateDomainEdited(b) => {
-                if !self.processing {
-                    self.electrum_config.validate_domain = b;
-                }
+            view::SettingsEditMessage::ValidateDomainEdited(b) if !self.processing => {
+                self.electrum_config.validate_domain = b;
             }
             _ => {}
         }

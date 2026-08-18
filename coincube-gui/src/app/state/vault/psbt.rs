@@ -1766,7 +1766,7 @@ async fn sign_psbt(
         } else {
             log::error!(
                 "Not all PSBT inputs are present in the pruned psbt. Pruned psbt: '{}'.",
-                &pruned_psbt
+                pruned_psbt
             );
         }
     }

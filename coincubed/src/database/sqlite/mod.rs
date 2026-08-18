@@ -2197,7 +2197,7 @@ CREATE TABLE labels (
                 .into_iter()
                 .map(Coin::from)
                 .collect::<Vec<_>>();
-            db_coins.sort_by(|c1, c2| c1.outpoint.vout.cmp(&c2.outpoint.vout));
+            db_coins.sort_by_key(|c1| c1.outpoint.vout);
             assert_eq!(&db_coins[..], &coins[..]);
 
             // Now that everything is settled, reorg to a previous height.

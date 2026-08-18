@@ -1010,9 +1010,9 @@ impl Step for DefineSpend {
                 recipient_with_max,
                 destinations_is_empty,
                 result,
-            } => {
+            }
                 // Ignore a stale result the user has already typed past.
-                if seq == self.redraft_seq {
+                if seq == self.redraft_seq => {
                     self.apply_redraft_result(
                         max_address,
                         recipient_with_max,
@@ -1021,7 +1021,6 @@ impl Step for DefineSpend {
                     );
                     self.check_valid();
                 }
-            }
             _ => {}
         }
         Task::none()

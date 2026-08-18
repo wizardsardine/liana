@@ -2707,7 +2707,7 @@ fn orders_from_cache(
             Some(p2p)
         })
         .collect();
-    orders.sort_by(|a, b| b.created_at_ts.cmp(&a.created_at_ts));
+    orders.sort_by_key(|o| std::cmp::Reverse(o.created_at_ts));
     orders
 }
 

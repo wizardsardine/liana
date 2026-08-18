@@ -876,12 +876,10 @@ impl DaemonControl {
                     Some(db_psbtin) => db_psbtin,
                     None => continue,
                 };
-                db_psbtin
-                    .partial_sigs
-                    .extend(psbtin.partial_sigs.clone().into_iter());
+                db_psbtin.partial_sigs.extend(psbtin.partial_sigs.clone());
                 db_psbtin
                     .tap_script_sigs
-                    .extend(psbtin.tap_script_sigs.clone().into_iter());
+                    .extend(psbtin.tap_script_sigs.clone());
                 if db_psbtin.tap_key_sig.is_none() {
                     db_psbtin.tap_key_sig = psbtin.tap_key_sig;
                 }
@@ -3043,7 +3041,7 @@ mod tests {
         db_conn.new_txs(&txs);
 
         let mut transactions = control.list_confirmed_transactions(0, 4, 10).transactions;
-        transactions.sort_by(|tx1, tx2| tx2.height.cmp(&tx1.height));
+        transactions.sort_by_key(|tx| std::cmp::Reverse(tx.height));
         assert_eq!(transactions.len(), 4);
 
         assert_eq!(transactions[0].time, Some(4));
@@ -3059,7 +3057,7 @@ mod tests {
         assert_eq!(transactions[3].tx, deposit1);
 
         let mut transactions = control.list_confirmed_transactions(2, 3, 10).transactions;
-        transactions.sort_by(|tx1, tx2| tx2.height.cmp(&tx1.height));
+        transactions.sort_by_key(|tx| std::cmp::Reverse(tx.height));
         assert_eq!(transactions.len(), 2);
 
         assert_eq!(transactions[0].time, Some(3));

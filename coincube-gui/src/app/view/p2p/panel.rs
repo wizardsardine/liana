@@ -4058,7 +4058,7 @@ impl P2PPanel {
         }
 
         // Sort by last message timestamp, newest first
-        chat_entries.sort_by(|a, b| b.2.cmp(&a.2));
+        chat_entries.sort_by_key(|e| std::cmp::Reverse(e.2));
 
         let list_content: Element<'_, view::Message> = if chat_entries.is_empty() {
             let (empty_label, empty_hint) = if is_disputes {

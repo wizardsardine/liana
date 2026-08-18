@@ -1141,7 +1141,7 @@ pub fn define_coincube_connect<'a>(
             .spacing(20)
             .push(text(format!(
                 "Enter the verification code sent to {}",
-                &email.value
+                email.value
             )))
             .push(
                 form::Form::new_trimmed("6-digit code", otp, |msg| {

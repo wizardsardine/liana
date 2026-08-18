@@ -258,13 +258,12 @@ impl LiquidTransactions {
             match self.asset_filter {
                 AssetFilter::UsdtOnly if !is_usdt => continue,
                 AssetFilter::LbtcOnly if is_usdt => continue,
-                AssetFilter::All => {
+                AssetFilter::All
                     // For All mode, skip USDt from balance calc since
                     // USDt amount_sat is in asset base units, not sats
-                    if is_usdt {
+                    if is_usdt => {
                         continue;
                     }
-                }
                 _ => {}
             }
 

@@ -433,8 +433,8 @@ impl CoincubeDescriptor {
                 // ECDSA sigs.
                 psbt_in
                     .partial_sigs
-                    .iter()
-                    .filter_map(|(pk, _)| psbt_in.bip32_derivation.get(&pk.inner))
+                    .keys()
+                    .filter_map(|pk| psbt_in.bip32_derivation.get(&pk.inner))
             })
             .into_iter()
             .flatten()
@@ -557,7 +557,7 @@ impl CoincubeDescriptor {
                 .map(|(_, (_, der_path))| der_path);
             let der_index = if let Some(i) = wsh_der_index
                 .into_iter()
-                .chain(tap_der_index.into_iter())
+                .chain(tap_der_index)
                 .next()
                 .and_then(|der_path| der_path.into_iter().last())
             {
