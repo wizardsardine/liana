@@ -654,10 +654,7 @@ mod tests {
         // Mk4 Edge and Q Edge suffixes are stripped by the parser.
         assert_eq!(tier(Some(parse("6.5.9X"))), AdvisoryTier::Affected);
         assert_eq!(tier(Some(parse("6.6.0X"))), AdvisoryTier::Residual);
-        assert_eq!(
-            tier(Some(parse("6.6.0QX"))),
-            AdvisoryTier::Residual
-        );
+        assert_eq!(tier(Some(parse("6.6.0QX"))), AdvisoryTier::Residual);
         assert_eq!(tier(Some(parse("6.2.1"))), AdvisoryTier::Affected);
     }
 
