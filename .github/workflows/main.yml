@@ -77,26 +77,45 @@ jobs:
       # was masking otherwise-green macOS/ubuntu results and forcing full
       # re-runs to see them.
       fail-fast: false
+      # `pinned` means "whatever rust-toolchain.toml selects" — the version we
+      # actually ship, gated on every OS. `stable` and `nightly` are advisory
+      # canaries for the next toolchain bump and run on ubuntu only; see
+      # `continue-on-error` below for why they do not gate.
+      #
+      # This used to be a `toolchain: [stable, nightly]` x `os: [...]` product,
+      # which never did what it claimed: `rustup default` loses to
+      # rust-toolchain.toml, so all six legs silently ran the pinned toolchain
+      # and each OS was tested twice over. Overriding the file needs
+      # RUSTUP_TOOLCHAIN (env beats rust-toolchain.toml in rustup's precedence
+      # order), not `rustup default`.
       matrix:
-        toolchain:
-          - stable
-          - nightly
-        os:
-          - ubuntu-latest
-          - macOS-latest
-          - windows-latest
+        include:
+          - { os: ubuntu-latest, toolchain: pinned }
+          - { os: macOS-latest, toolchain: pinned }
+          - { os: windows-latest, toolchain: pinned }
+          - { os: ubuntu-latest, toolchain: stable }
+          - { os: ubuntu-latest, toolchain: nightly }
     runs-on: ${{ matrix.os }}
+    # The canaries are informational: a newer toolchain breaking is upstream's
+    # doing, not the PR's, and blocking merges on it just teaches people to
+    # ignore a red tick. Their failures are still visible in the run.
+    continue-on-error: ${{ matrix.toolchain != 'pinned' }}
     env:
       BREEZ_API_KEY: ${{ secrets.BREEZ_API_KEY }}
+      # Empty for the pinned legs, which leaves rust-toolchain.toml in charge —
+      # rustup ignores an empty RUSTUP_TOOLCHAIN rather than erroring on it.
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain != 'pinned' && matrix.toolchain || '' }}
     steps:
       - name: Checkout source code
         uses: actions/checkout@v5
         with:
           persist-credentials: false
+      # Nothing to install for the pinned legs: rustup provisions the toolchain
+      # named by rust-toolchain.toml on first use. The canaries pin no such file
+      # and so must be installed before RUSTUP_TOOLCHAIN can select them.
       - name: Install Rust ${{ matrix.toolchain }} toolchain
-        run: |
-          rustup update ${{ matrix.toolchain }}
-          rustup default ${{ matrix.toolchain }}
+        if: matrix.toolchain != 'pinned'
+        run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal
       # Windows Defender's real-time scanning briefly locks files the tests
       # have just written under %TEMP%, so a follow-up read/enumerate can miss
       # them and surface as os error 2/3/5. Exclude the temp/work dirs (and drop
