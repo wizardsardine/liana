@@ -2028,7 +2028,7 @@ impl SelectKeySource {
                         advisory.headline,
                         None,
                         advisory.file_import,
-                        "Read the rotation guide",
+                        advisory.guide_label,
                         Some(Message::OpenUrl(advisory.url.to_string())),
                         None,
                     ))

@@ -71,7 +71,12 @@ mod u128_dec {
         }
 
         fn visit_i64<E: de::Error>(self, v: i64) -> Result<u128, E> {
-            u128::try_from(v).map_err(de::Error::custom)
+            // Our own wording, not `TryFromIntError`'s. std reworded that
+            // Display in 2026 ("out of range integral type conversion
+            // attempted" → "number too small to fit in target type"), which
+            // silently broke the test asserting on it. Naming the value and
+            // the target type is also more use in a log than std's sentence.
+            u128::try_from(v).map_err(|_| E::custom(format_args!("u128 out of range: {v}")))
         }
     }
 
@@ -1417,6 +1422,9 @@ mod tests {
             }
         });
         let err = serde_json::from_value::<Frame>(frame).expect_err("negative u128 rejected");
-        assert!(err.to_string().contains("out of range"), "{err}");
+        // Asserts on the message `U128Visitor` builds itself, the way the
+        // sibling test above asserts on its `expecting()` string. Asserting on
+        // a std error's Display made this test hostage to std's wording.
+        assert!(err.to_string().contains("u128 out of range: -1"), "{err}");
     }
 }
