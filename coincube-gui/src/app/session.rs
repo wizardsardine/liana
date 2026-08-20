@@ -50,6 +50,8 @@ use coincube_core::signer::{MasterSigner, SignerError};
 use subtle::ConstantTimeEq as _;
 use zeroize::Zeroizing;
 
+use crate::app::settings::CubeSettings;
+
 struct Session {
     /// The Cube this PIN belongs to. Checked on read so a stale session from a
     /// previously-open Cube can never hand its PIN to a different one.
@@ -259,6 +261,42 @@ pub fn pin_for(cube_id: &str) -> Option<Zeroizing<String>> {
         .and_then(|s| s.pin.clone())
 }
 
+/// The credential this Cube's **seed files** are encrypted under, whichever
+/// shape of Cube it is.
+///
+/// The two shapes disagree about what that credential even is, and every caller
+/// that reads or writes a seed file needs the same answer:
+///
+/// - a **PIN** Cube: the session PIN ([`pin_for`]);
+/// - a **passkey** Cube: a key derived from the master seed the unlock
+///   assertion produced ([`crate::services::passkey::seed_password`]) — it has
+///   no PIN, so `pin_for` answers `None` for it by design.
+///
+/// This is the read-side twin of what the Vault installer writes with
+/// ([`crate::installer::Context::seed_password`]). Keeping both on one
+/// definition of "the password" is the point: they must agree exactly or the
+/// file the installer writes is one nothing can open again.
+///
+/// `None` means this cache cannot answer — no session, a session for a
+/// different Cube, or a passkey Cube whose signer is not in the session (which
+/// is not a normal state: the unlock parks it there). Callers treat that as
+/// "no hot signer available", never as "the seed is gone".
+pub fn seed_file_password(cube: &CubeSettings) -> Option<Zeroizing<String>> {
+    if let Some(pin) = pin_for(&cube.id) {
+        return Some(pin);
+    }
+    if !cube.is_passkey_cube() {
+        return None;
+    }
+    // Deriving needs the Cube's *master* seed specifically, so go through
+    // `unlocked_signer`, which refuses to answer for any other key.
+    let signer = unlocked_signer(&cube.id, cube.master_signer_fingerprint?)?;
+    Some(crate::services::passkey::seed_password::derive(
+        &signer,
+        cube.network,
+    ))
+}
+
 /// The open Cube's PIN, whichever Cube that is. Use [`pin_for`] when the
 /// caller knows which Cube it means — this exists for the installer, which
 /// runs before the restored Cube's id is minted. `None` for a passkey Cube.
@@ -323,6 +361,109 @@ mod tests {
         close();
         assert!(!is_open());
         assert_eq!(pin_for("cube-a"), None);
+    }
+
+    fn passkey_cube(id: &str) -> CubeSettings {
+        use coincube_core::miniscript::bitcoin::Network;
+        let mut cube = CubeSettings::new_with_raw_id(
+            id.to_string(),
+            "Passkey Cube".to_string(),
+            Network::Bitcoin,
+        );
+        cube.passkey_metadata = Some(crate::app::settings::PasskeyMetadata {
+            credential_id: "Y3JlZC1pZA==".to_string(),
+            rp_id: "coincube.io".to_string(),
+            created_at: 1_786_122_245,
+            label: None,
+        });
+        cube
+    }
+
+    /// A PIN Cube's seed files are encrypted under its PIN, and that is the
+    /// answer `seed_file_password` must give — the installer wrote them that
+    /// way.
+    #[test]
+    fn a_pin_cubes_seed_password_is_its_pin() {
+        use coincube_core::miniscript::bitcoin::Network;
+        let _g = guard();
+        close();
+
+        let cube = CubeSettings::new_with_raw_id(
+            "cube-pin".to_string(),
+            "PIN Cube".to_string(),
+            Network::Bitcoin,
+        );
+        assert_eq!(
+            seed_file_password(&cube),
+            None,
+            "no session means no credential to hand out"
+        );
+
+        open("cube-pin", Zeroizing::new("1234".to_string()));
+        assert_eq!(seed_file_password(&cube).as_deref(), Some(&"1234".into()));
+
+        close();
+    }
+
+    /// The passkey arm: no PIN exists, so the answer is derived from the master
+    /// seed the assertion produced. This is the read side of what the Vault
+    /// installer encrypts with — they must be the same value.
+    #[test]
+    fn a_passkey_cubes_seed_password_is_derived_from_its_master_seed() {
+        use coincube_core::miniscript::bitcoin::secp256k1::Secp256k1;
+        use coincube_core::miniscript::bitcoin::Network;
+
+        let _g = guard();
+        close();
+
+        let signer = MasterSigner::generate(Network::Bitcoin).unwrap();
+        let fp = signer.fingerprint(&Secp256k1::signing_only());
+        let expected =
+            crate::services::passkey::seed_password::derive(&signer, Network::Bitcoin).to_string();
+
+        let cube = passkey_cube("cube-passkey").with_master_signer(fp);
+
+        // No session yet: nothing to derive from, and emphatically not an empty
+        // string.
+        assert_eq!(seed_file_password(&cube), None);
+
+        open_without_pin("cube-passkey");
+        store_unlocked_signer("cube-passkey", fp, signer);
+
+        assert_eq!(
+            seed_file_password(&cube).as_deref(),
+            Some(&expected),
+            "a passkey Cube's seed password comes from its own master seed"
+        );
+        assert_eq!(
+            pin_for("cube-passkey"),
+            None,
+            "and it is still not a PIN — nothing may treat it as one"
+        );
+
+        close();
+    }
+
+    /// The same guard `pin_for` has. A session for another Cube must not supply
+    /// a credential here either — deriving from the wrong seed would encrypt a
+    /// file nothing could open again.
+    #[test]
+    fn a_passkey_cube_gets_nothing_from_another_cubes_session() {
+        use coincube_core::miniscript::bitcoin::secp256k1::Secp256k1;
+        use coincube_core::miniscript::bitcoin::Network;
+
+        let _g = guard();
+        close();
+
+        let signer = MasterSigner::generate(Network::Bitcoin).unwrap();
+        let fp = signer.fingerprint(&Secp256k1::signing_only());
+        open_without_pin("cube-other");
+        store_unlocked_signer("cube-other", fp, signer);
+
+        let cube = passkey_cube("cube-passkey").with_master_signer(fp);
+        assert_eq!(seed_file_password(&cube), None);
+
+        close();
     }
 
     #[test]

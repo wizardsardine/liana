@@ -3042,6 +3042,11 @@ pub fn create_app_with_remote_backend(
         }
     };
 
+    // The Vault's hot signer is encrypted under the Cube's unlock credential —
+    // the session PIN, or a passkey Cube's seed-derived password. `None` here
+    // means the wallet loads without it and simply cannot sign with that key.
+    let seed_password = crate::app::session::seed_file_password(&cube_settings);
+
     // Reuse the existing `Arc<RwLock<AccessTokenResponse>>` from the
     // remote backend so the gRPC interceptor and the REST client share
     // a single source of truth — token refreshes propagate to both
@@ -3134,7 +3139,12 @@ pub fn create_app_with_remote_backend(
                 .with_provider_keys(provider_keys)
                 .with_border_wallet_fingerprints(wallet_settings.border_wallet_fingerprints())
                 .with_hardware_wallets(hws)
-                .load_hotsigners(&coincube_dir, network)
+                .load_hotsigners(
+                    &coincube_dir,
+                    network,
+                    &cube_settings.id,
+                    seed_password.as_deref().map(|p| p.as_str()),
+                )
                 .expect("Datadir should be conform"),
         ),
         breez_client,

@@ -401,10 +401,103 @@ impl Wallet {
         }
     }
 
+    /// Load the Vault's **hot signer** — the seed behind a "this computer" key
+    /// — so the wallet can sign PSBTs with it.
+    ///
+    /// # Why this takes credentials
+    ///
+    /// It used to call `MasterSigner::from_datadir_vault_only`, which passes
+    /// `password: None`, and `from_datadir_with_password_filtered` *skips every
+    /// encrypted file* when it has no password. Since seed hardening (I5) made
+    /// `store_encrypted` the only way to write a mnemonic, every hot-signer
+    /// seed on disk is encrypted — so the loop matched nothing, `self.signer`
+    /// stayed `None`, and a Vault whose descriptor contains a hot key could not
+    /// sign with it. The installer wrote the seed and nothing ever read it
+    /// back. That was true for PIN Cubes and passkey Cubes alike.
+    ///
+    /// `password` therefore comes from [`crate::app::session::seed_file_password`]
+    /// — the same definition the installer encrypts under, which is what makes
+    /// the two halves meet.
+    ///
+    /// # Why not `from_datadir_by_fingerprint`
+    ///
+    /// Because `coincube-core` has no keystore access and answers
+    /// `DeviceSecretRequired` for every `ENCRYPTED_V3` file — and
+    /// `migrate_seed_files` promotes a PIN Cube's *hot-signer* files to v3
+    /// along with its master seed. [`crate::services::unlock::open_seed_for_any_of`]
+    /// supplies the device secret, and handles v2 (a passkey Cube, which has
+    /// none) and pre-hardening plaintext on the same path.
+    ///
+    /// # Cost
+    ///
+    /// The session cache is tried first, across every descriptor key, and costs
+    /// nothing — it covers the developer-mode case where the Vault key *is* the
+    /// Cube master seed already in hand. Only then does it touch disk, through
+    /// [`crate::services::unlock::open_seed_for_any_of`]: **one** directory scan
+    /// and one keystore read for the whole key set, then one Argon2id pass
+    /// (~831 ms) per file whose name carries one of those keys. A Vault with no
+    /// hot key pays the scan and nothing else.
+    ///
+    /// A `None` password is not an error: a watch-only Vault, or a load with no
+    /// session (tests, some restore paths), keeps today's behaviour of reading
+    /// only unencrypted files. It never fails the load — a Vault without its
+    /// hot signer still watches, receives, and builds PSBTs for other keys.
     pub fn load_hotsigners(
         self,
         datadir_path: &CoincubeDirectory,
         network: bitcoin::Network,
+        cube_id: &str,
+        password: Option<&str>,
+    ) -> Result<Self, WalletError> {
+        let keys = self.descriptor_keys();
+
+        let Some(password) = password else {
+            return self.load_unencrypted_hotsigners(datadir_path, network, &keys);
+        };
+
+        // Free when it hits: the signer the unlock already decrypted, with no
+        // Argon2 pass. Only answers for this Cube and this exact key.
+        for fingerprint in &keys {
+            if let Some(signer) = crate::app::session::unlocked_signer(cube_id, *fingerprint) {
+                return Ok(self.with_signer(Signer::new(signer)));
+            }
+        }
+
+        match crate::services::unlock::open_seed_for_any_of(
+            datadir_path.path(),
+            network,
+            &keys,
+            password,
+            cube_id,
+        ) {
+            Ok(Some(signer)) => Ok(self.with_signer(Signer::new(signer))),
+            // The ordinary answer for a Vault built entirely from hardware
+            // wallets, Keychain cosigners, or Contacts' keys: no seed for any of
+            // them is on this machine, and none ever will be.
+            Ok(None) => Ok(self),
+            Err(e) => {
+                // The folder or the keystore could not be read. Not fatal — the
+                // Vault still watches, receives and builds PSBTs for its other
+                // keys — but it must not pass silently, because a v3 seed behind
+                // an unreachable keychain is indistinguishable from an absent
+                // one at this level.
+                tracing::warn!(
+                    error = %e,
+                    "couldn't look for this Vault's hot signer; it won't be available to sign"
+                );
+                Ok(self)
+            }
+        }
+    }
+
+    /// The no-credentials arm of [`Self::load_hotsigners`]: pre-hardening
+    /// plaintext seed files only, exactly as before. Kept as its own function so
+    /// the encrypted path never silently degrades into it.
+    fn load_unencrypted_hotsigners(
+        self,
+        datadir_path: &CoincubeDirectory,
+        network: bitcoin::Network,
+        keys: &HashSet<Fingerprint>,
     ) -> Result<Self, WalletError> {
         // Load only Vault mnemonics, skip Liquid wallet mnemonics (managed by Breez SDK)
         let master_signers =
@@ -423,7 +516,6 @@ impl Wallet {
             };
 
         let curve = bitcoin::secp256k1::Secp256k1::signing_only();
-        let keys = self.descriptor_keys();
         if let Some(master_signer) = master_signers
             .into_iter()
             .find(|s| keys.contains(&s.fingerprint(&curve)))
@@ -570,6 +662,79 @@ mod tests {
         let a = Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap());
         let b = Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap());
         assert_eq!(a.id_fingerprint(), b.id_fingerprint());
+    }
+
+    /// A Vault whose descriptor names a **hot key** must be able to sign with
+    /// it, and the seed for it is encrypted on disk like every other (I5).
+    ///
+    /// The regression this pins: `load_hotsigners` used to call
+    /// `from_datadir_vault_only`, which passes no password and therefore skips
+    /// every encrypted file. The installer wrote the seed, nothing read it
+    /// back, and `wallet.signer` was `None` on a Vault that owned a key.
+    #[test]
+    fn an_encrypted_hot_signer_is_loaded_with_the_cubes_credential() {
+        use coincube_core::miniscript::bitcoin::bip32::DerivationPath;
+
+        let secp = bitcoin::secp256k1::Secp256k1::signing_only();
+        let net = Network::Testnet;
+        let pin = "1234";
+        let cube_id = format!("cube-hotsigner-{}", std::process::id());
+        let root = std::env::temp_dir().join(format!(
+            "coincube-hotsigner-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let signer = MasterSigner::generate(net).unwrap();
+        let fp = signer.fingerprint(&secp);
+        let path = DerivationPath::from_str("48'/1'/0'/2'").unwrap();
+        let xpub = signer.xpub_at(&path, &secp);
+        let descriptor = CoincubeDescriptor::from_str(&format!(
+            "wsh(or_d(pk([{fp}/48'/1'/0'/2']{xpub}/<0;1>/*),\
+             and_v(v:pkh([{fp}/48'/1'/0'/2']{xpub}/<2;3>/*),older(3))))"
+        ))
+        .expect("a descriptor built from the hot signer must parse");
+
+        signer
+            .store_encrypted(
+                &root,
+                net,
+                &secp,
+                Some(("hotsigner1000".to_string(), 1000)),
+                pin,
+                &cube_id,
+                None,
+            )
+            .unwrap();
+
+        let dir = CoincubeDirectory::new(root.clone());
+
+        let loaded = Wallet::new(descriptor.clone())
+            .load_hotsigners(&dir, net, &cube_id, Some(pin))
+            .unwrap();
+        assert_eq!(
+            loaded.signer.as_ref().map(|s| s.fingerprint()),
+            Some(fp),
+            "the Vault's own hot signer must load with the Cube's credential"
+        );
+
+        // No credential (watch-only load, no session): the encrypted file stays
+        // shut. Not an error — the Vault still loads, it just cannot sign.
+        let none = Wallet::new(descriptor.clone())
+            .load_hotsigners(&dir, net, &cube_id, None)
+            .unwrap();
+        assert!(none.signer.is_none());
+
+        // A wrong credential must not hand back *some other* signer, and must
+        // not fail the load either.
+        let wrong = Wallet::new(descriptor)
+            .load_hotsigners(&dir, net, &cube_id, Some("9999"))
+            .unwrap();
+        assert!(wrong.signer.is_none());
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     /// Regression for the bug where the local-signer panel surfaced
