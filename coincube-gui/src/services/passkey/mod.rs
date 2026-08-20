@@ -30,6 +30,7 @@
 pub mod macos;
 pub mod reauth;
 pub mod security_key;
+pub mod seed_password;
 #[cfg(windows)]
 pub mod windows;
 

@@ -197,17 +197,46 @@ pub struct Context {
     /// - Recovery-Kit restore: [`Self::restore_pin`], chosen on
     ///   `RestorePinSetupStep` — a Cube that does not exist yet has no session.
     ///
-    /// `None` means neither was available, and the install fails loudly at the
-    /// point it would have had to write a seed. That is deliberate: the
+    /// `None` is not by itself a failure any more: a **passkey** Cube has no
+    /// PIN and supplies [`Self::passkey_seed_password`] instead. It is a
+    /// failure when that is `None` too, and the install then fails loudly at
+    /// the point it would have had to write a seed. That is deliberate: the
     /// alternative this replaces was writing the seed in the clear.
     pub cube_pin: Option<zeroize::Zeroizing<String>>,
+    /// The seed-file password for a **passkey** Cube, derived from the master
+    /// seed the unlock assertion produced
+    /// ([`crate::services::passkey::seed_password`]).
+    ///
+    /// A passkey Cube has no PIN, so [`Self::cube_pin`] is `None` for it by
+    /// design — and before this existed, "Set up a Vault" inside one died at
+    /// the seed write with "the Cube's PIN isn't available in this session".
+    /// The Cube's root secret was in hand the whole time; it just was not a
+    /// PIN.
+    ///
+    /// Populated in [`super::Installer::new`] from
+    /// [`crate::app::session::seed_file_password`] — the same resolver the read
+    /// side ([`crate::app::wallet::Wallet::load_hotsigners`]) uses, so what the
+    /// installer encrypts under is by construction what a later load decrypts
+    /// with. `None` for every PIN Cube, and for a passkey Cube whose session
+    /// holds no master signer — which fails the same loud way rather than
+    /// inventing a password no later unlock could rederive.
+    pub passkey_seed_password: Option<zeroize::Zeroizing<String>>,
 }
 
 impl Context {
-    /// The PIN to encrypt seed material under, preferring the restore PIN the
-    /// user just chose over a session PIN inherited from another Cube.
+    /// The password to encrypt seed material under, preferring the restore PIN
+    /// the user just chose over a session PIN inherited from another Cube, and
+    /// falling back to the passkey Cube's seed-derived password.
+    ///
+    /// The order matters. A restore always writes files the *restored* Cube
+    /// must open, so its freshly-chosen PIN wins outright. The passkey password
+    /// comes last because it only ever exists when the other two cannot: it is
+    /// set only for a passkey Cube, which has no PIN of either kind.
     pub fn seed_password(&self) -> Option<&zeroize::Zeroizing<String>> {
-        self.restore_pin.as_ref().or(self.cube_pin.as_ref())
+        self.restore_pin
+            .as_ref()
+            .or(self.cube_pin.as_ref())
+            .or(self.passkey_seed_password.as_ref())
     }
 
     /// The Cube id to bind seed files to. `""` when the Cube has not been
@@ -279,6 +308,7 @@ impl Context {
             // Filled in by `Installer::new` from the live session when the
             // installer is launched from inside an open Cube.
             cube_pin: None,
+            passkey_seed_password: None,
         }
     }
 }
@@ -326,6 +356,36 @@ mod tests {
             .expect("fixture descriptor must parse"),
         );
         c
+    }
+
+    /// A passkey Cube reaches the seed write with no PIN of either kind. Before
+    /// `passkey_seed_password` existed, `seed_password()` answered `None` there
+    /// and "Set up a Vault" died on the installer's last step.
+    #[test]
+    fn a_passkey_cube_encrypts_seeds_under_its_derived_password() {
+        let mut c = ctx();
+        assert!(
+            c.seed_password().is_none(),
+            "no credentials of any kind is still a hard failure"
+        );
+
+        c.passkey_seed_password = Some(zeroize::Zeroizing::new("derived".into()));
+        assert_eq!(c.seed_password().map(|p| p.as_str()), Some("derived"));
+    }
+
+    /// Ordering, not just presence. The passkey password is last because it can
+    /// only exist where neither PIN does — but if a flow ever set both, a
+    /// restore's freshly chosen PIN is the one the restored Cube will unlock
+    /// with, so it has to win.
+    #[test]
+    fn the_pins_outrank_the_passkey_password() {
+        let mut c = ctx();
+        c.passkey_seed_password = Some(zeroize::Zeroizing::new("derived".into()));
+        c.cube_pin = Some(zeroize::Zeroizing::new("session".into()));
+        assert_eq!(c.seed_password().map(|p| p.as_str()), Some("session"));
+
+        c.restore_pin = Some(zeroize::Zeroizing::new("restore".into()));
+        assert_eq!(c.seed_password().map(|p| p.as_str()), Some("restore"));
     }
 
     #[test]

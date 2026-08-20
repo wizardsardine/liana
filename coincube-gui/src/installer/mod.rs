@@ -345,6 +345,25 @@ impl Installer {
         context.cube_pin = cube_settings
             .as_ref()
             .and_then(|cs| crate::app::session::pin_for(&cs.id));
+        // A passkey Cube has no PIN, so the line above is `None` for it *by
+        // design* — `session::pin_for` refuses rather than hand back an empty
+        // string. Its seed files are encrypted under a key derived from the
+        // master seed the unlock assertion produced instead, which the session
+        // is already holding and which needs no second authenticator prompt.
+        //
+        // Deliberately the *same* resolver the read side uses
+        // (`Wallet::load_hotsigners`). The two have to agree exactly or the
+        // installer writes a file nothing can open again, and one shared
+        // definition is the only way to keep that true. Its own guards — right
+        // Cube, right master fingerprint — are what stop a stale session from
+        // supplying another Cube's seed here.
+        //
+        // Filtered on shape so a PIN Cube whose session has gone still fails
+        // loudly at the seed write, rather than quietly taking some other path.
+        context.passkey_seed_password = cube_settings
+            .as_ref()
+            .filter(|cs| cs.is_passkey_cube())
+            .and_then(crate::app::session::seed_file_password);
         // Connect blinding (PR D3): the Vault builder opens Contacts' xpub
         // envelopes with the Cube's seed-derived encryption key. The master
         // signer behind the Breez client is that seed, already unlocked — same
@@ -823,15 +842,23 @@ where
     (wallet_id, res.await)
 }
 
-/// User-facing message when the installer has no PIN to encrypt a seed under.
+/// User-facing message when the installer has nothing to encrypt a seed under.
 ///
 /// This should be unreachable: every flow that reaches a seed write either ran
-/// `RestorePinSetupStep` or was launched from an unlocked Cube. It fails loudly
-/// rather than falling back, because the fallback it replaces was writing the
-/// mnemonic to disk in the clear (I5).
+/// `RestorePinSetupStep` or was launched from an unlocked Cube, and an unlocked
+/// Cube always has one of the two — a session PIN, or (for a passkey Cube,
+/// which has no PIN at all) the seed-derived password in
+/// [`Context::passkey_seed_password`]. It fails loudly rather than falling
+/// back, because the fallback it replaces was writing the mnemonic to disk in
+/// the clear (I5).
+///
+/// Deliberately says "unlock credentials" rather than "PIN": a passkey user
+/// told their PIN is missing would go looking for a PIN they never set, and
+/// **I12** says a passkey failure must never read as something being wrong with
+/// their Cube.
 const NO_SEED_PASSWORD_MSG: &str =
-    "Can't save this wallet's seed: the Cube's PIN isn't available in this session. \
-     Close and re-open the Cube, then try again.";
+    "Can't save this wallet's seed: this Cube's unlock credentials aren't available in \
+     this session. Close and re-open the Cube, then try again.";
 
 fn seed_password(ctx: &Context) -> Result<zeroize::Zeroizing<String>, Error> {
     ctx.seed_password()

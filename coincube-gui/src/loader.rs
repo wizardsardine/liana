@@ -611,9 +611,19 @@ pub async fn load_application(
 > {
     let bitcoin_unit = config.cube_settings.unit_setting.display_unit;
 
+    // The Vault's hot signer ("this computer" key) is encrypted under the same
+    // credential the Cube unlocks with — the session PIN, or for a passkey Cube
+    // the seed-derived password. Without it the seed on disk is unreadable and
+    // the Vault silently loses the ability to sign with a key it holds.
+    let seed_password = crate::app::session::seed_file_password(&config.cube_settings);
     let wallet = Wallet::new(config.info.descriptors.main)
         .load_from_settings(config.wallet_settings)?
-        .load_hotsigners(&config.datadir_path, config.network)?;
+        .load_hotsigners(
+            &config.datadir_path,
+            config.network,
+            &config.cube_settings.id,
+            seed_password.as_deref().map(|p| p.as_str()),
+        )?;
 
     let coins = coins_to_cache(config.daemon.clone())
         .await
