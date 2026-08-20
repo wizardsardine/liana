@@ -479,59 +479,167 @@ pub(crate) fn open_seed_by_fingerprint(
     pin: &str,
     cube_id: &str,
 ) -> Result<MasterSigner, SignerError> {
-    use coincube_core::miniscript::bitcoin::secp256k1::Secp256k1;
-    use coincube_core::signer::MnemonicFileName;
-
     // "No entry for this Cube" is `None`, not an error — a v2 file needs no
     // secret and must keep opening without one.
     let secret = device_secret::load_optional(cube_id)
         .map_err(|e| SignerError::DecryptionFailed(e.to_string()))?;
 
-    let folder = MasterSigner::mnemonics_folder(datadir_root, network);
-    let entries = std::fs::read_dir(&folder).map_err(SignerError::MnemonicStorage)?;
-
-    for entry in entries.flatten() {
-        let file_name = entry.file_name();
-        let Some(name) = file_name.to_str() else {
-            continue;
-        };
-        let Ok(parsed) = MnemonicFileName::from_str(name) else {
-            continue;
-        };
+    for (path, named) in seed_files(datadir_root, network)? {
         // The duress marker deliberately shares this filename grammar, but its
         // fingerprint field is random rather than derived (unit 6a), so it will
         // not collide with the Cube's real fingerprint. Same independent filter
         // `master_seed_path` leans on, and the reason this can take the
         // fingerprint route without also being told the marker's name.
-        if parsed.fingerprint != fingerprint {
+        if named != fingerprint {
             continue;
         }
-
-        let data = std::fs::read(entry.path()).map_err(SignerError::MnemonicStorage)?;
-        let phrase = if MasterSigner::is_encrypted(&data) {
-            let plaintext = seed_crypt::decrypt_with(&data, pin, cube_id, secret.as_ref())?;
-            Zeroizing::new(
-                String::from_utf8(plaintext.to_vec()).map_err(|_| SignerError::InvalidPassword)?,
-            )
-        } else {
-            // Plaintext, written by a pre-hardening build. `migrate_seed_files`
-            // re-encrypts these on the first unlock, so one reaching here means
-            // the migration has not run yet — read it rather than refuse, which
-            // is what `read_mnemonic_bytes` did on the path this replaces.
-            Zeroizing::new(String::from_utf8(data).map_err(|_| SignerError::InvalidFileFormat)?)
-        };
-
-        let signer = MasterSigner::from_str(network, &phrase)?;
-        // The filename is a label; the key is the truth. Verify before handing
-        // it back, exactly as `from_datadir_by_fingerprint` did — handing a
-        // caller the wrong seed produces a valid-looking wallet that is not the
-        // one it asked for.
-        if signer.fingerprint(&Secp256k1::signing_only()) == fingerprint {
-            return Ok(signer);
-        }
+        return open_seed_at(&path, network, fingerprint, pin, cube_id, secret.as_ref());
     }
 
     Err(SignerError::SignerNotFound(fingerprint))
+}
+
+/// Every parseable seed file in this Cube's per-network `mnemonics/` folder,
+/// paired with the fingerprint its **name** claims.
+///
+/// One `read_dir`, so callers that are looking for several keys at once scan
+/// the folder once rather than once per key. The name is a label and not proof
+/// — [`open_seed_at`] re-derives and checks the real fingerprint after
+/// decrypting.
+///
+/// An unreadable folder — including one that does not exist — is
+/// `Err(MnemonicStorage)`, exactly as the `read_dir` this replaced was.
+/// [`open_seed_by_fingerprint`] reports it that way today and callers classify
+/// on the variant (`settings::general::is_wrong_pin`), so the distinction is not
+/// ours to soften; [`open_seed_for_any_of`] folds *only* `NotFound` into "no
+/// seed here" for itself, where a Cube with no seed file is an ordinary state.
+fn seed_files(
+    datadir_root: &Path,
+    network: Network,
+) -> Result<Vec<(PathBuf, Fingerprint)>, SignerError> {
+    use coincube_core::signer::MnemonicFileName;
+    use std::str::FromStr;
+
+    let folder = MasterSigner::mnemonics_folder(datadir_root, network);
+    let entries = std::fs::read_dir(&folder).map_err(SignerError::MnemonicStorage)?;
+
+    Ok(entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let parsed = MnemonicFileName::from_str(name.to_str()?).ok()?;
+            Some((entry.path(), parsed.fingerprint))
+        })
+        .collect())
+}
+
+/// Open one seed file and hand back the signer **only** if it really is
+/// `expected`. Blocking: one Argon2id pass on an encrypted file.
+///
+/// Shared by [`open_seed_by_fingerprint`] and [`open_seed_for_any_of`] so there
+/// is exactly one definition of "open a seed file": the v3 device secret, the
+/// pre-hardening plaintext arm, and the post-decrypt fingerprint check are easy
+/// to get subtly different in a second copy, and a wrong one hands back a
+/// valid-looking wallet that is not the one the caller asked for.
+fn open_seed_at(
+    path: &Path,
+    network: Network,
+    expected: Fingerprint,
+    password: &str,
+    cube_id: &str,
+    secret: Option<&DeviceSecret>,
+) -> Result<MasterSigner, SignerError> {
+    use coincube_core::miniscript::bitcoin::secp256k1::Secp256k1;
+
+    let data = std::fs::read(path).map_err(SignerError::MnemonicStorage)?;
+    let phrase = if MasterSigner::is_encrypted(&data) {
+        let plaintext = seed_crypt::decrypt_with(&data, password, cube_id, secret)?;
+        Zeroizing::new(
+            String::from_utf8(plaintext.to_vec()).map_err(|_| SignerError::InvalidPassword)?,
+        )
+    } else {
+        // Plaintext, written by a pre-hardening build. `migrate_seed_files`
+        // re-encrypts these on the first unlock, so one reaching here means the
+        // migration has not run yet — read it rather than refuse, which is what
+        // `read_mnemonic_bytes` did on the path this replaces.
+        Zeroizing::new(String::from_utf8(data).map_err(|_| SignerError::InvalidFileFormat)?)
+    };
+
+    let signer = MasterSigner::from_str(network, &phrase)?;
+    // The filename is a label; the key is the truth. Verify before handing it
+    // back, exactly as `from_datadir_by_fingerprint` did.
+    if signer.fingerprint(&Secp256k1::signing_only()) != expected {
+        return Err(SignerError::SignerNotFound(expected));
+    }
+    Ok(signer)
+}
+
+/// The first seed file in this Cube's folder whose key is one of `wanted`.
+///
+/// This is [`open_seed_by_fingerprint`] for a caller holding a *set* of
+/// candidate keys rather than one — [`crate::app::wallet::Wallet::load_hotsigners`],
+/// which knows the Vault's descriptor keys but not which of them (if any) is a
+/// hot key with a seed on this machine. Doing that with the single-fingerprint
+/// call meant one `read_dir` and one keystore hit **per key**; here both happen
+/// once.
+///
+/// `Ok(None)` is the ordinary answer: no descriptor key has a seed here, which
+/// is every hardware-wallet and Keychain-cosigner Vault. `Err` is reserved for
+/// "the folder itself could not be read" and a keystore that could not be
+/// reached — a v3 file would silently look absent otherwise. A file that exists
+/// and will not open is logged and skipped, because the rest of the Vault still
+/// works without it.
+///
+/// Blocking: up to one Argon2id pass per *matching* file, so callers run it off
+/// the UI thread.
+pub(crate) fn open_seed_for_any_of(
+    datadir_root: &Path,
+    network: Network,
+    wanted: &std::collections::HashSet<Fingerprint>,
+    password: &str,
+    cube_id: &str,
+) -> Result<Option<MasterSigner>, SignerError> {
+    let files = match seed_files(datadir_root, network) {
+        Ok(files) => files,
+        // No `mnemonics/` folder at all: this Cube has no seed on this device.
+        // Ordinary (watch-only restore, a passkey Cube with no Vault hot key),
+        // and not something to report as a fault.
+        Err(SignerError::MnemonicStorage(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None)
+        }
+        Err(e) => return Err(e),
+    };
+    // Nothing to look for, or nothing to look in: don't touch the keystore.
+    if files.is_empty() || wanted.is_empty() {
+        return Ok(None);
+    }
+
+    let secret = device_secret::load_optional(cube_id)
+        .map_err(|e| SignerError::DecryptionFailed(e.to_string()))?;
+
+    for (path, named) in files {
+        // The duress marker's fingerprint field is random, so it cannot be in
+        // a descriptor — the same independent filter the fingerprint route uses.
+        if !wanted.contains(&named) {
+            continue;
+        }
+        match open_seed_at(&path, network, named, password, cube_id, secret.as_ref()) {
+            Ok(signer) => return Ok(Some(signer)),
+            Err(e) => {
+                // A seed file for a key this Vault holds exists and would not
+                // open. Not fatal, but it means the Cube cannot sign with a key
+                // it believes it has, so it must not pass silently.
+                tracing::warn!(
+                    fingerprint = %named,
+                    error = %e,
+                    "a Vault seed file would not open with this Cube's credential"
+                );
+                continue;
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 /// Re-seal every openable mnemonic file in this Cube's folder at the current
@@ -2410,6 +2518,71 @@ mod tests {
         );
 
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The set-addressed opener `Wallet::load_hotsigners` uses. It exists so a
+    /// Vault with N descriptor keys costs **one** directory scan and one
+    /// keystore read instead of N of each, and it must agree with the
+    /// single-fingerprint route on every other answer.
+    #[test]
+    fn the_set_opener_finds_a_wanted_key_and_ignores_the_rest() {
+        use std::collections::HashSet;
+
+        let dir = tmp_dir("set-opener");
+        let cube_id = format!("cube-set-{}", std::process::id());
+        let fp = make_cube(&dir, &cube_id, 1000, "1234");
+        let stranger = MasterSigner::generate(NET)
+            .unwrap()
+            .fingerprint(&Secp256k1::signing_only());
+
+        // The key we hold, alongside one we do not: the seed on disk is found
+        // through the set, not through being the only file there.
+        // Edition 2018: `[T; N].into_iter()` yields references, so build the
+        // set explicitly rather than through the array iterator.
+        let wanted: HashSet<Fingerprint> = HashSet::from([stranger, fp]);
+        let found = open_seed_for_any_of(&dir, NET, &wanted, "1234", &cube_id)
+            .expect("a readable folder is not an error")
+            .expect("the seed for a wanted key must be found");
+        assert_eq!(found.fingerprint(&Secp256k1::signing_only()), fp);
+
+        // A Vault whose keys are all hardware wallets or Keychain cosigners:
+        // nothing on this machine, and nothing wrong.
+        let none: HashSet<Fingerprint> = HashSet::from([stranger]);
+        assert!(open_seed_for_any_of(&dir, NET, &none, "1234", &cube_id)
+            .unwrap()
+            .is_none());
+
+        // An empty key set must not even reach the keystore.
+        assert!(
+            open_seed_for_any_of(&dir, NET, &HashSet::new(), "1234", &cube_id)
+                .unwrap()
+                .is_none()
+        );
+
+        // A wrong credential is `None`, never some other Cube's signer — and it
+        // is not an `Err`, because one unopenable file must not stop the Vault
+        // from loading.
+        assert!(open_seed_for_any_of(&dir, NET, &wanted, "9999", &cube_id)
+            .unwrap()
+            .is_none());
+
+        // The AAD binds the file to its Cube, so another Cube's id cannot open
+        // it either.
+        assert!(
+            open_seed_for_any_of(&dir, NET, &wanted, "1234", "some-other-cube")
+                .unwrap()
+                .is_none()
+        );
+
+        // A folder that is not there is "no seed here", not a fault — the state
+        // of a watch-only restore.
+        let empty = tmp_dir("set-opener-empty");
+        assert!(open_seed_for_any_of(&empty, NET, &wanted, "1234", &cube_id)
+            .unwrap()
+            .is_none());
+
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(empty).unwrap();
     }
 
     /// The fingerprint-addressed fallback the seed-reveal surfaces use when no

@@ -424,17 +424,19 @@ impl Wallet {
     /// Because `coincube-core` has no keystore access and answers
     /// `DeviceSecretRequired` for every `ENCRYPTED_V3` file — and
     /// `migrate_seed_files` promotes a PIN Cube's *hot-signer* files to v3
-    /// along with its master seed. [`crate::services::unlock::open_seed_by_fingerprint`]
+    /// along with its master seed. [`crate::services::unlock::open_seed_for_any_of`]
     /// supplies the device secret, and handles v2 (a passkey Cube, which has
     /// none) and pre-hardening plaintext on the same path.
     ///
     /// # Cost
     ///
-    /// One Argon2id pass (~831 ms) per *matching* file, and a filename must
-    /// carry the fingerprint to match at all — so a Vault with no hot key pays
-    /// only a directory scan, and one with a hot key pays once per load. The
-    /// session cache is tried first, which covers the developer-mode case where
-    /// the Vault key *is* the Cube master seed already in hand.
+    /// The session cache is tried first, across every descriptor key, and costs
+    /// nothing — it covers the developer-mode case where the Vault key *is* the
+    /// Cube master seed already in hand. Only then does it touch disk, through
+    /// [`crate::services::unlock::open_seed_for_any_of`]: **one** directory scan
+    /// and one keystore read for the whole key set, then one Argon2id pass
+    /// (~831 ms) per file whose name carries one of those keys. A Vault with no
+    /// hot key pays the scan and nothing else.
     ///
     /// A `None` password is not an error: a watch-only Vault, or a load with no
     /// session (tests, some restore paths), keeps today's behaviour of reading
@@ -453,41 +455,39 @@ impl Wallet {
             return self.load_unencrypted_hotsigners(datadir_path, network, &keys);
         };
 
+        // Free when it hits: the signer the unlock already decrypted, with no
+        // Argon2 pass. Only answers for this Cube and this exact key.
         for fingerprint in &keys {
-            // Free when it hits: the signer the unlock already decrypted, with
-            // no Argon2 pass. Only answers for this Cube and this exact key.
             if let Some(signer) = crate::app::session::unlocked_signer(cube_id, *fingerprint) {
                 return Ok(self.with_signer(Signer::new(signer)));
             }
-
-            match crate::services::unlock::open_seed_by_fingerprint(
-                datadir_path.path(),
-                network,
-                *fingerprint,
-                password,
-                cube_id,
-            ) {
-                Ok(signer) => return Ok(self.with_signer(Signer::new(signer))),
-                // Expected for every descriptor key that is not a hot key —
-                // hardware wallets, Keychain cosigners, a Contact's xpub. There
-                // is no seed on this machine for those and never will be.
-                Err(coincube_core::signer::SignerError::SignerNotFound(_)) => continue,
-                Err(e) => {
-                    // A seed file for this key exists and would not open. Not
-                    // fatal — the rest of the Vault works — but it means this
-                    // Cube cannot sign with a key it believes it holds, so it
-                    // must not pass silently.
-                    tracing::warn!(
-                        %fingerprint,
-                        error = %e,
-                        "a Vault hot-signer seed exists for this key but would not open"
-                    );
-                    continue;
-                }
-            }
         }
 
-        Ok(self)
+        match crate::services::unlock::open_seed_for_any_of(
+            datadir_path.path(),
+            network,
+            &keys,
+            password,
+            cube_id,
+        ) {
+            Ok(Some(signer)) => Ok(self.with_signer(Signer::new(signer))),
+            // The ordinary answer for a Vault built entirely from hardware
+            // wallets, Keychain cosigners, or Contacts' keys: no seed for any of
+            // them is on this machine, and none ever will be.
+            Ok(None) => Ok(self),
+            Err(e) => {
+                // The folder or the keystore could not be read. Not fatal — the
+                // Vault still watches, receives and builds PSBTs for its other
+                // keys — but it must not pass silently, because a v3 seed behind
+                // an unreachable keychain is indistinguishable from an absent
+                // one at this level.
+                tracing::warn!(
+                    error = %e,
+                    "couldn't look for this Vault's hot signer; it won't be available to sign"
+                );
+                Ok(self)
+            }
+        }
     }
 
     /// The no-credentials arm of [`Self::load_hotsigners`]: pre-hardening
