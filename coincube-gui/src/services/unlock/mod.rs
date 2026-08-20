@@ -216,6 +216,22 @@ pub struct CubeLocation<'a> {
     /// `BYPASS_ACKNOWLEDGEMENT` and accepted it, so they have been told what
     /// they are risking — that is consent to reach v3, not a backup.
     pub creation_bypass: Option<&'a creation_gate::CreationBackupBypass>,
+    /// `CubeSettings::is_passkey_cube`. A passkey Cube has **no master seed
+    /// file**: its seed is re-derived from a WebAuthn PRF assertion at every
+    /// unlock. [`master_seed_path`] returns `None` for it on that basis alone,
+    /// without looking at the folder.
+    ///
+    /// Carried rather than inferred because the folder cannot answer it. A
+    /// passkey Cube's Vault *hot signer* is a seed file like any other, and in
+    /// developer mode — where the installer's signer is a clone of the Cube
+    /// master signer — that file's name carries the Cube's own master
+    /// fingerprint. The fingerprint branch below matches on the name, so
+    /// without this flag it would hand back a Vault seed as if it were the
+    /// Cube's master seed, and [`pin_requirement`] would answer `Required` for
+    /// a Cube that has no PIN at all. Two callers act on that: the Delete-Cube
+    /// modal renders a PIN field and gates deletion on a PIN nothing can
+    /// satisfy, and duress step-up picks `Pin` over the passkey path.
+    pub is_passkey: bool,
 }
 
 impl<'a> CubeLocation<'a> {
@@ -237,6 +253,7 @@ impl<'a> CubeLocation<'a> {
             // status in hand — see `with_kit`.
             kit_completeness: None,
             creation_bypass: cube.creation_backup_bypass.as_ref(),
+            is_passkey: cube.is_passkey_cube(),
         }
     }
 
@@ -268,6 +285,16 @@ impl<'a> CubeLocation<'a> {
 pub fn master_seed_path(loc: &CubeLocation) -> Option<PathBuf> {
     use coincube_core::signer::MnemonicFileName;
     use std::str::FromStr;
+
+    // A passkey Cube has no master seed file — the seed comes from the
+    // assertion, never from disk — so the answer is `None` before the folder is
+    // even opened. Anything found there belongs to something else (a Vault hot
+    // signer), and in developer mode that file carries this Cube's own master
+    // fingerprint, which the branch below would otherwise match on. See
+    // `CubeLocation::is_passkey`.
+    if loc.is_passkey {
+        return None;
+    }
 
     let folder = MasterSigner::mnemonics_folder(loc.datadir_root, loc.network);
     let entries = std::fs::read_dir(&folder).ok()?;
@@ -1040,6 +1067,8 @@ mod tests {
             backed_up: false,
             kit_completeness: None,
             creation_bypass: None,
+            // These tests are about PIN Cubes; the passkey arm has its own.
+            is_passkey: false,
         }
     }
 
@@ -1632,6 +1661,7 @@ mod tests {
             backed_up: false,
             kit_completeness: None,
             creation_bypass: None,
+            is_passkey: false,
         };
 
         assert_eq!(migrate_seed_files(&l, "1234").unwrap().migrated, 1);
@@ -2333,6 +2363,53 @@ mod tests {
             let _ = device_secret::delete(&cube_id);
             std::fs::remove_dir_all(dir).unwrap();
         }
+    }
+
+    /// A passkey Cube has no master seed file, so it can never *need* a PIN —
+    /// and the folder alone cannot prove that, which is why `is_passkey` is
+    /// carried rather than inferred.
+    ///
+    /// The concrete failure this pins: in developer mode the Vault installer's
+    /// signer is a clone of the Cube master signer, so the Vault's hot-signer
+    /// seed file is named with the Cube's *own* master fingerprint. The
+    /// fingerprint branch of `master_seed_path` matches on that name, so
+    /// without the flag it hands back a Vault seed as the Cube's master seed
+    /// and `pin_requirement` answers `Required` — at which point the
+    /// Delete-Cube modal demands a PIN that does not exist and duress step-up
+    /// offers the PIN path over the passkey one.
+    #[test]
+    fn a_passkey_cube_never_needs_a_pin_even_with_a_vault_seed_in_its_folder() {
+        let dir = tmp_dir("passkey-no-master-seed");
+        let cube_id = format!("cube-passkey-{}", std::process::id());
+
+        // Exactly the developer-mode shape: a seed file carrying the Cube's own
+        // master fingerprint, encrypted, sitting in the shared folder.
+        let fp = make_cube(&dir, &cube_id, 1000, "1234");
+
+        let pin_cube = loc(&dir, &cube_id, 1000, Some(fp));
+        assert_eq!(
+            pin_requirement(&pin_cube),
+            PinRequirement::Required,
+            "control: for a PIN Cube that file is exactly what a master seed looks like"
+        );
+
+        let passkey_cube = CubeLocation {
+            is_passkey: true,
+            ..loc(&dir, &cube_id, 1000, Some(fp))
+        };
+        assert_eq!(master_seed_path(&passkey_cube), None);
+        assert_eq!(
+            pin_requirement(&passkey_cube),
+            PinRequirement::NoLocalSeed,
+            "a Cube with no PIN must never be told it needs one"
+        );
+        assert_eq!(
+            seed_file_version(&passkey_cube),
+            None,
+            "and it has no master seed file to have a version"
+        );
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// The fingerprint-addressed fallback the seed-reveal surfaces use when no
