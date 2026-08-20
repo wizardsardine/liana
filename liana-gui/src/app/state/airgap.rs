@@ -30,8 +30,8 @@ use crate::{
 };
 
 const QR_FRAMES_PER_SECOND: u8 = 5;
-const QR_DISPLAY_SIZE: f32 = 440.0;
-const QR_MODAL_WIDTH: f32 = 860.0;
+const QR_DISPLAY_SIZE: f32 = 300.0;
+const QR_MODAL_WIDTH: f32 = 600.0;
 const DEFAULT_MODAL_WIDTH: f32 = 560.0;
 const MAX_JSON_RESPONSE_FILE_BYTES: usize = 24 * 1024;
 const MAX_PSBT_RESPONSE_FILE_BYTES: usize = 8 * 1024 * 1024;
@@ -339,12 +339,14 @@ impl AirgapModal {
                 let mut controls = Column::new().spacing(12).align_x(Horizontal::Center);
                 if let Some(data) = &self.qr_data {
                     body = body.push(
-                        row![
-                            qr_code::QRCode::<theme::Theme>::new(data).total_size(QR_DISPLAY_SIZE),
-                            self.qr_controls(controls, &msg)
-                        ]
-                        .spacing(20)
-                        .align_y(Alignment::Start),
+                        Column::new()
+                            .push(
+                                qr_code::QRCode::<theme::Theme>::new(data)
+                                    .total_size(QR_DISPLAY_SIZE),
+                            )
+                            .push(self.qr_controls(controls, &msg))
+                            .spacing(12)
+                            .align_x(Horizontal::Center),
                     );
                     body
                 } else {
