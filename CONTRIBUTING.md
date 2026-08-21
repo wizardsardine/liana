@@ -6,6 +6,10 @@ only judged based on their technical relevance and quality.
 Note that the development of Bitcoin software requires a high level of rigor, so it could take some
 time (and backs and forths) to polish a contribution before it's ready for merge.
 
+If you use AI tools while contributing, read and follow the
+[AI policy](doc/AI_POLICY.md). Contributors are responsible for understanding and
+explaining their own work in their own words.
+
 
 ## Communication
 
