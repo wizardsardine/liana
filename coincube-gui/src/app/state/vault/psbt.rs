@@ -869,6 +869,11 @@ pub struct BorderWalletReconstructionState {
     // Derived checksum word — displayed for visual confirmation once pattern is complete.
     pub checksum_word: Option<String>,
 
+    /// Whether [`Self::phrase_words`] was filled from this Cube's master seed
+    /// rather than typed. Only drives the note the phrase step shows — the
+    /// words are ordinary editable fields either way.
+    pub prefilled_from_master_seed: bool,
+
     pub error: Option<String>,
 }
 
@@ -883,8 +888,46 @@ impl BorderWalletReconstructionState {
             grid: None,
             pattern: OrderedPattern::new(),
             checksum_word: None,
+            prefilled_from_master_seed: false,
             error: None,
         }
+    }
+
+    /// Fill the twelve fields with the Entropy Grid phrase this Cube's master
+    /// seed derives — BIP-85 at `m/83696968'/39'/0'/12'/0'`, which is exactly
+    /// what the installer's Border Wallet wizard puts there on "Generate"
+    /// (`GridRecoveryPhrase::from_master_signer`).
+    ///
+    /// A Border Wallet key enrolled inside this Cube seeds its grid from the
+    /// Cube's own master seed, so those twelve words are already in hand at
+    /// signing time. Asking for them again asks the user to copy out something
+    /// the Cube can derive — and on a passkey Cube the master seed comes back
+    /// from the WebAuthn assertion at unlock, so there is nothing to type.
+    ///
+    /// This prefill signs nothing on its own: the pattern and its checksum word
+    /// are the secret half of a Border Wallet key and still have to be supplied
+    /// on the next step. The words stay editable, so a key enrolled from
+    /// somebody else's phrase — or from a randomly generated one
+    /// (`CubeSettings::allow_random_grid_phrase`) — is typed in as before.
+    ///
+    /// Silent on a derivation error: the fields simply stay empty, which is the
+    /// pre-existing behaviour and never blocks the flow.
+    fn prefill_from_master_seed(&mut self, signer: &crate::signer::Signer) {
+        let Ok(phrase) = signer.derive_grid_recovery_phrase() else {
+            return;
+        };
+        for (field, word) in self
+            .phrase_words
+            .iter_mut()
+            .zip(phrase.as_str().split_whitespace())
+        {
+            field.value.zeroize();
+            field.value = word.to_string();
+            field.valid = true;
+            field.warning = None;
+        }
+        self.phrase_valid = self.phrase_words.iter().all(|w| !w.value.trim().is_empty());
+        self.prefilled_from_master_seed = self.phrase_valid;
     }
 
     /// Recompute the checksum word if the pattern is complete, otherwise clear it.
@@ -1021,6 +1064,7 @@ impl Drop for BorderWalletReconstructionState {
         self.checksum_word = None;
         self.grid = None;
         self.pattern.clear();
+        self.prefilled_from_master_seed = false;
     }
 }
 
@@ -1495,7 +1539,15 @@ impl Modal for SignModal {
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectBorderWallet(fg))) => {
                 let network = self.network;
-                self.border_wallet_recon = Some(BorderWalletReconstructionState::new(fg, network));
+                let mut recon = BorderWalletReconstructionState::new(fg, network);
+                // The Cube's master seed is the same seed the wizard derived
+                // this key's grid phrase from, so fill it in rather than make
+                // the user retype twelve words they never chose. `None` here is
+                // the watch-only / hardware-only Vault, which types them.
+                if let Some(signer) = self.wallet.signer.as_ref() {
+                    recon.prefill_from_master_seed(signer);
+                }
+                self.border_wallet_recon = Some(recon);
                 // Keep modal displayed but now showing the reconstruction wizard
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::BorderWalletRecon(msg))) => {
@@ -1994,6 +2046,67 @@ mod tests {
         assert!(state.grid.is_some());
         assert!(state.pattern.is_empty());
         assert!(state.error.is_none());
+    }
+
+    /// A Border Wallet key enrolled inside a Cube seeds its grid from that
+    /// Cube's master seed, so the reconstruction step must arrive with the
+    /// twelve words already in it rather than asking the user to copy out
+    /// something the Cube can derive. On a passkey Cube the master seed comes
+    /// back from the WebAuthn assertion at unlock, so there is nothing to type.
+    #[test]
+    fn border_wallet_reconstruction_prefills_the_cubes_derived_grid_phrase() {
+        let signer = crate::signer::Signer::generate(Network::Bitcoin).unwrap();
+        // The same call the installer's wizard makes on "Generate" — the two
+        // have to agree exactly or the prefill is twelve wrong words.
+        let expected = signer.derive_grid_recovery_phrase().unwrap();
+
+        let mut state =
+            BorderWalletReconstructionState::new(fingerprint("f714c228"), Network::Bitcoin);
+        assert!(state.phrase_words.iter().all(|w| w.value.is_empty()));
+        assert!(!state.prefilled_from_master_seed);
+
+        state.prefill_from_master_seed(&signer);
+
+        let filled = state
+            .phrase_words
+            .iter()
+            .map(|w| w.value.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(filled, expected.as_str());
+        assert!(state.phrase_valid);
+        assert!(state.prefilled_from_master_seed);
+
+        // The grid seed is not the key. The pattern and its checksum word are
+        // still the user's to supply, so `Next` only opens the grid.
+        assert!(state.update(BorderWalletReconMessage::Next).is_none());
+        assert_eq!(state.step, ReconStep::Grid);
+        assert!(state.grid.is_some());
+        assert!(state.pattern.is_empty());
+        assert!(state.error.is_none());
+    }
+
+    /// A Vault with no signer on this machine — every key a hardware wallet, a
+    /// Keychain cosigner or a Contact's — has nothing to derive from, and must
+    /// keep the typed-entry behaviour rather than fail to open the step.
+    #[test]
+    fn border_wallet_reconstruction_without_a_signer_stays_empty() {
+        let modal = SignModal::new(
+            HashSet::new(),
+            Arc::new(wallet()),
+            CoincubeDirectory::new(PathBuf::new()),
+            Network::Signet,
+            false,
+            None,
+            None,
+            true,
+        );
+        assert!(modal.wallet.signer.is_none());
+
+        let state = BorderWalletReconstructionState::new(fingerprint("f714c228"), Network::Signet);
+        assert!(state.phrase_words.iter().all(|w| w.value.is_empty()));
+        assert!(!state.prefilled_from_master_seed);
+        assert!(!state.phrase_valid);
     }
 
     #[test]
