@@ -13,10 +13,9 @@ explaining their own work in their own words.
 
 ## Communication
 
-Most of the communication is done on GitHub or on the [`#revault` IRC channel on
-Libera](https://web.libera.chat/?channels=#revault).
+Most of the communication is done on GitHub or on [our Discord](https://discord.gg/9rAqZHwkv6).
 
-If you plan to contribute a non-trivial change, consider discussing it in the IRC channel or in a
+If you plan to contribute a non-trivial change, consider discussing it on Discord or in a
 Github issue before going forward with the implementation.
 
 
