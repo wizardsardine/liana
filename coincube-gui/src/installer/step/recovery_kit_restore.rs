@@ -388,12 +388,29 @@ impl StagedRestore {
         // carries the history: the seed half does not, and a descriptor-only
         // restore has no seed at all. Each step names itself, so a reader of
         // `restore_source` never has to guess which restore produced it.
-        let restored = self.descriptor.is_some();
+        let restored_descriptor = self.descriptor.is_some();
+        // Provenance follows *either* half. A seed-only kit — a Cube that had no
+        // Vault when it was backed up — restores a signer and no descriptor, and
+        // it came out of a Recovery Kit just as much as a Vault restore did.
+        // Keying provenance on the descriptor alone left those Cubes reporting
+        // "no recovery kit" on the Home card about the very kit they were
+        // rebuilt from.
+        let restored_anything = restored_descriptor || self.signer.is_some();
+
         if let Some(d) = self.descriptor {
             ctx.descriptor = Some(d);
         }
-        ctx.restore_source = restored.then_some(source);
-        ctx.restored_wallet_birthday = self.birthday;
+        ctx.restore_source = restored_anything.then_some(source);
+        // The rescan, by contrast, follows the descriptor and only the
+        // descriptor: that is what carries on-chain history. A seed-only restore
+        // has no Vault and no wallet to scan, so it must not acquire a birthday
+        // — nor, via `pending_rescan`, an undated rescan for a Vault that does
+        // not exist.
+        ctx.restored_wallet_birthday = if restored_descriptor {
+            self.birthday
+        } else {
+            None
+        };
 
         if let Some(s) = self.signer {
             ctx.recovered_signer = Some(Arc::new(s));

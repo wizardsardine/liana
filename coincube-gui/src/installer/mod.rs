@@ -918,6 +918,11 @@ fn seed_device_secret(
 fn pending_rescan(ctx: &Context) -> Option<crate::app::settings::PendingRescan> {
     use crate::app::settings::PendingRescan;
 
+    // No descriptor, no wallet, so no scan window that could fall short. True
+    // of a seed-only restore — a Cube that had no Vault when it was backed up —
+    // whichever way its birthday arrived, so it is asked first and once.
+    ctx.descriptor.as_ref()?;
+
     // A backup import records the source wallet's birthday, so the scan can
     // start unattended.
     let from_backup = ctx.backup.as_ref().and_then(|backup| {
@@ -932,7 +937,7 @@ fn pending_rescan(ctx: &Context) -> Option<crate::app::settings::PendingRescan> 
         return Some(PendingRescan::From(t));
     }
 
-    // Nothing was restored: a fresh install owes no rescan.
+    // A fresh install has a descriptor too, but no history behind it.
     ctx.restore_source?;
 
     // A Recovery Kit written since `DescriptorBlobVault::birthday` existed
@@ -1576,8 +1581,12 @@ mod pending_rescan_tests {
         )
     }
 
+    /// A backup-import context. The descriptor is part of the fixture because
+    /// the import step always sets one — there is no way to import a backup
+    /// without the descriptor it describes — and `pending_rescan` requires it.
     fn with_backup(accounts: Vec<Account>) -> Context {
         let mut ctx = ctx();
+        ctx.descriptor = staged_with_descriptor(None).descriptor;
         ctx.backup = Some(Backup {
             name: None,
             alias: None,
@@ -1648,7 +1657,7 @@ mod pending_rescan_tests {
     #[test]
     fn a_recovery_kit_restore_owes_an_undated_rescan() {
         let mut ctx = ctx();
-        ctx.restore_source = Some(RestoreSource::PasswordKit);
+        staged_with_descriptor(None).commit(&mut ctx, RestoreSource::PasswordKit);
         assert_eq!(pending_rescan(&ctx), Some(PendingRescan::DateUnknown));
         assert_eq!(pending_rescan(&ctx).unwrap().timestamp(), None);
     }
@@ -1752,6 +1761,64 @@ mod pending_rescan_tests {
         assert_eq!(pending_rescan(&ctx), None);
     }
 
+    /// A seed-only kit restores a Cube with no Vault: provenance yes, rescan no.
+    ///
+    /// `RestoreScope::Full` needs only `has_encrypted_seed`, so a Cube that had
+    /// no Vault when it was backed up is a legitimate Full restore that stages a
+    /// signer and no descriptor. Two things follow, and they pull opposite ways:
+    /// the Home card must know a Recovery Kit exists (it does — the restore came
+    /// out of one), while nothing owes a rescan, because there is no descriptor
+    /// and so no wallet whose scan window could fall short. Recording an undated
+    /// rescan for a Vault that does not exist would raise a prompt the user
+    /// cannot act on.
+    #[test]
+    fn a_seed_only_restore_keeps_provenance_without_owing_a_rescan() {
+        use crate::installer::step::recovery_kit_restore::StagedRestore;
+
+        let mut ctx = ctx();
+        StagedRestore {
+            descriptor: None,
+            signer: Some(crate::signer::Signer::generate(bitcoin::Network::Bitcoin).unwrap()),
+            birthday: None,
+        }
+        .commit(&mut ctx, RestoreSource::PasswordKit);
+
+        assert_eq!(
+            ctx.restore_source,
+            Some(RestoreSource::PasswordKit),
+            "a seed-only kit is still a Recovery Kit"
+        );
+        assert!(ctx.recovered_signer.is_some());
+        assert!(ctx.descriptor.is_none());
+        assert_eq!(
+            pending_rescan(&ctx),
+            None,
+            "no descriptor means no wallet to rescan"
+        );
+    }
+
+    /// A stray birthday must not survive a restore that brought no descriptor.
+    ///
+    /// Birthdays come off the descriptor blob, so this cannot happen through
+    /// `stage_restore` today — the assertion is what keeps that true if it ever
+    /// could, since a birthday with no descriptor would be a dated rescan for a
+    /// Vault that does not exist.
+    #[test]
+    fn a_seed_only_restore_drops_any_birthday() {
+        use crate::installer::step::recovery_kit_restore::StagedRestore;
+
+        let mut ctx = ctx();
+        StagedRestore {
+            descriptor: None,
+            signer: None,
+            birthday: Some(1_784_953_848),
+        }
+        .commit(&mut ctx, RestoreSource::PasswordKit);
+
+        assert_eq!(ctx.restored_wallet_birthday, None);
+        assert_eq!(pending_rescan(&ctx), None);
+    }
+
     /// Every restore owes a rescan; only one of them evidences a password
     /// Recovery Kit.
     ///
@@ -1768,7 +1835,7 @@ mod pending_rescan_tests {
             RestoreSource::Inheritance,
         ] {
             let mut ctx = ctx();
-            ctx.restore_source = Some(source);
+            staged_with_descriptor(None).commit(&mut ctx, source);
             assert!(
                 pending_rescan(&ctx).is_some(),
                 "{:?} restores a descriptor with history, so it owes a rescan",
@@ -1790,8 +1857,7 @@ mod pending_rescan_tests {
     #[test]
     fn a_kit_with_a_birthday_dates_its_own_rescan() {
         let mut ctx = ctx();
-        ctx.restore_source = Some(RestoreSource::PasswordKit);
-        ctx.restored_wallet_birthday = Some(1_784_953_848);
+        staged_with_descriptor(Some(1_784_953_848)).commit(&mut ctx, RestoreSource::PasswordKit);
         assert_eq!(
             pending_rescan(&ctx),
             Some(PendingRescan::From(1_784_953_848))
@@ -1803,7 +1869,7 @@ mod pending_rescan_tests {
     #[test]
     fn a_known_birthday_beats_an_undated_kit() {
         let mut ctx = with_backup(vec![account(Some(1_784_953_848))]);
-        ctx.restore_source = Some(RestoreSource::PasswordKit);
+        staged_with_descriptor(None).commit(&mut ctx, RestoreSource::PasswordKit);
         assert_eq!(
             pending_rescan(&ctx),
             Some(PendingRescan::From(1_784_953_848))
