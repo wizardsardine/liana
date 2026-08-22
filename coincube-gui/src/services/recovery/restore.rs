@@ -349,6 +349,7 @@ mod tests {
                 descriptor: "wsh(...)".into(),
                 change_descriptor: None,
                 signers: vec![],
+                birthday: None,
             },
         }
     }
@@ -533,6 +534,7 @@ mod integration_tests {
                 descriptor: "wsh(multi(2,xpub1,xpub2))".into(),
                 change_descriptor: None,
                 signers: vec![],
+                birthday: None,
             },
         }
     }

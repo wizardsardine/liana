@@ -1012,6 +1012,15 @@ impl Tab {
                     // carried into the Task is its own heap-zeroing
                     // value — it's dropped (and zeroed) once the task
                     // completes.
+                    // Only a *password* Recovery Kit evidences the flag the
+                    // Home badge reads. The keychain seal keeps its own record
+                    // and an heir has no kit of their own, yet both reach the
+                    // same commit seam — so this asks which restore it was, not
+                    // merely whether one happened.
+                    let from_password_kit = matches!(
+                        i.context.restore_source,
+                        Some(installer::RestoreSource::PasswordKit)
+                    );
                     let restore_seed = match (
                         i.context.restore_pin.clone(),
                         i.context.recovered_signer.as_ref().map(|s| s.fingerprint()),
@@ -1035,6 +1044,54 @@ impl Tab {
                                 restore_seed.as_ref(),
                             )
                             .await?;
+
+                            // Hand the freshly minted Cube's PIN to the session.
+                            //
+                            // `session::open` is otherwise called from exactly
+                            // one place — the PIN-entry unlock screen — and a
+                            // restore never passes through it: it goes installer
+                            // → app directly. So the session held no PIN for the
+                            // Cube that had just been created, `pin_for` answered
+                            // `None`, and `Wallet::load_hotsigners` fell to its
+                            // no-credential branch. The Vault then could not open
+                            // the hot signer whose seed the installer had written
+                            // moments earlier, under this very PIN, and the
+                            // signing picker reported the key as unreachable
+                            // until the app was restarted and unlocked normally.
+                            //
+                            // Only the restore flows reach here with a PIN of
+                            // their own; a Vault installed inside an already-open
+                            // Cube inherits that Cube's live session.
+                            if let Some(seed) = &restore_seed {
+                                app::session::open(cube.id.clone(), seed.pin.clone());
+                            }
+
+                            // Getting here through a kit *is* proof the Cube has
+                            // one: we just fetched and decrypted it. But
+                            // `has_recovery_kit()` reads three local flags, all
+                            // written only when a backup is made *from this
+                            // device* — so a Cube restored from a kit made
+                            // elsewhere had none of them set and the Home card
+                            // announced "Registered to Connect — no recovery
+                            // kit" about the very kit it had just been built
+                            // from. Recording it here is what makes the card
+                            // agree with what the user just did; Settings would
+                            // otherwise only correct it once its status loaded.
+                            if from_password_kit {
+                                if let Err(e) =
+                                    app::settings::update_settings_file(&network_dir, |settings| {
+                                        Some(marked_kit_backed_up(settings, &cube.id))
+                                    })
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "Could not record that this Cube was restored from a \
+                                         Recovery Kit: {}. The Home card may show it as having \
+                                         no kit until Settings reconciles with the server.",
+                                        e
+                                    );
+                                }
+                            }
 
                             // Only the restore path needs to build a
                             // BreezClient up-front — fresh-install +
@@ -2706,6 +2763,24 @@ fn attach_vault(cube: &mut app::settings::CubeSettings, vault: Option<&VaultIden
     }
 }
 
+/// `settings` with this Cube recorded as having a Recovery Kit, and everything
+/// else untouched.
+///
+/// Returns `Settings`, not `Option<Settings>`, on purpose — see
+/// [`crate::app::cleared_pending_rescan`] for the hazard. An updater that
+/// returns `None` makes [`app::settings::update_settings_file`] **delete**
+/// `settings.json`, so a Cube id matching nothing must still yield the settings
+/// unchanged rather than a `None` that wipes every Cube on this network.
+fn marked_kit_backed_up(
+    mut settings: app::settings::Settings,
+    cube_id: &str,
+) -> app::settings::Settings {
+    if let Some(cube) = settings.cubes.iter_mut().find(|c| c.id == cube_id) {
+        cube.recovery_kit_password_backed_up = true;
+    }
+    settings
+}
+
 async fn find_or_create_cube(
     network_dir: &NetworkDirectory,
     // Both halves of the Vault's identity, or `None` when the installer exited
@@ -3138,6 +3213,7 @@ pub fn create_app_with_remote_backend(
                 .with_key_aliases(aliases)
                 .with_provider_keys(provider_keys)
                 .with_border_wallet_fingerprints(wallet_settings.border_wallet_fingerprints())
+                .with_border_wallet_grid_seed(wallet_settings.border_wallet_grid_seed_sources())
                 .with_hardware_wallets(hws)
                 .load_hotsigners(
                     &coincube_dir,
@@ -3367,6 +3443,43 @@ mod find_or_create_cube_tests {
     //! listed as recoverable and let the flow be repeated indefinitely).
     use super::*;
     use app::settings::WalletId;
+
+    /// Same hazard as `cleared_pending_rescan`: `update_settings_file` deletes
+    /// `settings.json` when its updater returns `None`, so a Cube id that
+    /// matches nothing must leave the settings alone rather than wipe every
+    /// Cube on the network.
+    #[test]
+    fn recording_a_kit_for_an_unknown_cube_changes_nothing() {
+        let cube = |id: &str, backed_up: bool| {
+            let mut c = app::settings::CubeSettings::new_with_raw_id(
+                id.to_string(),
+                format!("Cube {}", id),
+                bitcoin::Network::Bitcoin,
+            );
+            c.recovery_kit_password_backed_up = backed_up;
+            c
+        };
+
+        let before = app::settings::Settings {
+            cubes: vec![cube("aaa", false), cube("bbb", false)],
+            ..Default::default()
+        };
+
+        let after = marked_kit_backed_up(before.clone(), "nosuchcube");
+        assert_eq!(after.cubes.len(), 2, "no Cube may be dropped");
+        assert!(after
+            .cubes
+            .iter()
+            .all(|c| !c.recovery_kit_password_backed_up));
+
+        let after = marked_kit_backed_up(before, "bbb");
+        assert_eq!(after.cubes.len(), 2);
+        assert!(!after.cubes[0].recovery_kit_password_backed_up);
+        assert!(
+            after.cubes[1].recovery_kit_password_backed_up,
+            "the restored Cube is the only one marked"
+        );
+    }
 
     const ORIG_UUID: &str = "11111111-2222-3333-4444-555555555555";
 

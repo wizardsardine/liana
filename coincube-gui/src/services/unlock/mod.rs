@@ -523,13 +523,29 @@ fn seed_files(
     let folder = MasterSigner::mnemonics_folder(datadir_root, network);
     let entries = std::fs::read_dir(&folder).map_err(SignerError::MnemonicStorage)?;
 
-    Ok(entries
+    let mut files: Vec<(i64, PathBuf, Fingerprint)> = entries
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name();
             let parsed = MnemonicFileName::from_str(name.to_str()?).ok()?;
-            Some((entry.path(), parsed.fingerprint))
+            let written_at = parsed
+                .descriptor_info
+                .as_ref()
+                .map(|(_, t)| *t)
+                .unwrap_or(0);
+            Some((written_at, entry.path(), parsed.fingerprint))
         })
+        .collect();
+    // `read_dir` yields in whatever order the filesystem feels like, which makes
+    // every caller that sweeps these files order-dependent — most visibly, which
+    // of several openable seeds becomes the Vault's signer. Oldest-written first
+    // is both stable and meaningful: the seed a Cube has had longest wins, and
+    // the same folder behaves the same way twice, here and on another machine.
+    // The fingerprint breaks ties, so files sharing a timestamp still order.
+    files.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.2.cmp(&b.2)));
+    Ok(files
+        .into_iter()
+        .map(|(_, path, fingerprint)| (path, fingerprint))
         .collect())
 }
 
@@ -574,7 +590,8 @@ fn open_seed_at(
     Ok(signer)
 }
 
-/// The first seed file in this Cube's folder whose key is one of `wanted`.
+/// Sweep this Cube's folder for the seed files whose key is one of `wanted`,
+/// returning the first that opens **and** every one that does not.
 ///
 /// This is [`open_seed_by_fingerprint`] for a caller holding a *set* of
 /// candidate keys rather than one — [`crate::app::wallet::Wallet::load_hotsigners`],
@@ -590,33 +607,97 @@ fn open_seed_at(
 /// and will not open is logged and skipped, because the rest of the Vault still
 /// works without it.
 ///
-/// Blocking: up to one Argon2id pass per *matching* file, so callers run it off
-/// the UI thread.
+/// Blocking: one Argon2id pass per *matching* file, so callers run it off the UI
+/// thread. Every match is attempted, including those after a success, because
+/// an attempt is the only way to learn whether a file would open — a Vault with
+/// one hot key (the ordinary shape) pays exactly one pass either way, and only
+/// one with several pays for the completeness.
+/// The outcome of a seed sweep: the signer if one opened, plus the keys whose
+/// seed file is **present but would not open**.
+///
+/// The second half is the load-bearing addition. "No signer" alone cannot tell
+/// a watch-only Vault (every key on hardware or a Keychain cosigner — nothing
+/// is wrong) from a Vault whose hot seed is right there on disk behind a
+/// credential that no longer opens it. Those look identical to the caller and
+/// read identically in the UI, so a restore that silently failed to make its
+/// seed openable presents as a perfectly ordinary watch-only wallet.
+#[derive(Default)]
+pub(crate) struct SeedLookup {
+    pub signer: Option<MasterSigner>,
+    /// Descriptor keys with a seed file here that this Cube's credential
+    /// rejected. Non-empty means a hot key exists on this machine and is
+    /// unreachable — always a fault, never the ordinary answer.
+    pub unopenable: std::collections::HashSet<Fingerprint>,
+}
+
+/// Descriptor keys that have an **encrypted** seed file in this Cube's folder.
+///
+/// For the no-credential load path, which reads plaintext files only. Without
+/// this, an encrypted seed sitting right there is indistinguishable from no
+/// seed at all — so a Vault loaded with no session PIN reports its own hot key
+/// as an external device nobody has connected.
+///
+/// Deliberately cheap: it reads the marker, never attempts a decrypt, and needs
+/// no password or keystore access.
+pub(crate) fn encrypted_seed_keys(
+    datadir_root: &Path,
+    network: Network,
+    wanted: &std::collections::HashSet<Fingerprint>,
+) -> std::collections::HashSet<Fingerprint> {
+    if wanted.is_empty() {
+        return Default::default();
+    }
+    let Ok(files) = seed_files(datadir_root, network) else {
+        // No folder, or unreadable: "no seed here" is the honest answer, and
+        // this must never be the thing that fails a Vault load.
+        return Default::default();
+    };
+    files
+        .into_iter()
+        .filter(|(_, named)| wanted.contains(named))
+        .filter(|(path, _)| {
+            std::fs::read(path)
+                .map(|data| MasterSigner::is_encrypted(&data))
+                .unwrap_or(false)
+        })
+        .map(|(_, named)| named)
+        .collect()
+}
+
 pub(crate) fn open_seed_for_any_of(
     datadir_root: &Path,
     network: Network,
     wanted: &std::collections::HashSet<Fingerprint>,
     password: &str,
     cube_id: &str,
-) -> Result<Option<MasterSigner>, SignerError> {
+) -> Result<SeedLookup, SignerError> {
     let files = match seed_files(datadir_root, network) {
         Ok(files) => files,
         // No `mnemonics/` folder at all: this Cube has no seed on this device.
         // Ordinary (watch-only restore, a passkey Cube with no Vault hot key),
         // and not something to report as a fault.
         Err(SignerError::MnemonicStorage(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(None)
+            return Ok(SeedLookup::default())
         }
         Err(e) => return Err(e),
     };
     // Nothing to look for, or nothing to look in: don't touch the keystore.
     if files.is_empty() || wanted.is_empty() {
-        return Ok(None);
+        return Ok(SeedLookup::default());
     }
 
     let secret = device_secret::load_optional(cube_id)
         .map_err(|e| SignerError::DecryptionFailed(e.to_string()))?;
 
+    let mut signer: Option<MasterSigner> = None;
+    // Keys whose seed this credential *did* open. A key can have more than one
+    // file — a Cube whose master seed is also a Vault hot key has both a
+    // `master_` file and a per-Vault one — and if a PIN change left the two
+    // under different credentials, the same key both opens and fails in one
+    // sweep. Without this, whichever file lost the race would mark a reachable
+    // key unreachable.
+    let mut opened: std::collections::HashSet<Fingerprint> = std::collections::HashSet::new();
+    let mut unopenable = std::collections::HashSet::new();
     for (path, named) in files {
         // The duress marker's fingerprint field is random, so it cannot be in
         // a descriptor — the same independent filter the fingerprint route uses.
@@ -624,22 +705,45 @@ pub(crate) fn open_seed_for_any_of(
             continue;
         }
         match open_seed_at(&path, network, named, password, cube_id, secret.as_ref()) {
-            Ok(signer) => return Ok(Some(signer)),
+            Ok(found) => {
+                // Keep the first and carry on. Returning here would end the
+                // sweep, so a *later* wanted seed that will not open would never
+                // be attempted and never land in `unopenable` — and which file
+                // comes first is `seed_files` order, not anything the Vault
+                // controls. That left the second hot key of a two-hot-key Vault
+                // reading as a plain unconnected device, which is exactly the
+                // state `unopenable` exists to stop.
+                //
+                // Only the first signer is kept because `Wallet::signer` holds
+                // one; the later attempts are made for what they *tell* us, not
+                // for what they return.
+                opened.insert(named);
+                signer.get_or_insert(found);
+            }
             Err(e) => {
                 // A seed file for a key this Vault holds exists and would not
                 // open. Not fatal, but it means the Cube cannot sign with a key
-                // it believes it has, so it must not pass silently.
+                // it believes it has, so it must not pass silently — the log
+                // alone was not enough, because nothing downstream could see it
+                // and the UI showed the key as a plain unconnected device.
                 tracing::warn!(
                     fingerprint = %named,
                     error = %e,
                     "a Vault seed file would not open with this Cube's credential"
                 );
+                unopenable.insert(named);
                 continue;
             }
         }
     }
 
-    Ok(None)
+    // A key that opened somewhere is reachable, whatever else failed for it.
+    // `unopenable` means "this Cube cannot sign with a key it holds", and the
+    // signing UI says exactly that — so a key that is provably reachable must
+    // never appear here, whichever order the files happened to be swept in.
+    unopenable.retain(|fingerprint| !opened.contains(fingerprint));
+
+    Ok(SeedLookup { signer, unopenable })
 }
 
 /// Re-seal every openable mnemonic file in this Cube's folder at the current
@@ -2485,6 +2589,60 @@ mod tests {
     /// and `pin_requirement` answers `Required` — at which point the
     /// Delete-Cube modal demands a PIN that does not exist and duress step-up
     /// offers the PIN path over the passkey one.
+    /// Two files for the **same** key, one openable, one not.
+    ///
+    /// Reachable whenever a Cube's master seed is also a Vault hot key — it has
+    /// both a `master_` file and a per-Vault one — and a PIN change left the two
+    /// under different credentials. The sweep then both opens and fails for that
+    /// one key, and whichever file came second used to decide the verdict.
+    ///
+    /// A key that opens *anywhere* is reachable. `unopenable` means "this Cube
+    /// cannot sign with a key it holds", so recording one there that just
+    /// yielded a signer is a plain contradiction — and when the signer kept is a
+    /// *different* key's, the picker shows the reachable one as unreachable.
+    #[test]
+    fn a_key_that_opens_is_never_reported_unopenable() {
+        use std::collections::HashSet;
+
+        let secp = Secp256k1::signing_only();
+        let dir = tmp_dir("set-opener-dup");
+        let cube_id = format!("cube-dup-{}", std::process::id());
+
+        // One key, two files, two credentials. The older file is the one this
+        // load can open; `seed_files` sweeps oldest-first, so the failure lands
+        // second and would previously have overwritten the verdict.
+        let signer = MasterSigner::generate(NET).unwrap();
+        let fp = signer.fingerprint(&secp);
+        for (label, ts, pin) in [("opens", 1000_i64, "1234"), ("stale", 2000_i64, "9999")] {
+            signer
+                .store_encrypted(
+                    &dir,
+                    NET,
+                    &secp,
+                    Some((label.to_string(), ts)),
+                    pin,
+                    &cube_id,
+                    None,
+                )
+                .unwrap();
+        }
+
+        let wanted: HashSet<Fingerprint> = HashSet::from([fp]);
+        let found = open_seed_for_any_of(&dir, NET, &wanted, "1234", &cube_id)
+            .expect("one unopenable file must not fail the load");
+
+        assert_eq!(
+            found.signer.as_ref().map(|s| s.fingerprint(&secp)),
+            Some(fp),
+            "the file this credential opens must still yield the signer"
+        );
+        assert!(
+            found.unopenable.is_empty(),
+            "a key that opened is reachable, whatever else failed for it: {:?}",
+            found.unopenable
+        );
+    }
+
     #[test]
     fn a_passkey_cube_never_needs_a_pin_even_with_a_vault_seed_in_its_folder() {
         let dir = tmp_dir("passkey-no-master-seed");
@@ -2524,6 +2682,49 @@ mod tests {
     /// Vault with N descriptor keys costs **one** directory scan and one
     /// keystore read instead of N of each, and it must agree with the
     /// single-fingerprint route on every other answer.
+    /// One usable hot key and one unreachable one, both wanted.
+    ///
+    /// The sweep used to return the moment a seed opened, so whichever file
+    /// `seed_files` happened to yield second was never attempted and never
+    /// recorded — the Vault got its signer and the *other* key silently read as
+    /// an unconnected device. Both facts have to survive one sweep, and neither
+    /// may depend on file order.
+    #[test]
+    fn a_usable_seed_does_not_hide_an_unreachable_one() {
+        use std::collections::HashSet;
+
+        let dir = tmp_dir("set-opener-mixed");
+        let cube_id = format!("cube-mixed-{}", std::process::id());
+
+        // Two seeds for this Cube, written under different credentials: one the
+        // load will present, one it will not.
+        let usable = make_cube(&dir, &cube_id, 1000, "1234");
+        let unreachable = make_cube(&dir, &cube_id, 2000, "9999");
+        assert_ne!(usable, unreachable);
+
+        let wanted: HashSet<Fingerprint> = HashSet::from([usable, unreachable]);
+        let found = open_seed_for_any_of(&dir, NET, &wanted, "1234", &cube_id)
+            .expect("one unopenable file must not fail the load");
+
+        assert_eq!(
+            found
+                .signer
+                .as_ref()
+                .map(|s| s.fingerprint(&Secp256k1::signing_only())),
+            Some(usable),
+            "the seed this credential opens must still be returned"
+        );
+        assert!(
+            found.unopenable.contains(&unreachable),
+            "the key this credential cannot reach must be reported, not skipped \
+             because another key happened to open first"
+        );
+        assert!(
+            !found.unopenable.contains(&usable),
+            "a key that opened is not unopenable"
+        );
+    }
+
     #[test]
     fn the_set_opener_finds_a_wanted_key_and_ignores_the_rest() {
         use std::collections::HashSet;
@@ -2542,44 +2743,50 @@ mod tests {
         let wanted: HashSet<Fingerprint> = HashSet::from([stranger, fp]);
         let found = open_seed_for_any_of(&dir, NET, &wanted, "1234", &cube_id)
             .expect("a readable folder is not an error")
+            .signer
             .expect("the seed for a wanted key must be found");
         assert_eq!(found.fingerprint(&Secp256k1::signing_only()), fp);
 
         // A Vault whose keys are all hardware wallets or Keychain cosigners:
         // nothing on this machine, and nothing wrong.
         let none: HashSet<Fingerprint> = HashSet::from([stranger]);
-        assert!(open_seed_for_any_of(&dir, NET, &none, "1234", &cube_id)
-            .unwrap()
-            .is_none());
+        let miss = open_seed_for_any_of(&dir, NET, &none, "1234", &cube_id).unwrap();
+        assert!(miss.signer.is_none());
+        // Nothing on disk for a key we hold, so nothing is wrong — this is the
+        // watch-only answer and must stay distinguishable from the one below.
+        assert!(miss.unopenable.is_empty());
 
         // An empty key set must not even reach the keystore.
         assert!(
             open_seed_for_any_of(&dir, NET, &HashSet::new(), "1234", &cube_id)
                 .unwrap()
+                .signer
                 .is_none()
         );
 
         // A wrong credential is `None`, never some other Cube's signer — and it
         // is not an `Err`, because one unopenable file must not stop the Vault
         // from loading.
-        assert!(open_seed_for_any_of(&dir, NET, &wanted, "9999", &cube_id)
-            .unwrap()
-            .is_none());
+        let wrong_pin = open_seed_for_any_of(&dir, NET, &wanted, "9999", &cube_id).unwrap();
+        assert!(wrong_pin.signer.is_none());
+        // ...and it is reported, not swallowed: the seed IS here, the
+        // credential just doesn't open it.
+        assert!(wrong_pin.unopenable.contains(&fp));
 
         // The AAD binds the file to its Cube, so another Cube's id cannot open
         // it either.
-        assert!(
-            open_seed_for_any_of(&dir, NET, &wanted, "1234", "some-other-cube")
-                .unwrap()
-                .is_none()
-        );
+        let wrong_cube =
+            open_seed_for_any_of(&dir, NET, &wanted, "1234", "some-other-cube").unwrap();
+        assert!(wrong_cube.signer.is_none());
+        assert!(wrong_cube.unopenable.contains(&fp));
 
         // A folder that is not there is "no seed here", not a fault — the state
         // of a watch-only restore.
         let empty = tmp_dir("set-opener-empty");
-        assert!(open_seed_for_any_of(&empty, NET, &wanted, "1234", &cube_id)
-            .unwrap()
-            .is_none());
+        let no_folder = open_seed_for_any_of(&empty, NET, &wanted, "1234", &cube_id).unwrap();
+        assert!(no_folder.signer.is_none());
+        // No folder is "no seed here", so there is nothing unreachable either.
+        assert!(no_folder.unopenable.is_empty());
 
         std::fs::remove_dir_all(dir).unwrap();
         std::fs::remove_dir_all(empty).unwrap();

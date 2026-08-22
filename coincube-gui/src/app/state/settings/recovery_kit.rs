@@ -1543,6 +1543,13 @@ pub(crate) fn descriptor_blob_from_wallet(
             descriptor: wallet.main_descriptor.to_string(),
             change_descriptor: None,
             signers,
+            // `pinned_at` is the Vault's `WalletId` timestamp — when it was
+            // created — which is exactly how far back a restoring node has to
+            // scan. Carrying it turns a restore's rescan from a question for
+            // the user into something the app just does.
+            birthday: wallet
+                .pinned_at
+                .and_then(|t| <u32 as std::convert::TryFrom<i64>>::try_from(t).ok()),
         },
     }
 }
@@ -1551,7 +1558,27 @@ pub(crate) fn descriptor_blob_from_wallet(
 /// the drift fingerprint cached on `CubeSettings`. Deterministic so
 /// long as `serde_json::to_vec` is called consistently.
 pub fn descriptor_blob_fingerprint(blob: &DescriptorBlob) -> Option<String> {
-    let bytes = serde_json::to_vec(blob).ok()?;
+    // `birthday` is deliberately excluded.
+    //
+    // This fingerprint answers exactly one question — has the *descriptor*
+    // changed since the last backup? — and drives a banner urging the user to
+    // re-back-up when it has. A birthday is metadata about when the Vault was
+    // created, not descriptor content: a kit that gains one describes precisely
+    // the same wallet, with the same keys and the same spending paths.
+    //
+    // Hashing it would make every Cube whose kit was sealed before the field
+    // existed report drift the moment this build ran — no re-backup required,
+    // because the live blob is rebuilt from the wallet on every tick while the
+    // stored fingerprint stays as sealed. That is a false alarm on the one
+    // signal the user has that their backup is stale, which is worse than
+    // having no signal.
+    //
+    // Excluding it also keeps every pre-existing fingerprint byte-identical:
+    // `birthday` is `skip_serializing_if`, so `None` serialises exactly as the
+    // field never having been there.
+    let mut blob = blob.clone();
+    blob.vault.birthday = None;
+    let bytes = serde_json::to_vec(&blob).ok()?;
     let digest = Sha256::digest(&bytes);
     Some(hex::encode(digest))
 }
@@ -2661,6 +2688,55 @@ mod tests {
         assert_eq!(network_str(BtcNet::Regtest), "regtest");
     }
 
+    /// A birthday must not move the drift fingerprint.
+    ///
+    /// The fingerprint drives the "your Recovery Kit is out of date" banner. If
+    /// adding `birthday` changed it, every Cube whose kit was sealed before the
+    /// field existed would report drift the moment this build ran — the live
+    /// blob is rebuilt from the wallet each tick while the stored fingerprint
+    /// stays as sealed, so no re-backup is even needed to trigger it. A false
+    /// alarm on the only staleness signal the user has is worse than none.
+    #[test]
+    fn the_birthday_does_not_move_the_drift_fingerprint() {
+        let base = DescriptorBlob {
+            version: BLOB_VERSION,
+            cube: DescriptorBlobCube {
+                uuid: "u".into(),
+                network: "bitcoin".into(),
+            },
+            vault: DescriptorBlobVault {
+                name: "n".into(),
+                descriptor: "d".into(),
+                change_descriptor: None,
+                signers: vec![DescriptorBlobSigner {
+                    name: "s".into(),
+                    fingerprint: "deadbeef".into(),
+                    xpub: String::new(),
+                }],
+                birthday: None,
+            },
+        };
+
+        let mut dated = base.clone();
+        dated.vault.birthday = Some(1_784_953_848);
+
+        assert_eq!(
+            descriptor_blob_fingerprint(&base).unwrap(),
+            descriptor_blob_fingerprint(&dated).unwrap(),
+            "the same wallet, dated or not, is not drift"
+        );
+
+        // ...but a real descriptor change still is. Excluding one metadata field
+        // must not have blunted the thing the fingerprint is for.
+        let mut changed = dated.clone();
+        changed.vault.descriptor = "d2".into();
+        assert_ne!(
+            descriptor_blob_fingerprint(&dated).unwrap(),
+            descriptor_blob_fingerprint(&changed).unwrap(),
+            "a changed descriptor must still register as drift"
+        );
+    }
+
     #[test]
     fn descriptor_fingerprint_is_deterministic() {
         let blob = DescriptorBlob {
@@ -2678,6 +2754,7 @@ mod tests {
                     fingerprint: "deadbeef".into(),
                     xpub: String::new(),
                 }],
+                birthday: None,
             },
         };
         let a = descriptor_blob_fingerprint(&blob).unwrap();
@@ -2702,6 +2779,7 @@ mod tests {
                 descriptor: "d".into(),
                 change_descriptor: None,
                 signers: vec![],
+                birthday: None,
             },
         })
     }
@@ -2789,6 +2867,7 @@ mod tests {
                 descriptor: "d".into(),
                 change_descriptor: None,
                 signers: vec![],
+                birthday: None,
             },
         };
         let before = descriptor_blob_fingerprint(&blob).unwrap();
@@ -2826,6 +2905,7 @@ mod tests {
             descriptor: "d".into(),
             change_descriptor: None,
             signers: vec![signer("aaaaaaaa"), signer("bbbbbbbb")],
+            birthday: None,
         };
         let a = DescriptorBlob {
             version: BLOB_VERSION,
@@ -2864,6 +2944,7 @@ mod tests {
                     descriptor: "d".into(),
                     change_descriptor: None,
                     signers: v.into_iter().map(signer).collect(),
+                    birthday: None,
                 },
             }
         }

@@ -119,7 +119,7 @@ use coincube_ui::{
 };
 use coincubed::config::EsploraConfig;
 use coincubed::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config};
-pub use context::{Context, RemoteBackend};
+pub use context::{Context, RemoteBackend, RestoreSource};
 use iced::{clipboard, Subscription, Task};
 use std::{collections::HashMap, ops::Deref};
 use tokio::runtime::Handle;
@@ -888,6 +888,72 @@ fn seed_device_secret(
     })
 }
 
+/// The rescan a restored Vault owes, if any.
+///
+/// # Why a restore owes a rescan
+///
+/// `import_descriptor` imports at `timestamp: "now"`. For a Vault being created
+/// that is right — there is no history behind it. For one being *restored* it
+/// leaves bitcoind scanning from today forward, so every transaction that
+/// funded the wallet before the restore is invisible to it while our own
+/// database, restored alongside, knows about those coins. The two never
+/// reconcile: `get_spender_txid` asks the wallet about a coin's funding
+/// transaction, gets `-5`, and the coin can never be resolved as spent — so it
+/// stays selectable and the user can build transactions conflicting with their
+/// own pending ones.
+///
+/// # Where the date comes from
+///
+/// The Recovery Kit already carries it. `backup::Account::timestamp` is the
+/// source wallet's birthday, written at backup time from that machine's
+/// `get_info().timestamp`, and it is exactly the point the new node has to scan
+/// from.
+///
+/// The **earliest** timestamp across the kit's accounts, because scanning from
+/// too early only costs time while scanning from too late is the bug this
+/// exists to prevent. `None` when there is no kit (a fresh install) or the kit
+/// predates the field — the caller surfaces a rescan prompt rather than
+/// inventing a date, since a wrong one would look like a completed rescan that
+/// found nothing.
+fn pending_rescan(ctx: &Context) -> Option<crate::app::settings::PendingRescan> {
+    use crate::app::settings::PendingRescan;
+
+    // No descriptor, no wallet, so no scan window that could fall short. True
+    // of a seed-only restore — a Cube that had no Vault when it was backed up —
+    // whichever way its birthday arrived, so it is asked first and once.
+    ctx.descriptor.as_ref()?;
+
+    // A backup import records the source wallet's birthday, so the scan can
+    // start unattended.
+    let from_backup = ctx.backup.as_ref().and_then(|backup| {
+        backup
+            .accounts
+            .iter()
+            .filter_map(|account| account.timestamp)
+            .min()
+            .map(|t| <u32 as std::convert::TryFrom<u64>>::try_from(t).unwrap_or(u32::MAX))
+    });
+    if let Some(t) = from_backup {
+        return Some(PendingRescan::From(t));
+    }
+
+    // A fresh install has a descriptor too, but no history behind it.
+    ctx.restore_source?;
+
+    // A Recovery Kit written since `DescriptorBlobVault::birthday` existed
+    // carries the Vault's creation time and can start unattended too.
+    //
+    // An older kit carries nothing that dates the wallet, so the rescan is
+    // recorded as owed *without* a date and the user supplies one. Inventing a
+    // date would be worse than asking: too late and the scan finds nothing
+    // while presenting as complete.
+    Some(
+        ctx.restored_wallet_birthday
+            .map(PendingRescan::From)
+            .unwrap_or(PendingRescan::DateUnknown),
+    )
+}
+
 pub async fn install_local_wallet(
     ctx: Context,
     wallet_id: WalletId,
@@ -924,6 +990,10 @@ pub async fn install_local_wallet(
         hardware_wallets,
         remote_backend_auth: None,
         start_internal_bitcoind: Some(ctx.internal_bitcoind.is_some()),
+        // A Recovery-Kit restore lands its descriptors in a watchonly wallet
+        // that has never seen them; `App` turns this into an actual rescan once
+        // the daemon is up, and clears it when the daemon accepts one.
+        pending_rescan: pending_rescan(&ctx),
     };
 
     let cfg: coincubed::config::Config = extract_daemon_config(&ctx, &wallet_settings)?;
@@ -1143,6 +1213,8 @@ pub async fn create_remote_wallet(
             remote_backend.wallet_id(),
         )),
         start_internal_bitcoind: None,
+        // Remote backend: no local node, so no scan window to fall short.
+        pending_rescan: None,
     };
     update_settings_file(&network_datadir, |mut settings| {
         settings.wallets.push(wallet_settings.clone());
@@ -1227,6 +1299,8 @@ pub async fn import_remote_wallet(
             backend.wallet_id(),
         )),
         start_internal_bitcoind: None,
+        // Remote backend: no local node, so no scan window to fall short.
+        pending_rescan: None,
     };
     update_settings_file(&network_datadir, |mut settings| {
         settings.wallets.push(wallet_settings.clone());
@@ -1486,6 +1560,328 @@ impl std::fmt::Display for Error {
             Self::HardwareWallet(e) => write!(f, "Hardware Wallet: {}", e),
             Self::Backup(e) => write!(f, "Backup: {:?}", e),
         }
+    }
+}
+
+#[cfg(test)]
+mod pending_rescan_tests {
+    //! What rescan, if any, a newly installed Vault owes.
+
+    use super::*;
+    use crate::app::settings::PendingRescan;
+    use crate::backup::{Account, Backup};
+
+    fn ctx() -> Context {
+        Context::new(
+            bitcoin::Network::Bitcoin,
+            CoincubeDirectory::new(std::path::PathBuf::from("/nonexistent")),
+            RemoteBackend::None,
+            None,
+            None,
+        )
+    }
+
+    /// A backup-import context. The descriptor is part of the fixture because
+    /// the import step always sets one — there is no way to import a backup
+    /// without the descriptor it describes — and `pending_rescan` requires it.
+    fn with_backup(accounts: Vec<Account>) -> Context {
+        let mut ctx = ctx();
+        ctx.descriptor = staged_with_descriptor(None).descriptor;
+        ctx.backup = Some(Backup {
+            name: None,
+            alias: None,
+            accounts,
+            network: bitcoin::Network::Bitcoin,
+            date: None,
+            proprietary: serde_json::Map::new(),
+            version: 0,
+        });
+        ctx
+    }
+
+    fn staged_with_descriptor(
+        birthday: Option<u32>,
+    ) -> crate::installer::step::recovery_kit_restore::StagedRestore {
+        crate::installer::step::recovery_kit_restore::StagedRestore {
+            descriptor: Some(
+                "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp"
+                    .parse()
+                    .expect("fixture descriptor must parse"),
+            ),
+            signer: None,
+            birthday,
+        }
+    }
+
+    fn account(timestamp: Option<u64>) -> Account {
+        let mut a = Account::new("wsh(pk(xpub))".to_string());
+        a.timestamp = timestamp;
+        a
+    }
+
+    /// A fresh install owes nothing — scanning from now is correct there, and a
+    /// spurious rescan is a long, pointless wait.
+    #[test]
+    fn a_fresh_install_owes_no_rescan() {
+        assert_eq!(pending_rescan(&ctx()), None);
+    }
+
+    /// A backup import records the source wallet's birthday, so the scan can
+    /// start unattended.
+    #[test]
+    fn a_backup_import_owes_a_dated_rescan() {
+        assert_eq!(
+            pending_rescan(&with_backup(vec![account(Some(1_784_953_848))])),
+            Some(PendingRescan::From(1_784_953_848))
+        );
+    }
+
+    /// Earliest wins. Too early only costs scan time; too late silently misses
+    /// history, which is the whole bug.
+    #[test]
+    fn the_earliest_account_birthday_wins() {
+        assert_eq!(
+            pending_rescan(&with_backup(vec![
+                account(Some(1_787_372_770)),
+                account(Some(1_784_953_848)),
+                account(None),
+            ])),
+            Some(PendingRescan::From(1_784_953_848))
+        );
+    }
+
+    /// The flow that actually caused this: a Recovery Kit carries no birthday
+    /// anywhere in `DescriptorBlobVault`, so the rescan is owed with no date
+    /// rather than not owed at all. Reading "no date" as "nothing to do" is the
+    /// bug — it leaves a wallet that silently cannot see its own history.
+    #[test]
+    fn a_recovery_kit_restore_owes_an_undated_rescan() {
+        let mut ctx = ctx();
+        staged_with_descriptor(None).commit(&mut ctx, RestoreSource::PasswordKit);
+        assert_eq!(pending_rescan(&ctx), Some(PendingRescan::DateUnknown));
+        assert_eq!(pending_rescan(&ctx).unwrap().timestamp(), None);
+    }
+
+    /// Every restore path must record the rescan, not just the Recovery Kit
+    /// one.
+    ///
+    /// `owner_keychain_restore` and `inheritance_restore` install a descriptor
+    /// that already has on-chain history, exactly as a kit restore does, but
+    /// committed it by hand and recorded nothing — so those Vaults came up
+    /// unable to see their own past with no prompt. All three now commit
+    /// through `StagedRestore::commit`, which is what this pins.
+    #[test]
+    fn every_restore_path_records_the_rescan_it_owes() {
+        use crate::installer::step::recovery_kit_restore::StagedRestore;
+
+        let stage_descriptor = |ctx: &mut Context| {
+            staged_with_descriptor(Some(1_784_953_848)).commit(ctx, RestoreSource::PasswordKit);
+        };
+
+        let mut dated = ctx();
+        assert_eq!(pending_rescan(&dated), None, "nothing staged yet");
+
+        stage_descriptor(&mut dated);
+        assert!(
+            dated.restore_source.is_some(),
+            "the descriptor carries history"
+        );
+        assert_eq!(
+            pending_rescan(&dated),
+            Some(PendingRescan::From(1_784_953_848))
+        );
+
+        // The same commit with no birthday still owes a rescan — just an
+        // undated one. Reading "no date" as "nothing to do" is the bug.
+        let mut empty = ctx();
+        StagedRestore {
+            descriptor: None,
+            signer: None,
+            birthday: None,
+        }
+        .commit(&mut empty, RestoreSource::PasswordKit);
+        assert!(
+            empty.restore_source.is_none(),
+            "no descriptor means nothing was restored"
+        );
+        assert_eq!(pending_rescan(&empty), None);
+    }
+
+    /// Backing out of a restore must take the rescan with it.
+    ///
+    /// Every restore step's `revert` drops `ctx.descriptor`; the rescan
+    /// metadata is derived from that same descriptor and has to go with it.
+    /// Left behind, a user who backs out and completes a *fresh* install gets a
+    /// Vault marked as owing a rescan it does not owe — and an inherited
+    /// birthday would start a multi-hour scan of a chain the new wallet has no
+    /// history on.
+    #[test]
+    fn backing_out_of_a_restore_clears_the_rescan_it_staged() {
+        use crate::installer::step::recovery_kit_restore::StagedRestore;
+
+        let mut ctx = ctx();
+        staged_with_descriptor(Some(1_784_953_848)).commit(&mut ctx, RestoreSource::PasswordKit);
+        assert_eq!(
+            pending_rescan(&ctx),
+            Some(PendingRescan::From(1_784_953_848))
+        );
+
+        StagedRestore::revert_commit(&mut ctx);
+        assert!(ctx.descriptor.is_none());
+        assert_eq!(
+            pending_rescan(&ctx),
+            None,
+            "a discarded restore leaves no rescan behind"
+        );
+    }
+
+    /// `commit` assigns the rescan fields rather than only setting them when
+    /// present, so re-applying with nothing staged cannot leave a mixture.
+    ///
+    /// `restored_wallet_birthday` was already unconditional while
+    /// `restore_source` was not — a re-apply staging nothing kept the source
+    /// and dropped the date, turning a dated rescan into an undated one.
+    #[test]
+    fn re_committing_with_nothing_staged_clears_rather_than_mixes() {
+        use crate::installer::step::recovery_kit_restore::StagedRestore;
+
+        let mut ctx = ctx();
+        staged_with_descriptor(Some(1_784_953_848)).commit(&mut ctx, RestoreSource::PasswordKit);
+        assert!(ctx.restore_source.is_some());
+
+        StagedRestore {
+            descriptor: None,
+            signer: None,
+            birthday: None,
+        }
+        .commit(&mut ctx, RestoreSource::PasswordKit);
+
+        assert_eq!(ctx.restore_source, None, "no descriptor, no restore");
+        assert_eq!(ctx.restored_wallet_birthday, None);
+        assert_eq!(pending_rescan(&ctx), None);
+    }
+
+    /// A seed-only kit restores a Cube with no Vault: provenance yes, rescan no.
+    ///
+    /// `RestoreScope::Full` needs only `has_encrypted_seed`, so a Cube that had
+    /// no Vault when it was backed up is a legitimate Full restore that stages a
+    /// signer and no descriptor. Two things follow, and they pull opposite ways:
+    /// the Home card must know a Recovery Kit exists (it does — the restore came
+    /// out of one), while nothing owes a rescan, because there is no descriptor
+    /// and so no wallet whose scan window could fall short. Recording an undated
+    /// rescan for a Vault that does not exist would raise a prompt the user
+    /// cannot act on.
+    #[test]
+    fn a_seed_only_restore_keeps_provenance_without_owing_a_rescan() {
+        use crate::installer::step::recovery_kit_restore::StagedRestore;
+
+        let mut ctx = ctx();
+        StagedRestore {
+            descriptor: None,
+            signer: Some(crate::signer::Signer::generate(bitcoin::Network::Bitcoin).unwrap()),
+            birthday: None,
+        }
+        .commit(&mut ctx, RestoreSource::PasswordKit);
+
+        assert_eq!(
+            ctx.restore_source,
+            Some(RestoreSource::PasswordKit),
+            "a seed-only kit is still a Recovery Kit"
+        );
+        assert!(ctx.recovered_signer.is_some());
+        assert!(ctx.descriptor.is_none());
+        assert_eq!(
+            pending_rescan(&ctx),
+            None,
+            "no descriptor means no wallet to rescan"
+        );
+    }
+
+    /// A stray birthday must not survive a restore that brought no descriptor.
+    ///
+    /// Birthdays come off the descriptor blob, so this cannot happen through
+    /// `stage_restore` today — the assertion is what keeps that true if it ever
+    /// could, since a birthday with no descriptor would be a dated rescan for a
+    /// Vault that does not exist.
+    #[test]
+    fn a_seed_only_restore_drops_any_birthday() {
+        use crate::installer::step::recovery_kit_restore::StagedRestore;
+
+        let mut ctx = ctx();
+        StagedRestore {
+            descriptor: None,
+            signer: None,
+            birthday: Some(1_784_953_848),
+        }
+        .commit(&mut ctx, RestoreSource::PasswordKit);
+
+        assert_eq!(ctx.restored_wallet_birthday, None);
+        assert_eq!(pending_rescan(&ctx), None);
+    }
+
+    /// Every restore owes a rescan; only one of them evidences a password
+    /// Recovery Kit.
+    ///
+    /// These are separate questions with different answers, and collapsing them
+    /// to one bool made an owner-keychain restore — and, worse, an heir
+    /// restoring somebody else's Vault — set
+    /// `recovery_kit_password_backed_up`, claiming a password kit that does not
+    /// exist. The keychain seal keeps its own record; an heir has no kit at all.
+    #[test]
+    fn only_a_password_kit_evidences_a_password_kit() {
+        for source in [
+            RestoreSource::PasswordKit,
+            RestoreSource::KeychainSeal,
+            RestoreSource::Inheritance,
+        ] {
+            let mut ctx = ctx();
+            staged_with_descriptor(None).commit(&mut ctx, source);
+            assert!(
+                pending_rescan(&ctx).is_some(),
+                "{:?} restores a descriptor with history, so it owes a rescan",
+                source
+            );
+        }
+
+        // The badge gate is the narrow one. Mirrors the `matches!` in the
+        // installer-exit handler, so a future widening of `restore_source` has
+        // to come past this.
+        let evidences_password_kit = |s: RestoreSource| matches!(s, RestoreSource::PasswordKit);
+        assert!(evidences_password_kit(RestoreSource::PasswordKit));
+        assert!(!evidences_password_kit(RestoreSource::KeychainSeal));
+        assert!(!evidences_password_kit(RestoreSource::Inheritance));
+    }
+
+    /// A kit written since `DescriptorBlobVault::birthday` existed dates its
+    /// own restore, so the scan starts unattended like a backup import does.
+    #[test]
+    fn a_kit_with_a_birthday_dates_its_own_rescan() {
+        let mut ctx = ctx();
+        staged_with_descriptor(Some(1_784_953_848)).commit(&mut ctx, RestoreSource::PasswordKit);
+        assert_eq!(
+            pending_rescan(&ctx),
+            Some(PendingRescan::From(1_784_953_848))
+        );
+    }
+
+    /// A kit whose install also carried a dated backup prefers the date — it
+    /// can start unattended, which is strictly better than prompting.
+    #[test]
+    fn a_known_birthday_beats_an_undated_kit() {
+        let mut ctx = with_backup(vec![account(Some(1_784_953_848))]);
+        staged_with_descriptor(None).commit(&mut ctx, RestoreSource::PasswordKit);
+        assert_eq!(
+            pending_rescan(&ctx),
+            Some(PendingRescan::From(1_784_953_848))
+        );
+    }
+
+    /// A backup with no birthday and no kit flag is not a restore we can speak
+    /// to: no date, and no evidence a rescan is owed.
+    #[test]
+    fn a_backup_without_a_birthday_owes_nothing_on_its_own() {
+        assert_eq!(pending_rescan(&with_backup(vec![account(None)])), None);
+        assert_eq!(pending_rescan(&with_backup(vec![])), None);
     }
 }
 

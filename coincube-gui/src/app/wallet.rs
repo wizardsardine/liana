@@ -95,8 +95,31 @@ pub struct Wallet {
     pub keys_aliases: HashMap<Fingerprint, String>,
     pub provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
     pub border_wallet_fingerprints: HashSet<Fingerprint>,
+    /// Recorded grid-seed provenance for the Border Wallet keys that have one.
+    ///
+    /// Sparse on purpose: a fingerprint with no entry was enrolled before the
+    /// provenance was tracked, which is *unrecorded*, not `Independent`. See
+    /// [`crate::app::settings::KeySetting::grid_seed_source`].
+    pub border_wallet_grid_seed: HashMap<Fingerprint, settings::GridSeedSource>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
     pub signer: Option<Arc<Signer>>,
+    /// Descriptor keys whose seed file is on this machine but which this
+    /// Cube's credential would not open. Distinct from "not in `signer`":
+    /// that covers every hardware / Keychain / Contact key too, which is
+    /// ordinary. A key in here is a fault — the Vault holds a hot key it
+    /// cannot reach — and the signing UI says so rather than showing it as
+    /// an unconnected device.
+    pub unopenable_seed_keys: HashSet<Fingerprint>,
+    /// Descriptor keys whose seed file is on this machine and encrypted, and
+    /// which this load had **no credential to try** — distinct from
+    /// [`Self::unopenable_seed_keys`], where a credential was tried and
+    /// rejected.
+    ///
+    /// The two used to share one set, so a Vault loaded without a session PIN
+    /// told the user their PIN had failed when no PIN had been attempted. That
+    /// sends them to check a credential that was never tested, and hides the
+    /// real remedy, which is to unlock the Cube.
+    pub locked_seed_keys: HashSet<Fingerprint>,
     /// Txids the user has just broadcast locally, mapped to the data
     /// needed to synthesize coin/tx/PSBT overrides until the daemon
     /// catches up. `Arc<Mutex<...>>` so the map is shared across every
@@ -121,8 +144,11 @@ impl Wallet {
             keys_aliases: HashMap::new(),
             provider_keys: HashMap::new(),
             border_wallet_fingerprints: HashSet::new(),
+            border_wallet_grid_seed: HashMap::new(),
             hardware_wallets: Vec::new(),
             signer: None,
+            unopenable_seed_keys: HashSet::new(),
+            locked_seed_keys: HashSet::new(),
             recently_broadcast: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -347,6 +373,19 @@ impl Wallet {
         self
     }
 
+    /// Record where each Border Wallet key's grid seed came from.
+    ///
+    /// Only fingerprints with a recorded source belong here; see
+    /// [`Self::border_wallet_grid_seed`] for why an absent entry is not the
+    /// same as `Independent`.
+    pub fn with_border_wallet_grid_seed(
+        mut self,
+        border_wallet_grid_seed: HashMap<Fingerprint, settings::GridSeedSource>,
+    ) -> Self {
+        self.border_wallet_grid_seed = border_wallet_grid_seed;
+        self
+    }
+
     pub fn with_hardware_wallets(mut self, hardware_wallets: Vec<HardwareWalletConfig>) -> Self {
         self.hardware_wallets = hardware_wallets;
         self
@@ -394,6 +433,7 @@ impl Wallet {
                 .with_key_aliases(wallet_settings.keys_aliases())
                 .with_provider_keys(wallet_settings.provider_keys())
                 .with_border_wallet_fingerprints(wallet_settings.border_wallet_fingerprints())
+                .with_border_wallet_grid_seed(wallet_settings.border_wallet_grid_seed_sources())
                 .with_alias(wallet_settings.alias)
                 .with_name(wallet_settings.name)
                 .with_pinned_at(wallet_settings.pinned_at)
@@ -451,17 +491,25 @@ impl Wallet {
     ) -> Result<Self, WalletError> {
         let keys = self.descriptor_keys();
 
-        let Some(password) = password else {
-            return self.load_unencrypted_hotsigners(datadir_path, network, &keys);
-        };
-
         // Free when it hits: the signer the unlock already decrypted, with no
         // Argon2 pass. Only answers for this Cube and this exact key.
+        //
+        // Ahead of the password gate, as the doc comment above has always
+        // claimed. Behind it, a Vault whose hot key is the Cube master seed —
+        // already decrypted and sitting in the session — still loaded without a
+        // signer whenever `password` was `None`, because the no-credential arm
+        // reads plaintext files only and this cache was never consulted. The
+        // cache needs no password by construction: it is keyed on `cube_id` and
+        // holds material the unlock already proved.
         for fingerprint in &keys {
             if let Some(signer) = crate::app::session::unlocked_signer(cube_id, *fingerprint) {
                 return Ok(self.with_signer(Signer::new(signer)));
             }
         }
+
+        let Some(password) = password else {
+            return self.load_unencrypted_hotsigners(datadir_path, network, &keys);
+        };
 
         match crate::services::unlock::open_seed_for_any_of(
             datadir_path.path(),
@@ -470,11 +518,21 @@ impl Wallet {
             password,
             cube_id,
         ) {
-            Ok(Some(signer)) => Ok(self.with_signer(Signer::new(signer))),
-            // The ordinary answer for a Vault built entirely from hardware
-            // wallets, Keychain cosigners, or Contacts' keys: no seed for any of
-            // them is on this machine, and none ever will be.
-            Ok(None) => Ok(self),
+            Ok(found) => {
+                let mut this = self;
+                // Carry the unopenable set either way. A seed can fail to open
+                // while a *different* descriptor key's seed opens fine, so this
+                // is not only the no-signer case.
+                this.unopenable_seed_keys = found.unopenable;
+                // The `None` arm is the ordinary answer for a Vault built
+                // entirely from hardware wallets, Keychain cosigners, or
+                // Contacts' keys: no seed for any of them is on this machine,
+                // and none ever will be.
+                Ok(match found.signer {
+                    Some(signer) => this.with_signer(Signer::new(signer)),
+                    None => this,
+                })
+            }
             Err(e) => {
                 // The folder or the keystore could not be read. Not fatal — the
                 // Vault still watches, receives and builds PSBTs for its other
@@ -520,10 +578,21 @@ impl Wallet {
             .into_iter()
             .find(|s| keys.contains(&s.fingerprint(&curve)))
         {
-            Ok(self.with_signer(Signer::new(master_signer)))
-        } else {
-            Ok(self)
+            return Ok(self.with_signer(Signer::new(master_signer)));
         }
+
+        // Nothing in plaintext — but an *encrypted* seed for one of these keys
+        // is a hot key this load simply had no credential to open, not the
+        // absent seed of a watch-only Vault. They read identically here and the
+        // difference never reached the UI, so a Vault loaded without a session
+        // PIN showed its own master key as an unconnected external device.
+        //
+        // `locked`, not `unopenable`: nothing was decrypted here, so the honest
+        // statement is "no credential to try", not "the credential failed".
+        let mut this = self;
+        this.locked_seed_keys =
+            crate::services::unlock::encrypted_seed_keys(datadir_path.path(), network, keys);
+        Ok(this)
     }
 
     pub fn keys(&self) -> HashMap<Fingerprint, settings::KeySetting> {
@@ -536,6 +605,7 @@ impl Wallet {
                     master_fingerprint: *fg,
                     provider_key: None,
                     is_border_wallet: self.border_wallet_fingerprints.contains(fg),
+                    grid_seed_source: self.border_wallet_grid_seed.get(fg).copied(),
                 },
             );
         });
@@ -664,6 +734,49 @@ mod tests {
         assert_eq!(a.id_fingerprint(), b.id_fingerprint());
     }
 
+    /// Grid-seed provenance is tri-state, and the third state is the one that
+    /// matters: a Border Wallet key enrolled before the field existed has no
+    /// recorded source, and reading that as `Independent` would stop offering
+    /// the phrase for every Vault built from the Cube's own seed.
+    #[test]
+    fn border_wallet_grid_seed_provenance_round_trips_including_its_absence() {
+        use crate::app::settings::GridSeedSource;
+        use std::str::FromStr as _;
+
+        let derived = Fingerprint::from_str("f714c228").unwrap();
+        let independent = Fingerprint::from_str("2522f23c").unwrap();
+        let unrecorded = Fingerprint::from_str("8a64f2a9").unwrap();
+        let seed = Fingerprint::from_str("cbe4c11e").unwrap();
+
+        let wallet = Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap())
+            // `keys()` is keyed off the aliases, and the wizard names every
+            // Border Wallet key, so an aliasless one would not round-trip.
+            .with_key_aliases(HashMap::from([
+                (derived, "Border Wallet".to_string()),
+                (independent, "Border Wallet".to_string()),
+                (unrecorded, "Border Wallet".to_string()),
+            ]))
+            .with_border_wallet_fingerprints(HashSet::from([derived, independent, unrecorded]))
+            .with_border_wallet_grid_seed(HashMap::from([
+                (derived, GridSeedSource::MasterDerived { fingerprint: seed }),
+                (independent, GridSeedSource::Independent),
+            ]));
+
+        // `keys()` is what the alias-edit path writes back, so the sources have
+        // to survive it — including the absence of one.
+        let keys = wallet.keys();
+        assert_eq!(
+            keys.get(&derived).and_then(|k| k.grid_seed_source),
+            Some(GridSeedSource::MasterDerived { fingerprint: seed }),
+            "the naming of the seed is the part that makes prefill exact"
+        );
+        assert_eq!(
+            keys.get(&independent).and_then(|k| k.grid_seed_source),
+            Some(GridSeedSource::Independent)
+        );
+        assert_eq!(keys.get(&unrecorded).and_then(|k| k.grid_seed_source), None);
+    }
+
     /// A Vault whose descriptor names a **hot key** must be able to sign with
     /// it, and the seed for it is encrypted on disk like every other (I5).
     ///
@@ -726,6 +839,22 @@ mod tests {
             .load_hotsigners(&dir, net, &cube_id, None)
             .unwrap();
         assert!(none.signer.is_none());
+        // ...but it must not read as "no seed on this machine". The seed IS
+        // here; this load had nothing to open it with. Silently conflating the
+        // two showed a restored Cube's own master key as an unconnected
+        // external device, with no hint that a PIN was all it needed.
+        assert!(
+            none.locked_seed_keys.contains(&fp),
+            "an encrypted seed for a descriptor key must be reported, not ignored"
+        );
+        // `locked`, never `unopenable`: no credential was supplied, so nothing
+        // was tried and nothing failed. The UI words the two differently, and
+        // saying the PIN was rejected when none was offered sends the user to
+        // re-check a credential that was never tested.
+        assert!(
+            none.unopenable_seed_keys.is_empty(),
+            "nothing was tried here, so nothing can have been rejected"
+        );
 
         // A wrong credential must not hand back *some other* signer, and must
         // not fail the load either.
@@ -733,6 +862,16 @@ mod tests {
             .load_hotsigners(&dir, net, &cube_id, Some("9999"))
             .unwrap();
         assert!(wrong.signer.is_none());
+        // The other side of the same distinction: a credential *was* tried and
+        // the file refused it.
+        assert!(
+            wrong.unopenable_seed_keys.contains(&fp),
+            "a rejected credential must be reported as rejected"
+        );
+        assert!(
+            wrong.locked_seed_keys.is_empty(),
+            "a credential was available, so this is not the locked case"
+        );
 
         std::fs::remove_dir_all(root).unwrap();
     }

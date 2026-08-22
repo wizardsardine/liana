@@ -100,6 +100,24 @@ pub enum BitcoindError {
     MalformedResponse(String /* what was wrong */),
 }
 
+/// The operator-facing explanation for a coin whose funding transaction the
+/// watchonly wallet has never scanned.
+///
+/// Built by a named function rather than inline in the `log::error!` so the
+/// wording is assertable: the first cut of this message shipped with
+/// "whether itwas spent", a missing space produced by a line continuation, and
+/// nothing in the build could have caught it.
+fn unknown_spent_coin_message(txid: &bitcoin::Txid, outpoint: &bitcoin::OutPoint) -> String {
+    format!(
+        concat!(
+            "Watchonly wallet has no record of '{}', the transaction that created ",
+            "coin '{}'. Cannot determine whether it was spent; the wallet likely ",
+            "needs a rescan. Leaving the coin as-is."
+        ),
+        txid, outpoint,
+    )
+}
+
 impl BitcoindError {
     /// Is bitcoind just starting ?
     pub fn is_warming_up(&self) -> bool {
@@ -111,6 +129,24 @@ impl BitcoindError {
             })) => *code == -28,
             _ => false,
         }
+    }
+
+    /// Does the wallet say it has never heard of the object we asked about?
+    ///
+    /// `RPC_INVALID_ADDRESS_OR_KEY` (-5). For `gettransaction` this is the reply
+    /// for a txid that is not one of the wallet's transactions — a fact about
+    /// what that wallet has scanned, not a failure of the request. Retrying it
+    /// cannot change the answer, so a caller has to be able to act on it rather
+    /// than treat it as an unreachable node.
+    pub fn is_unknown_to_wallet(&self) -> bool {
+        matches!(
+            self,
+            // https://github.com/bitcoin/bitcoin/blob/master/src/rpc/protocol.h
+            BitcoindError::Server(jsonrpc::error::Error::Rpc(jsonrpc::error::RpcError {
+                code: -5,
+                ..
+            }))
+        )
     }
 
     /// Is it a timeout of any kind?
@@ -890,6 +926,29 @@ impl BitcoinD {
         }
     }
 
+    /// The earliest point any of this wallet's descriptors was scanned from.
+    ///
+    /// The non-panicking sibling of [`Self::list_descriptors`], for the startup
+    /// diagnostic in `crate::warn_if_scan_window_misses_history`. That check is
+    /// advisory — it explains a wallet that will misbehave, it does not gate the
+    /// daemon — so a node that will not answer `listdescriptors`, or answers in
+    /// a shape we do not recognise, must degrade to "cannot tell" rather than
+    /// abort a startup that would otherwise have succeeded.
+    ///
+    /// `list_descriptors` itself stays panicking: its caller
+    /// ([`Self::wallet_sanity_checks`]) is a gate, and a wallet whose
+    /// descriptors cannot be read is not one to carry on with.
+    pub(crate) fn earliest_descriptor_timestamp(&self) -> Option<u32> {
+        self.make_faillible_wallet_request("listdescriptors", None)
+            .ok()?
+            .get("descriptors")?
+            .as_array()?
+            .iter()
+            .filter_map(|entry| entry.get("timestamp").and_then(Json::as_u64))
+            .filter_map(|t| <u32 as std::convert::TryFrom<u64>>::try_from(t).ok())
+            .min()
+    }
+
     fn list_descriptors(&self) -> Vec<ListDescEntry> {
         self.make_wallet_request("listdescriptors", None)
             .get("descriptors")
@@ -1187,10 +1246,33 @@ impl BitcoinD {
     pub fn get_spender_txid(&self, spent_outpoint: &bitcoin::OutPoint) -> Option<bitcoin::Txid> {
         // Get the hash of the spent transaction's block parent. If the spent transaction is still
         // unconfirmed, just use the tip.
-        let req = self.make_wallet_request(
+        //
+        // Fallible on purpose. The watchonly wallet can legitimately not know the
+        // transaction that created one of our coins — a wallet rebuilt or
+        // re-registered without a rescan reaching back that far holds the
+        // descriptors but none of the history, while the coin is still in our
+        // database from when we did see it. bitcoind answers that with `-5`,
+        // which no amount of retrying will change, so it must not go through the
+        // panicking `make_wallet_request`: this runs on the poller thread, the
+        // condition is per-coin and permanent until a rescan, and a panic here
+        // takes the whole application down on *every* poll rather than
+        // degrading one coin. `spending_coins` already treats `None` as "can't
+        // tell who spent it, leave it alone".
+        let req = match self.make_faillible_wallet_request(
             "gettransaction",
             params!(Json::String(spent_outpoint.txid.to_string())),
-        );
+        ) {
+            Err(e) if e.is_unknown_to_wallet() => {
+                log::error!(
+                    "{}",
+                    unknown_spent_coin_message(&spent_outpoint.txid, spent_outpoint)
+                );
+                return None;
+            }
+            // Everything else keeps the old contract: a node we cannot reach for
+            // more than the retry window is not something this layer can handle.
+            other => other.expect("We must not fail to make a request for more than a minute"),
+        };
         let list_since_height = match req.get("blockheight").and_then(Json::as_i64) {
             Some(h) => h as i32,
             None => self.chain_tip().height,
@@ -2185,6 +2267,72 @@ impl From<&&Json> for MempoolEntryFees {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rpc_err(code: i32) -> BitcoindError {
+        BitcoindError::Server(jsonrpc::error::Error::Rpc(jsonrpc::error::RpcError {
+            code,
+            message: "some message".to_string(),
+            data: None,
+        }))
+    }
+
+    /// The message an operator acts on. It shipped once as "whether itwas
+    /// spent" — a line continuation ate the space — so the wording is asserted
+    /// rather than left to be noticed in a log file.
+    #[test]
+    fn the_unscanned_coin_message_reads_as_prose() {
+        use std::str::FromStr as _;
+
+        let txid = bitcoin::Txid::from_str(
+            "b2eb7b01a0f97650eba9e074595263484eea04b668c424c0a3532199772661f4",
+        )
+        .unwrap();
+        let outpoint = bitcoin::OutPoint { txid, vout: 1 };
+        let msg = unknown_spent_coin_message(&txid, &outpoint);
+
+        // The whole prose, so any continuation that eats a space fails here
+        // rather than in a log file someone happens to read.
+        assert_eq!(
+            msg,
+            format!(
+                "Watchonly wallet has no record of '{}', the transaction that created coin \
+                 '{}'. Cannot determine whether it was spent; the wallet likely needs a rescan. \
+                 Leaving the coin as-is.",
+                txid, outpoint
+            )
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+        );
+    }
+
+    /// `-5` is an answer, not an outage. It is the one error `get_spender_txid`
+    /// has to be able to act on: a watchonly wallet that never scanned the
+    /// transaction which created one of our coins replies with it forever, and
+    /// routing that into the panicking `make_wallet_request` took the whole
+    /// application down on every poll.
+    #[test]
+    fn an_unknown_wallet_object_is_told_apart_from_an_unreachable_node() {
+        assert!(rpc_err(-5).is_unknown_to_wallet());
+
+        // Neighbouring codes must not be swept up — in particular the
+        // warming-up code, which has its own always-retry path.
+        for code in [-28, -1, -4, -6, -8, -25, -26, -27] {
+            assert!(
+                !rpc_err(code).is_unknown_to_wallet(),
+                "code {} is not 'unknown to this wallet'",
+                code
+            );
+        }
+        assert!(rpc_err(-28).is_warming_up());
+
+        // And the classifiers stay disjoint: -5 is neither transient nor a
+        // credentials problem, so nothing else will retry or re-auth on it.
+        assert!(!rpc_err(-5).is_warming_up());
+        assert!(!rpc_err(-5).is_transient());
+        assert!(!rpc_err(-5).is_unauthorized());
+        assert!(!rpc_err(-5).is_timeout());
+    }
 
     // The liveness gate exists only to rule out a deployment that will never
     // activate. Anything else must fall through to the height check, which is the

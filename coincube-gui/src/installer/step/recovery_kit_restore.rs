@@ -20,6 +20,7 @@
 //! `services::recovery::restore` so the crypto + API sequencing is
 //! audited in one place.
 
+use crate::installer::context::RestoreSource;
 use std::sync::Arc;
 
 use coincube_core::{
@@ -354,6 +355,81 @@ fn validate_blobs_match_selected(
 pub(crate) struct StagedRestore {
     pub descriptor: Option<CoincubeDescriptor>,
     pub signer: Option<Signer>,
+    /// The restored Vault's creation time, when the kit recorded one. Kits
+    /// written before `DescriptorBlobVault::birthday` existed have none, and
+    /// the restore then asks the user how far back to scan instead of guessing.
+    pub birthday: Option<u32>,
+}
+
+impl StagedRestore {
+    /// Commit a staged restore into the installer context.
+    ///
+    /// Shared by all three restore steps — Recovery Kit, owner-keychain and
+    /// inheritance — because all three install a descriptor that **already has
+    /// on-chain history**, and every one of them therefore owes the new
+    /// watchonly wallet a rescan. Two of them used to commit the descriptor and
+    /// the signer by hand and record nothing about the rescan, so the Vault came
+    /// up unable to see its own past. Putting the whole commit here is what
+    /// stops a fourth path repeating that.
+    ///
+    /// Deliberately not the *whole* of any step's `apply`: the Recovery Kit and
+    /// inheritance steps also carry a Cube identity out of their payload, which
+    /// is theirs alone. This covers only what all three share.
+    pub(crate) fn commit(self, ctx: &mut Context, source: RestoreSource) {
+        // The rescan fields are **assigned**, not merely set when present, so a
+        // commit that stages no descriptor clears them instead of leaving
+        // whatever an earlier pass wrote. Half-assigning was the inconsistency:
+        // `restored_wallet_birthday` was already unconditional while
+        // `restore_source` was not, so a re-apply staging nothing could end up
+        // with a source and no date — reading as `DateUnknown` for a Vault that
+        // had a date, or as a rescan owed by a Vault that owes none.
+        //
+        // Tracked off the descriptor because the descriptor is precisely what
+        // carries the history: the seed half does not, and a descriptor-only
+        // restore has no seed at all. Each step names itself, so a reader of
+        // `restore_source` never has to guess which restore produced it.
+        let restored_descriptor = self.descriptor.is_some();
+        // Provenance follows *either* half. A seed-only kit — a Cube that had no
+        // Vault when it was backed up — restores a signer and no descriptor, and
+        // it came out of a Recovery Kit just as much as a Vault restore did.
+        // Keying provenance on the descriptor alone left those Cubes reporting
+        // "no recovery kit" on the Home card about the very kit they were
+        // rebuilt from.
+        let restored_anything = restored_descriptor || self.signer.is_some();
+
+        if let Some(d) = self.descriptor {
+            ctx.descriptor = Some(d);
+        }
+        ctx.restore_source = restored_anything.then_some(source);
+        // The rescan, by contrast, follows the descriptor and only the
+        // descriptor: that is what carries on-chain history. A seed-only restore
+        // has no Vault and no wallet to scan, so it must not acquire a birthday
+        // — nor, via `pending_rescan`, an undated rescan for a Vault that does
+        // not exist.
+        ctx.restored_wallet_birthday = if restored_descriptor {
+            self.birthday
+        } else {
+            None
+        };
+
+        if let Some(s) = self.signer {
+            ctx.recovered_signer = Some(Arc::new(s));
+        }
+    }
+
+    /// Undo what [`Self::commit`] writes that follows the descriptor.
+    ///
+    /// Every restore step's `revert` already drops `ctx.descriptor`, because a
+    /// stale one leaks into a later decision. The rescan metadata is set from
+    /// the same descriptor and has to go with it — otherwise a user who backs
+    /// out of a restore and completes a *fresh* install carries a rescan that
+    /// Vault does not owe, banner and all, and an inherited birthday could
+    /// start a multi-hour scan of a chain the new wallet has no history on.
+    pub(crate) fn revert_commit(ctx: &mut Context) {
+        ctx.descriptor = None;
+        ctx.restore_source = None;
+        ctx.restored_wallet_birthday = None;
+    }
 }
 
 /// Convert decrypted kit halves into [`StagedRestore`], applying the scope's
@@ -368,6 +444,10 @@ pub(crate) fn stage_restore(
     seed: Option<&SeedBlob>,
     descriptor: Option<&DescriptorBlob>,
 ) -> Result<StagedRestore, String> {
+    // Keep the blob before `descriptor` is shadowed by the parsed value; the
+    // birthday lives on the blob, not on the parsed descriptor.
+    let descriptor_blob = descriptor;
+
     // Parse the descriptor into an owned value first; an error here aborts
     // before we touch any seed, so a partial result is never committed.
     let descriptor = match descriptor {
@@ -397,7 +477,13 @@ pub(crate) fn stage_restore(
         None
     };
 
-    Ok(StagedRestore { descriptor, signer })
+    let birthday = descriptor_blob.and_then(|b| b.vault.birthday);
+
+    Ok(StagedRestore {
+        descriptor,
+        signer,
+        birthday,
+    })
 }
 
 /// Filter applied to the server cube list before status probing:
@@ -828,12 +914,7 @@ impl Step for RecoveryKitRestoreStep {
         // "nothing applied" to "fully applied" in one go. `Arc::new` happens
         // here rather than at staging so we don't allocate the refcounted handle
         // for a signer that ultimately gets dropped on the error path.
-        if let Some(d) = staged.descriptor {
-            ctx.descriptor = Some(d);
-        }
-        if let Some(s) = staged.signer {
-            ctx.recovered_signer = Some(Arc::new(s));
-        }
+        staged.commit(ctx, RestoreSource::PasswordKit);
 
         // Carry the *original* Cube identity (UUID + name) out of the
         // decrypted kit so the post-install `find_or_create_cube` re-mints
@@ -887,10 +968,10 @@ impl Step for RecoveryKitRestoreStep {
             ctx.cube_id = None;
             ctx.cube_name = None;
         }
-        // Always clear descriptor — if the user navigates back from a
-        // later step through this one, keeping a stale descriptor would
-        // leak into a subsequent decision.
-        ctx.descriptor = None;
+        // Always clear the descriptor and the rescan metadata set from it —
+        // if the user navigates back from a later step through this one,
+        // keeping either would leak into a subsequent decision.
+        StagedRestore::revert_commit(ctx);
         // Also drop the Connect auth bits we pushed in `apply`.
         // `CoincubeConnectStep` skips itself when `connect_jwt` is
         // `Some`, so failing to clear here would "teleport" the user
@@ -1253,6 +1334,7 @@ mod tests {
                 descriptor: "d".into(),
                 change_descriptor: None,
                 signers: vec![],
+                birthday: None,
             },
         }
     }

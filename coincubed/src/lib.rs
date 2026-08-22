@@ -225,6 +225,93 @@ fn setup_sqlite(
 
 // Connect to bitcoind. Setup the watchonly wallet, and do some sanity checks.
 // If all went well, returns the interface to bitcoind.
+/// Warn when the watchonly wallet was never scanned over the history our own
+/// database already holds.
+///
+/// # The state this catches
+///
+/// `import_descriptor` imports at `timestamp: "now"`, which is right for a Vault
+/// being created — there is nothing behind it to find. It is wrong for one being
+/// *restored*: the descriptors go in, bitcoind scans from today forward, and
+/// every transaction that funded the wallet before the restore is invisible to
+/// it. The database, restored alongside, knows about those coins perfectly well.
+///
+/// The two halves then disagree forever. `get_spender_txid` asks the wallet
+/// about a coin's funding transaction, bitcoind answers `-5`, and the coin can
+/// never be resolved as spent or unspent — so it stays selectable and the user
+/// can build transactions that conflict with their own pending ones. Nothing
+/// recovers on its own; only a rescan fixes it.
+///
+/// [`BitcoinD::wallet_sanity_checks`] does not cover this. It asks whether the
+/// wallet is loaded and whether our descriptors are in it — both true here. The
+/// missing question is *since when*.
+///
+/// # Why a warning and not a rescan
+///
+/// A rescan can take hours on mainnet and must be the user's decision, with the
+/// progress UI in front of them. Starting one unannounced from a startup path
+/// would look like a hang. So this states the fault and names the remedy.
+/// The oldest coin the wallet's scan window does not cover, if any.
+///
+/// Split out from [`warn_if_scan_window_misses_history`] so the comparison is
+/// testable without standing up a node and a database. The boundary is
+/// deliberately exclusive: a wallet scanned from exactly the oldest coin's block
+/// time *did* see that block, and warning there would fire on every correctly
+/// restored wallet.
+fn history_outside_scan_window(
+    scanned_from: u32,
+    oldest_coin: Option<database::BlockInfo>,
+) -> Option<database::BlockInfo> {
+    oldest_coin.filter(|oldest| scanned_from > oldest.time)
+}
+
+fn warn_if_scan_window_misses_history(
+    bitcoind: &BitcoinD,
+    db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
+) {
+    // The database first, deliberately. It is a local read, and when it comes
+    // back empty — every fresh install — there is no history that could fall
+    // outside any window, so the node is never asked. Ordering it the other way
+    // would put an RPC on every startup to answer a question already moot.
+    //
+    // Unconfirmed coins have no block time and cannot be outside a scan window,
+    // so they are skipped.
+    let oldest = db
+        .lock()
+        .expect("db mutex poisoned")
+        .connection()
+        .coins(&[], &[])
+        .into_values()
+        .filter_map(|coin| coin.block_info)
+        .min_by_key(|block| block.time);
+    let Some(oldest) = oldest else {
+        return;
+    };
+
+    // The earliest point any of our descriptors was scanned from. `None` means
+    // the node would not tell us, which is not itself a fault to report.
+    let Some(scanned_from) = bitcoind.earliest_descriptor_timestamp() else {
+        return;
+    };
+
+    if let Some(oldest) = history_outside_scan_window(scanned_from, Some(oldest)) {
+        log::warn!(
+            concat!(
+                "Watchonly wallet was only scanned from unix time {}, but our database holds ",
+                "coins as far back as block {} (unix time {}). Transactions before the scan ",
+                "start are invisible to the wallet, so those coins cannot be tracked and may ",
+                "be offered for spending after they are already spent. This is the expected ",
+                "state after restoring a wallet onto a fresh node; rescan from at least unix ",
+                "time {} to correct it."
+            ),
+            scanned_from,
+            oldest.height,
+            oldest.time,
+            oldest.time,
+        );
+    }
+}
+
 fn setup_bitcoind(
     config: &Config,
     data_dir: &DataDirectory,
@@ -520,6 +607,12 @@ impl DaemonHandle {
             )?)) as sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         };
 
+        // A wallet whose scan window starts after the coins we already know about
+        // is a silent, permanent fault — see `warn_if_scan_window_misses_history`.
+        if let Some(bitcoind) = bitcoind.as_ref() {
+            warn_if_scan_window_misses_history(bitcoind, &db);
+        }
+
         // Shared abort flag: `stop` flips it so an in-flight Esplora scan stops
         // walking the provider chain and returns promptly, instead of the poller
         // (and the `stop` that joins it) blocking on dead/throttled providers.
@@ -678,6 +771,66 @@ impl DaemonHandle {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod scan_window_tests {
+    use super::*;
+    use crate::database::BlockInfo;
+
+    /// The state that took the app down: a wallet imported at `timestamp: "now"`
+    /// onto a restored database. The wallet was scanned from today, the coins
+    /// are from weeks ago, and nothing else in startup notices — the wallet is
+    /// loaded and the descriptors are present, which is all
+    /// `wallet_sanity_checks` asks.
+    #[test]
+    fn a_restored_database_behind_a_freshly_scanned_wallet_is_flagged() {
+        let oldest = BlockInfo {
+            height: 145_604,
+            time: 1_784_953_848,
+        };
+        assert_eq!(
+            history_outside_scan_window(1_787_373_712, Some(oldest)),
+            Some(oldest),
+            "coins predating the scan window are unreachable to the wallet"
+        );
+    }
+
+    /// A wallet scanned from before its oldest coin is correct, and must stay
+    /// quiet — this runs on every startup.
+    #[test]
+    fn a_wallet_scanned_before_its_oldest_coin_is_quiet() {
+        let oldest = BlockInfo {
+            height: 145_604,
+            time: 1_784_953_848,
+        };
+        assert_eq!(
+            history_outside_scan_window(1_784_953_000, Some(oldest)),
+            None
+        );
+    }
+
+    /// Exactly at the oldest coin's block time means that block was scanned.
+    /// An inclusive comparison here would warn on every correct restore.
+    #[test]
+    fn the_boundary_is_not_a_fault() {
+        let oldest = BlockInfo {
+            height: 145_604,
+            time: 1_784_953_848,
+        };
+        assert_eq!(
+            history_outside_scan_window(oldest.time, Some(oldest)),
+            None,
+            "a wallet scanned from the oldest coin's block time saw that block"
+        );
+    }
+
+    /// A wallet with no confirmed coins has no history to fall outside
+    /// anything — a fresh install, which is the common case.
+    #[test]
+    fn no_coins_means_nothing_to_warn_about() {
+        assert_eq!(history_outside_scan_window(u32::MAX, None), None);
     }
 }
 

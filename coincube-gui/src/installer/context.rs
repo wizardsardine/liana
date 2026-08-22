@@ -89,6 +89,23 @@ pub enum DescriptorTemplate {
     ExpandingMultisigInheritanceRecovery,
 }
 
+/// How an install's descriptor reached this machine.
+///
+/// All three carry a descriptor with on-chain history, so all three owe a
+/// rescan. Only [`Self::PasswordKit`] evidences a password Recovery Kit for
+/// *this* Cube — the keychain seal has its own record
+/// (`recovery_kit_last_backed_up_keychain_descriptor_fingerprint`), and an
+/// heir restoring somebody else's Vault has no kit of their own at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoreSource {
+    /// The owner's password-protected Cube Recovery Kit.
+    PasswordKit,
+    /// The owner's Cube, recovered through a paired phone's keychain seal.
+    KeychainSeal,
+    /// A Vault released to an heir.
+    Inheritance,
+}
+
 #[derive(Clone)]
 pub struct Context {
     pub bitcoin_config: BitcoinConfig,
@@ -103,6 +120,26 @@ pub struct Context {
     // In case a user entered a mnemonic,
     // we dont want to override the generated signer with it.
     pub recovered_signer: Option<Arc<Signer>>,
+    /// How the descriptor being installed was restored, if it was.
+    ///
+    /// Not derivable from the other fields. A `Full` restore leaves
+    /// [`Self::recovered_signer`] set, but a descriptor-only one (a passkey
+    /// Cube, or the descriptor half uploaded first) leaves nothing behind but
+    /// `descriptor` — which a fresh install has too.
+    ///
+    /// Deliberately *which* restore, not merely whether one happened. Two
+    /// different questions read this, and they do not have the same answer:
+    /// every restore owes the new watchonly wallet a rescan, but only one of
+    /// them says anything about the Cube owning a password Recovery Kit.
+    /// Collapsing the two to a bool made an inherited Vault claim its heir had
+    /// a password kit.
+    pub restore_source: Option<RestoreSource>,
+    /// The restored Vault's creation time, when the Recovery Kit recorded one
+    /// ([`crate::services::recovery::plaintext::DescriptorBlobVault::birthday`]).
+    ///
+    /// Turns the rescan a restore owes from a question into something the app
+    /// starts on its own. `None` for kits written before the field existed.
+    pub restored_wallet_birthday: Option<u32>,
     pub bitcoind_is_external: bool,
     pub use_coincube_connect: bool,
     /// Connect JWT threaded across installer steps. Wrapped in
@@ -287,6 +324,8 @@ impl Context {
             network,
             hw_is_used: false,
             recovered_signer: None,
+            restore_source: None,
+            restored_wallet_birthday: None,
             bitcoind_is_external: true,
             use_coincube_connect: false,
             connect_jwt: None,

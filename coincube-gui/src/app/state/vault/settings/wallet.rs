@@ -560,6 +560,13 @@ pub async fn update_aliases(
                         is_border_wallet: wallet
                             .border_wallet_fingerprints
                             .contains(master_fingerprint),
+                        // Carried through verbatim: this rewrite is about
+                        // aliases, and re-deriving the provenance from nothing
+                        // would silently downgrade every key to unrecorded.
+                        grid_seed_source: wallet
+                            .border_wallet_grid_seed
+                            .get(master_fingerprint)
+                            .copied(),
                     })
                     .collect();
             }

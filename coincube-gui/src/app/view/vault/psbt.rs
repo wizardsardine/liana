@@ -1556,14 +1556,36 @@ fn border_wallet_recon_phrase_view(
     }
     .width(Length::Fill);
 
+    let prompt = if recon.phrase_prefilled {
+        // Not necessarily the Cube's *master* seed: the installer derives a
+        // grid phrase from whichever signer that session held, which is the
+        // master seed only in developer mode.
+        format!(
+            "Recovery phrase for key #{}, re-derived from the seed it was created with",
+            recon.target_fingerprint
+        )
+    } else {
+        format!(
+            "Enter the 12-word recovery phrase for key #{}",
+            recon.target_fingerprint
+        )
+    };
+
     let mut col = Column::new()
         .spacing(12)
         .push(header)
-        .push(p1_regular(format!(
-            "Enter the 12-word recovery phrase for key #{}",
-            recon.target_fingerprint
-        )))
+        .push(p1_regular(prompt))
         .push(word_rows);
+
+    if recon.phrase_prefilled {
+        col = col.push(
+            p1_regular(
+                "Filled in for you. Edit any word if this key was enrolled from a \
+                 different phrase.",
+            )
+            .style(theme::text::secondary),
+        );
+    }
 
     if let Some(err) = error_text {
         col = col.push(err);
@@ -2162,9 +2184,26 @@ mod tests {
             grid: None,
             pattern: OrderedPattern::new(),
             checksum_word: None,
+            phrase_prefilled: false,
             error: Some("Check the phrase".to_string()),
         };
         let _ = border_wallet_recon_view(&phrase_recon);
+
+        // The prefilled variant renders a different prompt and an extra note,
+        // so it is a distinct branch of the phrase view.
+        let prefilled_phrase_recon = BorderWalletReconstructionState {
+            target_fingerprint: fingerprint("f714c228"),
+            network: Network::Bitcoin,
+            step: ReconStep::RecoveryPhrase,
+            phrase_words: vec![form_value("abandon", true); 12],
+            phrase_valid: true,
+            grid: None,
+            pattern: OrderedPattern::new(),
+            checksum_word: None,
+            phrase_prefilled: true,
+            error: None,
+        };
+        let _ = border_wallet_recon_view(&prefilled_phrase_recon);
 
         let mut pattern = OrderedPattern::new();
         pattern.add(CellRef::new(0, 0)).unwrap();
@@ -2177,6 +2216,7 @@ mod tests {
             grid: Some(WordGrid::from_recovery_phrase(GRID_PHRASE).unwrap()),
             pattern,
             checksum_word: Some("about".to_string()),
+            phrase_prefilled: false,
             error: Some("Pick eleven cells".to_string()),
         };
         let _ = border_wallet_recon_view(&grid_recon);
@@ -2194,6 +2234,7 @@ mod tests {
             grid: Some(WordGrid::from_recovery_phrase(GRID_PHRASE).unwrap()),
             pattern: complete_pattern,
             checksum_word: None,
+            phrase_prefilled: false,
             error: None,
         };
         let _ = border_wallet_recon_view(&complete_grid_recon);
