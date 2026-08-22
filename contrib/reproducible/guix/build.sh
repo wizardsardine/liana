@@ -30,6 +30,11 @@ replace-with = "vendored_sources"
 git = "https://github.com/wizardsardine/bdk"
 branch = "release/1.0.0-alpha.13"
 replace-with = "vendored_sources"
+
+[source."git+https://github.com/wizardsardine/bip329?rev=77c9d91"]
+git = "https://github.com/wizardsardine/bip329"
+rev = "77c9d91"
+replace-with = "vendored_sources"
 EOF
 
 # We need to set RUSTC_BOOTSTRAP=1 as a workaround to be able to use unstable

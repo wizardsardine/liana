@@ -553,9 +553,8 @@ checksum = "d965446196e3b7decd44aa7ee49e31d630118f90ef12f97900f262eb915c951d"
 
 [[package]]
 name = "bip329"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8351c1cf438ae5814ad2a696f06fd07d7be4a1a133d889b1785260fa8797798c"
+version = "0.6.0"
+source = "git+https://github.com/wizardsardine/bip329?rev=77c9d91#77c9d9156e1c5029d5df251b04a8f458a66475db"
 dependencies = [
  "bitcoin",
  "serde",

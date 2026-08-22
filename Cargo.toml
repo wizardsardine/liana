@@ -67,7 +67,7 @@ getrandom = "0.3.1"
 bip39 = "2.0"
 rdrand = "0.8"
 fern = "0.6"
-bip329 = { version = "0.3.0", default-features = false }
+bip329 = { git = "https://github.com/wizardsardine/bip329", rev = "77c9d91" }
 async-trait = "0.1"
 async-hwi = "0.0.32"
 hex = "0.4.3"
