@@ -16,8 +16,6 @@
 //! returns it, and it never rides a top-level message (the decrypt result stays
 //! on this step's redacting [`InheritanceRestoreMsg`]).
 
-use std::sync::Arc;
-
 use coincube_ui::widget::Element;
 use iced::Task;
 use zeroize::Zeroizing;
@@ -196,12 +194,7 @@ impl Step for InheritanceRestoreStep {
                 return false;
             }
         };
-        if let Some(d) = staged.descriptor {
-            ctx.descriptor = Some(d);
-        }
-        if let Some(s) = staged.signer {
-            ctx.recovered_signer = Some(Arc::new(s));
-        }
+        staged.commit(ctx);
         // Carry the original Cube identity (UUID + name) out of the decrypted
         // release so the post-install `find_or_create_cube` re-mints the same
         // Cube. Reusing the UUID makes the Connect `register_cube` call

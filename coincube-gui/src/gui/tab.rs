@@ -1072,16 +1072,11 @@ impl Tab {
                             // agree with what the user just did; Settings would
                             // otherwise only correct it once its status loaded.
                             if restored_from_kit {
-                                if let Err(e) = app::settings::update_settings_file(
-                                    &network_dir,
-                                    |mut settings| {
-                                        let c =
-                                            settings.cubes.iter_mut().find(|c| c.id == cube.id)?;
-                                        c.recovery_kit_password_backed_up = true;
-                                        Some(settings)
-                                    },
-                                )
-                                .await
+                                if let Err(e) =
+                                    app::settings::update_settings_file(&network_dir, |settings| {
+                                        Some(marked_kit_backed_up(settings, &cube.id))
+                                    })
+                                    .await
                                 {
                                     tracing::warn!(
                                         "Could not record that this Cube was restored from a \
@@ -2762,6 +2757,24 @@ fn attach_vault(cube: &mut app::settings::CubeSettings, vault: Option<&VaultIden
     }
 }
 
+/// `settings` with this Cube recorded as having a Recovery Kit, and everything
+/// else untouched.
+///
+/// Returns `Settings`, not `Option<Settings>`, on purpose — see
+/// [`crate::app::cleared_pending_rescan`] for the hazard. An updater that
+/// returns `None` makes [`app::settings::update_settings_file`] **delete**
+/// `settings.json`, so a Cube id matching nothing must still yield the settings
+/// unchanged rather than a `None` that wipes every Cube on this network.
+fn marked_kit_backed_up(
+    mut settings: app::settings::Settings,
+    cube_id: &str,
+) -> app::settings::Settings {
+    if let Some(cube) = settings.cubes.iter_mut().find(|c| c.id == cube_id) {
+        cube.recovery_kit_password_backed_up = true;
+    }
+    settings
+}
+
 async fn find_or_create_cube(
     network_dir: &NetworkDirectory,
     // Both halves of the Vault's identity, or `None` when the installer exited
@@ -3424,6 +3437,43 @@ mod find_or_create_cube_tests {
     //! listed as recoverable and let the flow be repeated indefinitely).
     use super::*;
     use app::settings::WalletId;
+
+    /// Same hazard as `cleared_pending_rescan`: `update_settings_file` deletes
+    /// `settings.json` when its updater returns `None`, so a Cube id that
+    /// matches nothing must leave the settings alone rather than wipe every
+    /// Cube on the network.
+    #[test]
+    fn recording_a_kit_for_an_unknown_cube_changes_nothing() {
+        let cube = |id: &str, backed_up: bool| {
+            let mut c = app::settings::CubeSettings::new_with_raw_id(
+                id.to_string(),
+                format!("Cube {}", id),
+                bitcoin::Network::Bitcoin,
+            );
+            c.recovery_kit_password_backed_up = backed_up;
+            c
+        };
+
+        let before = app::settings::Settings {
+            cubes: vec![cube("aaa", false), cube("bbb", false)],
+            ..Default::default()
+        };
+
+        let after = marked_kit_backed_up(before.clone(), "nosuchcube");
+        assert_eq!(after.cubes.len(), 2, "no Cube may be dropped");
+        assert!(after
+            .cubes
+            .iter()
+            .all(|c| !c.recovery_kit_password_backed_up));
+
+        let after = marked_kit_backed_up(before, "bbb");
+        assert_eq!(after.cubes.len(), 2);
+        assert!(!after.cubes[0].recovery_kit_password_backed_up);
+        assert!(
+            after.cubes[1].recovery_kit_password_backed_up,
+            "the restored Cube is the only one marked"
+        );
+    }
 
     const ORIG_UUID: &str = "11111111-2222-3333-4444-555555555555";
 

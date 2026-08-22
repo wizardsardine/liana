@@ -1639,6 +1639,57 @@ mod pending_rescan_tests {
         assert_eq!(pending_rescan(&ctx).unwrap().timestamp(), None);
     }
 
+    /// Every restore path must record the rescan, not just the Recovery Kit
+    /// one.
+    ///
+    /// `owner_keychain_restore` and `inheritance_restore` install a descriptor
+    /// that already has on-chain history, exactly as a kit restore does, but
+    /// committed it by hand and recorded nothing — so those Vaults came up
+    /// unable to see their own past with no prompt. All three now commit
+    /// through `StagedRestore::commit`, which is what this pins.
+    #[test]
+    fn every_restore_path_records_the_rescan_it_owes() {
+        use crate::installer::step::recovery_kit_restore::StagedRestore;
+
+        let stage_descriptor = |ctx: &mut Context| {
+            StagedRestore {
+                descriptor: Some(
+                    "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp"
+                        .parse()
+                        .expect("fixture descriptor must parse"),
+                ),
+                signer: None,
+                birthday: Some(1_784_953_848),
+            }
+            .commit(ctx);
+        };
+
+        let mut dated = ctx();
+        assert_eq!(pending_rescan(&dated), None, "nothing staged yet");
+
+        stage_descriptor(&mut dated);
+        assert!(dated.restored_from_kit, "the descriptor carries history");
+        assert_eq!(
+            pending_rescan(&dated),
+            Some(PendingRescan::From(1_784_953_848))
+        );
+
+        // The same commit with no birthday still owes a rescan — just an
+        // undated one. Reading "no date" as "nothing to do" is the bug.
+        let mut empty = ctx();
+        StagedRestore {
+            descriptor: None,
+            signer: None,
+            birthday: None,
+        }
+        .commit(&mut empty);
+        assert!(
+            !empty.restored_from_kit,
+            "no descriptor means nothing was restored"
+        );
+        assert_eq!(pending_rescan(&empty), None);
+    }
+
     /// A kit written since `DescriptorBlobVault::birthday` existed dates its
     /// own restore, so the scan starts unattended like a backup import does.
     #[test]

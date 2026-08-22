@@ -2634,8 +2634,8 @@ pub fn restore_pin_setup<'a>(
             .spacing(40)
             .push(p2_regular(
                 "Your Cube's mnemonic will be encrypted with this PIN on disk. \
-                 You'll enter it every time you open this Cube — the PIN is \
-                 what lets your wallets decrypt your keys.",
+                 You'll enter it every time you open this Cube — it's how the \
+                 Cube decrypts the seed and key material stored on this computer.",
             ))
             .push(
                 Column::new()

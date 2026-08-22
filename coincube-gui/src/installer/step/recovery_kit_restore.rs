@@ -360,6 +360,35 @@ pub(crate) struct StagedRestore {
     pub birthday: Option<u32>,
 }
 
+impl StagedRestore {
+    /// Commit a staged restore into the installer context.
+    ///
+    /// Shared by all three restore steps — Recovery Kit, owner-keychain and
+    /// inheritance — because all three install a descriptor that **already has
+    /// on-chain history**, and every one of them therefore owes the new
+    /// watchonly wallet a rescan. Two of them used to commit the descriptor and
+    /// the signer by hand and record nothing about the rescan, so the Vault came
+    /// up unable to see its own past. Putting the whole commit here is what
+    /// stops a fourth path repeating that.
+    ///
+    /// Deliberately not the *whole* of any step's `apply`: the Recovery Kit and
+    /// inheritance steps also carry a Cube identity out of their payload, which
+    /// is theirs alone. This covers only what all three share.
+    pub(crate) fn commit(self, ctx: &mut Context) {
+        if let Some(d) = self.descriptor {
+            ctx.descriptor = Some(d);
+            // Set alongside the descriptor because the descriptor is precisely
+            // what carries the history — the seed half does not, and a
+            // descriptor-only restore has no seed at all.
+            ctx.restored_from_kit = true;
+        }
+        if let Some(s) = self.signer {
+            ctx.recovered_signer = Some(Arc::new(s));
+        }
+        ctx.restored_wallet_birthday = self.birthday;
+    }
+}
+
 /// Convert decrypted kit halves into [`StagedRestore`], applying the scope's
 /// all-or-nothing discipline (Full needs the seed; DescriptorOnly ignores any
 /// seed half). Returns a user-visible error string on descriptor-parse or
@@ -842,18 +871,7 @@ impl Step for RecoveryKitRestoreStep {
         // "nothing applied" to "fully applied" in one go. `Arc::new` happens
         // here rather than at staging so we don't allocate the refcounted handle
         // for a signer that ultimately gets dropped on the error path.
-        ctx.restored_wallet_birthday = staged.birthday;
-        if let Some(d) = staged.descriptor {
-            ctx.descriptor = Some(d);
-            // This descriptor has a history the new node has never scanned, so
-            // the wallet bitcoind builds for it owes a rescan. Set alongside the
-            // descriptor because that is precisely what carries the history —
-            // the seed half does not, and a descriptor-only kit has no seed.
-            ctx.restored_from_kit = true;
-        }
-        if let Some(s) = staged.signer {
-            ctx.recovered_signer = Some(Arc::new(s));
-        }
+        staged.commit(ctx);
 
         // Carry the *original* Cube identity (UUID + name) out of the
         // decrypted kit so the post-install `find_or_create_cube` re-mints

@@ -523,13 +523,29 @@ fn seed_files(
     let folder = MasterSigner::mnemonics_folder(datadir_root, network);
     let entries = std::fs::read_dir(&folder).map_err(SignerError::MnemonicStorage)?;
 
-    Ok(entries
+    let mut files: Vec<(i64, PathBuf, Fingerprint)> = entries
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name();
             let parsed = MnemonicFileName::from_str(name.to_str()?).ok()?;
-            Some((entry.path(), parsed.fingerprint))
+            let written_at = parsed
+                .descriptor_info
+                .as_ref()
+                .map(|(_, t)| *t)
+                .unwrap_or(0);
+            Some((written_at, entry.path(), parsed.fingerprint))
         })
+        .collect();
+    // `read_dir` yields in whatever order the filesystem feels like, which makes
+    // every caller that sweeps these files order-dependent — most visibly, which
+    // of several openable seeds becomes the Vault's signer. Oldest-written first
+    // is both stable and meaningful: the seed a Cube has had longest wins, and
+    // the same folder behaves the same way twice, here and on another machine.
+    // The fingerprint breaks ties, so files sharing a timestamp still order.
+    files.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.2.cmp(&b.2)));
+    Ok(files
+        .into_iter()
+        .map(|(_, path, fingerprint)| (path, fingerprint))
         .collect())
 }
 
@@ -574,7 +590,8 @@ fn open_seed_at(
     Ok(signer)
 }
 
-/// The first seed file in this Cube's folder whose key is one of `wanted`.
+/// Sweep this Cube's folder for the seed files whose key is one of `wanted`,
+/// returning the first that opens **and** every one that does not.
 ///
 /// This is [`open_seed_by_fingerprint`] for a caller holding a *set* of
 /// candidate keys rather than one — [`crate::app::wallet::Wallet::load_hotsigners`],
@@ -590,8 +607,11 @@ fn open_seed_at(
 /// and will not open is logged and skipped, because the rest of the Vault still
 /// works without it.
 ///
-/// Blocking: up to one Argon2id pass per *matching* file, so callers run it off
-/// the UI thread.
+/// Blocking: one Argon2id pass per *matching* file, so callers run it off the UI
+/// thread. Every match is attempted, including those after a success, because
+/// an attempt is the only way to learn whether a file would open — a Vault with
+/// one hot key (the ordinary shape) pays exactly one pass either way, and only
+/// one with several pays for the completeness.
 /// The outcome of a seed sweep: the signer if one opened, plus the keys whose
 /// seed file is **present but would not open**.
 ///
@@ -669,6 +689,7 @@ pub(crate) fn open_seed_for_any_of(
     let secret = device_secret::load_optional(cube_id)
         .map_err(|e| SignerError::DecryptionFailed(e.to_string()))?;
 
+    let mut signer: Option<MasterSigner> = None;
     let mut unopenable = std::collections::HashSet::new();
     for (path, named) in files {
         // The duress marker's fingerprint field is random, so it cannot be in
@@ -677,11 +698,19 @@ pub(crate) fn open_seed_for_any_of(
             continue;
         }
         match open_seed_at(&path, network, named, password, cube_id, secret.as_ref()) {
-            Ok(signer) => {
-                return Ok(SeedLookup {
-                    signer: Some(signer),
-                    unopenable,
-                })
+            Ok(found) => {
+                // Keep the first and carry on. Returning here would end the
+                // sweep, so a *later* wanted seed that will not open would never
+                // be attempted and never land in `unopenable` — and which file
+                // comes first is `seed_files` order, not anything the Vault
+                // controls. That left the second hot key of a two-hot-key Vault
+                // reading as a plain unconnected device, which is exactly the
+                // state `unopenable` exists to stop.
+                //
+                // Only the first signer is kept because `Wallet::signer` holds
+                // one; the later attempts are made for what they *tell* us, not
+                // for what they return.
+                signer.get_or_insert(found);
             }
             Err(e) => {
                 // A seed file for a key this Vault holds exists and would not
@@ -700,10 +729,7 @@ pub(crate) fn open_seed_for_any_of(
         }
     }
 
-    Ok(SeedLookup {
-        signer: None,
-        unopenable,
-    })
+    Ok(SeedLookup { signer, unopenable })
 }
 
 /// Re-seal every openable mnemonic file in this Cube's folder at the current
@@ -2588,6 +2614,49 @@ mod tests {
     /// Vault with N descriptor keys costs **one** directory scan and one
     /// keystore read instead of N of each, and it must agree with the
     /// single-fingerprint route on every other answer.
+    /// One usable hot key and one unreachable one, both wanted.
+    ///
+    /// The sweep used to return the moment a seed opened, so whichever file
+    /// `seed_files` happened to yield second was never attempted and never
+    /// recorded — the Vault got its signer and the *other* key silently read as
+    /// an unconnected device. Both facts have to survive one sweep, and neither
+    /// may depend on file order.
+    #[test]
+    fn a_usable_seed_does_not_hide_an_unreachable_one() {
+        use std::collections::HashSet;
+
+        let dir = tmp_dir("set-opener-mixed");
+        let cube_id = format!("cube-mixed-{}", std::process::id());
+
+        // Two seeds for this Cube, written under different credentials: one the
+        // load will present, one it will not.
+        let usable = make_cube(&dir, &cube_id, 1000, "1234");
+        let unreachable = make_cube(&dir, &cube_id, 2000, "9999");
+        assert_ne!(usable, unreachable);
+
+        let wanted: HashSet<Fingerprint> = HashSet::from([usable, unreachable]);
+        let found = open_seed_for_any_of(&dir, NET, &wanted, "1234", &cube_id)
+            .expect("one unopenable file must not fail the load");
+
+        assert_eq!(
+            found
+                .signer
+                .as_ref()
+                .map(|s| s.fingerprint(&Secp256k1::signing_only())),
+            Some(usable),
+            "the seed this credential opens must still be returned"
+        );
+        assert!(
+            found.unopenable.contains(&unreachable),
+            "the key this credential cannot reach must be reported, not skipped \
+             because another key happened to open first"
+        );
+        assert!(
+            !found.unopenable.contains(&usable),
+            "a key that opened is not unopenable"
+        );
+    }
+
     #[test]
     fn the_set_opener_finds_a_wanted_key_and_ignores_the_rest() {
         use std::collections::HashSet;

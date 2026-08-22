@@ -2046,6 +2046,30 @@ fn pending_rescan(
     .and_then(|s| s.pending_rescan)
 }
 
+/// `settings` with this Vault's pending-rescan marker cleared, and everything
+/// else untouched.
+///
+/// Returns `Settings`, not `Option<Settings>`, on purpose. The updater passed to
+/// [`settings::update_settings_file`] deletes `settings.json` outright when it
+/// returns `None` — so an updater that looks a record up with `?` and finds
+/// nothing does not "skip the write", it **wipes every Cube's configuration**.
+/// A checksum that matches no wallet is an ordinary miss (a Vault removed while
+/// the rescan was starting, a concurrent rewrite), and it must leave the file
+/// exactly as it was. Making the miss unrepresentable is what keeps that true.
+fn cleared_pending_rescan(
+    mut settings: settings::Settings,
+    descriptor_checksum: &str,
+) -> settings::Settings {
+    if let Some(wallet) = settings
+        .wallets
+        .iter_mut()
+        .find(|w| w.descriptor_checksum == descriptor_checksum)
+    {
+        wallet.pending_rescan = None;
+    }
+    settings
+}
+
 /// Ask the daemon for the rescan a restored Vault owes, and clear the debt once
 /// it has taken it.
 ///
@@ -2076,13 +2100,8 @@ fn start_pending_rescan(
                 "Started the rescan this restored Vault owed, from unix time {}.",
                 timestamp
             );
-            if let Err(e) = settings::update_settings_file(&network_dir, |mut settings| {
-                let wallet = settings
-                    .wallets
-                    .iter_mut()
-                    .find(|w| w.descriptor_checksum == descriptor_checksum)?;
-                wallet.pending_rescan = None;
-                Some(settings)
+            if let Err(e) = settings::update_settings_file(&network_dir, |settings| {
+                Some(cleared_pending_rescan(settings, &descriptor_checksum))
             })
             .await
             {
@@ -5994,6 +6013,62 @@ fn restart_daemon_blocking(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `update_settings_file` **deletes** `settings.json` when its updater
+    /// returns `None`. So an updater that looks a record up with `?` does not
+    /// quietly skip the write when it misses — it destroys every Cube's
+    /// configuration on this network.
+    ///
+    /// This clearing runs from a background task after a rescan starts, so a
+    /// miss is entirely reachable: the Vault could have been removed, or another
+    /// writer could have rewritten the file, between the task starting and
+    /// finishing. It must be a no-op, not a wipe.
+    #[test]
+    fn clearing_a_pending_rescan_for_an_unknown_vault_changes_nothing() {
+        use crate::app::settings::{PendingRescan, WalletSettings};
+
+        let wallet = |checksum: &str, pending| WalletSettings {
+            name: format!("Coincube-{}", checksum),
+            alias: None,
+            descriptor_checksum: checksum.to_string(),
+            pinned_at: None,
+            keys: Vec::new(),
+            hardware_wallets: Vec::new(),
+            remote_backend_auth: None,
+            start_internal_bitcoind: None,
+            pending_rescan: pending,
+        };
+
+        let before = settings::Settings {
+            wallets: vec![
+                wallet("kt6ht0kt", Some(PendingRescan::DateUnknown)),
+                wallet("rsyfz849", Some(PendingRescan::From(1_784_953_848))),
+            ],
+            ..Default::default()
+        };
+
+        // A checksum that matches nothing: every wallet survives, untouched.
+        let after = cleared_pending_rescan(before.clone(), "nosuchck");
+        assert_eq!(after.wallets.len(), 2, "no wallet may be dropped");
+        assert_eq!(
+            after.wallets[0].pending_rescan,
+            Some(PendingRescan::DateUnknown)
+        );
+        assert_eq!(
+            after.wallets[1].pending_rescan,
+            Some(PendingRescan::From(1_784_953_848))
+        );
+
+        // A checksum that matches: only that wallet's marker is cleared.
+        let after = cleared_pending_rescan(before, "rsyfz849");
+        assert_eq!(after.wallets.len(), 2);
+        assert_eq!(
+            after.wallets[0].pending_rescan,
+            Some(PendingRescan::DateUnknown),
+            "the other Vault's rescan is not ours to clear"
+        );
+        assert_eq!(after.wallets[1].pending_rescan, None);
+    }
 
     use std::{
         fs,

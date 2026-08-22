@@ -17,8 +17,6 @@
 //! — `403` reads as "not the owner", `423` stays neutral, invariant I3). The
 //! decrypt relay, AEAD open, seed-derive, and restore are identical.
 
-use std::sync::Arc;
-
 use coincube_ui::widget::Element;
 use iced::Task;
 use zeroize::Zeroizing;
@@ -194,12 +192,7 @@ impl Step for OwnerKeychainRestoreStep {
                 return false;
             }
         };
-        if let Some(d) = staged.descriptor {
-            ctx.descriptor = Some(d);
-        }
-        if let Some(s) = staged.signer {
-            ctx.recovered_signer = Some(Arc::new(s));
-        }
+        staged.commit(ctx);
         // Carry the original Cube identity (UUID + name) out of the decrypted
         // envelope so the post-install `find_or_create_cube` re-mints the same
         // Cube. Reusing the UUID makes the Connect `register_cube` call
