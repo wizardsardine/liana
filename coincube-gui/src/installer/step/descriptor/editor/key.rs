@@ -2170,7 +2170,7 @@ impl SelectKeySource {
             KeySource::MasterSigner => icon::round_key_icon().color(color::RED),
             KeySource::Manual => icon::round_key_icon(),
             KeySource::Token(..) => icon::hdd_icon(),
-            KeySource::BorderWallet => icon::round_key_icon(),
+            KeySource::BorderWallet { .. } => icon::round_key_icon(),
             KeySource::KeychainKey { .. } => icon::round_key_icon(),
         };
         let fg_str = format!("#{}", fg);
@@ -2893,7 +2893,9 @@ mod tests {
         for source in [
             KeySource::Manual,
             KeySource::MasterSigner,
-            KeySource::BorderWallet,
+            KeySource::BorderWallet {
+                grid_seed_source: crate::app::settings::GridSeedSource::Independent,
+            },
         ] {
             assert_eq!(picker.key_unavailable_reason(fg, &source), None);
         }

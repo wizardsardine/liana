@@ -5,6 +5,8 @@
 //!
 //! Steps: Intro → RecoveryPhrase → Grid → Checksum → Confirm
 
+use crate::app::settings::GridSeedSource;
+
 use coincube_core::{
     border_wallet::{
         build_mnemonic, derive_enrollment, BorderWalletEnrollment, CellRef, GridRecoveryPhrase,
@@ -114,6 +116,14 @@ pub struct BorderWalletWizard {
     allow_random_grid_phrase: bool,
     /// Master signer for BIP-85 grid phrase derivation.
     signer: Option<Arc<Mutex<Signer>>>,
+    /// Where [`Self::phrase_words`] currently comes from.
+    ///
+    /// Set by "Generate" — naming the signer it derived from — and reset to
+    /// [`GridSeedSource::Independent`] by anything that makes the words
+    /// something else: a random generate, or a keystroke in any of the twelve
+    /// fields. It rides out on [`KeySource::BorderWallet`] so the signing flow
+    /// can re-derive the phrase from that exact seed, or know to ask.
+    phrase_source: GridSeedSource,
 
     error: Option<String>,
 }
@@ -137,6 +147,7 @@ impl BorderWalletWizard {
             enrollment: None,
             allow_random_grid_phrase,
             signer: Some(signer),
+            phrase_source: GridSeedSource::Independent,
             error: None,
         }
     }
@@ -238,12 +249,21 @@ impl BorderWalletWizard {
     fn on_generate_phrase(&mut self) -> Task<Message> {
         // Default: derive from master signer via BIP-85.
         // Fallback to random if allow_random_grid_phrase is true or signer is unavailable.
+        // Tracks which branch below produced the phrase, and which seed, so the
+        // recorded source describes what is actually in the fields rather than
+        // what the Cube was configured to prefer.
+        let mut source = GridSeedSource::Independent;
         let result = if !self.allow_random_grid_phrase {
             if let Some(signer) = &self.signer {
                 match signer.lock() {
-                    Ok(signer) => signer
-                        .derive_grid_recovery_phrase()
-                        .map_err(|e| format!("{:?}", e)),
+                    Ok(signer) => {
+                        source = GridSeedSource::MasterDerived {
+                            fingerprint: signer.fingerprint(),
+                        };
+                        signer
+                            .derive_grid_recovery_phrase()
+                            .map_err(|e| format!("{:?}", e))
+                    }
                     Err(e) => {
                         self.error = Some(format!(
                             "Failed to generate recovery phrase: signer lock poisoned: {}",
@@ -272,9 +292,11 @@ impl BorderWalletWizard {
                     }
                 }
                 self.phrase_valid = true;
+                self.phrase_source = source;
                 self.error = None;
             }
             Err(e) => {
+                self.phrase_source = GridSeedSource::Independent;
                 self.error = Some(format!("Failed to generate recovery phrase: {}", e));
             }
         }
@@ -288,6 +310,9 @@ impl BorderWalletWizard {
             self.phrase_words[index].warning = None;
         }
         self.phrase_valid = self.phrase_words.iter().all(|w| !w.value.trim().is_empty());
+        // One keystroke is enough: the phrase is no longer the one that signer
+        // derives, so it can no longer be re-derived at signing time.
+        self.phrase_source = GridSeedSource::Independent;
         Task::none()
     }
 
@@ -319,7 +344,9 @@ impl BorderWalletWizard {
             });
 
             let key = Key {
-                source: KeySource::BorderWallet,
+                source: KeySource::BorderWallet {
+                    grid_seed_source: self.phrase_source,
+                },
                 name: "Border Wallet".to_string(),
                 fingerprint,
                 key: desc_xpub,

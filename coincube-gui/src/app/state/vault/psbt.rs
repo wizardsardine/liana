@@ -869,10 +869,13 @@ pub struct BorderWalletReconstructionState {
     // Derived checksum word — displayed for visual confirmation once pattern is complete.
     pub checksum_word: Option<String>,
 
-    /// Whether [`Self::phrase_words`] was filled from this Cube's master seed
-    /// rather than typed. Only drives the note the phrase step shows — the
-    /// words are ordinary editable fields either way.
-    pub prefilled_from_master_seed: bool,
+    /// Whether [`Self::phrase_words`] currently holds a phrase this Cube
+    /// re-derived, untouched since.
+    ///
+    /// Cleared by any edit, so the step never claims a derivation the words no
+    /// longer match. Only drives what the phrase step says — the words are
+    /// ordinary editable fields either way.
+    pub phrase_prefilled: bool,
 
     pub error: Option<String>,
 }
@@ -888,34 +891,29 @@ impl BorderWalletReconstructionState {
             grid: None,
             pattern: OrderedPattern::new(),
             checksum_word: None,
-            prefilled_from_master_seed: false,
+            phrase_prefilled: false,
             error: None,
         }
     }
 
-    /// Fill the twelve fields with the Entropy Grid phrase this Cube's master
-    /// seed derives — BIP-85 at `m/83696968'/39'/0'/12'/0'`, which is exactly
-    /// what the installer's Border Wallet wizard puts there on "Generate"
+    /// Fill the twelve fields with an Entropy Grid phrase re-derived for this
+    /// key — BIP-85 at `m/83696968'/39'/0'/12'/0'`, exactly what the
+    /// installer's Border Wallet wizard put there on "Generate"
     /// (`GridRecoveryPhrase::from_master_signer`).
     ///
-    /// A Border Wallet key enrolled inside this Cube seeds its grid from the
-    /// Cube's own master seed, so those twelve words are already in hand at
-    /// signing time. Asking for them again asks the user to copy out something
-    /// the Cube can derive — and on a passkey Cube the master seed comes back
-    /// from the WebAuthn assertion at unlock, so there is nothing to type.
+    /// A Border Wallet key enrolled from a seed this machine still holds is
+    /// therefore reconstructible without the user retyping twelve words they
+    /// never chose; on a passkey Cube that seed comes back from the WebAuthn
+    /// assertion at unlock, so there is nothing to type.
+    ///
+    /// Choosing *which* seed is the caller's job
+    /// ([`SignModal::border_wallet_grid_phrase`]) and is where the correctness
+    /// lives — this function only writes what it is given.
     ///
     /// This prefill signs nothing on its own: the pattern and its checksum word
     /// are the secret half of a Border Wallet key and still have to be supplied
-    /// on the next step. The words stay editable, so a key enrolled from
-    /// somebody else's phrase — or from a randomly generated one
-    /// (`CubeSettings::allow_random_grid_phrase`) — is typed in as before.
-    ///
-    /// Silent on a derivation error: the fields simply stay empty, which is the
-    /// pre-existing behaviour and never blocks the flow.
-    fn prefill_from_master_seed(&mut self, signer: &crate::signer::Signer) {
-        let Ok(phrase) = signer.derive_grid_recovery_phrase() else {
-            return;
-        };
+    /// on the next step. The words stay editable.
+    fn prefill_phrase(&mut self, phrase: &GridRecoveryPhrase) {
         for (field, word) in self
             .phrase_words
             .iter_mut()
@@ -927,7 +925,7 @@ impl BorderWalletReconstructionState {
             field.warning = None;
         }
         self.phrase_valid = self.phrase_words.iter().all(|w| !w.value.trim().is_empty());
-        self.prefilled_from_master_seed = self.phrase_valid;
+        self.phrase_prefilled = self.phrase_valid;
     }
 
     /// Recompute the checksum word if the pattern is complete, otherwise clear it.
@@ -957,6 +955,12 @@ impl BorderWalletReconstructionState {
                     self.phrase_words[index].warning = None;
                 }
                 self.phrase_valid = self.phrase_words.iter().all(|w| !w.value.trim().is_empty());
+                // One keystroke and the fields are no longer the phrase we
+                // derived, so the step must stop saying they are. Same rule the
+                // installer's wizard applies to its own provenance — claiming a
+                // derivation the words no longer match is worse than claiming
+                // nothing, because the user reads it as confirmation.
+                self.phrase_prefilled = false;
             }
             BorderWalletReconMessage::Next => {
                 self.error = None;
@@ -1064,7 +1068,7 @@ impl Drop for BorderWalletReconstructionState {
         self.checksum_word = None;
         self.grid = None;
         self.pattern.clear();
-        self.prefilled_from_master_seed = false;
+        self.phrase_prefilled = false;
     }
 }
 
@@ -1122,6 +1126,73 @@ impl SignModal {
             keychain_enabled,
             expanded_paths: HashSet::new(),
         }
+    }
+
+    /// The Entropy Grid phrase for `fingerprint`, if this machine can still
+    /// re-derive it.
+    ///
+    /// Dispatches on the provenance recorded at enrolment
+    /// ([`crate::app::settings::GridSeedSource`]) rather than on whichever hot
+    /// signer the Vault loaded, because the two are not the same thing and
+    /// guessing has two distinct failure modes:
+    ///
+    /// - **Wrong words.** `Wallet::signer` is "some descriptor key whose seed is
+    ///   on this machine". A Vault that reuses an earlier Vault's key can load a
+    ///   seed that is *not* the one the wizard derived from, and BIP-85 off it
+    ///   yields twelve confident, wrong words.
+    /// - **No words.** The wizard derives from the Cube's master seed in
+    ///   developer mode, and that seed is only a descriptor key if the user also
+    ///   added it as one. When they did not, `Wallet::signer` is `None` while
+    ///   the right seed sits unlocked in the session.
+    ///
+    /// Naming the seed at enrolment settles both: derive from *that*
+    /// fingerprint, looking first at the loaded hot signer and then at the
+    /// session, and decline when neither is it.
+    fn border_wallet_grid_phrase(&self, fingerprint: &Fingerprint) -> Option<GridRecoveryPhrase> {
+        use crate::app::settings::GridSeedSource;
+        match self.wallet.border_wallet_grid_seed.get(fingerprint) {
+            // Random or hand-typed: the user holds the only copy.
+            Some(GridSeedSource::Independent) => None,
+            Some(GridSeedSource::MasterDerived {
+                fingerprint: seed, ..
+            }) => self.grid_phrase_from_seed(*seed),
+            // Enrolled before provenance was tracked. No seed is named, so the
+            // loaded hot signer is the only candidate — today's behaviour, kept
+            // so Vaults built before this existed still offer their phrase. The
+            // words are editable and labelled as derived, which is what makes a
+            // wrong guess here recoverable rather than misleading.
+            None => self
+                .wallet
+                .signer
+                .as_ref()
+                .and_then(|s| s.derive_grid_recovery_phrase().ok()),
+        }
+    }
+
+    /// Re-derive a grid phrase from one specific seed, `None` unless this
+    /// machine actually holds it.
+    ///
+    /// Two places it can be: loaded as the Vault's hot signer, or — for a
+    /// master seed that is not a descriptor key, which is the passkey and
+    /// developer-mode shape — unlocked in the session. The session lookup is
+    /// fingerprint-checked by [`crate::app::session::unlocked_signer`] and
+    /// scoped to the open Cube, so it cannot answer with another seed.
+    fn grid_phrase_from_seed(&self, seed: Fingerprint) -> Option<GridRecoveryPhrase> {
+        if let Some(signer) = self
+            .wallet
+            .signer
+            .as_ref()
+            .filter(|s| s.fingerprint() == seed)
+        {
+            return signer.derive_grid_recovery_phrase().ok();
+        }
+        let cube_id = crate::app::session::current_cube_id()?;
+        let master = crate::app::session::unlocked_signer(&cube_id, seed)?;
+        GridRecoveryPhrase::from_master_signer(
+            &master,
+            &coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only(),
+        )
+        .ok()
     }
 
     pub fn is_signing(&self) -> bool {
@@ -1394,6 +1465,23 @@ impl SignModal {
                 other => (Kind::Keychain, St::InProgress(other.label().to_string())),
             };
         }
+        // A hot key whose seed IS on this machine but which this Cube's
+        // credential would not open — the restore wrote it under a credential
+        // that no longer opens it, or the Cube's PIN changed underneath it.
+        // Checked after every path that can actually sign (a key may also be
+        // reachable via hardware or Keychain, and those still win), but before
+        // the unidentified fallbacks: without this the row reads "connect this
+        // signing device", which sends the user looking for a device that was
+        // never involved — the key is right here, just unreachable.
+        if self.wallet.unopenable_seed_keys.contains(&fp) {
+            return (
+                Kind::Unknown,
+                St::Disabled(
+                    "This key's seed is on this computer, but this Cube's PIN didn't unlock it."
+                        .to_string(),
+                ),
+            );
+        }
         // Keychain flow launched but still resolving — we don't yet know which
         // unidentified keys are Keychain signers, so show a neutral hint rather
         // than a misleading "connect a device" message.
@@ -1540,12 +1628,11 @@ impl Modal for SignModal {
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectBorderWallet(fg))) => {
                 let network = self.network;
                 let mut recon = BorderWalletReconstructionState::new(fg, network);
-                // The Cube's master seed is the same seed the wizard derived
-                // this key's grid phrase from, so fill it in rather than make
-                // the user retype twelve words they never chose. `None` here is
-                // the watch-only / hardware-only Vault, which types them.
-                if let Some(signer) = self.wallet.signer.as_ref() {
-                    recon.prefill_from_master_seed(signer);
+                // Offered only when this machine still holds the seed this key
+                // was actually enrolled from — never from whichever hot signer
+                // happens to be loaded, which can be a different seed entirely.
+                if let Some(phrase) = self.border_wallet_grid_phrase(&fg) {
+                    recon.prefill_phrase(&phrase);
                 }
                 self.border_wallet_recon = Some(recon);
                 // Keep modal displayed but now showing the reconstruction wizard
@@ -2048,13 +2135,26 @@ mod tests {
         assert!(state.error.is_none());
     }
 
-    /// A Border Wallet key enrolled inside a Cube seeds its grid from that
-    /// Cube's master seed, so the reconstruction step must arrive with the
-    /// twelve words already in it rather than asking the user to copy out
-    /// something the Cube can derive. On a passkey Cube the master seed comes
-    /// back from the WebAuthn assertion at unlock, so there is nothing to type.
+    fn sign_modal_for(wallet: Wallet) -> SignModal {
+        SignModal::new(
+            HashSet::new(),
+            Arc::new(wallet),
+            CoincubeDirectory::new(PathBuf::new()),
+            Network::Signet,
+            false,
+            None,
+            None,
+            true,
+        )
+    }
+
+    /// A Border Wallet key enrolled inside a Cube seeds its grid from a seed
+    /// that Cube holds, so the reconstruction step must arrive with the twelve
+    /// words already in it rather than asking the user to copy out something
+    /// the Cube can derive. On a passkey Cube that seed comes back from the
+    /// WebAuthn assertion at unlock, so there is nothing to type.
     #[test]
-    fn border_wallet_reconstruction_prefills_the_cubes_derived_grid_phrase() {
+    fn border_wallet_reconstruction_prefills_the_derived_grid_phrase() {
         let signer = crate::signer::Signer::generate(Network::Bitcoin).unwrap();
         // The same call the installer's wizard makes on "Generate" — the two
         // have to agree exactly or the prefill is twelve wrong words.
@@ -2063,9 +2163,9 @@ mod tests {
         let mut state =
             BorderWalletReconstructionState::new(fingerprint("f714c228"), Network::Bitcoin);
         assert!(state.phrase_words.iter().all(|w| w.value.is_empty()));
-        assert!(!state.prefilled_from_master_seed);
+        assert!(!state.phrase_prefilled);
 
-        state.prefill_from_master_seed(&signer);
+        state.prefill_phrase(&expected);
 
         let filled = state
             .phrase_words
@@ -2075,7 +2175,7 @@ mod tests {
             .join(" ");
         assert_eq!(filled, expected.as_str());
         assert!(state.phrase_valid);
-        assert!(state.prefilled_from_master_seed);
+        assert!(state.phrase_prefilled);
 
         // The grid seed is not the key. The pattern and its checksum word are
         // still the user's to supply, so `Next` only opens the grid.
@@ -2086,27 +2186,130 @@ mod tests {
         assert!(state.error.is_none());
     }
 
-    /// A Vault with no signer on this machine — every key a hardware wallet, a
-    /// Keychain cosigner or a Contact's — has nothing to derive from, and must
-    /// keep the typed-entry behaviour rather than fail to open the step.
+    /// The step may only claim a derivation while the words still *are* the
+    /// derived ones. Editing any of the twelve makes that claim false, and a
+    /// stale "re-derived from the seed it was created with" reads as
+    /// confirmation that whatever is now in the fields is correct.
+    ///
+    /// `phrase_valid` cannot stand in for this: it means "all twelve fields are
+    /// non-empty", so it is still true after an edit.
     #[test]
-    fn border_wallet_reconstruction_without_a_signer_stays_empty() {
-        let modal = SignModal::new(
-            HashSet::new(),
-            Arc::new(wallet()),
-            CoincubeDirectory::new(PathBuf::new()),
-            Network::Signet,
-            false,
-            None,
-            None,
-            true,
-        );
-        assert!(modal.wallet.signer.is_none());
+    fn editing_a_prefilled_word_drops_the_derived_claim() {
+        let signer = crate::signer::Signer::generate(Network::Bitcoin).unwrap();
+        let phrase = signer.derive_grid_recovery_phrase().unwrap();
 
-        let state = BorderWalletReconstructionState::new(fingerprint("f714c228"), Network::Signet);
+        let mut state =
+            BorderWalletReconstructionState::new(fingerprint("f714c228"), Network::Bitcoin);
+        state.prefill_phrase(&phrase);
+        assert!(state.phrase_prefilled);
+
+        state.update(BorderWalletReconMessage::PhraseWordEdited(
+            4,
+            "satoshi".to_string(),
+        ));
+        assert!(
+            !state.phrase_prefilled,
+            "the words are no longer the ones we derived"
+        );
+        assert!(
+            state.phrase_valid,
+            "all twelve fields are still non-empty, which is why phrase_valid \
+             cannot gate the claim"
+        );
+    }
+
+    /// A Vault with no signer on this machine — every key a hardware wallet, a
+    /// Keychain cosigner or a Contact's — has nothing to derive from, so no
+    /// phrase is offered and the user types it, as they always did.
+    #[test]
+    fn no_grid_phrase_is_offered_without_a_signer() {
+        let modal = sign_modal_for(wallet());
+        assert!(modal.wallet.signer.is_none());
+        assert!(modal
+            .border_wallet_grid_phrase(&fingerprint("f714c228"))
+            .is_none());
+    }
+
+    /// Having *a* signer is not enough — it has to be the one this key was
+    /// enrolled from.
+    ///
+    /// Covers all four shapes the provenance can take, including the two the
+    /// loaded-hot-signer heuristic got wrong: a key whose grid seed was typed
+    /// by hand, and a key derived from some *other* seed (a Vault reusing an
+    /// earlier Vault's key), where deriving off `Wallet::signer` would produce
+    /// twelve confident, wrong words.
+    #[test]
+    fn a_grid_phrase_is_only_offered_for_the_seed_it_was_enrolled_from() {
+        use crate::app::settings::GridSeedSource;
+
+        let hot = crate::signer::Signer::generate(Network::Signet).unwrap();
+        let hot_fg = hot.fingerprint();
+        let expected = hot.derive_grid_recovery_phrase().unwrap();
+
+        let from_hot = fingerprint("f714c228");
+        let from_elsewhere = fingerprint("2522f23c");
+        let hand_typed = fingerprint("8a64f2a9");
+        let unrecorded = fingerprint("8cb54888");
+        // A seed this machine does not hold — no hot signer, no session.
+        let absent_seed = fingerprint("deadbeef");
+
+        let mut wallet = wallet().with_signer(hot);
+        wallet.border_wallet_fingerprints.extend([
+            from_hot,
+            from_elsewhere,
+            hand_typed,
+            unrecorded,
+        ]);
+        wallet.border_wallet_grid_seed.extend([
+            (
+                from_hot,
+                GridSeedSource::MasterDerived {
+                    fingerprint: hot_fg,
+                },
+            ),
+            (
+                from_elsewhere,
+                GridSeedSource::MasterDerived {
+                    fingerprint: absent_seed,
+                },
+            ),
+            (hand_typed, GridSeedSource::Independent),
+        ]);
+        // `unrecorded` gets no entry on purpose: enrolled before the wizard
+        // tracked provenance.
+
+        let modal = sign_modal_for(wallet);
+
+        assert_eq!(
+            modal
+                .border_wallet_grid_phrase(&from_hot)
+                .map(|p| p.as_str().to_string()),
+            Some(expected.as_str().to_string()),
+            "the seed named at enrolment is loaded, so the phrase is exactly reproducible"
+        );
+        assert!(
+            modal.border_wallet_grid_phrase(&from_elsewhere).is_none(),
+            "a different seed derived this key; deriving off the loaded one would be wrong words"
+        );
+        assert!(
+            modal.border_wallet_grid_phrase(&hand_typed).is_none(),
+            "a random or hand-typed grid seed is not ours to guess"
+        );
+        assert_eq!(
+            modal
+                .border_wallet_grid_phrase(&unrecorded)
+                .map(|p| p.as_str().to_string()),
+            Some(expected.as_str().to_string()),
+            "unrecorded provenance is not a recorded 'no' — it predates the field"
+        );
+
+        // And a refusal really does leave the form empty.
+        let mut state = BorderWalletReconstructionState::new(hand_typed, Network::Signet);
+        if let Some(phrase) = modal.border_wallet_grid_phrase(&hand_typed) {
+            state.prefill_phrase(&phrase);
+        }
         assert!(state.phrase_words.iter().all(|w| w.value.is_empty()));
-        assert!(!state.prefilled_from_master_seed);
-        assert!(!state.phrase_valid);
+        assert!(!state.phrase_prefilled);
     }
 
     #[test]

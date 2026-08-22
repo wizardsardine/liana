@@ -1,3 +1,5 @@
+use crate::app::settings::GridSeedSource;
+
 use async_hwi::{DeviceKind, Version};
 use coincube_core::miniscript::{
     bitcoin::bip32::{ChildNumber, Fingerprint},
@@ -56,7 +58,13 @@ pub enum KeySource {
     /// A token for a key with the given kind.
     Token(KeyKind, ProviderKey),
     /// A Border Wallet key (derived transiently from grid pattern).
-    BorderWallet,
+    ///
+    /// `grid_seed_source` records where the Entropy Grid seed came from, naming
+    /// the signer when the wizard derived it via BIP-85. It is provenance, not
+    /// secret material — the phrase itself is never persisted — and it is what
+    /// lets the signing flow re-derive those twelve words from the *right* seed
+    /// rather than from whichever hot signer the Vault happens to load.
+    BorderWallet { grid_seed_source: GridSeedSource },
     /// A key from the COINCUBE Keychain, attached to a Cube.
     /// At sign time the Vault sends a PSBT signing request to the
     /// Keychain app via gRPC; the signer accepts/rejects and signs
@@ -107,7 +115,7 @@ impl KeySource {
             Self::MasterSigner => KeySourceKind::MasterSigner,
             Self::Manual => KeySourceKind::Manual,
             Self::Token(kind, _) => KeySourceKind::Token(*kind),
-            Self::BorderWallet => KeySourceKind::BorderWallet,
+            Self::BorderWallet { .. } => KeySourceKind::BorderWallet,
             Self::KeychainKey { .. } => KeySourceKind::KeychainKey,
         }
     }
@@ -117,6 +125,15 @@ impl KeySource {
             Some(token)
         } else {
             None
+        }
+    }
+
+    /// Where this Border Wallet key's grid seed came from. `None` for every
+    /// other kind of key.
+    pub fn grid_seed_source(&self) -> Option<GridSeedSource> {
+        match self {
+            Self::BorderWallet { grid_seed_source } => Some(*grid_seed_source),
+            _ => None,
         }
     }
 

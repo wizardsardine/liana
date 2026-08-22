@@ -2635,7 +2635,7 @@ pub fn restore_pin_setup<'a>(
             .push(p2_regular(
                 "Your Cube's mnemonic will be encrypted with this PIN on disk. \
                  You'll enter it every time you open this Cube — the PIN is \
-                 what lets the Liquid and Spark wallets decrypt your keys.",
+                 what lets your wallets decrypt your keys.",
             ))
             .push(
                 Column::new()

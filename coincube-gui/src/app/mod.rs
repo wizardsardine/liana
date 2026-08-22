@@ -2026,6 +2026,76 @@ fn connect_stream_ready_task(
     )
 }
 
+/// The unix time this Vault still owes a rescan from, if any.
+///
+/// Read from `settings.json` rather than carried in memory: the rescan it drives
+/// can take hours on mainnet, and a quit or a crash part-way through has to
+/// leave the Vault still owing one. `App::new` clears the field only once the
+/// daemon has accepted a rescan, so an interrupted one is offered again on the
+/// next launch.
+fn pending_rescan_timestamp(
+    data_dir: &CoincubeDirectory,
+    network: bitcoin::Network,
+    wallet: &Wallet,
+) -> Option<u32> {
+    settings::WalletSettings::from_file(&data_dir.network_directory(network), |s| {
+        s.descriptor_checksum == wallet.descriptor_checksum
+    })
+    .ok()
+    .flatten()
+    .and_then(|s| s.pending_rescan_timestamp)
+}
+
+/// Ask the daemon for the rescan a restored Vault owes, and clear the debt once
+/// it has taken it.
+///
+/// Fire-and-forget by design. The daemon owns the scan from here — progress
+/// shows in Settings > Node, which is also where the user can start one by hand
+/// — so nothing downstream waits on this and a failure must not block the app
+/// from opening. The field is cleared only on success, so a daemon that refuses
+/// (already rescanning, or a timestamp it rejects) leaves the Vault owing one
+/// and it is tried again next launch.
+fn start_pending_rescan(
+    daemon: Arc<dyn Daemon + Sync + Send>,
+    network_dir: crate::dir::NetworkDirectory,
+    descriptor_checksum: String,
+    timestamp: u32,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            if let Err(e) = daemon.start_rescan(timestamp).await {
+                tracing::error!(
+                    "Restored Vault needs a rescan from unix time {} but the daemon refused: {}. \
+                     It can be started by hand in Settings > Node.",
+                    timestamp,
+                    e
+                );
+                return;
+            }
+            tracing::info!(
+                "Started the rescan this restored Vault owed, from unix time {}.",
+                timestamp
+            );
+            if let Err(e) = settings::update_settings_file(&network_dir, |mut settings| {
+                let wallet = settings
+                    .wallets
+                    .iter_mut()
+                    .find(|w| w.descriptor_checksum == descriptor_checksum)?;
+                wallet.pending_rescan_timestamp = None;
+                Some(settings)
+            })
+            .await
+            {
+                // The scan is running; we just failed to record that it was
+                // asked for. Next launch asks again, which is wasteful but not
+                // wrong — `start_rescan` refuses while one is in flight.
+                tracing::warn!("Could not clear the pending rescan marker: {}", e);
+            }
+        },
+        |_| Message::Tick,
+    )
+}
+
 impl App {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -2062,6 +2132,12 @@ impl App {
             spark_backend.clone(),
         );
 
+        // A Vault restored from a Recovery Kit lands its descriptors in a
+        // watchonly wallet that has never scanned them, so it owes a rescan from
+        // the kit's recorded birthday. Read off disk rather than threaded
+        // through the loader messages: the rescan has to survive a quit or a
+        // crash part-way through, which an in-memory flag would not.
+        let pending_rescan = pending_rescan_timestamp(&data_dir, cache.network, &wallet);
         let mut panels = Panels::new(
             breez_client.clone(),
             spark_backend.clone(),
@@ -2071,7 +2147,7 @@ impl App {
             daemon.backend(),
             internal_bitcoind.as_ref(),
             config_arc.clone(),
-            restored_from_backup,
+            restored_from_backup || pending_rescan.is_some(),
             cube_settings.id.clone(),
             cube_settings.name.clone(),
             settings::network_to_api_string(cache.network),
@@ -2089,6 +2165,14 @@ impl App {
             .connect
             .set_vault_fingerprint(cube_settings.vault_fingerprint.clone());
         let mut tasks = vec![];
+        if let Some(timestamp) = pending_rescan {
+            tasks.push(start_pending_rescan(
+                daemon.clone(),
+                data_dir.network_directory(cache.network),
+                wallet.descriptor_checksum.clone(),
+                timestamp,
+            ));
+        }
         if let Some(vault_overview) = panels.vault_overview.as_mut() {
             tasks.push(vault_overview.reload(Some(daemon.clone()), Some(wallet.clone())));
         } else {

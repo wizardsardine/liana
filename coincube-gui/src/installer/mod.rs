@@ -888,6 +888,44 @@ fn seed_device_secret(
     })
 }
 
+/// The unix time a restored Vault's watchonly wallet must be scanned from, if
+/// this install is a restore that owes one.
+///
+/// # Why a restore owes a rescan
+///
+/// `import_descriptor` imports at `timestamp: "now"`. For a Vault being created
+/// that is right — there is no history behind it. For one being *restored* it
+/// leaves bitcoind scanning from today forward, so every transaction that
+/// funded the wallet before the restore is invisible to it while our own
+/// database, restored alongside, knows about those coins. The two never
+/// reconcile: `get_spender_txid` asks the wallet about a coin's funding
+/// transaction, gets `-5`, and the coin can never be resolved as spent — so it
+/// stays selectable and the user can build transactions conflicting with their
+/// own pending ones.
+///
+/// # Where the date comes from
+///
+/// The Recovery Kit already carries it. `backup::Account::timestamp` is the
+/// source wallet's birthday, written at backup time from that machine's
+/// `get_info().timestamp`, and it is exactly the point the new node has to scan
+/// from.
+///
+/// The **earliest** timestamp across the kit's accounts, because scanning from
+/// too early only costs time while scanning from too late is the bug this
+/// exists to prevent. `None` when there is no kit (a fresh install) or the kit
+/// predates the field — the caller surfaces a rescan prompt rather than
+/// inventing a date, since a wrong one would look like a completed rescan that
+/// found nothing.
+fn pending_rescan_timestamp(ctx: &Context) -> Option<u32> {
+    ctx.backup
+        .as_ref()?
+        .accounts
+        .iter()
+        .filter_map(|account| account.timestamp)
+        .min()
+        .map(|t| <u32 as std::convert::TryFrom<u64>>::try_from(t).unwrap_or(u32::MAX))
+}
+
 pub async fn install_local_wallet(
     ctx: Context,
     wallet_id: WalletId,
@@ -924,6 +962,10 @@ pub async fn install_local_wallet(
         hardware_wallets,
         remote_backend_auth: None,
         start_internal_bitcoind: Some(ctx.internal_bitcoind.is_some()),
+        // A Recovery-Kit restore lands its descriptors in a watchonly wallet
+        // that has never seen them; `App` turns this into an actual rescan once
+        // the daemon is up, and clears it when the daemon accepts one.
+        pending_rescan_timestamp: pending_rescan_timestamp(&ctx),
     };
 
     let cfg: coincubed::config::Config = extract_daemon_config(&ctx, &wallet_settings)?;
@@ -1143,6 +1185,8 @@ pub async fn create_remote_wallet(
             remote_backend.wallet_id(),
         )),
         start_internal_bitcoind: None,
+        // Remote backend: no local node, so no scan window to fall short.
+        pending_rescan_timestamp: None,
     };
     update_settings_file(&network_datadir, |mut settings| {
         settings.wallets.push(wallet_settings.clone());
@@ -1227,6 +1271,8 @@ pub async fn import_remote_wallet(
             backend.wallet_id(),
         )),
         start_internal_bitcoind: None,
+        // Remote backend: no local node, so no scan window to fall short.
+        pending_rescan_timestamp: None,
     };
     update_settings_file(&network_datadir, |mut settings| {
         settings.wallets.push(wallet_settings.clone());
@@ -1486,6 +1532,86 @@ impl std::fmt::Display for Error {
             Self::HardwareWallet(e) => write!(f, "Hardware Wallet: {}", e),
             Self::Backup(e) => write!(f, "Backup: {:?}", e),
         }
+    }
+}
+
+#[cfg(test)]
+mod pending_rescan_tests {
+    //! The birthday a restored Vault has to be rescanned from.
+
+    use super::*;
+    use crate::backup::{Account, Backup};
+
+    fn ctx_with(accounts: Vec<Account>) -> Context {
+        let mut ctx = Context::new(
+            bitcoin::Network::Bitcoin,
+            CoincubeDirectory::new(std::path::PathBuf::from("/nonexistent")),
+            RemoteBackend::None,
+            None,
+            None,
+        );
+        ctx.backup = Some(Backup {
+            name: None,
+            alias: None,
+            accounts,
+            network: bitcoin::Network::Bitcoin,
+            date: None,
+            proprietary: serde_json::Map::new(),
+            version: 0,
+        });
+        ctx
+    }
+
+    fn account(timestamp: Option<u64>) -> Account {
+        let mut a = Account::new("wsh(pk(xpub))".to_string());
+        a.timestamp = timestamp;
+        a
+    }
+
+    /// A fresh install has no kit and owes nothing — scanning from now is
+    /// correct there, and a spurious rescan would be a long, pointless wait.
+    #[test]
+    fn a_fresh_install_owes_no_rescan() {
+        let ctx = Context::new(
+            bitcoin::Network::Bitcoin,
+            CoincubeDirectory::new(std::path::PathBuf::from("/nonexistent")),
+            RemoteBackend::None,
+            None,
+            None,
+        );
+        assert!(ctx.backup.is_none());
+        assert_eq!(pending_rescan_timestamp(&ctx), None);
+    }
+
+    /// The kit's birthday is what the new node has to scan from.
+    #[test]
+    fn a_restore_owes_a_rescan_from_the_kits_birthday() {
+        let ctx = ctx_with(vec![account(Some(1_784_953_848))]);
+        assert_eq!(pending_rescan_timestamp(&ctx), Some(1_784_953_848));
+    }
+
+    /// Earliest wins across accounts. Too early only costs scan time; too late
+    /// silently misses history, which is the whole bug.
+    #[test]
+    fn the_earliest_account_birthday_wins() {
+        let ctx = ctx_with(vec![
+            account(Some(1_787_372_770)),
+            account(Some(1_784_953_848)),
+            account(None),
+        ]);
+        assert_eq!(pending_rescan_timestamp(&ctx), Some(1_784_953_848));
+    }
+
+    /// A kit predating the field: no date is better than a guessed one, which
+    /// would present as a completed rescan that found nothing. The caller
+    /// still shows the rescan prompt.
+    #[test]
+    fn a_kit_without_a_birthday_yields_no_date() {
+        assert_eq!(
+            pending_rescan_timestamp(&ctx_with(vec![account(None)])),
+            None
+        );
+        assert_eq!(pending_rescan_timestamp(&ctx_with(vec![])), None);
     }
 }
 

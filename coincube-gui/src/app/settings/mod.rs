@@ -980,6 +980,24 @@ pub struct WalletSettings {
     /// Start internal bitcoind executable.
     /// if None, the app must refer to the gui.toml start_internal_bitcoind field.
     pub start_internal_bitcoind: Option<bool>,
+    /// A rescan this Vault still owes, as the unix time to scan from.
+    ///
+    /// Set when a Vault is restored from a Recovery Kit: the descriptors go into
+    /// a bitcoind watchonly wallet that has never seen them, which imports them
+    /// at `timestamp: "now"` and so finds none of the wallet's history. The kit
+    /// carries the original wallet's birthday (`backup::Account::timestamp`),
+    /// which is exactly the point the new node has to scan from.
+    ///
+    /// Persisted rather than held in memory because the rescan has to survive
+    /// the things that interrupt it — the daemon not being up at the moment the
+    /// installer exits, a quit part-way through a multi-hour mainnet scan, a
+    /// crash. It is cleared only once a rescan has actually been accepted by the
+    /// daemon, so an interrupted one is offered again on the next launch.
+    ///
+    /// `None` on every other flow, including a fresh install, where scanning
+    /// from now is correct and there is nothing to catch up on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_rescan_timestamp: Option<u32>,
 }
 
 impl WalletSettings {
@@ -1018,6 +1036,19 @@ impl WalletSettings {
             .iter()
             .filter(|k| k.is_border_wallet)
             .map(|k| k.master_fingerprint)
+            .collect()
+    }
+
+    /// Recorded grid-seed provenance, one entry per Border Wallet key that has
+    /// one. A key with no entry has an *unrecorded* provenance — see
+    /// [`KeySetting::grid_seed_source`] — which is not the same as
+    /// [`GridSeedSource::Independent`], so the map is deliberately sparse
+    /// rather than defaulted.
+    pub fn border_wallet_grid_seed_sources(&self) -> HashMap<Fingerprint, GridSeedSource> {
+        self.keys
+            .iter()
+            .filter(|k| k.is_border_wallet)
+            .filter_map(|k| k.grid_seed_source.map(|src| (k.master_fingerprint, src)))
             .collect()
     }
 
@@ -1188,6 +1219,44 @@ pub struct KeySetting {
     /// Whether this key is a Border Wallet key (derived transiently from grid pattern).
     #[serde(default)]
     pub is_border_wallet: bool,
+    /// For a Border Wallet key, where its Entropy Grid seed came from.
+    ///
+    /// Deliberately tri-state. `None` means *unrecorded*, which is every key
+    /// enrolled before this field existed — not [`GridSeedSource::Independent`].
+    /// Collapsing the two would stop the signing flow offering the phrase for
+    /// Vaults that were built from the Cube's own seed, which is the whole
+    /// reason the provenance is tracked. Absent from the file when `None`, so a
+    /// Cube that has never enrolled a Border Wallet key gains no noise.
+    ///
+    /// Meaningless unless [`Self::is_border_wallet`]; no other key kind sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_seed_source: Option<GridSeedSource>,
+}
+
+/// Where a Border Wallet key's Entropy Grid seed came from.
+///
+/// Provenance, never secret material — the twelve words themselves are never
+/// persisted. This exists so the signing flow can tell "I can re-derive those
+/// words" from "I cannot", instead of guessing from whichever hot signer the
+/// Vault happens to have loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GridSeedSource {
+    /// BIP-85 from the signer with this **BIP-32 master fingerprint**.
+    ///
+    /// The fingerprint is the point. The installer derives the grid seed from
+    /// whichever signer that session holds — the Cube's master seed in
+    /// developer mode, a freshly generated one otherwise — and neither is
+    /// guaranteed to be the hot signer a later `Wallet` load turns up.
+    /// `Wallet::signer` is "some descriptor key whose seed is on this machine",
+    /// which can be a *different* seed entirely (a key reused from an earlier
+    /// Vault) or absent while the right seed sits in the session (a master seed
+    /// that was never added to the descriptor). Naming the seed makes the
+    /// signing flow exact instead of hopeful.
+    MasterDerived { fingerprint: Fingerprint },
+    /// Random, or typed/edited by hand. Nothing on this machine re-derives it;
+    /// the user holds the only copy.
+    Independent,
 }
 
 impl KeySetting {
@@ -1204,7 +1273,16 @@ impl KeySetting {
             }
         }
         let proprietary = if self.is_border_wallet {
-            serde_json::json!({ "is_border_wallet": true })
+            // `grid_seed_source` is omitted when unrecorded, so a restore reads
+            // back `None` rather than inventing `Independent`.
+            let mut metadata = serde_json::json!({ "is_border_wallet": true });
+            if let Some(src) = self
+                .grid_seed_source
+                .and_then(|src| serde_json::to_value(src).ok())
+            {
+                metadata["grid_seed_source"] = src;
+            }
+            metadata
         } else {
             serde_json::Value::Null
         };
@@ -1231,17 +1309,22 @@ impl KeySetting {
                 master_fingerprint: fg,
                 provider_key,
                 is_border_wallet: false,
+                grid_seed_source: None,
             })
         } else {
             let is_border_wallet = metadata
                 .get("is_border_wallet")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let grid_seed_source = metadata
+                .get("grid_seed_source")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
             Some(Self {
                 name,
                 master_fingerprint: fg,
                 provider_key: None,
                 is_border_wallet,
+                grid_seed_source,
             })
         }
     }
@@ -1677,6 +1760,45 @@ pub mod global {
 mod test {
     use super::global::{GlobalSettings, WindowConfig};
     use std::env;
+
+    use super::WalletSettings;
+
+    /// The marker a restored Vault carries until its rescan has been started.
+    ///
+    /// Two properties matter and neither is obvious from the type. It has to
+    /// survive a write/read cycle, because an interrupted multi-hour scan is
+    /// re-offered from the file and nowhere else. And it has to be *absent*
+    /// from the file when unset, so the settings of every Cube that never
+    /// restored anything are untouched by the field existing.
+    #[test]
+    fn a_pending_rescan_round_trips_and_stays_out_of_the_file_when_unset() {
+        let raw = r#"{
+            "name": "Coincube-kt6ht0kt",
+            "alias": null,
+            "descriptor_checksum": "kt6ht0kt",
+            "pinned_at": null,
+            "remote_backend_auth": null,
+            "start_internal_bitcoind": true,
+            "pending_rescan_timestamp": 1784953848
+        }"#;
+        let parsed: WalletSettings = serde_json::from_str(raw).unwrap();
+        assert_eq!(parsed.pending_rescan_timestamp, Some(1_784_953_848));
+
+        let reserialised = serde_json::to_string(&parsed).unwrap();
+        assert!(reserialised.contains("\"pending_rescan_timestamp\":1784953848"));
+
+        // Absent in the file means absent in the struct — a Vault that never
+        // restored is not owed a rescan.
+        let without = raw.replace(
+            ",\n            \"pending_rescan_timestamp\": 1784953848",
+            "",
+        );
+        let parsed: WalletSettings = serde_json::from_str(&without).unwrap();
+        assert_eq!(parsed.pending_rescan_timestamp, None);
+        assert!(!serde_json::to_string(&parsed)
+            .unwrap()
+            .contains("pending_rescan_timestamp"));
+    }
 
     const RAW_GLOBAL_SETTINGS: &str = r#"{
           "bitbox": {

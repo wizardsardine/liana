@@ -3138,6 +3138,7 @@ pub fn create_app_with_remote_backend(
                 .with_key_aliases(aliases)
                 .with_provider_keys(provider_keys)
                 .with_border_wallet_fingerprints(wallet_settings.border_wallet_fingerprints())
+                .with_border_wallet_grid_seed(wallet_settings.border_wallet_grid_seed_sources())
                 .with_hardware_wallets(hws)
                 .load_hotsigners(
                     &coincube_dir,
