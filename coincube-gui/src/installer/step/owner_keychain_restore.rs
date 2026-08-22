@@ -17,6 +17,7 @@
 //! — `403` reads as "not the owner", `423` stays neutral, invariant I3). The
 //! decrypt relay, AEAD open, seed-derive, and restore are identical.
 
+use crate::installer::context::RestoreSource;
 use coincube_ui::widget::Element;
 use iced::Task;
 use zeroize::Zeroizing;
@@ -27,7 +28,7 @@ use crate::{
         context::Context,
         message::{InheritanceRestoreMsg, Message},
         step::{
-            recovery_kit_restore::{stage_restore, RestoreScope},
+            recovery_kit_restore::{stage_restore, RestoreScope, StagedRestore},
             Step,
         },
         view,
@@ -192,7 +193,7 @@ impl Step for OwnerKeychainRestoreStep {
                 return false;
             }
         };
-        staged.commit(ctx);
+        staged.commit(ctx, RestoreSource::KeychainSeal);
         // Carry the original Cube identity (UUID + name) out of the decrypted
         // envelope so the post-install `find_or_create_cube` re-mints the same
         // Cube. Reusing the UUID makes the Connect `register_cube` call
@@ -225,7 +226,7 @@ impl Step for OwnerKeychainRestoreStep {
             ctx.cube_id = None;
             ctx.cube_name = None;
         }
-        ctx.descriptor = None;
+        StagedRestore::revert_commit(ctx);
         ctx.connect_jwt = None;
         ctx.use_coincube_connect = false;
     }

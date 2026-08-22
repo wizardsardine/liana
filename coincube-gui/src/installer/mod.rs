@@ -119,7 +119,7 @@ use coincube_ui::{
 };
 use coincubed::config::EsploraConfig;
 use coincubed::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config};
-pub use context::{Context, RemoteBackend};
+pub use context::{Context, RemoteBackend, RestoreSource};
 use iced::{clipboard, Subscription, Task};
 use std::{collections::HashMap, ops::Deref};
 use tokio::runtime::Handle;
@@ -932,9 +932,9 @@ fn pending_rescan(ctx: &Context) -> Option<crate::app::settings::PendingRescan> 
         return Some(PendingRescan::From(t));
     }
 
-    if !ctx.restored_from_kit {
-        return None;
-    }
+    // Nothing was restored: a fresh install owes no rescan.
+    ctx.restore_source?;
+
     // A Recovery Kit written since `DescriptorBlobVault::birthday` existed
     // carries the Vault's creation time and can start unattended too.
     //
@@ -1590,6 +1590,20 @@ mod pending_rescan_tests {
         ctx
     }
 
+    fn staged_with_descriptor(
+        birthday: Option<u32>,
+    ) -> crate::installer::step::recovery_kit_restore::StagedRestore {
+        crate::installer::step::recovery_kit_restore::StagedRestore {
+            descriptor: Some(
+                "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp"
+                    .parse()
+                    .expect("fixture descriptor must parse"),
+            ),
+            signer: None,
+            birthday,
+        }
+    }
+
     fn account(timestamp: Option<u64>) -> Account {
         let mut a = Account::new("wsh(pk(xpub))".to_string());
         a.timestamp = timestamp;
@@ -1634,7 +1648,7 @@ mod pending_rescan_tests {
     #[test]
     fn a_recovery_kit_restore_owes_an_undated_rescan() {
         let mut ctx = ctx();
-        ctx.restored_from_kit = true;
+        ctx.restore_source = Some(RestoreSource::PasswordKit);
         assert_eq!(pending_rescan(&ctx), Some(PendingRescan::DateUnknown));
         assert_eq!(pending_rescan(&ctx).unwrap().timestamp(), None);
     }
@@ -1652,23 +1666,17 @@ mod pending_rescan_tests {
         use crate::installer::step::recovery_kit_restore::StagedRestore;
 
         let stage_descriptor = |ctx: &mut Context| {
-            StagedRestore {
-                descriptor: Some(
-                    "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp"
-                        .parse()
-                        .expect("fixture descriptor must parse"),
-                ),
-                signer: None,
-                birthday: Some(1_784_953_848),
-            }
-            .commit(ctx);
+            staged_with_descriptor(Some(1_784_953_848)).commit(ctx, RestoreSource::PasswordKit);
         };
 
         let mut dated = ctx();
         assert_eq!(pending_rescan(&dated), None, "nothing staged yet");
 
         stage_descriptor(&mut dated);
-        assert!(dated.restored_from_kit, "the descriptor carries history");
+        assert!(
+            dated.restore_source.is_some(),
+            "the descriptor carries history"
+        );
         assert_eq!(
             pending_rescan(&dated),
             Some(PendingRescan::From(1_784_953_848))
@@ -1682,12 +1690,99 @@ mod pending_rescan_tests {
             signer: None,
             birthday: None,
         }
-        .commit(&mut empty);
+        .commit(&mut empty, RestoreSource::PasswordKit);
         assert!(
-            !empty.restored_from_kit,
+            empty.restore_source.is_none(),
             "no descriptor means nothing was restored"
         );
         assert_eq!(pending_rescan(&empty), None);
+    }
+
+    /// Backing out of a restore must take the rescan with it.
+    ///
+    /// Every restore step's `revert` drops `ctx.descriptor`; the rescan
+    /// metadata is derived from that same descriptor and has to go with it.
+    /// Left behind, a user who backs out and completes a *fresh* install gets a
+    /// Vault marked as owing a rescan it does not owe — and an inherited
+    /// birthday would start a multi-hour scan of a chain the new wallet has no
+    /// history on.
+    #[test]
+    fn backing_out_of_a_restore_clears_the_rescan_it_staged() {
+        use crate::installer::step::recovery_kit_restore::StagedRestore;
+
+        let mut ctx = ctx();
+        staged_with_descriptor(Some(1_784_953_848)).commit(&mut ctx, RestoreSource::PasswordKit);
+        assert_eq!(
+            pending_rescan(&ctx),
+            Some(PendingRescan::From(1_784_953_848))
+        );
+
+        StagedRestore::revert_commit(&mut ctx);
+        assert!(ctx.descriptor.is_none());
+        assert_eq!(
+            pending_rescan(&ctx),
+            None,
+            "a discarded restore leaves no rescan behind"
+        );
+    }
+
+    /// `commit` assigns the rescan fields rather than only setting them when
+    /// present, so re-applying with nothing staged cannot leave a mixture.
+    ///
+    /// `restored_wallet_birthday` was already unconditional while
+    /// `restore_source` was not — a re-apply staging nothing kept the source
+    /// and dropped the date, turning a dated rescan into an undated one.
+    #[test]
+    fn re_committing_with_nothing_staged_clears_rather_than_mixes() {
+        use crate::installer::step::recovery_kit_restore::StagedRestore;
+
+        let mut ctx = ctx();
+        staged_with_descriptor(Some(1_784_953_848)).commit(&mut ctx, RestoreSource::PasswordKit);
+        assert!(ctx.restore_source.is_some());
+
+        StagedRestore {
+            descriptor: None,
+            signer: None,
+            birthday: None,
+        }
+        .commit(&mut ctx, RestoreSource::PasswordKit);
+
+        assert_eq!(ctx.restore_source, None, "no descriptor, no restore");
+        assert_eq!(ctx.restored_wallet_birthday, None);
+        assert_eq!(pending_rescan(&ctx), None);
+    }
+
+    /// Every restore owes a rescan; only one of them evidences a password
+    /// Recovery Kit.
+    ///
+    /// These are separate questions with different answers, and collapsing them
+    /// to one bool made an owner-keychain restore — and, worse, an heir
+    /// restoring somebody else's Vault — set
+    /// `recovery_kit_password_backed_up`, claiming a password kit that does not
+    /// exist. The keychain seal keeps its own record; an heir has no kit at all.
+    #[test]
+    fn only_a_password_kit_evidences_a_password_kit() {
+        for source in [
+            RestoreSource::PasswordKit,
+            RestoreSource::KeychainSeal,
+            RestoreSource::Inheritance,
+        ] {
+            let mut ctx = ctx();
+            ctx.restore_source = Some(source);
+            assert!(
+                pending_rescan(&ctx).is_some(),
+                "{:?} restores a descriptor with history, so it owes a rescan",
+                source
+            );
+        }
+
+        // The badge gate is the narrow one. Mirrors the `matches!` in the
+        // installer-exit handler, so a future widening of `restore_source` has
+        // to come past this.
+        let evidences_password_kit = |s: RestoreSource| matches!(s, RestoreSource::PasswordKit);
+        assert!(evidences_password_kit(RestoreSource::PasswordKit));
+        assert!(!evidences_password_kit(RestoreSource::KeychainSeal));
+        assert!(!evidences_password_kit(RestoreSource::Inheritance));
     }
 
     /// A kit written since `DescriptorBlobVault::birthday` existed dates its
@@ -1695,7 +1790,7 @@ mod pending_rescan_tests {
     #[test]
     fn a_kit_with_a_birthday_dates_its_own_rescan() {
         let mut ctx = ctx();
-        ctx.restored_from_kit = true;
+        ctx.restore_source = Some(RestoreSource::PasswordKit);
         ctx.restored_wallet_birthday = Some(1_784_953_848);
         assert_eq!(
             pending_rescan(&ctx),
@@ -1708,7 +1803,7 @@ mod pending_rescan_tests {
     #[test]
     fn a_known_birthday_beats_an_undated_kit() {
         let mut ctx = with_backup(vec![account(Some(1_784_953_848))]);
-        ctx.restored_from_kit = true;
+        ctx.restore_source = Some(RestoreSource::PasswordKit);
         assert_eq!(
             pending_rescan(&ctx),
             Some(PendingRescan::From(1_784_953_848))

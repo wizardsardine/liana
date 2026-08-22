@@ -1012,9 +1012,15 @@ impl Tab {
                     // carried into the Task is its own heap-zeroing
                     // value — it's dropped (and zeroed) once the task
                     // completes.
-                    // Whether this install came out of a Recovery Kit — the
-                    // same signal the rescan bookkeeping uses.
-                    let restored_from_kit = i.context.restored_from_kit;
+                    // Only a *password* Recovery Kit evidences the flag the
+                    // Home badge reads. The keychain seal keeps its own record
+                    // and an heir has no kit of their own, yet both reach the
+                    // same commit seam — so this asks which restore it was, not
+                    // merely whether one happened.
+                    let from_password_kit = matches!(
+                        i.context.restore_source,
+                        Some(installer::RestoreSource::PasswordKit)
+                    );
                     let restore_seed = match (
                         i.context.restore_pin.clone(),
                         i.context.recovered_signer.as_ref().map(|s| s.fingerprint()),
@@ -1071,7 +1077,7 @@ impl Tab {
                             // from. Recording it here is what makes the card
                             // agree with what the user just did; Settings would
                             // otherwise only correct it once its status loaded.
-                            if restored_from_kit {
+                            if from_password_kit {
                                 if let Err(e) =
                                     app::settings::update_settings_file(&network_dir, |settings| {
                                         Some(marked_kit_backed_up(settings, &cube.id))

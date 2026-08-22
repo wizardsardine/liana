@@ -20,6 +20,7 @@
 //! `services::recovery::restore` so the crypto + API sequencing is
 //! audited in one place.
 
+use crate::installer::context::RestoreSource;
 use std::sync::Arc;
 
 use coincube_core::{
@@ -374,18 +375,43 @@ impl StagedRestore {
     /// Deliberately not the *whole* of any step's `apply`: the Recovery Kit and
     /// inheritance steps also carry a Cube identity out of their payload, which
     /// is theirs alone. This covers only what all three share.
-    pub(crate) fn commit(self, ctx: &mut Context) {
+    pub(crate) fn commit(self, ctx: &mut Context, source: RestoreSource) {
+        // The rescan fields are **assigned**, not merely set when present, so a
+        // commit that stages no descriptor clears them instead of leaving
+        // whatever an earlier pass wrote. Half-assigning was the inconsistency:
+        // `restored_wallet_birthday` was already unconditional while
+        // `restore_source` was not, so a re-apply staging nothing could end up
+        // with a source and no date — reading as `DateUnknown` for a Vault that
+        // had a date, or as a rescan owed by a Vault that owes none.
+        //
+        // Tracked off the descriptor because the descriptor is precisely what
+        // carries the history: the seed half does not, and a descriptor-only
+        // restore has no seed at all. Each step names itself, so a reader of
+        // `restore_source` never has to guess which restore produced it.
+        let restored = self.descriptor.is_some();
         if let Some(d) = self.descriptor {
             ctx.descriptor = Some(d);
-            // Set alongside the descriptor because the descriptor is precisely
-            // what carries the history — the seed half does not, and a
-            // descriptor-only restore has no seed at all.
-            ctx.restored_from_kit = true;
         }
+        ctx.restore_source = restored.then_some(source);
+        ctx.restored_wallet_birthday = self.birthday;
+
         if let Some(s) = self.signer {
             ctx.recovered_signer = Some(Arc::new(s));
         }
-        ctx.restored_wallet_birthday = self.birthday;
+    }
+
+    /// Undo what [`Self::commit`] writes that follows the descriptor.
+    ///
+    /// Every restore step's `revert` already drops `ctx.descriptor`, because a
+    /// stale one leaks into a later decision. The rescan metadata is set from
+    /// the same descriptor and has to go with it — otherwise a user who backs
+    /// out of a restore and completes a *fresh* install carries a rescan that
+    /// Vault does not owe, banner and all, and an inherited birthday could
+    /// start a multi-hour scan of a chain the new wallet has no history on.
+    pub(crate) fn revert_commit(ctx: &mut Context) {
+        ctx.descriptor = None;
+        ctx.restore_source = None;
+        ctx.restored_wallet_birthday = None;
     }
 }
 
@@ -871,7 +897,7 @@ impl Step for RecoveryKitRestoreStep {
         // "nothing applied" to "fully applied" in one go. `Arc::new` happens
         // here rather than at staging so we don't allocate the refcounted handle
         // for a signer that ultimately gets dropped on the error path.
-        staged.commit(ctx);
+        staged.commit(ctx, RestoreSource::PasswordKit);
 
         // Carry the *original* Cube identity (UUID + name) out of the
         // decrypted kit so the post-install `find_or_create_cube` re-mints
@@ -925,10 +951,10 @@ impl Step for RecoveryKitRestoreStep {
             ctx.cube_id = None;
             ctx.cube_name = None;
         }
-        // Always clear descriptor — if the user navigates back from a
-        // later step through this one, keeping a stale descriptor would
-        // leak into a subsequent decision.
-        ctx.descriptor = None;
+        // Always clear the descriptor and the rescan metadata set from it —
+        // if the user navigates back from a later step through this one,
+        // keeping either would leak into a subsequent decision.
+        StagedRestore::revert_commit(ctx);
         // Also drop the Connect auth bits we pushed in `apply`.
         // `CoincubeConnectStep` skips itself when `connect_jwt` is
         // `Some`, so failing to clear here would "teleport" the user

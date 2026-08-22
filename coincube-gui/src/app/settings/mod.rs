@@ -109,6 +109,41 @@ impl Settings {
     }
 }
 
+/// Read `settings.json`, hand it to `updater`, and write back what comes out.
+///
+/// # `None` DELETES the file
+///
+/// The `Option` is not "skip the write". Returning `None` unlinks
+/// `settings.json`, taking **every Cube on this network** with it — that is the
+/// deliberate behaviour a caller uses to remove the file, and it is the only
+/// thing `None` means here.
+///
+/// The hazard is that `Option` is also what `?` produces on a failed lookup, so
+/// the natural-looking updater
+///
+/// ```ignore
+/// update_settings_file(&dir, |mut settings| {
+///     let cube = settings.cubes.iter_mut().find(|c| c.id == id)?; // ← wipes the file
+///     cube.some_field = value;
+///     Some(settings)
+/// })
+/// ```
+///
+/// destroys the user's configuration whenever the lookup misses — a record
+/// removed since the caller last looked, or a concurrent rewrite. It reads as a
+/// no-op and is the opposite of one.
+///
+/// An updater that means "leave it alone" must return `Some(settings)`
+/// unchanged. The safest shape is a named `Fn(Settings) -> Settings` wrapped at
+/// the call site as `|s| Some(f(s, ..))`, which makes the wipe unrepresentable
+/// from inside the update; see `crate::app::cleared_pending_rescan` and
+/// `crate::gui::tab::marked_kit_backed_up`.
+///
+/// # Errors
+///
+/// A pre-existing file that will not parse is an error, never silently replaced
+/// with defaults — that would discard the stored Cube configuration just as
+/// surely as the `None` path.
 pub async fn update_settings_file<F>(
     network_dir: &NetworkDirectory,
     updater: F,

@@ -16,6 +16,7 @@
 //! returns it, and it never rides a top-level message (the decrypt result stays
 //! on this step's redacting [`InheritanceRestoreMsg`]).
 
+use crate::installer::context::RestoreSource;
 use coincube_ui::widget::Element;
 use iced::Task;
 use zeroize::Zeroizing;
@@ -26,7 +27,7 @@ use crate::{
         context::Context,
         message::{InheritanceRestoreMsg, Message},
         step::{
-            recovery_kit_restore::{stage_restore, RestoreScope},
+            recovery_kit_restore::{stage_restore, RestoreScope, StagedRestore},
             Step,
         },
         view,
@@ -194,7 +195,7 @@ impl Step for InheritanceRestoreStep {
                 return false;
             }
         };
-        staged.commit(ctx);
+        staged.commit(ctx, RestoreSource::Inheritance);
         // Carry the original Cube identity (UUID + name) out of the decrypted
         // release so the post-install `find_or_create_cube` re-mints the same
         // Cube. Reusing the UUID makes the Connect `register_cube` call
@@ -227,7 +228,7 @@ impl Step for InheritanceRestoreStep {
             ctx.cube_id = None;
             ctx.cube_name = None;
         }
-        ctx.descriptor = None;
+        StagedRestore::revert_commit(ctx);
         ctx.connect_jwt = None;
         ctx.use_coincube_connect = false;
     }

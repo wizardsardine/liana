@@ -690,6 +690,13 @@ pub(crate) fn open_seed_for_any_of(
         .map_err(|e| SignerError::DecryptionFailed(e.to_string()))?;
 
     let mut signer: Option<MasterSigner> = None;
+    // Keys whose seed this credential *did* open. A key can have more than one
+    // file — a Cube whose master seed is also a Vault hot key has both a
+    // `master_` file and a per-Vault one — and if a PIN change left the two
+    // under different credentials, the same key both opens and fails in one
+    // sweep. Without this, whichever file lost the race would mark a reachable
+    // key unreachable.
+    let mut opened: std::collections::HashSet<Fingerprint> = std::collections::HashSet::new();
     let mut unopenable = std::collections::HashSet::new();
     for (path, named) in files {
         // The duress marker's fingerprint field is random, so it cannot be in
@@ -710,6 +717,7 @@ pub(crate) fn open_seed_for_any_of(
                 // Only the first signer is kept because `Wallet::signer` holds
                 // one; the later attempts are made for what they *tell* us, not
                 // for what they return.
+                opened.insert(named);
                 signer.get_or_insert(found);
             }
             Err(e) => {
@@ -728,6 +736,12 @@ pub(crate) fn open_seed_for_any_of(
             }
         }
     }
+
+    // A key that opened somewhere is reachable, whatever else failed for it.
+    // `unopenable` means "this Cube cannot sign with a key it holds", and the
+    // signing UI says exactly that — so a key that is provably reachable must
+    // never appear here, whichever order the files happened to be swept in.
+    unopenable.retain(|fingerprint| !opened.contains(fingerprint));
 
     Ok(SeedLookup { signer, unopenable })
 }
@@ -2575,6 +2589,60 @@ mod tests {
     /// and `pin_requirement` answers `Required` — at which point the
     /// Delete-Cube modal demands a PIN that does not exist and duress step-up
     /// offers the PIN path over the passkey one.
+    /// Two files for the **same** key, one openable, one not.
+    ///
+    /// Reachable whenever a Cube's master seed is also a Vault hot key — it has
+    /// both a `master_` file and a per-Vault one — and a PIN change left the two
+    /// under different credentials. The sweep then both opens and fails for that
+    /// one key, and whichever file came second used to decide the verdict.
+    ///
+    /// A key that opens *anywhere* is reachable. `unopenable` means "this Cube
+    /// cannot sign with a key it holds", so recording one there that just
+    /// yielded a signer is a plain contradiction — and when the signer kept is a
+    /// *different* key's, the picker shows the reachable one as unreachable.
+    #[test]
+    fn a_key_that_opens_is_never_reported_unopenable() {
+        use std::collections::HashSet;
+
+        let secp = Secp256k1::signing_only();
+        let dir = tmp_dir("set-opener-dup");
+        let cube_id = format!("cube-dup-{}", std::process::id());
+
+        // One key, two files, two credentials. The older file is the one this
+        // load can open; `seed_files` sweeps oldest-first, so the failure lands
+        // second and would previously have overwritten the verdict.
+        let signer = MasterSigner::generate(NET).unwrap();
+        let fp = signer.fingerprint(&secp);
+        for (label, ts, pin) in [("opens", 1000_i64, "1234"), ("stale", 2000_i64, "9999")] {
+            signer
+                .store_encrypted(
+                    &dir,
+                    NET,
+                    &secp,
+                    Some((label.to_string(), ts)),
+                    pin,
+                    &cube_id,
+                    None,
+                )
+                .unwrap();
+        }
+
+        let wanted: HashSet<Fingerprint> = HashSet::from([fp]);
+        let found = open_seed_for_any_of(&dir, NET, &wanted, "1234", &cube_id)
+            .expect("one unopenable file must not fail the load");
+
+        assert_eq!(
+            found.signer.as_ref().map(|s| s.fingerprint(&secp)),
+            Some(fp),
+            "the file this credential opens must still yield the signer"
+        );
+        assert!(
+            found.unopenable.is_empty(),
+            "a key that opened is reachable, whatever else failed for it: {:?}",
+            found.unopenable
+        );
+    }
+
     #[test]
     fn a_passkey_cube_never_needs_a_pin_even_with_a_vault_seed_in_its_folder() {
         let dir = tmp_dir("passkey-no-master-seed");
