@@ -980,7 +980,7 @@ pub struct WalletSettings {
     /// Start internal bitcoind executable.
     /// if None, the app must refer to the gui.toml start_internal_bitcoind field.
     pub start_internal_bitcoind: Option<bool>,
-    /// A rescan this Vault still owes, as the unix time to scan from.
+    /// A rescan this Vault still owes.
     ///
     /// Set when a Vault is restored from a Recovery Kit: the descriptors go into
     /// a bitcoind watchonly wallet that has never seen them, which imports them
@@ -997,7 +997,36 @@ pub struct WalletSettings {
     /// `None` on every other flow, including a fresh install, where scanning
     /// from now is correct and there is nothing to catch up on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pending_rescan_timestamp: Option<u32>,
+    pub pending_rescan: Option<PendingRescan>,
+}
+
+/// A rescan a restored Vault owes, and whether we know where to start it.
+///
+/// Two variants because the two restore sources differ in what they recorded.
+/// A backup import carries `Account::timestamp`, the source wallet's birthday,
+/// and can start the scan unattended. A **Recovery Kit** carries no birthday at
+/// all — `DescriptorBlobVault` is name, descriptor, change descriptor and
+/// signers — so the date is genuinely unknown and guessing one would be worse
+/// than asking: a scan started too late looks exactly like a completed scan
+/// that found nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingRescan {
+    /// Scan from this unix time. Started automatically at next open.
+    From(u32),
+    /// A rescan is owed, but nothing recorded when the wallet was born. The
+    /// prompt is raised and the user picks the date in Settings > Node.
+    DateUnknown,
+}
+
+impl PendingRescan {
+    /// The date to scan from, when one is known.
+    pub fn timestamp(&self) -> Option<u32> {
+        match self {
+            Self::From(t) => Some(*t),
+            Self::DateUnknown => None,
+        }
+    }
 }
 
 impl WalletSettings {
@@ -1779,25 +1808,43 @@ mod test {
             "pinned_at": null,
             "remote_backend_auth": null,
             "start_internal_bitcoind": true,
-            "pending_rescan_timestamp": 1784953848
+            "pending_rescan": {"from": 1784953848}
         }"#;
         let parsed: WalletSettings = serde_json::from_str(raw).unwrap();
-        assert_eq!(parsed.pending_rescan_timestamp, Some(1_784_953_848));
+        assert_eq!(
+            parsed.pending_rescan,
+            Some(super::PendingRescan::From(1_784_953_848))
+        );
+        assert_eq!(
+            parsed.pending_rescan.unwrap().timestamp(),
+            Some(1_784_953_848)
+        );
 
         let reserialised = serde_json::to_string(&parsed).unwrap();
-        assert!(reserialised.contains("\"pending_rescan_timestamp\":1784953848"));
+        assert!(reserialised.contains("\"pending_rescan\":{\"from\":1784953848}"));
+
+        // A Recovery-Kit restore knows a rescan is owed but not from when: the
+        // kit records no birthday. It must round-trip as its own state, not
+        // collapse to "nothing owed".
+        let unknown = raw.replace("{\"from\": 1784953848}", "\"date_unknown\"");
+        let parsed: WalletSettings = serde_json::from_str(&unknown).unwrap();
+        assert_eq!(
+            parsed.pending_rescan,
+            Some(super::PendingRescan::DateUnknown)
+        );
+        assert_eq!(parsed.pending_rescan.unwrap().timestamp(), None);
 
         // Absent in the file means absent in the struct — a Vault that never
         // restored is not owed a rescan.
         let without = raw.replace(
-            ",\n            \"pending_rescan_timestamp\": 1784953848",
+            ",\n            \"pending_rescan\": {\"from\": 1784953848}",
             "",
         );
         let parsed: WalletSettings = serde_json::from_str(&without).unwrap();
-        assert_eq!(parsed.pending_rescan_timestamp, None);
+        assert_eq!(parsed.pending_rescan, None);
         assert!(!serde_json::to_string(&parsed)
             .unwrap()
-            .contains("pending_rescan_timestamp"));
+            .contains("pending_rescan"));
     }
 
     const RAW_GLOBAL_SETTINGS: &str = r#"{

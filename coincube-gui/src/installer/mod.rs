@@ -888,8 +888,7 @@ fn seed_device_secret(
     })
 }
 
-/// The unix time a restored Vault's watchonly wallet must be scanned from, if
-/// this install is a restore that owes one.
+/// The rescan a restored Vault owes, if any.
 ///
 /// # Why a restore owes a rescan
 ///
@@ -916,14 +915,38 @@ fn seed_device_secret(
 /// predates the field — the caller surfaces a rescan prompt rather than
 /// inventing a date, since a wrong one would look like a completed rescan that
 /// found nothing.
-fn pending_rescan_timestamp(ctx: &Context) -> Option<u32> {
-    ctx.backup
-        .as_ref()?
-        .accounts
-        .iter()
-        .filter_map(|account| account.timestamp)
-        .min()
-        .map(|t| <u32 as std::convert::TryFrom<u64>>::try_from(t).unwrap_or(u32::MAX))
+fn pending_rescan(ctx: &Context) -> Option<crate::app::settings::PendingRescan> {
+    use crate::app::settings::PendingRescan;
+
+    // A backup import records the source wallet's birthday, so the scan can
+    // start unattended.
+    let from_backup = ctx.backup.as_ref().and_then(|backup| {
+        backup
+            .accounts
+            .iter()
+            .filter_map(|account| account.timestamp)
+            .min()
+            .map(|t| <u32 as std::convert::TryFrom<u64>>::try_from(t).unwrap_or(u32::MAX))
+    });
+    if let Some(t) = from_backup {
+        return Some(PendingRescan::From(t));
+    }
+
+    if !ctx.restored_from_kit {
+        return None;
+    }
+    // A Recovery Kit written since `DescriptorBlobVault::birthday` existed
+    // carries the Vault's creation time and can start unattended too.
+    //
+    // An older kit carries nothing that dates the wallet, so the rescan is
+    // recorded as owed *without* a date and the user supplies one. Inventing a
+    // date would be worse than asking: too late and the scan finds nothing
+    // while presenting as complete.
+    Some(
+        ctx.restored_wallet_birthday
+            .map(PendingRescan::From)
+            .unwrap_or(PendingRescan::DateUnknown),
+    )
 }
 
 pub async fn install_local_wallet(
@@ -965,7 +988,7 @@ pub async fn install_local_wallet(
         // A Recovery-Kit restore lands its descriptors in a watchonly wallet
         // that has never seen them; `App` turns this into an actual rescan once
         // the daemon is up, and clears it when the daemon accepts one.
-        pending_rescan_timestamp: pending_rescan_timestamp(&ctx),
+        pending_rescan: pending_rescan(&ctx),
     };
 
     let cfg: coincubed::config::Config = extract_daemon_config(&ctx, &wallet_settings)?;
@@ -1186,7 +1209,7 @@ pub async fn create_remote_wallet(
         )),
         start_internal_bitcoind: None,
         // Remote backend: no local node, so no scan window to fall short.
-        pending_rescan_timestamp: None,
+        pending_rescan: None,
     };
     update_settings_file(&network_datadir, |mut settings| {
         settings.wallets.push(wallet_settings.clone());
@@ -1272,7 +1295,7 @@ pub async fn import_remote_wallet(
         )),
         start_internal_bitcoind: None,
         // Remote backend: no local node, so no scan window to fall short.
-        pending_rescan_timestamp: None,
+        pending_rescan: None,
     };
     update_settings_file(&network_datadir, |mut settings| {
         settings.wallets.push(wallet_settings.clone());
@@ -1537,19 +1560,24 @@ impl std::fmt::Display for Error {
 
 #[cfg(test)]
 mod pending_rescan_tests {
-    //! The birthday a restored Vault has to be rescanned from.
+    //! What rescan, if any, a newly installed Vault owes.
 
     use super::*;
+    use crate::app::settings::PendingRescan;
     use crate::backup::{Account, Backup};
 
-    fn ctx_with(accounts: Vec<Account>) -> Context {
-        let mut ctx = Context::new(
+    fn ctx() -> Context {
+        Context::new(
             bitcoin::Network::Bitcoin,
             CoincubeDirectory::new(std::path::PathBuf::from("/nonexistent")),
             RemoteBackend::None,
             None,
             None,
-        );
+        )
+    }
+
+    fn with_backup(accounts: Vec<Account>) -> Context {
+        let mut ctx = ctx();
         ctx.backup = Some(Backup {
             name: None,
             alias: None,
@@ -1568,50 +1596,80 @@ mod pending_rescan_tests {
         a
     }
 
-    /// A fresh install has no kit and owes nothing — scanning from now is
-    /// correct there, and a spurious rescan would be a long, pointless wait.
+    /// A fresh install owes nothing — scanning from now is correct there, and a
+    /// spurious rescan is a long, pointless wait.
     #[test]
     fn a_fresh_install_owes_no_rescan() {
-        let ctx = Context::new(
-            bitcoin::Network::Bitcoin,
-            CoincubeDirectory::new(std::path::PathBuf::from("/nonexistent")),
-            RemoteBackend::None,
-            None,
-            None,
-        );
-        assert!(ctx.backup.is_none());
-        assert_eq!(pending_rescan_timestamp(&ctx), None);
+        assert_eq!(pending_rescan(&ctx()), None);
     }
 
-    /// The kit's birthday is what the new node has to scan from.
+    /// A backup import records the source wallet's birthday, so the scan can
+    /// start unattended.
     #[test]
-    fn a_restore_owes_a_rescan_from_the_kits_birthday() {
-        let ctx = ctx_with(vec![account(Some(1_784_953_848))]);
-        assert_eq!(pending_rescan_timestamp(&ctx), Some(1_784_953_848));
+    fn a_backup_import_owes_a_dated_rescan() {
+        assert_eq!(
+            pending_rescan(&with_backup(vec![account(Some(1_784_953_848))])),
+            Some(PendingRescan::From(1_784_953_848))
+        );
     }
 
-    /// Earliest wins across accounts. Too early only costs scan time; too late
-    /// silently misses history, which is the whole bug.
+    /// Earliest wins. Too early only costs scan time; too late silently misses
+    /// history, which is the whole bug.
     #[test]
     fn the_earliest_account_birthday_wins() {
-        let ctx = ctx_with(vec![
-            account(Some(1_787_372_770)),
-            account(Some(1_784_953_848)),
-            account(None),
-        ]);
-        assert_eq!(pending_rescan_timestamp(&ctx), Some(1_784_953_848));
+        assert_eq!(
+            pending_rescan(&with_backup(vec![
+                account(Some(1_787_372_770)),
+                account(Some(1_784_953_848)),
+                account(None),
+            ])),
+            Some(PendingRescan::From(1_784_953_848))
+        );
     }
 
-    /// A kit predating the field: no date is better than a guessed one, which
-    /// would present as a completed rescan that found nothing. The caller
-    /// still shows the rescan prompt.
+    /// The flow that actually caused this: a Recovery Kit carries no birthday
+    /// anywhere in `DescriptorBlobVault`, so the rescan is owed with no date
+    /// rather than not owed at all. Reading "no date" as "nothing to do" is the
+    /// bug — it leaves a wallet that silently cannot see its own history.
     #[test]
-    fn a_kit_without_a_birthday_yields_no_date() {
+    fn a_recovery_kit_restore_owes_an_undated_rescan() {
+        let mut ctx = ctx();
+        ctx.restored_from_kit = true;
+        assert_eq!(pending_rescan(&ctx), Some(PendingRescan::DateUnknown));
+        assert_eq!(pending_rescan(&ctx).unwrap().timestamp(), None);
+    }
+
+    /// A kit written since `DescriptorBlobVault::birthday` existed dates its
+    /// own restore, so the scan starts unattended like a backup import does.
+    #[test]
+    fn a_kit_with_a_birthday_dates_its_own_rescan() {
+        let mut ctx = ctx();
+        ctx.restored_from_kit = true;
+        ctx.restored_wallet_birthday = Some(1_784_953_848);
         assert_eq!(
-            pending_rescan_timestamp(&ctx_with(vec![account(None)])),
-            None
+            pending_rescan(&ctx),
+            Some(PendingRescan::From(1_784_953_848))
         );
-        assert_eq!(pending_rescan_timestamp(&ctx_with(vec![])), None);
+    }
+
+    /// A kit whose install also carried a dated backup prefers the date — it
+    /// can start unattended, which is strictly better than prompting.
+    #[test]
+    fn a_known_birthday_beats_an_undated_kit() {
+        let mut ctx = with_backup(vec![account(Some(1_784_953_848))]);
+        ctx.restored_from_kit = true;
+        assert_eq!(
+            pending_rescan(&ctx),
+            Some(PendingRescan::From(1_784_953_848))
+        );
+    }
+
+    /// A backup with no birthday and no kit flag is not a restore we can speak
+    /// to: no date, and no evidence a rescan is owed.
+    #[test]
+    fn a_backup_without_a_birthday_owes_nothing_on_its_own() {
+        assert_eq!(pending_rescan(&with_backup(vec![account(None)])), None);
+        assert_eq!(pending_rescan(&with_backup(vec![])), None);
     }
 }
 

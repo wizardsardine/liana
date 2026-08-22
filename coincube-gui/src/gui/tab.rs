@@ -1012,6 +1012,9 @@ impl Tab {
                     // carried into the Task is its own heap-zeroing
                     // value — it's dropped (and zeroed) once the task
                     // completes.
+                    // Whether this install came out of a Recovery Kit — the
+                    // same signal the rescan bookkeeping uses.
+                    let restored_from_kit = i.context.restored_from_kit;
                     let restore_seed = match (
                         i.context.restore_pin.clone(),
                         i.context.recovered_signer.as_ref().map(|s| s.fingerprint()),
@@ -1035,6 +1038,59 @@ impl Tab {
                                 restore_seed.as_ref(),
                             )
                             .await?;
+
+                            // Hand the freshly minted Cube's PIN to the session.
+                            //
+                            // `session::open` is otherwise called from exactly
+                            // one place — the PIN-entry unlock screen — and a
+                            // restore never passes through it: it goes installer
+                            // → app directly. So the session held no PIN for the
+                            // Cube that had just been created, `pin_for` answered
+                            // `None`, and `Wallet::load_hotsigners` fell to its
+                            // no-credential branch. The Vault then could not open
+                            // the hot signer whose seed the installer had written
+                            // moments earlier, under this very PIN, and the
+                            // signing picker reported the key as unreachable
+                            // until the app was restarted and unlocked normally.
+                            //
+                            // Only the restore flows reach here with a PIN of
+                            // their own; a Vault installed inside an already-open
+                            // Cube inherits that Cube's live session.
+                            if let Some(seed) = &restore_seed {
+                                app::session::open(cube.id.clone(), seed.pin.clone());
+                            }
+
+                            // Getting here through a kit *is* proof the Cube has
+                            // one: we just fetched and decrypted it. But
+                            // `has_recovery_kit()` reads three local flags, all
+                            // written only when a backup is made *from this
+                            // device* — so a Cube restored from a kit made
+                            // elsewhere had none of them set and the Home card
+                            // announced "Registered to Connect — no recovery
+                            // kit" about the very kit it had just been built
+                            // from. Recording it here is what makes the card
+                            // agree with what the user just did; Settings would
+                            // otherwise only correct it once its status loaded.
+                            if restored_from_kit {
+                                if let Err(e) = app::settings::update_settings_file(
+                                    &network_dir,
+                                    |mut settings| {
+                                        let c =
+                                            settings.cubes.iter_mut().find(|c| c.id == cube.id)?;
+                                        c.recovery_kit_password_backed_up = true;
+                                        Some(settings)
+                                    },
+                                )
+                                .await
+                                {
+                                    tracing::warn!(
+                                        "Could not record that this Cube was restored from a \
+                                         Recovery Kit: {}. The Home card may show it as having \
+                                         no kit until Settings reconciles with the server.",
+                                        e
+                                    );
+                                }
+                            }
 
                             // Only the restore path needs to build a
                             // BreezClient up-front — fresh-install +

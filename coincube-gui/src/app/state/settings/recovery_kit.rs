@@ -1543,6 +1543,13 @@ pub(crate) fn descriptor_blob_from_wallet(
             descriptor: wallet.main_descriptor.to_string(),
             change_descriptor: None,
             signers,
+            // `pinned_at` is the Vault's `WalletId` timestamp — when it was
+            // created — which is exactly how far back a restoring node has to
+            // scan. Carrying it turns a restore's rescan from a question for
+            // the user into something the app just does.
+            birthday: wallet
+                .pinned_at
+                .and_then(|t| <u32 as std::convert::TryFrom<i64>>::try_from(t).ok()),
         },
     }
 }
@@ -2678,6 +2685,7 @@ mod tests {
                     fingerprint: "deadbeef".into(),
                     xpub: String::new(),
                 }],
+                birthday: None,
             },
         };
         let a = descriptor_blob_fingerprint(&blob).unwrap();
@@ -2702,6 +2710,7 @@ mod tests {
                 descriptor: "d".into(),
                 change_descriptor: None,
                 signers: vec![],
+                birthday: None,
             },
         })
     }
@@ -2789,6 +2798,7 @@ mod tests {
                 descriptor: "d".into(),
                 change_descriptor: None,
                 signers: vec![],
+                birthday: None,
             },
         };
         let before = descriptor_blob_fingerprint(&blob).unwrap();
@@ -2826,6 +2836,7 @@ mod tests {
             descriptor: "d".into(),
             change_descriptor: None,
             signers: vec![signer("aaaaaaaa"), signer("bbbbbbbb")],
+            birthday: None,
         };
         let a = DescriptorBlob {
             version: BLOB_VERSION,
@@ -2864,6 +2875,7 @@ mod tests {
                     descriptor: "d".into(),
                     change_descriptor: None,
                     signers: v.into_iter().map(signer).collect(),
+                    birthday: None,
                 },
             }
         }

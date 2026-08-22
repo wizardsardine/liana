@@ -2033,17 +2033,17 @@ fn connect_stream_ready_task(
 /// leave the Vault still owing one. `App::new` clears the field only once the
 /// daemon has accepted a rescan, so an interrupted one is offered again on the
 /// next launch.
-fn pending_rescan_timestamp(
+fn pending_rescan(
     data_dir: &CoincubeDirectory,
     network: bitcoin::Network,
     wallet: &Wallet,
-) -> Option<u32> {
+) -> Option<settings::PendingRescan> {
     settings::WalletSettings::from_file(&data_dir.network_directory(network), |s| {
         s.descriptor_checksum == wallet.descriptor_checksum
     })
     .ok()
     .flatten()
-    .and_then(|s| s.pending_rescan_timestamp)
+    .and_then(|s| s.pending_rescan)
 }
 
 /// Ask the daemon for the rescan a restored Vault owes, and clear the debt once
@@ -2081,7 +2081,7 @@ fn start_pending_rescan(
                     .wallets
                     .iter_mut()
                     .find(|w| w.descriptor_checksum == descriptor_checksum)?;
-                wallet.pending_rescan_timestamp = None;
+                wallet.pending_rescan = None;
                 Some(settings)
             })
             .await
@@ -2137,7 +2137,7 @@ impl App {
         // the kit's recorded birthday. Read off disk rather than threaded
         // through the loader messages: the rescan has to survive a quit or a
         // crash part-way through, which an in-memory flag would not.
-        let pending_rescan = pending_rescan_timestamp(&data_dir, cache.network, &wallet);
+        let pending_rescan = pending_rescan(&data_dir, cache.network, &wallet);
         let mut panels = Panels::new(
             breez_client.clone(),
             spark_backend.clone(),
@@ -2165,7 +2165,11 @@ impl App {
             .connect
             .set_vault_fingerprint(cube_settings.vault_fingerprint.clone());
         let mut tasks = vec![];
-        if let Some(timestamp) = pending_rescan {
+        // Only a known date can be started unattended. `DateUnknown` still
+        // raises the prompt above — the user supplies the date in Settings >
+        // Node, because a guessed one would present as a scan that found
+        // nothing.
+        if let Some(timestamp) = pending_rescan.and_then(|p| p.timestamp()) {
             tasks.push(start_pending_rescan(
                 daemon.clone(),
                 data_dir.network_directory(cache.network),

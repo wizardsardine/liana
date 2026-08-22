@@ -1477,7 +1477,23 @@ impl SignModal {
             return (
                 Kind::Unknown,
                 St::Disabled(
-                    "This key's seed is on this computer, but this Cube's PIN didn't unlock it."
+                    "This key's seed is on this computer, but this Cube's credential didn't \
+                     unlock it."
+                        .to_string(),
+                ),
+            );
+        }
+        // The same seed, but nothing was tried against it — this load had no
+        // credential at all (no session PIN for this Cube). Saying the PIN
+        // failed here would be false, and would send the user to re-check a
+        // credential that was never tested instead of to the one thing that
+        // fixes it.
+        if self.wallet.locked_seed_keys.contains(&fp) {
+            return (
+                Kind::Unknown,
+                St::Disabled(
+                    "This key's seed is on this computer. Reopen this Cube with its PIN to sign \
+                     with it."
                         .to_string(),
                 ),
             );
@@ -2228,6 +2244,51 @@ mod tests {
         assert!(modal
             .border_wallet_grid_phrase(&fingerprint("f714c228"))
             .is_none());
+    }
+
+    /// "No credential was tried" and "the credential was rejected" are
+    /// different facts and must not share a message.
+    ///
+    /// They shared one set once, so a Vault loaded without a session PIN — the
+    /// state every Recovery-Kit restore landed in on its first run — told the
+    /// user their PIN had failed when no PIN had been attempted. That sends
+    /// them to re-check a credential that was never tested and hides the actual
+    /// remedy.
+    #[test]
+    fn an_untried_seed_is_not_reported_as_a_rejected_one() {
+        use view::vault::psbt::SigningKeyState as St;
+
+        let rejected = fingerprint("f714c228");
+        let untried = fingerprint("2522f23c");
+
+        let mut wallet = wallet();
+        wallet.unopenable_seed_keys.insert(rejected);
+        wallet.locked_seed_keys.insert(untried);
+        let modal = sign_modal_for(wallet);
+
+        let message = |fp| match modal.classify_signing_key(fp, true).1 {
+            St::Disabled(m) => m,
+            _ => panic!("expected a disabled row for a seed we hold but cannot use"),
+        };
+
+        let rejected_msg = message(rejected);
+        assert!(
+            rejected_msg.contains("didn't unlock it"),
+            "{}",
+            rejected_msg
+        );
+
+        let untried_msg = message(untried);
+        assert!(
+            untried_msg.contains("Reopen this Cube"),
+            "the remedy is to unlock, not to doubt the PIN: {}",
+            untried_msg
+        );
+        assert!(
+            !untried_msg.contains("didn't unlock"),
+            "nothing was tried, so nothing failed: {}",
+            untried_msg
+        );
     }
 
     /// Having *a* signer is not enough — it has to be the one this key was

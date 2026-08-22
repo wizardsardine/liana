@@ -154,6 +154,21 @@ pub struct DescriptorBlobVault {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub change_descriptor: Option<String>,
     pub signers: Vec<DescriptorBlobSigner>,
+    /// When this Vault was created, as a unix time — the point a node restoring
+    /// it has to scan the chain from.
+    ///
+    /// A restored descriptor goes into a watchonly wallet that has never seen
+    /// it, imported at `timestamp: "now"`, so bitcoind finds none of the
+    /// wallet's history. Without a birthday the restoring machine cannot know
+    /// how far back to look and has to ask the user; with one it just scans.
+    ///
+    /// `Option` because every kit written before this field existed has none,
+    /// and `skip_serializing_if` because a kit that cannot supply one must
+    /// serialise byte-identically to how it always did — the blob's canonical
+    /// JSON is SHA-256'd into the drift fingerprint that decides whether the
+    /// user is told their kit is stale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub birthday: Option<u32>,
 }
 
 impl std::fmt::Debug for DescriptorBlobVault {
@@ -166,6 +181,7 @@ impl std::fmt::Debug for DescriptorBlobVault {
                 &self.change_descriptor.as_ref().map(|_| "<redacted>"),
             )
             .field("signers", &self.signers) // delegates to redacting impl
+            .field("birthday", &self.birthday) // a date, not a secret
             .finish()
     }
 }
@@ -196,6 +212,61 @@ impl std::fmt::Debug for DescriptorBlobSigner {
 
 #[cfg(test)]
 mod tests {
+
+    /// Old kits must keep deserialising, and — critically — a kit that has no
+    /// birthday must serialise byte-identically to how it always did.
+    ///
+    /// The blob's canonical JSON is SHA-256'd into the drift fingerprint that
+    /// decides whether the user is told their Recovery Kit is stale. A field
+    /// that serialised as `null` instead of being omitted would change every
+    /// existing Cube's fingerprint and fire that warning across the board.
+    #[test]
+    fn the_birthday_is_optional_and_absent_when_unset() {
+        let without = r#"{
+            "name": "Vault",
+            "descriptor": "wsh(pk(xpub))",
+            "signers": []
+        }"#;
+        let parsed: DescriptorBlobVault = serde_json::from_str(without).unwrap();
+        assert_eq!(parsed.birthday, None, "an old kit has no birthday");
+        assert!(
+            !serde_json::to_string(&parsed).unwrap().contains("birthday"),
+            "a kit with no birthday must serialise exactly as it always did, \
+             or every existing Cube's drift fingerprint changes"
+        );
+
+        let with = r#"{
+            "name": "Vault",
+            "descriptor": "wsh(pk(xpub))",
+            "signers": [],
+            "birthday": 1784953848
+        }"#;
+        let parsed: DescriptorBlobVault = serde_json::from_str(with).unwrap();
+        assert_eq!(parsed.birthday, Some(1_784_953_848));
+        assert!(serde_json::to_string(&parsed)
+            .unwrap()
+            .contains("\"birthday\":1784953848"));
+    }
+
+    /// The redacting `Debug` must keep covering every field. A date is not a
+    /// secret, but a field added without a matching arm silently disappears
+    /// from diagnostics.
+    #[test]
+    fn the_birthday_survives_the_redacting_debug() {
+        let v = DescriptorBlobVault {
+            name: "Vault".into(),
+            descriptor: "wsh(pk(xpub))".into(),
+            change_descriptor: None,
+            signers: vec![],
+            birthday: Some(1_784_953_848),
+        };
+        let rendered = format!("{:?}", v);
+        assert!(rendered.contains("1784953848"), "{}", rendered);
+        assert!(
+            !rendered.contains("wsh(pk("),
+            "the descriptor stays redacted"
+        );
+    }
     use super::*;
 
     /// Canary string unlikely to appear anywhere else in the
@@ -320,6 +391,7 @@ mod tests {
             descriptor: "wsh(descriptor-canary-XYZZY)".into(),
             change_descriptor: Some("wsh(change-canary-XYZZY)".into()),
             signers: vec![],
+            birthday: None,
         };
         let r = format!("{:?}", v);
         assert!(!r.contains("vault-name-canary-XYZZY"), "name leaked: {}", r);
@@ -379,6 +451,7 @@ mod tests {
                     fingerprint: "deadbeef".into(),
                     xpub: "xpub-canary-XYZZY".into(),
                 }],
+                birthday: None,
             },
         };
         let r = format!("{:?}", blob);
@@ -442,6 +515,7 @@ mod tests {
                     fingerprint: "deadbeef".into(),
                     xpub: "xpub...".into(),
                 }],
+                birthday: None,
             },
         };
         let json = serde_json::to_string(&blob).unwrap();

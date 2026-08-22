@@ -327,6 +327,7 @@ mod tests {
                 descriptor: "wsh(multi(2,xpubA,xpubB))#cksum".into(),
                 change_descriptor: None,
                 signers: vec![],
+                birthday: None,
             },
         }
     }

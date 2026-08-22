@@ -354,6 +354,10 @@ fn validate_blobs_match_selected(
 pub(crate) struct StagedRestore {
     pub descriptor: Option<CoincubeDescriptor>,
     pub signer: Option<Signer>,
+    /// The restored Vault's creation time, when the kit recorded one. Kits
+    /// written before `DescriptorBlobVault::birthday` existed have none, and
+    /// the restore then asks the user how far back to scan instead of guessing.
+    pub birthday: Option<u32>,
 }
 
 /// Convert decrypted kit halves into [`StagedRestore`], applying the scope's
@@ -368,6 +372,10 @@ pub(crate) fn stage_restore(
     seed: Option<&SeedBlob>,
     descriptor: Option<&DescriptorBlob>,
 ) -> Result<StagedRestore, String> {
+    // Keep the blob before `descriptor` is shadowed by the parsed value; the
+    // birthday lives on the blob, not on the parsed descriptor.
+    let descriptor_blob = descriptor;
+
     // Parse the descriptor into an owned value first; an error here aborts
     // before we touch any seed, so a partial result is never committed.
     let descriptor = match descriptor {
@@ -397,7 +405,13 @@ pub(crate) fn stage_restore(
         None
     };
 
-    Ok(StagedRestore { descriptor, signer })
+    let birthday = descriptor_blob.and_then(|b| b.vault.birthday);
+
+    Ok(StagedRestore {
+        descriptor,
+        signer,
+        birthday,
+    })
 }
 
 /// Filter applied to the server cube list before status probing:
@@ -828,8 +842,14 @@ impl Step for RecoveryKitRestoreStep {
         // "nothing applied" to "fully applied" in one go. `Arc::new` happens
         // here rather than at staging so we don't allocate the refcounted handle
         // for a signer that ultimately gets dropped on the error path.
+        ctx.restored_wallet_birthday = staged.birthday;
         if let Some(d) = staged.descriptor {
             ctx.descriptor = Some(d);
+            // This descriptor has a history the new node has never scanned, so
+            // the wallet bitcoind builds for it owes a rescan. Set alongside the
+            // descriptor because that is precisely what carries the history —
+            // the seed half does not, and a descriptor-only kit has no seed.
+            ctx.restored_from_kit = true;
         }
         if let Some(s) = staged.signer {
             ctx.recovered_signer = Some(Arc::new(s));
@@ -1253,6 +1273,7 @@ mod tests {
                 descriptor: "d".into(),
                 change_descriptor: None,
                 signers: vec![],
+                birthday: None,
             },
         }
     }

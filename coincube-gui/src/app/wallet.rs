@@ -110,6 +110,16 @@ pub struct Wallet {
     /// cannot reach — and the signing UI says so rather than showing it as
     /// an unconnected device.
     pub unopenable_seed_keys: HashSet<Fingerprint>,
+    /// Descriptor keys whose seed file is on this machine and encrypted, and
+    /// which this load had **no credential to try** — distinct from
+    /// [`Self::unopenable_seed_keys`], where a credential was tried and
+    /// rejected.
+    ///
+    /// The two used to share one set, so a Vault loaded without a session PIN
+    /// told the user their PIN had failed when no PIN had been attempted. That
+    /// sends them to check a credential that was never tested, and hides the
+    /// real remedy, which is to unlock the Cube.
+    pub locked_seed_keys: HashSet<Fingerprint>,
     /// Txids the user has just broadcast locally, mapped to the data
     /// needed to synthesize coin/tx/PSBT overrides until the daemon
     /// catches up. `Arc<Mutex<...>>` so the map is shared across every
@@ -138,6 +148,7 @@ impl Wallet {
             hardware_wallets: Vec::new(),
             signer: None,
             unopenable_seed_keys: HashSet::new(),
+            locked_seed_keys: HashSet::new(),
             recently_broadcast: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -575,8 +586,11 @@ impl Wallet {
         // absent seed of a watch-only Vault. They read identically here and the
         // difference never reached the UI, so a Vault loaded without a session
         // PIN showed its own master key as an unconnected external device.
+        //
+        // `locked`, not `unopenable`: nothing was decrypted here, so the honest
+        // statement is "no credential to try", not "the credential failed".
         let mut this = self;
-        this.unopenable_seed_keys =
+        this.locked_seed_keys =
             crate::services::unlock::encrypted_seed_keys(datadir_path.path(), network, keys);
         Ok(this)
     }
@@ -830,8 +844,16 @@ mod tests {
         // two showed a restored Cube's own master key as an unconnected
         // external device, with no hint that a PIN was all it needed.
         assert!(
-            none.unopenable_seed_keys.contains(&fp),
+            none.locked_seed_keys.contains(&fp),
             "an encrypted seed for a descriptor key must be reported, not ignored"
+        );
+        // `locked`, never `unopenable`: no credential was supplied, so nothing
+        // was tried and nothing failed. The UI words the two differently, and
+        // saying the PIN was rejected when none was offered sends the user to
+        // re-check a credential that was never tested.
+        assert!(
+            none.unopenable_seed_keys.is_empty(),
+            "nothing was tried here, so nothing can have been rejected"
         );
 
         // A wrong credential must not hand back *some other* signer, and must
@@ -840,6 +862,16 @@ mod tests {
             .load_hotsigners(&dir, net, &cube_id, Some("9999"))
             .unwrap();
         assert!(wrong.signer.is_none());
+        // The other side of the same distinction: a credential *was* tried and
+        // the file refused it.
+        assert!(
+            wrong.unopenable_seed_keys.contains(&fp),
+            "a rejected credential must be reported as rejected"
+        );
+        assert!(
+            wrong.locked_seed_keys.is_empty(),
+            "a credential was available, so this is not the locked case"
+        );
 
         std::fs::remove_dir_all(root).unwrap();
     }

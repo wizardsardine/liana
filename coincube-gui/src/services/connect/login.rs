@@ -613,7 +613,7 @@ mod tests {
             hardware_wallets: Vec::new(),
             remote_backend_auth: Some(AuthConfig::new(email.to_string(), wallet_id.to_string())),
             start_internal_bitcoind: None,
-            pending_rescan_timestamp: None,
+            pending_rescan: None,
         }
     }
 

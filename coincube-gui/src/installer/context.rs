@@ -103,6 +103,21 @@ pub struct Context {
     // In case a user entered a mnemonic,
     // we dont want to override the generated signer with it.
     pub recovered_signer: Option<Arc<Signer>>,
+    /// Whether the descriptor being installed came out of a **Recovery Kit**.
+    ///
+    /// Not derivable from the other fields. A `Full` kit leaves
+    /// [`Self::recovered_signer`] set, but a descriptor-only kit (a passkey
+    /// Cube, or the descriptor half uploaded first) leaves nothing behind but
+    /// `descriptor` — which a fresh install has too. The distinction decides
+    /// whether the new watchonly wallet owes a rescan, so it is recorded
+    /// rather than inferred.
+    pub restored_from_kit: bool,
+    /// The restored Vault's creation time, when the Recovery Kit recorded one
+    /// ([`crate::services::recovery::plaintext::DescriptorBlobVault::birthday`]).
+    ///
+    /// Turns the rescan a restore owes from a question into something the app
+    /// starts on its own. `None` for kits written before the field existed.
+    pub restored_wallet_birthday: Option<u32>,
     pub bitcoind_is_external: bool,
     pub use_coincube_connect: bool,
     /// Connect JWT threaded across installer steps. Wrapped in
@@ -287,6 +302,8 @@ impl Context {
             network,
             hw_is_used: false,
             recovered_signer: None,
+            restored_from_kit: false,
+            restored_wallet_birthday: None,
             bitcoind_is_external: true,
             use_coincube_connect: false,
             connect_jwt: None,
