@@ -66,6 +66,10 @@ fs2 = { workspace = true }
 open = { workspace = true }
 
 bip138 = { workspace = true }
+bwk-qr = { workspace = true, features = ["bbqr"] }
+bwk-bbqr = { workspace = true }
+bip377 = { workspace = true }
+bwk-camera = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 zip = { workspace = true, default-features = false, features = ["bzip2", "deflate"] }

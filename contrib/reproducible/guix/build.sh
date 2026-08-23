@@ -35,6 +35,16 @@ replace-with = "vendored_sources"
 git = "https://github.com/wizardsardine/bip329"
 rev = "77c9d91"
 replace-with = "vendored_sources"
+
+[source."git+https://github.com/bwk-bitcoin/bwk?rev=c698c0314e73f3a5baec0bcdd71fc10e08f17686"]
+git = "https://github.com/bwk-bitcoin/bwk"
+rev = "c698c0314e73f3a5baec0bcdd71fc10e08f17686"
+replace-with = "vendored_sources"
+
+[source."git+https://github.com/pythcoiner/bip377?rev=7727820263d5cc4066f89717db6620bc56ebdb36"]
+git = "https://github.com/pythcoiner/bip377"
+rev = "7727820263d5cc4066f89717db6620bc56ebdb36"
+replace-with = "vendored_sources"
 EOF
 
 # We need to set RUSTC_BOOTSTRAP=1 as a workaround to be able to use unstable

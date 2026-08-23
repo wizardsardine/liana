@@ -71,7 +71,7 @@ jobs:
       # The install overlaps the toolchain and cache setup.
       - name: Start installing the system dependencies
         run: |
-          (sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+          (sudo apt-get update && sudo apt-get install -y clang libclang-dev libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
            echo $? > "$RUNNER_TEMP/apt.status") > "$RUNNER_TEMP/apt.log" 2>&1 &
 
       - uses: actions/checkout@v4
@@ -125,7 +125,7 @@ jobs:
       # The install overlaps the toolchain and cache setup.
       - name: Start installing the system dependencies
         run: |
-          (sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+          (sudo apt-get update && sudo apt-get install -y clang libclang-dev libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
            echo $? > "$RUNNER_TEMP/apt.status") > "$RUNNER_TEMP/apt.log" 2>&1 &
 
       - uses: actions/checkout@v4
@@ -188,7 +188,7 @@ jobs:
       # The install overlaps the toolchain and cache setup.
       - name: Start installing the system dependencies
         run: |
-          (sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+          (sudo apt-get update && sudo apt-get install -y clang libclang-dev libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
            echo $? > "$RUNNER_TEMP/apt.status") > "$RUNNER_TEMP/apt.log" 2>&1 &
 
       - uses: actions/checkout@v4

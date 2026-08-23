@@ -80,6 +80,13 @@ fern = "0.6"
 bip329 = { git = "https://github.com/wizardsardine/bip329", rev = "77c9d91" }
 async-trait = "0.1"
 async-hwi = { version = "0.0.35", default-features = false, features = ["ledger", "specter", "coldcard", "bitbox", "jade", "service", "rustls-no-provider" ] }
+# QR transport and BBQR framing, and the signing-flow codec, for air-gapped signers.
+bwk-qr = { git = "https://github.com/bwk-bitcoin/bwk", rev = "c698c0314e73f3a5baec0bcdd71fc10e08f17686", default-features = false, features = ["gen", "scan"] }
+bwk-bbqr = { git = "https://github.com/bwk-bitcoin/bwk", rev = "c698c0314e73f3a5baec0bcdd71fc10e08f17686" }
+bip377 = { git = "https://github.com/pythcoiner/bip377", rev = "7727820263d5cc4066f89717db6620bc56ebdb36", default-features = false, features = ["bitcoin_latest", "coordinator"] }
+# Camera capture: Media Foundation on Windows, V4L2 on Linux, AVFoundation on macOS.
+# Without its mjpeg feature, so no JPEG decoder is linked.
+bwk-camera = { git = "https://github.com/bwk-bitcoin/bwk", rev = "c698c0314e73f3a5baec0bcdd71fc10e08f17686", default-features = false }
 hex = "0.4.3"
 email_address = "0.2.7"
 tokio = "1.21.0"
