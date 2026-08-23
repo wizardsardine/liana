@@ -11,6 +11,10 @@ airgap-point-camera => "Point the camera at your signer's screen." => NONE
 
 airgap-show-request => "Show this to your signer, then scan its answer back." => NONE
 
+airgap-sign-title => "Sign with a signing device" => NONE
+
+airgap-verify-address-title => "Verify the address" => NONE
+
 bitcoind-upgrade-hint
 => "Updating your Liana-managed Bitcoin node."
 => "Mise à jour de votre nœud Bitcoin géré par Liana.";;

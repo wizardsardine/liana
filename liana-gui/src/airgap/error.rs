@@ -49,6 +49,10 @@ pub enum Error {
     Unreadable(Arc<rust_bitcoin::Error>),
     #[error(transparent)]
     Camera(CameraFailure),
+    #[error("The device did not return a signed transaction")]
+    NotSigned,
+    #[error("The transaction came back without any new signature")]
+    NoNewSignature,
 }
 
 fn refusal<'a>(error: &response::Error, message: &'a str) -> &'a str {

@@ -1,13 +1,17 @@
 pub mod animation;
 pub mod camera;
 
+use bip377::{
+    backend::{rust_bitcoin::RustBitcoin, Backend},
+    request,
+};
 use iced::{
     widget::{column, mouse_area, row, Space},
     Alignment, Length,
 };
 use liana_ui::{
     component::{
-        button,
+        address, button,
         modal::{modal_view, ModalWidth},
         notification, pick_list, qr,
         text::new::{b5_medium, caption},
@@ -15,7 +19,7 @@ use liana_ui::{
     icon,
     spacing::{HSpacing, VSpacing},
     theme,
-    widget::{Element, SpaceExt},
+    widget::{Container, Element, SpaceExt},
 };
 
 use crate::{
@@ -76,6 +80,17 @@ fn request_view<M: Clone + 'static>(
         MODAL_WIDTH,
         to_message(Message::ToggleEnlarged),
     );
+
+    let address = match modal.exchange.request() {
+        request::Body::VerifyAddress(request::VerifyAddress {
+            address: Some(address),
+            ..
+        }) => Some(
+            Container::new(address::address(RustBitcoin::to_ll_address(address)))
+                .center_x(Length::Fill),
+        ),
+        _ => None,
+    };
 
     let display = modal.animation.settings();
     let rank = QrSettings::DENSITIES
@@ -153,6 +168,7 @@ fn request_view<M: Clone + 'static>(
     column![
         b5_medium(t!("airgap-show-request")),
         request,
+        address,
         button::btn_scan_response(Some(to_message(Message::Scan))),
         settings_toggle,
         settings,

@@ -443,7 +443,46 @@ where
     K: Display + 'a,
     A: Display + 'a,
 {
-    let tile = device_tile(kind.is_some());
+    signer_entry(
+        device_tile(kind.is_some()),
+        fingerprint,
+        kind,
+        alias,
+        status,
+        on_press,
+    )
+}
+
+pub fn airgapped_signer_entry<'a, M, F, K, A>(
+    fingerprint: Option<F>,
+    model: Option<K>,
+    alias: Option<A>,
+    status: DeviceStatus,
+    on_press: Option<M>,
+) -> Element<'a, M>
+where
+    M: 'static + Clone,
+    F: Display + 'a,
+    K: Display + 'a,
+    A: Display + 'a,
+{
+    signer_entry(Tile::Qr, fingerprint, model, alias, status, on_press)
+}
+
+fn signer_entry<'a, M, F, K, A>(
+    tile: Tile,
+    fingerprint: Option<F>,
+    kind: Option<K>,
+    alias: Option<A>,
+    status: DeviceStatus,
+    on_press: Option<M>,
+) -> Element<'a, M>
+where
+    M: 'static + Clone,
+    F: Display + 'a,
+    K: Display + 'a,
+    A: Display + 'a,
+{
     let designation = device_designation(kind, alias, fingerprint);
     let trailing = Option::<Element<'a, M>>::from(status).map(|status| {
         Container::new(status)

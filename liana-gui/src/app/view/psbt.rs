@@ -30,6 +30,7 @@ use liana_ui::{
 };
 
 use crate::{
+    airgap::device::AirgappedDevice,
     app::{
         cache::Cache,
         error::Error,
@@ -366,6 +367,8 @@ fn change_view<'a>(
 pub fn sign_action<'a>(
     warning: Option<&Error>,
     hws: &'a [HardwareWallet],
+    airgapped_signers: &'a [AirgappedDevice],
+    keys_aliases: &'a HashMap<Fingerprint, String>,
     descriptor: &LianaDescriptor,
     signer: Option<Fingerprint>,
     signer_alias: Option<&'a String>,
@@ -375,7 +378,7 @@ pub fn sign_action<'a>(
 ) -> Element<'a, Message> {
     let title = t!("psbt-select-signing-device");
 
-    let mut signers: Vec<Element<'a, Message>> = if hws.is_empty() {
+    let mut signers: Vec<Element<'a, Message>> = if hws.is_empty() && airgapped_signers.is_empty() {
         vec![modal::modal_no_devices_placeholder()]
     } else {
         hws.iter()
@@ -401,6 +404,29 @@ pub fn sign_action<'a>(
             })
             .collect()
     };
+
+    for airgapped_signer in airgapped_signers {
+        let fingerprint = airgapped_signer.fingerprint;
+        let can_sign = descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);
+        let status = if signed.contains(&fingerprint) {
+            DeviceStatus::Signed
+        } else if !can_sign {
+            DeviceStatus::NotInPath
+        } else {
+            DeviceStatus::None
+        };
+        signers.push(modal::airgapped_signer_entry(
+            Some(format!("#{fingerprint}")),
+            Some(&airgapped_signer.model),
+            keys_aliases
+                .get(&fingerprint)
+                .or(airgapped_signer.alias.as_ref()),
+            status,
+            (can_sign && !signed.contains(&fingerprint)).then_some(Message::Spend(
+                SpendTxMessage::SelectAirgappedSigner(fingerprint),
+            )),
+        ));
+    }
 
     signers.extend(signer.map(|fingerprint| {
         let can_sign = descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);

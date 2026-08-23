@@ -338,6 +338,10 @@ impl Exchange {
         Ok(bytes)
     }
 
+    pub fn request(&self) -> &request::Body<RustBitcoin> {
+        &self.request.body
+    }
+
     pub fn read(&self, bytes: &[u8]) -> Result<Answer, Error> {
         log::debug!("scanned a response of {} bytes", bytes.len());
         log::trace!("response payload {}", hex::encode(bytes));
