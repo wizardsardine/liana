@@ -16,6 +16,7 @@ use liana_ui::{widget::modal, widget::Element};
 use crate::daemon::model::LabelsLoader;
 use crate::export::{ImportExportMessage, ImportExportType, Progress};
 use crate::{
+    airgap::{Answer, Ask},
     app::{
         cache::Cache,
         error::Error,
@@ -32,7 +33,10 @@ use crate::{
     hw::{HardwareWallet, HardwareWallets},
 };
 
-use super::export::ExportModal;
+use super::{
+    airgap::{AirgapAction, AirgapModal, AirgapOutcome},
+    export::ExportModal,
+};
 
 pub trait Modal {
     fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
@@ -461,6 +465,7 @@ pub struct SignModal {
     is_saved: bool,
     display_modal: bool,
     recovery_timelock: Option<u16>,
+    airgap: Option<AirgapModal>,
 }
 
 impl SignModal {
@@ -481,17 +486,75 @@ impl SignModal {
             is_saved,
             display_modal: true,
             recovery_timelock,
+            airgap: None,
         }
     }
 
     pub fn is_signing(&self) -> bool {
         !self.signing.is_empty()
     }
+
+    /// The exchange already checked every signature it merged. What is left is
+    /// that the signer answered for itself: a signer that returns a PSBT signed
+    /// by somebody else has not signed.
+    fn signed_by_airgapped_signer(&mut self, original: &Psbt, answer: Answer) -> Task<Message> {
+        let Answer::Signed(psbt) = answer else {
+            self.error = Some(Error::Unexpected(
+                "The device did not return a signed transaction".to_owned(),
+            ));
+            return Task::none();
+        };
+        let Some(fingerprint) = added_signature_origin(original, &psbt) else {
+            self.error = Some(Error::Unexpected(
+                "The device did not add any signature of its own".to_owned(),
+            ));
+            return Task::none();
+        };
+        Task::done(Message::Signed(fingerprint, Ok(psbt)))
+    }
+}
+
+/// The master fingerprint behind a signature the merge added, read from the key
+/// origins the PSBT already carries.
+///
+/// Compared against the transaction as it was, so a PSBT another signer already
+/// signed does not report that signer again.
+fn added_signature_origin(before: &Psbt, after: &Psbt) -> Option<Fingerprint> {
+    before
+        .inputs
+        .iter()
+        .zip(&after.inputs)
+        .find_map(|(before, after)| {
+            let ecdsa = after
+                .partial_sigs
+                .keys()
+                .filter(|key| !before.partial_sigs.contains_key(*key))
+                .filter_map(|key| after.bip32_derivation.get(&key.inner))
+                .map(|(fingerprint, _)| *fingerprint);
+            let tap_script = after
+                .tap_script_sigs
+                .keys()
+                .filter(|key| !before.tap_script_sigs.contains_key(*key))
+                .filter_map(|(key, _)| after.tap_key_origins.get(key))
+                .map(|(_, (fingerprint, _))| *fingerprint);
+            // a key-path spend signs with the internal key, and carries no key of
+            // its own to look up, so the origin comes from that internal key
+            let tap_key = (after.tap_key_sig.is_some() && before.tap_key_sig.is_none())
+                .then_some(after.tap_internal_key)
+                .flatten()
+                .and_then(|key| after.tap_key_origins.get(&key))
+                .map(|(_, (fingerprint, _))| *fingerprint);
+            ecdsa.chain(tap_script).chain(tap_key).next()
+        })
 }
 
 impl Modal for SignModal {
     fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        let hws = self.hws.refresh().map(Message::HardwareWallets);
+        match &self.airgap {
+            Some(airgap) => Subscription::batch([hws, airgap.subscription().map(airgap_message)]),
+            None => hws,
+        }
     }
 
     fn update(
@@ -517,6 +580,40 @@ impl Modal for SignModal {
                         move |res| Message::Signed(fingerprint, res),
                     );
                 }
+            }
+            Message::View(view::Message::Spend(view::SpendTxMessage::SelectAirgappedSigner(
+                fingerprint,
+            ))) => {
+                let Some(signer) = self.wallet.airgapped_signer(fingerprint) else {
+                    return Task::none();
+                };
+                match AirgapModal::new(
+                    "Sign with an air-gapped signer",
+                    Ask::Sign {
+                        wallet: self.wallet.for_airgapped_signer(signer),
+                        psbt: tx.psbt.clone(),
+                    },
+                ) {
+                    Ok(modal) => self.airgap = Some(modal),
+                    Err(e) => self.error = Some(e.into()),
+                }
+            }
+            Message::View(view::Message::Airgap(action)) => {
+                let Some(airgap) = self.airgap.as_mut() else {
+                    return Task::none();
+                };
+                let task = airgap.update(action).map(airgap_message);
+                return match airgap.take_outcome() {
+                    Some(AirgapOutcome::Answer(answer)) => {
+                        self.airgap = None;
+                        self.signed_by_airgapped_signer(&tx.psbt, *answer)
+                    }
+                    Some(AirgapOutcome::Cancelled) => {
+                        self.airgap = None;
+                        Task::none()
+                    }
+                    None => task,
+                };
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectHotSigner)) => {
                 return Task::perform(
@@ -584,6 +681,11 @@ impl Modal for SignModal {
         Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        if let Some(airgap) = &self.airgap {
+            return modal::Modal::new(content, airgap.view(view::Message::Airgap))
+                .on_blur(Some(view::Message::Close))
+                .into();
+        }
         let content = toast::Manager::new(
             content,
             view::psbt::sign_action_toasts(self.error.as_ref(), &self.hws.list, &self.signing),
@@ -595,6 +697,7 @@ impl Modal for SignModal {
                 view::psbt::sign_action(
                     self.error.as_ref(),
                     &self.hws.list,
+                    &self.wallet.airgapped_signers,
                     &self.wallet.main_descriptor,
                     self.wallet.signer.as_ref().map(|s| s.fingerprint()),
                     self.wallet
@@ -694,6 +797,79 @@ async fn sign_psbt(
         hw.sign_tx(&mut psbt).await.map_err(Error::from)?;
     }
     Ok(psbt)
+}
+
+fn airgap_message(action: AirgapAction) -> Message {
+    Message::View(view::Message::Airgap(action))
+}
+
+#[cfg(test)]
+mod attribution_tests {
+    use super::*;
+    use liana::miniscript::bitcoin::base64::{prelude::BASE64_STANDARD, Engine};
+
+    /// A real exchange: the transaction Liana sent, and the key-path signature a
+    /// signer returned for it.
+    fn unsigned() -> Psbt {
+        let base64 = include_str!("../../../test_assets/airgap/taproot-unsigned.psbt.base64");
+        Psbt::deserialize(&BASE64_STANDARD.decode(base64.trim()).unwrap()).unwrap()
+    }
+
+    fn returned_signature() -> liana::miniscript::bitcoin::taproot::Signature {
+        let base64 =
+            include_str!("../../../test_assets/airgap/taproot-key-path-signed.psbt.base64");
+        Psbt::deserialize(&BASE64_STANDARD.decode(base64.trim()).unwrap())
+            .unwrap()
+            .inputs[0]
+            .tap_key_sig
+            .expect("the fixture carries a key-path signature")
+    }
+
+    /// What the merge produces: Liana's own transaction with the returned
+    /// signature folded in, which is what the attribution actually runs on.
+    fn merged() -> Psbt {
+        let mut psbt = unsigned();
+        psbt.inputs[0].tap_key_sig = Some(returned_signature());
+        psbt
+    }
+
+    /// A `tr()` primary path is spent through the key path, so the signer returns
+    /// a `tap_key_sig` and no key of its own. The origin has to come from the
+    /// internal key, or the signature is merged and then disowned.
+    #[test]
+    fn a_key_path_signature_is_attributed_to_the_internal_key() {
+        let before = unsigned();
+        let after = merged();
+        assert!(before.inputs[0].tap_key_sig.is_none());
+
+        // The whole of the signer's contribution is this one field: it added no
+        // partial_sigs and no tap_script_sigs, so anything that looks only at
+        // those two sees an untouched transaction and disowns the signature.
+        assert!(after.inputs[0].partial_sigs.is_empty());
+        assert!(after.inputs[0].tap_script_sigs.is_empty());
+        assert!(after.inputs[0].tap_key_sig.is_some());
+
+        assert_eq!(
+            added_signature_origin(&before, &after)
+                .expect("a key-path signature must name its signer")
+                .to_string(),
+            "73c5da0a"
+        );
+    }
+
+    /// Nothing added means nothing to attribute, so a signer that returns the
+    /// transaction untouched is not credited with a signature.
+    #[test]
+    fn an_unchanged_transaction_names_nobody() {
+        assert!(added_signature_origin(&unsigned(), &unsigned()).is_none());
+    }
+
+    /// The comparison is against the transaction as it was, so a signature that
+    /// was already there is not reported as newly added.
+    #[test]
+    fn a_signature_that_was_already_there_is_not_reported() {
+        assert!(added_signature_origin(&merged(), &merged()).is_none());
+    }
 }
 
 #[cfg(test)]

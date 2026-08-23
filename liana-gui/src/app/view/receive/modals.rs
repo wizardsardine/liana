@@ -14,6 +14,7 @@ use liana_ui::{
     component::{
         button::btn_show_qr_section,
         form, label,
+        list::DeviceStatus,
         modal::{self, modal_no_devices_placeholder, optional_section},
         panels::receive,
         text::text,
@@ -22,6 +23,7 @@ use liana_ui::{
 };
 
 use crate::{
+    airgap::AirgappedSignerConfig,
     app::{
         error::Error,
         view::{hw, warning::warn},
@@ -31,16 +33,19 @@ use crate::{
 
 use crate::app::view::message::{AddressQrSource, LabelMessage, Message, NewAddressMessage};
 
+#[allow(clippy::too_many_arguments)]
 pub fn verify_address_modal<'a>(
     warning: Option<&Error>,
     hws: &'a [HardwareWallet],
+    airgapped: &'a [AirgappedSignerConfig],
     chosen_hws: &HashSet<Fingerprint>,
+    verified: &HashSet<Fingerprint>,
     address: &Address,
     derivation_index: ChildNumber,
     qr_section_open: bool,
 ) -> Element<'a, Message> {
     let mut devices = Column::new().spacing(10);
-    if hws.is_empty() {
+    if hws.is_empty() && airgapped.is_empty() {
         devices = devices.push(row![
             Space::fill_width(),
             modal_no_devices_placeholder(),
@@ -59,6 +64,22 @@ pub fn verify_address_modal<'a>(
             ));
         }
     }
+    for signer in airgapped {
+        let fingerprint = signer.fingerprint;
+        let status = if verified.contains(&fingerprint) {
+            DeviceStatus::Selected
+        } else {
+            DeviceStatus::None
+        };
+        devices = devices.push(modal::airgapped_signer_entry(
+            Some(format!("#{fingerprint}")),
+            Some(&signer.model),
+            signer.alias.as_ref(),
+            status,
+            Some(Message::VerifyAirgappedSigner(fingerprint)),
+        ));
+    }
+
     devices = devices.push(optional_section(
         qr_section_open,
         "Other options".to_string(),

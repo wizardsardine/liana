@@ -4,8 +4,12 @@ use std::sync::Arc;
 use crate::app::cache::FiatPrice;
 use crate::dir::LianaDirectory;
 use crate::{
-    airgap::AirgappedSignerConfig, app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig,
-    node::NodeType, signer::Signer,
+    airgap::{self, AirgappedSignerConfig},
+    app::settings,
+    daemon::DaemonBackend,
+    hw::HardwareWalletConfig,
+    node::NodeType,
+    signer::Signer,
 };
 
 use liana::{miniscript::bitcoin, signer::HotSigner};
@@ -138,6 +142,29 @@ impl Wallet {
     pub fn with_remote_backend_auth(mut self, auth_cfg: settings::AuthConfig) -> Self {
         self.remote_backend_auth = Some(auth_cfg);
         self
+    }
+
+    /// The wallet as an air-gapped signer sees it: the alias it is registered
+    /// under, the descriptor, and whatever that signer reported at registration.
+    pub fn for_airgapped_signer(&self, signer: &AirgappedSignerConfig) -> airgap::Wallet {
+        airgap::Wallet {
+            alias: self.descriptor_alias().to_owned(),
+            descriptor: self.main_descriptor.clone(),
+            registration: signer.registration.clone(),
+        }
+    }
+
+    /// The name the descriptor is registered under on a signer. Every signer
+    /// keys its registration by it, so a USB device and an air-gapped one must
+    /// be given the very same string.
+    pub fn descriptor_alias(&self) -> &str {
+        &self.name
+    }
+
+    pub fn airgapped_signer(&self, fingerprint: Fingerprint) -> Option<&AirgappedSignerConfig> {
+        self.airgapped_signers
+            .iter()
+            .find(|signer| signer.fingerprint == fingerprint)
     }
 
     pub fn descriptor_keys(&self) -> HashSet<Fingerprint> {
@@ -327,4 +354,62 @@ pub fn sync_status(
         return SyncStatus::LatestWalletSync;
     }
     SyncStatus::Synced
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+    use crate::airgap::{Capabilities, FirmwareVersion};
+
+    const DESCRIPTOR: &str = include_str!("../../test_assets/airgap/multisig-testnet.descriptor");
+    const ACCOUNT: &str = "[9f141cf0/48'/1'/0'/2']tpubDFnReAwXvYd6RA46X55HuFpmvZsLanDrwHAUsdYEGEpNGTRnCdbDRXJGLTwDeqKURCPZUDgdkuuu9dYkuBNQHmSNBUu7V2CdLKwpJjx2JuC";
+
+    fn wallet() -> Wallet {
+        Wallet::new(LianaDescriptor::from_str(DESCRIPTOR.trim()).unwrap())
+    }
+
+    fn signer() -> AirgappedSignerConfig {
+        AirgappedSignerConfig {
+            fingerprint: Fingerprint::from_str("9f141cf0").unwrap(),
+            alias: Some("Cold signer".to_owned()),
+            account: liana::miniscript::descriptor::DescriptorPublicKey::from_str(ACCOUNT).unwrap(),
+            model: "test signer".to_owned(),
+            version: FirmwareVersion {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                prerelease: None,
+            },
+            capabilities: Capabilities(1),
+            registration: Default::default(),
+        }
+    }
+
+    /// A signer keys its registration by the alias, so the air-gapped exchange
+    /// has to send the one a USB device is registered under. Both read
+    /// `descriptor_alias`, and this pins that they stay one value.
+    #[test]
+    fn airgapped_signer_gets_the_usb_descriptor_alias() {
+        let wallet = wallet();
+        assert_eq!(wallet.descriptor_alias(), "Liana-u768v50p");
+        assert_eq!(
+            wallet.for_airgapped_signer(&signer()).alias,
+            wallet.descriptor_alias()
+        );
+    }
+
+    /// A backend names the wallet itself, so the alias is not always derived
+    /// from the descriptor. The air-gapped exchange must follow the name, the
+    /// way the USB registration does.
+    #[test]
+    fn a_renamed_wallet_keeps_one_alias_for_both() {
+        let wallet = wallet().with_name("Named by the backend".to_owned());
+        assert_eq!(wallet.descriptor_alias(), "Named by the backend");
+        assert_eq!(
+            wallet.for_airgapped_signer(&signer()).alias,
+            wallet.descriptor_alias()
+        );
+    }
 }

@@ -11,12 +11,17 @@ use liana_ui::{component::form, widget::modal, widget::*};
 use crate::daemon::model::LabelsLoader;
 use crate::dir::LianaDirectory;
 use crate::{
+    airgap::{Answer, Ask},
     app::{
         cache::Cache,
         error::Error,
         menu::Menu,
         message::Message,
-        state::{label::LabelsEdited, State},
+        state::{
+            airgap::{AirgapAction, AirgapModal, AirgapOutcome},
+            label::LabelsEdited,
+            State,
+        },
         view,
         wallet::Wallet,
     },
@@ -470,10 +475,15 @@ pub struct VerifyAddressModal {
     warning: Option<Error>,
     chosen_hws: HashSet<Fingerprint>,
     hws: HardwareWallets,
+    wallet: Arc<Wallet>,
     address: Address,
     derivation_index: ChildNumber,
     /// Whether the "Other options" (specter DIY QR code) section is open.
     qr_section_open: bool,
+    verified: HashSet<Fingerprint>,
+    /// The signer the open exchange is verifying with.
+    verifying: Option<Fingerprint>,
+    airgap: Option<AirgapModal>,
 }
 
 impl VerifyAddressModal {
@@ -487,28 +497,41 @@ impl VerifyAddressModal {
         Self {
             warning: None,
             chosen_hws: HashSet::new(),
-            hws: HardwareWallets::new(data_dir, network).with_wallet(wallet),
+            hws: HardwareWallets::new(data_dir, network).with_wallet(wallet.clone()),
+            wallet,
             address,
             derivation_index,
             qr_section_open: false,
+            verified: HashSet::new(),
+            verifying: None,
+            airgap: None,
         }
     }
 }
 
 impl VerifyAddressModal {
     fn view(&self) -> Element<'_, view::Message> {
-        view::receive::verify_address_modal(
-            self.warning.as_ref(),
-            &self.hws.list,
-            &self.chosen_hws,
-            &self.address,
-            self.derivation_index,
-            self.qr_section_open,
-        )
+        match &self.airgap {
+            Some(airgap) => airgap.view(view::Message::Airgap),
+            None => view::receive::verify_address_modal(
+                self.warning.as_ref(),
+                &self.hws.list,
+                &self.wallet.airgapped_signers,
+                &self.chosen_hws,
+                &self.verified,
+                &self.address,
+                self.derivation_index,
+                self.qr_section_open,
+            ),
+        }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        let hws = self.hws.refresh().map(Message::HardwareWallets);
+        match &self.airgap {
+            Some(airgap) => Subscription::batch([hws, airgap.subscription().map(airgap_message)]),
+            None => hws,
+        }
     }
 
     fn update(
@@ -518,6 +541,51 @@ impl VerifyAddressModal {
         message: Message,
     ) -> Task<Message> {
         match message {
+            Message::View(view::Message::VerifyAirgappedSigner(fingerprint)) => {
+                let Some(signer) = self.wallet.airgapped_signer(fingerprint) else {
+                    return Task::none();
+                };
+                match AirgapModal::new(
+                    "Verify the address",
+                    Ask::VerifyAddress {
+                        wallet: self.wallet.for_airgapped_signer(signer),
+                        address: self.address.clone(),
+                        change: false,
+                        index: self.derivation_index,
+                    },
+                ) {
+                    Ok(modal) => {
+                        self.warning = None;
+                        self.airgap = Some(modal);
+                    }
+                    Err(e) => self.warning = Some(e.into()),
+                }
+                self.verifying = Some(fingerprint);
+                Task::none()
+            }
+            Message::View(view::Message::Airgap(action)) => {
+                let Some(airgap) = self.airgap.as_mut() else {
+                    return Task::none();
+                };
+                let task = airgap.update(action).map(airgap_message);
+                match airgap.take_outcome() {
+                    Some(AirgapOutcome::Answer(answer)) => {
+                        self.airgap = None;
+                        if matches!(*answer, Answer::AddressVerified) {
+                            if let Some(fingerprint) = self.verifying.take() {
+                                self.verified.insert(fingerprint);
+                            }
+                        }
+                        Task::none()
+                    }
+                    Some(AirgapOutcome::Cancelled) => {
+                        self.airgap = None;
+                        self.verifying = None;
+                        Task::none()
+                    }
+                    None => task,
+                }
+            }
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),
                 Err(e) => {
@@ -751,6 +819,10 @@ async fn verify_address(
     })
     .await?;
     Ok(())
+}
+
+fn airgap_message(action: AirgapAction) -> Message {
+    Message::View(view::Message::Airgap(action))
 }
 
 #[cfg(test)]
