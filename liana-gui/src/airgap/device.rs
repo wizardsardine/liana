@@ -27,6 +27,64 @@ use crate::{airgap::error::Error, utils::derivation_path};
 
 type SignerAddress = <RustBitcoin as Backend>::Address;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AirgappedDevice {
+    pub fingerprint: Fingerprint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+    pub vendor: String,
+    pub model: String,
+    pub version: FirmwareVersion,
+    pub capabilities: Capabilities,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub registrations: Vec<Registration>,
+}
+
+impl AirgappedDevice {
+    pub fn new(signer: &Signer, alias: Option<String>) -> Self {
+        Self {
+            fingerprint: signer.fingerprint,
+            alias,
+            vendor: signer.vendor.clone(),
+            model: signer.model.clone(),
+            version: signer.version.clone(),
+            capabilities: signer.capabilities,
+            registrations: Vec::new(),
+        }
+    }
+
+    pub fn registration(&self, descriptor_checksum: &str) -> Option<&Registration> {
+        self.registrations
+            .iter()
+            .find(|registration| registration.is_for_descriptor(descriptor_checksum))
+    }
+
+    pub fn record(&mut self, registration: Registration) {
+        if registration.descriptor_checksum.is_none() {
+            return;
+        }
+        self.registrations
+            .retain(|known| known.descriptor_checksum != registration.descriptor_checksum);
+        self.registrations.push(registration);
+    }
+
+    pub fn merge(&mut self, other: AirgappedDevice) {
+        for registration in other.registrations {
+            self.record(registration);
+        }
+    }
+}
+
+pub fn save_device(devices: &mut Vec<AirgappedDevice>, device: AirgappedDevice) {
+    match devices
+        .iter_mut()
+        .find(|known| known.fingerprint == device.fingerprint)
+    {
+        Some(known) => known.merge(device),
+        None => devices.push(device),
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Registration {
     #[serde(default)]
@@ -363,14 +421,126 @@ fn merge_signature_entry(psbt: &mut Psbt, entry: SignatureEntry<RustBitcoin>) {
 
 #[cfg(test)]
 mod tests {
-    use bip377::response::{SignatureEntry, Signed};
+    use std::str::FromStr;
+
+    use bip377::{
+        ll::response::{Capabilities, FirmwareVersion, ReleaseFlag},
+        response::{SignatureEntry, Signed},
+    };
     use liana::miniscript::bitcoin::{
         base64::{prelude::BASE64_STANDARD, Engine},
+        bip32::Fingerprint,
         psbt::Psbt,
         taproot,
     };
 
-    use crate::airgap::device::merge;
+    use crate::airgap::device::{merge, save_device, AirgappedDevice, Registration};
+
+    fn device(registration: Registration) -> AirgappedDevice {
+        let mut device = AirgappedDevice {
+            fingerprint: Fingerprint::from_str("9f141cf0").unwrap(),
+            alias: Some("Cold signer".to_owned()),
+            vendor: "Vendor".to_owned(),
+            model: "Model".to_owned(),
+            version: FirmwareVersion {
+                major: 1,
+                minor: 2,
+                patch: 3,
+                flag: ReleaseFlag::Stable,
+            },
+            capabilities: Capabilities(7),
+            registrations: Vec::new(),
+        };
+        device.record(registration);
+        device
+    }
+
+    #[test]
+    fn a_device_keeps_a_registration_per_descriptor() {
+        let mut device = device(Registration {
+            descriptor_checksum: Some("u768v50p".to_owned()),
+            stored: Some(false),
+            proof: Some(vec![7; 32]),
+        });
+        device.record(Registration {
+            descriptor_checksum: Some("another".to_owned()),
+            stored: Some(true),
+            proof: None,
+        });
+
+        let json = serde_json::to_value(&device).unwrap();
+        assert_eq!(json["registrations"][0]["proof"], "07".repeat(32));
+        let read: AirgappedDevice = serde_json::from_value(json).unwrap();
+        assert_eq!(read, device);
+
+        let wallet = read.registration("u768v50p").unwrap();
+        assert_eq!(wallet.proof, Some(vec![7; 32]));
+        assert_eq!(wallet.stored, Some(false));
+        let other = read.registration("another").unwrap();
+        assert_eq!(other.stored, Some(true));
+        assert_eq!(other.proof, None);
+        assert_eq!(read.registration("unknown"), None);
+    }
+
+    #[test]
+    fn saving_a_known_device_adds_its_registration() {
+        let mut devices = vec![device(Registration {
+            descriptor_checksum: Some("u768v50p".to_owned()),
+            stored: Some(true),
+            proof: None,
+        })];
+        save_device(
+            &mut devices,
+            device(Registration {
+                descriptor_checksum: Some("another".to_owned()),
+                stored: Some(false),
+                proof: Some(vec![1; 32]),
+            }),
+        );
+        save_device(&mut devices, device(Registration::default()));
+
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].registrations.len(), 2);
+        assert!(devices[0].registration("u768v50p").is_some());
+    }
+
+    #[test]
+    fn merging_a_device_keeps_the_known_fields() {
+        let mut known = device(Registration {
+            descriptor_checksum: Some("u768v50p".to_owned()),
+            stored: Some(true),
+            proof: None,
+        });
+        let kept = known.clone();
+        let mut incoming = device(Registration {
+            descriptor_checksum: Some("another".to_owned()),
+            stored: Some(false),
+            proof: Some(vec![1; 32]),
+        });
+        incoming.alias = Some("From a backup".to_owned());
+        incoming.vendor = String::new();
+        incoming.model = String::new();
+        incoming.version = FirmwareVersion {
+            major: 0,
+            minor: 9,
+            patch: 0,
+            flag: ReleaseFlag::Stable,
+        };
+        incoming.capabilities = Capabilities(0);
+
+        known.merge(incoming);
+
+        assert_eq!(known.alias, kept.alias);
+        assert_eq!(known.vendor, kept.vendor);
+        assert_eq!(known.model, kept.model);
+        assert_eq!(known.version, kept.version);
+        assert_eq!(known.capabilities, kept.capabilities);
+        assert!(known.registration("u768v50p").is_some());
+        assert_eq!(
+            known.registration("another").unwrap().proof,
+            Some(vec![1; 32])
+        );
+    }
 
     fn psbt(base64: &str) -> Psbt {
         Psbt::deserialize(&BASE64_STANDARD.decode(base64.trim()).unwrap()).unwrap()

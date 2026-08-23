@@ -5,6 +5,7 @@ use std::{
 };
 
 use crate::{
+    airgap::device::AirgappedDevice,
     app::settings::KeySetting,
     backup::Backup,
     dir::LianaDirectory,
@@ -73,6 +74,7 @@ pub struct Context {
     pub descriptor: Option<LianaDescriptor>,
     pub keys: HashMap<bitcoin::bip32::Fingerprint, KeySetting>,
     pub hws: Vec<(DeviceKind, bitcoin::bip32::Fingerprint, Option<[u8; 32]>)>,
+    pub airgapped_signers: HashMap<bitcoin::bip32::Fingerprint, AirgappedDevice>,
     pub liana_directory: LianaDirectory,
     pub network: bitcoin::Network,
     pub hw_is_used: bool,
@@ -102,6 +104,7 @@ impl Context {
                 poll_interval_secs: Duration::from_secs(30),
             },
             hws: Vec::new(),
+            airgapped_signers: HashMap::new(),
             keys: HashMap::new(),
             bitcoin_backend: None,
             descriptor: None,
@@ -118,5 +121,9 @@ impl Context {
             pending_compile: None,
             encrypted_backup_privacy_mode: false,
         }
+    }
+
+    pub fn airgapped_devices(&self) -> Vec<AirgappedDevice> {
+        self.airgapped_signers.values().cloned().collect()
     }
 }

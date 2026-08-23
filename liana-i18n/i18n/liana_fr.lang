@@ -3,6 +3,14 @@
 # Format: id => "English" => "Translation"
 # Use \n for line breaks
 
+airgap-error-title => "Signing device" => NONE
+
+airgap-looking-for-qr => "Looking for the signer's QR code..." => NONE
+
+airgap-point-camera => "Point the camera at your signer's screen." => NONE
+
+airgap-show-request => "Show this to your signer, then scan its answer back." => NONE
+
 bitcoind-upgrade-hint
 => "Updating your Liana-managed Bitcoin node."
 => "Mise à jour de votre nœud Bitcoin géré par Liana.";;
@@ -38,6 +46,8 @@ btn-apply => "Apply" => "Appliquer"
 btn-approve => "Approve" => "Approuver"
 
 btn-back => "Back" => "Retour"
+
+btn-back-to-request => "Back to the request" => NONE
 
 btn-back-up-descriptor => "Back up descriptor" => "Sauvegarder le descriptor"
 
@@ -148,6 +158,8 @@ btn-reset-timelock => "Reset timelock" => "Réinitialiser le timelock"
 btn-retry => "Retry" => "Réessayer"
 
 btn-save => "Save" => "Enregistrer"
+
+btn-scan-response => "Scan the response" => NONE
 
 btn-see-more-details => "See more details" => "Détails"
 
@@ -2201,6 +2213,16 @@ psbts-signatures-collected
 => "{ $threshold ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}"
 => "{ $threshold ->\n    [one] {$count}/{$threshold} signature collectée\n   *[other] {$count}/{$threshold} signatures collectées\n}";;
 
+qr-brightness => "Brightness: {$percent}%" => NONE
+
+qr-camera => "Camera" => NONE
+
+qr-density => "Density" => NONE
+
+qr-frame-rate => "Speed" => NONE
+
+qr-settings => "QR code settings" => NONE
+
 receive-address-label-placeholder
 => "Enter an address label"
 => "Saisir une étiquette d'adresse";;
@@ -2220,6 +2242,8 @@ receive-generating-address-title => "Generating address" => "Génération de l'a
 receive-previous-addresses
 => "Previously generated addresses still awaiting deposit"
 => "Adresses générées précédemment toujours en attente de dépôt";;
+
+receive-qr-unavailable => "Cannot show the QR code" => NONE
 
 receive-select-device
 => "Select device to verify address on:"

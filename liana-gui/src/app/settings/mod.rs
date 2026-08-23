@@ -24,6 +24,7 @@ use liana::miniscript::bitcoin;
 use lianad::commands::ListCoinsResult;
 
 use crate::{
+    airgap::device::AirgappedDevice,
     app::{self, state::State},
     backup::{Key, KeyRole, KeyType},
     dir::{LianaDirectory, NetworkDirectory},
@@ -58,6 +59,12 @@ pub trait SettingsTrait: Clone + Default + Serialize + DeserializeOwned + Send +
 
     /// Get mutable access to wallet settings.
     fn wallets_mut(&mut self) -> &mut Vec<Self::Wallet>;
+
+    /// Get the QR signing devices of the network.
+    fn airgapped_signers(&self) -> &[AirgappedDevice];
+
+    /// Get mutable access to the QR signing devices of the network.
+    fn airgapped_signers_mut(&mut self) -> &mut Vec<AirgappedDevice>;
 
     /// Create an App from Liana Connect remote backend data.
     ///
@@ -115,6 +122,8 @@ pub trait WalletSettingsTrait: Clone + Serialize + DeserializeOwned + Send + 'st
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct LianaSettings {
     pub wallets: Vec<LianaWalletSettings>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub airgapped_signers: Vec<AirgappedDevice>,
 }
 
 impl LianaSettings {
@@ -149,6 +158,14 @@ impl SettingsTrait for LianaSettings {
 
     fn wallets_mut(&mut self) -> &mut Vec<Self::Wallet> {
         &mut self.wallets
+    }
+
+    fn airgapped_signers(&self) -> &[AirgappedDevice] {
+        &self.airgapped_signers
+    }
+
+    fn airgapped_signers_mut(&mut self) -> &mut Vec<AirgappedDevice> {
+        &mut self.airgapped_signers
     }
 
     fn create_app_for_remote_backend(
@@ -213,7 +230,7 @@ where
 
     let settings = updater(settings);
 
-    if settings.wallets().is_empty() {
+    if settings.wallets().is_empty() && settings.airgapped_signers().is_empty() {
         tokio::fs::remove_file(&path)
             .await
             .map_err(|e| SettingsError::ReadingFile(e.to_string()))?;
@@ -571,7 +588,7 @@ impl std::fmt::Display for SettingsError {
 
 /// global settings.
 pub mod global {
-    use crate::dir::LianaDirectory;
+    use crate::{airgap::display::QrSettings, dir::LianaDirectory};
     use async_hwi::bitbox::{ConfigError, NoiseConfig, NoiseConfigData};
     use fs2::FileExt;
     use liana_i18n::SupportedLocale;
@@ -594,6 +611,10 @@ pub mod global {
         pub window_config: Option<WindowConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub locale: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub airgap_display: Option<QrSettings>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub airgap_camera: Option<String>,
     }
 
     impl GlobalSettings {
@@ -632,6 +653,30 @@ pub mod global {
 
         pub fn update_locale(path: &PathBuf, locale: SupportedLocale) -> Result<(), String> {
             Self::update(path, |s| s.locale = Some(locale.code().to_string()), true)
+        }
+
+        pub fn load_airgap_display(path: &PathBuf) -> QrSettings {
+            let mut ret = None;
+            if let Err(e) = Self::update(path, |s| ret = s.airgap_display.clone(), false) {
+                tracing::error!("Failed to load the air-gap display settings: {e}");
+            }
+            ret.unwrap_or_default()
+        }
+
+        pub fn update_airgap_display(path: &PathBuf, display: &QrSettings) -> Result<(), String> {
+            Self::update(path, |s| s.airgap_display = Some(display.clone()), true)
+        }
+
+        pub fn load_airgap_camera(path: &PathBuf) -> Option<String> {
+            let mut ret = None;
+            if let Err(e) = Self::update(path, |s| ret = s.airgap_camera.clone(), false) {
+                tracing::error!("Failed to load the air-gap camera: {e}");
+            }
+            ret
+        }
+
+        pub fn update_airgap_camera(path: &PathBuf, camera: &str) -> Result<(), String> {
+            Self::update(path, |s| s.airgap_camera = Some(camera.to_owned()), true)
         }
 
         pub fn load_bitbox_settings(path: &PathBuf) -> Result<Option<BitboxSettings>, String> {
@@ -687,6 +732,8 @@ pub mod global {
                 && global_settings.bitbox.is_none()
                 && global_settings.window_config.is_none()
                 && global_settings.locale.is_none()
+                && global_settings.airgap_display.is_none()
+                && global_settings.airgap_camera.is_none()
             {
                 write = false;
             }
@@ -776,7 +823,10 @@ pub mod global {
 #[cfg(test)]
 mod test {
     use super::global::{GlobalSettings, WindowConfig};
-    use crate::app::settings::LianaWalletSettings;
+    use bwk_qr::config::QrDensity;
+    use liana_ui::component::qr::Brightness;
+
+    use crate::{airgap::display::QrSettings, app::settings::LianaWalletSettings};
     use std::env;
 
     const RAW_GLOBAL_SETTINGS: &str = r#"{
@@ -945,6 +995,30 @@ mod test {
             true,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn the_airgap_display_settings_are_kept_across_runs() {
+        let path =
+            env::temp_dir().join(format!("liana-airgap-display-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            GlobalSettings::load_airgap_display(&path),
+            QrSettings::default()
+        );
+        let display = QrSettings {
+            density: QrDensity::High,
+            frame_rate: 1.5,
+            brightness: Brightness::new(60),
+        };
+        GlobalSettings::update_airgap_display(&path, &display).unwrap();
+        GlobalSettings::update_airgap_camera(&path, "Integrated Camera").unwrap();
+        assert_eq!(GlobalSettings::load_airgap_display(&path), display);
+        assert_eq!(
+            GlobalSettings::load_airgap_camera(&path).as_deref(),
+            Some("Integrated Camera")
+        );
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]

@@ -17,6 +17,7 @@ pub use ui::BusinessSettingsUI;
 use liana::miniscript::bitcoin;
 use liana::miniscript::bitcoin::bip32::Fingerprint;
 use liana_gui::{
+    airgap::device::AirgappedDevice,
     app::{
         self,
         cache::{Cache, DaemonCache},
@@ -82,6 +83,8 @@ impl TryFrom<liana_gui::services::fiat::Currency> for BackendCurrency {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct BusinessSettings {
     pub wallets: Vec<BusinessWalletSettings>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub airgapped_signers: Vec<AirgappedDevice>,
 }
 
 impl BusinessSettings {
@@ -116,6 +119,14 @@ impl SettingsTrait for BusinessSettings {
 
     fn wallets_mut(&mut self) -> &mut Vec<Self::Wallet> {
         &mut self.wallets
+    }
+
+    fn airgapped_signers(&self) -> &[AirgappedDevice] {
+        &self.airgapped_signers
+    }
+
+    fn airgapped_signers_mut(&mut self) -> &mut Vec<AirgappedDevice> {
+        &mut self.airgapped_signers
     }
 
     fn create_app_for_remote_backend(

@@ -7,7 +7,7 @@ use bip377::{
 };
 use liana::miniscript::bitcoin::{bip32, psbt};
 
-use crate::airgap::device::label;
+use crate::airgap::{camera::CameraFailure, device::label};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
@@ -47,6 +47,8 @@ pub enum Error {
     InvalidPsbt(Arc<psbt::Error>),
     #[error("The device answered with unreadable data: {0}")]
     Unreadable(Arc<rust_bitcoin::Error>),
+    #[error(transparent)]
+    Camera(CameraFailure),
 }
 
 fn refusal<'a>(error: &response::Error, message: &'a str) -> &'a str {

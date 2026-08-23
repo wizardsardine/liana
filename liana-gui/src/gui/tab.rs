@@ -717,6 +717,11 @@ pub fn create_app_with_remote_backend(
                 .with_key_aliases(aliases)
                 .with_provider_keys(provider_keys)
                 .with_hardware_wallets(hws)
+                .with_airgapped_signers(
+                    &LianaSettings::from_file(&network_directory)
+                        .map(|settings| settings.airgapped_signers)
+                        .unwrap_or_default(),
+                )
                 .with_remote_backend_auth(
                     wallet_settings
                         .remote_backend_auth

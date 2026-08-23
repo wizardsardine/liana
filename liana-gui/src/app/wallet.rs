@@ -4,7 +4,8 @@ use std::sync::Arc;
 use crate::app::cache::FiatPrice;
 use crate::dir::LianaDirectory;
 use crate::{
-    app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig, node::NodeType, signer::Signer,
+    airgap::device::AirgappedDevice, app::settings, daemon::DaemonBackend,
+    hw::HardwareWalletConfig, node::NodeType, signer::Signer,
 };
 
 use liana::{
@@ -46,6 +47,7 @@ pub struct Wallet {
     pub keys_aliases: HashMap<Fingerprint, String>,
     pub provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
+    pub airgapped_signers: Vec<AirgappedDevice>,
     pub signer: Option<Arc<Signer>>,
     pub fiat_price_setting: Option<fiat::PriceSetting>,
     pub encrypted_backup_privacy_mode: bool,
@@ -68,6 +70,7 @@ impl Wallet {
             keys_aliases: HashMap::new(),
             provider_keys: HashMap::new(),
             hardware_wallets: Vec::new(),
+            airgapped_signers: Vec::new(),
             signer: None,
             fiat_price_setting: None,
             encrypted_backup_privacy_mode: false,
@@ -110,6 +113,16 @@ impl Wallet {
 
     pub fn with_hardware_wallets(mut self, hardware_wallets: Vec<HardwareWalletConfig>) -> Self {
         self.hardware_wallets = hardware_wallets;
+        self
+    }
+
+    pub fn with_airgapped_signers(mut self, devices: &[AirgappedDevice]) -> Self {
+        let keys = self.descriptor_keys();
+        self.airgapped_signers = devices
+            .iter()
+            .filter(|device| keys.contains(&device.fingerprint))
+            .cloned()
+            .collect();
         self
     }
 

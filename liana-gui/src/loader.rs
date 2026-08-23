@@ -26,7 +26,7 @@ use lianad::{
 
 use crate::app;
 use crate::app::cache::DaemonCache;
-use crate::app::settings::WalletSettings;
+use crate::app::settings::{LianaSettings, WalletSettings};
 use crate::backup::Backup;
 use crate::dir::LianaDirectory;
 use crate::export::RestoreBackupError;
@@ -436,8 +436,12 @@ pub async fn load_application(
     ),
     Error,
 > {
+    let airgapped_signers = LianaSettings::from_file(&datadir_path.network_directory(network))
+        .map(|settings| settings.airgapped_signers)
+        .unwrap_or_default();
     let wallet = Wallet::new(info.descriptors.main)
         .load_from_settings(wallet_settings)?
+        .with_airgapped_signers(&airgapped_signers)
         .load_hotsigners(&datadir_path, network)?;
 
     let coins = coins_to_cache(daemon.clone()).await.map(|res| res.coins)?;

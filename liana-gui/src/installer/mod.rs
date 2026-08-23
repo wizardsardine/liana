@@ -24,6 +24,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::{
+    airgap::device::save_device,
     app::{
         config as gui_config,
         settings::{
@@ -690,6 +691,9 @@ pub async fn install_local_wallet(
     // create liana GUI settings file
     update_settings_file(&network_datadir, |mut settings: LianaSettings| {
         settings.wallets.push(wallet_settings.clone());
+        for device in ctx.airgapped_devices() {
+            save_device(&mut settings.airgapped_signers, device);
+        }
         settings
     })
     .await
@@ -837,6 +841,9 @@ pub async fn create_remote_wallet(
     };
     update_settings_file(&network_datadir, |mut settings: LianaSettings| {
         settings.wallets.push(wallet_settings.clone());
+        for device in ctx.airgapped_devices() {
+            save_device(&mut settings.airgapped_signers, device);
+        }
         settings
     })
     .await
@@ -920,6 +927,9 @@ pub async fn import_remote_wallet(
     };
     update_settings_file(&network_datadir, |mut settings: LianaSettings| {
         settings.wallets.push(wallet_settings.clone());
+        for device in ctx.airgapped_devices() {
+            save_device(&mut settings.airgapped_signers, device);
+        }
         settings
     })
     .await
