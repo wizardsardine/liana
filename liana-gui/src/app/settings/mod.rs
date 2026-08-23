@@ -24,6 +24,7 @@ use liana::miniscript::bitcoin;
 use lianad::commands::ListCoinsResult;
 
 use crate::{
+    airgap::device::AirgappedSignerConfig,
     app::{self, state::State},
     backup::{Key, KeyRole, KeyType},
     dir::{LianaDirectory, NetworkDirectory},
@@ -102,6 +103,10 @@ pub trait WalletSettingsTrait: Clone + Serialize + DeserializeOwned + Send + 'st
     fn keys(&self) -> &[KeySetting];
     /// Get the list of hardware wallet configurations registered with this wallet.
     fn hardware_wallets(&self) -> &[HardwareWalletConfig];
+    /// Get the air-gapped signers this wallet knows about.
+    fn airgapped_signers(&self) -> &[AirgappedSignerConfig] {
+        &[]
+    }
     /// Get the remote backend authentication config, if this wallet uses a remote backend.
     fn remote_backend_auth(&self) -> Option<&AuthConfig>;
     /// Get the fiat price conversion settings for this wallet.
@@ -280,6 +285,10 @@ pub struct LianaWalletSettings {
     // wallet metadata
     #[serde(default)]
     pub hardware_wallets: Vec<HardwareWalletConfig>,
+    // Air-gapped signers are never seen over USB, so unlike hardware wallets
+    // they are only known from what they sent back over QR.
+    #[serde(default)]
+    pub airgapped_signers: Vec<AirgappedSignerConfig>,
     pub remote_backend_auth: Option<AuthConfig>,
     /// Start internal bitcoind executable.
     /// if None, the app must refer to the gui.toml start_internal_bitcoind field.
@@ -378,6 +387,10 @@ impl WalletSettingsTrait for LianaWalletSettings {
 
     fn hardware_wallets(&self) -> &[HardwareWalletConfig] {
         &self.hardware_wallets
+    }
+
+    fn airgapped_signers(&self) -> &[AirgappedSignerConfig] {
+        &self.airgapped_signers
     }
 
     fn remote_backend_auth(&self) -> Option<&AuthConfig> {
@@ -571,7 +584,7 @@ impl std::fmt::Display for SettingsError {
 
 /// global settings.
 pub mod global {
-    use crate::dir::LianaDirectory;
+    use crate::{airgap::display::DisplaySettings, dir::LianaDirectory};
     use async_hwi::bitbox::{ConfigError, NoiseConfig, NoiseConfigData};
     use fs2::FileExt;
     use liana_i18n::SupportedLocale;
@@ -594,6 +607,8 @@ pub mod global {
         pub window_config: Option<WindowConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub locale: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub airgap_display: Option<DisplaySettings>,
     }
 
     impl GlobalSettings {
@@ -632,6 +647,21 @@ pub mod global {
 
         pub fn update_locale(path: &PathBuf, locale: SupportedLocale) -> Result<(), String> {
             Self::update(path, |s| s.locale = Some(locale.code().to_string()), true)
+        }
+
+        pub fn load_airgap_display(path: &PathBuf) -> DisplaySettings {
+            let mut ret = None;
+            if let Err(e) = Self::update(path, |s| ret = s.airgap_display, false) {
+                tracing::error!("Failed to load the air-gap display settings: {e}");
+            }
+            ret.map(DisplaySettings::clamped).unwrap_or_default()
+        }
+
+        pub fn update_airgap_display(
+            path: &PathBuf,
+            display: DisplaySettings,
+        ) -> Result<(), String> {
+            Self::update(path, |s| s.airgap_display = Some(display), true)
         }
 
         pub fn load_bitbox_settings(path: &PathBuf) -> Result<Option<BitboxSettings>, String> {
@@ -687,6 +717,7 @@ pub mod global {
                 && global_settings.bitbox.is_none()
                 && global_settings.window_config.is_none()
                 && global_settings.locale.is_none()
+                && global_settings.airgap_display.is_none()
             {
                 write = false;
             }
@@ -776,7 +807,7 @@ pub mod global {
 #[cfg(test)]
 mod test {
     use super::global::{GlobalSettings, WindowConfig};
-    use crate::app::settings::LianaWalletSettings;
+    use crate::{airgap::display::DisplaySettings, app::settings::LianaWalletSettings};
     use std::env;
 
     const RAW_GLOBAL_SETTINGS: &str = r#"{
@@ -945,6 +976,25 @@ mod test {
             true,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn the_airgap_display_settings_are_kept_across_runs() {
+        let path =
+            env::temp_dir().join(format!("liana-airgap-display-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            GlobalSettings::load_airgap_display(&path),
+            DisplaySettings::default()
+        );
+        let display = DisplaySettings {
+            density: 3,
+            frame_rate: 3,
+            brightness: 60,
+        };
+        GlobalSettings::update_airgap_display(&path, display).unwrap();
+        assert_eq!(GlobalSettings::load_airgap_display(&path), display);
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]

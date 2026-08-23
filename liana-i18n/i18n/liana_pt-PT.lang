@@ -3,6 +3,20 @@
 # Format: id => "English" => "Translation"
 # Use \n for line breaks
 
+airgap-back-to-request => "Back to the request" => NONE
+
+airgap-error-title => "Air-gapped signer" => NONE
+
+airgap-frames-read => "Read {$seen} of {$total} frames" => NONE
+
+airgap-looking-for-qr => "Looking for the signer's QR code..." => NONE
+
+airgap-point-camera => "Point the camera at your signer's screen." => NONE
+
+airgap-requesting-camera => "Requesting camera access..." => NONE
+
+airgap-show-request => "Show this to your signer, then scan its answer back." => NONE
+
 bitcoind-upgrade-hint
 => "Updating your Liana-managed Bitcoin node."
 => "A atualizar o seu nó Bitcoin gerido pela Liana.";;
@@ -146,6 +160,8 @@ btn-reset-timelock => "Reset timelock" => "Repor timelock"
 btn-retry => "Retry" => "Repetir"
 
 btn-save => "Save" => "Guardar"
+
+btn-scan-response => "Scan the response" => NONE
 
 btn-see-more-details => "See more details" => "Ver mais detalhes"
 
@@ -2175,6 +2191,14 @@ psbts-signatures-collected
 => "{ $threshold ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}"
 => "{ $threshold ->\n    [one] {$count}/{$threshold} assinatura recolhida\n   *[other] {$count}/{$threshold} assinaturas recolhidas\n}";;
 
+qr-brightness => "Brightness: {$percent}%" => NONE
+
+qr-density => "Density" => NONE
+
+qr-frame-rate => "Speed" => NONE
+
+qr-settings => "QR code settings" => NONE
+
 receive-address-label-placeholder
 => "Enter an address label"
 => "Introduza uma etiqueta de endereço";;
@@ -2192,6 +2216,8 @@ receive-generating-address-title => "Generating address" => "A gerar endereço"
 receive-previous-addresses
 => "Previously generated addresses still awaiting deposit"
 => "Endereços gerados anteriormente ainda estão à espera de depósito";;
+
+receive-qr-unavailable => "Cannot show the QR code" => NONE
 
 receive-select-device
 => "Select device to verify address on:"

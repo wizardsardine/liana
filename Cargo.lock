@@ -2996,7 +2996,6 @@ dependencies = [
  "log",
  "num-traits",
  "ouroboros",
- "qrcode",
  "rustc-hash 2.1.1",
  "thiserror 2.0.17",
  "unicode-segmentation",
@@ -3641,6 +3640,7 @@ dependencies = [
  "email_address",
  "flate2",
  "fs2",
+ "getrandom 0.3.1",
  "hex",
  "iced",
  "iced_aw",
@@ -3688,6 +3688,8 @@ name = "liana-ui"
 version = "16.0.0"
 dependencies = [
  "bitcoin",
+ "bwk-bbqr",
+ "bwk-qr",
  "chrono",
  "iced",
  "iced_aw",
@@ -5166,12 +5168,6 @@ checksum = "7f6d64c71eb498fe9eae14ce4ec935c555749aef511cca85b5568910d6e48001"
 dependencies = [
  "bytemuck",
 ]
-
-[[package]]
-name = "qrcode"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "166f136dfdb199f98186f3649cf7a0536534a61417a1a30221b492b4fb60ce3f"
 
 [[package]]
 name = "qrcodegen"

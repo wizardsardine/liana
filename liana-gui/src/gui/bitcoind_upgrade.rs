@@ -346,6 +346,7 @@ mod tests {
             pinned_at: None,
             keys: Vec::new(),
             hardware_wallets: Vec::new(),
+            airgapped_signers: Vec::new(),
             remote_backend_auth: remote_backend.then(|| {
                 AuthConfig::new(
                     "user".to_string(),

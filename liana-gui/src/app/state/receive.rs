@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use iced::{widget::qr_code, Length, Subscription, Task};
+use iced::{Length, Subscription, Task};
 use liana::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Address, Network,
@@ -296,7 +296,7 @@ impl State for ReceivePanel {
                 view::NewAddressMessage::ShowQr => {
                     let qr = if let Modal::NewAddress(m) = &self.modal {
                         m.shown()
-                            .and_then(|(address, _)| ShowQrCodeModal::new(address, None))
+                            .map(|(address, _)| ShowQrCodeModal::new(address, None))
                     } else {
                         None
                     };
@@ -415,9 +415,7 @@ impl State for ReceivePanel {
             Message::View(view::Message::ShowAddressQrCode(view::AddressQrSource::Row(i))) => {
                 // The address QR code does not encode the derivation index.
                 if let Some(address) = self.address(i) {
-                    if let Some(modal) = ShowQrCodeModal::new(address, None) {
-                        self.modal = Modal::ShowQrCode(modal);
-                    }
+                    self.modal = Modal::ShowQrCode(ShowQrCodeModal::new(address, None));
                 }
                 Task::none()
             }
@@ -426,14 +424,13 @@ impl State for ReceivePanel {
                 i,
             ))) => {
                 // Specter DIY devices need the derivation index in the QR code.
-                if let Some(qr) = ShowQrCodeModal::new(&address, Some(i)) {
-                    // From the generate flow's verify sub-modal, stack the QR so closing it
-                    // returns to the show-address step. From a standalone verify modal, replace.
-                    if let Modal::NewAddress(m) = &mut self.modal {
-                        m.set_sub(NewAddressSubModal::Qr(qr));
-                    } else {
-                        self.modal = Modal::ShowQrCode(qr);
-                    }
+                let qr = ShowQrCodeModal::new(&address, Some(i));
+                // From the generate flow's verify sub-modal, stack the QR so closing it
+                // returns to the show-address step. From a standalone verify modal, replace.
+                if let Modal::NewAddress(m) = &mut self.modal {
+                    m.set_sub(NewAddressSubModal::Qr(qr));
+                } else {
+                    self.modal = Modal::ShowQrCode(qr);
                 }
                 Task::none()
             }
@@ -575,23 +572,23 @@ impl VerifyAddressModal {
 }
 
 pub struct ShowQrCodeModal {
-    qr_code: qr_code::Data,
+    /// The BIP-21 URI the code carries, which is not the address alone: the
+    /// index suffix is there for signers that ask for it.
+    uri: String,
     address: String,
 }
 
 impl ShowQrCodeModal {
-    pub fn new(address: &Address, index: Option<ChildNumber>) -> Option<Self> {
+    pub fn new(address: &Address, index: Option<ChildNumber>) -> Self {
         let index = index.map(|i| format!("?index={i}")).unwrap_or_default();
-        qr_code::Data::new(format!("bitcoin:{address}{index}"))
-            .ok()
-            .map(|qr_code| Self {
-                qr_code,
-                address: address.to_string(),
-            })
+        Self {
+            uri: format!("bitcoin:{address}{index}"),
+            address: address.to_string(),
+        }
     }
 
     fn view(&self) -> Element<'_, view::Message> {
-        view::receive::qr_modal(&self.qr_code, &self.address)
+        view::receive::qr_modal(&self.uri, &self.address)
     }
 }
 

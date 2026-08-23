@@ -3,6 +3,20 @@
 # Format: id => "English"
 # Use \n for line breaks
 
+airgap-back-to-request => "Back to the request"
+
+airgap-error-title => "Air-gapped signer"
+
+airgap-frames-read => "Read {$seen} of {$total} frames"
+
+airgap-looking-for-qr => "Looking for the signer's QR code..."
+
+airgap-point-camera => "Point the camera at your signer's screen."
+
+airgap-requesting-camera => "Requesting camera access..."
+
+airgap-show-request => "Show this to your signer, then scan its answer back."
+
 bitcoind-upgrade-hint => "Updating your Liana-managed Bitcoin node."
 
 bitcoind-upgrade-title => "Upgrading Bitcoin Core to {$version}"
@@ -136,6 +150,8 @@ btn-reset-timelock => "Reset timelock"
 btn-retry => "Retry"
 
 btn-save => "Save"
+
+btn-scan-response => "Scan the response"
 
 btn-see-more-details => "See more details"
 
@@ -1615,6 +1631,14 @@ psbts-hide-confirmed => "Hide confirmed transactions"
 psbts-signatures-collected
 => "{ $threshold ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}";;
 
+qr-brightness => "Brightness: {$percent}%"
+
+qr-density => "Density"
+
+qr-frame-rate => "Speed"
+
+qr-settings => "QR code settings"
+
 receive-address-label-placeholder => "Enter an address label"
 
 receive-derivation-index => "Derivation index:"
@@ -1627,6 +1651,8 @@ receive-generating-address => "Generating address ..."
 receive-generating-address-title => "Generating address"
 
 receive-previous-addresses => "Previously generated addresses still awaiting deposit"
+
+receive-qr-unavailable => "Cannot show the QR code"
 
 receive-select-device => "Select device to verify address on:"
 

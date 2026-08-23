@@ -5,7 +5,10 @@
 //! the signing-flow protocol encoded by `bip377`, framed with BBQR; this module
 //! holds the Liana side of the exchange.
 
+pub mod animation;
+pub mod camera;
 pub mod device;
+pub mod display;
 pub mod error;
 pub mod exchange;
 mod merge;

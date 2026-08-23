@@ -1,8 +1,7 @@
 use liana_ui::component::panels::spend::FeeLevel;
 
 use crate::{
-    app::menu::Menu,
-    app::view::FiatAmountConverter,
+    app::{menu::Menu, state::airgap::AirgapAction, view::FiatAmountConverter},
     export::ImportExportMessage,
     node::bitcoind::RpcAuthType,
     services::fiat::{Currency, PriceSource},
@@ -41,6 +40,7 @@ pub enum Message {
     ShowAddressQrCode(AddressQrSource),
     ShowQrOptSection(bool),
     ImportExport(ImportExportMessage),
+    Airgap(AirgapAction),
     HideRescanWarning,
     ExportPsbt,
     ImportPsbt,
