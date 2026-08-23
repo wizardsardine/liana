@@ -43,6 +43,7 @@ use crate::{
     },
     services::connect::client::BackendType,
     signer::Signer,
+    utils::{check_key_network, derivation_path},
 };
 use liana_connect::keys::{self, api::KeyKind};
 
@@ -61,26 +62,6 @@ pub fn new_multixkey_from_xpub(
         ])
         .unwrap(),
         wildcard: Wildcard::Unhardened,
-    }
-}
-
-pub fn check_key_network(key: &DescriptorPublicKey, network: Network) -> bool {
-    match key {
-        DescriptorPublicKey::XPub(key) => {
-            if network == Network::Bitcoin {
-                key.xkey.network == Network::Bitcoin.into()
-            } else {
-                key.xkey.network == Network::Testnet.into()
-            }
-        }
-        DescriptorPublicKey::MultiXPub(key) => {
-            if network == Network::Bitcoin {
-                key.xkey.network == Network::Bitcoin.into()
-            } else {
-                key.xkey.network == Network::Testnet.into()
-            }
-        }
-        _ => true,
     }
 }
 
@@ -1484,22 +1465,6 @@ fn alias_already_exists(
     false
 }
 
-pub fn derivation_path(network: Network, account: ChildNumber) -> DerivationPath {
-    assert!(account.is_hardened());
-    let network = if network == Network::Bitcoin {
-        ChildNumber::Hardened { index: 0 }
-    } else {
-        ChildNumber::Hardened { index: 1 }
-    };
-    vec![
-        ChildNumber::Hardened { index: 48 },
-        network,
-        account,
-        ChildNumber::Hardened { index: 2 },
-    ]
-    .into()
-}
-
 /// LIANA_STANDARD_PATH: m/48'/0'/0'/2';
 /// LIANA_TESTNET_STANDARD_PATH: m/48'/1'/0'/2';
 pub async fn get_extended_pubkey(
@@ -1519,61 +1484,4 @@ pub async fn get_extended_pubkey(
         wildcard: Wildcard::None,
         xkey,
     }))
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::utils::default_derivation_path;
-
-    use super::*;
-
-    #[test]
-    fn test_default_derivation_path() {
-        assert_eq!(
-            default_derivation_path(Network::Bitcoin).to_string(),
-            "48'/0'/0'/2'"
-        );
-        assert_eq!(
-            default_derivation_path(Network::Testnet).to_string(),
-            "48'/1'/0'/2'"
-        );
-        assert_eq!(
-            default_derivation_path(Network::Testnet4).to_string(),
-            "48'/1'/0'/2'"
-        );
-        assert_eq!(
-            default_derivation_path(Network::Signet).to_string(),
-            "48'/1'/0'/2'"
-        );
-        assert_eq!(
-            default_derivation_path(Network::Regtest).to_string(),
-            "48'/1'/0'/2'"
-        );
-    }
-
-    #[test]
-    fn test_derivation_path() {
-        assert_eq!(
-            derivation_path(Network::Bitcoin, ChildNumber::Hardened { index: 0 }).to_string(),
-            "48'/0'/0'/2'"
-        );
-        assert_eq!(
-            derivation_path(Network::Regtest, ChildNumber::Hardened { index: 0 }).to_string(),
-            "48'/1'/0'/2'"
-        );
-        assert_eq!(
-            derivation_path(Network::Bitcoin, ChildNumber::Hardened { index: 1 }).to_string(),
-            "48'/0'/1'/2'"
-        );
-        assert_eq!(
-            derivation_path(Network::Regtest, ChildNumber::Hardened { index: 1 }).to_string(),
-            "48'/1'/1'/2'"
-        );
-    }
-
-    #[test]
-    #[should_panic]
-    fn unhardened_derivation_path() {
-        derivation_path(Network::Bitcoin, ChildNumber::Normal { index: 0 }).to_string();
-    }
 }
