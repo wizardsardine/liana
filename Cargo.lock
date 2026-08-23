@@ -3669,6 +3669,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tar",
+ "thiserror 2.0.17",
  "tokio",
  "toml 0.5.11",
  "tracing",
