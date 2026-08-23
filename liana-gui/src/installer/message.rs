@@ -19,6 +19,7 @@ use super::{
 use crate::{
     app::{
         settings::{self, ProviderKey},
+        state::airgap::Message as AirgapMessage,
         view::Close,
     },
     backup::Backup,
@@ -79,6 +80,8 @@ pub enum Message {
     SelectAccount(Fingerprint, ChildNumber),
     OpenUrl(String),
     SelectKeySource(SelectKeySourceMessage),
+    Airgap(AirgapMessage),
+    SelectAirgappedSigner(Fingerprint),
     EditKeyAlias(EditKeyAliasMessage),
     Decrypt(Decrypt),
     None,

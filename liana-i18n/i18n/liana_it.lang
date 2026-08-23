@@ -929,6 +929,8 @@ device-hot-key-test-only
 => "We recommend using this option only for test purposes"
 => "Consigliamo di usare questa opzione solo per test";;
 
+device-import-xpub-qr => "Import xpub by QR Code" => NONE
+
 device-install-firmware-version-or-later
 => "Install firmware version {$version} \nor later"
 => "Installa la versione firmware {$version} \no successiva";;
@@ -1166,6 +1168,10 @@ installer-accepted-wallet-not-found
 installer-add-key => "Add key" => "Aggiungi chiave"
 
 installer-add-safety-net-key => "Add Safety Net key" => "Aggiungi chiave Safety Net"
+
+installer-airgapped-key-added-another-way
+=> "This signer's key is already in the wallet as {$name}, added another way."
+=> NONE;;
 
 installer-already-have-node => "I already have a node" => "Ho già un nodo"
 
@@ -1420,6 +1426,8 @@ installer-expanding-multisig-wallet
 installer-export-backup-failed
 => "Failed to export backup"
 => "Esportazione backup non riuscita";;
+
+installer-extended-public-key => "Extended public key:" => NONE
 
 installer-finalize-installation
 => "Finalize installation"

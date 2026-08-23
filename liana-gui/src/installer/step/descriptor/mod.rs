@@ -2,6 +2,7 @@ pub mod editor;
 
 use std::{
     collections::{HashMap, HashSet},
+    path::PathBuf,
     str::FromStr,
 };
 
@@ -11,13 +12,25 @@ use liana::{
     miniscript::bitcoin::{bip32::Fingerprint, Network},
 };
 
-use liana_ui::{component::form, widget::Element};
+use liana_ui::{
+    component::form,
+    widget::{modal::Modal, Element},
+};
 
 use async_hwi::DeviceKind;
 
 use crate::{
-    app::{settings::KeySetting, state::export::ExportModal, wallet::wallet_name},
+    airgap::device::{AirgappedDevice, Answer, Registration, RequestBuilder},
+    app::{
+        settings::KeySetting,
+        state::{
+            airgap::{AirgapModal, AirgapOutcome, Message as AirgapMessage},
+            export::ExportModal,
+        },
+        wallet::wallet_name,
+    },
     backup::Backup,
+    dir::LianaDirectory,
     export::{ImportExportMessage, ImportExportType, Progress},
     hw::{HardwareWallet, HardwareWallets},
     installer::{
@@ -265,6 +278,9 @@ pub struct RegisterDescriptor {
     chosen_hw: Option<usize>,
     hmacs: Vec<(Fingerprint, DeviceKind, Option<[u8; 32]>)>,
     registered: HashSet<Fingerprint>,
+    airgapped_signers: Vec<AirgappedDevice>,
+    modal: Option<AirgapModal>,
+    liana_directory: LianaDirectory,
     error: Option<Error>,
     done: bool,
     /// Whether this step is part of the descriptor creation process. This is used to detect when
@@ -283,6 +299,9 @@ impl RegisterDescriptor {
             chosen_hw: Default::default(),
             hmacs: Default::default(),
             registered: Default::default(),
+            airgapped_signers: Default::default(),
+            modal: None,
+            liana_directory: LianaDirectory::new(PathBuf::new()),
             error: Default::default(),
             done: Default::default(),
         }
@@ -295,6 +314,82 @@ impl RegisterDescriptor {
     pub fn new_import_wallet() -> Self {
         Self::new(false)
     }
+
+    fn on_select_airgapped_signer(&mut self, fingerprint: Fingerprint) -> Task<Message> {
+        let (Some(descriptor), Some(signer)) = (
+            self.descriptor.as_ref(),
+            self.airgapped_signers
+                .iter()
+                .find(|signer| signer.fingerprint == fingerprint),
+        ) else {
+            log::warn!("no descriptor or no signing device {fingerprint} to register with");
+            return Task::none();
+        };
+        let builder = RequestBuilder {
+            alias: wallet_name(descriptor),
+            descriptor: descriptor.clone(),
+            registration: signer
+                .registration(&descriptor.checksum())
+                .cloned()
+                .unwrap_or_default(),
+            capabilities: signer.capabilities,
+        };
+        match builder.register().and_then(|request| {
+            AirgapModal::new(
+                Some(fingerprint),
+                crate::t!("airgap-register-title"),
+                request,
+                &self.liana_directory,
+            )
+        }) {
+            Ok((modal, task)) => {
+                self.error = None;
+                self.modal = Some(modal);
+                task.map(Message::Airgap)
+            }
+            Err(e) => {
+                self.error = Some(e.into());
+                Task::none()
+            }
+        }
+    }
+
+    fn on_airgap(&mut self, action: AirgapMessage) -> Task<Message> {
+        let Some(modal) = self.modal.as_mut() else {
+            return Task::none();
+        };
+        let task = modal.update(action).map(Message::Airgap);
+        match modal.outcome.take() {
+            Some(AirgapOutcome::Answer(answer)) => {
+                let fingerprint = modal.fingerprint;
+                self.modal = None;
+                let (Some(fingerprint), Answer::Registered(registration)) = (fingerprint, *answer)
+                else {
+                    return task;
+                };
+                if let Some(signer) = self
+                    .airgapped_signers
+                    .iter_mut()
+                    .find(|signer| signer.fingerprint == fingerprint)
+                {
+                    signer.record(Registration {
+                        descriptor_checksum: self
+                            .descriptor
+                            .as_ref()
+                            .map(LianaDescriptor::checksum),
+                        ..registration
+                    });
+                    self.registered.insert(fingerprint);
+                }
+                task
+            }
+            Some(AirgapOutcome::Cancelled) => {
+                self.modal = None;
+                task
+            }
+            None => task,
+        }
+    }
 }
 
 impl Step for RegisterDescriptor {
@@ -305,6 +400,8 @@ impl Step for RegisterDescriptor {
             self.done = false;
         }
         self.descriptor.clone_from(&ctx.descriptor);
+        self.airgapped_signers = ctx.airgapped_signers.values().cloned().collect();
+        self.liana_directory = ctx.liana_directory.clone();
         let mut map = HashMap::new();
         for key in ctx.keys.values().filter(|k| !k.name.is_empty()) {
             map.insert(key.master_fingerprint, key.name.clone());
@@ -312,6 +409,10 @@ impl Step for RegisterDescriptor {
     }
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match message {
+            Message::SelectAirgappedSigner(fingerprint) => {
+                return self.on_select_airgapped_signer(fingerprint);
+            }
+            Message::Airgap(action) => return self.on_airgap(action),
             Message::Select(i) => {
                 if let Some(HardwareWallet::Supported {
                     device,
@@ -369,16 +470,24 @@ impl Step for RegisterDescriptor {
         Task::none()
     }
     fn skip(&self, ctx: &Context) -> bool {
-        !ctx.hw_is_used
+        !ctx.hw_is_used && ctx.airgapped_signers.is_empty()
     }
     fn apply(&mut self, ctx: &mut Context) -> bool {
         for (fingerprint, kind, token) in &self.hmacs {
             ctx.hws.push((*kind, *fingerprint, *token));
         }
+        for signer in &self.airgapped_signers {
+            ctx.airgapped_signers
+                .insert(signer.fingerprint, signer.clone());
+        }
         true
     }
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
-        hws.refresh().map(Message::HardwareWallets)
+        let hw = hws.refresh().map(Message::HardwareWallets);
+        match &self.modal {
+            Some(modal) => Subscription::batch([hw, modal.subscription().map(Message::Airgap)]),
+            None => hw,
+        }
     }
     fn load(&self) -> Task<Message> {
         Task::none()
@@ -392,19 +501,26 @@ impl Step for RegisterDescriptor {
     ) -> Element<'a, Message> {
         let desc = self.descriptor.as_ref().unwrap();
 
-        view::register_descriptor(
+        let content = view::register_descriptor(
             progress,
             network,
             email,
             desc,
             &hws.list,
+            &self.airgapped_signers,
             &self.registered,
             self.error.as_ref(),
             self.processing,
             self.chosen_hw,
             self.done,
             self.created_desc,
-        )
+        );
+        match &self.modal {
+            Some(modal) => Modal::new(content, crate::view::airgap::modal(modal, Message::Airgap))
+                .on_blur(Some(Message::Airgap(AirgapMessage::Cancel)))
+                .into(),
+            None => content,
+        }
     }
 }
 

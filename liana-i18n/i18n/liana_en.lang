@@ -725,6 +725,8 @@ device-generate-hot-key => "Generate hot key stored on this computer"
 
 device-hot-key-test-only => "We recommend using this option only for test purposes"
 
+device-import-xpub-qr => "Import xpub by QR Code"
+
 device-install-firmware-version-or-later
 => "Install firmware version {$version} \nor later";;
 
@@ -891,6 +893,9 @@ installer-accepted-wallet-not-found => "Wallet of accepted invitation not found"
 installer-add-key => "Add key"
 
 installer-add-safety-net-key => "Add Safety Net key"
+
+installer-airgapped-key-added-another-way
+=> "This signer's key is already in the wallet as {$name}, added another way.";;
 
 installer-already-have-node => "I already have a node"
 
@@ -1061,6 +1066,8 @@ installer-expanding-multisig-description
 installer-expanding-multisig-wallet => "Expanding multisig wallet"
 
 installer-export-backup-failed => "Failed to export backup"
+
+installer-extended-public-key => "Extended public key:"
 
 installer-finalize-installation => "Finalize installation"
 
