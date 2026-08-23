@@ -671,6 +671,7 @@ pub fn create_app_with_remote_backend(
                 .with_key_aliases(aliases)
                 .with_provider_keys(provider_keys)
                 .with_hardware_wallets(hws)
+                .with_airgapped_signers(wallet_settings.airgapped_signers.clone())
                 .with_remote_backend_auth(
                     wallet_settings
                         .remote_backend_auth

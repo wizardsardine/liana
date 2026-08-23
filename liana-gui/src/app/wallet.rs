@@ -4,7 +4,8 @@ use std::sync::Arc;
 use crate::app::cache::FiatPrice;
 use crate::dir::LianaDirectory;
 use crate::{
-    app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig, node::NodeType, signer::Signer,
+    airgap::AirgappedSignerConfig, app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig,
+    node::NodeType, signer::Signer,
 };
 
 use liana::{miniscript::bitcoin, signer::HotSigner};
@@ -41,6 +42,7 @@ pub struct Wallet {
     pub keys_aliases: HashMap<Fingerprint, String>,
     pub provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
+    pub airgapped_signers: Vec<AirgappedSignerConfig>,
     pub signer: Option<Arc<Signer>>,
     pub fiat_price_setting: Option<fiat::PriceSetting>,
     pub remote_backend_auth: Option<settings::AuthConfig>,
@@ -62,6 +64,7 @@ impl Wallet {
             keys_aliases: HashMap::new(),
             provider_keys: HashMap::new(),
             hardware_wallets: Vec::new(),
+            airgapped_signers: Vec::new(),
             signer: None,
             fiat_price_setting: None,
             remote_backend_auth: None,
@@ -103,6 +106,19 @@ impl Wallet {
 
     pub fn with_hardware_wallets(mut self, hardware_wallets: Vec<HardwareWalletConfig>) -> Self {
         self.hardware_wallets = hardware_wallets;
+        self
+    }
+
+    /// A registration only ever covered one descriptor, so anything recorded
+    /// against a different one is dropped rather than shown as still valid.
+    pub fn with_airgapped_signers(
+        mut self,
+        mut airgapped_signers: Vec<AirgappedSignerConfig>,
+    ) -> Self {
+        for signer in &mut airgapped_signers {
+            signer.invalidate_registration(&self.descriptor_checksum);
+        }
+        self.airgapped_signers = airgapped_signers;
         self
     }
 
@@ -149,6 +165,7 @@ impl Wallet {
                 .with_name(wallet_settings.name)
                 .with_pinned_at(wallet_settings.pinned_at)
                 .with_hardware_wallets(wallet_settings.hardware_wallets)
+                .with_airgapped_signers(wallet_settings.airgapped_signers)
                 .with_fiat_price_setting(wallet_settings.fiat_price))
         }
     }

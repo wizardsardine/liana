@@ -65,6 +65,7 @@ open = { workspace = true }
 
 encrypted_backup = { workspace = true }
 bwk-qr = { workspace = true }
+getrandom = { workspace = true }
 nokhwa = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]

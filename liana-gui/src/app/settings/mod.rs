@@ -24,6 +24,7 @@ use liana::miniscript::bitcoin;
 use lianad::commands::ListCoinsResult;
 
 use crate::{
+    airgap::AirgappedSignerConfig,
     app::{self, state::State},
     backup::{Key, KeyRole, KeyType},
     dir::{LianaDirectory, NetworkDirectory},
@@ -102,6 +103,10 @@ pub trait WalletSettingsTrait: Clone + Serialize + DeserializeOwned + Send + 'st
     fn keys(&self) -> &[KeySetting];
     /// Get the list of hardware wallet configurations registered with this wallet.
     fn hardware_wallets(&self) -> &[HardwareWalletConfig];
+    /// Get the air-gapped signers this wallet knows about.
+    fn airgapped_signers(&self) -> &[AirgappedSignerConfig] {
+        &[]
+    }
     /// Get the remote backend authentication config, if this wallet uses a remote backend.
     fn remote_backend_auth(&self) -> Option<&AuthConfig>;
     /// Get the fiat price conversion settings for this wallet.
@@ -280,6 +285,10 @@ pub struct LianaWalletSettings {
     // wallet metadata
     #[serde(default)]
     pub hardware_wallets: Vec<HardwareWalletConfig>,
+    // Air-gapped signers are never seen over USB, so unlike hardware wallets
+    // they are only known from what they sent back over QR.
+    #[serde(default)]
+    pub airgapped_signers: Vec<AirgappedSignerConfig>,
     pub remote_backend_auth: Option<AuthConfig>,
     /// Start internal bitcoind executable.
     /// if None, the app must refer to the gui.toml start_internal_bitcoind field.
@@ -375,6 +384,10 @@ impl WalletSettingsTrait for LianaWalletSettings {
 
     fn hardware_wallets(&self) -> &[HardwareWalletConfig] {
         &self.hardware_wallets
+    }
+
+    fn airgapped_signers(&self) -> &[AirgappedSignerConfig] {
+        &self.airgapped_signers
     }
 
     fn remote_backend_auth(&self) -> Option<&AuthConfig> {

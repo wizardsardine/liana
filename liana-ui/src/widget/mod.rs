@@ -26,6 +26,7 @@ pub type Toggler<'a, Message> = iced::widget::Toggler<'a, Message, Theme, Render
 pub type TextInput<'a, Message> = text_input::TextInput<'a, Message, Theme, Renderer>;
 pub type Tooltip<'a> = iced::widget::Tooltip<'a, Theme, Renderer>;
 pub type ProgressBar<'a> = iced::widget::ProgressBar<'a, Theme>;
+pub type Slider<'a, T, Message> = iced::widget::Slider<'a, T, Message, Theme>;
 pub type PickList<'a, T, L, V, Message> =
     iced::widget::PickList<'a, T, L, V, Message, Theme, Renderer>;
 pub type Scrollable<'a, Message> = iced::widget::Scrollable<'a, Message, Theme, Renderer>;

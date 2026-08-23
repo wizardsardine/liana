@@ -594,6 +594,7 @@ pub async fn install_local_wallet(
         descriptor_checksum: wallet_id.descriptor_checksum.clone(),
         keys: ctx.keys.values().cloned().collect(),
         hardware_wallets,
+        airgapped_signers: ctx.airgapped_signers.values().cloned().collect(),
         remote_backend_auth: None,
         start_internal_bitcoind: Some(ctx.internal_bitcoind.is_some()),
         fiat_price: None,
@@ -811,6 +812,9 @@ pub async fn create_remote_wallet(
         pinned_at: wallet_id.timestamp,
         keys: Vec::new(),
         hardware_wallets: Vec::new(),
+        // The remote backend has no schema for an air-gapped signer, so unlike keys
+        // and hardware wallets these stay in the local settings file.
+        airgapped_signers: ctx.airgapped_signers.values().cloned().collect(),
         remote_backend_auth: Some(AuthConfig::new(
             remote_backend.user_id().to_string(),
             remote_backend.user_email().to_string(),
@@ -893,6 +897,9 @@ pub async fn import_remote_wallet(
         pinned_at: wallet_id.timestamp,
         keys: Vec::new(),
         hardware_wallets: Vec::new(),
+        // The remote backend has no schema for an air-gapped signer, so unlike keys
+        // and hardware wallets these stay in the local settings file.
+        airgapped_signers: ctx.airgapped_signers.values().cloned().collect(),
         remote_backend_auth: Some(AuthConfig::new(
             backend.user_id().to_string(),
             backend.user_email().to_string(),

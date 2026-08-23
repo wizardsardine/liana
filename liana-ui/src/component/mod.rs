@@ -15,6 +15,7 @@ pub mod notification;
 pub mod panels;
 pub mod pick_list;
 pub mod pill;
+pub mod qr;
 pub mod scrollable;
 pub mod spinner;
 pub mod tab;
