@@ -22,6 +22,8 @@ use liana_ui::{
             self, btn_backup_encrypt_descriptor, btn_icon_edit, btn_register_on_device, btn_update,
         },
         card, form,
+        list::DeviceStatus,
+        modal,
         panels::setting::{
             export_section, header, settings_section, ImportExportKind, SectionKind,
         },
@@ -37,6 +39,7 @@ use lianad::config::BitcoindRpcAuth;
 use super::{dashboard, message::*};
 
 use crate::{
+    airgap::AirgappedSignerConfig,
     app::{cache::Cache, error::Error, menu::Menu, settings::ProviderKey, view::warning::warn},
     help,
     hw::HardwareWallet,
@@ -1222,9 +1225,11 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
 pub fn register_wallet_modal<'a>(
     warning: Option<&Error>,
     hws: &'a [HardwareWallet],
+    airgapped: &'a [AirgappedSignerConfig],
     processing: bool,
     chosen_hw: Option<usize>,
     registered: &HashSet<Fingerprint>,
+    descriptor_checksum: &str,
 ) -> Element<'a, Message> {
     let signers = hws
         .iter()
@@ -1250,6 +1255,24 @@ pub fn register_wallet_modal<'a>(
                 move || Message::SelectHardwareWallet(i),
             ))
         });
+
+    let signers = airgapped.iter().fold(signers, |col, signer| {
+        let fingerprint = signer.fingerprint;
+        let status = if signer.registration.covers(descriptor_checksum) {
+            DeviceStatus::Registered
+        } else {
+            DeviceStatus::None
+        };
+        col.push(modal::airgapped_signer_entry(
+            Some(format!("#{fingerprint}")),
+            Some(&signer.model),
+            signer.alias.as_ref(),
+            status,
+            Some(Message::Settings(SettingsMessage::RegisterAirgappedSigner(
+                fingerprint,
+            ))),
+        ))
+    });
 
     let card_content = Column::new()
         .push(

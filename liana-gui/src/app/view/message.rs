@@ -139,6 +139,7 @@ pub enum SettingsMessage {
     ImportWallet,
     AboutSection,
     RegisterWallet,
+    RegisterAirgappedSigner(Fingerprint),
     FingerprintAliasEdited(Fingerprint, String),
     WalletAliasEdited(String),
     Save,
