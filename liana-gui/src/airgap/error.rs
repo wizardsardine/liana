@@ -5,7 +5,10 @@ use bip377::{
     ll::{decode, encode, response},
     response::Mismatch,
 };
-use liana::miniscript::bitcoin::{bip32, psbt};
+use liana::miniscript::bitcoin::{
+    bip32::{self, Fingerprint},
+    psbt,
+};
 
 use crate::airgap::{camera::CameraFailure, device::label};
 
@@ -53,6 +56,8 @@ pub enum Error {
     NotSigned,
     #[error("The transaction came back without any new signature")]
     NoNewSignature,
+    #[error("The signing device {0} is not saved")]
+    NotSaved(Fingerprint),
 }
 
 fn refusal<'a>(error: &response::Error, message: &'a str) -> &'a str {

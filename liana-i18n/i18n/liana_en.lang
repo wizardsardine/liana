@@ -9,6 +9,8 @@ airgap-looking-for-qr => "Looking for the signer's QR code..."
 
 airgap-point-camera => "Point the camera at your signer's screen."
 
+airgap-register-title => "Register the wallet"
+
 airgap-show-request => "Show this to your signer, then scan its answer back."
 
 airgap-sign-title => "Sign with a signing device"

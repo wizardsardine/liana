@@ -13,7 +13,8 @@ use liana_ui::{
     component::{
         button::btn_update,
         card, form,
-        list::STANDARD_ENTRY_WIDTH,
+        list::{DeviceStatus, STANDARD_ENTRY_WIDTH},
+        modal,
         panels::setting::{descriptor_card, header, SectionKind},
         scrollable,
         text::new,
@@ -37,6 +38,7 @@ use crate::{
             settings::SETTING_MSG,
             warning::warn,
         },
+        wallet::Wallet,
     },
     hw::HardwareWallet,
     t,
@@ -291,6 +293,7 @@ const REGISTER_DEVICE_CARD_WIDTH: f32 = STANDARD_ENTRY_WIDTH + 2.0 * card::SIMPL
 pub fn register_wallet_modal<'a>(
     warning: Option<&Error>,
     hws: &'a [HardwareWallet],
+    wallet: &'a Wallet,
     processing: bool,
     chosen_hw: Option<usize>,
     registered: &HashSet<Fingerprint>,
@@ -319,6 +322,28 @@ pub fn register_wallet_modal<'a>(
                     move || Message::SelectHardwareWallet(i),
                 ))
             });
+
+    let airgapped_signers = &wallet.airgapped_signers;
+    let signers = airgapped_signers.iter().fold(signers, |col, signer| {
+        let fingerprint = signer.fingerprint;
+        let status = if signer.registration(&wallet.descriptor_checksum).is_some() {
+            DeviceStatus::Registered
+        } else {
+            DeviceStatus::None
+        };
+        col.push(modal::airgapped_signer_entry(
+            Some(format!("#{fingerprint}")),
+            Some(&signer.model),
+            wallet
+                .keys_aliases
+                .get(&fingerprint)
+                .or(signer.alias.as_ref()),
+            status,
+            Some(Message::Settings(SettingsMessage::RegisterAirgappedSigner(
+                fingerprint,
+            ))),
+        ))
+    });
 
     let title = new::h3_semi(t!("settings-select-device")).width(Length::Fill);
     let devices = column![title, signers]
