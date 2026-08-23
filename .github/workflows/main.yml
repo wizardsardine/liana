@@ -64,7 +64,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+          sudo apt-get install -y clang libclang-dev libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
       - name: clippy
         run: cargo clippy --all-features --all-targets -- -D warnings
 
@@ -145,7 +145,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+          sudo apt-get install -y clang libclang-dev libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
       - name: Build the tests of every slice
         shell: bash
         env:
@@ -191,7 +191,7 @@ jobs:
         if: matrix.slice.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev libfontconfig1-dev
+          sudo apt-get install -y clang libclang-dev libudev-dev libfontconfig1-dev
       - name: Test (Windows)
         if: matrix.slice.os == 'windows-latest'
         run: cargo test --verbose --no-default-features ${{ matrix.slice.packages }}
@@ -213,7 +213,7 @@ jobs:
       # The release build is the longest CI job, so the install overlaps the next steps.
       - name: Start installing the system dependencies
         run: |
-          (sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+          (sudo apt-get update && sudo apt-get install -y clang libclang-dev libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
            echo $? > "$RUNNER_TEMP/apt.status") > "$RUNNER_TEMP/apt.log" 2>&1 &
       - uses: actions/checkout@v4
       # rust-cache keys on every installed toolchain: keep the ones of the runner image out.

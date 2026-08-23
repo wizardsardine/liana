@@ -12,7 +12,7 @@ default = ["debugger"]
 debugger = ["liana-gui/debugger"]
 
 [dependencies]
-crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
+crossbeam = { workspace = true, features = ["crossbeam-channel"] }
 email_address = { workspace = true }
 reqwest = { workspace = true, features = ["json", "blocking"] }
 tokio = { workspace = true, features = ["rt"] }

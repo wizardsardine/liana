@@ -95,7 +95,7 @@ let
     buildPhaseCargoCommand = "cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31 -p liana-business --no-default-features --message-format json-render-diagnostics";
     doNotPostBuildInstallCargoBinaries = true;
 
-    nativeBuildInputs = [ pkgs.pkg-config ];
+    nativeBuildInputs = [ pkgs.pkg-config pkgs.rustPlatform.bindgenHook ];
     buildInputs = [ pkgs.udev ];
     depsBuildBuild = [ pkgs.zig pkgs.cargo-zigbuild ];
 

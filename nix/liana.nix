@@ -79,7 +79,7 @@ let
     '';
     doNotPostBuildInstallCargoBinaries = true;
 
-    nativeBuildInputs = [ pkgs.pkg-config ];
+    nativeBuildInputs = [ pkgs.pkg-config pkgs.rustPlatform.bindgenHook ];
     buildInputs = [ pkgs.udev ];
     depsBuildBuild = [ pkgs.zig pkgs.cargo-zigbuild ];
 
