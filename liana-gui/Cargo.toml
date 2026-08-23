@@ -87,5 +87,7 @@ skip-windows-icon = []
 winresource = { workspace = true }
 
 [dev-dependencies]
+# The protocol tests play the signer: they decode requests and encode answers.
+bip377 = { workspace = true, features = ["signer"] }
 liana = { path = "../liana", features = ["test-utils"] }
 tokio = {workspace = true, features = ["rt", "macros"]}

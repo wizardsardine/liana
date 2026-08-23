@@ -42,7 +42,7 @@ use crate::{
     },
     services::connect::client::BackendType,
     signer::Signer,
-    utils::derivation_path,
+    utils::{check_key_network, derivation_path},
 };
 use liana_connect::keys::{self, api::KeyKind};
 
@@ -62,26 +62,6 @@ pub fn new_multixkey_from_xpub(
         ])
         .unwrap(),
         wildcard: Wildcard::Unhardened,
-    }
-}
-
-pub fn check_key_network(key: &DescriptorPublicKey, network: Network) -> bool {
-    match key {
-        DescriptorPublicKey::XPub(key) => {
-            if network == Network::Bitcoin {
-                key.xkey.network == Network::Bitcoin.into()
-            } else {
-                key.xkey.network == Network::Testnet.into()
-            }
-        }
-        DescriptorPublicKey::MultiXPub(key) => {
-            if network == Network::Bitcoin {
-                key.xkey.network == Network::Bitcoin.into()
-            } else {
-                key.xkey.network == Network::Testnet.into()
-            }
-        }
-        _ => true,
     }
 }
 

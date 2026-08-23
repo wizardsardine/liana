@@ -1,3 +1,4 @@
+pub mod airgap;
 pub mod app;
 pub mod args;
 pub mod backup;

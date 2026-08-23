@@ -1,8 +1,11 @@
 use std::time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH};
 
-use liana::miniscript::bitcoin::{
-    bip32::{ChildNumber, DerivationPath},
-    Network,
+use liana::miniscript::{
+    bitcoin::{
+        bip32::{ChildNumber, DerivationPath},
+        Network,
+    },
+    descriptor::DescriptorPublicKey,
 };
 
 pub mod serde;
@@ -47,6 +50,26 @@ pub fn derivation_path(network: Network, account: ChildNumber) -> DerivationPath
         ChildNumber::Hardened { index: 2 },
     ]
     .into()
+}
+
+pub fn check_key_network(key: &DescriptorPublicKey, network: Network) -> bool {
+    match key {
+        DescriptorPublicKey::XPub(key) => {
+            if network == Network::Bitcoin {
+                key.xkey.network == Network::Bitcoin.into()
+            } else {
+                key.xkey.network == Network::Testnet.into()
+            }
+        }
+        DescriptorPublicKey::MultiXPub(key) => {
+            if network == Network::Bitcoin {
+                key.xkey.network == Network::Bitcoin.into()
+            } else {
+                key.xkey.network == Network::Testnet.into()
+            }
+        }
+        _ => true,
+    }
 }
 
 #[cfg(test)]
