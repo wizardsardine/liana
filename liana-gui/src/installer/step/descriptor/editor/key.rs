@@ -24,7 +24,7 @@ use liana_ui::{
     component::{
         button, card, form,
         modal::{self, modal_no_devices_placeholder, KeySourceKind},
-        pick_list,
+        pick_list, scrollable,
         text::{p1_bold, p1_regular},
         tooltip,
     },
@@ -33,7 +33,14 @@ use liana_ui::{
 };
 
 use crate::{
-    app::{settings::ProviderKey, state::export::ExportModal},
+    airgap::{AirgappedSignerConfig, Answer, Ask, Signer as AirgapSigner},
+    app::{
+        settings::ProviderKey,
+        state::{
+            airgap::{AirgapAction, AirgapModal, AirgapOutcome},
+            export::ExportModal,
+        },
+    },
     export::{ImportExportMessage, ImportExportType},
     hw::{is_compatible_with_tapminiscript, HardwareWallet, HardwareWallets, UnsupportedReason},
     installer::{
@@ -78,6 +85,7 @@ enum Focus {
     Device(Fingerprint),
     EnterXpub,
     LoadXpubFromFile,
+    ScanAirgapped,
     GenerateHotKey,
     EnterSafetyNetToken,
     EnterCosignerToken,
@@ -90,6 +98,8 @@ pub enum SelectKeySourceMessage {
     FetchFromDevice(Fingerprint, ChildNumber),
     SelectKey(Fingerprint),
     SelectLoadXpub,
+    SelectScanAirgapped,
+    Airgap(AirgapAction),
     SelectEnterXpub,
     PasteXpub,
     Xpub(String),
@@ -164,6 +174,10 @@ pub struct SelectKeySource {
     step: Step,
     focus: Focus,
     modal: Option<ExportModal>,
+    airgap: Option<AirgapModal>,
+    /// The accounts the last scanned signer returned, so picking another one
+    /// does not need a second exchange.
+    airgapped_signer: Option<AirgapSigner>,
     processing: bool,
     error: Option<String>,
     details_error: Option<String>,
@@ -200,6 +214,8 @@ impl SelectKeySource {
             step: Step::Select,
             focus: Focus::None,
             modal: None,
+            airgap: None,
+            airgapped_signer: None,
             processing: false,
             error: None,
             details_error: None,
@@ -467,6 +483,95 @@ impl SelectKeySource {
         }
         Task::none()
     }
+    fn on_select_scan_airgapped(&mut self) -> Task<Message> {
+        self.focus = Focus::ScanAirgapped;
+        self.error = None;
+        if self.airgap.is_none() {
+            match AirgapModal::new(
+                "Import xpub by QR Code",
+                Ask::Xpubs {
+                    network: self.network,
+                },
+            ) {
+                Ok(modal) => self.airgap = Some(modal),
+                Err(e) => self.error = Some(e.to_string()),
+            }
+        }
+        Task::none()
+    }
+
+    fn on_airgap(&mut self, action: AirgapAction) -> Task<Message> {
+        let Some(airgap) = self.airgap.as_mut() else {
+            return Task::none();
+        };
+        let task = airgap
+            .update(action)
+            .map(|action| Self::route(SelectKeySourceMessage::Airgap(action)));
+        match airgap.take_outcome() {
+            Some(AirgapOutcome::Answer(answer)) => {
+                self.airgap = None;
+                match *answer {
+                    Answer::Xpubs(signer) => self.on_airgapped_signer(signer),
+                    _ => Task::none(),
+                }
+            }
+            Some(AirgapOutcome::Cancelled) => {
+                self.airgap = None;
+                if self.focus == Focus::ScanAirgapped {
+                    self.focus = Focus::None;
+                }
+                Task::none()
+            }
+            None => task,
+        }
+    }
+
+    fn on_airgapped_signer(&mut self, signer: AirgapSigner) -> Task<Message> {
+        if self.keys.contains_key(&signer.fingerprint) {
+            self.selected_key = SelectedKey::Existing(signer.fingerprint);
+            self.airgapped_signer = None;
+            return self.on_next();
+        }
+        self.form_alias.value = signer.model.clone();
+        self.form_alias.valid = true;
+        let account = self
+            .form_account
+            .unwrap_or(ChildNumber::from_hardened_idx(0).expect("hardcoded"));
+        self.airgapped_signer = Some(signer);
+        self.select_airgapped_account(account);
+        self.on_next()
+    }
+
+    /// Picks one of the accounts the signer already returned. Nothing is asked
+    /// of the signer again, and the step does not advance: the user is choosing,
+    /// and only Apply commits.
+    fn select_airgapped_account(&mut self, account: ChildNumber) {
+        let Some(signer) = self.airgapped_signer.as_ref() else {
+            return;
+        };
+        let Some((_, key)) = signer
+            .accounts
+            .iter()
+            .find(|(candidate, _)| *candidate == account)
+        else {
+            self.details_error = Some(format!(
+                "The device did not return an account {account} key"
+            ));
+            return;
+        };
+        self.form_account = Some(account);
+        self.details_error = None;
+        let record =
+            AirgappedSignerConfig::new(signer, key.clone(), Some(self.form_alias.value.clone()));
+        self.selected_key = SelectedKey::New(Box::new(Key {
+            source: KeySource::Airgapped(Box::new(record)),
+            name: self.form_alias.value.clone(),
+            fingerprint: signer.fingerprint,
+            key: key.clone(),
+            account: Some(account),
+        }));
+    }
+
     fn on_select_enter_xpub(&mut self) -> Task<Message> {
         self.focus = Focus::EnterXpub;
         Task::none()
@@ -777,6 +882,10 @@ impl SelectKeySource {
                 fg, index,
             ))),
             Focus::GenerateHotKey => self.on_fetch_from_hotsigner(index),
+            Focus::ScanAirgapped => {
+                self.select_airgapped_account(index);
+                Task::none()
+            }
             _ => Task::none(),
         }
     }
@@ -931,20 +1040,30 @@ impl SelectKeySource {
             Some(Message::Close),
         );
 
-        let accounts: Vec<_> = (0..10)
-            .map(|i| {
-                modal::Account::new(
-                    ChildNumber::from_hardened_idx(i).expect("hardcoded"),
-                    fingerprint,
-                )
-            })
-            .collect();
+        // A scanned signer answered a fixed set of accounts in one exchange, so
+        // offer those rather than a range it may not have covered.
+        let accounts: Vec<_> = match self.airgapped_signer.as_ref() {
+            Some(signer) if self.focus == Focus::ScanAirgapped => signer
+                .accounts
+                .iter()
+                .map(|(account, _)| modal::Account::new(*account, fingerprint))
+                .collect(),
+            _ => (0..10)
+                .map(|i| {
+                    modal::Account::new(
+                        ChildNumber::from_hardened_idx(i).expect("hardcoded"),
+                        fingerprint,
+                    )
+                })
+                .collect(),
+        };
         let child = self
             .form_account
             .unwrap_or(ChildNumber::Hardened { index: 0 });
         let account = modal::Account::new(child, fingerprint);
 
-        let pick_enabled = !self.processing && matches!(self.focus, Focus::Device(_));
+        let pick_enabled =
+            !self.processing && matches!(self.focus, Focus::Device(_) | Focus::ScanAirgapped);
 
         let pick_account: Container<_> = if pick_enabled {
             container(pick_list::pick_list(
@@ -955,13 +1074,23 @@ impl SelectKeySource {
         } else {
             container(p1_regular(account.to_string()))
         };
-        let edit_account = matches!(self.focus, Focus::Device(_));
+        let edit_account = matches!(self.focus, Focus::Device(_) | Focus::ScanAirgapped);
 
         let pick_account = edit_account.then_some(pick_account);
+
+        // Showing the key lets the user check which account they picked before
+        // committing to it, which is the point of asking a signer for several.
+        let xpub = (self.focus == Focus::ScanAirgapped)
+            .then(|| match &self.selected_key {
+                SelectedKey::New(key) => Some(key.key.to_string()),
+                _ => None,
+            })
+            .flatten();
 
         details_view(
             header,
             pick_account,
+            xpub,
             &self.form_alias,
             self.details_error.clone(),
             |s| Self::route(SelectKeySourceMessage::Alias(s)),
@@ -1064,12 +1193,20 @@ impl SelectKeySource {
             )
         });
 
+        let import_xpub_qr = safety_net_token.is_none().then(|| {
+            modal::import_xpub_qr_entry(
+                None,
+                Some(|| Self::route(SelectKeySourceMessage::SelectScanAirgapped)),
+            )
+        });
+
         let mut col = Column::new()
             .push(option_section)
             .spacing(modal::V_SPACING)
             .width(modal::BTN_W);
         if collapsed {
             col = col
+                .push_maybe(import_xpub_qr)
                 .push_maybe(load_key)
                 .push_maybe(paste_xpub)
                 .push_maybe(hot_signer)
@@ -1152,6 +1289,7 @@ impl SelectKeySource {
         let (source, alias, fg, available) = key;
         let kind = match source {
             KeySource::Device(..) => KeySourceKind::Device,
+            KeySource::Airgapped(..) => KeySourceKind::Airgapped,
             KeySource::HotSigner => KeySourceKind::HotKey,
             KeySource::Manual => KeySourceKind::Xpub,
             KeySource::Token(..) => KeySourceKind::Token,
@@ -1216,6 +1354,8 @@ impl super::DescriptorEditModal for SelectKeySource {
                 }
                 SelectKeySourceMessage::SelectKey(fingerprint) => self.on_select_key(fingerprint),
                 SelectKeySourceMessage::SelectLoadXpub => self.on_select_load_xpub(),
+                SelectKeySourceMessage::SelectScanAirgapped => self.on_select_scan_airgapped(),
+                SelectKeySourceMessage::Airgap(action) => self.on_airgap(action),
                 SelectKeySourceMessage::LoadKey(key) => self.on_load_key(key),
                 SelectKeySourceMessage::SelectEnterXpub => self.on_select_enter_xpub(),
                 SelectKeySourceMessage::PasteXpub => self.on_paste_xpub(),
@@ -1247,6 +1387,12 @@ impl super::DescriptorEditModal for SelectKeySource {
     }
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
         let hw = hws.refresh().map(Message::HardwareWallets);
+        if let Some(airgap) = self.airgap.as_ref() {
+            let exchange = airgap
+                .subscription()
+                .map(|action| Self::route(SelectKeySourceMessage::Airgap(action)));
+            return Subscription::batch(vec![hw, exchange]);
+        }
         if let Some(modal) = self.modal.as_ref() {
             if let Some(sub) = modal.subscription() {
                 let import = sub.map(|m| {
@@ -1260,6 +1406,9 @@ impl super::DescriptorEditModal for SelectKeySource {
         hw
     }
     fn view<'a>(&'a self, hws: &'a HardwareWallets) -> Element<'a, Message> {
+        if let Some(airgap) = &self.airgap {
+            return airgap.view(|action| Self::route(SelectKeySourceMessage::Airgap(action)));
+        }
         let detected_hws = self.detected_hws(hws);
         let content = match self.step {
             Step::Select => self.main_view(detected_hws),
@@ -1278,9 +1427,11 @@ impl super::DescriptorEditModal for SelectKeySource {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn details_view<'a, Alias>(
     header: Element<'a, Message>,
     pick_account: Option<Container<'a, Message>>,
+    xpub: Option<String>,
     alias: &'a form::Value<String>,
     error: Option<String>,
     alias_msg: Alias,
@@ -1349,6 +1500,20 @@ where
             None
         })
         .push_maybe(pick_account)
+        .push_maybe(xpub.map(|xpub| {
+            column![
+                Space::with_height(10),
+                row![
+                    p1_bold("Extended public key:"),
+                    Space::with_width(Length::Fill)
+                ],
+                Container::new(scrollable::horizontal_thin(
+                    Container::new(p1_regular(xpub)).padding(10)
+                ))
+                .style(theme::card::simple)
+                .width(Length::Fill),
+            ]
+        }))
         .push_maybe(error)
         .push(btn_row)
         .width(410);
@@ -1441,6 +1606,7 @@ impl super::DescriptorEditModal for EditKeyAlias {
         details_view(
             header,
             None,
+            None,
             &self.form_alias,
             None,
             |s| Message::EditKeyAlias(EditKeyAliasMessage::Alias(s)),
@@ -1484,4 +1650,145 @@ pub async fn get_extended_pubkey(
         wildcard: Wildcard::None,
         xkey,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use liana::miniscript::descriptor::DescriptorPublicKey;
+
+    use super::*;
+    use crate::airgap::{Capabilities, FirmwareVersion};
+
+    const ACCOUNT_KEYS: [&str; 3] = [
+        "[9f141cf0/48'/1'/0'/2']tpubDFnReAwXvYd6RA46X55HuFpmvZsLanDrwHAUsdYEGEpNGTRnCdbDRXJGLTwDeqKURCPZUDgdkuuu9dYkuBNQHmSNBUu7V2CdLKwpJjx2JuC",
+        "[9f141cf0/48'/1'/1'/2']tpubDDwKEc4i4k8rBgVLGxytHrP13VVYucUGmL2cadux7AfMwMnRHKcw1YZKt9SMB4fWut7ZAiZqPefzm3BBCNXLZMxDrWJ4Q6VA1AFB6b8GzbT",
+        "[9f141cf0/48'/1'/2'/2']tpubDEnYysximqdZkZnW5W9gYc7N3sxizKyqfdJfZ2qRfwNvSv6E11yDgyLTAnWQqDmVJ7oQ3h3ui59RQm1qmGxMm4jinq5wvSzyueKgrLJj5Cy",
+    ];
+
+    /// Three accounts out of the ten asked for, so the tests also pin what
+    /// happens when a signer answers with fewer than requested.
+    fn scanned_signer() -> AirgapSigner {
+        AirgapSigner {
+            fingerprint: Fingerprint::from_str("9f141cf0").unwrap(),
+            model: "test signer".to_owned(),
+            version: FirmwareVersion {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                prerelease: None,
+            },
+            capabilities: Capabilities(1),
+            accounts: ACCOUNT_KEYS
+                .iter()
+                .enumerate()
+                .map(|(index, key)| {
+                    (
+                        ChildNumber::from_hardened_idx(index as u32).unwrap(),
+                        DescriptorPublicKey::from_str(key).unwrap(),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    fn select_key_source() -> SelectKeySource {
+        SelectKeySource::new(
+            Network::Testnet,
+            false,
+            PathData {
+                coordinates: vec![(0, 0)],
+                keys: Vec::new(),
+                token_kind: Vec::new(),
+            },
+            HashMap::new(),
+            HashMap::new(),
+            Arc::new(Mutex::new(Signer::generate(Network::Testnet).unwrap())),
+        )
+    }
+
+    fn selected(step: &SelectKeySource) -> &Key {
+        match &step.selected_key {
+            SelectedKey::New(key) => key,
+            _ => panic!("no key selected"),
+        }
+    }
+
+    /// A scan lands on the first account and moves to the step where the user
+    /// names the key and can change that choice.
+    #[test]
+    fn a_scan_selects_the_first_account_and_shows_the_details() {
+        let mut step = select_key_source();
+        step.focus = Focus::ScanAirgapped;
+        let _ = step.on_airgapped_signer(scanned_signer());
+
+        assert_eq!(step.step, Step::Details);
+        assert_eq!(step.form_account, Some(ChildNumber::Hardened { index: 0 }));
+        assert_eq!(selected(&step).key.to_string(), ACCOUNT_KEYS[0]);
+        assert_eq!(selected(&step).name, "test signer");
+    }
+
+    /// Picking another account swaps the key from what the signer already sent,
+    /// without asking it again and without committing the key.
+    #[test]
+    fn picking_another_account_swaps_the_key_in_place() {
+        let mut step = select_key_source();
+        step.focus = Focus::ScanAirgapped;
+        let _ = step.on_airgapped_signer(scanned_signer());
+
+        step.select_airgapped_account(ChildNumber::Hardened { index: 2 });
+
+        assert_eq!(step.step, Step::Details, "picking must not commit the key");
+        assert_eq!(step.form_account, Some(ChildNumber::Hardened { index: 2 }));
+        assert_eq!(selected(&step).key.to_string(), ACCOUNT_KEYS[2]);
+        assert_eq!(
+            selected(&step).account,
+            Some(ChildNumber::Hardened { index: 2 })
+        );
+        assert!(step.details_error.is_none());
+    }
+
+    /// The signer answered three accounts, so the tenth is not on offer.
+    #[test]
+    fn an_account_the_signer_did_not_send_is_refused() {
+        let mut step = select_key_source();
+        step.focus = Focus::ScanAirgapped;
+        let _ = step.on_airgapped_signer(scanned_signer());
+
+        step.select_airgapped_account(ChildNumber::Hardened { index: 9 });
+
+        assert!(step.details_error.is_some());
+        assert_eq!(
+            selected(&step).key.to_string(),
+            ACCOUNT_KEYS[0],
+            "the previous choice must stand"
+        );
+    }
+
+    /// A key already in the wallet is picked as the existing one rather than
+    /// added a second time.
+    #[test]
+    fn a_signer_already_in_the_wallet_reuses_its_key() {
+        let mut step = select_key_source();
+        let fingerprint = Fingerprint::from_str("9f141cf0").unwrap();
+        step.keys.insert(
+            fingerprint,
+            (
+                vec![(0, 0)],
+                Key {
+                    source: KeySource::Manual,
+                    name: "already here".to_owned(),
+                    fingerprint,
+                    key: DescriptorPublicKey::from_str(ACCOUNT_KEYS[0]).unwrap(),
+                    account: None,
+                },
+            ),
+        );
+        step.focus = Focus::ScanAirgapped;
+        let _ = step.on_airgapped_signer(scanned_signer());
+
+        assert!(matches!(step.selected_key, SelectedKey::Existing(fg) if fg == fingerprint));
+        assert!(step.airgapped_signer.is_none());
+    }
 }

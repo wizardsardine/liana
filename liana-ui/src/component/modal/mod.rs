@@ -300,6 +300,7 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeySourceKind {
     Device,
+    Airgapped,
     HotKey,
     Xpub,
     Token,
@@ -309,6 +310,7 @@ impl From<KeySourceKind> for Tile {
     fn from(kind: KeySourceKind) -> Self {
         match kind {
             KeySourceKind::Device => Tile::Device,
+            KeySourceKind::Airgapped => Tile::Qr,
             KeySourceKind::HotKey => Tile::KeyHot,
             KeySourceKind::Xpub => Tile::KeyExternal,
             KeySourceKind::Token => Tile::KeyService,
@@ -572,6 +574,23 @@ where
 }
 
 /// Entry loading an extended public key from a file.
+pub fn import_xpub_qr_entry<'a, Message, M>(
+    error: Option<String>,
+    on_press: Option<M>,
+) -> Element<'a, Message>
+where
+    M: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    button_entry(
+        Tile::Qr,
+        "Import xpub by QR Code",
+        Some("Exchange QR codes with a signer that never touches this computer"),
+        error,
+        on_press,
+    )
+}
+
 pub fn import_xpub_entry<'a, Message, M>(
     error: Option<String>,
     on_press: Option<M>,

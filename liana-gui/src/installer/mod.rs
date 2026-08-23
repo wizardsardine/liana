@@ -25,6 +25,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::{
+    airgap,
     app::{
         config as gui_config,
         settings::{
@@ -1018,6 +1019,7 @@ pub enum Error {
     CannotGetAvailablePort(String),
     Unexpected(String),
     HardwareWallet(async_hwi::Error),
+    Airgap(airgap::Error),
     Backup(encrypted_backup::Error),
 }
 
@@ -1036,6 +1038,12 @@ impl From<jsonrpc::Error> for Error {
 impl From<async_hwi::Error> for Error {
     fn from(error: async_hwi::Error) -> Self {
         Error::HardwareWallet(error)
+    }
+}
+
+impl From<airgap::Error> for Error {
+    fn from(error: airgap::Error) -> Self {
+        Error::Airgap(error)
     }
 }
 
@@ -1072,6 +1080,7 @@ impl std::fmt::Display for Error {
             Self::CannotCreateFile(e) => write!(f, "Failed to create file: {e}"),
             Self::Unexpected(e) => write!(f, "Unexpected: {e}"),
             Self::HardwareWallet(e) => write!(f, "Hardware Wallet: {e}"),
+            Self::Airgap(e) => write!(f, "Air-gapped signer: {e}"),
             Self::Backup(e) => write!(f, "Backup: {e:?}"),
         }
     }
