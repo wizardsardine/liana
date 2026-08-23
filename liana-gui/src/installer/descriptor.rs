@@ -5,6 +5,7 @@ use liana::miniscript::{
 };
 
 use crate::{
+    airgap::device::AirgappedSignerConfig,
     app::settings::ProviderKey,
     hw::{is_compatible_with_tapminiscript, min_taproot_version},
     t,
@@ -19,6 +20,9 @@ const ENABLE_COSIGNER_KEYS: bool = true;
 pub enum KeySource {
     /// A hardware signing device with the given kind and version.
     Device(DeviceKind, Option<Version>),
+    /// An air-gapped signer reached over QR codes, with what it reported
+    /// about itself when its keys were scanned.
+    Airgapped(Box<AirgappedSignerConfig>),
     /// A hot signer on the user's computer.
     HotSigner,
     /// A manually inserted xpub.
@@ -92,9 +96,17 @@ impl KeySource {
     pub fn kind(&self) -> KeySourceKind {
         match self {
             Self::Device(_, _) => KeySourceKind::Device,
+            Self::Airgapped(_) => KeySourceKind::Airgapped,
             Self::HotSigner => KeySourceKind::HotSigner,
             Self::Manual => KeySourceKind::Manual,
             Self::Token(kind, _) => KeySourceKind::Token(*kind),
+        }
+    }
+
+    pub fn airgapped_signer(&self) -> Option<&AirgappedSignerConfig> {
+        match self {
+            KeySource::Airgapped(signer) => Some(signer),
+            _ => None,
         }
     }
 
@@ -128,6 +140,8 @@ impl KeySource {
 pub enum KeySourceKind {
     /// A hardware signing device.
     Device,
+    /// An air-gapped signer reached over QR codes.
+    Airgapped,
     /// A hot signer.
     HotSigner,
     /// A manually inserted xpub.

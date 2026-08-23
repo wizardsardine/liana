@@ -323,6 +323,7 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeySourceKind {
     Device,
+    Airgapped,
     HotKey,
     Imported,
     Token,
@@ -332,6 +333,7 @@ impl From<KeySourceKind> for Tile {
     fn from(kind: KeySourceKind) -> Self {
         match kind {
             KeySourceKind::Device => Tile::Device,
+            KeySourceKind::Airgapped => Tile::Qr,
             KeySourceKind::HotKey => Tile::KeyHot,
             KeySourceKind::Imported => Tile::KeyImported,
             KeySourceKind::Token => Tile::KeyService,
@@ -595,6 +597,25 @@ where
 
     let msg = on_press.map(|f| f());
     button::list_entry(col, None, button::EntryWidth::Fill, msg)
+}
+
+/// Entry importing an extended public key from an air-gapped signer over QR codes.
+pub fn import_xpub_qr_entry<'a, Message, M>(
+    error: Option<String>,
+    on_press: Option<M>,
+) -> Element<'a, Message>
+where
+    M: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    button_entry(
+        Tile::Qr,
+        t!("device-import-xpub-qr"),
+        Some(t!("device-import-xpub-qr-description")),
+        error,
+        None,
+        on_press,
+    )
 }
 
 /// Entry loading an extended public key from a file. `taproot_note` carries the

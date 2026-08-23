@@ -282,6 +282,14 @@ impl LianaDescriptor {
         &self.change_desc
     }
 
+    /// The descriptor's checksum, without the `#`.
+    pub fn checksum(&self) -> String {
+        self.to_string()
+            .split_once('#')
+            .map(|(_, checksum)| checksum.to_owned())
+            .expect("a descriptor is always displayed with its checksum")
+    }
+
     /// Get the spending policy of this descriptor.
     pub fn policy(&self) -> LianaPolicy {
         LianaPolicy::from_multipath_descriptor(&self.multi_desc)
@@ -863,6 +871,12 @@ mod tests {
         (vb + WITNESS_SCALE_FACTOR - 1)
             .checked_div(WITNESS_SCALE_FACTOR)
             .expect("Non 0")
+    }
+
+    #[test]
+    fn the_checksum_is_the_one_displayed() {
+        let desc = LianaDescriptor::from_str("wsh(or_d(pk([abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:pkh([abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560))))#g7vk9r5l").unwrap();
+        assert_eq!(desc.checksum(), "g7vk9r5l");
     }
 
     #[test]
