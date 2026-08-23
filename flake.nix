@@ -41,6 +41,8 @@
         # Common build inputs for all shells
         commonBuildInputs = with pkgs; [
           expat
+          clang
+          libclang
           fontconfig
           freetype
           freetype.dev

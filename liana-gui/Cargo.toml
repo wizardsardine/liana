@@ -64,9 +64,16 @@ fs2 = { workspace = true }
 open = { workspace = true }
 
 encrypted_backup = { workspace = true }
+bwk-qr = { workspace = true }
+nokhwa = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 zip = { workspace = true, default-features = false, features = ["bzip2", "deflate"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nokhwa-bindings-macos = { workspace = true }
+flume = { workspace = true }
+objc = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 tar = { workspace = true, default-features = false }
