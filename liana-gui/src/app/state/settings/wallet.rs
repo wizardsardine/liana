@@ -15,12 +15,20 @@ use liana_ui::{
 };
 
 use crate::{
+    airgap::{
+        device::Registration,
+        exchange::{Answer, Ask},
+    },
     app::{
         cache::Cache,
         error::Error,
         message::Message,
         settings::{self, update_settings_file, LianaSettings},
-        state::{export::ExportModal, State},
+        state::{
+            airgap::{AirgapAction, AirgapModal, AirgapOutcome},
+            export::ExportModal,
+            State,
+        },
         view,
         wallet::Wallet,
         Config,
@@ -328,6 +336,9 @@ pub struct RegisterWalletModal {
     hws: HardwareWallets,
     registered: HashSet<Fingerprint>,
     processing: bool,
+    /// The air-gapped signer the open exchange registers with.
+    registering: Option<Fingerprint>,
+    airgap: Option<AirgapModal>,
 }
 
 impl RegisterWalletModal {
@@ -344,23 +355,34 @@ impl RegisterWalletModal {
             wallet,
             processing: false,
             registered,
+            registering: None,
+            airgap: None,
         }
     }
 }
 
 impl RegisterWalletModal {
     pub fn view(&self) -> Element<'_, view::Message> {
-        view::settings::wallet::register_wallet_modal(
-            self.warning.as_ref(),
-            &self.hws.list,
-            self.processing,
-            self.chosen_hw,
-            &self.registered,
-        )
+        match &self.airgap {
+            Some(airgap) => airgap.view(view::Message::Airgap),
+            None => view::settings::wallet::register_wallet_modal(
+                self.warning.as_ref(),
+                &self.hws.list,
+                &self.wallet.airgapped_signers,
+                self.processing,
+                self.chosen_hw,
+                &self.registered,
+                &self.wallet.descriptor_checksum,
+            ),
+        }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        let hws = self.hws.refresh().map(Message::HardwareWallets);
+        match &self.airgap {
+            Some(airgap) => Subscription::batch([hws, airgap.subscription().map(airgap_message)]),
+            None => hws,
+        }
     }
 
     pub fn update(
@@ -387,10 +409,11 @@ impl RegisterWalletModal {
                 self.chosen_hw = None;
                 match res {
                     Ok(wallet) => {
-                        self.registered = HashSet::new();
-                        for hw in &wallet.hardware_wallets {
-                            self.registered.insert(hw.fingerprint);
-                        }
+                        self.registered = wallet
+                            .hardware_wallets
+                            .iter()
+                            .map(|hw| hw.fingerprint)
+                            .collect();
                         self.wallet = wallet;
                     }
                     Err(e) => {
@@ -400,6 +423,62 @@ impl RegisterWalletModal {
                     }
                 }
                 Task::none()
+            }
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::RegisterAirgappedSigner(fingerprint),
+            )) => {
+                let Some(signer) = self.wallet.airgapped_signer(fingerprint) else {
+                    return Task::none();
+                };
+                match AirgapModal::new(
+                    crate::t!("airgap-register-title"),
+                    Ask::Register {
+                        wallet: self.wallet.for_airgapped_signer(signer),
+                    },
+                    &cache.datadir_path,
+                ) {
+                    Ok(modal) => {
+                        self.warning = None;
+                        self.registering = Some(fingerprint);
+                        self.airgap = Some(modal);
+                    }
+                    Err(e) => self.warning = Some(e.into()),
+                }
+                Task::none()
+            }
+            Message::View(view::Message::Airgap(action)) => {
+                let Some(airgap) = self.airgap.as_mut() else {
+                    return Task::none();
+                };
+                let task = airgap.update(action).map(airgap_message);
+                match airgap.take_outcome() {
+                    Some(AirgapOutcome::Answer(answer)) => {
+                        self.airgap = None;
+                        let (Some(fingerprint), Answer::Registered(registration)) =
+                            (self.registering.take(), *answer)
+                        else {
+                            return Task::none();
+                        };
+                        self.processing = true;
+                        Task::perform(
+                            record_airgapped_registration(
+                                self.data_dir.clone(),
+                                cache.network,
+                                fingerprint,
+                                registration,
+                                self.wallet.clone(),
+                                daemon,
+                            ),
+                            Message::WalletUpdated,
+                        )
+                    }
+                    Some(AirgapOutcome::Cancelled) => {
+                        self.airgap = None;
+                        self.registering = None;
+                        Task::none()
+                    }
+                    None => task,
+                }
             }
             Message::View(view::Message::SelectHardwareWallet(i)) => {
                 if let Some(HardwareWallet::Supported {
@@ -439,7 +518,10 @@ pub async fn register_wallet(
     daemon: Arc<dyn Daemon + Sync + Send>,
 ) -> Result<Arc<Wallet>, Error> {
     let hmac = hw
-        .register_wallet(&wallet.name, &wallet.main_descriptor.to_string())
+        .register_wallet(
+            wallet.descriptor_alias(),
+            &wallet.main_descriptor.to_string(),
+        )
         .await
         .map_err(Error::from)?;
 
@@ -579,4 +661,70 @@ pub async fn update_aliases(
         .await?;
 
     Ok(Arc::new(wallet))
+}
+
+/// Records what an air-gapped signer reported at registration, in the settings
+/// file and on the wallet in memory. The remote backend has no schema for this,
+/// so it is never forwarded there.
+pub async fn record_airgapped_registration(
+    data_dir: LianaDirectory,
+    network: Network,
+    fingerprint: Fingerprint,
+    registration: Registration,
+    wallet: Arc<Wallet>,
+    daemon: Arc<dyn Daemon + Sync + Send>,
+) -> Result<Arc<Wallet>, Error> {
+    let registration = Registration {
+        descriptor_checksum: Some(wallet.descriptor_checksum.clone()),
+        ..registration
+    };
+
+    let network_dir = data_dir.network_directory(network);
+    let wallet_id = wallet.id();
+    let recorded = registration.clone();
+    let mut stored = false;
+    update_settings_file(&network_dir, |mut settings: LianaSettings| {
+        if let Some(signer) = settings
+            .wallets
+            .iter_mut()
+            .find(|w| w.wallet_id() == wallet_id)
+            .and_then(|wallet_setting| {
+                wallet_setting
+                    .airgapped_signers
+                    .iter_mut()
+                    .find(|signer| signer.fingerprint == fingerprint)
+            })
+        {
+            signer.registration = recorded;
+            stored = true;
+        }
+        settings
+    })
+    .await?;
+    // A registration that is not in the settings file is lost on restart, so
+    // the user must not be told it was recorded.
+    if !stored {
+        return Err(Error::Unexpected(format!(
+            "The air-gapped signer {fingerprint} of this wallet is missing from the settings file"
+        )));
+    }
+    // the daemon holds no air-gapped signer metadata, so nothing to forward
+    let _ = daemon;
+
+    let mut wallet = wallet.as_ref().clone();
+    let signer = wallet
+        .airgapped_signers
+        .iter_mut()
+        .find(|signer| signer.fingerprint == fingerprint)
+        .ok_or_else(|| {
+            Error::Unexpected(format!(
+                "The air-gapped signer {fingerprint} is not one of this wallet's signers"
+            ))
+        })?;
+    signer.registration = registration;
+    Ok(Arc::new(wallet))
+}
+
+fn airgap_message(action: AirgapAction) -> Message {
+    Message::View(view::Message::Airgap(action))
 }
