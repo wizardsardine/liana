@@ -296,6 +296,10 @@ impl Exchange {
         Ok(())
     }
 
+    pub fn ask(&self) -> &Ask {
+        &self.ask
+    }
+
     pub fn frames(&self) -> &[Image] {
         &self.frames
     }

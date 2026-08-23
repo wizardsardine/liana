@@ -41,6 +41,7 @@ pub enum Message {
     ShowQrOptSection(bool),
     ImportExport(ImportExportMessage),
     Airgap(AirgapAction),
+    VerifyAirgappedSigner(Fingerprint),
     HideRescanWarning,
     ExportPsbt,
     ImportPsbt,
@@ -104,6 +105,7 @@ pub enum SpendTxMessage {
     Confirm,
     Cancel,
     SelectHotSigner,
+    SelectAirgappedSigner(Fingerprint),
 }
 
 #[allow(clippy::large_enum_variant)]

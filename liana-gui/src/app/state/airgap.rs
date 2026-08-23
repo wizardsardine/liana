@@ -8,11 +8,11 @@ use iced::{
 };
 use liana_ui::{
     component::{
-        button, card, qr,
+        address, button, card, qr,
         text::new::{b5_medium, caption},
     },
     icon, theme,
-    widget::{Element, SpaceExt},
+    widget::{Container, Element, SpaceExt},
 };
 
 use crate::{
@@ -256,6 +256,14 @@ impl AirgapModal {
             .animation
             .view(to_message(AirgapAction::ToggleEnlarged));
 
+        // The user checks this against the address the signer shows.
+        let address = match self.exchange.ask() {
+            Ask::VerifyAddress { address, .. } => {
+                Some(Container::new(address::address(address.to_string())).center_x(Length::Fill))
+            }
+            _ => None,
+        };
+
         let display = self.display;
         let density = qr::setting_slider(
             t!("qr-density"),
@@ -310,6 +318,7 @@ impl AirgapModal {
         column![
             b5_medium(t!("airgap-show-request")),
             request,
+            address,
             button::btn_scan_response(Some(to_message(AirgapAction::Scan))),
             settings_toggle,
             settings,

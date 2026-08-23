@@ -17,6 +17,10 @@ airgap-requesting-camera => "Requesting camera access..." => NONE
 
 airgap-show-request => "Show this to your signer, then scan its answer back." => NONE
 
+airgap-sign-title => "Sign with an air-gapped signer" => NONE
+
+airgap-verify-address-title => "Verify the address" => NONE
+
 bitcoind-upgrade-hint
 => "Updating your Liana-managed Bitcoin node."
 => "A atualizar o seu nó Bitcoin gerido pela Liana.";;
