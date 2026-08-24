@@ -42,6 +42,16 @@ use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 use zeroize::Zeroizing;
 
 /// API version that first exposes PRF on make-credential.
+///
+/// Not read by the gate — [`PRF_ASSERTION_API_VERSION`] is the binding
+/// threshold, because a credential we can register but never evaluate is worse
+/// than refusing up front. Kept as the recorded fact that the two halves land in
+/// *different* Windows releases, and asserted against the assertion threshold in
+/// `make_credential_floor_is_not_mistaken_for_the_assertion_floor` so a future
+/// edit cannot quietly gate on the earlier one.
+// Not `#[cfg(test)]`: it documents a fact about the production gate, and a
+// reader of that gate should find it there.
+#[allow(dead_code)]
 const PRF_MAKE_CREDENTIAL_API_VERSION: u32 = 6;
 /// API version that first exposes `pPRFGlobalEval` on get-assertion. Both
 /// halves are needed: registering a PRF credential we can never evaluate is
@@ -453,7 +463,11 @@ mod tests {
         for v in 1..PRF_ASSERTION_API_VERSION {
             assert!(
                 matches!(classify_version(v), Capability::Unavailable(_)),
-                "API version {v} must not be treated as PRF-capable"
+                // Edition 2018: a lone literal is the panic payload, not a
+                // format string, so `{v}` has to be passed as an argument or it
+                // reaches the reader uninterpolated.
+                "API version {} must not be treated as PRF-capable",
+                v
             );
         }
         assert!(classify_version(PRF_ASSERTION_API_VERSION).is_available());

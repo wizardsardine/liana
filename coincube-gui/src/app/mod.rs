@@ -2070,26 +2070,73 @@ fn cleared_pending_rescan(
     settings
 }
 
-/// Retire the rescan prompt this Vault was carrying.
+/// Start the rescan a restored Vault owes, from the birthday its Recovery Kit
+/// recorded, and clear the marker once the daemon takes it.
 ///
-/// The prompt exists to tell the user a restored Vault has history their node
-/// has not seen. It is *not* what makes the rescan happen — `coincubed`'s
-/// `heal_scan_window` does that, from the database, after every watchonly wallet
-/// creation. So the marker is cleared once it has been shown, and correctness
-/// does not depend on the clear landing: if the wallet still cannot see its
-/// history, the daemon will say so and fix it on the next start regardless.
-fn retire_rescan_prompt(
+/// # Why this exists *and* `coincubed::heal_scan_window` does
+///
+/// They cover different halves and neither is sufficient alone.
+///
+/// A fresh restore begins with an **empty database** — the datadir is new, so
+/// there are no coins in it. The daemon's heal derives how far back to scan from
+/// the oldest coin it holds, so on an empty database it has nothing to reason
+/// from and correctly does nothing. The Recovery Kit's birthday is the *only*
+/// thing that knows where this wallet's history starts, and this is what carries
+/// it to the node. Without it the wallet is scanned from "now", finds nothing,
+/// and the database stays empty forever — the heal never has anything to work
+/// from, so the Vault never recovers.
+///
+/// Conversely this alone is not enough: the scan can be discarded by anything
+/// that re-creates the watchonly wallet afterwards (a backend switch does, at
+/// `timestamp: "now"`). That is what the daemon's heal repairs, and it can,
+/// because by then this scan has populated the database with the history it
+/// needs to derive the date itself.
+///
+/// So: this seeds the history, the daemon keeps it.
+///
+/// # Failure
+///
+/// Fire-and-forget. The daemon owns the scan from here — progress shows in
+/// Settings > Node, which is also where a rescan can be started by hand — so
+/// nothing waits on this and a failure must not block the app from opening.
+fn start_pending_rescan(
+    daemon: Arc<dyn Daemon + Sync + Send>,
     network_dir: crate::dir::NetworkDirectory,
     descriptor_checksum: String,
+    timestamp: u32,
 ) -> Task<Message> {
     Task::perform(
         async move {
+            if let Err(e) = daemon.start_rescan(timestamp).await {
+                tracing::error!(
+                    "Restored Vault needs a rescan from unix time {} but the daemon refused: {}. \
+                     It can be started by hand in Settings > Node.",
+                    timestamp,
+                    e
+                );
+                return;
+            }
+            tracing::info!(
+                "Started the rescan this restored Vault owed, from unix time {}.",
+                timestamp
+            );
+            // Cleared on acceptance, which is weaker than it sounds: bitcoind
+            // has taken the import, not finished the scan. What makes that safe
+            // is the daemon's `heal_scan_window`, which re-checks on every start
+            // and re-triggers when the wallet cannot see coins we hold —
+            // covering both a scan discarded by a wallet re-creation and one cut
+            // short by a shutdown.
+            //
+            // The one case neither covers is a scan interrupted before it
+            // recorded *any* coin: the database stays empty, so the daemon has
+            // nothing to derive a date from and this marker is already gone. The
+            // remedy there is the manual rescan in Settings > Node.
             if let Err(e) = settings::update_settings_file(&network_dir, |settings| {
                 Some(cleared_pending_rescan(settings, &descriptor_checksum))
             })
             .await
             {
-                tracing::warn!("Could not clear the pending rescan prompt: {}", e);
+                tracing::warn!("Could not clear the pending rescan marker: {}", e);
             }
         },
         |_| Message::Tick,
@@ -2165,19 +2212,16 @@ impl App {
             .connect
             .set_vault_fingerprint(cube_settings.vault_fingerprint.clone());
         let mut tasks = vec![];
-        // The rescan itself is the daemon's job now, not ours. Starting one from
-        // here raced anything that re-created the watchonly wallet afterwards —
-        // a backend switch does, at `timestamp: "now"` — and the completed scan
-        // was discarded with the marker already cleared, so nothing retried.
-        // `coincubed::heal_scan_window` runs after every wallet creation and
-        // redoes it from our own database, which no ordering can defeat.
-        //
-        // The marker survives only to raise the prompt above, and is retired
-        // once seen: the daemon has already dealt with the substance.
-        if pending_rescan.is_some() {
-            tasks.push(retire_rescan_prompt(
+        // Only a known date can be started unattended. `DateUnknown` keeps the
+        // prompt raised above instead — the user supplies the date in Settings >
+        // Node, because a guessed one would present as a scan that found
+        // nothing.
+        if let Some(timestamp) = pending_rescan.and_then(|p| p.timestamp()) {
+            tasks.push(start_pending_rescan(
+                daemon.clone(),
                 data_dir.network_directory(cache.network),
                 wallet.descriptor_checksum.clone(),
+                timestamp,
             ));
         }
         if let Some(vault_overview) = panels.vault_overview.as_mut() {

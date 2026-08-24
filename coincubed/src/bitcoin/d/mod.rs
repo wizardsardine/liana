@@ -926,6 +926,27 @@ impl BitcoinD {
         }
     }
 
+    /// Does the watchonly wallet actually hold this transaction?
+    ///
+    /// The honest test of whether a scan reached a block, as opposed to whether
+    /// bitcoind *says* it did. `importdescriptors` stamps the descriptors with
+    /// the requested timestamp **before** scanning, and keeps that stamp even if
+    /// the scan is then aborted by a shutdown — the poller's own note says so.
+    /// So a wallet can claim to have been scanned from January while holding
+    /// none of the transactions it should have found.
+    ///
+    /// `false` on any error, including a node that will not answer: the caller
+    /// uses this to decide whether to *re-*scan, and re-scanning a wallet that
+    /// was fine costs time, while skipping one that is broken costs the user
+    /// their history.
+    pub(crate) fn knows_transaction(&self, txid: &bitcoin::Txid) -> bool {
+        self.make_faillible_wallet_request(
+            "gettransaction",
+            params!(Json::String(txid.to_string())),
+        )
+        .is_ok()
+    }
+
     /// The earliest point any of this wallet's descriptors was scanned from.
     ///
     /// The non-panicking sibling of [`Self::list_descriptors`], for the startup
