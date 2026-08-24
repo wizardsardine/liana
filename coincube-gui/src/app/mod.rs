@@ -2070,45 +2070,26 @@ fn cleared_pending_rescan(
     settings
 }
 
-/// Ask the daemon for the rescan a restored Vault owes, and clear the debt once
-/// it has taken it.
+/// Retire the rescan prompt this Vault was carrying.
 ///
-/// Fire-and-forget by design. The daemon owns the scan from here — progress
-/// shows in Settings > Node, which is also where the user can start one by hand
-/// — so nothing downstream waits on this and a failure must not block the app
-/// from opening. The field is cleared only on success, so a daemon that refuses
-/// (already rescanning, or a timestamp it rejects) leaves the Vault owing one
-/// and it is tried again next launch.
-fn start_pending_rescan(
-    daemon: Arc<dyn Daemon + Sync + Send>,
+/// The prompt exists to tell the user a restored Vault has history their node
+/// has not seen. It is *not* what makes the rescan happen — `coincubed`'s
+/// `heal_scan_window` does that, from the database, after every watchonly wallet
+/// creation. So the marker is cleared once it has been shown, and correctness
+/// does not depend on the clear landing: if the wallet still cannot see its
+/// history, the daemon will say so and fix it on the next start regardless.
+fn retire_rescan_prompt(
     network_dir: crate::dir::NetworkDirectory,
     descriptor_checksum: String,
-    timestamp: u32,
 ) -> Task<Message> {
     Task::perform(
         async move {
-            if let Err(e) = daemon.start_rescan(timestamp).await {
-                tracing::error!(
-                    "Restored Vault needs a rescan from unix time {} but the daemon refused: {}. \
-                     It can be started by hand in Settings > Node.",
-                    timestamp,
-                    e
-                );
-                return;
-            }
-            tracing::info!(
-                "Started the rescan this restored Vault owed, from unix time {}.",
-                timestamp
-            );
             if let Err(e) = settings::update_settings_file(&network_dir, |settings| {
                 Some(cleared_pending_rescan(settings, &descriptor_checksum))
             })
             .await
             {
-                // The scan is running; we just failed to record that it was
-                // asked for. Next launch asks again, which is wasteful but not
-                // wrong — `start_rescan` refuses while one is in flight.
-                tracing::warn!("Could not clear the pending rescan marker: {}", e);
+                tracing::warn!("Could not clear the pending rescan prompt: {}", e);
             }
         },
         |_| Message::Tick,
@@ -2184,16 +2165,19 @@ impl App {
             .connect
             .set_vault_fingerprint(cube_settings.vault_fingerprint.clone());
         let mut tasks = vec![];
-        // Only a known date can be started unattended. `DateUnknown` still
-        // raises the prompt above — the user supplies the date in Settings >
-        // Node, because a guessed one would present as a scan that found
-        // nothing.
-        if let Some(timestamp) = pending_rescan.and_then(|p| p.timestamp()) {
-            tasks.push(start_pending_rescan(
-                daemon.clone(),
+        // The rescan itself is the daemon's job now, not ours. Starting one from
+        // here raced anything that re-created the watchonly wallet afterwards —
+        // a backend switch does, at `timestamp: "now"` — and the completed scan
+        // was discarded with the marker already cleared, so nothing retried.
+        // `coincubed::heal_scan_window` runs after every wallet creation and
+        // redoes it from our own database, which no ordering can defeat.
+        //
+        // The marker survives only to raise the prompt above, and is retired
+        // once seen: the daemon has already dealt with the substance.
+        if pending_rescan.is_some() {
+            tasks.push(retire_rescan_prompt(
                 data_dir.network_directory(cache.network),
                 wallet.descriptor_checksum.clone(),
-                timestamp,
             ));
         }
         if let Some(vault_overview) = panels.vault_overview.as_mut() {
