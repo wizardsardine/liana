@@ -2070,41 +2070,135 @@ fn cleared_pending_rescan(
     settings
 }
 
-/// Start the rescan a restored Vault owes, from the birthday its Recovery Kit
-/// recorded.
+/// Settle the rescan obligation this Vault carries: retire it if the seeding
+/// scan demonstrably worked, otherwise try again.
 ///
-/// # Why this exists *and* `coincubed::heal_scan_window` does
+/// # Why the GUI seeds at all, when the daemon has a heal
 ///
-/// They cover different halves and neither is sufficient alone.
-///
-/// A fresh restore begins with an **empty database** — the datadir is new, so
-/// there are no coins in it. The daemon's heal derives how far back to scan from
-/// the coins it holds, so on an empty database it has nothing to reason from and
-/// correctly does nothing. The Recovery Kit's birthday is the *only* thing that
-/// knows where this wallet's history starts, and this is what carries it to the
-/// node. Without it the wallet is scanned from "now", finds nothing, and the
-/// database stays empty forever — so the heal never gets anything to work from
-/// and the Vault never recovers.
+/// They cover different halves and neither is sufficient alone. A fresh restore
+/// begins with an **empty database** — the datadir is new — and
+/// `coincubed::heal_scan_window` derives how far back to scan from the coins it
+/// holds, so on an empty database it has nothing to reason from and correctly
+/// does nothing. The Recovery Kit's birthday is the only thing that knows where
+/// this wallet's history starts, and this is what carries it to the node.
+/// Without it the wallet is scanned from "now", finds nothing, the database
+/// stays empty, and the heal never gets anything to work from.
 ///
 /// Conversely this alone is not enough: the scan can be discarded by anything
 /// that re-creates the watchonly wallet afterwards (a backend switch does, at
-/// `timestamp: "now"`), or cut short by a shutdown. That is what the daemon's
-/// heal repairs, and it can, because by then this scan has put the history in
-/// the database for it to derive a date from.
+/// `timestamp: "now"`), or cut short by a shutdown. That is what the heal
+/// repairs, and it can, because by then this scan has put the history in the
+/// database for it to derive a date from.
 ///
-/// So: this seeds the history, the daemon keeps it. The marker that says the
-/// seeding is still owed is **not** cleared here — see the caller; `Ok` from the
-/// daemon means the import was accepted, not that anything was scanned.
+/// So: this seeds the history, the daemon keeps it.
 ///
-/// # Failure
+/// # Why this asks the daemon instead of reading the cache
 ///
-/// Fire-and-forget. The daemon owns the scan from here — progress shows in
-/// Settings > Node, which is also where a rescan can be started by hand — so
-/// nothing waits on this and a failure must not block the app from opening. The
-/// obligation survives, so the next start tries again.
-fn start_pending_rescan(daemon: Arc<dyn Daemon + Sync + Send>, timestamp: u32) -> Task<Message> {
+/// Twice over: for the coins, and for whether a scan is already running.
+///
+/// Proof that the history was found is "we have a confirmed coin", and the
+/// app's cache cannot answer that. [`crate::app::cache::coins_to_cache`] lists
+/// only `Unconfirmed | Confirmed` — the **unspent** coins — because that is what
+/// every balance and coin-selection surface wants. A restored Vault whose
+/// history is entirely spent has none of those, and would look exactly like a
+/// Vault that was never scanned: the obligation would never retire and every
+/// launch would start another full-chain rescan from the birthday, for ever.
+///
+/// So the question is put to the daemon over all four statuses, spent included.
+/// One extra RPC, paid only by a Vault that still carries an obligation.
+///
+/// # Why proof at all
+///
+/// The obligation used to be retired the moment `start_rescan` returned `Ok`,
+/// which proves nothing: bitcoind stamps the descriptors before it scans, and
+/// keeps the stamp through an aborting shutdown. A scan interrupted before
+/// recording any coin then left an empty database — precisely the one state
+/// `coincubed::heal_scan_window` cannot derive a date from — with the obligation
+/// already discarded. That Vault never recovered.
+fn settle_rescan_obligation(
+    daemon: Arc<dyn Daemon + Sync + Send>,
+    network_dir: crate::dir::NetworkDirectory,
+    descriptor_checksum: String,
+    timestamp: Option<u32>,
+) -> Task<Message> {
     Task::perform(
         async move {
+            use coincubed::commands::CoinStatus;
+
+            let seeded = match daemon
+                .list_coins(
+                    &[
+                        CoinStatus::Unconfirmed,
+                        CoinStatus::Confirmed,
+                        CoinStatus::Spending,
+                        CoinStatus::Spent,
+                    ],
+                    &[],
+                )
+                .await
+            {
+                Ok(res) => res.coins.iter().any(|c| c.block_height.is_some()),
+                // Not an answer. Leave the obligation alone and try again next
+                // start rather than guessing in either direction.
+                Err(e) => {
+                    tracing::warn!(
+                        "Could not check whether this restored Vault's history is present: {}. \
+                         The rescan obligation stays recorded.",
+                        e
+                    );
+                    return;
+                }
+            };
+
+            if seeded {
+                // History is here. Everything that can go wrong from now on — a
+                // wallet re-created, a later scan cut short — is visible to the
+                // daemon, which re-checks on every start and repairs it.
+                if let Err(e) = settings::update_settings_file(&network_dir, |settings| {
+                    Some(cleared_pending_rescan(settings, &descriptor_checksum))
+                })
+                .await
+                {
+                    // Harmless: re-evaluated on every start, and the next one
+                    // sees the same coins and retires it.
+                    tracing::warn!("Could not retire the pending rescan marker: {}", e);
+                }
+                return;
+            }
+
+            // Not seeded. `None` here is `DateUnknown`: no date to retry from,
+            // so the obligation stays and the prompt asks the user for one.
+            let Some(timestamp) = timestamp else {
+                return;
+            };
+
+            // Nothing already scanning — a second `importdescriptors` on a live
+            // scan restarts it from the top, so a slow scan would never finish
+            // if every launch kicked it over.
+            //
+            // Asked of the daemon, not of `Cache::rescan_progress`: that field
+            // is `None` at every `App::new`, because both construction paths
+            // leave it at its default and only the periodic refresh ever fills
+            // it in. Reading it here looked like a guard and was never once
+            // true.
+            match daemon.get_info().await {
+                Ok(info) if info.rescan_progress.is_some() => {
+                    tracing::info!(
+                        "A rescan is already running; leaving the obligation recorded rather \
+                         than restarting it."
+                    );
+                    return;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        "Could not check for a running rescan: {}. Not starting one; the \
+                         obligation stays recorded for the next start.",
+                        e
+                    );
+                    return;
+                }
+            }
             match daemon.start_rescan(timestamp).await {
                 Ok(()) => tracing::info!(
                     "Started the rescan this restored Vault owed, from unix time {}. The \
@@ -2118,28 +2212,6 @@ fn start_pending_rescan(daemon: Arc<dyn Daemon + Sync + Send>, timestamp: u32) -
                     timestamp,
                     e
                 ),
-            }
-        },
-        |_| Message::Tick,
-    )
-}
-
-/// Retire the rescan obligation: this Vault's history is in the database, so the
-/// seeding scan demonstrably worked and the daemon can keep it from here.
-fn retire_rescan_marker(
-    network_dir: crate::dir::NetworkDirectory,
-    descriptor_checksum: String,
-) -> Task<Message> {
-    Task::perform(
-        async move {
-            if let Err(e) = settings::update_settings_file(&network_dir, |settings| {
-                Some(cleared_pending_rescan(settings, &descriptor_checksum))
-            })
-            .await
-            {
-                // Harmless: the obligation is re-evaluated on every start, and
-                // the next one sees the same confirmed coins and retires it.
-                tracing::warn!("Could not retire the pending rescan marker: {}", e);
             }
         },
         |_| Message::Tick,
@@ -2216,38 +2288,12 @@ impl App {
             .set_vault_fingerprint(cube_settings.vault_fingerprint.clone());
         let mut tasks = vec![];
         if let Some(pending) = pending_rescan {
-            // The marker records an obligation: this Vault's history has never
-            // been found on this machine. Retiring it needs *proof* the seeding
-            // scan worked, and the only proof available here is a confirmed coin
-            // in the database.
-            //
-            // It used to be retired the moment the daemon accepted the import,
-            // which proves nothing — bitcoind stamps the descriptors before it
-            // scans. A scan interrupted before recording any coin then left an
-            // empty database, which is precisely the one state
-            // `coincubed::heal_scan_window` cannot derive a date from, with the
-            // obligation already discarded. That Vault never recovered.
-            let seeded = cache.coins().iter().any(|c| c.block_height.is_some());
-            if seeded {
-                // History is here. Everything that can go wrong from now on —
-                // a wallet re-created, a later scan cut short — is visible to
-                // the daemon, which re-checks on every start and repairs it.
-                tasks.push(retire_rescan_marker(
-                    data_dir.network_directory(cache.network),
-                    wallet.descriptor_checksum.clone(),
-                ));
-            } else if let Some(timestamp) = pending.timestamp() {
-                // Not seeded yet, and we know where to look. Retry, unless the
-                // daemon already has a scan running — piling a second import on
-                // top of a live scan restarts it from the top.
-                //
-                // `DateUnknown` falls through deliberately: there is no date to
-                // retry from, so the marker stays and the prompt above asks the
-                // user for one in Settings > Node.
-                if cache.rescan_progress().is_none() {
-                    tasks.push(start_pending_rescan(daemon.clone(), timestamp));
-                }
-            }
+            tasks.push(settle_rescan_obligation(
+                daemon.clone(),
+                data_dir.network_directory(cache.network),
+                wallet.descriptor_checksum.clone(),
+                pending.timestamp(),
+            ));
         }
         if let Some(vault_overview) = panels.vault_overview.as_mut() {
             tasks.push(vault_overview.reload(Some(daemon.clone()), Some(wallet.clone())));
@@ -6101,6 +6147,16 @@ mod tests {
             |coins: &[crate::daemon::model::Coin]| coins.iter().any(|c| c.block_height.is_some());
 
         assert!(!seeded(&[]), "an empty database is the stranding state");
+        // The status set matters as much as the predicate: a Vault whose
+        // history is entirely spent has no *unspent* coins, so asking the
+        // cache — which lists only `Unconfirmed | Confirmed` — would call it
+        // unseeded for ever and rescan the whole chain on every launch.
+        // `settle_rescan_obligation` therefore asks the daemon across all four
+        // statuses, and a spent coin still carries a `block_height`.
+        assert!(
+            seeded(&[coin(Some(145_604))]),
+            "a coin that is confirmed — spent or not — is proof the scan reached its block"
+        );
         assert!(
             !seeded(&[coin(None)]),
             "an unconfirmed coin is not evidence the history was scanned"
