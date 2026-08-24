@@ -303,6 +303,38 @@ fn history_outside_scan_window(
 ///
 /// Returns the point to scan from — always the *oldest* coin, since a scan that
 /// stopped early has to be redone from the beginning, not resumed.
+/// The two points [`heal_scan_window`] needs from our confirmed coins: where a
+/// repair would have to start, and which coin to probe the wallet for.
+///
+/// They are chosen by **different keys on purpose**.
+///
+/// The probe is the coin in the *highest block*. A scan runs in chain order, so
+/// the highest block is the last thing it reaches and the first thing missing
+/// when it is cut short. Picking by block *time* instead would be wrong:
+/// Bitcoin block timestamps only have to beat the median of the previous
+/// eleven, so they tie and go backwards routinely. A coin in an earlier block
+/// can carry a later timestamp, and probing that one — which a truncated scan
+/// would already hold — reports the wallet healthy while coins in later blocks
+/// are still missing.
+///
+/// The start point is the *earliest timestamp* of any coin, which is what
+/// `importdescriptors` takes. Under the same non-monotonicity that is the
+/// conservative choice: it is at or before the timestamp of the lowest block we
+/// hold, so the rescan cannot begin after history we need.
+fn scan_probe_points(
+    confirmed: &[(database::BlockInfo, miniscript::bitcoin::OutPoint)],
+) -> Option<(database::BlockInfo, miniscript::bitcoin::OutPoint)> {
+    let start_from = confirmed
+        .iter()
+        .map(|(block, _)| *block)
+        .min_by_key(|b| b.time)?;
+    let probe = confirmed
+        .iter()
+        .max_by_key(|(block, _)| block.height)
+        .map(|(_, outpoint)| *outpoint)?;
+    Some((start_from, probe))
+}
+
 fn scan_repair_needed(
     scanned_from: u32,
     oldest_coin: Option<database::BlockInfo>,
@@ -333,22 +365,39 @@ fn heal_scan_window(
         .expect("db mutex poisoned")
         .connection()
         .coins(&[], &[]);
-    let mut confirmed: Vec<_> = coins
+    let confirmed: Vec<_> = coins
         .into_iter()
         .filter_map(|(outpoint, coin)| coin.block_info.map(|block| (block, outpoint)))
         .collect();
-    confirmed.sort_by_key(|(block, _)| block.time);
-    let Some((oldest, _)) = confirmed.first().copied() else {
+    let Some((oldest, newest_outpoint)) = scan_probe_points(&confirmed) else {
         return;
     };
-    let (_, newest_outpoint) = confirmed.last().copied().expect("non-empty");
 
     let Some(scanned_from) = bitcoind.earliest_descriptor_timestamp() else {
         return;
     };
     // Asked only when there is something to ask about, and only about one coin:
     // a wallet RPC per start, not per coin.
-    let newest_coin_known = bitcoind.knows_transaction(&newest_outpoint.txid);
+    let newest_coin_known = match bitcoind.knows_transaction(&newest_outpoint.txid) {
+        Ok(known) => known,
+        // Not an answer, so it must not be read as one. Fall back to the
+        // descriptor-window test: a window that is plainly short still triggers
+        // a repair, while a cut-short scan that only this probe could catch
+        // waits for the next start rather than costing a full rescan of a
+        // wallet that was never asked about.
+        Err(e) => {
+            log::warn!(
+                concat!(
+                    "Could not ask the watchonly wallet whether it holds '{}': {}. Judging the ",
+                    "scan window on the descriptor timestamps alone this time; a repair this ",
+                    "misses is retried on the next start."
+                ),
+                newest_outpoint.txid,
+                e
+            );
+            true
+        }
+    };
 
     let Some(oldest) = scan_repair_needed(scanned_from, Some(oldest), newest_coin_known) else {
         return;
@@ -929,6 +978,86 @@ mod scan_window_tests {
             oldest.time
         );
         assert_eq!(gap, oldest);
+    }
+
+    fn outpoint(n: u8) -> miniscript::bitcoin::OutPoint {
+        miniscript::bitcoin::OutPoint {
+            txid: miniscript::bitcoin::Txid::from_raw_hash(
+                miniscript::bitcoin::hashes::Hash::from_byte_array([n; 32]),
+            ),
+            vout: 0,
+        }
+    }
+
+    /// An unanswerable probe must not be read as "the wallet is missing this".
+    ///
+    /// `knows_transaction` returns `Err` for anything that is not the wallet's
+    /// own `-5`, and the caller substitutes `true` — "do not trigger on the
+    /// probe" — leaving the descriptor-window test to decide alone. Reading the
+    /// failure as `false` instead would rescan a healthy wallet whenever the RPC
+    /// hiccupped, on every start, for a question never actually asked.
+    #[test]
+    fn an_unanswerable_probe_defers_instead_of_forcing_a_rescan() {
+        let oldest = BlockInfo {
+            height: 145_604,
+            time: 1_784_953_848,
+        };
+
+        // Window fine, probe unanswerable: nothing is known to be wrong, so
+        // nothing is repaired — and the next start asks again.
+        assert_eq!(
+            scan_repair_needed(oldest.time - 1, Some(oldest), true),
+            None
+        );
+
+        // Window plainly short: still repaired, because that test stands on its
+        // own and needed no probe.
+        assert_eq!(
+            scan_repair_needed(1_787_373_712, Some(oldest), true),
+            Some(oldest),
+            "a short window is conclusive without the probe"
+        );
+    }
+
+    /// The probe must follow block **height**, not block time.
+    ///
+    /// Bitcoin timestamps only have to beat the median of the previous eleven
+    /// blocks, so they tie and run backwards routinely. Here the coin with the
+    /// latest *time* sits in an earlier block than the newest coin — exactly the
+    /// shape a truncated scan produces, since it would already hold the earlier
+    /// block and be missing the later one. Probing by time asks about the coin
+    /// it has and concludes the wallet is fine.
+    #[test]
+    fn the_probe_follows_height_when_timestamps_run_backwards() {
+        let early_block_late_stamp = BlockInfo {
+            height: 145_600,
+            time: 1_784_960_000,
+        };
+        let late_block_early_stamp = BlockInfo {
+            height: 145_610,
+            time: 1_784_953_848,
+        };
+        let confirmed = vec![
+            (early_block_late_stamp, outpoint(1)),
+            (late_block_early_stamp, outpoint(2)),
+        ];
+
+        let (start_from, probe) = scan_probe_points(&confirmed).expect("two confirmed coins");
+        assert_eq!(
+            probe,
+            outpoint(2),
+            "the coin in the highest block is the one a cut-short scan would be missing"
+        );
+        assert_eq!(
+            start_from, late_block_early_stamp,
+            "the start point is the earliest timestamp, which is the conservative floor"
+        );
+    }
+
+    /// No confirmed coins, no probe points — the fresh-restore state.
+    #[test]
+    fn no_confirmed_coins_yields_no_probe_points() {
+        assert!(scan_probe_points(&[]).is_none());
     }
 
     /// The case the descriptor timestamp cannot see: a scan cut short.
