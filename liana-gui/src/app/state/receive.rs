@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use iced::{widget::qr_code, Length, Subscription, Task};
+use iced::{Length, Subscription, Task};
 use liana::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Address, Network,
@@ -624,23 +624,23 @@ impl VerifyAddressModal {
 }
 
 pub struct ShowQrCodeModal {
-    qr_code: qr_code::Data,
+    /// The BIP-21 URI the code carries, which is not the address alone: the
+    /// index suffix is there for signers that ask for it.
+    uri: String,
     address: String,
 }
 
 impl ShowQrCodeModal {
     pub fn new(address: &Address, index: Option<ChildNumber>) -> Option<Self> {
         let index = index.map(|i| format!("?index={i}")).unwrap_or_default();
-        qr_code::Data::new(format!("bitcoin:{address}{index}"))
-            .ok()
-            .map(|qr_code| Self {
-                qr_code,
-                address: address.to_string(),
-            })
+        Some(Self {
+            uri: format!("bitcoin:{address}{index}"),
+            address: address.to_string(),
+        })
     }
 
     fn view(&self) -> Element<'_, view::Message> {
-        view::receive::qr_modal(&self.qr_code, &self.address)
+        view::receive::qr_modal(&self.uri, &self.address)
     }
 }
 

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use iced::{
-    widget::{qr_code, row, Space},
+    widget::{row, Space},
     Length,
 };
 
@@ -116,13 +116,13 @@ pub fn verify_address_modal<'a>(
     )
 }
 
-pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a str) -> Element<'a, Message> {
+pub fn qr_modal<'a>(uri: &str, address: &'a str) -> Element<'a, Message> {
     modal::modal_view(
         Some("Address"),
         None,
         Some(Message::Close),
         modal::ModalWidth::L,
-        receive::modal::qr_display(qr, address),
+        receive::modal::qr_display(uri, address),
     )
 }
 
