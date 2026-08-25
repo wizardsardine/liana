@@ -17,7 +17,7 @@ use liana::{
 
 use liana_ui::{
     component::{form, spinner},
-    widget::{modal::Modal, Element},
+    widget::{modal::Modal, text_input, Element},
 };
 
 use crate::installer::KeySourceKind;
@@ -35,7 +35,7 @@ use crate::{
 };
 use liana_connect::keys::api::KeyKind;
 
-use key::{new_multixkey_from_xpub, EditKeyAlias, PathData, SelectKeySource};
+use key::{new_multixkey_from_xpub, EditKeyAlias, PathData, SelectKeySource, ALIAS_INPUT_ID};
 
 pub trait DescriptorEditModal {
     fn processing(&self) -> bool {
@@ -403,7 +403,7 @@ impl Step for DefineDescriptor {
                                             coordinates,
                                         );
                                         self.modal = Some(Box::new(modal));
-                                        return Task::none();
+                                        return text_input::focus(ALIAS_INPUT_ID);
                                     }
                                 }
                                 log::error!("DefineDescriptor.update(): DefineKey::EditAlias => key is None.");
