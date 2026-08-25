@@ -225,8 +225,8 @@ fn setup_sqlite(
 
 // Connect to bitcoind. Setup the watchonly wallet, and do some sanity checks.
 // If all went well, returns the interface to bitcoind.
-/// Warn when the watchonly wallet was never scanned over the history our own
-/// database already holds.
+/// Trigger a rescan when the watchonly wallet was never scanned over the history
+/// our own database already holds.
 ///
 /// # The state this catches
 ///
@@ -246,18 +246,39 @@ fn setup_sqlite(
 /// wallet is loaded and whether our descriptors are in it — both true here. The
 /// missing question is *since when*.
 ///
-/// # Why a warning and not a rescan
+/// # Why the daemon heals it rather than reporting it
 ///
-/// A rescan can take hours on mainnet and must be the user's decision, with the
-/// progress UI in front of them. Starting one unannounced from a startup path
-/// would look like a hang. So this states the fault and names the remedy.
+/// Because the daemon is the only place that can do so reliably. The GUI used
+/// to own this: a restore recorded the rescan it owed and started one once the
+/// app was up. That holds right until something re-creates the watchonly wallet
+/// afterwards — a backend switch does exactly that, and `setup_bitcoind` builds
+/// the replacement at `timestamp: "now"` — and the completed scan is silently
+/// discarded with nothing left to notice it. Here the check runs *after* every
+/// wallet creation, on every start, so a discarded scan is simply redone and no
+/// ordering can defeat it.
+///
+/// The date comes from our own database — the oldest confirmed coin — rather
+/// than from a Recovery Kit, so this covers wallets recreated for reasons that
+/// have nothing to do with a restore.
+///
+/// # What it costs, and what it does not
+///
+/// It **triggers** a rescan; it does not wait for one.
+/// [`BitcoinD::start_rescan`] re-imports the descriptors through a no-reply
+/// request precisely so the caller does not block for the scan's duration, and
+/// returns as soon as bitcoind reports the new timestamps on the wallet. Startup
+/// therefore continues while the chain scan runs in the background, exactly as
+/// it does for a rescan started from Settings > Node.
+///
+/// So the coins stay unresolvable for as long as the scan takes, and the poller
+/// logs about them meanwhile. That is the same window a manually started rescan
+/// has; what this removes is the need for anyone to notice and start one.
 /// The oldest coin the wallet's scan window does not cover, if any.
 ///
-/// Split out from [`warn_if_scan_window_misses_history`] so the comparison is
-/// testable without standing up a node and a database. The boundary is
-/// deliberately exclusive: a wallet scanned from exactly the oldest coin's block
-/// time *did* see that block, and warning there would fire on every correctly
-/// restored wallet.
+/// Split out from [`heal_scan_window`] so the comparison is testable without
+/// standing up a node and a database. The boundary is deliberately exclusive: a
+/// wallet scanned from exactly the oldest coin's block time *did* see that
+/// block, and firing there would rescan on every correctly restored wallet.
 fn history_outside_scan_window(
     scanned_from: u32,
     oldest_coin: Option<database::BlockInfo>,
@@ -265,9 +286,72 @@ fn history_outside_scan_window(
     oldest_coin.filter(|oldest| scanned_from > oldest.time)
 }
 
-fn warn_if_scan_window_misses_history(
-    bitcoind: &BitcoinD,
+/// Whether the wallet needs (re)scanning, given what it claims and what it holds.
+///
+/// Two independent tests, because the first one lies.
+///
+/// `scanned_from` is the descriptors' timestamp, and bitcoind stamps those when
+/// the import is *requested*, not when the scan finishes — keeping the stamp
+/// even if a shutdown aborts the scan half-way. A wallet interrupted mid-scan
+/// therefore claims a window it never covered, and the timestamp comparison
+/// alone reports it healthy forever.
+///
+/// `newest_coin_known` is the corrective: the wallet is asked whether it
+/// actually holds the funding transaction of the most recent coin we have. A
+/// scan runs forward from its start point, so the newest coin is the last thing
+/// it would have found and the first thing missing when it is cut short.
+///
+/// Returns the point to scan from — always the *oldest* coin, since a scan that
+/// stopped early has to be redone from the beginning, not resumed.
+/// The two points [`heal_scan_window`] needs from our confirmed coins: where a
+/// repair would have to start, and which coin to probe the wallet for.
+///
+/// They are chosen by **different keys on purpose**.
+///
+/// The probe is the coin in the *highest block*. A scan runs in chain order, so
+/// the highest block is the last thing it reaches and the first thing missing
+/// when it is cut short. Picking by block *time* instead would be wrong:
+/// Bitcoin block timestamps only have to beat the median of the previous
+/// eleven, so they tie and go backwards routinely. A coin in an earlier block
+/// can carry a later timestamp, and probing that one — which a truncated scan
+/// would already hold — reports the wallet healthy while coins in later blocks
+/// are still missing.
+///
+/// The start point is the *earliest timestamp* of any coin, which is what
+/// `importdescriptors` takes. Under the same non-monotonicity that is the
+/// conservative choice: it is at or before the timestamp of the lowest block we
+/// hold, so the rescan cannot begin after history we need.
+fn scan_probe_points(
+    confirmed: &[(database::BlockInfo, miniscript::bitcoin::OutPoint)],
+) -> Option<(database::BlockInfo, miniscript::bitcoin::OutPoint)> {
+    let start_from = confirmed
+        .iter()
+        .map(|(block, _)| *block)
+        .min_by_key(|b| b.time)?;
+    let probe = confirmed
+        .iter()
+        .max_by_key(|(block, _)| block.height)
+        .map(|(_, outpoint)| *outpoint)?;
+    Some((start_from, probe))
+}
+
+fn scan_repair_needed(
+    scanned_from: u32,
+    oldest_coin: Option<database::BlockInfo>,
+    newest_coin_known: bool,
+) -> Option<database::BlockInfo> {
+    let oldest = oldest_coin?;
+    if history_outside_scan_window(scanned_from, Some(oldest)).is_some() || !newest_coin_known {
+        Some(oldest)
+    } else {
+        None
+    }
+}
+
+fn heal_scan_window(
+    bitcoind: &mut BitcoinD,
     db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
+    descriptor: &coincube_core::descriptors::CoincubeDescriptor,
 ) {
     // The database first, deliberately. It is a local read, and when it comes
     // back empty — every fresh install — there is no history that could fall
@@ -276,39 +360,89 @@ fn warn_if_scan_window_misses_history(
     //
     // Unconfirmed coins have no block time and cannot be outside a scan window,
     // so they are skipped.
-    let oldest = db
+    let coins = db
         .lock()
         .expect("db mutex poisoned")
         .connection()
-        .coins(&[], &[])
-        .into_values()
-        .filter_map(|coin| coin.block_info)
-        .min_by_key(|block| block.time);
-    let Some(oldest) = oldest else {
+        .coins(&[], &[]);
+    let confirmed: Vec<_> = coins
+        .into_iter()
+        .filter_map(|(outpoint, coin)| coin.block_info.map(|block| (block, outpoint)))
+        .collect();
+    let Some((oldest, newest_outpoint)) = scan_probe_points(&confirmed) else {
         return;
     };
 
-    // The earliest point any of our descriptors was scanned from. `None` means
-    // the node would not tell us, which is not itself a fault to report.
     let Some(scanned_from) = bitcoind.earliest_descriptor_timestamp() else {
         return;
     };
+    // Asked only when there is something to ask about, and only about one coin:
+    // a wallet RPC per start, not per coin.
+    let newest_coin_known = match bitcoind.knows_transaction(&newest_outpoint.txid) {
+        Ok(known) => known,
+        // Not an answer, so it must not be read as one. Fall back to the
+        // descriptor-window test: a window that is plainly short still triggers
+        // a repair, while a cut-short scan that only this probe could catch
+        // waits for the next start rather than costing a full rescan of a
+        // wallet that was never asked about.
+        Err(e) => {
+            log::warn!(
+                concat!(
+                    "Could not ask the watchonly wallet whether it holds '{}': {}. Judging the ",
+                    "scan window on the descriptor timestamps alone this time; a repair this ",
+                    "misses is retried on the next start."
+                ),
+                newest_outpoint.txid,
+                e
+            );
+            true
+        }
+    };
 
-    if let Some(oldest) = history_outside_scan_window(scanned_from, Some(oldest)) {
-        log::warn!(
+    let Some(oldest) = scan_repair_needed(scanned_from, Some(oldest), newest_coin_known) else {
+        return;
+    };
+
+    log::warn!(
+        concat!(
+            "Watchonly wallet cannot see coins we hold: it reports being scanned from unix ",
+            "time {}, our database holds coins as far back as block {} (unix time {}), and ",
+            "the newest of them is {} to it. Those coins cannot be tracked and may be ",
+            "offered for spending after they are already spent. Expected after restoring ",
+            "onto a fresh node, after anything that re-created the wallet, and after a scan ",
+            "cut short by a shutdown. Triggering a rescan from unix time {}; it runs in the ",
+            "background and these coins stay unresolvable until it finishes."
+        ),
+        scanned_from,
+        oldest.height,
+        oldest.time,
+        if newest_coin_known {
+            "known"
+        } else {
+            "unknown"
+        },
+        oldest.time,
+    );
+
+    match bitcoind.start_rescan(descriptor, oldest.time) {
+        // bitcoind has accepted the re-import and stamped the descriptors; the
+        // scan itself is still running. "Started", never "complete".
+        Ok(()) => log::info!(
+            "Rescan of the watchonly wallet started from unix time {}.",
+            oldest.time
+        ),
+        // Not fatal: the daemon still runs, the coins simply stay unresolvable
+        // and the next start tries again — including when the scan is aborted
+        // or interrupted after this returns, which this call cannot observe.
+        // Refusing to boot over this would be worse than running degraded.
+        Err(e) => log::error!(
             concat!(
-                "Watchonly wallet was only scanned from unix time {}, but our database holds ",
-                "coins as far back as block {} (unix time {}). Transactions before the scan ",
-                "start are invisible to the wallet, so those coins cannot be tracked and may ",
-                "be offered for spending after they are already spent. This is the expected ",
-                "state after restoring a wallet onto a fresh node; rescan from at least unix ",
-                "time {} to correct it."
+                "Could not start a rescan of the watchonly wallet from unix time {}: {}. ",
+                "Coins older than the wallet's scan window stay untrackable until one runs."
             ),
-            scanned_from,
-            oldest.height,
             oldest.time,
-            oldest.time,
-        );
+            e
+        ),
     }
 }
 
@@ -585,7 +719,7 @@ impl DaemonHandle {
 
         // Set up the connection to bitcoind (if using it) first as we may need it for the database
         // migration when setting up SQLite below.
-        let bitcoind = if bitcoin.is_none() {
+        let mut bitcoind = if bitcoin.is_none() {
             if let Some(config::BitcoinBackend::Bitcoind(_)) = &config.bitcoin_backend {
                 Some(setup_bitcoind(&config, &data_dir, fresh_data_dir)?)
             } else {
@@ -608,9 +742,9 @@ impl DaemonHandle {
         };
 
         // A wallet whose scan window starts after the coins we already know about
-        // is a silent, permanent fault — see `warn_if_scan_window_misses_history`.
-        if let Some(bitcoind) = bitcoind.as_ref() {
-            warn_if_scan_window_misses_history(bitcoind, &db);
+        // cannot track them, and nothing else notices — see `heal_scan_window`.
+        if let Some(bitcoind) = bitcoind.as_mut() {
+            heal_scan_window(bitcoind, &db, &config.main_descriptor);
         }
 
         // Shared abort flag: `stop` flips it so an in-flight Esplora scan stops
@@ -826,10 +960,168 @@ mod scan_window_tests {
         );
     }
 
-    /// A wallet with no confirmed coins has no history to fall outside
-    /// anything — a fresh install, which is the common case.
+    /// The rescan the daemon performs must start from at or before the oldest
+    /// coin — that is the whole point, and an off-by-one here would scan past
+    /// the very block it exists to reach.
     #[test]
-    fn no_coins_means_nothing_to_warn_about() {
+    fn the_heal_starts_at_or_before_the_oldest_coin() {
+        let oldest = BlockInfo {
+            height: 145_604,
+            time: 1_784_953_848,
+        };
+        let gap = history_outside_scan_window(1_787_373_712, Some(oldest))
+            .expect("a short window is a gap");
+        assert!(
+            gap.time <= oldest.time,
+            "rescanning from {} would start after the coin at {}",
+            gap.time,
+            oldest.time
+        );
+        assert_eq!(gap, oldest);
+    }
+
+    fn outpoint(n: u8) -> miniscript::bitcoin::OutPoint {
+        miniscript::bitcoin::OutPoint {
+            txid: miniscript::bitcoin::Txid::from_raw_hash(
+                miniscript::bitcoin::hashes::Hash::from_byte_array([n; 32]),
+            ),
+            vout: 0,
+        }
+    }
+
+    /// An unanswerable probe must not be read as "the wallet is missing this".
+    ///
+    /// `knows_transaction` returns `Err` for anything that is not the wallet's
+    /// own `-5`, and the caller substitutes `true` — "do not trigger on the
+    /// probe" — leaving the descriptor-window test to decide alone. Reading the
+    /// failure as `false` instead would rescan a healthy wallet whenever the RPC
+    /// hiccupped, on every start, for a question never actually asked.
+    #[test]
+    fn an_unanswerable_probe_defers_instead_of_forcing_a_rescan() {
+        let oldest = BlockInfo {
+            height: 145_604,
+            time: 1_784_953_848,
+        };
+
+        // Window fine, probe unanswerable: nothing is known to be wrong, so
+        // nothing is repaired — and the next start asks again.
+        assert_eq!(
+            scan_repair_needed(oldest.time - 1, Some(oldest), true),
+            None
+        );
+
+        // Window plainly short: still repaired, because that test stands on its
+        // own and needed no probe.
+        assert_eq!(
+            scan_repair_needed(1_787_373_712, Some(oldest), true),
+            Some(oldest),
+            "a short window is conclusive without the probe"
+        );
+    }
+
+    /// The probe must follow block **height**, not block time.
+    ///
+    /// Bitcoin timestamps only have to beat the median of the previous eleven
+    /// blocks, so they tie and run backwards routinely. Here the coin with the
+    /// latest *time* sits in an earlier block than the newest coin — exactly the
+    /// shape a truncated scan produces, since it would already hold the earlier
+    /// block and be missing the later one. Probing by time asks about the coin
+    /// it has and concludes the wallet is fine.
+    #[test]
+    fn the_probe_follows_height_when_timestamps_run_backwards() {
+        let early_block_late_stamp = BlockInfo {
+            height: 145_600,
+            time: 1_784_960_000,
+        };
+        let late_block_early_stamp = BlockInfo {
+            height: 145_610,
+            time: 1_784_953_848,
+        };
+        let confirmed = vec![
+            (early_block_late_stamp, outpoint(1)),
+            (late_block_early_stamp, outpoint(2)),
+        ];
+
+        let (start_from, probe) = scan_probe_points(&confirmed).expect("two confirmed coins");
+        assert_eq!(
+            probe,
+            outpoint(2),
+            "the coin in the highest block is the one a cut-short scan would be missing"
+        );
+        assert_eq!(
+            start_from, late_block_early_stamp,
+            "the start point is the earliest timestamp, which is the conservative floor"
+        );
+    }
+
+    /// No confirmed coins, no probe points — the fresh-restore state.
+    #[test]
+    fn no_confirmed_coins_yields_no_probe_points() {
+        assert!(scan_probe_points(&[]).is_none());
+    }
+
+    /// The case the descriptor timestamp cannot see: a scan cut short.
+    ///
+    /// `importdescriptors` stamps the descriptors when the import is requested,
+    /// not when the scan finishes, and keeps the stamp through an aborting
+    /// shutdown — the poller says as much in its own note. So a wallet
+    /// interrupted mid-scan reports a window it never covered, and the
+    /// timestamp test alone calls it healthy forever while its coins stay
+    /// unresolvable.
+    #[test]
+    fn a_scan_cut_short_is_caught_even_though_the_window_looks_right() {
+        let oldest = BlockInfo {
+            height: 145_604,
+            time: 1_784_953_848,
+        };
+        // Window looks perfect — scanned from before the oldest coin.
+        let scanned_from = oldest.time - 1;
+
+        assert_eq!(
+            history_outside_scan_window(scanned_from, Some(oldest)),
+            None,
+            "the timestamp test alone sees nothing wrong"
+        );
+        assert_eq!(
+            scan_repair_needed(scanned_from, Some(oldest), false),
+            Some(oldest),
+            "but the wallet not holding the newest coin's tx is proof it did not finish"
+        );
+        assert_eq!(
+            scan_repair_needed(scanned_from, Some(oldest), true),
+            None,
+            "a wallet that both claims and holds the history is left alone"
+        );
+    }
+
+    /// A repair always restarts from the oldest coin, never from where a
+    /// cut-short scan happened to stop: bitcoind rescans forward from a
+    /// timestamp, so resuming from the middle would leave the gap in place.
+    #[test]
+    fn a_repair_restarts_from_the_oldest_coin() {
+        let oldest = BlockInfo {
+            height: 145_604,
+            time: 1_784_953_848,
+        };
+        for (scanned_from, known) in [(1_787_373_712, true), (oldest.time - 1, false)] {
+            assert_eq!(
+                scan_repair_needed(scanned_from, Some(oldest), known),
+                Some(oldest)
+            );
+        }
+    }
+
+    /// An empty database yields no gap — and that is a **limit**, not just an
+    /// optimisation.
+    ///
+    /// A freshly restored Vault starts with an empty database, so this path
+    /// cannot tell how far back its history goes and correctly does nothing.
+    /// Seeding that first scan is the Recovery Kit birthday's job, carried by
+    /// `coincube_gui::app::start_pending_rescan`; the heal here is what keeps
+    /// the result once the database has coins to reason from. Removing either
+    /// half leaves restored wallets unable to see their own history.
+    #[test]
+    fn no_coins_means_no_gap_can_be_derived() {
         assert_eq!(history_outside_scan_window(u32::MAX, None), None);
     }
 }

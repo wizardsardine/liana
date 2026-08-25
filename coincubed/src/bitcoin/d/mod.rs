@@ -926,6 +926,37 @@ impl BitcoinD {
         }
     }
 
+    /// Does the watchonly wallet actually hold this transaction?
+    ///
+    /// The honest test of whether a scan reached a block, as opposed to whether
+    /// bitcoind *says* it did. `importdescriptors` stamps the descriptors with
+    /// the requested timestamp **before** scanning, and keeps that stamp even if
+    /// the scan is then aborted by a shutdown — the poller's own note says so.
+    /// So a wallet can claim to have been scanned from January while holding
+    /// none of the transactions it should have found.
+    ///
+    /// `Ok(false)` **only** for `-5`, the wallet's own "I have never seen this
+    /// transaction". Every other failure — transport, auth, a node mid-restart,
+    /// a response shape we do not recognise — is `Err`, because it is not an
+    /// answer.
+    ///
+    /// The distinction matters because the caller spends a full rescan on a
+    /// `false`. Reading an unreachable node as "the wallet is missing history"
+    /// would rescan a perfectly healthy wallet, and do it again on every start
+    /// the RPC happened to fail — hours of scanning on mainnet for a question
+    /// that was never actually asked. Deferring costs one more start with
+    /// unresolvable coins; guessing costs the rescan.
+    pub(crate) fn knows_transaction(&self, txid: &bitcoin::Txid) -> Result<bool, BitcoindError> {
+        match self.make_faillible_wallet_request(
+            "gettransaction",
+            params!(Json::String(txid.to_string())),
+        ) {
+            Ok(_) => Ok(true),
+            Err(e) if e.is_unknown_to_wallet() => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
     /// The earliest point any of this wallet's descriptors was scanned from.
     ///
     /// The non-panicking sibling of [`Self::list_descriptors`], for the startup
