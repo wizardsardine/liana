@@ -46,3 +46,15 @@ It is sometimes useful to change the network without a factory reset, such as wh
 device and/or Liana. In this case the "Temporary signer" mode may be used. The network can be reset
 by simply disconnecting and reconnecting it. If using this mode, we advise you to first choose the
 network in the Liana installer before setting up the network on your Jade.
+
+## [Krux](https://github.com/selfcustody/krux)
+
+The firmware supports Miniscript in both P2WSH and Taproot descriptors.
+
+See the [Krux documentation](https://selfcustody.github.io/krux/getting-started/usage/navigating-the-main-menu/#wallet-descriptor) for usage.
+
+Miniscript support was introduced in
+[v25.03.0](https://github.com/selfcustody/krux/releases/tag/v25.03.0).
+
+NOTE: Krux devices will not be dectected by Liana; you use it by exporting the
+PSBT from Liana to an SD card, signing on the device, and importing the signed PSBT back.
