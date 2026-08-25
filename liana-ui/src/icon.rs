@@ -46,7 +46,7 @@ pub fn cross_icon<'a>() -> Text<'a> {
 }
 
 pub fn big_cross_icon<'a>() -> Text<'a> {
-    bootstrap_icon('\u{F00D}')
+    bootstrap_icon('\u{F623}')
 }
 
 pub fn arrow_down() -> Text<'static> {
