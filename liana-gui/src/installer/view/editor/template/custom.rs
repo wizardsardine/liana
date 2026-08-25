@@ -1,6 +1,6 @@
 use iced::{
     alignment,
-    widget::{row, Container, Space},
+    widget::{column, row, Container, Space},
     Alignment, Length,
 };
 use liana::miniscript::bitcoin::Network;
@@ -11,7 +11,9 @@ use liana_ui::{
         button::{btn_add_recovery_option, btn_add_safety_net, btn_next},
         text::new,
     },
-    image, theme,
+    image,
+    spacing::{HSpacing, VSpacing},
+    theme,
     widget::*,
 };
 
@@ -19,7 +21,12 @@ use crate::installer::{
     descriptor::Path,
     message::{self, Message},
     view::{
-        editor::{defined_key, path, undefined_key},
+        editor::{
+            defined_key, path,
+            template::BOTTOM_PADDING,
+            template::{DESCRIPTION_BOTTOM_PADDING, FOOTER_SPACING},
+            undefined_key,
+        },
         layout,
     },
 };
@@ -28,29 +35,45 @@ pub fn custom_template_description(
     progress: (usize, usize),
     network: Network,
 ) -> Element<'static, Message> {
+    let title = new::b1_bold("Build your own");
+
+    let intro = Container::new(
+        new::caption("For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.")
+            .style(theme::text::secondary)
+            .align_x(alignment::Horizontal::Left),
+    )
+    .align_x(alignment::Horizontal::Left)
+    .width(Length::Fill);
+
+    let explanation = Container::new(
+        new::caption("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.")
+            .style(theme::text::secondary)
+            .align_x(alignment::Horizontal::Left),
+    )
+    .align_x(alignment::Horizontal::Left)
+    .width(Length::Fill);
+
     let row_next = row![Space::fill_width(), btn_next(Some(Message::Next))];
+
+    let diagram = image::custom_template_description().width(Length::Fill);
+
+    let content = column![
+        title,
+        intro,
+        explanation,
+        diagram,
+        row_next,
+        Space::with_height(DESCRIPTION_BOTTOM_PADDING),
+    ]
+    .align_x(Alignment::Start)
+    .spacing(VSpacing::L);
+
     layout(
         progress,
         network,
         None,
         "Introduction",
-        Column::new()
-            .align_x(Alignment::Start)
-            .push(new::b1_bold("Build your own"))
-            .push(Container::new(
-                new::caption("For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.")
-                .style(theme::text::secondary)
-                .align_x(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
-            .push(Container::new(
-                new::caption("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.")
-                .style(theme::text::secondary)
-                .align_x(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
-            .push(image::custom_template_description().width(Length::Fill))
-            .push(row_next)
-            .push(Space::with_height(50.0))
-            .spacing(20),
+        content,
         Some(Message::Previous),
     )
 }
@@ -110,7 +133,7 @@ pub fn custom_template<'a>(
     .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(0, msg)));
 
     let recovery_paths = recovery_paths.into_iter().enumerate().fold(
-        Column::new().spacing(20),
+        column![].spacing(VSpacing::L),
         |col, (i, (p_idx, p))| {
             col.push(
                 path(
@@ -173,10 +196,7 @@ pub fn custom_template<'a>(
                 message::DefineDescriptor::AddSafetyNetPath,
             ))));
 
-    let btn_row = Row::new()
-        .push(btn_add_recovery_option(add_recov_option))
-        .push_maybe(safety_net)
-        .spacing(10);
+    let btn_row = row![btn_add_recovery_option(add_recov_option), safety_net].spacing(HSpacing::M);
 
     let safety_net = safety_net_path.map(|(sn_index, sn_path)| {
         path(
@@ -226,22 +246,25 @@ pub fn custom_template<'a>(
 
     let last_btn_row = super::template_footer(valid, processing, false);
 
+    let content = column![
+        advanced_settings,
+        primary,
+        recovery_paths,
+        btn_row,
+        safety_net,
+        Space::with_height(FOOTER_SPACING),
+        last_btn_row,
+        Space::with_height(BOTTOM_PADDING),
+    ]
+    .align_x(Alignment::Start)
+    .spacing(VSpacing::L);
+
     layout(
         progress,
         network,
         None,
         "Set keys",
-        Column::new()
-            .align_x(Alignment::Start)
-            .push(advanced_settings)
-            .push(primary)
-            .push(recovery_paths)
-            .push(btn_row)
-            .push_maybe(safety_net)
-            .push(Space::with_height(10))
-            .push(last_btn_row)
-            .push(Space::with_height(super::BOTTOM_PADDING))
-            .spacing(20),
+        content,
         Some(Message::Previous),
     )
 }
