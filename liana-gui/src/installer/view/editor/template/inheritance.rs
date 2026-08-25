@@ -14,7 +14,8 @@ use crate::installer::{
             defined_key, path,
             template::{
                 caption_block, key_legend, row_next, BOTTOM_PADDING, DESCRIPTION_BOTTOM_PADDING,
-                FOOTER_SPACING, KEY_LEGEND_SPACING,
+                FOOTER_SPACING, HARDWARE_WALLET_ADVICE, INHERITANCE_KEY, INTRODUCTION_TITLE,
+                KEY_LEGEND_SPACING, PRIMARY_KEY, SET_KEYS_TITLE, UNSUPPORTED_TAPROOT_WARNING,
             },
             undefined_key,
         },
@@ -28,11 +29,11 @@ pub fn inheritance_template_description(
 ) -> Element<'static, Message> {
     let title = new::b1_bold("Simple inheritance wallet");
 
-    let intro = caption_block("For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key.");
+    let intro = caption_block(format!("For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). {HARDWARE_WALLET_ADVICE}."));
 
     let keys = row![
-        key_legend(theme::text::success, "Primary key"),
-        key_legend(theme::text::primary, "Inheritance key"),
+        key_legend(theme::text::success, PRIMARY_KEY),
+        key_legend(theme::text::primary, INHERITANCE_KEY),
     ]
     .spacing(KEY_LEGEND_SPACING);
 
@@ -57,7 +58,7 @@ After a period of inactivity (but not before that) your Inheritance Key will bec
         progress,
         network,
         None,
-        "Introduction",
+        INTRODUCTION_TITLE,
         content,
         Some(Message::Previous),
     )
@@ -90,16 +91,16 @@ pub fn inheritance_template<'a>(
             defined_key(
                 &key.name,
                 color::GREEN,
-                "Primary key",
+                PRIMARY_KEY,
                 if use_taproot && !key.source.is_compatible_taproot() {
-                    Some("This device does not support Taproot")
+                    Some(UNSUPPORTED_TAPROOT_WARNING)
                 } else {
                     None
                 },
                 true,
             )
         } else {
-            undefined_key(color::GREEN, "Primary key", true, true)
+            undefined_key(color::GREEN, PRIMARY_KEY, true, true)
         }
         .map(|msg| message::DefinePath::Key(0, msg))],
         true,
@@ -116,16 +117,16 @@ pub fn inheritance_template<'a>(
             defined_key(
                 &key.name,
                 color::WHITE,
-                "Inheritance key",
+                INHERITANCE_KEY,
                 if use_taproot && !key.source.is_compatible_taproot() {
-                    Some("This device does not support Taproot")
+                    Some(UNSUPPORTED_TAPROOT_WARNING)
                 } else {
                     None
                 },
                 true,
             )
         } else {
-            undefined_key(color::WHITE, "Inheritance key", primary_key.is_some(), true)
+            undefined_key(color::WHITE, INHERITANCE_KEY, primary_key.is_some(), true)
         }
         .map(|msg| message::DefinePath::Key(0, msg))],
         true,
@@ -149,7 +150,7 @@ pub fn inheritance_template<'a>(
         progress,
         network,
         None,
-        "Set keys",
+        SET_KEYS_TITLE,
         content,
         Some(Message::Previous),
     )

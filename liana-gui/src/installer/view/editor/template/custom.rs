@@ -22,7 +22,9 @@ use crate::installer::{
         editor::{
             defined_key, path,
             template::{
-                caption_block, row_next, BOTTOM_PADDING, DESCRIPTION_BOTTOM_PADDING, FOOTER_SPACING,
+                caption_block, row_next, BOTTOM_PADDING, DESCRIPTION_BOTTOM_PADDING,
+                FOOTER_SPACING, HARDWARE_WALLET_ADVICE, INTRODUCTION_TITLE, PRIMARY_KEY,
+                RECOVERY_KEY, SAFETY_NET_KEY, SET_KEYS_TITLE, UNSUPPORTED_TAPROOT_WARNING,
             },
             undefined_key,
         },
@@ -36,7 +38,7 @@ pub fn custom_template_description(
 ) -> Element<'static, Message> {
     let title = new::b1_bold("Build your own");
 
-    let intro = caption_block("For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.");
+    let intro = caption_block(format!("For this setup you will need to define your primary and recovery spending policies. {HARDWARE_WALLET_ADVICE} belonging to them."));
 
     let explanation = caption_block("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.");
 
@@ -57,7 +59,7 @@ pub fn custom_template_description(
         progress,
         network,
         None,
-        "Introduction",
+        INTRODUCTION_TITLE,
         content,
         Some(Message::Previous),
     )
@@ -94,9 +96,9 @@ pub fn custom_template<'a>(
                     defined_key(
                         &key.name,
                         color::GREEN,
-                        "Primary key",
+                        PRIMARY_KEY,
                         if use_taproot && !key.source.is_compatible_taproot() {
-                            Some("This device does not support Taproot")
+                            Some(UNSUPPORTED_TAPROOT_WARNING)
                         } else {
                             None
                         },
@@ -105,7 +107,7 @@ pub fn custom_template<'a>(
                 } else {
                     undefined_key(
                         color::GREEN,
-                        "Primary key",
+                        PRIMARY_KEY,
                         !primary_path.keys[0..i].iter().any(|k| k.is_none()),
                         prim_keys_fixed,
                     )
@@ -139,9 +141,9 @@ pub fn custom_template<'a>(
                                 defined_key(
                                     &key.name,
                                     color::ORANGE,
-                                    "Recovery key",
+                                    RECOVERY_KEY,
                                     if use_taproot && !key.source.is_compatible_taproot() {
-                                        Some("This device does not support Taproot")
+                                        Some(UNSUPPORTED_TAPROOT_WARNING)
                                     } else {
                                         None
                                     },
@@ -150,7 +152,7 @@ pub fn custom_template<'a>(
                             } else {
                                 undefined_key(
                                     color::ORANGE,
-                                    "Recovery key",
+                                    RECOVERY_KEY,
                                     !p.keys[0..j].iter().any(|k| k.is_none()),
                                     fixed,
                                 )
@@ -202,9 +204,9 @@ pub fn custom_template<'a>(
                         defined_key(
                             &key.name,
                             color::WHITE,
-                            "Safety Net key",
+                            SAFETY_NET_KEY,
                             if use_taproot && !key.source.is_compatible_taproot() {
-                                Some("This key source does not support Taproot")
+                                Some(UNSUPPORTED_TAPROOT_WARNING)
                             } else {
                                 None
                             },
@@ -213,7 +215,7 @@ pub fn custom_template<'a>(
                     } else {
                         undefined_key(
                             color::WHITE,
-                            "Safety Net key",
+                            SAFETY_NET_KEY,
                             !sn_path.keys[0..i].iter().any(|k| k.is_none()),
                             fixed,
                         )
@@ -248,7 +250,7 @@ pub fn custom_template<'a>(
         progress,
         network,
         None,
-        "Set keys",
+        SET_KEYS_TITLE,
         content,
         Some(Message::Previous),
     )

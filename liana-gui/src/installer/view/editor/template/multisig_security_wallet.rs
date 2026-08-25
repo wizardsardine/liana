@@ -14,7 +14,8 @@ use crate::installer::{
             defined_key, path,
             template::{
                 caption_block, key_legend, row_next, BOTTOM_PADDING, DESCRIPTION_BOTTOM_PADDING,
-                FOOTER_SPACING, KEY_LEGEND_SPACING,
+                FOOTER_SPACING, HARDWARE_WALLET_ADVICE, INTRODUCTION_TITLE, KEY_LEGEND_SPACING,
+                PRIMARY_KEY, RECOVERY_KEY, SET_KEYS_TITLE, UNSUPPORTED_TAPROOT_WARNING,
             },
             undefined_key, uneditable_defined_key,
         },
@@ -28,12 +29,12 @@ pub fn multisig_security_template_description(
 ) -> Element<'static, Message> {
     let title = new::b1_bold("Expanding multisig wallet");
 
-    let intro = caption_block("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key.");
+    let intro = caption_block(format!("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. {HARDWARE_WALLET_ADVICE}."));
 
     let keys = row![
-        key_legend(theme::text::success, "Primary key #1"),
-        key_legend(theme::text::success, "Primary key #2"),
-        key_legend(theme::text::success, "Recovery key"),
+        key_legend(theme::text::success, format!("{PRIMARY_KEY} #1")),
+        key_legend(theme::text::success, format!("{PRIMARY_KEY} #2")),
+        key_legend(theme::text::success, RECOVERY_KEY),
     ]
     .spacing(KEY_LEGEND_SPACING);
 
@@ -57,7 +58,7 @@ pub fn multisig_security_template_description(
         progress,
         network,
         None,
-        "Introduction",
+        INTRODUCTION_TITLE,
         content,
         Some(Message::Previous),
     )
@@ -89,9 +90,9 @@ pub fn multisig_security_template<'a>(
                     defined_key(
                         &key.name,
                         color::GREEN,
-                        format!("Primary key #{}", i + 1),
+                        format!("{PRIMARY_KEY} #{}", i + 1),
                         if use_taproot && !key.source.is_compatible_taproot() {
-                            Some("This device does not support Taproot")
+                            Some(UNSUPPORTED_TAPROOT_WARNING)
                         } else {
                             None
                         },
@@ -100,7 +101,7 @@ pub fn multisig_security_template<'a>(
                 } else {
                     undefined_key(
                         color::GREEN,
-                        format!("Primary key #{}", i + 1),
+                        format!("{PRIMARY_KEY} #{}", i + 1),
                         !primary_path.keys[0..i].iter().any(|k| k.is_none()),
                         true,
                     )
@@ -137,9 +138,9 @@ pub fn multisig_security_template<'a>(
                         uneditable_defined_key(
                             &key.name,
                             color::GREEN,
-                            format!("Primary key #{}", j + 1),
+                            format!("{PRIMARY_KEY} #{}", j + 1),
                             if use_taproot && !key.source.is_compatible_taproot() {
-                                Some("This device does not support Taproot")
+                                Some(UNSUPPORTED_TAPROOT_WARNING)
                             } else {
                                 None
                             },
@@ -148,9 +149,9 @@ pub fn multisig_security_template<'a>(
                         defined_key(
                             &key.name,
                             color::ORANGE,
-                            "Recovery key".to_string(),
+                            RECOVERY_KEY,
                             if use_taproot && !key.source.is_compatible_taproot() {
-                                Some("This device does not support Taproot")
+                                Some(UNSUPPORTED_TAPROOT_WARNING)
                             } else {
                                 None
                             },
@@ -161,9 +162,9 @@ pub fn multisig_security_template<'a>(
                     undefined_key(
                         if j < 2 { color::GREEN } else { color::ORANGE },
                         if j < 2 {
-                            format!("Primary key #{}", j + 1)
+                            format!("{PRIMARY_KEY} #{}", j + 1)
                         } else {
-                            "Recovery key".to_string()
+                            RECOVERY_KEY.to_string()
                         },
                         !(primary_path.keys.iter().any(|k| k.is_none())
                             || recovery_path.keys[0..j].iter().any(|k| k.is_none())),
@@ -206,7 +207,7 @@ pub fn multisig_security_template<'a>(
         progress,
         network,
         None,
-        "Set keys",
+        SET_KEYS_TITLE,
         content,
         Some(Message::Previous),
     )

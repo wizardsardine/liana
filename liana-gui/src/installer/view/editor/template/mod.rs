@@ -41,6 +41,16 @@ pub const FOOTER_SPACING: f32 = 10.0;
 /// Gap between the key legend items of the template introductions.
 pub const KEY_LEGEND_SPACING: f32 = 30.0;
 
+pub const UNSUPPORTED_TAPROOT_WARNING: &str = "This device does not support Taproot";
+pub const HARDWARE_WALLET_ADVICE: &str =
+    "For security reasons, we suggest you use a separate Hardware Wallet for each key";
+pub const PRIMARY_KEY: &str = "Primary key";
+pub const RECOVERY_KEY: &str = "Recovery key";
+pub const INHERITANCE_KEY: &str = "Inheritance key";
+pub const SAFETY_NET_KEY: &str = "Safety Net key";
+pub const INTRODUCTION_TITLE: &str = "Introduction";
+pub const SET_KEYS_TITLE: &str = "Set keys";
+
 pub fn advanced_settings_collapse<'a>(use_taproot: bool) -> Element<'a, Message> {
     fn collapse<'a>(collapsed: bool) -> Element<'a, Message> {
         let icn = if collapsed {
