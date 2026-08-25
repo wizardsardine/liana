@@ -107,12 +107,18 @@ icon_badge!(wallet, wallet_icon, simple);
 icon_badge!(backup, backup_icon, simple);
 icon_badge!(restore, restore_icon, simple);
 
-pub fn tile<'a, M>(name: Tile) -> Container<'a, M> {
-    tile_with_tone(name, None)
+pub fn tile<'a, M>(tile: Tile) -> Container<'a, M> {
+    let tone = tile_spec(tile).tone;
+    let tone = if tone == TileStyle::Neutral {
+        None
+    } else {
+        Some(tone)
+    };
+    tile_with_tone(tile, tone)
 }
 
-pub fn tile_accent<'a, M>(name: Tile) -> Container<'a, M> {
-    tile_with_tone(name, Some(TileStyle::Accent))
+pub fn tile_accent<'a, M>(tile: Tile) -> Container<'a, M> {
+    tile_with_tone(tile, Some(TileStyle::Accent))
 }
 
 fn tile_with_tone<'a, M>(name: Tile, tone: Option<TileStyle>) -> Container<'a, M> {
