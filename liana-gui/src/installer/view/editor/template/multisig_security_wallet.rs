@@ -34,7 +34,7 @@ pub fn multisig_security_template_description(
     let keys = row![
         key_legend(theme::text::success, format!("{PRIMARY_KEY} #1")),
         key_legend(theme::text::success, format!("{PRIMARY_KEY} #2")),
-        key_legend(theme::text::success, RECOVERY_KEY),
+        key_legend(theme::text::warning, RECOVERY_KEY),
     ]
     .spacing(KEY_LEGEND_SPACING);
 
