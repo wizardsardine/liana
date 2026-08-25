@@ -1167,7 +1167,7 @@ impl SelectKeySource {
         let kind = match source {
             KeySource::Device(..) => KeySourceKind::Device,
             KeySource::HotSigner => KeySourceKind::HotKey,
-            KeySource::Manual => KeySourceKind::Xpub,
+            KeySource::Manual => KeySourceKind::Imported,
             KeySource::Token(..) => KeySourceKind::Token,
         };
         let message = if let KeySource::Token(kind, _) = source {

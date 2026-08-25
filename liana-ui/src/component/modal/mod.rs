@@ -301,7 +301,7 @@ where
 pub enum KeySourceKind {
     Device,
     HotKey,
-    Xpub,
+    Imported,
     Token,
 }
 
@@ -310,7 +310,7 @@ impl From<KeySourceKind> for Tile {
         match kind {
             KeySourceKind::Device => Tile::Device,
             KeySourceKind::HotKey => Tile::KeyHot,
-            KeySourceKind::Xpub => Tile::KeyExternal,
+            KeySourceKind::Imported => Tile::KeyImported,
             KeySourceKind::Token => Tile::KeyService,
         }
     }
