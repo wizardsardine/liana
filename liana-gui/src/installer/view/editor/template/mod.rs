@@ -2,7 +2,10 @@ pub mod custom;
 pub mod inheritance;
 pub mod multisig_security_wallet;
 
+use std::fmt::Display;
+
 use iced::{
+    alignment,
     widget::{column, row, Space},
     Alignment, Length,
 };
@@ -12,9 +15,11 @@ use liana_ui::{
     component::{
         button::{self, btn_clear_all, btn_customize, btn_next},
         collapse, list,
-        text::{new, p1_bold},
+        text::{new, p1_bold, H3_SIZE},
     },
-    icon, theme,
+    icon,
+    spacing::HSpacing,
+    theme,
     widget::*,
 };
 
@@ -126,4 +131,30 @@ fn template_option(
         button::EntryWidth::Standard,
         Some(Message::SelectDescriptorTemplate(template)),
     )
+}
+
+pub fn key_legend<'a>(
+    style: fn(&theme::Theme) -> iced::widget::text::Style,
+    label: impl Display,
+) -> Row<'a, Message> {
+    row![
+        icon::round_key_icon().size(H3_SIZE).style(style),
+        new::b5_bold(label),
+    ]
+    .align_y(Alignment::Center)
+    .spacing(HSpacing::M)
+}
+
+pub fn caption_block<'a>(content: impl Display) -> Container<'a, Message> {
+    Container::new(
+        new::caption(content)
+            .style(theme::text::secondary)
+            .align_x(alignment::Horizontal::Left),
+    )
+    .align_x(alignment::Horizontal::Left)
+    .width(Length::Fill)
+}
+
+pub fn row_next<'a>() -> Row<'a, Message> {
+    row![Space::fill_width(), btn_next(Some(Message::Next))]
 }

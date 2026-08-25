@@ -1,6 +1,5 @@
 use iced::{
-    alignment,
-    widget::{column, row, Container, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
 use liana::miniscript::bitcoin::Network;
@@ -8,12 +7,11 @@ use liana::miniscript::bitcoin::Network;
 use liana_ui::{
     color,
     component::{
-        button::{btn_add_recovery_option, btn_add_safety_net, btn_next},
+        button::{btn_add_recovery_option, btn_add_safety_net},
         text::new,
     },
     image,
     spacing::{HSpacing, VSpacing},
-    theme,
     widget::*,
 };
 
@@ -23,8 +21,9 @@ use crate::installer::{
     view::{
         editor::{
             defined_key, path,
-            template::BOTTOM_PADDING,
-            template::{DESCRIPTION_BOTTOM_PADDING, FOOTER_SPACING},
+            template::{
+                caption_block, row_next, BOTTOM_PADDING, DESCRIPTION_BOTTOM_PADDING, FOOTER_SPACING,
+            },
             undefined_key,
         },
         layout,
@@ -37,23 +36,9 @@ pub fn custom_template_description(
 ) -> Element<'static, Message> {
     let title = new::b1_bold("Build your own");
 
-    let intro = Container::new(
-        new::caption("For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.")
-            .style(theme::text::secondary)
-            .align_x(alignment::Horizontal::Left),
-    )
-    .align_x(alignment::Horizontal::Left)
-    .width(Length::Fill);
+    let intro = caption_block("For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.");
 
-    let explanation = Container::new(
-        new::caption("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.")
-            .style(theme::text::secondary)
-            .align_x(alignment::Horizontal::Left),
-    )
-    .align_x(alignment::Horizontal::Left)
-    .width(Length::Fill);
-
-    let row_next = row![Space::fill_width(), btn_next(Some(Message::Next))];
+    let explanation = caption_block("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.");
 
     let diagram = image::custom_template_description().width(Length::Fill);
 
@@ -62,7 +47,7 @@ pub fn custom_template_description(
         intro,
         explanation,
         diagram,
-        row_next,
+        row_next(),
         Space::with_height(DESCRIPTION_BOTTOM_PADDING),
     ]
     .align_x(Alignment::Start)

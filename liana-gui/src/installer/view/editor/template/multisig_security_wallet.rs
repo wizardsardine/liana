@@ -1,21 +1,10 @@
 use iced::{
-    alignment,
     widget::{column, row, Space},
     Alignment, Length,
 };
 use liana::miniscript::bitcoin::Network;
 
-use liana_ui::{
-    color,
-    component::{
-        button::btn_next,
-        text::{new, H3_SIZE},
-    },
-    icon, image,
-    spacing::{HSpacing, VSpacing},
-    theme,
-    widget::*,
-};
+use liana_ui::{color, component::text::new, image, spacing::VSpacing, theme, widget::*};
 
 use crate::installer::{
     descriptor::{Path, PathKind, PathSequence},
@@ -23,8 +12,10 @@ use crate::installer::{
     view::{
         editor::{
             defined_key, path,
-            template::BOTTOM_PADDING,
-            template::{DESCRIPTION_BOTTOM_PADDING, FOOTER_SPACING, KEY_LEGEND_SPACING},
+            template::{
+                caption_block, key_legend, row_next, BOTTOM_PADDING, DESCRIPTION_BOTTOM_PADDING,
+                FOOTER_SPACING, KEY_LEGEND_SPACING,
+            },
             undefined_key, uneditable_defined_key,
         },
         layout,
@@ -37,51 +28,16 @@ pub fn multisig_security_template_description(
 ) -> Element<'static, Message> {
     let title = new::b1_bold("Expanding multisig wallet");
 
-    let intro = Container::new(
-        new::caption("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key.")
-            .style(theme::text::secondary)
-            .align_x(alignment::Horizontal::Left),
-    )
-    .align_x(alignment::Horizontal::Left)
-    .width(Length::Fill);
+    let intro = caption_block("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key.");
 
     let keys = row![
-        row![
-            icon::round_key_icon()
-                .size(H3_SIZE)
-                .style(theme::text::success),
-            new::b5_bold("Primary key #1"),
-        ]
-        .align_y(Alignment::Center)
-        .spacing(HSpacing::M),
-        row![
-            icon::round_key_icon()
-                .size(H3_SIZE)
-                .style(theme::text::success),
-            new::b5_bold("Primary key #2"),
-        ]
-        .align_y(Alignment::Center)
-        .spacing(HSpacing::M),
-        row![
-            icon::round_key_icon()
-                .size(H3_SIZE)
-                .style(theme::text::success),
-            new::b5_bold("Recovery key"),
-        ]
-        .align_y(Alignment::Center)
-        .spacing(HSpacing::M),
+        key_legend(theme::text::success, "Primary key #1"),
+        key_legend(theme::text::success, "Primary key #2"),
+        key_legend(theme::text::success, "Recovery key"),
     ]
     .spacing(KEY_LEGEND_SPACING);
 
-    let explanation = Container::new(
-        new::caption("The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):")
-            .style(theme::text::secondary)
-            .align_x(alignment::Horizontal::Left),
-    )
-    .align_x(alignment::Horizontal::Left)
-    .width(Length::Fill);
-
-    let row_next = row![Space::fill_width(), btn_next(Some(Message::Next))];
+    let explanation = caption_block("The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):");
 
     let diagram = image::multisig_security_template_description().width(Length::Fill);
 
@@ -91,7 +47,7 @@ pub fn multisig_security_template_description(
         keys,
         explanation,
         diagram,
-        row_next,
+        row_next(),
         Space::with_height(DESCRIPTION_BOTTOM_PADDING),
     ]
     .align_x(Alignment::Start)
