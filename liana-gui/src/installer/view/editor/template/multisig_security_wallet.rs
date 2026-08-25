@@ -1,6 +1,6 @@
 use iced::{
     alignment,
-    widget::{row, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
 use liana::miniscript::bitcoin::Network;
@@ -11,7 +11,9 @@ use liana_ui::{
         button::btn_next,
         text::{new, H3_SIZE},
     },
-    icon, image, theme,
+    icon, image,
+    spacing::{HSpacing, VSpacing},
+    theme,
     widget::*,
 };
 
@@ -19,7 +21,12 @@ use crate::installer::{
     descriptor::{Path, PathKind, PathSequence},
     message::{self, Message},
     view::{
-        editor::{defined_key, path, undefined_key, uneditable_defined_key},
+        editor::{
+            defined_key, path,
+            template::BOTTOM_PADDING,
+            template::{DESCRIPTION_BOTTOM_PADDING, FOOTER_SPACING, KEY_LEGEND_SPACING},
+            undefined_key, uneditable_defined_key,
+        },
         layout,
     },
 };
@@ -28,50 +35,74 @@ pub fn multisig_security_template_description(
     progress: (usize, usize),
     network: Network,
 ) -> Element<'static, Message> {
+    let title = new::b1_bold("Expanding multisig wallet");
+
+    let intro = Container::new(
+        new::caption("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key.")
+            .style(theme::text::secondary)
+            .align_x(alignment::Horizontal::Left),
+    )
+    .align_x(alignment::Horizontal::Left)
+    .width(Length::Fill);
+
+    let keys = row![
+        row![
+            icon::round_key_icon()
+                .size(H3_SIZE)
+                .style(theme::text::success),
+            new::b5_bold("Primary key #1"),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(HSpacing::M),
+        row![
+            icon::round_key_icon()
+                .size(H3_SIZE)
+                .style(theme::text::success),
+            new::b5_bold("Primary key #2"),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(HSpacing::M),
+        row![
+            icon::round_key_icon()
+                .size(H3_SIZE)
+                .style(theme::text::success),
+            new::b5_bold("Recovery key"),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(HSpacing::M),
+    ]
+    .spacing(KEY_LEGEND_SPACING);
+
+    let explanation = Container::new(
+        new::caption("The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):")
+            .style(theme::text::secondary)
+            .align_x(alignment::Horizontal::Left),
+    )
+    .align_x(alignment::Horizontal::Left)
+    .width(Length::Fill);
+
     let row_next = row![Space::fill_width(), btn_next(Some(Message::Next))];
+
+    let diagram = image::multisig_security_template_description().width(Length::Fill);
+
+    let content = column![
+        title,
+        intro,
+        keys,
+        explanation,
+        diagram,
+        row_next,
+        Space::with_height(DESCRIPTION_BOTTOM_PADDING),
+    ]
+    .align_x(Alignment::Start)
+    .spacing(VSpacing::L);
+
     layout(
         progress,
         network,
         None,
         "Introduction",
-        Column::new()
-            .align_x(Alignment::Start)
-            .push(new::b1_bold("Expanding multisig wallet"))
-            .push(Container::new(
-                new::caption("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key.")
-                .style(theme::text::secondary)
-                .align_x(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
-            .push(Row::new()
-                .spacing(30)
-                .push(
-                    Row::new()
-                    .align_y(Alignment::Center)
-                    .spacing(10)
-                    .push(icon::round_key_icon().size(H3_SIZE).style(theme::text::success))
-                    .push(new::b5_bold("Primary key #1"))
-                ).push(
-                    Row::new()
-                    .align_y(Alignment::Center)
-                    .spacing(10)
-                    .push(icon::round_key_icon().size(H3_SIZE).style(theme::text::success))
-                    .push(new::b5_bold("Primary key #2"))
-                ).push(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(10)
-                        .push(icon::round_key_icon().size(H3_SIZE).style(theme::text::success))
-                        .push(new::b5_bold("Recovery key"))
-            ))
-            .push(Container::new(
-                new::caption("The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):")
-                .style(theme::text::secondary)
-                .align_x(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
-            .push(image::multisig_security_template_description().width(Length::Fill))
-            .push(row_next)
-            .push(Space::with_height(50.0))
-            .spacing(20),
+        content,
         Some(Message::Previous),
     )
 }
@@ -204,20 +235,23 @@ pub fn multisig_security_template<'a>(
 
     let footer = super::template_footer(valid, processing, true);
 
+    let content = column![
+        advanced_settings,
+        primary,
+        recovery,
+        Space::with_height(FOOTER_SPACING),
+        footer,
+        Space::with_height(BOTTOM_PADDING),
+    ]
+    .align_x(Alignment::Start)
+    .spacing(VSpacing::L);
+
     layout(
         progress,
         network,
         None,
         "Set keys",
-        Column::new()
-            .align_x(Alignment::Start)
-            .push(advanced_settings)
-            .push(primary)
-            .push(recovery)
-            .push(Space::with_height(10))
-            .push(footer)
-            .push(Space::with_height(super::BOTTOM_PADDING))
-            .spacing(20),
+        content,
         Some(Message::Previous),
     )
 }

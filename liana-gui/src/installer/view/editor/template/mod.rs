@@ -27,6 +27,15 @@ use crate::installer::{
 /// Bottom padding below the footer of the editor templates.
 pub const BOTTOM_PADDING: f32 = 100.0;
 
+/// Bottom padding below the Next button of the template introductions.
+pub const DESCRIPTION_BOTTOM_PADDING: f32 = 50.0;
+
+/// Gap between the last spending path and the footer.
+pub const FOOTER_SPACING: f32 = 10.0;
+
+/// Gap between the key legend items of the template introductions.
+pub const KEY_LEGEND_SPACING: f32 = 30.0;
+
 pub fn advanced_settings_collapse<'a>(use_taproot: bool) -> Element<'a, Message> {
     fn collapse<'a>(collapsed: bool) -> Element<'a, Message> {
         let icn = if collapsed {
