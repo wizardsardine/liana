@@ -28,7 +28,6 @@ use liana_ui::{
         text::{p1_bold, p1_regular},
         tooltip,
     },
-    theme,
     widget::{ColumnExt, Container, Element, RowExt, SpaceExt},
 };
 
@@ -908,23 +907,19 @@ impl SelectKeySource {
 
         let keys = (!self.keys.is_empty() && !only_safety_net).then_some(self.view_keys());
 
-        let header = modal::header(
-            Some("Select key source".to_string()),
-            None,
-            Some(Message::Close),
-        );
-
-        let column = Column::new()
+        let scrollable_content = column![no_devices, devices, keys, self.view_other_options()]
             .spacing(10)
-            .push(header)
-            .push_maybe(no_devices)
-            .push_maybe(devices)
-            .push_maybe(keys)
-            .push(self.view_other_options())
             .align_x(Horizontal::Center)
             .width(modal::MODAL_WIDTH as u32);
-        let cont = Container::new(column).padding(15).style(theme::card::modal);
-        cont.into()
+        let scrollable = liana_ui::component::scrollable::vertical_thin(scrollable_content);
+
+        liana_ui::component::modal::modal_view(
+            Some("Select key source"),
+            None,
+            Some(Message::Close),
+            modal::ModalWidth::L,
+            scrollable,
+        )
     }
     fn details_view(&self) -> Element<'_, Message> {
         let apply = match (
@@ -1172,7 +1167,7 @@ impl SelectKeySource {
         let kind = match source {
             KeySource::Device(..) => KeySourceKind::Device,
             KeySource::HotSigner => KeySourceKind::HotKey,
-            KeySource::Manual => KeySourceKind::Xpub,
+            KeySource::Manual => KeySourceKind::Imported,
             KeySource::Token(..) => KeySourceKind::Token,
         };
         let message = if let KeySource::Token(kind, _) = source {

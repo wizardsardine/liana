@@ -660,7 +660,7 @@ impl Palette {
                 },
                 danger: Tile {
                     fg: color::RED,
-                    bg: Some(color::LIGHT_BLACK),
+                    bg: None,
                 },
             },
             pills: Pills {

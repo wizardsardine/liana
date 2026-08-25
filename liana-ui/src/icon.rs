@@ -257,6 +257,10 @@ pub fn copy_icon<'a>() -> Text<'a> {
     bootstrap_icon_no_padding('\u{F759}')
 }
 
+pub fn file_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F392}')
+}
+
 pub fn arrow_repeat() -> Text<'static> {
     iconex_icon('\u{46BB}')
 }
