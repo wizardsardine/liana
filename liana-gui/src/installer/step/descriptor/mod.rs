@@ -113,7 +113,7 @@ impl Step for ImportDescriptor {
             }
             Message::ImportBackup => {
                 self.imported_backup = None;
-                let modal = ExportModal::new(None, ImportExportType::FromBackup);
+                let modal = ExportModal::new(None, ImportExportType::FromBackup(self.network));
                 let launch = modal.launch(false);
                 self.modal = ImportDescriptorModal::Export(modal);
                 Some(launch)
