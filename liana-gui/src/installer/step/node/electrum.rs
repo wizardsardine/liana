@@ -14,7 +14,7 @@ use crate::{
     node::electrum::ConfigField,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DefineElectrum {
     address: form::Value<String>,
     validate_domain: bool,
@@ -65,8 +65,8 @@ impl DefineElectrum {
         false
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
-        view::define_electrum(&self.address, self.validate_domain)
+    pub fn view(&self, waiting_for_ping_result: bool) -> Element<'_, Message> {
+        view::define_electrum(&self.address, self.validate_domain, waiting_for_ping_result)
     }
 
     pub fn ping(&self) -> Result<(), Error> {

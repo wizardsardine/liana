@@ -19,7 +19,7 @@ use iced::Task;
 use liana::miniscript::bitcoin::Network;
 use liana_ui::widget::Element;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum NodeDefinition {
     Bitcoind(DefineBitcoind),
     Electrum(DefineElectrum),
@@ -70,10 +70,10 @@ impl NodeDefinition {
         }
     }
 
-    fn view(&self) -> Element<'_, Message> {
+    fn view(&self, waiting_for_ping_result: bool) -> Element<'_, Message> {
         match self {
-            NodeDefinition::Bitcoind(def) => def.view(),
-            NodeDefinition::Electrum(def) => def.view(),
+            NodeDefinition::Bitcoind(def) => def.view(waiting_for_ping_result),
+            NodeDefinition::Electrum(def) => def.view(waiting_for_ping_result),
         }
     }
 
@@ -85,6 +85,7 @@ impl NodeDefinition {
     }
 }
 
+#[derive(Debug)]
 pub struct Node {
     definition: NodeDefinition,
     is_running: Option<Result<(), Error>>,
@@ -233,13 +234,14 @@ impl Step for DefineNode {
         network: Network,
         _email: Option<&str>,
     ) -> Element<'_, Message> {
-        // TODO: Make input fields read-only while waiting for a ping result.
         view::define_bitcoin_node(
             progress,
             network,
             self.nodes.iter().map(|node| node.definition.node_type()),
             self.selected_node_type,
-            self.selected().definition.view(),
+            self.selected()
+                .definition
+                .view(self.selected().waiting_for_ping_result),
             self.selected().is_running.as_ref(),
             self.selected().definition.can_try_ping(),
             self.selected().waiting_for_ping_result,

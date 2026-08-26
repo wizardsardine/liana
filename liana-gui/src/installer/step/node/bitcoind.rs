@@ -339,7 +339,7 @@ impl Step for SelectBitcoindTypeStep {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DefineBitcoind {
     rpc_auth_vals: RpcAuthValues,
     selected_auth_type: RpcAuthType,
@@ -482,8 +482,13 @@ impl DefineBitcoind {
         }
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
-        view::define_bitcoind(&self.address, &self.rpc_auth_vals, &self.selected_auth_type)
+    pub fn view(&self, waiting_for_ping_result: bool) -> Element<'_, Message> {
+        view::define_bitcoind(
+            &self.address,
+            &self.rpc_auth_vals,
+            &self.selected_auth_type,
+            waiting_for_ping_result,
+        )
     }
 }
 
