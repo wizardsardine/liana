@@ -984,6 +984,7 @@ pub fn define_bitcoind<'a>(
     address: &form::Value<String>,
     rpc_auth_vals: &RpcAuthValues,
     selected_auth_type: &RpcAuthType,
+    waiting_for_ping_result: bool,
 ) -> Element<'a, Message> {
     let is_loopback = if let Some((ip, _port)) = address.value.clone().rsplit_once(':') {
         let (ipv4, ipv6) = (Ipv4Addr::from_str(ip), Ipv6Addr::from_str(ip));
@@ -996,10 +997,14 @@ pub fn define_bitcoind<'a>(
         false
     };
 
-    let address_msg = |msg| {
-        Message::DefineNode(DefineNode::DefineBitcoind(
-            DefineBitcoind::ConfigFieldEdited(ConfigField::Address, msg),
-        ))
+    let address_msg = move |msg| {
+        if !waiting_for_ping_result {
+            Message::DefineNode(DefineNode::DefineBitcoind(
+                DefineBitcoind::ConfigFieldEdited(ConfigField::Address, msg),
+            ))
+        } else {
+            Message::None
+        }
     };
     let address_input = form::Form::new_trimmed("Address", address, address_msg)
         .warning("Please enter correct address")
@@ -1023,9 +1028,13 @@ pub fn define_bitcoind<'a>(
                     *auth_type,
                     Some(*selected_auth_type),
                     |new_selection| {
-                        Message::DefineNode(DefineNode::DefineBitcoind(
-                            DefineBitcoind::RpcAuthTypeSelected(new_selection),
-                        ))
+                        if !waiting_for_ping_result {
+                            Message::DefineNode(DefineNode::DefineBitcoind(
+                                DefineBitcoind::RpcAuthTypeSelected(new_selection),
+                            ))
+                        } else {
+                            Message::None
+                        }
                     },
                 ))
                 .spacing(30)
@@ -1035,25 +1044,37 @@ pub fn define_bitcoind<'a>(
     let auth_fields = match selected_auth_type {
         RpcAuthType::CookieFile => {
             row![
-                form::Form::new_trimmed("Cookie path", &rpc_auth_vals.cookie_path, |msg| {
-                    Message::DefineNode(DefineNode::DefineBitcoind(
-                        DefineBitcoind::ConfigFieldEdited(ConfigField::CookieFilePath, msg),
-                    ))
+                form::Form::new_trimmed("Cookie path", &rpc_auth_vals.cookie_path, move |msg| {
+                    if !waiting_for_ping_result {
+                        Message::DefineNode(DefineNode::DefineBitcoind(
+                            DefineBitcoind::ConfigFieldEdited(ConfigField::CookieFilePath, msg),
+                        ))
+                    } else {
+                        Message::None
+                    }
                 })
                 .warning("Please enter correct path")
             ]
         }
         RpcAuthType::UserPass => row![
-            form::Form::new_trimmed("User", &rpc_auth_vals.user, |msg| {
-                Message::DefineNode(DefineNode::DefineBitcoind(
-                    DefineBitcoind::ConfigFieldEdited(ConfigField::User, msg),
-                ))
+            form::Form::new_trimmed("User", &rpc_auth_vals.user, move |msg| {
+                if !waiting_for_ping_result {
+                    Message::DefineNode(DefineNode::DefineBitcoind(
+                        DefineBitcoind::ConfigFieldEdited(ConfigField::User, msg),
+                    ))
+                } else {
+                    Message::None
+                }
             })
             .warning("Please enter correct user"),
-            form::Form::new_trimmed("Password", &rpc_auth_vals.password, |msg| {
-                Message::DefineNode(DefineNode::DefineBitcoind(
-                    DefineBitcoind::ConfigFieldEdited(ConfigField::Password, msg),
-                ))
+            form::Form::new_trimmed("Password", &rpc_auth_vals.password, move |msg| {
+                if !waiting_for_ping_result {
+                    Message::DefineNode(DefineNode::DefineBitcoind(
+                        DefineBitcoind::ConfigFieldEdited(ConfigField::Password, msg),
+                    ))
+                } else {
+                    Message::None
+                }
             })
             .warning("Please enter correct password")
         ]
@@ -1067,18 +1088,27 @@ pub fn define_bitcoind<'a>(
 pub fn define_electrum<'a>(
     address: &form::Value<String>,
     validate_domain: bool,
+    waiting_for_ping_result: bool,
 ) -> Element<'a, Message> {
-    let validate_certificate_msg = |b| {
-        Message::DefineNode(DefineNode::DefineElectrum(
-            message::DefineElectrum::ValidDomainChanged(b),
-        ))
+    let validate_certificate_msg = move |b| {
+        if !waiting_for_ping_result {
+            Message::DefineNode(DefineNode::DefineElectrum(
+                message::DefineElectrum::ValidDomainChanged(b),
+            ))
+        } else {
+            Message::None
+        }
     };
     let checkbox = validate_domain_checkbox(address, validate_domain, validate_certificate_msg);
 
-    let address_msg = |msg| {
-        Message::DefineNode(DefineNode::DefineElectrum(
-            message::DefineElectrum::ConfigFieldEdited(electrum::ConfigField::Address, msg),
-        ))
+    let address_msg = move |msg| {
+        if !waiting_for_ping_result {
+            Message::DefineNode(DefineNode::DefineElectrum(
+                message::DefineElectrum::ConfigFieldEdited(electrum::ConfigField::Address, msg),
+            ))
+        } else {
+            Message::None
+        }
     };
     let address_input = form::Form::new_trimmed("127.0.0.1:50001", address, address_msg)
         .warning(
