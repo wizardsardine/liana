@@ -28,7 +28,7 @@ use liana_ui::{
         text::{p1_bold, p1_regular},
         tooltip,
     },
-    widget::{ColumnExt, Container, Element, RowExt, SpaceExt},
+    widget::{text_input, ColumnExt, Container, Element, RowExt, SpaceExt},
 };
 
 use crate::{
@@ -46,6 +46,7 @@ use crate::{
 use liana_connect::keys::{self, api::KeyKind};
 
 const MAX_ALIAS_LEN: usize = 24;
+pub const ALIAS_INPUT_ID: &str = "key_alias";
 
 pub fn new_multixkey_from_xpub(
     xpub: DescriptorXKey<Xpub>,
@@ -386,9 +387,12 @@ impl SelectKeySource {
         self.focus = Focus::Device(fingerprint);
         let _ = self.on_next();
         self.processing = true;
-        Task::done(Self::route(SelectKeySourceMessage::Account(
-            ChildNumber::from_hardened_idx(0).expect("hardcoded"),
-        )))
+        Task::batch([
+            self.focus_alias(),
+            Task::done(Self::route(SelectKeySourceMessage::Account(
+                ChildNumber::from_hardened_idx(0).expect("hardcoded"),
+            ))),
+        ])
     }
     fn on_fetch_from_device(
         &mut self,
@@ -493,9 +497,12 @@ impl SelectKeySource {
         self.focus = Focus::GenerateHotKey;
         let _ = self.on_next();
         self.processing = true;
-        Task::done(Self::route(SelectKeySourceMessage::Account(
-            ChildNumber::from_hardened_idx(0).expect("hardcoded"),
-        )))
+        Task::batch([
+            self.focus_alias(),
+            Task::done(Self::route(SelectKeySourceMessage::Account(
+                ChildNumber::from_hardened_idx(0).expect("hardcoded"),
+            ))),
+        ])
     }
     fn on_fetch_from_hotsigner(&mut self, account: ChildNumber) -> Task<Message> {
         self.processing = false;
@@ -588,7 +595,7 @@ impl SelectKeySource {
                 self.error = Some(e.to_string());
             }
         }
-        Task::none()
+        self.focus_alias()
     }
     fn on_load_key(&mut self, key: Result<Key, Error>) -> Task<Message> {
         self.processing = false;
@@ -648,7 +655,7 @@ impl SelectKeySource {
                 }
 
                 if self.form_xpub.valid {
-                    self.xpub_valid(fingerprint, key);
+                    return self.xpub_valid(fingerprint, key);
                 }
             } else {
                 self.form_xpub.valid = false;
@@ -669,13 +676,13 @@ impl SelectKeySource {
                     self.import_xpub_error = Some("Imported key already used".to_string());
                     self.focus = Focus::None;
                 } else {
-                    self.xpub_valid(fingerprint, key)
+                    return self.xpub_valid(fingerprint, key);
                 }
             }
         }
         Task::none()
     }
-    fn xpub_valid(&mut self, fingerprint: Fingerprint, key: DescriptorXKey<Xpub>) {
+    fn xpub_valid(&mut self, fingerprint: Fingerprint, key: DescriptorXKey<Xpub>) -> Task<Message> {
         let key = Key {
             source: KeySource::Manual,
             fingerprint,
@@ -691,6 +698,7 @@ impl SelectKeySource {
         self.form_alias.value = "".to_string();
         self.form_alias.valid = true;
         let _ = self.on_next();
+        self.focus_alias()
     }
     fn on_paste_xpub(&mut self) -> Task<Message> {
         clipboard::read().map(|t| {
@@ -829,6 +837,14 @@ impl SelectKeySource {
             }
         }
         Task::none()
+    }
+    /// Focus the alias input if the modal is on the details step.
+    fn focus_alias(&self) -> Task<Message> {
+        if self.step == Step::Details {
+            text_input::focus(ALIAS_INPUT_ID)
+        } else {
+            Task::none()
+        }
     }
     fn on_previous(&mut self) -> Task<Message> {
         if self.step == Step::Details {
@@ -1246,7 +1262,10 @@ impl super::DescriptorEditModal for SelectKeySource {
                 }
                 SelectKeySourceMessage::PasteToken => self.on_paste_token(),
                 SelectKeySourceMessage::Token(token) => self.on_update_token(token),
-                SelectKeySourceMessage::Next => self.on_next(),
+                SelectKeySourceMessage::Next => {
+                    let next = self.on_next();
+                    Task::batch([next, self.focus_alias()])
+                }
                 SelectKeySourceMessage::Previous => self.on_previous(),
                 SelectKeySourceMessage::Alias(alias) => self.on_update_alias(alias),
                 SelectKeySourceMessage::ImportExport(msg) => self.on_import_message(msg),
@@ -1309,6 +1328,7 @@ where
         .map(|pick_account| row![pick_account, Space::with_width(Length::Fill)].spacing(5));
     let info = "Switch account if you already uses the same hardware in other configurations";
 
+    let submit = error.is_none().then(|| apply_msg.clone()).flatten();
     let error = error.clone().map(|e| p1_regular(e).color(color::ORANGE));
 
     let spacer = replace_message.is_some().then_some(Space::with_width(10));
@@ -1353,8 +1373,13 @@ where
             Space::with_width(Length::Fill)
         ])
         .push(
-            container(form::Form::new("E.g. My Hardware Wallet", alias, alias_msg).padding(10))
-                .width(300),
+            container(
+                form::Form::new("E.g. My Hardware Wallet", alias, alias_msg)
+                    .padding(10)
+                    .id(ALIAS_INPUT_ID)
+                    .on_submit_maybe(submit),
+            )
+            .width(300),
         )
         .push(Space::with_height(10))
         .push_maybe(if pick_account.is_some() {
@@ -1452,13 +1477,15 @@ impl super::DescriptorEditModal for EditKeyAlias {
 
     fn view<'a>(&'a self, _hws: &'a HardwareWallets) -> Element<'a, Message> {
         let header = modal::header(None::<String>, None, Some(Message::Close));
+        let apply = (self.form_alias.valid && !self.form_alias.value.is_empty())
+            .then(|| Message::EditKeyAlias(EditKeyAliasMessage::Save));
         details_view(
             header,
             None,
             &self.form_alias,
             None,
             |s| Message::EditKeyAlias(EditKeyAliasMessage::Alias(s)),
-            Some(Message::EditKeyAlias(EditKeyAliasMessage::Save)),
+            apply,
             None,
             Some(Message::EditKeyAlias(EditKeyAliasMessage::Replace)),
         )
