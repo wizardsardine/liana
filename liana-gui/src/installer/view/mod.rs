@@ -907,7 +907,7 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
     }
 }
 
-const RADIO_TITLE_WIDTH: u32 = 160;
+const RADIO_TITLE_WIDTH: u32 = 200;
 
 #[allow(clippy::too_many_arguments)]
 pub fn define_bitcoin_node<'a>(
@@ -921,7 +921,7 @@ pub fn define_bitcoin_node<'a>(
     waiting_for_ping_result: bool,
 ) -> Element<'a, Message> {
     let node_type = available_node_types.fold(
-        row![text::new::b5_bold("Node type:").width(RADIO_TITLE_WIDTH)].spacing(10),
+        row![text::new::b3("Node type:").width(RADIO_TITLE_WIDTH)].spacing(10),
         |row, node_type| {
             row.push(radio(
                 match node_type {
@@ -1021,7 +1021,7 @@ pub fn define_bitcoind<'a>(
     let auth_type = [RpcAuthType::CookieFile, RpcAuthType::UserPass]
         .iter()
         .fold(
-            row![text::new::b5_bold("RPC authentication:").width(RADIO_TITLE_WIDTH)].spacing(10),
+            row![text::new::b3("RPC authentication:").width(RADIO_TITLE_WIDTH)].spacing(10),
             |row, auth_type| {
                 row.push(radio(
                     format!("{auth_type}"),
@@ -1115,7 +1115,7 @@ pub fn define_electrum<'a>(
             "Please enter correct address (including port), \
         optionally prefixed with tcp:// or ssl://",
         )
-        .label("Address")
+        .label("Address:")
         .padding(10);
     let address = column![
         address_input,
