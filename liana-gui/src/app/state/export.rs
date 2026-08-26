@@ -81,9 +81,9 @@ impl ExportModal {
             ImportExportType::Descriptor(_) => "Export Descriptor",
             ImportExportType::ExportLabels => "Export Labels",
             ImportExportType::ImportPsbt(_) => "Import PSBT",
-            ImportExportType::ImportDescriptor => "Import Descriptor",
+            ImportExportType::ImportDescriptor(_) => "Import Descriptor",
             ImportExportType::ImportBackup { .. } => "Restore Backup",
-            ImportExportType::FromBackup => "Import existing wallet from backup",
+            ImportExportType::FromBackup(_) => "Import existing wallet from backup",
         }
     }
 
@@ -106,12 +106,12 @@ impl ExportModal {
             }
             ImportExportType::ExportEncryptedDescriptor(_) => "liana.bed".into(),
             ImportExportType::ImportPsbt(_) => "psbt.psbt".into(),
-            ImportExportType::ImportDescriptor => "descriptor.txt".into(),
+            ImportExportType::ImportDescriptor(_) => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
             ImportExportType::ExportProcessBackup(..) => {
                 format!("liana-backup-{date}.json")
             }
-            ImportExportType::FromBackup | ImportExportType::ImportBackup { .. } => {
+            ImportExportType::FromBackup(_) | ImportExportType::ImportBackup { .. } => {
                 "liana-backup.json".to_string()
             }
         }
@@ -182,7 +182,10 @@ impl ExportModal {
                     });
                 }
                 Progress::Descriptor(_) => {
-                    if matches!(self.import_export_type, ImportExportType::ImportDescriptor) {
+                    if matches!(
+                        self.import_export_type,
+                        ImportExportType::ImportDescriptor(_)
+                    ) {
                         self.state = ImportExportState::Ended;
                     }
                 }

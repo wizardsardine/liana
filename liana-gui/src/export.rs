@@ -180,12 +180,12 @@ pub enum ImportExportType {
         overwrite_labels: Option<Sender<bool>>,
         overwrite_aliases: Option<Sender<bool>>,
     },
-    FromBackup,
+    FromBackup(Network),
     Descriptor(LianaDescriptor),
     ExportLabels,
     ImportPsbt(Option<Txid>),
     ImportXpub(Network),
-    ImportDescriptor,
+    ImportDescriptor(Network),
 }
 
 impl ImportExportType {
@@ -201,8 +201,8 @@ impl ImportExportType {
             ImportExportType::ImportBackup { .. }
             | ImportExportType::ImportPsbt(_)
             | ImportExportType::ImportXpub(_)
-            | ImportExportType::FromBackup
-            | ImportExportType::ImportDescriptor => "Import successful",
+            | ImportExportType::FromBackup(_)
+            | ImportExportType::ImportDescriptor(_) => "Import successful",
         }
     }
 }
@@ -310,7 +310,9 @@ impl Export {
             ImportExportType::ExportLabels => export_labels(&sender, daemon, path).await,
             ImportExportType::ImportPsbt(txid) => import_psbt(daemon, &sender, path, txid).await,
             ImportExportType::ImportXpub(network) => import_xpub(&sender, path, network).await,
-            ImportExportType::ImportDescriptor => import_descriptor(&sender, path).await,
+            ImportExportType::ImportDescriptor(network) => {
+                import_descriptor(&sender, path, network).await
+            }
             ImportExportType::ExportEncryptedDescriptor(descr) => {
                 export_encrypted_descriptor(&sender, path, *descr).await
             }
@@ -332,7 +334,7 @@ impl Export {
                 wallet,
                 ..
             } => import_backup(&network_dir, wallet, &sender, path, daemon).await,
-            ImportExportType::FromBackup => from_backup(&sender, path).await,
+            ImportExportType::FromBackup(network) => from_backup(&sender, path, network).await,
         } {
             if let Err(e) = sender.send(Progress::Error(e)) {
                 tracing::error!("Import/Export fail to send msg: {}", e);
@@ -699,6 +701,7 @@ pub async fn import_psbt(
 pub async fn import_descriptor(
     sender: &UnboundedSender<Progress>,
     path: PathBuf,
+    required_network: Network,
 ) -> Result<(), Error> {
     let mut file = File::open(path)?;
 
@@ -719,6 +722,14 @@ pub async fn import_descriptor(
         })
     };
     let descriptor = descriptor.ok_or(Error::ParseDescriptor)?;
+
+    let mainnet = descriptor.all_xpubs_net_is(Network::Bitcoin);
+    let required_mainnet = required_network == Network::Bitcoin;
+    if mainnet != required_mainnet {
+        return Err(Error::BackupImport(
+            "Descriptor is for wrong network".to_string(),
+        ));
+    }
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Descriptor(descriptor));
@@ -1117,7 +1128,11 @@ impl From<DaemonError> for RestoreBackupError {
 ///    - encrypted file
 ///    - liana wallet backup
 ///    - plaintext descriptor
-pub async fn from_backup(sender: &UnboundedSender<Progress>, path: PathBuf) -> Result<(), Error> {
+pub async fn from_backup(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+    required_network: Network,
+) -> Result<(), Error> {
     // Load file
     let mut file = File::open(path)?;
 
@@ -1153,6 +1168,11 @@ pub async fn from_backup(sender: &UnboundedSender<Progress>, path: PathBuf) -> R
                     } else {
                         Network::Signet
                     };
+                    if network != required_network {
+                        return Err(Error::BackupImport(
+                            "Descriptor is for wrong network".to_string(),
+                        ));
+                    }
                     Backup::from_descriptor(descr, network)
                 }
                 Err(e2) => {
@@ -1167,7 +1187,9 @@ pub async fn from_backup(sender: &UnboundedSender<Progress>, path: PathBuf) -> R
     let network = if backup.network == Network::Bitcoin {
         Some(backup.network)
     } else {
-        None
+        return Err(Error::BackupImport(
+            "A backup must have a network!".to_string(),
+        ));
     };
 
     let account = match backup.accounts.len() {
@@ -1417,7 +1439,9 @@ mod tests {
             .join("test_assets")
             .join("liana-jz5sm0xn.txt");
         println!("path: {}", path.display());
-        import_descriptor(&sender, path).await.unwrap();
+        import_descriptor(&sender, path, Network::Signet)
+            .await
+            .unwrap();
         let _msg = receiver.try_recv().unwrap();
         assert!(matches!(Progress::Progress(100.0), _msg));
         let raw_descriptor = "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn";
@@ -1434,7 +1458,9 @@ mod tests {
             .join("test_assets")
             .join("liana-backup-2025-06-23T13-23-54.json");
         println!("path: {}", path.display());
-        import_descriptor(&sender, path).await.unwrap();
+        import_descriptor(&sender, path, Network::Signet)
+            .await
+            .unwrap();
         let _msg = receiver.try_recv().unwrap();
         assert!(matches!(Progress::Progress(100.0), _msg));
         let raw_descriptor = "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn";
