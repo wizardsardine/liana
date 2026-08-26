@@ -647,7 +647,7 @@ impl Step for ImportRemoteWallet {
                 self.active_option = (self.active_option != Some(option)).then_some(option);
             }
             Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportDescriptorFromFile) => {
-                let modal = ExportModal::new(None, ImportExportType::FromBackup);
+                let modal = ExportModal::new(None, ImportExportType::ImportDescriptor);
                 let launch = modal.launch(false);
                 self.modal = ImportDescriptorModal::Export(modal);
                 return launch;
@@ -666,6 +666,10 @@ impl Step for ImportRemoteWallet {
                 bytes,
             ))) => {
                 self.modal = ImportDescriptorModal::Decrypt(DecryptModal::new(bytes, self.network));
+            }
+            Message::ImportExport(ImportExportMessage::Progress(Progress::Descriptor(desc))) => {
+                self.imported_descriptor.value = desc.to_string();
+                return Task::done(Message::Next);
             }
             Message::ImportExport(m) => return self.modal.update(Message::ImportExport(m)),
             Message::HardwareWalletUpdate => {
