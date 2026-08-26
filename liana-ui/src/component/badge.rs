@@ -192,7 +192,7 @@ tile_specs! {
     (KeyInternal, round_key_icon, Neutral, DEFAULT),
     (KeyExternal, scale_icon, Neutral, DEFAULT),
     (KeyService, shield_icon, Neutral, DEFAULT),
-    (KeyImported, file_icon, Danger, DEFAULT),
+    (KeyImported, file_icon, Neutral, DEFAULT),
     (KeyHot, round_key_icon, Danger, DEFAULT),
     (Device, usb_icon, Neutral, DEFAULT),
     (Account, person_icon, Neutral, DEFAULT),
