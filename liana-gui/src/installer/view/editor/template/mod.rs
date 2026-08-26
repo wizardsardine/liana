@@ -2,7 +2,10 @@ pub mod custom;
 pub mod inheritance;
 pub mod multisig_security_wallet;
 
+use std::fmt::Display;
+
 use iced::{
+    alignment,
     widget::{column, row, Space},
     Alignment, Length,
 };
@@ -12,9 +15,11 @@ use liana_ui::{
     component::{
         button::{self, btn_clear_all, btn_customize, btn_next},
         collapse, list,
-        text::{new, p1_bold},
+        text::{new, p1_bold, H3_SIZE},
     },
-    icon, theme,
+    icon,
+    spacing::HSpacing,
+    theme,
     widget::*,
 };
 
@@ -26,6 +31,25 @@ use crate::installer::{
 
 /// Bottom padding below the footer of the editor templates.
 pub const BOTTOM_PADDING: f32 = 100.0;
+
+/// Bottom padding below the Next button of the template introductions.
+pub const DESCRIPTION_BOTTOM_PADDING: f32 = 50.0;
+
+/// Gap between the last spending path and the footer.
+pub const FOOTER_SPACING: f32 = 10.0;
+
+/// Gap between the key legend items of the template introductions.
+pub const KEY_LEGEND_SPACING: f32 = 30.0;
+
+pub const UNSUPPORTED_TAPROOT_WARNING: &str = "This device does not support Taproot";
+pub const HARDWARE_WALLET_ADVICE: &str =
+    "For security reasons, we suggest you use a separate Hardware Wallet for each key";
+pub const PRIMARY_KEY: &str = "Primary key";
+pub const RECOVERY_KEY: &str = "Recovery key";
+pub const INHERITANCE_KEY: &str = "Inheritance key";
+pub const SAFETY_NET_KEY: &str = "Safety Net key";
+pub const INTRODUCTION_TITLE: &str = "Introduction";
+pub const SET_KEYS_TITLE: &str = "Set keys";
 
 pub fn advanced_settings_collapse<'a>(use_taproot: bool) -> Element<'a, Message> {
     fn collapse<'a>(collapsed: bool) -> Element<'a, Message> {
@@ -117,4 +141,30 @@ fn template_option(
         button::EntryWidth::Standard,
         Some(Message::SelectDescriptorTemplate(template)),
     )
+}
+
+pub fn key_legend<'a>(
+    style: fn(&theme::Theme) -> iced::widget::text::Style,
+    label: impl Display,
+) -> Row<'a, Message> {
+    row![
+        icon::round_key_icon().size(H3_SIZE).style(style),
+        new::b5_bold(label),
+    ]
+    .align_y(Alignment::Center)
+    .spacing(HSpacing::M)
+}
+
+pub fn caption_block<'a>(content: impl Display) -> Container<'a, Message> {
+    Container::new(
+        new::caption(content)
+            .style(theme::text::secondary)
+            .align_x(alignment::Horizontal::Left),
+    )
+    .align_x(alignment::Horizontal::Left)
+    .width(Length::Fill)
+}
+
+pub fn row_next<'a>() -> Row<'a, Message> {
+    row![Space::fill_width(), btn_next(Some(Message::Next))]
 }

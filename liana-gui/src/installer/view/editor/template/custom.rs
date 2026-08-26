@@ -1,6 +1,5 @@
 use iced::{
-    alignment,
-    widget::{row, Container, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
 use liana::miniscript::bitcoin::Network;
@@ -8,10 +7,11 @@ use liana::miniscript::bitcoin::Network;
 use liana_ui::{
     color,
     component::{
-        button::{btn_add_recovery_option, btn_add_safety_net, btn_next},
+        button::{btn_add_recovery_option, btn_add_safety_net},
         text::new,
     },
-    image, theme,
+    image,
+    spacing::{HSpacing, VSpacing},
     widget::*,
 };
 
@@ -19,7 +19,15 @@ use crate::installer::{
     descriptor::Path,
     message::{self, Message},
     view::{
-        editor::{defined_key, path, undefined_key},
+        editor::{
+            defined_key, path,
+            template::{
+                caption_block, row_next, BOTTOM_PADDING, DESCRIPTION_BOTTOM_PADDING,
+                FOOTER_SPACING, HARDWARE_WALLET_ADVICE, INTRODUCTION_TITLE, PRIMARY_KEY,
+                RECOVERY_KEY, SAFETY_NET_KEY, SET_KEYS_TITLE, UNSUPPORTED_TAPROOT_WARNING,
+            },
+            undefined_key,
+        },
         layout,
     },
 };
@@ -28,29 +36,31 @@ pub fn custom_template_description(
     progress: (usize, usize),
     network: Network,
 ) -> Element<'static, Message> {
-    let row_next = row![Space::fill_width(), btn_next(Some(Message::Next))];
+    let title = new::b1_bold("Build your own");
+
+    let intro = caption_block(format!("For this setup you will need to define your primary and recovery spending policies. {HARDWARE_WALLET_ADVICE} belonging to them."));
+
+    let explanation = caption_block("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.");
+
+    let diagram = image::custom_template_description().width(Length::Fill);
+
+    let content = column![
+        title,
+        intro,
+        explanation,
+        diagram,
+        row_next(),
+        Space::with_height(DESCRIPTION_BOTTOM_PADDING),
+    ]
+    .align_x(Alignment::Start)
+    .spacing(VSpacing::L);
+
     layout(
         progress,
         network,
         None,
-        "Introduction",
-        Column::new()
-            .align_x(Alignment::Start)
-            .push(new::b1_bold("Build your own"))
-            .push(Container::new(
-                new::caption("For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.")
-                .style(theme::text::secondary)
-                .align_x(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
-            .push(Container::new(
-                new::caption("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.")
-                .style(theme::text::secondary)
-                .align_x(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
-            .push(image::custom_template_description().width(Length::Fill))
-            .push(row_next)
-            .push(Space::with_height(50.0))
-            .spacing(20),
+        INTRODUCTION_TITLE,
+        content,
         Some(Message::Previous),
     )
 }
@@ -86,9 +96,9 @@ pub fn custom_template<'a>(
                     defined_key(
                         &key.name,
                         color::GREEN,
-                        "Primary key",
+                        PRIMARY_KEY,
                         if use_taproot && !key.source.is_compatible_taproot() {
-                            Some("This device does not support Taproot")
+                            Some(UNSUPPORTED_TAPROOT_WARNING)
                         } else {
                             None
                         },
@@ -97,7 +107,7 @@ pub fn custom_template<'a>(
                 } else {
                     undefined_key(
                         color::GREEN,
-                        "Primary key",
+                        PRIMARY_KEY,
                         !primary_path.keys[0..i].iter().any(|k| k.is_none()),
                         prim_keys_fixed,
                     )
@@ -110,7 +120,7 @@ pub fn custom_template<'a>(
     .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(0, msg)));
 
     let recovery_paths = recovery_paths.into_iter().enumerate().fold(
-        Column::new().spacing(20),
+        column![].spacing(VSpacing::L),
         |col, (i, (p_idx, p))| {
             col.push(
                 path(
@@ -131,9 +141,9 @@ pub fn custom_template<'a>(
                                 defined_key(
                                     &key.name,
                                     color::ORANGE,
-                                    "Recovery key",
+                                    RECOVERY_KEY,
                                     if use_taproot && !key.source.is_compatible_taproot() {
-                                        Some("This device does not support Taproot")
+                                        Some(UNSUPPORTED_TAPROOT_WARNING)
                                     } else {
                                         None
                                     },
@@ -142,7 +152,7 @@ pub fn custom_template<'a>(
                             } else {
                                 undefined_key(
                                     color::ORANGE,
-                                    "Recovery key",
+                                    RECOVERY_KEY,
                                     !p.keys[0..j].iter().any(|k| k.is_none()),
                                     fixed,
                                 )
@@ -173,10 +183,7 @@ pub fn custom_template<'a>(
                 message::DefineDescriptor::AddSafetyNetPath,
             ))));
 
-    let btn_row = Row::new()
-        .push(btn_add_recovery_option(add_recov_option))
-        .push_maybe(safety_net)
-        .spacing(10);
+    let btn_row = row![btn_add_recovery_option(add_recov_option), safety_net].spacing(HSpacing::M);
 
     let safety_net = safety_net_path.map(|(sn_index, sn_path)| {
         path(
@@ -197,9 +204,9 @@ pub fn custom_template<'a>(
                         defined_key(
                             &key.name,
                             color::WHITE,
-                            "Safety Net key",
+                            SAFETY_NET_KEY,
                             if use_taproot && !key.source.is_compatible_taproot() {
-                                Some("This key source does not support Taproot")
+                                Some(UNSUPPORTED_TAPROOT_WARNING)
                             } else {
                                 None
                             },
@@ -208,7 +215,7 @@ pub fn custom_template<'a>(
                     } else {
                         undefined_key(
                             color::WHITE,
-                            "Safety Net key",
+                            SAFETY_NET_KEY,
                             !sn_path.keys[0..i].iter().any(|k| k.is_none()),
                             fixed,
                         )
@@ -226,22 +233,25 @@ pub fn custom_template<'a>(
 
     let last_btn_row = super::template_footer(valid, processing, false);
 
+    let content = column![
+        advanced_settings,
+        primary,
+        recovery_paths,
+        btn_row,
+        safety_net,
+        Space::with_height(FOOTER_SPACING),
+        last_btn_row,
+        Space::with_height(BOTTOM_PADDING),
+    ]
+    .align_x(Alignment::Start)
+    .spacing(VSpacing::L);
+
     layout(
         progress,
         network,
         None,
-        "Set keys",
-        Column::new()
-            .align_x(Alignment::Start)
-            .push(advanced_settings)
-            .push(primary)
-            .push(recovery_paths)
-            .push(btn_row)
-            .push_maybe(safety_net)
-            .push(Space::with_height(10))
-            .push(last_btn_row)
-            .push(Space::with_height(super::BOTTOM_PADDING))
-            .spacing(20),
+        SET_KEYS_TITLE,
+        content,
         Some(Message::Previous),
     )
 }

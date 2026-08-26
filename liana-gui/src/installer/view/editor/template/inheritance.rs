@@ -1,25 +1,24 @@
 use iced::{
-    alignment,
-    widget::{row, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
 use liana::miniscript::bitcoin::Network;
 
-use liana_ui::{
-    color,
-    component::{
-        button::btn_next,
-        text::{new, H3_SIZE},
-    },
-    icon, image, theme,
-    widget::*,
-};
+use liana_ui::{color, component::text::new, image, spacing::VSpacing, theme, widget::*};
 
 use crate::installer::{
     descriptor::{Path, PathSequence},
     message::{self, Message},
     view::{
-        editor::{defined_key, path, undefined_key},
+        editor::{
+            defined_key, path,
+            template::{
+                caption_block, key_legend, row_next, BOTTOM_PADDING, DESCRIPTION_BOTTOM_PADDING,
+                FOOTER_SPACING, HARDWARE_WALLET_ADVICE, INHERITANCE_KEY, INTRODUCTION_TITLE,
+                KEY_LEGEND_SPACING, PRIMARY_KEY, SET_KEYS_TITLE, UNSUPPORTED_TAPROOT_WARNING,
+            },
+            undefined_key,
+        },
         layout,
     },
 };
@@ -28,45 +27,39 @@ pub fn inheritance_template_description(
     progress: (usize, usize),
     network: Network,
 ) -> Element<'static, Message> {
-    let row_next = row![Space::fill_width(), btn_next(Some(Message::Next))];
+    let title = new::b1_bold("Simple inheritance wallet");
+
+    let intro = caption_block(format!("For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). {HARDWARE_WALLET_ADVICE}."));
+
+    let keys = row![
+        key_legend(theme::text::success, PRIMARY_KEY),
+        key_legend(theme::text::primary, INHERITANCE_KEY),
+    ]
+    .spacing(KEY_LEGEND_SPACING);
+
+    let explanation = caption_block("You will always be able to spend using your Primary Key.
+After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds.");
+
+    let diagram = image::inheritance_template_description().width(Length::Fill);
+
+    let content = column![
+        title,
+        intro,
+        keys,
+        explanation,
+        diagram,
+        row_next(),
+        Space::with_height(DESCRIPTION_BOTTOM_PADDING),
+    ]
+    .align_x(Alignment::Start)
+    .spacing(VSpacing::L);
+
     layout(
         progress,
         network,
         None,
-        "Introduction",
-        Column::new()
-            .align_x(Alignment::Start)
-            .push(new::b1_bold("Simple inheritance wallet"))
-            .push(Container::new(
-                new::caption("For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key.")
-                .style(theme::text::secondary)
-                .align_x(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
-            .push(Row::new()
-                .spacing(30)
-                .push(
-                    Row::new()
-                    .align_y(Alignment::Center)
-                    .spacing(10)
-                    .push(icon::round_key_icon().size(H3_SIZE).color(color::GREEN))
-                    .push(new::b5_bold("Primary key"))
-                ).push(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(10)
-                        .push(icon::round_key_icon().size(H3_SIZE).color(color::WHITE))
-                        .push(new::b5_bold("Inheritance key"))
-            ))
-            .push(Container::new(
-                new::caption("You will always be able to spend using your Primary Key.
-After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds.")
-                .style(theme::text::secondary)
-                .align_x(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
-            .push(image::inheritance_template_description().width(Length::Fill))
-            .push(row_next)
-            .push(Space::with_height(50.0))
-            .spacing(20),
+        INTRODUCTION_TITLE,
+        content,
         Some(Message::Previous),
     )
 }
@@ -98,16 +91,16 @@ pub fn inheritance_template<'a>(
             defined_key(
                 &key.name,
                 color::GREEN,
-                "Primary key",
+                PRIMARY_KEY,
                 if use_taproot && !key.source.is_compatible_taproot() {
-                    Some("This device does not support Taproot")
+                    Some(UNSUPPORTED_TAPROOT_WARNING)
                 } else {
                     None
                 },
                 true,
             )
         } else {
-            undefined_key(color::GREEN, "Primary key", true, true)
+            undefined_key(color::GREEN, PRIMARY_KEY, true, true)
         }
         .map(|msg| message::DefinePath::Key(0, msg))],
         true,
@@ -124,16 +117,16 @@ pub fn inheritance_template<'a>(
             defined_key(
                 &key.name,
                 color::WHITE,
-                "Inheritance key",
+                INHERITANCE_KEY,
                 if use_taproot && !key.source.is_compatible_taproot() {
-                    Some("This device does not support Taproot")
+                    Some(UNSUPPORTED_TAPROOT_WARNING)
                 } else {
                     None
                 },
                 true,
             )
         } else {
-            undefined_key(color::WHITE, "Inheritance key", primary_key.is_some(), true)
+            undefined_key(color::WHITE, INHERITANCE_KEY, primary_key.is_some(), true)
         }
         .map(|msg| message::DefinePath::Key(0, msg))],
         true,
@@ -142,20 +135,23 @@ pub fn inheritance_template<'a>(
 
     let footer = super::template_footer(valid, processing, true);
 
+    let content = column![
+        advanced_settings,
+        primary,
+        recovery,
+        Space::with_height(FOOTER_SPACING),
+        footer,
+        Space::with_height(BOTTOM_PADDING),
+    ]
+    .align_x(Alignment::Start)
+    .spacing(VSpacing::L);
+
     layout(
         progress,
         network,
         None,
-        "Set keys",
-        Column::new()
-            .align_x(Alignment::Start)
-            .push(advanced_settings)
-            .push(primary)
-            .push(recovery)
-            .push(Space::with_height(10))
-            .push(footer)
-            .push(Space::with_height(super::BOTTOM_PADDING))
-            .spacing(20),
+        SET_KEYS_TITLE,
+        content,
         Some(Message::Previous),
     )
 }
