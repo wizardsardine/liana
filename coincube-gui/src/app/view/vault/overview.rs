@@ -4,7 +4,7 @@ use std::{collections::HashMap, time::Duration, vec};
 use iced::{
     alignment,
     widget::{Container, Row, Space},
-    Alignment::{self, Center},
+    Alignment,
     Length,
 };
 
@@ -17,7 +17,7 @@ use coincube_ui::{
         text::*,
         transaction::{TransactionBadge, TransactionDirection, TransactionListItem},
     },
-    icon::{self, cross_icon},
+    icon,
     theme,
     widget::{Button, Column, ColumnExt, Element},
 };
@@ -25,7 +25,7 @@ use coincube_ui::{
 use crate::{
     app::{
         cache::Cache,
-        menu::{self, Menu, VaultSubMenu},
+        menu::{Menu, VaultSubMenu},
         settings::display::DisplayMode,
         view::{
             balance_header_card, dashboard, loading_placeholder,
@@ -40,41 +40,6 @@ use crate::{
     daemon::model::{HistoryTransaction, Payment, PaymentKind, TransactionKind},
 };
 
-const RESCAN_WARNING: &str = "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions.";
-
-fn rescan_warning<'a>() -> Element<'a, Message> {
-    Container::new(
-        Column::new()
-            .spacing(10)
-            .push(
-                Row::new()
-                    .spacing(5)
-                    .push(icon::warning_icon().style(theme::text::warning))
-                    .push(text(RESCAN_WARNING).style(theme::text::warning))
-                    .align_y(Center),
-            )
-            .push(
-                Row::new()
-                    .spacing(5)
-                    .push(Space::new().width(Length::Fill))
-                    .push(
-                        button::secondary(None, "Go to rescan").on_press(Message::Menu(
-                            Menu::Vault(menu::VaultSubMenu::Settings(Some(
-                                menu::SettingsOption::Node,
-                            ))),
-                        )),
-                    )
-                    .push(
-                        button::secondary(Some(cross_icon()), "Dismiss")
-                            .on_press(Message::HideRescanWarning),
-                    ),
-            ),
-    )
-    .padding(25)
-    .style(theme::card::border)
-    .into()
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn vault_overview_view<'a>(
     balance: &'a bitcoin::Amount,
@@ -87,7 +52,6 @@ pub fn vault_overview_view<'a>(
     processing: bool,
     loading: bool,
     sync_status: &SyncStatus,
-    show_rescan_warning: bool,
     bitcoin_unit: BitcoinDisplayUnit,
     node_bitcoind_sync_progress: Option<f64>,
     node_bitcoind_ibd: Option<bool>,
@@ -170,7 +134,6 @@ pub fn vault_overview_view<'a>(
                 )
                 .push(vault_btc_row),
         ))
-        .push(show_rescan_warning.then_some(rescan_warning()))
         .push(match (node_bitcoind_ibd, node_bitcoind_sync_progress) {
             (Some(true), Some(progress)) => Some(
                 Container::new(

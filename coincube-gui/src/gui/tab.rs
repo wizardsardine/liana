@@ -1395,9 +1395,7 @@ impl Tab {
                             },
                             |r| {
                                 let r = r.map_err(loader::Error::RestoreBackup);
-                                Message::Load(loader::Message::App(
-                                    r, /* restored_from_backup */ true,
-                                ))
+                                Message::Load(loader::Message::App(r))
                             },
                         )
                     } else {
@@ -1413,7 +1411,6 @@ impl Tab {
                                 daemon,
                                 datadir: loader.datadir_path.clone(),
                                 bitcoind,
-                                restored_from_backup: false,
                                 cube_settings,
                             }));
                         }
@@ -1426,14 +1423,10 @@ impl Tab {
                                 "BreezClient missing - should have been pre-loaded after PIN entry. \
                                  Liquid wallet is encrypted and cannot be loaded without PIN.".to_string()
                             )),
-                            false,
                         )))
                     }
                 }
-                loader::Message::App(
-                    Ok((cache, wallet, config, daemon, datadir, bitcoind)),
-                    restored_from_backup,
-                ) => {
+                loader::Message::App(Ok((cache, wallet, config, daemon, datadir, bitcoind))) => {
                     // Check if BreezClient is already loaded
                     if let Some(breez) = loader.breez_client.clone() {
                         // Use pre-loaded BreezClient (came from PIN entry path)
@@ -1446,7 +1439,6 @@ impl Tab {
                             daemon,
                             datadir,
                             bitcoind,
-                            restored_from_backup,
                             cube_settings: loader.cube_settings.clone(),
                         }));
                     }
@@ -1460,7 +1452,6 @@ impl Tab {
                              Liquid wallet is encrypted and cannot be loaded without PIN."
                                 .to_string(),
                         )),
-                        restored_from_backup,
                     )))
                 }
                 loader::Message::BreezLoaded {
@@ -1472,7 +1463,6 @@ impl Tab {
                     daemon,
                     datadir,
                     bitcoind,
-                    restored_from_backup,
                     cube_settings,
                 } => {
                     // Restore Connect auth cached at `<network>/connect.json`
@@ -1509,14 +1499,13 @@ impl Tab {
                         daemon,
                         datadir,
                         bitcoind,
-                        restored_from_backup,
                         cube_settings,
                         connect_auth,
                     );
                     self.state = State::App(app);
                     command.map(Message::Run)
                 }
-                loader::Message::App(Err(e), _) => {
+                loader::Message::App(Err(e)) => {
                     tracing::error!("Failed to import backup: {e}");
                     Task::none()
                 }
@@ -3229,7 +3218,6 @@ pub fn create_app_with_remote_backend(
         Arc::new(remote_backend),
         coincube_dir,
         None,
-        false,
         cube_settings,
         connect_auth,
     ))

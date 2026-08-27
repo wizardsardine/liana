@@ -173,7 +173,6 @@ pub enum Message {
     CreateRbf(CreateRbfMessage),
     ShowQrCode(usize),
     ImportExport(ImportExportMessage),
-    HideRescanWarning,
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),

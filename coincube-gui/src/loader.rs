@@ -131,7 +131,6 @@ pub enum Message {
             ),
             Error,
         >,
-        /* restored_from_backup */ bool,
     ),
     BreezLoaded {
         breez: std::sync::Arc<BreezClient>,
@@ -142,7 +141,6 @@ pub enum Message {
         daemon: Arc<dyn Daemon + Sync + Send>,
         datadir: CoincubeDirectory,
         bitcoind: Option<Bitcoind>,
-        restored_from_backup: bool,
         cube_settings: CubeSettings,
     },
     Started(StartedResult),

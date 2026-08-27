@@ -279,19 +279,10 @@ impl Panels {
         daemon_backend: DaemonBackend,
         internal_bitcoind: Option<&Bitcoind>,
         config: Arc<Config>,
-        restored_from_backup: bool,
         cube_id: String,
         cube_name: String,
         cube_network: String,
     ) -> Panels {
-        let show_rescan_warning = restored_from_backup
-            && daemon_backend.is_coincubed()
-            && daemon_backend
-                .node_type()
-                .map(|nt| nt == NodeType::Bitcoind)
-                // We don't know the node type for external coincubed so assume it's bitcoind.
-                .unwrap_or(true);
-
         let default_fiat_currency = Self::default_fiat_currency(&data_dir, cache.network, &cube_id);
         let liquid_backend = Arc::new(LiquidBackend::new(breez_client.clone()));
         let swaps_path = Self::swaps_path(&data_dir, cache.network, &cube_id);
@@ -320,7 +311,6 @@ impl Panels {
                     cache.last_poll_at_startup,
                 ),
                 cache.blockheight(),
-                show_rescan_warning,
             )),
             liquid_overview: LiquidOverview::new(liquid_backend.clone(), swaps_path.clone()),
             liquid_send: LiquidSend::new(liquid_backend.clone()),
@@ -457,7 +447,6 @@ impl Panels {
                 cache.last_poll_at_startup,
             ),
             cache.blockheight(),
-            false, // show_rescan_warning: false when adding vault dynamically
         ));
         self.coins = Some(CoinsPanel::new(
             cache.coins(),
@@ -2229,7 +2218,6 @@ impl App {
         daemon: Arc<dyn Daemon + Sync + Send>,
         data_dir: CoincubeDirectory,
         internal_bitcoind: Option<Bitcoind>,
-        restored_from_backup: bool,
         cube_settings: settings::CubeSettings,
         connect_auth: Option<(
             Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
@@ -2269,7 +2257,6 @@ impl App {
             daemon.backend(),
             internal_bitcoind.as_ref(),
             config_arc.clone(),
-            restored_from_backup || pending_rescan.is_some(),
             cube_settings.id.clone(),
             cube_settings.name.clone(),
             settings::network_to_api_string(cache.network),
