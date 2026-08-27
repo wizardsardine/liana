@@ -70,6 +70,14 @@ fern = "0.6"
 bip329 = { version = "0.3.0", default-features = false }
 async-trait = "0.1"
 async-hwi = "0.0.32"
+# QR transport and the signing-flow codec for air-gapped signers.
+bwk-qr = { git = "https://github.com/ws-plaude/bwk", rev = "dd803aeabdb77e150c236f8cb255cc0ce4dcc6d6" }
+# Camera capture. Media Foundation on Windows, V4L2 on Linux; macOS negotiates
+# its own session below because nokhwa cannot pick a 720p preset there.
+nokhwa = { version = "=0.10.11", default-features = false, features = ["input-native"] }
+nokhwa-bindings-macos = "=0.2.4"
+flume = "0.11"
+objc = "0.2"
 hex = "0.4.3"
 email_address = "0.2.7"
 tokio = "1.21.0"

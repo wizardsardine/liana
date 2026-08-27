@@ -1,9 +1,5 @@
 use iced::{
-    widget::{
-        column,
-        qr_code::{self, QRCode},
-        row, Space,
-    },
+    widget::{column, row, Space},
     Alignment, Length,
 };
 
@@ -12,6 +8,7 @@ use crate::{
         self,
         address::{address as address_view, copyable_address},
         button::{btn_copy, btn_show_qr, btn_verify},
+        qr,
         text::{text, Text},
     },
     theme,
@@ -44,10 +41,18 @@ pub fn verify_address_modal<'a, M: Clone + 'static>(
 }
 
 /// QR code for an address, with the address shown below it.
-pub fn qr_display<'a, M: 'a>(qr: &'a qr_code::Data, address: &'a str) -> Element<'a, M> {
+///
+/// `content` is what the code carries, usually a BIP-21 URI, while `address` is
+/// what is written out underneath for the reader to check by eye.
+pub fn qr_display<'a, M: 'a>(content: &str, address: &'a str) -> Element<'a, M> {
+    let code = qr::text::<M>(
+        theme::qr_code::qr_code(&theme::Theme::default()),
+        content,
+        None,
+    );
     column![
-        Container::new(QRCode::<theme::Theme>::new(qr).cell_size(8)).padding(10),
-        Space::with_height(Length::Fixed(15.0)),
+        code,
+        Space::with_height(15),
         Container::new(address_view(address)).center_x(Length::Fill),
     ]
     .align_x(Alignment::Center)

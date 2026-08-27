@@ -50,6 +50,7 @@ impl From<&Error> for WarningMessage {
             Error::Desc(e) => WarningMessage(format!("Descriptor analysis error: '{e}'.")),
             Error::Spend(e) => WarningMessage(format!("Spend creation error: '{e}'.")),
             Error::ImportExport(e) => WarningMessage(format!("{e}")),
+            Error::Airgap(e) => WarningMessage(format!("Air-gapped signer: {e}")),
             Error::RestoreBackup(e) => WarningMessage(format!("Failed to restore backup: {e}")),
             Error::FiatPrice(e) => WarningMessage(format!("Fiat price error: {e}")),
         }

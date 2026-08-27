@@ -5,6 +5,9 @@ Documentation related to signing devices. It is required signers support Miniscr
 The connection to the signing devices is implemented in [another
 repository](https://github.com/wizardsardine/async-hwi).
 
+A signer that is never connected at all, and exchanges QR codes instead, is covered by
+[AIRGAP.md](AIRGAP.md).
+
 
 ## [Specter DIY](https://github.com/cryptoadvance/specter-diy)
 

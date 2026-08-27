@@ -622,6 +622,16 @@ pub fn btn_retry<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_secondary(None, "Retry", BtnWidth::M, msg)
 }
 
+/// Scan response button: primary. Width Auto.
+pub fn btn_scan_response<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(
+        Some(icon::qr_icon()),
+        "Scan the response",
+        BtnWidth::Auto,
+        msg,
+    )
+}
+
 /// Yes button: primary. Width S.
 pub fn btn_yes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "Yes", BtnWidth::S, msg)

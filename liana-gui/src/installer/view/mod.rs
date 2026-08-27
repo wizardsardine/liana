@@ -44,6 +44,7 @@ use liana_ui::{
 
 use crate::node::electrum::validate_domain_checkbox;
 use crate::{
+    airgap::AirgappedSignerConfig,
     app::settings,
     help,
     hw::HardwareWallet,
@@ -568,6 +569,7 @@ pub fn register_descriptor<'a>(
     email: Option<&'a str>,
     descriptor: &'a LianaDescriptor,
     hws: &'a [HardwareWallet],
+    airgapped: &'a [AirgappedSignerConfig],
     registered: &HashSet<bitcoin::bip32::Fingerprint>,
     error: Option<&Error>,
     processing: bool,
@@ -594,7 +596,24 @@ pub fn register_descriptor<'a>(
         new::b5_bold("If necessary, please select the signing device to register descriptor on:")
     })
     .width(Length::Fill);
-    let devices: Element<'a, Message> = if hws.is_empty() {
+    let airgapped_entries = airgapped.iter().map(|signer| {
+        let fingerprint = signer.fingerprint;
+        let status = if registered.contains(&fingerprint) {
+            DeviceStatus::Registered
+        } else {
+            DeviceStatus::None
+        };
+        Container::new(modal::airgapped_signer_entry(
+            Some(format!("#{fingerprint}")),
+            Some(&signer.model),
+            signer.alias.as_ref(),
+            status,
+            Some(Message::SelectAirgappedSigner(fingerprint)),
+        ))
+        .width(EntryWidth::Standard)
+        .into()
+    });
+    let devices: Element<'a, Message> = if hws.is_empty() && airgapped.is_empty() {
         modal::modal_no_devices_placeholder()
     } else {
         Column::with_children(hws.iter().enumerate().map(|(i, hw)| {
@@ -614,6 +633,7 @@ pub fn register_descriptor<'a>(
             );
             Container::new(entry).width(EntryWidth::Standard).into()
         }))
+        .extend(airgapped_entries)
         .spacing(10)
         .into()
     };

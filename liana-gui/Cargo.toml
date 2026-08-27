@@ -26,7 +26,7 @@ liana-ui = { path = "../liana-ui" }
 backtrace = { workspace = true }
 hex = { workspace = true }
 
-iced = { workspace = true, default-features = false, features = ["tokio", "svg", "qr_code", "image", "lazy", "wgpu", "advanced", "tiny-skia", "x11", "wayland"] }
+iced = { workspace = true, default-features = false, features = ["tokio", "svg", "image", "lazy", "wgpu", "advanced", "tiny-skia", "x11", "wayland"] }
 iced_aw = { workspace = true, features = ["context_menu"] }
 iced_runtime = { workspace = true }
 
@@ -64,9 +64,17 @@ fs2 = { workspace = true }
 open = { workspace = true }
 
 encrypted_backup = { workspace = true }
+bwk-qr = { workspace = true }
+getrandom = { workspace = true }
+nokhwa = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 zip = { workspace = true, default-features = false, features = ["bzip2", "deflate"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nokhwa-bindings-macos = { workspace = true }
+flume = { workspace = true }
+objc = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 tar = { workspace = true, default-features = false }

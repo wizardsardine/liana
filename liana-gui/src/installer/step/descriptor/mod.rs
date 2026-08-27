@@ -16,7 +16,15 @@ use liana_ui::{component::form, widget::Element};
 use async_hwi::DeviceKind;
 
 use crate::{
-    app::{settings::KeySetting, state::export::ExportModal, wallet::wallet_name},
+    airgap::{self, AirgappedSignerConfig, Answer, Ask},
+    app::{
+        settings::KeySetting,
+        state::{
+            airgap::{AirgapModal, AirgapOutcome},
+            export::ExportModal,
+        },
+        wallet::wallet_name,
+    },
     backup::Backup,
     export::{ImportExportMessage, ImportExportType, Progress},
     hw::{HardwareWallet, HardwareWallets},
@@ -263,6 +271,10 @@ pub struct RegisterDescriptor {
     chosen_hw: Option<usize>,
     hmacs: Vec<(Fingerprint, DeviceKind, Option<[u8; 32]>)>,
     registered: HashSet<Fingerprint>,
+    airgapped_signers: Vec<AirgappedSignerConfig>,
+    /// The air-gapped signer the open exchange registers with.
+    registering: Option<Fingerprint>,
+    airgap: Option<AirgapModal>,
     error: Option<Error>,
     done: bool,
     /// Whether this step is part of the descriptor creation process. This is used to detect when
@@ -281,6 +293,9 @@ impl RegisterDescriptor {
             chosen_hw: Default::default(),
             hmacs: Default::default(),
             registered: Default::default(),
+            airgapped_signers: Default::default(),
+            registering: None,
+            airgap: None,
             error: Default::default(),
             done: Default::default(),
         }
@@ -303,6 +318,7 @@ impl Step for RegisterDescriptor {
             self.done = false;
         }
         self.descriptor.clone_from(&ctx.descriptor);
+        self.airgapped_signers = ctx.airgapped_signers.values().cloned().collect();
         let mut map = HashMap::new();
         for key in ctx.keys.values().filter(|k| !k.name.is_empty()) {
             map.insert(key.master_fingerprint, key.name.clone());
@@ -310,6 +326,69 @@ impl Step for RegisterDescriptor {
     }
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match message {
+            Message::SelectAirgappedSigner(fingerprint) => {
+                let (Some(descriptor), Some(signer)) = (
+                    self.descriptor.as_ref(),
+                    self.airgapped_signers
+                        .iter()
+                        .find(|signer| signer.fingerprint == fingerprint),
+                ) else {
+                    return Task::none();
+                };
+                match AirgapModal::new(
+                    "Register the wallet",
+                    Ask::Register {
+                        wallet: airgap::Wallet {
+                            // the very alias the USB path below registers under
+                            alias: wallet_name(descriptor),
+                            descriptor: descriptor.clone(),
+                            registration: signer.registration.clone(),
+                        },
+                    },
+                ) {
+                    Ok(modal) => {
+                        self.error = None;
+                        self.registering = Some(fingerprint);
+                        self.airgap = Some(modal);
+                    }
+                    Err(e) => self.error = Some(e.into()),
+                }
+            }
+            Message::Airgap(action) => {
+                let Some(airgap) = self.airgap.as_mut() else {
+                    return Task::none();
+                };
+                let task = airgap.update(action).map(Message::Airgap);
+                return match airgap.take_outcome() {
+                    Some(AirgapOutcome::Answer(answer)) => {
+                        self.airgap = None;
+                        let (Some(fingerprint), Answer::Registered(registration)) =
+                            (self.registering.take(), *answer)
+                        else {
+                            return Task::none();
+                        };
+                        if let Some(signer) = self
+                            .airgapped_signers
+                            .iter_mut()
+                            .find(|signer| signer.fingerprint == fingerprint)
+                        {
+                            signer.registration = registration;
+                            signer.registration.descriptor_checksum =
+                                self.descriptor.as_ref().and_then(|d| {
+                                    d.to_string().split_once('#').map(|(_, c)| c.to_owned())
+                                });
+                            self.registered.insert(fingerprint);
+                        }
+                        Task::none()
+                    }
+                    Some(AirgapOutcome::Cancelled) => {
+                        self.airgap = None;
+                        self.registering = None;
+                        Task::none()
+                    }
+                    None => task,
+                };
+            }
             Message::Select(i) => {
                 if let Some(HardwareWallet::Supported {
                     device,
@@ -367,16 +446,24 @@ impl Step for RegisterDescriptor {
         Task::none()
     }
     fn skip(&self, ctx: &Context) -> bool {
-        !ctx.hw_is_used
+        !ctx.hw_is_used && ctx.airgapped_signers.is_empty()
     }
     fn apply(&mut self, ctx: &mut Context) -> bool {
         for (fingerprint, kind, token) in &self.hmacs {
             ctx.hws.push((*kind, *fingerprint, *token));
         }
+        for signer in &self.airgapped_signers {
+            ctx.airgapped_signers
+                .insert(signer.fingerprint, signer.clone());
+        }
         true
     }
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
-        hws.refresh().map(Message::HardwareWallets)
+        let hw = hws.refresh().map(Message::HardwareWallets);
+        match &self.airgap {
+            Some(airgap) => Subscription::batch([hw, airgap.subscription().map(Message::Airgap)]),
+            None => hw,
+        }
     }
     fn load(&self) -> Task<Message> {
         Task::none()
@@ -388,6 +475,9 @@ impl Step for RegisterDescriptor {
         network: Network,
         email: Option<&'a str>,
     ) -> Element<'a, Message> {
+        if let Some(airgap) = &self.airgap {
+            return airgap.view(Message::Airgap);
+        }
         let desc = self.descriptor.as_ref().unwrap();
 
         view::register_descriptor(
@@ -396,6 +486,7 @@ impl Step for RegisterDescriptor {
             email,
             desc,
             &hws.list,
+            &self.airgapped_signers,
             &self.registered,
             self.error.as_ref(),
             self.processing,
