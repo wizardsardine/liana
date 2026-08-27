@@ -2,6 +2,7 @@
 
 use liana::miniscript::bitcoin;
 use liana_ui::component::label::LABEL_MAX_LENGTH;
+use liana_ui::component::text::truncate;
 use std::str::FromStr;
 use std::{collections::HashMap, iter::IntoIterator, sync::Arc};
 
@@ -47,6 +48,7 @@ impl LabelsEdited {
             // Edit (open the label editor) is handled by each panel before it reaches the
             // shared cache; it falls through to the catch-all below.
             Message::View(view::Message::Label(items, view::LabelMessage::Edited(value))) => {
+                let value = truncate(&value, LABEL_MAX_LENGTH);
                 let valid = is_valid_label_value(&value);
                 for item in items {
                     if let Some(label) = self.0.get_mut(&item) {
