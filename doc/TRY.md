@@ -63,8 +63,7 @@ if Liana version is inferior to v7:
 
 This is a GPG signature made with Antoine Poinsot's key:
 `590B7292695AFFA5B672CBB2E13FC145CD3F4304`. This key is available elsewhere for cross-checking, such
-as on [his Twitter profile](https://twitter.com/darosior) or his [personal
-website](http://download.darosior.ninja/antoine_poinsot_0xE13FC145CD3F4304.txt). It is recommended
+as on [his Twitter profile](https://twitter.com/darosior). It is recommended
 you verify your download against this key.
 Example for Linux (replace the signature name with the one corresponding to your download):
 ```
@@ -83,8 +82,7 @@ if Liana version is superior or equal to v7:
 
 This is a GPG signature made with Edouard Paris key:
 `5B63F3B97699C7EEF3B040B19B7F629A53E77B83`. This key is available elsewhere for cross-checking, such
-as on  his [personal website](https://edouard.paris/keys/5B63F3B97699C7EEF3B040B19B7F629A53E77B83.asc).
-It is recommended you verify your download against this key.
+as on [his Twitter profile](https://twitter.com/darosior). It is recommended you verify your download against this key.
 Example for Linux (replace the signature name with the one corresponding to your download):
 ```
 gpg --keyserver hkps://keys.openpgp.org --receive 5B63F3B97699C7EEF3B040B19B7F629A53E77B83
