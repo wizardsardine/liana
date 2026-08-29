@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 async-trait = { workspace = true }
-async-hwi = { workspace = true }
+async-hwi = { git = "https://github.com/romanz/async-hwi", branch = "trezor-miniscript" }
 liana = { path = "../liana" }
 liana-connect = { workspace = true }
 lianad = { path = "../lianad", default-features = false, features = ["nonblocking_shutdown"] }
