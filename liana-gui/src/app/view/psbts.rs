@@ -1,12 +1,15 @@
-use iced::{Alignment, Length};
+use iced::{
+    widget::{column, row},
+    Alignment, Length,
+};
 
 use liana_ui::{
     component::{
-        amount::*,
+        amount::{amount, amount_with_font},
         badge,
         button::{btn_import, btn_new},
         pill,
-        text::*,
+        text::{legacy::panel_title, new},
     },
     icon, theme,
     widget::*,
@@ -21,105 +24,83 @@ use crate::{
 use super::message::*;
 
 pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
-    Column::new()
-        .push(
-            Row::new()
-                .align_y(Alignment::Center)
-                .spacing(10)
-                .push(Container::new(panel_title(Menu::PSBTs.title())).width(Length::Fill))
-                .push(btn_import(Some(Message::ImportPsbt)))
-                .push(btn_new(Some(Message::Menu(Menu::CreateSpendTx)))),
-        )
-        .push(
-            Column::new().spacing(10).push(
-                spend_txs
-                    .iter()
-                    .enumerate()
-                    .fold(Column::new().spacing(10), |col, (i, tx)| {
-                        col.push(spend_tx_list_view(i, tx))
-                    }),
-            ),
-        )
+    let title = Container::new(panel_title(Menu::PSBTs.title())).width(Length::Fill);
+    let import = btn_import(Some(Message::ImportPsbt));
+    let new_tx = btn_new(Some(Message::Menu(Menu::CreateSpendTx)));
+    let header = row![title, import, new_tx]
+        .align_y(Alignment::Center)
+        .spacing(10);
+
+    let list = spend_txs
+        .iter()
+        .enumerate()
+        .fold(Column::new().spacing(10), |col, (i, tx)| {
+            col.push(spend_tx_list_view(i, tx))
+        });
+
+    column![header, list]
         .align_x(Alignment::Center)
         .spacing(25)
         .into()
 }
 
 fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(
-                    Row::new()
-                        .push(if tx.is_send_to_self() {
-                            badge::cycle()
-                        } else {
-                            badge::spend()
-                        })
-                        .push(if !tx.sigs.recovery_paths().is_empty() {
-                            pill::recovery()
-                        } else {
-                            let sigs = tx.sigs.primary_path();
-                            Container::new(
-                                Row::new()
-                                    .spacing(5)
-                                    .align_y(Alignment::Center)
-                                    .push(
-                                        p2_regular(format!(
-                                            "{}/{}",
-                                            if sigs.sigs_count <= sigs.threshold {
-                                                sigs.sigs_count
-                                            } else {
-                                                sigs.threshold
-                                            },
-                                            sigs.threshold
-                                        ))
-                                        .style(theme::text::secondary),
-                                    )
-                                    .push(icon::key_icon().style(theme::text::secondary)),
-                            )
-                        })
-                        .push_maybe(
-                            tx.labels
-                                .get(&tx.psbt.unsigned_tx.compute_txid().to_string())
-                                .map(p1_regular),
-                        )
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill),
-                )
-                .push_maybe(if tx.is_batch() {
-                    Some(pill::batch())
-                } else {
-                    None
-                })
-                .push_maybe(match tx.status {
-                    SpendStatus::Deprecated => Some(pill::deprecated().width(120.0)),
-                    SpendStatus::Broadcast => Some(pill::unconfirmed().width(120.0)),
-                    SpendStatus::Spent => Some(pill::spent().width(120.0)),
-                    _ => None,
-                })
-                .push(
-                    Column::new()
-                        .align_x(Alignment::End)
-                        .push(if !tx.is_send_to_self() {
-                            Container::new(amount(&tx.spend_amount))
-                        } else {
-                            Container::new(p1_regular(t!("common-self-transfer")))
-                        })
-                        .push_maybe(
-                            tx.fee_amount
-                                .map(|fee| amount_with_font(&fee, P2_REGULAR_SPEC)),
-                        )
-                        .width(Length::Fixed(140.0)),
-                )
-                .align_y(Alignment::Center)
-                .spacing(20),
-        )
+    let badge = if tx.is_send_to_self() {
+        badge::cycle()
+    } else {
+        badge::spend()
+    };
+
+    let sigs = if tx.sigs.recovery_paths().is_empty() {
+        let sigs = tx.sigs.primary_path();
+        let count = sigs.sigs_count.min(sigs.threshold);
+        let counter =
+            new::caption(format!("{count}/{}", sigs.threshold)).style(theme::text::secondary);
+        let key = icon::key_icon().style(theme::text::secondary);
+        Container::new(row![counter, key].spacing(5).align_y(Alignment::Center))
+    } else {
+        pill::recovery()
+    };
+
+    let label = tx
+        .labels
+        .get(&tx.psbt.unsigned_tx.compute_txid().to_string())
+        .map(new::b5_medium);
+
+    let left = row![badge, sigs, label]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+
+    let batch = tx.is_batch().then_some(pill::batch());
+
+    let status = match tx.status {
+        SpendStatus::Deprecated => Some(pill::deprecated().width(120.0)),
+        SpendStatus::Broadcast => Some(pill::unconfirmed().width(120.0)),
+        SpendStatus::Spent => Some(pill::spent().width(120.0)),
+        _ => None,
+    };
+
+    let spent = if tx.is_send_to_self() {
+        Container::new(new::b5_medium(t!("common-self-transfer")))
+    } else {
+        Container::new(amount(&tx.spend_amount))
+    };
+    let fee = tx
+        .fee_amount
+        .map(|fee| amount_with_font(&fee, new::CAPTION_SPEC));
+    let amounts = column![spent, fee].align_x(Alignment::End).width(140);
+
+    let content = row![left, batch, status, amounts]
+        .align_y(Alignment::Center)
+        .spacing(20);
+
+    let entry = Button::new(content)
         .padding(10)
         .on_press(Message::Select(i))
-        .style(theme::button::transparent_border),
-    )
-    .style(theme::card::button_simple)
-    .into()
+        .style(theme::button::transparent_border);
+
+    Container::new(entry)
+        .style(theme::card::button_simple)
+        .into()
 }
