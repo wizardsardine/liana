@@ -223,7 +223,7 @@ impl SettingsTrait for BusinessSettings {
                 Arc::new(remote_backend),
                 liana_dir,
                 None,
-                false,
+                None,
             ))
         })())
     }

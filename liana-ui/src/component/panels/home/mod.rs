@@ -25,16 +25,31 @@ use crate::{
     widget::{Container, Element, SpaceExt},
 };
 
-const RESCAN_WARNING: &str = "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions.";
+/// Which import brought an existing wallet in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalletOrigin {
+    Backup,
+    Descriptor,
+}
 
-/// Card prompting a rescan after restoring a wallet from backup.
-pub fn rescan_warning<'a, M: Clone + 'static>(go_to_rescan: M, dismiss: M) -> Element<'a, M> {
+/// Card prompting a rescan after importing an existing wallet.
+pub fn rescan_warning<'a, M: Clone + 'static>(
+    origin: WalletOrigin,
+    go_to_rescan: M,
+    dismiss: M,
+) -> Element<'a, M> {
+    let source = match origin {
+        WalletOrigin::Backup => "restored from a backup",
+        WalletOrigin::Descriptor => "imported from a descriptor",
+    };
     let icon = icon::warning_fill_icon().size(icon::ICON_SIZE_M as u32);
     let msg = row![
         Space::with_width(10),
         icon,
         Space::with_width(15),
-        new::h3(RESCAN_WARNING),
+        new::h3(format!(
+            "As this wallet was {source}, you may need to rescan the blockchain to see past transactions."
+        )),
     ]
     .align_y(Alignment::Center);
 

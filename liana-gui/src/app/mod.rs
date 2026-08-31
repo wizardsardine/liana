@@ -22,7 +22,7 @@ use tracing::{error, info, warn};
 
 pub use liana::miniscript::bitcoin;
 use liana_ui::{
-    component::network_banner,
+    component::{network_banner, panels::home::WalletOrigin},
     widget::{Column, Element},
 };
 pub use lianad::{commands::CoinStatus, config::Config as DaemonConfig};
@@ -71,15 +71,16 @@ impl<S: SettingsTrait> Panels<S> {
         daemon_backend: DaemonBackend,
         internal_bitcoind: Option<&Bitcoind>,
         config: Arc<Config>,
-        restored_from_backup: bool,
+        wallet_origin: Option<WalletOrigin>,
     ) -> (Panels<S>, Task<S::Message>) {
-        let show_rescan_warning = restored_from_backup
-            && daemon_backend.is_lianad()
-            && daemon_backend
-                .node_type()
-                .map(|nt| nt == NodeType::Bitcoind)
-                // We don't know the node type for external lianad so assume it's bitcoind.
-                .unwrap_or(true);
+        let rescan_warning = wallet_origin.filter(|_| {
+            daemon_backend.is_lianad()
+                && daemon_backend
+                    .node_type()
+                    .map(|nt| nt == NodeType::Bitcoind)
+                    // We don't know the node type for external lianad so assume it's bitcoind.
+                    .unwrap_or(true)
+        });
 
         let (settings_ui, settings_task) = S::UI::new(
             data_dir.clone(),
@@ -103,7 +104,7 @@ impl<S: SettingsTrait> Panels<S> {
                     cache.last_poll_at_startup,
                 ),
                 cache.blockheight(),
-                show_rescan_warning,
+                rescan_warning,
             ),
             coins: CoinsPanel::new(cache.coins(), wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
@@ -179,7 +180,7 @@ impl<S: SettingsTrait> App<S> {
         daemon: Arc<dyn Daemon + Sync + Send>,
         data_dir: LianaDirectory,
         internal_bitcoind: Option<Bitcoind>,
-        restored_from_backup: bool,
+        wallet_origin: Option<WalletOrigin>,
     ) -> (App<S>, Task<Message>) {
         let config = Arc::new(config);
 
@@ -206,7 +207,7 @@ impl<S: SettingsTrait> App<S> {
             daemon.backend(),
             internal_bitcoind.as_ref(),
             config.clone(),
-            restored_from_backup,
+            wallet_origin,
         );
         let cmd = panels.home.reload(daemon.clone(), wallet.clone());
         (

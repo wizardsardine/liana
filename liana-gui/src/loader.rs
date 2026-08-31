@@ -13,7 +13,7 @@ use tracing::{debug, info, warn};
 
 use liana::miniscript::bitcoin;
 use liana_ui::{
-    component::{button, notification, text::*},
+    component::{button, notification, panels::home::WalletOrigin, text::*},
     icon, theme,
     widget::*,
 };
@@ -109,7 +109,7 @@ pub enum Message {
             ),
             Error,
         >,
-        /* restored_from_backup */ bool,
+        Option<WalletOrigin>,
     ),
     Started(StartedResult),
     Loaded(Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error>),
