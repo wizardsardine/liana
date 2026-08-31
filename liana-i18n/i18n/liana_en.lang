@@ -1544,12 +1544,6 @@ psbt-transaction-broadcast => "Transaction is broadcast"
 
 psbt-transaction-saved => "Transaction is saved"
 
-psbts-base64-warning => "Please enter a base64 encoded PSBT"
-
-psbts-imported => "PSBT is imported"
-
-psbts-insert-psbt => "Insert PSBT:"
-
 receive-address-label-placeholder => "Enter an address label"
 
 receive-derivation-index => "Derivation index:"

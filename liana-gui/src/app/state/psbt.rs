@@ -780,28 +780,6 @@ mod tests {
                 &cache,
                 Message::View(view::Message::Select(0)),
             )
-            .await
-            .update(
-                client.clone(),
-                &cache,
-                Message::View(view::Message::Spend(view::SpendTxMessage::EditPsbt)),
-            )
-            .await
-            .update(
-                client.clone(),
-                &cache,
-                Message::View(view::Message::ImportSpend(
-                    view::ImportSpendMessage::PsbtEdited("panic".to_string()),
-                )),
-            )
-            .await
-            .update(
-                client.clone(),
-                &cache,
-                Message::View(view::Message::ImportSpend(
-                    view::ImportSpendMessage::Confirm,
-                )),
-            )
             .await;
     }
 }

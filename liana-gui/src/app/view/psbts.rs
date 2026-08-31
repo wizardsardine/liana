@@ -1,11 +1,11 @@
-use iced::{widget::Space, Alignment, Length};
+use iced::{Alignment, Length};
 
 use liana_ui::{
     component::{
         amount::*,
         badge,
-        button::{btn_import, btn_new, btn_processing},
-        card, form, pill,
+        button::{btn_import, btn_new},
+        pill,
         text::*,
     },
     icon, theme,
@@ -13,58 +13,12 @@ use liana_ui::{
 };
 
 use crate::{
-    app::{error::Error, menu::Menu},
+    app::menu::Menu,
     daemon::model::{SpendStatus, SpendTx},
     t,
 };
 
-use super::{message::*, warning::warn};
-
-pub fn import_psbt_view<'a>(
-    imported: &form::Value<String>,
-    error: Option<&Error>,
-    processing: bool,
-) -> Element<'a, Message> {
-    Column::new()
-        .push(warn(error))
-        .push(card::simple(
-            Column::new()
-                .spacing(10)
-                .push(text(t!("psbts-insert-psbt")).bold())
-                .push(
-                    form::Form::new_trimmed("PSBT", imported, move |msg| {
-                        Message::ImportSpend(ImportSpendMessage::PsbtEdited(msg))
-                    })
-                    .warning(t!("psbts-base64-warning"))
-                    .size(P1_SIZE)
-                    .padding(10),
-                )
-                .push(Row::new().push(Space::with_width(Length::Fill)).push(
-                    if imported.valid && !imported.value.is_empty() && !processing {
-                        btn_import(Some(Message::ImportSpend(ImportSpendMessage::Confirm)))
-                    } else if processing {
-                        btn_processing()
-                    } else {
-                        btn_import(None)
-                    },
-                )),
-        ))
-        .max_width(400)
-        .into()
-}
-
-pub fn import_psbt_success_view<'a>() -> Element<'a, Message> {
-    Column::new()
-        .push(
-            card::simple(Container::new(
-                text(t!("psbts-imported")).style(theme::text::success),
-            ))
-            .padding(50),
-        )
-        .width(Length::Fixed(400.0))
-        .align_x(Alignment::Center)
-        .into()
-}
+use super::message::*;
 
 pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
     Column::new()
