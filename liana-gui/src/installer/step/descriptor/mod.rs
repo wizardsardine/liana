@@ -204,13 +204,13 @@ impl Step for ImportDescriptor {
         ctx.hw_is_used = true;
         // descriptor forms for import or creation cannot be both empty or filled.
         if let Some(desc) = self.check_descriptor(self.network) {
-            ctx.descriptor = Some(desc);
+            ctx.descriptor = Some(desc.clone());
+            ctx.backup = Some(match &self.imported_backup {
+                Some(backup) => backup.clone(),
+                None => Backup::from_descriptor(desc, self.network),
+            });
         } else {
             return false;
-        }
-
-        if let Some(backup) = &self.imported_backup {
-            ctx.backup = Some(backup.clone());
         }
 
         if let Some(aliases) = &self.imported_aliases {

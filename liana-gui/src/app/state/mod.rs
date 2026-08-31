@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::{Amount, OutPoint};
-use liana_ui::widget::*;
+use liana_ui::{component::panels::home::WalletOrigin, widget::*};
 use lianad::commands::CoinStatus;
 
 use super::{
@@ -157,7 +157,7 @@ pub struct Home {
     labels_edited: LabelsEdited,
 
     warning: Option<Error>,
-    show_rescan_warning: bool,
+    rescan_warning: Option<WalletOrigin>,
 }
 
 impl Home {
@@ -166,7 +166,7 @@ impl Home {
         coins: &[Coin],
         sync_status: SyncStatus,
         tip_height: i32,
-        show_rescan_warning: bool,
+        rescan_warning: Option<WalletOrigin>,
     ) -> Self {
         let (balance, unconfirmed_balance, expiring_coins, remaining_seq) = coins_summary(
             coins,
@@ -186,7 +186,7 @@ impl Home {
             labels_edited: LabelsEdited::default(),
             warning: None,
             processing: false,
-            show_rescan_warning,
+            rescan_warning,
             last_reload: Instant::now(),
         }
     }
@@ -218,7 +218,7 @@ impl State for Home {
                     self.payments.is_last_page,
                     self.processing,
                     &self.sync_status,
-                    self.show_rescan_warning,
+                    self.rescan_warning,
                 ),
             )
         }
@@ -320,7 +320,7 @@ impl State for Home {
                 }
             },
             Message::View(view::Message::HideRescanWarning) => {
-                self.show_rescan_warning = false;
+                self.rescan_warning = None;
             }
             Message::View(view::Message::SelectPayment(outpoint)) => {
                 return Task::perform(

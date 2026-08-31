@@ -59,6 +59,9 @@ pub struct Backup {
     pub proprietary: serde_json::Map<String, serde_json::Value>,
     #[serde(default = "default_version")]
     pub version: u32,
+    /// True when synthesized from a bare descriptor rather than read from a backup file.
+    #[serde(skip)]
+    pub descriptor_only: bool,
 }
 
 fn default_version() -> u32 {
@@ -124,6 +127,7 @@ impl Backup {
             date: None,
             proprietary: Default::default(),
             version: default_version(),
+            descriptor_only: true,
         }
     }
 
@@ -240,6 +244,7 @@ impl Backup {
             proprietary: serde_json::Map::new(),
             date: Some(now().as_secs()),
             version: 0,
+            descriptor_only: false,
         })
     }
 
@@ -473,6 +478,7 @@ mod test {
             date: Some(0),
             proprietary: serde_json::Map::new(),
             version: 0,
+            descriptor_only: false,
         };
         let serialized = serde_json::to_string(&backup).unwrap();
         let expected = r#"{"accounts":[],"network":"signet","date":0,"version":0}"#;

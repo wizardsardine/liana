@@ -6,7 +6,7 @@ extern crate serde;
 extern crate serde_json;
 
 use liana::miniscript::bitcoin;
-use liana_ui::widget::Element;
+use liana_ui::{component::panels::home::WalletOrigin, widget::Element};
 use lianad::commands::ListCoinsResult;
 
 use crate::{
@@ -377,6 +377,11 @@ where
                     if let Some(backup) = backup {
                         let config = loader.gui_config.clone();
                         let datadir = loader.datadir_path.clone();
+                        let origin = if backup.descriptor_only {
+                            WalletOrigin::Descriptor
+                        } else {
+                            WalletOrigin::Backup
+                        };
                         Task::perform(
                             async move {
                                 import_backup_at_launch(
@@ -384,11 +389,9 @@ where
                                 )
                                 .await
                             },
-                            |r| {
+                            move |r| {
                                 let r = r.map_err(loader::Error::RestoreBackup);
-                                Message::Load(Box::new(loader::Message::App(
-                                    r, /* restored_from_backup */ true,
-                                )))
+                                Message::Load(Box::new(loader::Message::App(r, Some(origin))))
                             },
                         )
                     } else {
@@ -399,7 +402,7 @@ where
                             daemon,
                             loader.datadir_path.clone(),
                             bitcoind,
-                            false,
+                            None,
                         );
                         self.state = State::App(app);
                         command.map(|msg| Message::Run(Box::new(msg)))
@@ -407,7 +410,7 @@ where
                 }
                 loader::Message::App(
                     Ok((cache, wallet, config, daemon, datadir, bitcoind)),
-                    restored_from_backup,
+                    wallet_origin,
                 ) => {
                     let (app, command) = app::App::<S>::new(
                         cache,
@@ -416,7 +419,7 @@ where
                         daemon,
                         datadir,
                         bitcoind,
-                        restored_from_backup,
+                        wallet_origin,
                     );
                     self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))
@@ -684,7 +687,7 @@ pub fn create_app_with_remote_backend(
         Arc::new(remote_backend),
         liana_dir,
         None,
-        false,
+        None,
     ))
 }
 

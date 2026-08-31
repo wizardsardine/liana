@@ -10,7 +10,7 @@ use liana_ui::{
         panels::home::{
             self,
             payment::{payment_card, PaymentKind, UIPayment},
-            rescan_warning, SyncProgress,
+            SyncProgress, WalletOrigin,
         },
         text::new,
     },
@@ -37,7 +37,7 @@ pub fn home_view<'a>(
     is_last_page: bool,
     processing: bool,
     sync_status: &SyncStatus,
-    show_rescan_warning: bool,
+    rescan_warning: Option<WalletOrigin>,
 ) -> Element<'a, Message> {
     let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
     let sync = (!sync_status.is_synced()).then_some(match sync_status {
@@ -75,8 +75,9 @@ pub fn home_view<'a>(
         Some(recovery_warning(expiring_coins))
     };
 
-    let rescan_warn = show_rescan_warning.then_some({
-        rescan_warning(
+    let rescan_warn = rescan_warning.map(|origin| {
+        home::rescan_warning(
+            origin,
             Message::Menu(Menu::SettingsPreSelected(menu::SettingsOption::Node)),
             Message::HideRescanWarning,
         )
