@@ -395,7 +395,7 @@ impl From<DbLabel> for Label {
             DbLabelledKind::OutPoint => Label::Output(bip329::OutputRecord {
                 ref_: OutPoint::from_str(&ref_).expect(" db contains valid outpoints"),
                 label,
-                spendable: true,
+                spendable: None,
             }),
             DbLabelledKind::Txid => Label::Transaction(bip329::TransactionRecord {
                 ref_: bitcoin::consensus::encode::deserialize_hex(&ref_)

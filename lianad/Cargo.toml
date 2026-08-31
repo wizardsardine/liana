@@ -51,4 +51,4 @@ rusqlite = { workspace = true, features = ["bundled", "unlock_notify"] }
 jsonrpc = { workspace = true, features = ["minreq_http"], default-features = false }
 
 # import/export labels
-bip329 = { workspace = true, default-features = false }
+bip329 = { workspace = true }
