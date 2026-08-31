@@ -235,6 +235,19 @@ impl SpendTx {
         matches!(self.kind, TransactionKind::SendToSelf)
     }
 
+    /// Amount the transaction moves: what it sends out, or the total of its outputs for a
+    /// self-transfer, which sends nothing out.
+    pub fn moved_amount(&self) -> Amount {
+        if !self.is_send_to_self() {
+            return self.spend_amount;
+        }
+        let mut moved = Amount::from_sat(0);
+        for output in &self.psbt.unsigned_tx.output {
+            moved += output.value;
+        }
+        moved
+    }
+
     pub fn is_single_payment(&self) -> Option<OutPoint> {
         match self.kind {
             TransactionKind::IncomingSinglePayment(outpoint) => Some(outpoint),

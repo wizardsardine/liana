@@ -47,7 +47,7 @@ impl State for PsbtsPanel {
                 &Menu::PSBTs,
                 cache,
                 self.warning.as_ref(),
-                view::psbts::psbts_view(&self.spend_txs),
+                view::psbts::psbts_view(&self.spend_txs, cache.pane_size.get().width),
             );
             if let Some(modal) = &self.modal {
                 modal.view(list_view)

@@ -1,38 +1,49 @@
 use bitcoin::Amount;
 use iced::{
-    widget::{column, row},
-    Alignment, Length,
+    widget::{column, row, text::Style, Space},
+    Alignment,
 };
 use liana::spend::SpendStatus;
 use liana_i18n::t;
 
 use crate::{
     component::{
-        amount::{amount, amount_with_font},
-        badge, pill,
-        text::new,
+        amount::{amount_with_fiat_tooltip, AmountSize},
+        card,
+        panels::{
+            home::payment::{FiatPrice, FiatSource, PaymentKind},
+            LIST_ENTRY_PADDING,
+        },
+        pill,
+        text::{new, truncate},
     },
-    icon, theme,
-    widget::{Button, Container, Element},
+    spacing::HSpacing,
+    theme::{self, Theme},
+    widget::{Container, Element, SpaceExt},
 };
 
-const STATUS_PILL_WIDTH: f32 = 120.0;
+const PSBT_HEIGHT: u32 = 90;
 
-/// How far along the signing of a PSBT is: either it spends through a recovery
-/// path, or it has some of the signatures its primary path requires.
+const STATUS_PILL_WIDTH_SMALL: f32 = 100.0;
+const STATUS_PILL_WIDTH: f32 = 120.0;
+const STATUS_PILL_WIDTH_LARGE: f32 = 150.0;
+
+/// How far along the signing of a PSBT is on the path it spends through.
 #[derive(Debug, Clone, Copy)]
-pub enum PsbtSigs {
-    Recovery,
-    Primary { count: usize, threshold: usize },
+pub struct PsbtSigs {
+    pub count: usize,
+    pub threshold: usize,
 }
 
 /// The pill telling where a saved PSBT is at in its lifecycle.
-pub fn status_pill<'a, M: 'a>(status: SpendStatus) -> Container<'a, M> {
+pub fn status_pill<'a, M: 'a>(status: SpendStatus, signed: bool) -> Option<Container<'a, M>> {
     match status {
-        SpendStatus::Broadcastable => pill::signed().width(STATUS_PILL_WIDTH),
-        SpendStatus::Broadcast => pill::unconfirmed().width(STATUS_PILL_WIDTH),
-        SpendStatus::Spent => pill::spent().width(STATUS_PILL_WIDTH),
-        SpendStatus::Deprecated => pill::deprecated().width(STATUS_PILL_WIDTH),
+        SpendStatus::Broadcastable => {
+            signed.then_some(pill::signed().width(STATUS_PILL_WIDTH_LARGE))
+        }
+        SpendStatus::Broadcast => Some(pill::unconfirmed().width(STATUS_PILL_WIDTH)),
+        SpendStatus::Spent => Some(pill::spent().width(STATUS_PILL_WIDTH)),
+        SpendStatus::Deprecated => Some(pill::deprecated().width(STATUS_PILL_WIDTH)),
     }
 }
 
@@ -41,57 +52,67 @@ pub fn list_entry<'a, M: Clone + 'static>(
     label: Option<&'a str>,
     is_send_to_self: bool,
     is_batch: bool,
+    is_recovery: bool,
     status: SpendStatus,
     sigs: PsbtSigs,
-    spend_amount: Amount,
-    fee_amount: Option<Amount>,
+    amount: Amount,
+    fiat_price: Option<FiatPrice>,
+    available_width: f32,
     msg: Option<M>,
 ) -> Element<'a, M> {
-    let badge = if is_send_to_self {
-        badge::cycle()
+    let PsbtSigs { count, threshold } = sigs;
+    let signed = count >= threshold;
+
+    let thresh_descr = if available_width >= 1460.0 {
+        t!("psbts-signatures-collected")
     } else {
-        badge::spend()
+        String::new()
     };
-
-    let sigs = match sigs {
-        PsbtSigs::Recovery => pill::recovery(),
-        PsbtSigs::Primary { count, threshold } => {
-            let counter = new::caption(format!("{}/{threshold}", count.min(threshold)))
-                .style(theme::text::secondary);
-            let key = icon::key_icon().style(theme::text::secondary);
-            Container::new(row![counter, key].spacing(5).align_y(Alignment::Center))
-        }
-    };
-
-    let label = label.map(new::b5_medium);
-
-    let left = row![badge, sigs, label]
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .width(Length::Fill);
-
-    let batch = is_batch.then_some(pill::batch());
-
-    let status = status_pill(status);
-
-    let spent = if is_send_to_self {
-        Container::new(new::b5_medium(t!("common-self-transfer")))
+    let sig_style: fn(&Theme) -> Style = if !signed {
+        theme::text::warning
     } else {
-        Container::new(amount(&spend_amount))
+        theme::text::success
     };
-    let fee = fee_amount.map(|fee| amount_with_font(&fee, new::CAPTION_SPEC));
-    let amounts = column![spent, fee].align_x(Alignment::End).width(140);
+    let counter = format!("{}/{threshold}", count.min(threshold));
+    let sigs = new::b4_medium(format!("{counter} {thresh_descr}")).style(sig_style);
 
-    let content = row![left, batch, status, amounts]
-        .align_y(Alignment::Center)
-        .spacing(20);
+    let recovery_pill = is_recovery.then_some(pill::recovery().width(STATUS_PILL_WIDTH_SMALL));
+    let batch_pill = is_batch.then_some(pill::batch().width(STATUS_PILL_WIDTH_SMALL));
 
-    let entry = Button::new(content)
-        .padding(10)
-        .on_press_maybe(msg)
-        .style(theme::button::transparent_border);
+    let status_pill = status_pill(status, signed);
 
-    Container::new(entry)
-        .style(theme::card::button_simple)
-        .into()
+    let max_lbl_chars = (available_width - 500.0) as usize / 22;
+    let mut label = label.map(|l| truncate(l, max_lbl_chars));
+
+    let kind = if is_send_to_self {
+        label = Some(t!("common-self-transfer"));
+        PaymentKind::SendToSelf
+    } else {
+        PaymentKind::Outgoing
+    };
+
+    let label = label.map(|l| new::h2(l).style(theme::text::primary));
+
+    let sigs = row![
+        sigs,
+        status_pill,
+        Space::fill_width(),
+        recovery_pill,
+        batch_pill,
+    ]
+    .align_y(Alignment::Center)
+    .spacing(22);
+    let left = column![label, sigs].spacing(12);
+
+    let to_fiat = fiat_price.map(|fp| move |_: Amount| fp.amount);
+    let approximate = fiat_price.is_none_or(|fp| fp.source == FiatSource::Timestamp);
+    let tooltip = fiat_price.map(|fp| fp.source.infotip());
+    let amount = amount_with_fiat_tooltip(&amount, to_fiat, AmountSize::M, approximate, tooltip);
+    let spent = row![kind.icon(), amount]
+        .spacing(HSpacing::S)
+        .align_y(Alignment::Center);
+
+    let content = row![left, spent].spacing(HSpacing::L).height(PSBT_HEIGHT);
+
+    card::list_entry_with_padding(content, msg, LIST_ENTRY_PADDING)
 }
