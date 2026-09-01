@@ -1713,7 +1713,7 @@ pub fn connection_step_select_account<'a>(
         "Liana Connect",
         Some(installer_layout::intro_prompt(
             "Select an account to continue",
-            None,
+            None::<String>,
         )),
         false,
     );
@@ -1756,7 +1756,7 @@ pub fn connection_step_select_account<'a>(
             is_ws_admin: false,
             nav_bar: installer_layout::NavBar::StepTitle {
                 progress,
-                title: "Login",
+                title: "Login".to_string(),
                 previous_message: (!processing).then_some(Message::Previous),
             },
             content_width: button::STANDARD_ENTRY_WIDTH,
@@ -1978,11 +1978,11 @@ fn layout<'a>(
         installer_layout::LayoutConfig {
             variant: Variant::Liana,
             network,
-            email,
+            email: email.map(String::from),
             is_ws_admin: false,
             nav_bar: installer_layout::NavBar::StepTitle {
                 progress,
-                title,
+                title: title.to_string(),
                 previous_message,
             },
             content_width: 800.0,

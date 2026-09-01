@@ -19,7 +19,10 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
 
     let header_content = screen_intro(
         "Liana Business",
-        Some(intro_prompt("Select an account to continue", None)),
+        Some(intro_prompt(
+            "Select an account to continue",
+            None::<String>,
+        )),
         false,
     );
 

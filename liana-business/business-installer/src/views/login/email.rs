@@ -36,7 +36,7 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
                 "Liana Business",
                 Some(intro_prompt(
                     "Enter the email associated with your account",
-                    None,
+                    None::<String>,
                 )),
                 true,
             ),

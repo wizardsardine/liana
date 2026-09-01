@@ -39,7 +39,7 @@ pub enum LayoutContent<'a, M> {
 pub struct LayoutConfig<'a, M> {
     pub variant: Variant,
     pub network: Network,
-    pub email: Option<&'a str>,
+    pub email: Option<String>,
     pub is_ws_admin: bool,
     pub nav_bar: NavBar<'a, M>,
     pub content_width: f32,
@@ -53,7 +53,7 @@ pub enum NavBar<'a, M> {
     },
     StepTitle {
         progress: (usize, usize),
-        title: &'a str,
+        title: String,
         previous_message: Option<M>,
     },
     Launcher {
@@ -77,7 +77,7 @@ pub fn screen_intro<'a, M: 'a>(
         .into()
 }
 
-pub fn intro_description<'a, M: 'a>(value: &'a str) -> Element<'a, M> {
+pub fn intro_description<'a, M: 'a>(value: impl Display) -> Element<'a, M> {
     Container::new(text::new::caption(value).style(theme::text::secondary))
         .width(Length::Shrink)
         .max_width(SCREEN_INTRO_SUB_WIDTH)
@@ -85,8 +85,11 @@ pub fn intro_description<'a, M: 'a>(value: &'a str) -> Element<'a, M> {
         .into()
 }
 
-pub fn intro_prompt<'a, M: 'a>(prompt: &'a str, accent: Option<&'a str>) -> Element<'a, M> {
-    let accent = accent.map(|accent| text::new::h3_semi(accent).style(theme::text::accent));
+pub fn intro_prompt<'a, M: 'a>(
+    prompt: impl Display,
+    accent: Option<impl Into<String>>,
+) -> Element<'a, M> {
+    let accent = accent.map(|accent| text::new::h3_semi(accent.into()).style(theme::text::accent));
     Container::new(row![text::new::h3_semi(prompt), accent].wrap())
         .center_x(Length::Fill)
         .into()
@@ -123,7 +126,7 @@ fn identity_bar<'a, M: 'static + 'a + Clone>(
     variant: Variant,
     network: Network,
     is_ws_admin: bool,
-    email: Option<&'a str>,
+    email: Option<String>,
 ) -> Element<'a, M> {
     const IDENTITY_BAR_HEIGHT: u32 = 28;
 
@@ -161,7 +164,7 @@ fn identity_bar<'a, M: 'static + 'a + Clone>(
     let ws_admin_pill = is_ws_admin.then_some(pill::ws_admin());
     let user = email.map(|e| {
         let mut icon = icon::person_icon().size(16).style(theme::text::tertiary);
-        let e = component::text::short_email(e, 35);
+        let e = component::text::short_email(&e, 35);
         let mut mail = text::new::caption(e).style(theme::text::accent);
         if network != Network::Bitcoin {
             icon = icon.style(theme::text::network_banner);
