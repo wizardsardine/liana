@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::{
     backend::Backend,
     state::{message::Msg, State},
@@ -26,10 +28,11 @@ pub use entry_path_list::entry_path_list;
 fn banner_card(
     variant: fn(Element<'static, Msg>) -> Container<'static, Msg>,
     icon_style: fn(&theme::Theme) -> iced::widget::text::Style,
-    body: &'static str,
+    body: impl Display,
 ) -> Element<'static, Msg> {
+    let body = body.to_string();
     let content = row![
-        tooltip::tooltip_with_style(body, icon_style),
+        tooltip::tooltip_with_style(body.clone(), icon_style),
         text::new::caption(body).style(icon_style),
     ]
     .spacing(HSpacing::M)
