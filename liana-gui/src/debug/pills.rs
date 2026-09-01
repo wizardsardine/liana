@@ -27,7 +27,7 @@ fn pill_components_b() -> Sample<14> {
         (pill::rescan(1.0_f64, false),                        "liana_ui::component::pill::rescan(1.0, false)"),
         (pill::rescan(1.0_f64, true),                        "liana_ui::component::pill::rescan(1.0, true)"),
         (pill::fingerprint("deadbeef", Some("alice")), "liana_ui::component::pill::fingerprint(_, Some(_))"),
-        (pill::fingerprint("abcd1234", None),          "liana_ui::component::pill::fingerprint(_, None)"),
+        (pill::fingerprint("abcd1234", None::<String>),          "liana_ui::component::pill::fingerprint(_, None)"),
         (pill::coin_sequence(0),                       "liana_ui::component::pill::coin_sequence(0)"),
         (pill::coin_sequence(50),                      "liana_ui::component::pill::coin_sequence(50)"),
         (pill::coin_sequence(200),                      "liana_ui::component::pill::coin_sequence(200)"),
