@@ -7,14 +7,22 @@ use crate::{
 use iced::widget::{text::Style, tooltip::Position};
 
 pub fn tooltip_with_style<'a, T: 'a>(
-    help: &'a str,
+    help: impl Into<String>,
     icon_style: fn(&Theme) -> Style,
 ) -> Container<'a, T> {
-    tooltip_custom(help, icon::tooltip_icon().style(icon_style), Position::Top)
+    tooltip_custom(
+        iced::widget::text(help.into()),
+        icon::tooltip_icon().style(icon_style),
+        Position::Top,
+    )
 }
 
-pub fn tooltip<'a, T: 'a>(help: &'a str) -> Container<'a, T> {
-    tooltip_custom(help, icon::tooltip_icon(), Position::Right)
+pub fn tooltip<'a, T: 'a>(help: impl Into<String>) -> Container<'a, T> {
+    tooltip_custom(
+        iced::widget::text(help.into()),
+        icon::tooltip_icon(),
+        Position::Right,
+    )
 }
 
 pub fn tooltip_custom<'a, T: 'a>(
