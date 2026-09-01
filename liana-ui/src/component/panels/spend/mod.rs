@@ -59,7 +59,7 @@ pub fn recipient_card<'a, M: Clone + 'static>(
     amount: &'a form::Value<String>,
     fiat: Option<RecipientFiat<'a, M>>,
     is_max_selected: bool,
-    dust_warning: Option<&'a str>,
+    dust_warning: Option<impl Into<String>>,
     max_estimated_amount: Option<Amount>,
     on_address_edit: impl Fn(String) -> M + 'static,
     on_label_edit: impl Fn(String) -> M + 'static,
@@ -197,7 +197,7 @@ pub fn recipient_card<'a, M: Clone + 'static>(
         .width(Length::Fill);
     // Show dust warning, if any, or otherwise any amount warning.
     let warning = dust_warning
-        .map(|w| new::caption(w).color(color::RED))
+        .map(|w| new::caption(w.into()).color(color::RED))
         .or_else(|| {
             amount
                 .warning

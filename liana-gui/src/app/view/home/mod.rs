@@ -87,8 +87,8 @@ pub fn home_view<'a>(
         if event.kind != PaymentKind::SendToSelf {
             col.push(payment_card(
                 UIPayment {
-                    label: event.label.as_deref(),
-                    address_label: event.address_label.as_deref(),
+                    label: event.label.clone(),
+                    address_label: event.address_label.clone(),
                     kind: event.kind,
                     time: event.time,
                     amount: event.amount,
