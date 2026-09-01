@@ -92,7 +92,7 @@ pub enum DeviceStatus {
     Warning(&'static str),
 }
 
-fn device_success_mark<'a, M: 'static>(label: Option<&'static str>) -> Element<'a, M> {
+fn device_success_mark<'a, M: 'static>(label: Option<String>) -> Element<'a, M> {
     row![label.map(text::new::b5_medium), badge::success()]
         .align_y(Alignment::Center)
         .spacing(5)
@@ -141,8 +141,8 @@ impl<'a, M: 'static> From<DeviceStatus> for Option<Element<'a, M>> {
                 text::new::b5_medium(format!("Install firmware version {version} \nor later"))
                     .into(),
             ),
-            DeviceStatus::Signed => Some(device_success_mark(Some("Signed"))),
-            DeviceStatus::Registered => Some(device_success_mark(Some("Registered"))),
+            DeviceStatus::Signed => Some(device_success_mark(Some("Signed".to_string()))),
+            DeviceStatus::Registered => Some(device_success_mark(Some("Registered".to_string()))),
             DeviceStatus::Selected => Some(device_success_mark(None)),
             DeviceStatus::Warning(w) => Some(
                 tooltip::tooltip_custom(
@@ -210,7 +210,7 @@ pub fn list_entry_row_static<'a, M: Clone + 'a>(
 /// Expanded "paste an extended public key" entry: a paste tile, an xpub text input and a paste button,
 /// laid out as a static (non-clickable) entry row.
 pub fn entry_paste_xpub<'a, M: Clone + 'a>(
-    value: &str,
+    value: impl Display,
     on_input: impl Fn(String) -> M + 'static,
     on_paste: M,
 ) -> Element<'a, M> {
@@ -230,9 +230,9 @@ pub fn entry_paste_xpub<'a, M: Clone + 'a>(
 pub struct CollapsibleEntry<'a, M> {
     pub accent: Option<EntryAccent>,
     pub tile: Tile,
-    pub title: &'static str,
-    pub collapsed_subtitle: Option<&'static str>,
-    pub expanded_subtitle: Option<&'static str>,
+    pub title: String,
+    pub collapsed_subtitle: Option<String>,
+    pub expanded_subtitle: Option<String>,
     pub content: Element<'a, M>,
     pub expanded: bool,
     pub on_toggle: M,
@@ -241,16 +241,8 @@ pub struct CollapsibleEntry<'a, M> {
 pub fn entry_collapsible<'a, M: Clone + 'static>(cfg: CollapsibleEntry<'a, M>) -> Element<'a, M> {
     let accent = cfg.accent.map(entry_accent);
     let entry = collapse::Collapse::new(
-        collapsible_entry_header(
-            cfg.tile,
-            cfg.title.to_string(),
-            cfg.collapsed_subtitle.map(str::to_string),
-        ),
-        collapsible_entry_header(
-            cfg.tile,
-            cfg.title.to_string(),
-            cfg.expanded_subtitle.map(str::to_string),
-        ),
+        collapsible_entry_header(cfg.tile, cfg.title.to_string(), cfg.collapsed_subtitle),
+        collapsible_entry_header(cfg.tile, cfg.title.to_string(), cfg.expanded_subtitle),
         Container::new(cfg.content).padding(iced::Padding {
             left: button::LIST_ENTRY_PADDING[1].into(),
             right: button::LIST_ENTRY_PADDING[1].into(),
