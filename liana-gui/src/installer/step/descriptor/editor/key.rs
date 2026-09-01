@@ -1164,7 +1164,7 @@ impl SelectKeySource {
             KeySourceKind::Device,
             alias,
             fingerprint,
-            None,
+            None::<String>,
             None,
             message,
             msg,
@@ -1199,7 +1199,15 @@ impl SelectKeySource {
         let on_press = message
             .is_none()
             .then_some(Self::route(SelectKeySourceMessage::SelectKey(fg)));
-        modal::key_entry(kind, alias, Some(fg_str), None, None, message, on_press)
+        modal::key_entry(
+            kind,
+            alias,
+            Some(fg_str),
+            None::<String>,
+            None,
+            message,
+            on_press,
+        )
     }
 }
 

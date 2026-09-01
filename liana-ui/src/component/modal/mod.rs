@@ -253,9 +253,9 @@ fn acked_input_button<'a, Message, Ack, Input, Paste, Collapse>(
     collapsed: bool,
     ack: bool,
     tile: Tile,
-    label: &'a str,
-    disclaimer: &'a str,
-    input_placeholder: &'a str,
+    label: impl Into<String>,
+    disclaimer: impl Into<String>,
+    input_placeholder: impl Into<String>,
     input_value: &Value<String>,
     ack_message: Ack,
     input_message: Input,
@@ -269,10 +269,13 @@ where
     Collapse: 'static + Fn() -> Message,
     Message: Clone + 'static,
 {
+    let label = label.into();
+    let disclaimer = disclaimer.into();
+    let input_placeholder = input_placeholder.into();
     let form = if ack {
-        form::Form::new(input_placeholder, input_value, input_message)
+        form::Form::new(&input_placeholder, input_value, input_message)
     } else {
-        form::Form::new_disabled(input_placeholder, input_value)
+        form::Form::new_disabled(&input_placeholder, input_value)
     }
     .padding(10);
     let paste = Button::new(icon::paste_icon().color(color::BLACK)).on_press(paste_message());
@@ -280,7 +283,10 @@ where
     let expanded = {
         let line = row![form, paste].spacing(H_SPACING);
         let check_box = CheckBox::new(ack).label(disclaimer).on_toggle(ack_message);
-        let label = row![caption(label).color(color::WHITE), Space::fill_width()];
+        let label = row![
+            caption(label.clone()).color(color::WHITE),
+            Space::fill_width()
+        ];
         let content = if ack {
             Container::new(column![label, line])
         } else {
@@ -320,7 +326,7 @@ pub fn key_entry<'a, M: 'a + Clone>(
     kind: KeySourceKind,
     name: String,
     fingerprint: Option<String>,
-    tooltip_str: Option<&'a str>,
+    tooltip_str: Option<impl Into<String>>,
     error: Option<String>,
     mut message: Option<String>,
     on_press: Option<M>,
@@ -330,7 +336,7 @@ pub fn key_entry<'a, M: 'a + Clone>(
     }
     let message = message.map(caption);
     let error = error.map(|e| caption(e).color(color::ORANGE));
-    let tt = tooltip_str.map(|s| tooltip(s));
+    let tt = tooltip_str.map(|s| tooltip(s.into()));
 
     let designation = column![
         b5_bold(name),
@@ -507,8 +513,8 @@ where
 
 fn button_entry<'a, Message, M>(
     tile: Tile,
-    label: &'a str,
-    tooltip_str: Option<&'static str>,
+    label: impl Into<String>,
+    tooltip_str: Option<impl Into<String>>,
     error: Option<String>,
     on_press: Option<M>,
 ) -> Element<'a, Message>
@@ -518,11 +524,16 @@ where
 {
     let error = error.map(|e| row![caption(e).color(color::ORANGE), Space::fill_width()]);
 
-    let tt = tooltip_str.map(|s| tooltip(s));
+    let tt = tooltip_str.map(|s| tooltip(s.into()));
 
-    let row = row![badge::tile(tile), caption(label), Space::fill_width(), tt]
-        .spacing(list::ENTRY_H_SPACING)
-        .align_y(Vertical::Center);
+    let row = row![
+        badge::tile(tile),
+        caption(label.into()),
+        Space::fill_width(),
+        tt
+    ]
+    .spacing(list::ENTRY_H_SPACING)
+    .align_y(Vertical::Center);
 
     let col = column![row, error].width(Length::Fill);
 
@@ -542,7 +553,7 @@ where
     button_entry(
         Tile::Import,
         "Import extended public key file",
-        None,
+        None::<String>,
         error,
         on_press,
     )
@@ -557,7 +568,7 @@ where
     button_entry(
         Tile::KeyHot,
         "Generate hot key stored on this computer",
-        Some("We recommend to use this option only for test purposes"),
+        Some("We recommend to use this option only for test purposes".to_string()),
         None,
         on_press,
     )
@@ -639,7 +650,7 @@ where
 }
 
 fn token_entry<'a, Message, Paste, Collapse, Input>(
-    label: &'static str,
+    label: impl Into<String>,
     collapsed: bool,
     input_value: &Value<String>,
     input_message: Option<Input>,
@@ -655,7 +666,7 @@ where
     collapsible_input_button(
         collapsed,
         Tile::EnterToken,
-        label.to_string(),
+        label.into(),
         TOKEN_PLACEHOLDER.to_string(),
         input_value,
         input_message,
