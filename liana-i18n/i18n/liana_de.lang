@@ -2333,6 +2333,12 @@ settings-import-wallet-description
 
 settings-invitation-sent => "Invitation was sent" => "Die Einladung wurde gesendet"
 
+settings-language => "Language" => "Sprache"
+
+settings-language-description
+=> "Choose the language used by the application."
+=> "Wählen Sie die von der Anwendung verwendete Sprache.";;
+
 settings-month => "Month:" => "Monat:"
 
 settings-network => "Network:" => "Netzwerk:"
