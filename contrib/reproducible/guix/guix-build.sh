@@ -94,6 +94,8 @@ time_machine shell --no-cwd \
     --expose="$PWD/lianad/Cargo.toml=/liana/lianad/Cargo.toml" \
     --expose="$PWD/liana-gui/Cargo.toml=/liana/liana-gui/Cargo.toml" \
     --expose="$PWD/liana-gui/src=/liana/liana-gui/src" \
+    --expose="$PWD/liana-i18n-toolbox/Cargo.toml=/liana/liana-i18n-toolbox/Cargo.toml" \
+    --expose="$PWD/liana-i18n-toolbox/src=/liana/liana-i18n-toolbox/src" \
     --expose="$PWD/liana-ui/src=/liana/liana-ui/src" \
     --expose="$PWD/liana-ui/Cargo.toml=/liana/liana-ui/Cargo.toml" \
     --expose="$PWD/liana-ui/static=/liana/liana-ui/static" \

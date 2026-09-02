@@ -5,6 +5,7 @@ members = [
     "liana",
     "lianad",
     "liana-gui",
+    "liana-i18n-toolbox",
     "liana-ui",
     "liana-connect",
     "liana-business",
@@ -14,6 +15,7 @@ default-members = [
     "liana",
     "lianad",
     "liana-gui",
+    "liana-i18n-toolbox",
     "liana-ui",
     "liana-connect",
     "liana-business",
@@ -24,6 +26,7 @@ default-members = [
 # Internal crates
 liana = { path = "liana" }
 liana-gui = { path = "liana-gui", default-features = false }
+liana-i18n-toolbox = { path = "liana-i18n-toolbox" }
 liana-ui = { path = "liana-ui" }
 liana-connect = { path = "liana-connect" }
 
