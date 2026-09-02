@@ -4,7 +4,9 @@ use liana::miniscript::{
     descriptor::DescriptorPublicKey,
 };
 
-use crate::{app::settings::ProviderKey, hw::is_compatible_with_tapminiscript};
+use crate::{
+    airgap::AirgappedSignerKind, app::settings::ProviderKey, hw::is_compatible_with_tapminiscript,
+};
 use liana_connect::keys::api::KeyKind;
 
 /// Whether to enable cosigner keys on all paths (excluding safety net paths).
@@ -17,6 +19,8 @@ pub enum KeySource {
     Device(DeviceKind, Option<Version>),
     /// A hot signer on the user's computer.
     HotSigner,
+    /// A persisted asynchronous signer that communicates without USB.
+    Airgapped(AirgappedSignerKind),
     /// A manually inserted xpub.
     Manual,
     /// A token for a key with the given kind.
@@ -60,6 +64,7 @@ impl KeySource {
         match self {
             Self::Device(_, _) => KeySourceKind::Device,
             Self::HotSigner => KeySourceKind::HotSigner,
+            Self::Airgapped(_) => KeySourceKind::Airgapped,
             Self::Manual => KeySourceKind::Manual,
             Self::Token(kind, _) => KeySourceKind::Token(*kind),
         }
@@ -97,6 +102,8 @@ pub enum KeySourceKind {
     Device,
     /// A hot signer.
     HotSigner,
+    /// An asynchronous QR/file signer.
+    Airgapped,
     /// A manually inserted xpub.
     Manual,
     /// A token for a key with the given kind.

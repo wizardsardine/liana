@@ -4,7 +4,12 @@ use std::sync::Arc;
 use crate::app::cache::FiatPrice;
 use crate::dir::LianaDirectory;
 use crate::{
-    app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig, node::NodeType, signer::Signer,
+    airgap::{AirgappedSignerConfig, PassportAccount},
+    app::settings,
+    daemon::DaemonBackend,
+    hw::HardwareWalletConfig,
+    node::NodeType,
+    signer::Signer,
 };
 
 use liana::{miniscript::bitcoin, signer::HotSigner};
@@ -41,6 +46,7 @@ pub struct Wallet {
     pub keys_aliases: HashMap<Fingerprint, String>,
     pub provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
+    pub airgapped_signers: Vec<AirgappedSignerConfig>,
     pub signer: Option<Arc<Signer>>,
     pub fiat_price_setting: Option<fiat::PriceSetting>,
     pub remote_backend_auth: Option<settings::AuthConfig>,
@@ -62,6 +68,7 @@ impl Wallet {
             keys_aliases: HashMap::new(),
             provider_keys: HashMap::new(),
             hardware_wallets: Vec::new(),
+            airgapped_signers: Vec::new(),
             signer: None,
             fiat_price_setting: None,
             remote_backend_auth: None,
@@ -106,6 +113,17 @@ impl Wallet {
         self
     }
 
+    pub fn with_airgapped_signers(mut self, airgapped_signers: Vec<AirgappedSignerConfig>) -> Self {
+        self.airgapped_signers = airgapped_signers
+            .into_iter()
+            .map(|mut signer| {
+                signer.invalidate_registration(&self.descriptor_checksum);
+                signer
+            })
+            .collect();
+        self
+    }
+
     pub fn with_signer(mut self, signer: Signer) -> Self {
         self.signer = Some(Arc::new(signer));
         self
@@ -138,6 +156,44 @@ impl Wallet {
         descriptor_keys
     }
 
+    /// Return persisted QR signers plus safe migration candidates for wallets
+    /// made before signer transport metadata was stored. Candidate records are
+    /// derived only from public BIP48 keys already committed to the descriptor
+    /// and are not persisted until the user confirms policy registration.
+    pub fn airgapped_signer_candidates(
+        &self,
+        network: bitcoin::Network,
+    ) -> Vec<AirgappedSignerConfig> {
+        let mut signers = self.airgapped_signers.clone();
+        let mut known: HashSet<_> = signers.iter().map(|signer| signer.fingerprint).collect();
+        let hot_signer = self.signer.as_ref().map(|signer| signer.fingerprint());
+
+        for key in self.main_descriptor.spendable_keys() {
+            let Ok(account) = PassportAccount::from_descriptor_key(&key.to_string(), network)
+            else {
+                continue;
+            };
+            let fingerprint = account.fingerprint;
+            if known.contains(&fingerprint)
+                || hot_signer == Some(fingerprint)
+                || self
+                    .hardware_wallets
+                    .iter()
+                    .any(|device| device.fingerprint == fingerprint)
+                || self.provider_keys.contains_key(&fingerprint)
+            {
+                continue;
+            }
+            let alias = self.keys_aliases.get(&fingerprint).cloned();
+            if let Ok(signer) = AirgappedSignerConfig::qr(account, alias) {
+                known.insert(fingerprint);
+                signers.push(signer);
+            }
+        }
+        signers.sort_by_key(|signer| signer.fingerprint);
+        signers
+    }
+
     pub fn load_from_settings(self, wallet_settings: WalletSettings) -> Result<Self, WalletError> {
         if wallet_settings.descriptor_checksum != self.descriptor_checksum {
             Err(WalletError::WrongWalletLoaded)
@@ -149,6 +205,7 @@ impl Wallet {
                 .with_name(wallet_settings.name)
                 .with_pinned_at(wallet_settings.pinned_at)
                 .with_hardware_wallets(wallet_settings.hardware_wallets)
+                .with_airgapped_signers(wallet_settings.airgapped_signers)
                 .with_fiat_price_setting(wallet_settings.fiat_price))
         }
     }

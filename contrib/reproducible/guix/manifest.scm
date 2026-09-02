@@ -516,6 +516,8 @@
         "coreutils-minimal"
         "patchelf"
         "gcc-toolchain"
+        ;; v4l2-sys-mit generates the Linux camera bindings with bindgen.
+        "clang-toolchain"
         "pkg-config"
         "eudev"
         "fontconfig"))

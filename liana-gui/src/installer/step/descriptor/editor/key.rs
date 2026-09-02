@@ -8,7 +8,7 @@ use async_hwi::{DeviceKind, Version};
 use iced::{
     alignment::{Horizontal, Vertical},
     clipboard,
-    widget::{column, container, row, Column, Row, Space},
+    widget::{column, container, image, row, Column, Row, Space},
     Alignment, Length, Subscription, Task,
 };
 use liana::miniscript::{
@@ -32,6 +32,10 @@ use liana_ui::{
 };
 
 use crate::{
+    airgap::{
+        request_camera_access, AirgappedSignerKind, CameraDescriptor, CameraEvent, CameraScanner,
+        PassportAccount, ScanLimits, UrType,
+    },
     app::{settings::ProviderKey, state::export::ExportModal},
     export::{ImportExportMessage, ImportExportType},
     hw::{is_compatible_with_tapminiscript, HardwareWallet, HardwareWallets, UnsupportedReason},
@@ -97,6 +101,8 @@ enum Focus {
     Device(Fingerprint),
     EnterXpub,
     LoadXpubFromFile,
+    ImportPassport,
+    ScanPassport,
     GenerateHotKey,
     EnterSafetyNetToken,
     EnterCosignerToken,
@@ -109,6 +115,14 @@ pub enum SelectKeySourceMessage {
     FetchFromDevice(Fingerprint, ChildNumber),
     SelectKey(Fingerprint),
     SelectLoadXpub,
+    SelectPassport,
+    SelectPassportQr,
+    SelectPassportFile,
+    PassportCameras(Result<Vec<CameraDescriptor>, crate::airgap::CameraFailure>),
+    SelectPassportCamera(usize),
+    PollPassportCamera,
+    CancelPassportScan,
+    PassportAccount(String),
     SelectEnterXpub,
     PasteXpub,
     Xpub(String),
@@ -187,6 +201,12 @@ pub struct SelectKeySource {
     error: Option<String>,
     details_error: Option<String>,
     import_xpub_error: Option<String>,
+    passport_cameras: Vec<CameraDescriptor>,
+    passport_camera_index: Option<usize>,
+    passport_scanner: Option<CameraScanner>,
+    passport_preview: Option<image::Handle>,
+    passport_scan_progress: f32,
+    passport_scan_error: Option<String>,
 
     // fields
     form_alias: form::Value<String>,
@@ -223,6 +243,12 @@ impl SelectKeySource {
             error: None,
             details_error: None,
             import_xpub_error: None,
+            passport_cameras: Vec::new(),
+            passport_camera_index: None,
+            passport_scanner: None,
+            passport_preview: None,
+            passport_scan_progress: 0.0,
+            passport_scan_error: None,
             form_alias: Default::default(),
             form_xpub: Default::default(),
             form_safety_net_token: Default::default(),
@@ -487,6 +513,167 @@ impl SelectKeySource {
             self.modal = Some(modal);
             return launch;
         }
+        Task::none()
+    }
+    fn on_select_passport(&mut self) -> Task<Message> {
+        self.focus = Focus::ImportPassport;
+        self.import_xpub_error = None;
+        Task::none()
+    }
+
+    fn on_select_passport_file(&mut self) -> Task<Message> {
+        self.focus = Focus::ImportPassport;
+        if self.modal.is_none() {
+            let modal = ExportModal::new(None, ImportExportType::ImportXpub(self.network));
+            let launch = modal.launch(false);
+            self.modal = Some(modal);
+            return launch;
+        }
+        Task::none()
+    }
+
+    fn on_select_passport_qr(&mut self) -> Task<Message> {
+        self.cancel_passport_scan();
+        self.focus = Focus::ScanPassport;
+        self.processing = true;
+        self.passport_scan_error = None;
+        Task::perform(request_camera_access(), |result| {
+            Self::route(SelectKeySourceMessage::PassportCameras(result))
+        })
+    }
+
+    fn on_passport_cameras(
+        &mut self,
+        result: Result<Vec<CameraDescriptor>, crate::airgap::CameraFailure>,
+    ) -> Task<Message> {
+        // The permission callback may arrive after the user cancelled. Do not
+        // open a camera unless this scanner is still the active installer view.
+        if self.focus != Focus::ScanPassport {
+            return Task::none();
+        }
+        self.processing = false;
+        match result {
+            Ok(cameras) if !cameras.is_empty() => {
+                self.passport_cameras = cameras;
+                self.start_passport_camera(0);
+            }
+            Ok(_) => self.passport_scan_error = Some("No camera is available".to_owned()),
+            Err(error) => self.passport_scan_error = Some(error.to_string()),
+        }
+        Task::none()
+    }
+
+    fn start_passport_camera(&mut self, index: usize) {
+        self.passport_scanner = None;
+        self.passport_preview = None;
+        self.passport_scan_progress = 0.0;
+        self.passport_scan_error = None;
+        let Some(camera) = self.passport_cameras.get(index) else {
+            self.passport_scan_error = Some("Selected camera is no longer available".to_owned());
+            return;
+        };
+        match CameraScanner::start(
+            camera.index.clone(),
+            UrType::CryptoAccount,
+            ScanLimits::default(),
+        ) {
+            Ok(scanner) => {
+                self.passport_camera_index = Some(index);
+                self.passport_scanner = Some(scanner);
+            }
+            Err(error) => self.passport_scan_error = Some(error.to_string()),
+        }
+    }
+
+    fn poll_passport_camera(&mut self) -> Task<Message> {
+        let mut complete = None;
+        let mut failed = false;
+        if let Some(scanner) = self.passport_scanner.as_ref() {
+            while let Ok(event) = scanner.try_recv() {
+                match event {
+                    CameraEvent::Preview {
+                        width,
+                        height,
+                        rgba,
+                    } => {
+                        self.passport_preview = Some(image::Handle::from_rgba(width, height, rgba))
+                    }
+                    CameraEvent::Progress { estimated, .. } => {
+                        self.passport_scan_progress = estimated
+                    }
+                    CameraEvent::Rejected(error) => self.passport_scan_error = Some(error),
+                    CameraEvent::Complete(payload) => complete = Some(payload),
+                    CameraEvent::Failure(error) => {
+                        self.passport_scan_error = Some(error.to_string());
+                        failed = true;
+                    }
+                }
+            }
+        }
+        if failed {
+            self.passport_scanner = None;
+        }
+        if let Some(payload) = complete {
+            self.passport_scanner = None;
+            match PassportAccount::from_crypto_account_cbor(&payload.data, self.network) {
+                Ok(account) => return self.accept_passport_account(account),
+                Err(error) => self.passport_scan_error = Some(error.to_string()),
+            }
+        }
+        Task::none()
+    }
+
+    fn cancel_passport_scan(&mut self) {
+        self.passport_scanner = None;
+        self.passport_preview = None;
+        self.passport_cameras.clear();
+        self.passport_camera_index = None;
+        self.passport_scan_progress = 0.0;
+        self.processing = false;
+    }
+
+    fn on_import_passport(&mut self, value: String) -> Task<Message> {
+        match PassportAccount::from_descriptor_key(&value, self.network) {
+            Ok(account) => self.accept_passport_account(account),
+            Err(error) => {
+                self.error = Some(error.to_string());
+                Task::none()
+            }
+        }
+    }
+
+    fn accept_passport_account(&mut self, account: PassportAccount) -> Task<Message> {
+        self.cancel_passport_scan();
+        self.focus = Focus::ImportPassport;
+        let fingerprint = account.fingerprint;
+        if let Some((_, existing)) = self.keys.get(&fingerprint) {
+            if existing.key != account.account {
+                self.error = Some(
+                    "A different key with this master fingerprint is already present".to_owned(),
+                );
+                return Task::none();
+            }
+            self.selected_key = SelectedKey::Existing(fingerprint);
+            return self.on_next();
+        }
+        let account_number = match account.account_number() {
+            Ok(number) => number,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                return Task::none();
+            }
+        };
+        self.form_alias.value = "Air-gapped signer".to_owned();
+        self.form_alias.valid = true;
+        self.form_account = Some(account_number);
+        self.selected_key = SelectedKey::New(Box::new(Key {
+            source: KeySource::Airgapped(AirgappedSignerKind::Qr),
+            name: self.form_alias.value.clone(),
+            fingerprint,
+            key: account.account,
+            account: Some(account_number),
+        }));
+        self.step = Step::Details;
         Task::none()
     }
     fn on_select_enter_xpub(&mut self) -> Task<Message> {
@@ -937,6 +1124,66 @@ impl SelectKeySource {
             scrollable,
         )
     }
+
+    fn passport_scanner_view(&self) -> Element<'_, Message> {
+        let header = modal::header(
+            Some("Scan air-gapped signer account"),
+            Some(Self::route(SelectKeySourceMessage::CancelPassportScan)),
+            Some(Message::Close),
+        );
+        let mut content = Column::new().spacing(12).push(header).push(p1_regular(
+            "On your compatible signer, export the account key as an animated QR code.",
+        ));
+
+        if self.processing {
+            content = content.push(p1_regular("Requesting camera access…"));
+        }
+        if let Some(error) = &self.passport_scan_error {
+            content = content.push(card::error("Camera", error.clone()));
+        }
+        if self.passport_cameras.len() > 1 {
+            content = content.push(p1_bold("Camera"));
+            for (index, camera) in self.passport_cameras.iter().enumerate() {
+                let selected = self.passport_camera_index == Some(index);
+                let label = if selected {
+                    format!("{} (active)", camera.name)
+                } else {
+                    camera.name.clone()
+                };
+                content =
+                    content.push(button::secondary(None, label).width(Length::Fill).on_press(
+                        Self::route(SelectKeySourceMessage::SelectPassportCamera(index)),
+                    ));
+            }
+        }
+        if let Some(preview) = &self.passport_preview {
+            content = content.push(
+                image(preview.clone())
+                    .width(Length::Fill)
+                    .height(Length::Fixed(300.0)),
+            );
+        }
+        if self.passport_scan_progress > 0.0 {
+            content = content.push(p1_regular(format!(
+                "QR progress: {:.0}%",
+                self.passport_scan_progress * 100.0
+            )));
+        }
+        content = content.push(
+            button::btn_secondary(
+                None,
+                "Cancel",
+                button::BtnWidth::Fill,
+                Some(Self::route(SelectKeySourceMessage::CancelPassportScan)),
+            )
+            .width(Length::Fill),
+        );
+        Container::new(content.width(modal::MODAL_WIDTH as u32))
+            .padding(15)
+            .style(theme::card::modal)
+            .into()
+    }
+
     fn details_view(&self) -> Element<'_, Message> {
         let apply = match (
             &self.selected_key,
@@ -989,8 +1236,36 @@ impl SelectKeySource {
 
         let pick_account = edit_account.then_some(pick_account);
 
+        let passport_details = if self.focus == Focus::ImportPassport {
+            match &self.selected_key {
+                SelectedKey::New(key) => match &key.key {
+                    DescriptorPublicKey::XPub(xpub) => {
+                        xpub.origin
+                            .as_ref()
+                            .map(|(origin_fingerprint, origin_path)| {
+                                column![
+                                    p1_bold("Air-gapped signer account"),
+                                    p1_regular("Device: Compatible air-gapped signer"),
+                                    p1_regular(format!("Master fingerprint: {origin_fingerprint}")),
+                                    p1_regular(format!("Origin path: {origin_path}")),
+                                    p1_regular(format!("Network: {}", self.network)),
+                                    p1_regular(format!("Account: {account}")),
+                                ]
+                                .spacing(4)
+                                .into()
+                            })
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         details_view(
             header,
+            passport_details,
             pick_account,
             &self.form_alias,
             self.details_error.clone(),
@@ -1094,12 +1369,34 @@ impl SelectKeySource {
             )
         });
 
+        let passport = safety_net_token.is_none().then(|| {
+            modal::import_airgapped_signer_entry(Some(|| {
+                Self::route(SelectKeySourceMessage::SelectPassport)
+            }))
+        });
+
+        let passport_transport = (self.focus == Focus::ImportPassport).then(|| {
+            column![
+                p1_regular("Import the public signer account key using:"),
+                button::primary(None, "Scan animated QR code")
+                    .width(Length::Fill)
+                    .on_press(Self::route(SelectKeySourceMessage::SelectPassportQr)),
+                button::secondary(None, "Import key file from microSD")
+                    .width(Length::Fill)
+                    .on_press(Self::route(SelectKeySourceMessage::SelectPassportFile)),
+            ]
+            .spacing(8)
+            .width(Length::Fill)
+        });
+
         let mut col = Column::new()
             .push(option_section)
             .spacing(modal::V_SPACING)
             .width(modal::BTN_W);
         if collapsed {
             col = col
+                .push_maybe(passport)
+                .push_maybe(passport_transport)
                 .push_maybe(load_key)
                 .push_maybe(paste_xpub)
                 .push_maybe(hot_signer)
@@ -1182,6 +1479,7 @@ impl SelectKeySource {
         let (source, alias, fg, available) = key;
         let kind = match source {
             KeySource::Device(..) => KeySourceKind::Device,
+            KeySource::Airgapped(_) => KeySourceKind::Device,
             KeySource::HotSigner => KeySourceKind::HotKey,
             KeySource::Manual => KeySourceKind::Imported,
             KeySource::Token(..) => KeySourceKind::Token,
@@ -1236,7 +1534,11 @@ impl super::DescriptorEditModal for SelectKeySource {
             }
             Message::ImportExport(ImportExportMessage::Xpub(xpub)) => {
                 self.modal = None;
-                self.on_import_xpub(xpub)
+                if self.focus == Focus::ImportPassport {
+                    self.on_import_passport(xpub)
+                } else {
+                    self.on_import_xpub(xpub)
+                }
             }
             Message::ImportExport(iem) => {
                 if let Some(modal) = &mut self.modal {
@@ -1254,6 +1556,21 @@ impl super::DescriptorEditModal for SelectKeySource {
                 }
                 SelectKeySourceMessage::SelectKey(fingerprint) => self.on_select_key(fingerprint),
                 SelectKeySourceMessage::SelectLoadXpub => self.on_select_load_xpub(),
+                SelectKeySourceMessage::SelectPassport => self.on_select_passport(),
+                SelectKeySourceMessage::SelectPassportQr => self.on_select_passport_qr(),
+                SelectKeySourceMessage::SelectPassportFile => self.on_select_passport_file(),
+                SelectKeySourceMessage::PassportCameras(result) => self.on_passport_cameras(result),
+                SelectKeySourceMessage::SelectPassportCamera(index) => {
+                    self.start_passport_camera(index);
+                    Task::none()
+                }
+                SelectKeySourceMessage::PollPassportCamera => self.poll_passport_camera(),
+                SelectKeySourceMessage::CancelPassportScan => {
+                    self.cancel_passport_scan();
+                    self.focus = Focus::ImportPassport;
+                    Task::none()
+                }
+                SelectKeySourceMessage::PassportAccount(value) => self.on_import_passport(value),
                 SelectKeySourceMessage::LoadKey(key) => self.on_load_key(key),
                 SelectKeySourceMessage::SelectEnterXpub => self.on_select_enter_xpub(),
                 SelectKeySourceMessage::PasteXpub => self.on_paste_xpub(),
@@ -1288,6 +1605,12 @@ impl super::DescriptorEditModal for SelectKeySource {
     }
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
         let hw = hws.refresh().map(Message::HardwareWallets);
+        let camera = if self.passport_scanner.is_some() {
+            iced::time::every(std::time::Duration::from_millis(33))
+                .map(|_| Self::route(SelectKeySourceMessage::PollPassportCamera))
+        } else {
+            Subscription::none()
+        };
         if let Some(modal) = self.modal.as_ref() {
             if let Some(sub) = modal.subscription() {
                 let import = sub.map(|m| {
@@ -1295,14 +1618,15 @@ impl super::DescriptorEditModal for SelectKeySource {
                         ImportExportMessage::Progress(m),
                     ))
                 });
-                return Subscription::batch(vec![hw, import]);
+                return Subscription::batch(vec![hw, camera, import]);
             }
         }
-        hw
+        Subscription::batch(vec![hw, camera])
     }
     fn view<'a>(&'a self, hws: &'a HardwareWallets) -> Element<'a, Message> {
         let detected_hws = self.detected_hws(hws);
         let content = match self.step {
+            Step::Select if self.focus == Focus::ScanPassport => self.passport_scanner_view(),
             Step::Select => self.main_view(detected_hws),
             Step::Details => self.details_view(),
         };
@@ -1321,6 +1645,7 @@ impl super::DescriptorEditModal for SelectKeySource {
 #[allow(clippy::too_many_arguments)]
 pub fn details_view<'a, Alias>(
     header: Element<'a, Message>,
+    key_details: Option<Element<'a, Message>>,
     pick_account: Option<Container<'a, Message>>,
     alias: &'a form::Value<String>,
     error: Option<String>,
@@ -1372,6 +1697,7 @@ where
     let column = Column::new()
         .spacing(5)
         .push(header)
+        .push_maybe(key_details)
         .push(row![
             p1_bold("Key name (alias):"),
             Space::with_width(Length::Fill)
@@ -1489,6 +1815,7 @@ impl super::DescriptorEditModal for EditKeyAlias {
             .then(|| Message::EditKeyAlias(EditKeyAliasMessage::Save));
         details_view(
             header,
+            None,
             None,
             &self.form_alias,
             None,

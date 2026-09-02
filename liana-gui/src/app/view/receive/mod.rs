@@ -1,7 +1,7 @@
 mod modals;
 pub use modals::{
     edit_label_modal, new_address_label_modal, new_address_processing_modal,
-    new_address_show_modal, qr_modal, verify_address_modal,
+    new_address_show_modal, qr_modal, verify_address_modal, AirgappedVerification,
 };
 
 use std::collections::HashMap;

@@ -10,8 +10,11 @@ use liana::miniscript::bitcoin::bip32::ChildNumber;
 use liana::{
     descriptors::{LianaDescriptor, PathInfo},
     miniscript::{
-        bitcoin::{bip32::Fingerprint, Network},
-        descriptor::DescriptorPublicKey,
+        bitcoin::{
+            bip32::{Fingerprint, Xpub},
+            Network,
+        },
+        descriptor::{DescriptorPublicKey, DescriptorXKey},
     },
 };
 
@@ -36,6 +39,37 @@ use crate::{
 use liana_connect::keys::api::KeyKind;
 
 use key::{new_multixkey_from_xpub, EditKeyAlias, PathData, SelectKeySource, ALIAS_INPUT_ID};
+
+fn record_installer_key(ctx: &mut Context, key: &Key, xpub: &DescriptorXKey<Xpub>) -> bool {
+    let Some((master_fingerprint, _)) = xpub.origin else {
+        return false;
+    };
+    ctx.keys.insert(
+        master_fingerprint,
+        KeySetting {
+            master_fingerprint,
+            name: key.name.clone(),
+            provider_key: key.source.provider_key(),
+        },
+    );
+    if let crate::installer::descriptor::KeySource::Airgapped(kind) = key.source {
+        ctx.airgapped_signers.insert(
+            master_fingerprint,
+            crate::airgap::AirgappedSignerConfig {
+                kind,
+                fingerprint: master_fingerprint,
+                alias: (!key.name.is_empty()).then(|| key.name.clone()),
+                account: DescriptorPublicKey::XPub(xpub.clone()),
+                registration: crate::airgap::RegistrationState::NotRegistered,
+            },
+        );
+    }
+    matches!(
+        key.source,
+        crate::installer::descriptor::KeySource::Device(_, _)
+            | crate::installer::descriptor::KeySource::Airgapped(_)
+    )
+}
 
 pub trait DescriptorEditModal {
     fn processing(&self) -> bool {
@@ -491,6 +525,7 @@ impl Step for DefineDescriptor {
 
         ctx.bitcoin_config.network = self.network;
         ctx.keys = HashMap::new();
+        ctx.airgapped_signers.clear();
         let mut hw_is_used = false;
         let mut spending_keys: Vec<DescriptorPublicKey> = Vec::new();
         let mut key_derivation_index = HashMap::<Fingerprint, usize>::new();
@@ -504,19 +539,7 @@ impl Step for DefineDescriptor {
                 .get(&fingerprint)
                 .expect("Must be present at this step");
             if let DescriptorPublicKey::XPub(xpub) = &key.key {
-                if let Some((master_fingerprint, _)) = xpub.origin {
-                    ctx.keys.insert(
-                        master_fingerprint,
-                        KeySetting {
-                            master_fingerprint,
-                            name: key.name.clone(),
-                            provider_key: key.source.provider_key(),
-                        },
-                    );
-                    if key.source.device_kind().is_some() {
-                        hw_is_used = true;
-                    }
-                }
+                hw_is_used |= record_installer_key(ctx, key, xpub);
                 let derivation_index = key_derivation_index.get(&fingerprint).unwrap_or(&0);
                 spending_keys.push(DescriptorPublicKey::MultiXPub(new_multixkey_from_xpub(
                     xpub.clone(),
@@ -540,19 +563,7 @@ impl Step for DefineDescriptor {
                     .get(&fingerprint)
                     .expect("Must be present at this step");
                 if let DescriptorPublicKey::XPub(xpub) = &key.key {
-                    if let Some((master_fingerprint, _)) = xpub.origin {
-                        ctx.keys.insert(
-                            master_fingerprint,
-                            KeySetting {
-                                master_fingerprint,
-                                name: key.name.clone(),
-                                provider_key: key.source.provider_key(),
-                            },
-                        );
-                        if key.source.device_kind().is_some() {
-                            hw_is_used = true;
-                        }
-                    }
+                    hw_is_used |= record_installer_key(ctx, key, xpub);
 
                     let derivation_index = key_derivation_index.get(&fingerprint).unwrap_or(&0);
                     recovery_keys.push(DescriptorPublicKey::MultiXPub(new_multixkey_from_xpub(

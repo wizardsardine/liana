@@ -37,6 +37,7 @@ use lianad::config::BitcoindRpcAuth;
 use super::{dashboard, message::*};
 
 use crate::{
+    airgap::AirgappedSignerConfig,
     app::{cache::Cache, error::Error, menu::Menu, settings::ProviderKey, view::warning::warn},
     help,
     hw::HardwareWallet,
@@ -928,6 +929,11 @@ pub fn wallet_settings<'a>(
 
     // ------------------------- Descriptor card -------------------------
     let title = text("Wallet descriptor:").bold();
+    let policy_checksum = descriptor
+        .to_string()
+        .rsplit_once('#')
+        .map(|(_, checksum)| checksum.to_owned())
+        .unwrap_or_default();
     let descriptor_s =
         scrollable::horizontal_thin(Column::new().push(text(descriptor.to_string()).small()))
             .width(Length::Fill);
@@ -947,7 +953,19 @@ pub fn wallet_settings<'a>(
         .width(Length::Fill)
         .wrap();
     let descriptor_card = card::simple(
-        column![title, descriptor_row, btn_row]
+        column![
+            title,
+            descriptor_row,
+            row![
+                text("Policy checksum:").bold(),
+                text(policy_checksum.clone()),
+                button::btn_copy(Some(Message::Clipboard(policy_checksum)))
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+            text("Compare this exact checksum with your signer; matching wallet names are not sufficient.").small(),
+            btn_row
+        ]
             .spacing(10)
             .width(Length::Fill),
     )
@@ -1222,11 +1240,18 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
 pub fn register_wallet_modal<'a>(
     warning: Option<&Error>,
     hws: &'a [HardwareWallet],
+    airgapped_signers: &'a [AirgappedSignerConfig],
+    descriptor: &LianaDescriptor,
     processing: bool,
     chosen_hw: Option<usize>,
     registered: &HashSet<Fingerprint>,
 ) -> Element<'a, Message> {
-    let signers = hws
+    let current_checksum = descriptor
+        .to_string()
+        .rsplit_once('#')
+        .map(|(_, checksum)| checksum.to_owned())
+        .unwrap_or_default();
+    let mut signers = hws
         .iter()
         .enumerate()
         .fold(Column::new().spacing(10), |col, (i, hw)| {
@@ -1250,6 +1275,27 @@ pub fn register_wallet_modal<'a>(
                 move || Message::SelectHardwareWallet(i),
             ))
         });
+    for signer in airgapped_signers {
+        let status = if signer.registration.is_current(&current_checksum) {
+            component::list::DeviceStatus::Registered
+        } else {
+            component::list::DeviceStatus::None
+        };
+        let title = signer
+            .alias
+            .clone()
+            .unwrap_or_else(|| "Air-gapped signer".to_owned());
+        let fingerprint = signer.fingerprint;
+        signers = signers.push(component::list::entry_device_list(
+            title,
+            Some(format!("QR signer #{fingerprint}")),
+            status,
+            button::EntryWidth::Fill,
+            (!processing).then_some(Message::Settings(SettingsMessage::RegisterAirgappedSigner(
+                fingerprint,
+            ))),
+        ));
+    }
 
     let card_content = Column::new()
         .push(

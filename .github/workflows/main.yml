@@ -19,7 +19,7 @@ jobs:
       - name: clippy
         run: |
           sudo apt-get update &&
-          sudo apt-get install --allow-downgrades libudev-dev pkg-config libvulkan-dev &&
+          sudo apt-get install --allow-downgrades clang libclang-dev libudev-dev pkg-config libvulkan-dev &&
           cargo clippy --all-features --all-targets -- -D warnings
 
   unit_tests:
@@ -53,5 +53,5 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update &&
-          sudo apt-get install libudev-dev libfontconfig1-dev &&
+          sudo apt-get install clang libclang-dev libudev-dev libfontconfig1-dev &&
           cargo test --verbose --color always -- --nocapture

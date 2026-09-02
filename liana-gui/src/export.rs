@@ -741,10 +741,15 @@ pub async fn import_xpub(
     path: PathBuf,
     network: Network,
 ) -> Result<(), Error> {
-    let mut file = File::open(path)?;
+    const MAX_XPUB_FILE_BYTES: u64 = 16 * 1024;
+    let file = File::open(path)?;
 
     let mut xpub_str = String::new();
-    file.read_to_string(&mut xpub_str)?;
+    file.take(MAX_XPUB_FILE_BYTES + 1)
+        .read_to_string(&mut xpub_str)?;
+    if xpub_str.len() as u64 > MAX_XPUB_FILE_BYTES {
+        return Err(Error::ParseXpub);
+    }
     let xpub_str = xpub_str.trim().to_string();
 
     let (descriptor_pubkey, key) =
