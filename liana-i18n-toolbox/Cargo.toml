@@ -1,0 +1,8 @@
+[package]
+name = "liana-i18n-toolbox"
+version = "0.1.0"
+edition = "2021"
+description = "The .lang translation catalog format for Liana, and the tool that maintains it"
+license = "BSD-3-Clause"
+
+[dependencies]
