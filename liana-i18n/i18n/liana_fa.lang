@@ -2269,6 +2269,12 @@ settings-import-wallet-description
 
 settings-invitation-sent => "Invitation was sent" => "دعوت‌نامه ارسال شد"
 
+settings-language => "Language" => "زبان"
+
+settings-language-description
+=> "Choose the language used by the application."
+=> "زبان مورد استفاده برنامه را انتخاب کنید.";;
+
 settings-month => "Month:" => "ماه:"
 
 settings-network => "Network:" => "شبکه:"
