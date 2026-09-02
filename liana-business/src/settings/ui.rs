@@ -8,7 +8,7 @@ use liana_gui::{
         cache::Cache,
         menu::Menu,
         message::Message,
-        settings::{fiat::PriceSetting, SettingsError, SettingsUI},
+        settings::{fiat::PriceSetting, global::GlobalSettings, SettingsError, SettingsUI},
         state::{
             export::ExportModal,
             settings::{export_progress, wallet::RegisterWalletModal},
@@ -22,6 +22,7 @@ use liana_gui::{
     dir::LianaDirectory,
     export::{ImportExportMessage, ImportExportType},
 };
+use liana_i18n as i18n;
 use liana_ui::widget::{modal, Element};
 
 use super::message::{Msg, Section};
@@ -84,7 +85,8 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
             Msg::RegisterWallet
             | Msg::ExportEncryptedDescriptor
             | Msg::FiatEnable(_)
-            | Msg::FiatCurrencyEdited(_) => Task::none(), // Handled in State::update()
+            | Msg::FiatCurrencyEdited(_)
+            | Msg::LanguageEdited(_) => Task::none(), // Handled in State::update()
         }
     }
 
@@ -188,6 +190,9 @@ impl State for BusinessSettingsUI {
             Msg::FiatCurrencyEdited(c) => view::Message::Settings(view::SettingsMessage::Fiat(
                 view::FiatMessage::CurrencyEdited(c.into()),
             )),
+            Msg::LanguageEdited(locale) => {
+                view::Message::Settings(view::SettingsMessage::LanguageEdited(locale))
+            }
         });
         let dashboard = view::dashboard(&Menu::Settings, cache, None, content);
 
@@ -283,6 +288,16 @@ impl State for BusinessSettingsUI {
                     }
                     _ => Task::none(),
                 }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::LanguageEdited(
+                locale,
+            ))) => {
+                i18n::set_locale(locale);
+                let path = GlobalSettings::path(&self.data_dir);
+                if let Err(e) = GlobalSettings::update_locale(&path, locale) {
+                    tracing::error!("Failed to save language: {e}");
+                }
+                Task::none()
             }
             Message::View(view::Message::Settings(ref settings_msg)) => {
                 let msg = match settings_msg {
