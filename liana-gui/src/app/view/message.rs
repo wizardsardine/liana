@@ -11,6 +11,7 @@ use liana::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Address, OutPoint,
 };
+use liana_i18n::SupportedLocale;
 
 pub trait Close {
     fn close() -> Self;
@@ -140,6 +141,7 @@ pub enum SettingsMessage {
     Save,
     GeneralSection,
     Fiat(FiatMessage),
+    LanguageEdited(SupportedLocale),
 }
 
 impl From<SettingsMessage> for Message {
