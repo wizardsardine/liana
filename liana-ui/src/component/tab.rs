@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use iced::{
     alignment::Vertical,
     border::Radius,
@@ -20,10 +22,10 @@ pub enum Dot {
     Pending,
 }
 
-pub fn tab_header<'a, K: PartialEq + 'a, M: Clone + 'a>(
-    items: &[(K, &'a str, Option<Dot>)],
+pub fn tab_header<'a, K: PartialEq, L: Display, M: Clone + 'a>(
+    items: &[(K, L, Option<Dot>)],
     active: &K,
-    on_select: impl Fn(&K) -> M + 'a,
+    on_select: impl Fn(&K) -> M,
 ) -> Element<'a, M> {
     let tabs = items.iter().fold(
         row![]
@@ -40,7 +42,7 @@ pub fn tab_header<'a, K: PartialEq + 'a, M: Clone + 'a>(
 }
 
 fn tab_item<'a, M: Clone + 'a>(
-    label: &'a str,
+    label: impl Display,
     dot: Option<Dot>,
     active: bool,
     on_press: M,
@@ -57,7 +59,7 @@ fn tab_item<'a, M: Clone + 'a>(
     } else {
         font::MANROPE_MEDIUM
     };
-    let label = Text::new(label)
+    let label = Text::new(label.to_string())
         .size(TAB_LABEL_SIZE)
         .font(font)
         .style(move |theme| iced::widget::text::Style {

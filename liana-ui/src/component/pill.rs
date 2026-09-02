@@ -51,11 +51,12 @@ impl From<PillWidth> for Length {
 }
 
 pub fn pill<'a, T: 'a>(
-    label: &'static str,
-    tooltip: &'static str,
+    label: impl Display,
+    tooltip: impl Display,
     width: PillWidth,
     style: fn(&Theme) -> Style,
 ) -> Container<'a, T> {
+    let tooltip = tooltip.to_string();
     let pill = pill_body_with_font(label, width, style, PILL_FONT);
     if !tooltip.is_empty() {
         pill_with_tooltip(pill, Some(tooltip))
@@ -335,7 +336,7 @@ pub fn compact_metric<'a, T: 'a, L: Display>(
 }
 
 pub fn compact_pill<'a, T: 'a>(
-    text: &'a str,
+    text: impl Display,
     width: PillWidth,
     style: fn(&Theme) -> Style,
 ) -> Container<'a, T> {
@@ -423,12 +424,15 @@ pub fn rescan<'a, T: 'a>(progress: f64, compact: bool) -> Container<'a, T> {
     }
 }
 
-pub fn fingerprint<'a, T: 'a>(fg: impl Into<String>, alias: Option<&str>) -> Container<'a, T> {
+pub fn fingerprint<'a, T: 'a>(
+    fg: impl Into<String>,
+    alias: Option<impl Into<String>>,
+) -> Container<'a, T> {
     let fg = fg.into();
     match alias {
         Some(alias) => {
             let body = compact_pill_body_with_font(
-                alias.to_string(),
+                alias.into(),
                 PillWidth::Shrink,
                 theme::pill::fingerprint,
                 PILL_FONT_COMPACT,

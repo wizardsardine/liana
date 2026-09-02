@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use iced::{
     widget::{
         column,
@@ -44,11 +46,11 @@ pub fn verify_address_modal<'a, M: Clone + 'static>(
 }
 
 /// QR code for an address, with the address shown below it.
-pub fn qr_display<'a, M: 'a>(qr: &'a qr_code::Data, address: &'a str) -> Element<'a, M> {
+pub fn qr_display<'a, M: 'a>(qr: &'a qr_code::Data, address: impl Display) -> Element<'a, M> {
     column![
         Container::new(QRCode::<theme::Theme>::new(qr).cell_size(8)).padding(10),
         Space::with_height(Length::Fixed(15.0)),
-        Container::new(address_view(address)).center_x(Length::Fill),
+        Container::new(address_view(address.to_string())).center_x(Length::Fill),
     ]
     .align_x(Alignment::Center)
     .width(Length::Fill)

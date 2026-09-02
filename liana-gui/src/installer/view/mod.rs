@@ -148,9 +148,11 @@ pub fn import_wallet_or_descriptor<'a>(
     let invitation = list::entry_collapsible(list::CollapsibleEntry {
         accent: wallet_accent,
         tile: Tile::Import,
-        title: "Load a shared wallet",
-        collapsed_subtitle: Some("If you received an invitation to join a shared wallet"),
-        expanded_subtitle: Some("Type the invitation token you received by email"),
+        title: "Load a shared wallet".to_string(),
+        collapsed_subtitle: Some(
+            "If you received an invitation to join a shared wallet".to_string(),
+        ),
+        expanded_subtitle: Some("Type the invitation token you received by email".to_string()),
         content: invitation_content,
         expanded: active_option == Some(message::ImportWalletOption::Invitation),
         on_toggle: Message::ImportRemoteWallet(message::ImportRemoteWallet::ToggleOption(
@@ -189,9 +191,9 @@ pub fn import_wallet_or_descriptor<'a>(
     let paste_descriptor = list::entry_collapsible(list::CollapsibleEntry {
         accent: wallet_accent,
         tile: Tile::Paste,
-        title: "Paste a descriptor",
-        collapsed_subtitle: Some("Creates a new wallet from the pasted descriptor"),
-        expanded_subtitle: Some("Creates a new wallet from the pasted descriptor"),
+        title: "Paste a descriptor".to_string(),
+        collapsed_subtitle: Some("Creates a new wallet from the pasted descriptor".to_string()),
+        expanded_subtitle: Some("Creates a new wallet from the pasted descriptor".to_string()),
         content: descriptor_content.into(),
         expanded: active_option == Some(message::ImportWalletOption::PasteDescriptor),
         on_toggle: Message::ImportRemoteWallet(message::ImportRemoteWallet::ToggleOption(
@@ -279,9 +281,9 @@ pub fn import_descriptor<'a>(
     let paste_descriptor = list::entry_collapsible(list::CollapsibleEntry {
         accent,
         tile: Tile::Paste,
-        title: "Paste a descriptor",
-        collapsed_subtitle: Some("Creates a new wallet from the pasted descriptor"),
-        expanded_subtitle: Some("Creates a new wallet from the pasted descriptor"),
+        title: "Paste a descriptor".to_string(),
+        collapsed_subtitle: Some("Creates a new wallet from the pasted descriptor".to_string()),
+        expanded_subtitle: Some("Creates a new wallet from the pasted descriptor".to_string()),
         content: descriptor_form.into(),
         expanded: paste_descriptor_expanded,
         on_toggle: Message::DefineDescriptor(message::DefineDescriptor::ShowImportDescriptor(
@@ -1563,7 +1565,7 @@ fn import_mnemonic_entry<'a>(
     list::entry_collapsible(list::CollapsibleEntry {
         accent,
         tile: Tile::Import,
-        title: "Import mnemonic",
+        title: "Import mnemonic".to_string(),
         collapsed_subtitle: None,
         expanded_subtitle: None,
         content: content.into(),
@@ -1713,7 +1715,7 @@ pub fn connection_step_select_account<'a>(
         "Liana Connect",
         Some(installer_layout::intro_prompt(
             "Select an account to continue",
-            None,
+            None::<String>,
         )),
         false,
     );
@@ -1756,7 +1758,7 @@ pub fn connection_step_select_account<'a>(
             is_ws_admin: false,
             nav_bar: installer_layout::NavBar::StepTitle {
                 progress,
-                title: "Login",
+                title: "Login".to_string(),
                 previous_message: (!processing).then_some(Message::Previous),
             },
             content_width: button::STANDARD_ENTRY_WIDTH,
@@ -1978,11 +1980,11 @@ fn layout<'a>(
         installer_layout::LayoutConfig {
             variant: Variant::Liana,
             network,
-            email,
+            email: email.map(String::from),
             is_ws_admin: false,
             nav_bar: installer_layout::NavBar::StepTitle {
                 progress,
-                title,
+                title: title.to_string(),
                 previous_message,
             },
             content_width: 800.0,

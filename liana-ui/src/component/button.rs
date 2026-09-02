@@ -41,7 +41,7 @@ const BTN_PADDING_COMPACT: [u16; 2] = [7 /* Top/Bottom */, 12 /* Left/Right */];
 pub type ListEntryAccent = fn(&Theme) -> Color;
 pub type ButtonStyle = fn(&theme::Theme, Status) -> Style;
 
-pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str, compact: bool) -> Button<'a, T> {
+pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: impl Display, compact: bool) -> Button<'a, T> {
     Button::new(
         content_menu(
             icon.map(|i| i.style(theme::text::secondary)),
@@ -57,7 +57,7 @@ pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str, compact: bool) -
 
 pub fn menu_active<'a, T: 'a>(
     icon: Option<Text<'a>>,
-    t: &'static str,
+    t: impl Display,
     compact: bool,
 ) -> Button<'a, T> {
     Button::new(content_menu(icon, t, true, compact).padding(MENU_BTN_PADDING))
@@ -87,7 +87,7 @@ pub fn menu_active_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
 
 fn content_menu<'a, T: 'a>(
     icon: Option<Text<'a>>,
-    t: &'static str,
+    t: impl Display,
     active: bool,
     compact: bool,
 ) -> Container<'a, T> {
@@ -178,7 +178,7 @@ pub fn auxiliary<'a, T: 'a + Clone>(
         .padding(0)
 }
 
-pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: impl Display) -> Button<'a, T> {
     Button::new(content(icon, panel_title(t), false))
         .style(theme::button::breadcrumb)
         .padding(0)
@@ -328,7 +328,7 @@ fn auxiliary_content<'a, T: 'a>(icon: Option<Text<'a>>, t: impl Display) -> Cont
 fn content_with_tooltip<'a, T: 'a>(
     icon: Option<Text<'a>>,
     text: Text<'a>,
-    tooltip: Option<&'a str>,
+    tooltip: Option<String>,
     compact: bool,
 ) -> Container<'a, T> {
     let content = row![icon, text, tooltip.map(tooltip::tooltip)]
@@ -458,7 +458,7 @@ pub fn clickable_icon_with_size<'a, T: 'a + Clone>(
 /// Primary button with preset width.
 pub fn btn_primary<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'static str,
+    label: impl Display,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
@@ -472,7 +472,7 @@ pub fn btn_primary<'a, T: Clone + 'a>(
 /// Secondary button with preset width.
 pub fn btn_secondary<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'a str,
+    label: impl Display,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
@@ -510,8 +510,8 @@ pub fn btn_high<'a, T: Clone + 'a>(selected: bool, msg: Option<T>) -> Button<'a,
 
 fn btn_with_tooltip<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'a str,
-    tooltip: Option<&'a str>,
+    label: impl Display,
+    tooltip: Option<impl Into<String>>,
     width: BtnWidth,
     msg: Option<T>,
     style: ButtonStyle,
@@ -519,7 +519,7 @@ fn btn_with_tooltip<'a, T: Clone + 'a>(
     Button::new(content_with_tooltip(
         icon,
         button_text(label),
-        tooltip,
+        tooltip.map(Into::into),
         false,
     ))
     .width(width)
@@ -531,7 +531,7 @@ fn btn_with_tooltip<'a, T: Clone + 'a>(
 /// Tertiary button with preset width.
 pub fn btn_tertiary<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'static str,
+    label: impl Display,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
@@ -545,7 +545,7 @@ pub fn btn_tertiary<'a, T: Clone + 'a>(
 /// Destructive button with preset width.
 pub fn btn_destructive<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'static str,
+    label: impl Display,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
@@ -559,7 +559,7 @@ pub fn btn_destructive<'a, T: Clone + 'a>(
 /// Flat button with preset width.
 pub fn btn_flat<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'static str,
+    label: impl Display,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
@@ -902,7 +902,7 @@ pub fn btn_add_wallet<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 /// Full-width "Show QR Code" button for an optional modal section, with an
 /// optional tooltip.
 pub fn btn_show_qr_section<'a, M: 'a + 'static>(
-    tt: Option<&'static str>,
+    tt: Option<impl Into<String>>,
     msg: Option<M>,
 ) -> Button<'a, M> {
     let mut btn = Button::new(
@@ -1028,6 +1028,6 @@ pub fn btn_modal_previous<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     transparent(Some(icon::previous_icon().size(25)), "").on_press(msg)
 }
 
-pub fn btn_mnemonic_word<'a, T: Clone + 'a>(word: &str, msg: T) -> Button<'a, T> {
+pub fn btn_mnemonic_word<'a, T: Clone + 'a>(word: impl Display, msg: T) -> Button<'a, T> {
     button_compact(word, theme::button::tertiary, Some(msg)).width(BtnWidth::S)
 }

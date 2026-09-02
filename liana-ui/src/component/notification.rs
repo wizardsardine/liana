@@ -54,14 +54,14 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<&'a str>,
+    alias: Option<impl Into<String>>,
 ) -> Container<'a, T> {
     container(
         row(vec![
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(text::p1_bold))
+                    .push_maybe(alias.map(|a| text::p1_bold(a.into())))
                     .push(text::p1_regular(format!("#{fingerprint}")))
                     .into(),
                 Row::new()

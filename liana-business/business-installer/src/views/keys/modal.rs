@@ -238,7 +238,7 @@ fn signer_entries<'a>(
             };
             MenuEntry::Option {
                 value,
-                body: combobox::email_entry(&initials(primary), primary, secondary, tag),
+                body: combobox::email_entry(initials(primary), primary, secondary, tag),
                 selected,
             }
         }));

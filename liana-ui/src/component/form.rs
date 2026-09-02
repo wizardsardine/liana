@@ -64,7 +64,7 @@ fn default_styled<'a, M: 'a + Clone>(input: TextInput<'a, M>) -> TextInput<'a, M
 
 pub struct Form<'a, Message> {
     input: TextInput<'a, Message>,
-    warning: Option<&'a str>,
+    warning: Option<String>,
     valid: bool,
     label: Option<Element<'a, Message>>,
     fee: bool,
@@ -88,7 +88,7 @@ where
             input: default_styled(
                 text_input::TextInput::new(placeholder, &value.value).on_input(on_change),
             ),
-            warning: value.warning,
+            warning: value.warning.map(String::from),
             valid: value.valid,
             label: None,
             fee: false,
@@ -100,7 +100,7 @@ where
     /// It expects:
     /// - a placeholder
     /// - the current value
-    pub fn new_disabled(placeholder: &str, value: &Value<String>) -> Self {
+    pub fn new_disabled(placeholder: impl Display, value: &Value<String>) -> Self {
         Self {
             input: default_styled(text_input::TextInput::new(placeholder, &value.value)),
             warning: None, // no warning for disabled form
@@ -116,7 +116,7 @@ where
     /// - a placeholder
     /// - the current value
     /// - a function that produces a message when the [`Form`] changes
-    pub fn new_trimmed<F>(placeholder: &str, value: &Value<String>, on_change: F) -> Self
+    pub fn new_trimmed<F>(placeholder: impl Display, value: &Value<String>, on_change: F) -> Self
     where
         F: 'static + Fn(String) -> Message,
     {
@@ -125,7 +125,7 @@ where
                 text_input::TextInput::new(placeholder, &value.value)
                     .on_input(move |s| on_change(s.trim().to_string())),
             ),
-            warning: value.warning,
+            warning: value.warning.map(String::from),
             valid: value.valid,
             label: None,
             fee: false,
@@ -138,7 +138,11 @@ where
     /// - a placeholder
     /// - the current value
     /// - a function that produces a message when the [`Form`] changes
-    pub fn new_amount_btc<F>(placeholder: &str, value: &'a Value<String>, on_change: F) -> Self
+    pub fn new_amount_btc<F>(
+        placeholder: impl Display,
+        value: &'a Value<String>,
+        on_change: F,
+    ) -> Self
     where
         F: 'static + Fn(String) -> Message + Clone,
     {
@@ -166,7 +170,7 @@ where
                         on_change_clone(pasted)
                     }),
             ),
-            warning: value.warning,
+            warning: value.warning.map(String::from),
             valid: value.valid,
             label: None,
             fee: false,
@@ -184,14 +188,14 @@ where
     }
 
     /// Sets the [`Form`] with a warning message
-    pub fn warning(mut self, warning: &'a str) -> Self {
-        self.warning = Some(warning);
+    pub fn warning(mut self, warning: impl Into<String>) -> Self {
+        self.warning = Some(warning.into());
         self
     }
 
     /// Sets the [`Form`] with a warning message
-    pub fn maybe_warning(mut self, warning: Option<&'a str>) -> Self {
-        self.warning = warning;
+    pub fn maybe_warning(mut self, warning: Option<impl Into<String>>) -> Self {
+        self.warning = warning.map(Into::into);
         self
     }
 

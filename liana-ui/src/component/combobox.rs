@@ -114,11 +114,17 @@ pub enum Tag {
 
 /// A member row: an initials avatar, the name over the email, and a trailing [`Tag`]. When
 /// `email` is empty the row is a single line (used for emails with no member name).
-pub fn email_entry<'a, M: 'a>(avatar: &str, name: &str, email: &str, tag: Tag) -> Element<'a, M> {
+pub fn email_entry<'a, M: 'a>(
+    avatar: impl Display,
+    name: impl Display,
+    email: impl Display,
+    tag: Tag,
+) -> Element<'a, M> {
+    let email = email.to_string();
     let details = column![
         text::new::b5_medium(name.to_string()),
         (!email.is_empty())
-            .then_some(text::new::small_caption(email.to_string()).style(theme::text::secondary))
+            .then_some(text::new::small_caption(email).style(theme::text::secondary))
     ]
     .spacing(2)
     .width(Length::Fill);
@@ -144,7 +150,7 @@ fn trailing<'a, M: 'a>(tag: Tag) -> Element<'a, M> {
 
 pub fn combobox<'a, T, Message>(
     state: &'a State<T>,
-    placeholder: &'a str,
+    placeholder: impl Display,
     selected: Option<T>,
     on_selected: impl Fn(T) -> Message + 'static,
 ) -> Combobox<'a, Message>
@@ -157,7 +163,7 @@ where
 
 pub fn editable_combobox<'a, T, Message>(
     state: &'a State<T>,
-    placeholder: &'a str,
+    placeholder: impl Display,
     selected: Option<T>,
     on_selected: impl Fn(T) -> Message + 'static,
     on_input: impl Fn(String) -> Message + 'static,
@@ -176,7 +182,7 @@ where
 
 fn styled_combobox<'a, T, Message>(
     state: &'a State<T>,
-    placeholder: &'a str,
+    placeholder: impl Display,
     selected: Option<T>,
     on_selected: impl Fn(T) -> Message + 'static,
 ) -> IcedComboBox<'a, T, Message, theme::Theme, Renderer>
@@ -186,7 +192,7 @@ where
 {
     IcedComboBox::new(
         state.combo_box(),
-        placeholder,
+        &placeholder.to_string(),
         selected.as_ref(),
         on_selected,
     )
@@ -200,7 +206,7 @@ where
 }
 
 pub fn editable_menu_combobox<'a, T, Message, F>(
-    placeholder: &'a str,
+    placeholder: impl Display,
     value: String,
     on_selected: impl Fn(T) -> Message + 'static,
     entries: Vec<MenuEntry<'a, T, Message>>,
@@ -221,7 +227,7 @@ where
 }
 
 fn input<'a, Message, F>(
-    placeholder: &'a str,
+    placeholder: impl Display,
     value: String,
     on_input: Option<F>,
 ) -> Element<'a, Message>

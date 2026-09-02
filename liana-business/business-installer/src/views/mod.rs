@@ -129,7 +129,7 @@ fn layout_inner<'a>(
         installer_layout::LayoutConfig {
             variant: Variant::LianaBusiness,
             network,
-            email,
+            email: email.map(String::from),
             is_ws_admin,
             nav_bar: installer_layout::NavBar::Steps {
                 progress,

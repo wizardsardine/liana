@@ -91,9 +91,9 @@ pub struct FiatPrice {
 }
 
 #[derive(Debug, Clone)]
-pub struct UIPayment<'a> {
-    pub label: Option<&'a str>,
-    pub address_label: Option<&'a str>,
+pub struct UIPayment {
+    pub label: Option<String>,
+    pub address_label: Option<String>,
     pub kind: PaymentKind,
     pub time: Option<chrono::DateTime<chrono::Utc>>,
     pub amount: bitcoin::Amount,
@@ -105,7 +105,7 @@ pub fn format_date(time: chrono::DateTime<chrono::Utc>) -> String {
     time.format("%b %-d, %Y").to_string()
 }
 
-pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment<'a>, msg: Option<M>) -> Element<'a, M> {
+pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment, msg: Option<M>) -> Element<'a, M> {
     let UIPayment {
         label,
         address_label,
@@ -118,9 +118,9 @@ pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment<'a>, msg: Option<M>) -
         (None, None) => h2("(No label)").style(theme::text::primary).into(),
         (Some(label), _) => {
             if label.chars().count() > MAX_LABEL_LENGTH {
-                let short = truncate(label, MAX_LABEL_LENGTH);
+                let short = truncate(&label, MAX_LABEL_LENGTH);
                 let short = h2(short).style(theme::text::primary);
-                tooltip_custom(label, short, Position::Top).into()
+                tooltip_custom(h2(label), short, Position::Top).into()
             } else {
                 h2(label).style(theme::text::primary).into()
             }
@@ -128,9 +128,9 @@ pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment<'a>, msg: Option<M>) -
         (None, Some(label)) => {
             let prefix = "address label: ";
             if label.chars().count() > (MAX_LABEL_LENGTH - prefix.len()) {
-                let short = truncate(label, MAX_LABEL_LENGTH - prefix.len());
+                let short = truncate(&label, MAX_LABEL_LENGTH - prefix.len());
                 let short = h2(format!("{prefix}{short}")).style(theme::text::primary);
-                tooltip_custom(label, short, Position::Top).into()
+                tooltip_custom(h2(label), short, Position::Top).into()
             } else {
                 h2(format!("{prefix}{label}"))
                     .style(theme::text::primary)

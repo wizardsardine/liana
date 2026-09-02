@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use iced::{
     widget::{column, row},
     Alignment, Length,
@@ -15,17 +17,17 @@ use crate::{
 const PADDING: u16 = 10;
 const SPACING: u32 = 20;
 
-fn breadcrumb_btn<M: Clone + 'static>(label: &'static str, msg: Option<M>) -> Button<'static, M> {
+fn breadcrumb_btn<M: Clone + 'static>(label: impl Display, msg: Option<M>) -> Button<'static, M> {
     button::breadcrumb(None, label).on_press_maybe(msg)
 }
 
 pub fn header<M: Clone + 'static>(
     setting_msg: Option<M>,
-    section_title: Option<&'static str>,
+    section_title: Option<impl Into<String>>,
     msg: Option<M>,
 ) -> Element<'static, M> {
     let setting_btn = breadcrumb_btn("Settings", setting_msg);
-    let section_btn = section_title.map(|t| breadcrumb_btn(t, msg));
+    let section_btn = section_title.map(|t| breadcrumb_btn(t.into(), msg));
 
     if let Some(s_btn) = section_btn {
         row![setting_btn, icon::chevron_right().size(30), s_btn]
@@ -136,7 +138,7 @@ pub fn export_section<M: Clone + 'static>(kind: ImportExportKind, msg: M) -> Ele
 }
 
 pub fn section_list<M: 'static + Clone>(children: Vec<Element<'static, M>>) -> Element<'static, M> {
-    let header = header(None, None, None);
+    let header = header(None, None::<String>, None);
     let mut header = vec![header];
     header.extend(children);
 
