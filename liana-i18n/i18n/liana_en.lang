@@ -1659,6 +1659,10 @@ settings-import-wallet-description => "Upload a backup file to update wallet inf
 
 settings-invitation-sent => "Invitation was sent"
 
+settings-language => "Language"
+
+settings-language-description => "Choose the language used by the application."
+
 settings-month => "Month:"
 
 settings-network => "Network:"
