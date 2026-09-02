@@ -6,6 +6,7 @@ let
       fileset = lib.fileset.unions [
         (craneLib.fileset.commonCargoSources rootPath)
         (lib.fileset.maybeMissing (rootPath + "/liana-ui/static"))
+        (rootPath + "/liana-i18n/i18n")
       ];
     };
     strictDeps = true;
