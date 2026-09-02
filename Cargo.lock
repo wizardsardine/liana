@@ -3263,6 +3263,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "liana-i18n-toolbox"
+version = "0.1.0"
+
+[[package]]
 name = "liana-ui"
 version = "15.0.0"
 dependencies = [
