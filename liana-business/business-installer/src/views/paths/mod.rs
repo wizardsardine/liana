@@ -55,11 +55,15 @@ fn header_content(
             banner_card(
                 card::soft_warning,
                 theme::text::warning,
-                "Template is locked and pending approval. You must approve it to continue.",
+                "Template is locked and pending approval. You must approve it to continue."
+                    .to_string(),
             )
         } else {
-            card::info("Template is locked and pending approval. Unlock to make further changes.")
-                .into()
+            card::info(
+                "Template is locked and pending approval. Unlock to make further changes."
+                    .to_string(),
+            )
+            .into()
         });
     }
 

@@ -38,10 +38,10 @@ fn format_timelock_human(timelock: &ws_business::Timelock) -> String {
         }
     } else {
         let hours = blocks / BLOCKS_PER_HOUR;
-        if hours <= 1 {
+        if hours.max(1) == 1 {
             "After 1 hour".to_string()
         } else {
-            format!("After {hours} hours")
+            format!("After {} hours", hours.max(1))
         }
     }
 }

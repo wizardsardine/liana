@@ -59,28 +59,27 @@ fn format_last_edit_info_strings(
     let timestamp = last_edited?;
     let visible = format!("Edited {}", state.app.format_relative_time(timestamp));
 
-    let editor = last_editor
-        .and_then(|editor_id| {
-            state.backend.get_user(editor_id).map(|user| {
-                if user.email.to_lowercase() == current_user_email_lower {
-                    "You".to_string()
-                } else if user.role == UserRole::WizardSardineAdmin {
-                    let name = admin_name_from_email(&user.email).unwrap_or_default();
-                    format!("Admin{name}")
-                } else {
-                    user.email.clone()
-                }
-            })
+    let editor = last_editor.and_then(|editor_id| {
+        state.backend.get_user(editor_id).map(|user| {
+            if user.email.to_lowercase() == current_user_email_lower {
+                "You".to_string()
+            } else if user.role == UserRole::WizardSardineAdmin {
+                let name = admin_name_from_email(&user.email).unwrap_or_default();
+                format!("Admin{name}")
+            } else {
+                user.email.clone()
+            }
         })
-        .map(|name| format!(" by {name}"))
-        .unwrap_or_default();
+    });
     let absolute = state.app.format_absolute_time(timestamp);
-    let on = if absolute.is_empty() {
-        String::new()
-    } else {
-        format!(" on {absolute}")
+    let hover = match (editor, absolute.is_empty()) {
+        (Some(editor), false) => {
+            format!("Edited by {editor} on {absolute}")
+        }
+        (Some(editor), true) => format!("Edited by {editor}"),
+        (None, false) => format!("Edited on {absolute}"),
+        (None, true) => "Edited".to_string(),
     };
-    let hover = format!("Edited{editor}{on}");
 
     Some((visible, hover))
 }
@@ -230,10 +229,10 @@ pub(crate) const KEY_KIND_LABEL: [(ws_business::KeyType, &str); 4] = [
     (ws_business::KeyType::SafetyNet, "Safety Net"),
 ];
 
-pub(crate) fn key_kind_label(key_type: &ws_business::KeyType) -> &'static str {
+pub(crate) fn key_kind_label(key_type: &ws_business::KeyType) -> String {
     KEY_KIND_LABEL
         .iter()
-        .find_map(|(kind, label)| (kind == key_type).then_some(*label))
+        .find_map(|(kind, label)| (kind == key_type).then(|| label.to_string()))
         .expect("every key type must have a label")
 }
 
@@ -251,7 +250,7 @@ pub(crate) const SEARCH_ENTRY_THRESHOLD: usize = 5;
 
 /// Optional centered search bar inside a select list view.
 pub struct SelectSearch<'a> {
-    pub placeholder: &'static str,
+    pub placeholder: String,
     pub value: &'a str,
     pub on_change: fn(String) -> Msg,
 }
@@ -281,7 +280,7 @@ pub fn select_list_view(cfg: SelectListView<'_>) -> Element<'_, Msg> {
             warning: None,
             valid: true,
         };
-        let search_form = form::Form::new_trimmed(search.placeholder, &value, search.on_change)
+        let search_form = form::Form::new_trimmed(&search.placeholder, &value, search.on_change)
             .size(16)
             .padding(10);
         let search_container = Container::new(search_form).align_x(Alignment::Center);

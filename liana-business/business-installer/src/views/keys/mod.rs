@@ -50,7 +50,7 @@ const NOTICE_ICON_SIZE: u32 = 16;
 fn notice_card(
     variant: fn(Element<'static, Msg>) -> Container<'static, Msg>,
     icon: Text<'static>,
-    body: &'static str,
+    body: String,
 ) -> Element<'static, Msg> {
     let content = row![
         icon.size(NOTICE_ICON_SIZE),
@@ -69,9 +69,9 @@ fn notice_content(is_manager: bool, keys_ready: bool, locked: bool) -> Element<'
                 card::success,
                 icon::check_icon().style(theme::text::success),
                 if locked {
-                    "Keys & signers marked as ready. The spending policy will be crafted from these keys."
+                    "Keys & signers marked as ready. The spending policy will be crafted from these keys.".to_string()
                 } else {
-                    "Keys & signers marked as ready. The spending policy will be crafted from these keys. You can still edit keys if anything needs to change."
+                    "Keys & signers marked as ready. The spending policy will be crafted from these keys. You can still edit keys if anything needs to change.".to_string()
                 },
             )]
         } else {
@@ -84,7 +84,7 @@ fn notice_content(is_manager: bool, keys_ready: bool, locked: bool) -> Element<'
             notice_card(
                 card::success,
                 icon::check_icon().style(theme::text::success),
-                "Marked as ready by the Wallet Manager. They've finished adding keys & signers.",
+                "Marked as ready by the Wallet Manager. They've finished adding keys & signers.".to_string(),
             ),
             card::info(
                 "These keys are shared with the Spending policy tab, where you arrange them into spending paths."
@@ -94,7 +94,8 @@ fn notice_content(is_manager: bool, keys_ready: bool, locked: bool) -> Element<'
         column![notice_card(
             card::soft_warning,
             icon::tooltip_icon().style(theme::text::warning),
-            "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet.",
+            "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet."
+                .to_string(),
         )]
     };
 

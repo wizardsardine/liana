@@ -21,7 +21,7 @@ use liana_ui::{
     theme,
     widget::*,
 };
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
 pub fn key_modal_view(state: &State) -> Option<Element<'_, Message>> {
     let modal_state = state.views.keys.edit_key_modal.as_ref()?;
@@ -71,12 +71,11 @@ pub fn edit_key_modal_view<'a>(
     ]
     .spacing(VSpacing::S);
 
-    let key_type_options = [
-        ws_business::KeyType::Internal,
-        ws_business::KeyType::External,
-        ws_business::KeyType::Cosigner,
-        ws_business::KeyType::SafetyNet,
-    ];
+    let key_type_options = key_type_options();
+    let selected_key_type = KeyTypeOption {
+        label: crate::views::key_kind_label(&modal_state.key_type),
+        key_type: modal_state.key_type,
+    };
     let key_type_hint = "Internal: Held by a member of your organization.\n\
 External: Held by a trusted third party.\n\
 Cosigner: Professional co-signing service.\n\
@@ -86,11 +85,9 @@ SafetyNet: Professional recovery service.";
         .spacing(HSpacing::S);
     let key_type_field = column![
         key_type_label,
-        pick_list::field_pick_list(
-            key_type_options,
-            Some(modal_state.key_type),
-            Message::KeyUpdateType,
-        ),
+        pick_list::field_pick_list(key_type_options, Some(selected_key_type), |option| {
+            Message::KeyUpdateType(option.key_type)
+        },),
     ]
     .spacing(VSpacing::S);
 
@@ -214,7 +211,7 @@ fn signer_entries<'a>(
 
     if !filtered_options.is_empty() {
         let header = if modal_state.key_type == ws_business::KeyType::Internal {
-            "From your organization"
+            "From your organization".to_string()
         } else {
             crate::views::key_kind_label(&modal_state.key_type)
         };
@@ -301,7 +298,7 @@ fn footer<'a>(can_save: bool) -> Element<'a, Message> {
     .into()
 }
 
-fn field_label(label: &'static str) -> Element<'static, Message> {
+fn field_label(label: impl fmt::Display) -> Element<'static, Message> {
     text::new::b5_bold(label).style(theme::text::primary).into()
 }
 
@@ -310,4 +307,29 @@ fn uses_token_identity(key_type: ws_business::KeyType) -> bool {
         key_type,
         ws_business::KeyType::Cosigner | ws_business::KeyType::SafetyNet
     )
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct KeyTypeOption {
+    key_type: ws_business::KeyType,
+    label: String,
+}
+
+impl fmt::Display for KeyTypeOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
+fn key_type_options() -> [KeyTypeOption; 4] {
+    [
+        ws_business::KeyType::Internal,
+        ws_business::KeyType::External,
+        ws_business::KeyType::Cosigner,
+        ws_business::KeyType::SafetyNet,
+    ]
+    .map(|key_type| KeyTypeOption {
+        label: crate::views::key_kind_label(&key_type),
+        key_type,
+    })
 }

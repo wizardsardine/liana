@@ -39,13 +39,20 @@ fn wallet_edit_view(
 fn wallet_edit_tab_items(
     keys_ready: bool,
     template_edit_disabled: bool,
-) -> Vec<(View, &'static str, Option<Dot>)> {
+) -> Vec<(View, String, Option<Dot>)> {
     let dot = if keys_ready { Dot::Ready } else { Dot::Pending };
-    let keys = (View::Keys, KEYS_SIGNERS_TAB_LABEL, Some(dot));
+    let keys = (View::Keys, KEYS_SIGNERS_TAB_LABEL.to_string(), Some(dot));
     if template_edit_disabled {
         vec![keys]
     } else {
-        vec![(View::TemplateEdit, SPENDING_POLICY_TAB_LABEL, None), keys]
+        vec![
+            (
+                View::TemplateEdit,
+                SPENDING_POLICY_TAB_LABEL.to_string(),
+                None,
+            ),
+            keys,
+        ]
     }
 }
 
@@ -103,8 +110,16 @@ mod test {
         assert_eq!(
             items,
             [
-                (View::TemplateEdit, SPENDING_POLICY_TAB_LABEL, None),
-                (View::Keys, KEYS_SIGNERS_TAB_LABEL, Some(Dot::Pending)),
+                (
+                    View::TemplateEdit,
+                    SPENDING_POLICY_TAB_LABEL.to_string(),
+                    None,
+                ),
+                (
+                    View::Keys,
+                    KEYS_SIGNERS_TAB_LABEL.to_string(),
+                    Some(Dot::Pending),
+                ),
             ]
         );
     }
@@ -137,7 +152,11 @@ mod test {
         assert!(gated);
         assert_eq!(
             items,
-            [(View::Keys, KEYS_SIGNERS_TAB_LABEL, Some(Dot::Pending))]
+            [(
+                View::Keys,
+                KEYS_SIGNERS_TAB_LABEL.to_string(),
+                Some(Dot::Pending),
+            )]
         );
         assert_eq!(
             wallet_edit_view(
@@ -162,7 +181,11 @@ mod test {
         assert!(gated);
         assert_eq!(
             items,
-            [(View::Keys, KEYS_SIGNERS_TAB_LABEL, Some(Dot::Pending))]
+            [(
+                View::Keys,
+                KEYS_SIGNERS_TAB_LABEL.to_string(),
+                Some(Dot::Pending),
+            )]
         );
         assert_eq!(
             wallet_edit_view(

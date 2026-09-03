@@ -33,6 +33,15 @@ fn navigate_back_target(current_view: View) -> Option<View> {
     }
 }
 
+fn hardware_wallet_error_message(error: &str) -> String {
+    let message = if error.contains("status: Unknown,") {
+        "Device disconnected"
+    } else {
+        "Hardware wallet error"
+    };
+    format!("{message}: {error}")
+}
+
 // Update routing logic
 impl State {
     #[rustfmt::skip]
@@ -1781,7 +1790,7 @@ impl State {
             SigningDeviceMsg::Error(Some(request_id), e) => {
                 if let Some(modal) = self.views.xpub.modal_mut() {
                     if modal.matches_fetch_error_request(request_id) {
-                        modal.set_fetch_error(e);
+                        modal.set_fetch_error(hardware_wallet_error_message(&e));
                     }
                 }
             }
@@ -2313,7 +2322,9 @@ impl State {
             Err(error) => {
                 error!("on_registration_result: registration failed - {}", error);
                 // Show error in modal
-                self.views.registration.set_modal_error(error);
+                self.views
+                    .registration
+                    .set_modal_error(hardware_wallet_error_message(&error));
             }
         }
         Task::none()
