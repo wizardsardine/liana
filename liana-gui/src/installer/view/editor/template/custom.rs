@@ -22,25 +22,24 @@ use crate::installer::{
         editor::{
             defined_key, path,
             template::{
-                caption_block, row_next, BOTTOM_PADDING, DESCRIPTION_BOTTOM_PADDING,
-                FOOTER_SPACING, HARDWARE_WALLET_ADVICE, INTRODUCTION_TITLE, PRIMARY_KEY,
-                RECOVERY_KEY, SAFETY_NET_KEY, SET_KEYS_TITLE, UNSUPPORTED_TAPROOT_WARNING,
+                caption_block, row_next, BOTTOM_PADDING, DESCRIPTION_BOTTOM_PADDING, FOOTER_SPACING,
             },
             undefined_key,
         },
         layout,
     },
 };
+use crate::t;
 
 pub fn custom_template_description(
     progress: (usize, usize),
     network: Network,
 ) -> Element<'static, Message> {
-    let title = new::b1_bold("Build your own");
+    let title = new::b1_bold(t!("installer-build-your-own"));
 
-    let intro = caption_block(format!("For this setup you will need to define your primary and recovery spending policies. {HARDWARE_WALLET_ADVICE} belonging to them."));
+    let intro = caption_block(t!("installer-custom-template-description-1"));
 
-    let explanation = caption_block("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.");
+    let explanation = caption_block(t!("installer-custom-template-description-2"));
 
     let diagram = image::custom_template_description().width(Length::Fill);
 
@@ -59,7 +58,7 @@ pub fn custom_template_description(
         progress,
         network,
         None,
-        INTRODUCTION_TITLE.to_string(),
+        t!("installer-introduction"),
         content,
         Some(Message::Previous),
     )
@@ -83,7 +82,7 @@ pub fn custom_template<'a>(
 
     let primary = path(
         color::GREEN,
-        Some("Primary spending option:".to_string()),
+        Some(t!("installer-primary-spending-option")),
         primary_path.sequence,
         primary_path.warning,
         primary_path.threshold,
@@ -96,9 +95,9 @@ pub fn custom_template<'a>(
                     defined_key(
                         &key.name,
                         color::GREEN,
-                        PRIMARY_KEY,
+                        t!("installer-primary-key"),
                         if use_taproot && !key.source.is_compatible_taproot() {
-                            Some(UNSUPPORTED_TAPROOT_WARNING.to_string())
+                            Some(t!("installer-device-no-taproot"))
                         } else {
                             None
                         },
@@ -107,7 +106,7 @@ pub fn custom_template<'a>(
                 } else {
                     undefined_key(
                         color::GREEN,
-                        PRIMARY_KEY,
+                        t!("installer-primary-key"),
                         !primary_path.keys[0..i].iter().any(|k| k.is_none()),
                         prim_keys_fixed,
                     )
@@ -125,7 +124,7 @@ pub fn custom_template<'a>(
             col.push(
                 path(
                     color::ORANGE,
-                    Some(format!("Recovery option #{}:", i + 1)),
+                    Some(t!("installer-recovery-option", number = i + 1)),
                     p.sequence,
                     p.warning,
                     p.threshold,
@@ -141,9 +140,9 @@ pub fn custom_template<'a>(
                                 defined_key(
                                     &key.name,
                                     color::ORANGE,
-                                    RECOVERY_KEY,
+                                    t!("installer-recovery-key"),
                                     if use_taproot && !key.source.is_compatible_taproot() {
-                                        Some(UNSUPPORTED_TAPROOT_WARNING.to_string())
+                                        Some(t!("installer-device-no-taproot"))
                                     } else {
                                         None
                                     },
@@ -152,7 +151,7 @@ pub fn custom_template<'a>(
                             } else {
                                 undefined_key(
                                     color::ORANGE,
-                                    RECOVERY_KEY,
+                                    t!("installer-recovery-key"),
                                     !p.keys[0..j].iter().any(|k| k.is_none()),
                                     fixed,
                                 )
@@ -188,7 +187,7 @@ pub fn custom_template<'a>(
     let safety_net = safety_net_path.map(|(sn_index, sn_path)| {
         path(
             color::WHITE,
-            Some("Safety Net:".to_string()),
+            Some(t!("installer-safety-net")),
             sn_path.sequence,
             sn_path.warning,
             sn_path.threshold,
@@ -204,9 +203,9 @@ pub fn custom_template<'a>(
                         defined_key(
                             &key.name,
                             color::WHITE,
-                            SAFETY_NET_KEY,
+                            t!("installer-safety-net-key"),
                             if use_taproot && !key.source.is_compatible_taproot() {
-                                Some(UNSUPPORTED_TAPROOT_WARNING.to_string())
+                                Some(t!("installer-device-no-taproot"))
                             } else {
                                 None
                             },
@@ -215,7 +214,7 @@ pub fn custom_template<'a>(
                     } else {
                         undefined_key(
                             color::WHITE,
-                            SAFETY_NET_KEY,
+                            t!("installer-safety-net-key"),
                             !sn_path.keys[0..i].iter().any(|k| k.is_none()),
                             fixed,
                         )
@@ -250,7 +249,7 @@ pub fn custom_template<'a>(
         progress,
         network,
         None,
-        SET_KEYS_TITLE.to_string(),
+        t!("btn-set-keys"),
         content,
         Some(Message::Previous),
     )
