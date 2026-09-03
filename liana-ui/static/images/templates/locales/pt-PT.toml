@@ -1,0 +1,22 @@
+# Português europeu, DRAFT: terminology of the liana-i18n catalogs, to be reviewed by a native speaker.
+
+[common]
+event_receipt = "Receção dos fundos"
+event_timelock = "Após algum tempo* de inatividade da carteira"
+state_spend = "Pode gastar"
+state_locked = "Não pode gastar"
+policy_primary = "Política de gasto principal"
+policy_recovery = "Política de gasto de recuperação"
+footnote = "*O período (timelock) antes da ativação das chaves configura-se no passo seguinte."
+
+[multisig_security]
+label_primary = "Multisig 2-de-2"
+label_recovery = "Multisig 2-de-3"
+
+[inheritance]
+label_primary = "Chave principal"
+label_recovery = "Chave de herança"
+
+[custom]
+label_primary = "Chaves principais"
+label_recovery = "Chaves de recuperação"

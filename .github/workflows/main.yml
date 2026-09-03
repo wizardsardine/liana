@@ -55,3 +55,21 @@ jobs:
           sudo apt-get update &&
           sudo apt-get install libudev-dev libfontconfig1-dev &&
           cargo test --verbose --color always -- --nocapture
+
+  template_images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+            toolchain: 1.88.0
+            components: rustfmt
+            override: true
+      - name: Install the pinned Typst release
+        run: |
+          curl -sSfL -o typst.tar.xz https://github.com/typst/typst/releases/download/v0.15.1/typst-x86_64-unknown-linux-musl.tar.xz
+          echo "a6d077d0a95eed5a2eba715b2dae06be954f624ccbf85758a03f389ded33118c  typst.tar.xz" | sha256sum -c -
+          tar -xJf typst.tar.xz
+          echo "$PWD/typst-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
+      - name: Check the generated template images are up to date
+        run: cargo xtask gen-images --check

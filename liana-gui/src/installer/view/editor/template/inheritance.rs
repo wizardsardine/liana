@@ -40,7 +40,8 @@ pub fn inheritance_template_description(
     let explanation = caption_block("You will always be able to spend using your Primary Key.
 After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds.");
 
-    let diagram = image::inheritance_template_description().width(Length::Fill);
+    let diagram = image::inheritance_template_description(image::TEMPLATE_IMAGE_FALLBACK_LOCALE)
+        .width(Length::Fill);
 
     let content = column![
         title,

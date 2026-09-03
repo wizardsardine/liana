@@ -1,0 +1,17 @@
+# Custom wallet: primary and recovery policies defined by the user.
+id = "custom"
+title = "Custom wallet"
+events = ["receipt", "timelock"]
+footnote = "footnote"
+
+[[policies]]
+name = "policy_primary"
+label = "label_primary"
+keys = [{ number = 1, kind = "primary" }]
+segments = ["spend", "spend"]
+
+[[policies]]
+name = "policy_recovery"
+label = "label_recovery"
+keys = [{ number = 2, kind = "recovery" }]
+segments = ["locked", "spend"]

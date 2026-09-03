@@ -9,6 +9,7 @@ members = [
     "liana-connect",
     "liana-business",
     "liana-business/business-installer",
+    "xtask",
 ]
 default-members = [
     "liana",

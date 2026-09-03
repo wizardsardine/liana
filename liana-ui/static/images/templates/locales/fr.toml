@@ -1,0 +1,22 @@
+# Français. Terminologie des catalogues liana-i18n (clé primaire, clé de récupération, clé d'héritage).
+
+[common]
+event_receipt = "Réception des fonds"
+event_timelock = "Après un certain temps* d'inactivité du portefeuille"
+state_spend = "Peut dépenser"
+state_locked = "Ne peut pas dépenser"
+policy_primary = "Politique de dépense principale"
+policy_recovery = "Politique de dépense de récupération"
+footnote = "*La durée (timelock) avant l'activation des clés se configure à l'étape suivante."
+
+[multisig_security]
+label_primary = "Multisig 2-sur-2"
+label_recovery = "Multisig 2-sur-3"
+
+[inheritance]
+label_primary = "Clé primaire"
+label_recovery = "Clé d'héritage"
+
+[custom]
+label_primary = "Clés primaires"
+label_recovery = "Clés de récupération"

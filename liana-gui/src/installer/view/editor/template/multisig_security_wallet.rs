@@ -40,7 +40,9 @@ pub fn multisig_security_template_description(
 
     let explanation = caption_block("The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):");
 
-    let diagram = image::multisig_security_template_description().width(Length::Fill);
+    let diagram =
+        image::multisig_security_template_description(image::TEMPLATE_IMAGE_FALLBACK_LOCALE)
+            .width(Length::Fill);
 
     let content = column![
         title,

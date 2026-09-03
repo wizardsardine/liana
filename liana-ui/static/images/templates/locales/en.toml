@@ -1,0 +1,24 @@
+# Source locale: every other locale must define exactly these keys.
+# [common] is shared by all templates; [<template id>] holds one template's strings.
+# * marks the term the footnote explains. Keep the strings short: the images are 800 px wide.
+
+[common]
+event_receipt = "Receipt of funds"
+event_timelock = "After some time* of wallet inactivity"
+state_spend = "Can spend"
+state_locked = "Can't spend"
+policy_primary = "Primary spending policy"
+policy_recovery = "Recovery spending policy"
+footnote = "*The time range (timelock) for the activation of keys can be configured in the next step."
+
+[multisig_security]
+label_primary = "2-of-2 multisig"
+label_recovery = "2-of-3 multisig"
+
+[inheritance]
+label_primary = "Primary key"
+label_recovery = "Inheritance key"
+
+[custom]
+label_primary = "Primary keys"
+label_recovery = "Recovery keys"

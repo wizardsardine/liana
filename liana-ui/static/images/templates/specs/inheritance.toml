@@ -1,0 +1,17 @@
+# Simple inheritance: a primary key that always spends, an inheritance key after the timelock.
+id = "inheritance"
+title = "Simple inheritance"
+events = ["receipt", "timelock"]
+footnote = "footnote"
+
+[[policies]]
+name = "policy_primary"
+label = "label_primary"
+keys = [{ number = 1, kind = "primary" }]
+segments = ["spend", "spend"]
+
+[[policies]]
+name = "policy_recovery"
+label = "label_recovery"
+keys = [{ number = 2, kind = "inheritance" }]
+segments = ["locked", "spend"]
