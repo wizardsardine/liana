@@ -44,14 +44,14 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
         match state {
             ImportExportState::Init => "".to_string(),
             ImportExportState::ChoosePath => {
-                "Select the path you want to export in the popup window...".into()
+                "Select the path you want to export in the popup window...".to_string()
             }
-            ImportExportState::Path(_) => "".into(),
-            ImportExportState::Started => "Starting export...".into(),
+            ImportExportState::Path(_) => String::new(),
+            ImportExportState::Started => "Starting export...".to_string(),
             ImportExportState::Progress(p) => format!("Progress: {}%", p.round()),
-            ImportExportState::TimedOut => "Export failed: timeout".into(),
-            ImportExportState::Aborted => "Export canceled".into(),
-            ImportExportState::Ended => import_export_type.end_message().into(),
+            ImportExportState::TimedOut => "Export failed: timeout".to_string(),
+            ImportExportState::Aborted => "Export canceled".to_string(),
+            ImportExportState::Ended => import_export_type.end_message(),
             ImportExportState::Closed => "".into(),
         }
     };

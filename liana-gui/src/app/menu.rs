@@ -68,7 +68,7 @@ fn menu_entry<'a>(
     active: &Menu,
     menu: Menu,
     icon: liana_ui::widget::Text<'a>,
-    text: &'static str,
+    text: String,
     reload: bool,
     menu_width: MenuWidth,
 ) -> liana_ui::widget::Row<'a, Message> {
@@ -97,20 +97,20 @@ fn menu_entry<'a>(
 }
 
 impl Menu {
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self) -> String {
         match self {
-            Menu::Home => "Dashboard",
-            Menu::Receive => "Receive",
-            Menu::PSBTs => "Drafts & Approvals",
-            Menu::Transactions => "Transactions",
-            Menu::Settings => "Settings",
-            Menu::Coins => "Coins/UTXOs",
-            Menu::CreateSpendTx => "Send",
-            Menu::Recovery => "Recovery",
+            Menu::Home => "Dashboard".to_string(),
+            Menu::Receive => "Receive".to_string(),
+            Menu::PSBTs => "Drafts & Approvals".to_string(),
+            Menu::Transactions => "Transactions".to_string(),
+            Menu::Settings => "Settings".to_string(),
+            Menu::Coins => "Coins/UTXOs".to_string(),
+            Menu::CreateSpendTx => "Send".to_string(),
+            Menu::Recovery => "Recovery".to_string(),
             Menu::RefreshCoins(_)
             | Menu::PsbtPreSelected(_)
             | Menu::TransactionPreSelected(_)
-            | Menu::SettingsPreSelected(_) => "",
+            | Menu::SettingsPreSelected(_) => String::new(),
         }
     }
 

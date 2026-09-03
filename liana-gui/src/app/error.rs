@@ -24,6 +24,7 @@ pub enum Error {
     ImportExport(export::Error),
     RestoreBackup(RestoreBackupError),
     FiatPrice(PriceApiError),
+    NoAvailableCurrencies,
 }
 
 impl std::fmt::Display for Error {
@@ -67,6 +68,7 @@ impl std::fmt::Display for Error {
             Self::ImportExport(e) => write!(f, "{e}"),
             Self::RestoreBackup(e) => write!(f, "{e}"),
             Self::FiatPrice(e) => write!(f, "Fiat price error: {e}"),
+            Self::NoAvailableCurrencies => write!(f, "No available currencies in the list."),
         }
     }
 }

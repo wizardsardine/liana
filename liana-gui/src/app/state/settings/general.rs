@@ -162,9 +162,7 @@ impl State for GeneralSettingsState {
                     } else if let Some(curr) = self.currencies.first() {
                         self.new_price_setting.currency = *curr;
                     } else {
-                        self.error = Some(Error::Unexpected(
-                            "No available currencies in the list.".to_string(),
-                        ));
+                        self.error = Some(Error::NoAvailableCurrencies);
                         return Task::none();
                     }
                 }

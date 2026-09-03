@@ -499,7 +499,7 @@ impl DecryptModal {
     }
 }
 
-fn invalid_content(hint: &str) -> Container<'_, installer::Message> {
+fn invalid_content(hint: String) -> Container<'static, installer::Message> {
     Container::new(
         Column::new()
             .spacing(5)
@@ -520,9 +520,9 @@ fn invalid_content(hint: &str) -> Container<'_, installer::Message> {
 fn widget_signing_device(
     name: String,
     fingerprint: Option<Fingerprint>,
-    message: &str,
+    message: String,
     pairing_code: Option<String>,
-) -> Button<'_, installer::Message> {
+) -> Button<'static, installer::Message> {
     let message = if let Some(code) = pairing_code {
         column![
             p1_regular(message),
@@ -554,17 +554,17 @@ fn cant_fetch_device(
     name: String,
     pairing_code: Option<String>,
 ) -> Button<'static, installer::Message> {
-    let message = "Please unlock or open app on the device";
+    let message = "Please unlock or open app on the device".to_string();
     widget_signing_device(name, None, message, pairing_code)
 }
 
 fn fetching_device(name: String, fingerprint: Fingerprint) -> Button<'static, installer::Message> {
-    let message = "Try to decrypt with this device...";
+    let message = "Try to decrypt with this device...".to_string();
     widget_signing_device(name, Some(fingerprint), message, None)
 }
 
 fn fetched_device(name: String, fingerprint: Fingerprint) -> Button<'static, installer::Message> {
-    let message = "Failed to decrypt file with this device";
+    let message = "Failed to decrypt file with this device".to_string();
     widget_signing_device(name, Some(fingerprint), message, None)
 }
 
@@ -672,13 +672,15 @@ pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Messag
     let content = match state.error {
         Some(e) => match e {
             Error::InvalidEncoding => invalid_content(
-                "The file cannot be decoded properly, it seems not to be an encrypted backup.",
+                "The file cannot be decoded properly, it seems not to be an encrypted backup."
+                    .to_string(),
             ),
             Error::InvalidType => invalid_content(
-                "The file has been decrypted but the content type is not supported.",
+                "The file has been decrypted but the content type is not supported.".to_string(),
             ),
             Error::InvalidDescriptor => invalid_content(
-                "The file has been decrypted but the descriptor is not a valid Liana descriptor.",
+                "The file has been decrypted but the descriptor is not a valid Liana descriptor."
+                    .to_string(),
             ),
         },
         None => valid_content(state),

@@ -155,13 +155,13 @@ where
         }
     }
 
-    pub fn title(&self) -> &str {
+    pub fn title(&self) -> String {
         match &self.state {
-            State::Installer(_) => "Installer",
-            State::Loader(_) => "Loading...",
-            State::Launcher(_) => "Launcher",
-            State::Login(_) => "Login",
-            State::App(a) => a.title(),
+            State::Installer(_) => "Installer".to_string(),
+            State::Loader(_) => "Loading...".to_string(),
+            State::Launcher(_) => "Launcher".to_string(),
+            State::Login(_) => "Login".to_string(),
+            State::App(a) => a.title().to_string(),
             State::_Phantom(_) => unreachable!(),
         }
     }

@@ -373,16 +373,14 @@ pub fn spend_overview_view<'a>(
                                         p2_regular(tx.psbt.unsigned_tx.compute_txid().to_string())
                                             .style(theme::text::secondary),
                                     )
-                                    .push(
-                                        button::btn_copy(Some(Message::Clipboard(
-                                            tx.psbt.unsigned_tx.compute_txid().to_string(),
-                                        ))),
-                                    )
+                                    .push(button::btn_copy(Some(Message::Clipboard(
+                                        tx.psbt.unsigned_tx.compute_txid().to_string(),
+                                    ))))
                                     .align_y(Alignment::Center),
                             ),
                     )
                     .push(signatures(tx, desc_info, key_aliases))
-                    .push(Space::with_height(5))
+                    .push(Space::with_height(5)),
             )
             .style(theme::card::simple),
         )
@@ -391,13 +389,11 @@ pub fn spend_overview_view<'a>(
                 Row::new()
                     .push(Space::with_width(Length::Fill))
                     .push_maybe(if tx.path_ready().is_none() {
-                        Some(
-                            btn_sign(Some(Message::Spend(SpendTxMessage::Sign))),
-                        )
+                        Some(btn_sign(Some(Message::Spend(SpendTxMessage::Sign))))
                     } else {
-                        Some(
-                            btn_broadcast(Some(Message::Spend(SpendTxMessage::Broadcast))),
-                        )
+                        Some(btn_broadcast(Some(Message::Spend(
+                            SpendTxMessage::Broadcast,
+                        ))))
                     })
                     .align_y(Alignment::Center)
                     .spacing(20),
@@ -538,17 +534,13 @@ pub fn path_view<'a>(
                     .push(Space::with_width(Length::Fixed(20.0))),
             )
             .push(
-                p1_regular(format!(
-                    "{} more signature{}",
-                    missing_signatures,
-                    if missing_signatures > 1 {
-                        "s from "
-                    } else if missing_signatures == 0 {
-                        ""
-                    } else {
-                        " from "
-                    }
-                ))
+                p1_regular(if missing_signatures == 0 {
+                    "0 more signature".to_string()
+                } else if missing_signatures == 1 {
+                    "1 more signature from ".to_string()
+                } else {
+                    format!("{missing_signatures} more signatures from ")
+                })
                 .style(theme::text::secondary),
             )
             .push_maybe(row_unsigned)
@@ -572,22 +564,22 @@ pub fn inputs_view<'a>(
             Row::new()
                 .align_y(Alignment::Center)
                 .push(
-                    h4_bold(format!(
-                        "{} coin{} spent",
-                        tx.input.len(),
-                        if tx.input.len() == 1 { "" } else { "s" }
-                    ))
+                    h4_bold(if tx.input.len() == 1 {
+                        "1 coin spent".to_string()
+                    } else {
+                        format!("{} coins spent", tx.input.len())
+                    })
                     .width(Length::Fill),
                 )
                 .push(icon::collapse_icon()),
             Row::new()
                 .align_y(Alignment::Center)
                 .push(
-                    h4_bold(format!(
-                        "{} coin{} spent",
-                        tx.input.len(),
-                        if tx.input.len() == 1 { "" } else { "s" }
-                    ))
+                    h4_bold(if tx.input.len() == 1 {
+                        "1 coin spent".to_string()
+                    } else {
+                        format!("{} coins spent", tx.input.len())
+                    })
                     .width(Length::Fill),
                 )
                 .push(icon::collapsed_icon()),
@@ -633,22 +625,22 @@ pub fn outputs_view<'a>(
                         Row::new()
                             .align_y(Alignment::Center)
                             .push(
-                                h4_bold(format!(
-                                    "{} payment{}",
-                                    count,
-                                    if count == 1 { "" } else { "s" }
-                                ))
+                                h4_bold(if count == 1 {
+                                    "1 payment".to_string()
+                                } else {
+                                    format!("{count} payments")
+                                })
                                 .width(Length::Fill),
                             )
                             .push(icon::collapse_icon()),
                         Row::new()
                             .align_y(Alignment::Center)
                             .push(
-                                h4_bold(format!(
-                                    "{} payment{}",
-                                    count,
-                                    if count == 1 { "" } else { "s" }
-                                ))
+                                h4_bold(if count == 1 {
+                                    "1 payment".to_string()
+                                } else {
+                                    format!("{count} payments")
+                                })
                                 .width(Length::Fill),
                             )
                             .push(icon::collapsed_icon()),
@@ -908,7 +900,7 @@ pub fn sign_action<'a>(
     signing: &HashSet<Fingerprint>,
     recovery_timelock: Option<u16>,
 ) -> Element<'a, Message> {
-    let title = "Select signing device to sign with:".to_string();
+    let title = "Select signing device to sign with:";
 
     let mut signers = vec![];
     if hws.is_empty() {

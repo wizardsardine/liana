@@ -189,7 +189,7 @@ pub enum ImportExportType {
 }
 
 impl ImportExportType {
-    pub fn end_message(&self) -> &str {
+    pub fn end_message(&self) -> String {
         match self {
             ImportExportType::Transactions
             | ImportExportType::ExportPsbt(_)
@@ -197,12 +197,12 @@ impl ImportExportType {
             | ImportExportType::ExportProcessBackup(..)
             | ImportExportType::ExportXpub(_)
             | ImportExportType::ExportEncryptedDescriptor(_)
-            | ImportExportType::ExportLabels => "Export successful!",
+            | ImportExportType::ExportLabels => "Export successful!".to_string(),
             ImportExportType::ImportBackup { .. }
             | ImportExportType::ImportPsbt(_)
             | ImportExportType::ImportXpub(_)
             | ImportExportType::FromBackup(_)
-            | ImportExportType::ImportDescriptor(_) => "Import successful",
+            | ImportExportType::ImportDescriptor(_) => "Import successful".to_string(),
         }
     }
 }
@@ -445,7 +445,7 @@ pub async fn export_transactions(
     let daemon = daemon.ok_or(Error::DaemonMissing)?;
     let mut file = open_file_write(&path).await?;
 
-    let header = "Date,Label,Value,Fee,Txid,Block\n".to_string();
+    let header = "Date,Label,Value,Fee,Txid,Block\n";
     file.write_all(header.as_bytes())?;
 
     // look 2 hour forward
@@ -1478,7 +1478,7 @@ mod tests {
         let mut file = File::open(path).unwrap();
         let mut raw = String::new();
         let _ = file.read_to_string(&mut raw).unwrap();
-        let expected = "[c658b283/48'/1'/0'/2']tpubDFL5wzgPBYK5pZ2Kh1T8qrxnp43kjE5CXfguZHHBrZSWpkfASy5rVfj7prh11XdqkC1P3kRwUPBeX7AHN8XBNx8UwiprnFnEm5jyswiRD4p".to_string();
+        let expected = "[c658b283/48'/1'/0'/2']tpubDFL5wzgPBYK5pZ2Kh1T8qrxnp43kjE5CXfguZHHBrZSWpkfASy5rVfj7prh11XdqkC1P3kRwUPBeX7AHN8XBNx8UwiprnFnEm5jyswiRD4p";
         assert_eq!(
             expected,
             parse_coldcard_xpub_json(&raw).unwrap().to_string()
@@ -1494,7 +1494,7 @@ mod tests {
         let mut file = File::open(path).unwrap();
         let mut raw = String::new();
         let _ = file.read_to_string(&mut raw).unwrap();
-        let expected = "[c658b283/48'/1'/0'/2']tpubDFL5wzgPBYK5pZ2Kh1T8qrxnp43kjE5CXfguZHHBrZSWpkfASy5rVfj7prh11XdqkC1P3kRwUPBeX7AHN8XBNx8UwiprnFnEm5jyswiRD4p".to_string();
+        let expected = "[c658b283/48'/1'/0'/2']tpubDFL5wzgPBYK5pZ2Kh1T8qrxnp43kjE5CXfguZHHBrZSWpkfASy5rVfj7prh11XdqkC1P3kRwUPBeX7AHN8XBNx8UwiprnFnEm5jyswiRD4p";
         assert_eq!(
             expected,
             parse_coldcard_xpub_ccxp(&raw).unwrap().to_string()

@@ -49,16 +49,10 @@ pub fn recovery<'a>(
                         .push(
                             text(if no_recovery_paths {
                                 "No recovery path is currently available.".to_string()
+                            } else if recovery_paths.len() == 1 {
+                                "1 recovery path is available:".to_string()
                             } else {
-                                format!(
-                                    "{} recovery path{} available:",
-                                    recovery_paths.len(),
-                                    if recovery_paths.len() > 1 {
-                                        "s are"
-                                    } else {
-                                        " is"
-                                    },
-                                )
+                                format!("{} recovery paths are available:", recovery_paths.len())
                             })
                             .width(Length::Fill),
                         )
@@ -104,11 +98,11 @@ pub fn recovery_path_view<'a>(
                         .align_y(Alignment::Center)
                         .spacing(10)
                         .push(
-                            text(format!(
-                                "{} signature{} from",
-                                threshold,
-                                if threshold > 1 { "s" } else { "" }
-                            ))
+                            text(if threshold == 1 {
+                                "1 signature from".to_string()
+                            } else {
+                                format!("{threshold} signatures from")
+                            })
                             .bold(),
                         )
                         .push(origins.iter().fold(
@@ -125,11 +119,11 @@ pub fn recovery_path_view<'a>(
                     Row::new()
                         .spacing(5)
                         .push(text("can recover"))
-                        .push(text(format!(
-                            "{} coin{} totalling",
-                            number_of_coins,
-                            if number_of_coins > 1 { "s" } else { "" }
-                        )))
+                        .push(text(if number_of_coins == 1 {
+                            "1 coin totalling".to_string()
+                        } else {
+                            format!("{number_of_coins} coins totalling")
+                        }))
                         .push(amount(&total_amount)),
                 )
                 .spacing(5),

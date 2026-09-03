@@ -648,7 +648,8 @@ impl Step for DefineDescriptor {
         let modal: Option<Element<'a, Message>> = if self.processing {
             Some(spinner::spinner_modal(
                 "Loading...",
-                "Generating and validating your wallet descriptor. This can take a few seconds.",
+                "Generating and validating your wallet descriptor. This can take a few seconds."
+                    .to_string(),
             ))
         } else {
             self.modal.as_ref().map(|modal| modal.view(hws))

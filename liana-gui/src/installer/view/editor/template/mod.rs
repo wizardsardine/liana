@@ -92,18 +92,18 @@ pub fn template_footer<'a>(valid: bool, processing: bool, customize: bool) -> Ro
 
 pub fn choose_descriptor_template(network: Network) -> Element<'static, Message> {
     let simple_inheritance = template_option(
-        "Simple inheritance",
-        "Two keys required, one for yourself to spend and another for your heir.",
+        "Simple inheritance".to_string(),
+        "Two keys required, one for yourself to spend and another for your heir.".to_string(),
         context::DescriptorTemplate::SimpleInheritance,
     );
     let expanding_multisig = template_option(
-        "Expanding multisig",
-        "Two keys required to spend, with an extra key as a backup.",
+        "Expanding multisig".to_string(),
+        "Two keys required to spend, with an extra key as a backup.".to_string(),
         context::DescriptorTemplate::MultisigSecurity,
     );
     let custom = template_option(
-        "Build your own",
-        "Create a custom setup that fits all your needs.",
+        "Build your own".to_string(),
+        "Create a custom setup that fits all your needs.".to_string(),
         context::DescriptorTemplate::Custom,
     );
     let content = column![simple_inheritance, expanding_multisig, custom,]
@@ -115,15 +115,15 @@ pub fn choose_descriptor_template(network: Network) -> Element<'static, Message>
         (0, 0),
         network,
         None,
-        "Choose wallet type",
+        "Choose wallet type".to_string(),
         content,
         Some(Message::Previous),
     )
 }
 
 fn template_option(
-    title: &'static str,
-    description: &'static str,
+    title: String,
+    description: String,
     template: context::DescriptorTemplate,
 ) -> Element<'static, Message> {
     let content = column![

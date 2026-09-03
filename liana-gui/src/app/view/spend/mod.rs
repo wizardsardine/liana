@@ -144,7 +144,7 @@ pub fn create_spend_tx<'a>(
     let title_text = new::d2(if recovery_timelock.is_some() {
         Menu::Recovery.title()
     } else if is_self_send {
-        "Self-transfer"
+        "Self-transfer".to_string()
     } else {
         Menu::CreateSpendTx.title()
     });
@@ -158,7 +158,7 @@ pub fn create_spend_tx<'a>(
     let title = row![title_text, Space::fill_width(), self_transfer_btn].align_y(Alignment::Center);
 
     let batch_label_input = (recipients.len() > 1).then_some(
-        form::Form::new("Batch label", batch_label, |s| {
+        form::Form::new(&"Batch label", batch_label, |s| {
             Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(s))
         })
         .warning(LABEL_LENGTH_WARNING)
@@ -258,7 +258,30 @@ pub fn create_spend_tx<'a>(
 
     let next_reason = next_blocker.map(|blocker| {
         let content: Element<Message> = match blocker {
-            NextBlocker::Reason(msg) => new::caption(msg).style(theme::text::card_secondary).into(),
+            NextBlocker::RecipientAddress => {
+                new::caption("A recipient address is missing or invalid")
+                    .style(theme::text::card_secondary)
+                    .into()
+            }
+            NextBlocker::PaymentDescription => {
+                new::caption("Payment description is missing or invalid")
+                    .style(theme::text::card_secondary)
+                    .into()
+            }
+            NextBlocker::Funds => new::caption("Select or add more funds.")
+                .style(theme::text::card_secondary)
+                .into(),
+            NextBlocker::RecipientAmount => {
+                new::caption("A recipient amount is missing or invalid")
+                    .style(theme::text::card_secondary)
+                    .into()
+            }
+            NextBlocker::Feerate => new::caption("The feerate is missing or invalid")
+                .style(theme::text::card_secondary)
+                .into(),
+            NextBlocker::Coin => new::caption("Select at least one coin.")
+                .style(theme::text::card_secondary)
+                .into(),
             NextBlocker::CoinsLeft => match amount_left {
                 Some(left) if left.to_sat() > 0 => row![
                     amount_with_font(left, new::CAPTION_SPEC),
@@ -302,7 +325,12 @@ pub fn create_spend_tx<'a>(
 }
 
 enum NextBlocker {
-    Reason(&'static str),
+    RecipientAddress,
+    PaymentDescription,
+    Funds,
+    RecipientAmount,
+    Feerate,
+    Coin,
     CoinsLeft,
 }
 
@@ -319,25 +347,21 @@ fn next_disabled_reason(
 ) -> Option<NextBlocker> {
     let empty_or_invalid = |v: &form::Value<String>| v.value.is_empty() || !v.valid;
     if recipients.iter().any(|r| empty_or_invalid(&r.address)) {
-        Some(NextBlocker::Reason(
-            "A recipient address is missing or invalid",
-        ))
+        Some(NextBlocker::RecipientAddress)
     } else if recipients.iter().any(|r| empty_or_invalid(&r.label))
         || (recipients.len() >= 2 && !batch_label.valid)
     {
-        Some(NextBlocker::Reason(
-            "Payment description is missing or invalid",
-        ))
+        Some(NextBlocker::PaymentDescription)
     } else if recipients.iter().any(|r| empty_or_invalid(&r.amount)) {
-        Some(NextBlocker::Reason(if max_under_dust {
-            "Select or add more funds."
+        Some(if max_under_dust {
+            NextBlocker::Funds
         } else {
-            "A recipient amount is missing or invalid"
-        }))
+            NextBlocker::RecipientAmount
+        })
     } else if empty_or_invalid(feerate) {
-        Some(NextBlocker::Reason("The feerate is missing or invalid"))
+        Some(NextBlocker::Feerate)
     } else if !any_coin_selected {
-        Some(NextBlocker::Reason("Select at least one coin."))
+        Some(NextBlocker::Coin)
     } else if !is_self_send
         && recovery_timelock.is_none()
         && amount_left != Some(&Amount::from_sat(0))

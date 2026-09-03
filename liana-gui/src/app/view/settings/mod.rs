@@ -95,7 +95,7 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<'_, Message> {
     dashboard(&Menu::Settings, cache, None, content)
 }
 
-pub fn link<'a>(url: &str, link_text: &'static str) -> Element<'a, Message> {
+pub fn link<'a>(url: &str, link_text: impl std::fmt::Display) -> Element<'a, Message> {
     iced_tooltip::Tooltip::new(
         button::link(Some(icon::link_icon()), link_text)
             .on_press(Message::OpenUrl(url.to_string())),
@@ -265,7 +265,7 @@ pub fn remote_backend_section<'a>(
             .spacing(20)
             .push(text("Grant access to wallet to another user"))
             .push(
-                form::Form::new_trimmed("User email", email_form, |email| {
+                form::Form::new_trimmed(&"User email", email_form, |email| {
                     Message::Settings(SettingsMessage::RemoteBackendSettings(
                         RemoteBackendSettingsMessage::EditInvitationEmail(email),
                     ))
@@ -374,7 +374,7 @@ pub fn bitcoind_edit<'a>(
             RpcAuthType::CookieFile => Column::new()
                 .push(
                     form::Form::new_trimmed(
-                        "Cookie file path",
+                        &"Cookie file path",
                         &rpc_auth_vals.cookie_path,
                         |value| SettingsEditMessage::FieldEdited("cookie_file_path", value),
                     )
@@ -387,7 +387,7 @@ pub fn bitcoind_edit<'a>(
                 .push(
                     Row::new()
                         .push(
-                            form::Form::new_trimmed("User", &rpc_auth_vals.user, |value| {
+                            form::Form::new_trimmed(&"User", &rpc_auth_vals.user, |value| {
                                 SettingsEditMessage::FieldEdited("user", value)
                             })
                             .warning("Please enter a valid user")
@@ -395,9 +395,11 @@ pub fn bitcoind_edit<'a>(
                             .padding(5),
                         )
                         .push(
-                            form::Form::new_trimmed("Password", &rpc_auth_vals.password, |value| {
-                                SettingsEditMessage::FieldEdited("password", value)
-                            })
+                            form::Form::new_trimmed(
+                                &"Password",
+                                &rpc_auth_vals.password,
+                                |value| SettingsEditMessage::FieldEdited("password", value),
+                            )
                             .warning("Please enter a valid password")
                             .size(P1_SIZE)
                             .padding(5),
@@ -410,7 +412,7 @@ pub fn bitcoind_edit<'a>(
             Column::new()
                 .push(text("Socket address:").bold().small())
                 .push(
-                    form::Form::new_trimmed("Socket address:", addr, |value| {
+                    form::Form::new_trimmed(&"Socket address:", addr, |value| {
                         SettingsEditMessage::FieldEdited("socket_address", value)
                     })
                     .warning("Please enter a valid address")
@@ -514,7 +516,7 @@ pub fn bitcoind<'a>(
     for (k, v) in rows {
         col_fields = col_fields.push({
             let t = if k == "Password" {
-                "*".to_string().repeat(v.len())
+                "*".repeat(v.len())
             } else {
                 v.clone()
             };
@@ -963,7 +965,7 @@ pub fn wallet_settings<'a>(
 
     // -------------------------- Aliases card ---------------------------
     let w_alias_title = text("Wallet alias:").bold().into();
-    let w_alias_input = form::Form::new("Alias", wallet_alias, move |msg| {
+    let w_alias_input = form::Form::new(&"Alias", wallet_alias, move |msg| {
         Message::Settings(SettingsMessage::WalletAliasEdited(msg))
     })
     .warning("Please enter alias that is not too long")
@@ -983,7 +985,7 @@ pub fn wallet_settings<'a>(
             .align_y(Alignment::Center)
             .push(text(fg.to_string()).bold().width(Length::Fixed(100.0)))
             .push(
-                form::Form::new("Alias", name, move |msg| {
+                form::Form::new(&"Alias", name, move |msg| {
                     Message::Settings(SettingsMessage::FingerprintAliasEdited(fg, msg))
                 })
                 .warning("Please enter correct alias")

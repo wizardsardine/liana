@@ -237,7 +237,7 @@ pub enum PathWarning {
 }
 
 impl PathWarning {
-    pub fn message(&self) -> &'static str {
+    pub fn message(&self) -> String {
         match self {
             Self::DuplicateSequence => {
                 "No two recovery options may become available at the very same date."
@@ -247,5 +247,6 @@ impl PathWarning {
                 "Path contains a key that is disallowed for this kind of path."
             }
         }
+        .to_string()
     }
 }
