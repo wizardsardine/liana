@@ -153,7 +153,7 @@ fn signing_entry<'a, M: Clone + 'static>(
     } else if registered == Some(false) {
         (
             alias,
-            DeviceStatus::Warning("The wallet descriptor is not registered on the device.\n You can register it in the settings."),
+            DeviceStatus::Warning("The wallet descriptor is not registered on the device.\n You can register it in the settings.".to_string()),
             None,
         )
     } else if !can_sign {
@@ -197,7 +197,9 @@ fn registration_entry<'a, M: Clone + 'static>(
     } else if not_tapminiscript {
         (
             alias,
-            DeviceStatus::Warning("Device firmware version does not support taproot miniscript"),
+            DeviceStatus::Warning(
+                "Device firmware version does not support taproot miniscript".to_string(),
+            ),
             select_msg,
         )
     } else {

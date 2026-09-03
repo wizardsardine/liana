@@ -38,18 +38,16 @@ pub fn rescan_warning<'a, M: Clone + 'static>(
     go_to_rescan: M,
     dismiss: M,
 ) -> Element<'a, M> {
-    let source = match origin {
-        WalletOrigin::Backup => "restored from a backup",
-        WalletOrigin::Descriptor => "imported from a descriptor",
+    let warning = match origin {
+        WalletOrigin::Backup => "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions.",
+        WalletOrigin::Descriptor => "As this wallet was imported from a descriptor, you may need to rescan the blockchain to see past transactions.",
     };
     let icon = icon::warning_fill_icon().size(icon::ICON_SIZE_M as u32);
     let msg = row![
         Space::with_width(10),
         icon,
         Space::with_width(15),
-        new::h3(format!(
-            "As this wallet was {source}, you may need to rescan the blockchain to see past transactions."
-        )),
+        new::h3(warning),
     ]
     .align_y(Alignment::Center);
 
@@ -144,7 +142,7 @@ pub fn recovery_hint<'a, M: Clone + 'a>(units_left: String) -> Element<'a, M> {
     let icon = icon::tooltip_icon().size(icon::ICON_SIZE_M as u32);
     let content = row![
         new::h3(format!(
-            "≈ {units_left} left before first recovery path becomes available.",
+            "≈ {units_left} left before first recovery path becomes available."
         ))
         .width(Length::Fill),
         icon,

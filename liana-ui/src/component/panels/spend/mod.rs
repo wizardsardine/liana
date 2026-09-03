@@ -3,7 +3,7 @@ use iced::{
     widget::{column, row, text::Style, Space},
     Alignment, Length,
 };
-use std::fmt::Display;
+use std::fmt::{self, Display};
 
 use bitcoin::{Amount, Denomination};
 
@@ -52,6 +52,27 @@ pub struct RecipientFiat<'a, M> {
     pub on_edit: Box<dyn Fn(String) -> M + 'static>,
 }
 
+/// Why the recipient cannot send its maximum amount: it would be below the dust limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DustWarning {
+    AddFunds,
+    SelectMoreCoins,
+}
+
+impl Display for DustWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AddFunds => {
+                "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s)."
+            }
+            Self::SelectMoreCoins => {
+                "Minimum amount is 0.00 000 500 BTC. Select more coins to continue."
+            }
+        }
+        .fmt(f)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn recipient_card<'a, M: Clone + 'static>(
     address: &'a form::Value<String>,
@@ -59,7 +80,7 @@ pub fn recipient_card<'a, M: Clone + 'static>(
     amount: &'a form::Value<String>,
     fiat: Option<RecipientFiat<'a, M>>,
     is_max_selected: bool,
-    dust_warning: Option<impl Into<String>>,
+    dust_warning: Option<DustWarning>,
     max_estimated_amount: Option<Amount>,
     on_address_edit: impl Fn(String) -> M + 'static,
     on_label_edit: impl Fn(String) -> M + 'static,
@@ -197,7 +218,7 @@ pub fn recipient_card<'a, M: Clone + 'static>(
         .width(Length::Fill);
     // Show dust warning, if any, or otherwise any amount warning.
     let warning = dust_warning
-        .map(|w| new::caption(w.into()).color(color::RED))
+        .map(|w| new::caption(w.to_string()).color(color::RED))
         .or_else(|| {
             amount
                 .warning

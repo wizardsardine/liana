@@ -11,7 +11,13 @@ use liana::{
 };
 
 use liana_ui::{
-    component::{amount::*, button, form, label::LABEL_LENGTH_WARNING, panels::spend, text::new},
+    component::{
+        amount::*,
+        button, form,
+        label::LABEL_LENGTH_WARNING,
+        panels::spend::{self, DustWarning},
+        text::new,
+    },
     icon, theme,
     widget::*,
 };
@@ -353,7 +359,7 @@ pub fn recipient_view<'a>(
     is_max_selected: bool,
     is_recovery: bool,
     can_delete: bool,
-    dust_warning: &'a Option<String>,
+    dust_warning: Option<DustWarning>,
     max_estimated_amount: Option<Amount>,
 ) -> Element<'a, CreateSpendMessage> {
     let fiat = fiat_converter.map(|conv| {
@@ -379,7 +385,7 @@ pub fn recipient_view<'a>(
         amount,
         fiat,
         is_max_selected,
-        dust_warning.as_deref(),
+        dust_warning,
         max_estimated_amount,
         move |msg| CreateSpendMessage::RecipientEdited(index, "address", msg.trim().to_string()),
         move |msg| CreateSpendMessage::RecipientEdited(index, "label", msg),
