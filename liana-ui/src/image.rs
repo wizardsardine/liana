@@ -1,6 +1,8 @@
 use crate::widget::Svg;
 use iced::{widget::svg::Handle, window::icon};
 
+pub mod template_images;
+
 const LIANA_APP_ICON: &[u8] = include_bytes!("../static/logos/liana-app-icon.png");
 const LIANA_BUSINESS_APP_ICON: &[u8] =
     include_bytes!("../static/logos/liana-business-app-icon.png");
