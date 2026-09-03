@@ -437,9 +437,9 @@ impl DefineSpend {
                     .create_recovery(max_address.clone(), &outpoints, feerate_vb, Some(reco_tl))
                     .await
                     // Map the PSBT to `CreateSpendResult` result. We only need the PSBT below.
-                    .map(|psbt| CreateSpendResult::Success {
+                    .map(|(psbt, warnings)| CreateSpendResult::Success {
                         psbt,
-                        warnings: vec![],
+                        warnings: warnings.iter().map(|w| w.to_string()).collect(),
                     })
             } else {
                 daemon
@@ -738,7 +738,9 @@ impl Step for DefineSpend {
                                         )
                                         .await
                                         .map_err(|e| e.into())
-                                        .map(|psbt| (psbt, vec![]))
+                                        .map(|(psbt, warnings)| {
+                                            (psbt, warnings.iter().map(|w| w.to_string()).collect())
+                                        })
                                 },
                                 Message::Psbt,
                             );

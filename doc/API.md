@@ -471,9 +471,13 @@ cover the requested feerate.
 
 #### Response
 
-| Field          | Type      | Description                                          |
-| -------------- | --------- | ---------------------------------------------------- |
-| `psbt`         | string    | PSBT of the recovery transaction, encoded as base64. |
+| Field          | Type           | Description                                           |
+| -------------- | -------------- | ----------------------------------------------------- |
+| `psbt`         | string         | PSBT of the recovery transaction, encoded as base64.  |
+| `warnings`     | list of string | Warnings, if any, generated during recovery creation. |
+
+A warning will be included in the `warnings` response field (`to_own_address`) if the sweep address
+is known to belong to this wallet, since recovered funds would be locked under the same descriptor again.
 
 ### `updatelabels`
 

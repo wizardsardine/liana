@@ -1298,7 +1298,15 @@ def test_create_recovery(lianad, bitcoind):
     ][0]
     reco_address = bitcoind.rpc.getnewaddress()
     res = lianad.rpc.createrecovery(reco_address, 18)
+
+    # No warnings because it swept to an external address
+    assert len(res["warnings"]) == 0
     reco_psbt = PSBT.from_base64(res["psbt"])
+
+    # Recover to own address but warn user about re-lock behaviour
+    own_address = lianad.rpc.getnewaddress()["address"]
+    res_own = lianad.rpc.createrecovery(own_address, 18)
+    assert res_own["warnings"] == ["to_own_address"]
 
     # Do the same passing all three coins explicitly:
     res_op = lianad.rpc.createrecovery(reco_address, 18, 10, first_outpoints)
