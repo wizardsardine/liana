@@ -9,6 +9,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_connect::ws_business::{self, KeyIdentity, KeyType, UserRole, WalletStatus};
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{btn_add_key, btn_edit_keys, btn_mark_keys_ready, EntryWidth},
@@ -33,7 +34,7 @@ fn key_signer(key: &ws_business::Key) -> String {
                 provider: Some(provider),
                 ..
             } => provider.name.clone(),
-            _ => "Professional service".to_string(),
+            _ => t!("business-professional-service"),
         },
         _ => key.identity.to_string(),
     };
@@ -69,33 +70,28 @@ fn notice_content(is_manager: bool, keys_ready: bool, locked: bool) -> Element<'
                 card::success,
                 icon::check_icon().style(theme::text::success),
                 if locked {
-                    "Keys & signers marked as ready. The spending policy will be crafted from these keys.".to_string()
+                    t!("business-keys-ready-policy-pending")
                 } else {
-                    "Keys & signers marked as ready. The spending policy will be crafted from these keys. You can still edit keys if anything needs to change.".to_string()
+                    t!("business-keys-ready-policy-editable")
                 },
             )]
         } else {
-            column![card::info(
-                "List the keys that will be part of this wallet and assign a signer to each. The spending policy will be crafted from these keys."
-            )]
+            column![card::info(t!("business-keys-manager-instruction"))]
         }
     } else if keys_ready {
         column![
             notice_card(
                 card::success,
                 icon::check_icon().style(theme::text::success),
-                "Marked as ready by the Wallet Manager. They've finished adding keys & signers.".to_string(),
+                t!("business-keys-ready-by-manager"),
             ),
-            card::info(
-                "These keys are shared with the Spending policy tab, where you arrange them into spending paths."
-            ),
+            card::info(t!("business-keys-shared-with-policy")),
         ]
     } else {
         column![notice_card(
             card::soft_warning,
             icon::tooltip_icon().style(theme::text::warning),
-            "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet."
-                .to_string(),
+            t!("business-keys-awaiting-manager"),
         )]
     };
 
@@ -167,7 +163,8 @@ fn footer_content(
         let enough_keys = key_count >= 2;
         let hint: Option<Element<'static, Msg>> = (!enough_keys).then_some({
             Container::new(
-                text::new::caption("Add at least 2 keys to continue").style(theme::text::secondary),
+                text::new::caption(t!("business-add-two-keys-to-continue"))
+                    .style(theme::text::secondary),
             )
             .width(Length::Shrink)
             .into()
@@ -184,10 +181,7 @@ fn footer_content(
     } else if is_manager && keys_ready {
         row![btn_edit_keys(Some(Msg::MarkKeysReady(false)))].align_y(Alignment::Center)
     } else if !keys_ready {
-        row![
-            text::new::caption("These keys are shared with the Spending policy tab")
-                .style(theme::text::secondary)
-        ]
+        row![text::new::caption(t!("business-keys-shared-policy-tab")).style(theme::text::secondary)]
     } else {
         return None;
     };
@@ -241,13 +235,13 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
         .selected_org
         .and_then(|org_id| state.backend.get_org(org_id))
         .map(|org| org.name.clone())
-        .unwrap_or_else(|| "Organization".to_string());
+        .unwrap_or_else(|| t!("business-organization"));
     let wallet_name = state
         .app
         .selected_wallet
         .and_then(|wallet_id| state.backend.get_wallet(wallet_id))
         .map(|wallet| wallet.alias.clone())
-        .unwrap_or_else(|| "Wallet".to_string());
+        .unwrap_or_else(|| t!("common-wallet"));
     let breadcrumb = vec![org_name, wallet_name];
 
     layout_with_scrollable_list(

@@ -1,7 +1,7 @@
 pub mod modal;
 
 use liana_connect::ws_business::{self, Key, KeyIdentity};
-pub use modal::{EditKeyModalState, SignerOption};
+pub use modal::{EditKeyModalState, SignerOption, TokenWarning};
 use std::{collections::BTreeMap, str::FromStr};
 
 /// Keys view state
@@ -43,7 +43,7 @@ impl KeysViewState {
 
             // Local format validation
             if liana_connect::keys::token::Token::from_str(&value).is_err() {
-                modal.token_warning = Some("Invalid token!");
+                modal.token_warning = Some(TokenWarning::Invalid);
                 return;
             }
 
@@ -54,7 +54,7 @@ impl KeysViewState {
                     && matches!(&k.identity, KeyIdentity::TokenWithProvider{ token: t, .. } if t == &value)
             });
             if is_duplicate {
-                modal.token_warning = Some("Duplicate token");
+                modal.token_warning = Some(TokenWarning::Duplicate);
                 return;
             }
 
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn clone_keeps_modal_runtime_state() {
         let mut modal = modal_state();
-        modal.token_warning = Some("Duplicate token");
+        modal.token_warning = Some(TokenWarning::Duplicate);
 
         let state = KeysViewState {
             edit_key_modal: Some(modal),
@@ -246,6 +246,6 @@ mod tests {
         let cloned = state.clone();
 
         let modal = cloned.edit_key_modal.as_ref().expect("modal");
-        assert_eq!(modal.token_warning, Some("Duplicate token"));
+        assert_eq!(modal.token_warning, Some(TokenWarning::Duplicate));
     }
 }

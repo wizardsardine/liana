@@ -1,12 +1,10 @@
 use crate::state::{message::Msg, State, View};
 use liana_connect::ws_business::{UserRole, WalletStatus};
+use liana_i18n::t;
 use liana_ui::{
     component::tab::{self, Dot},
     widget::*,
 };
-
-const SPENDING_POLICY_TAB_LABEL: &str = "Spending policy";
-const KEYS_SIGNERS_TAB_LABEL: &str = "Keys & Signers";
 
 fn template_edit_disabled(
     current_user_role: Option<UserRole>,
@@ -41,16 +39,12 @@ fn wallet_edit_tab_items(
     template_edit_disabled: bool,
 ) -> Vec<(View, String, Option<Dot>)> {
     let dot = if keys_ready { Dot::Ready } else { Dot::Pending };
-    let keys = (View::Keys, KEYS_SIGNERS_TAB_LABEL.to_string(), Some(dot));
+    let keys = (View::Keys, t!("business-keys-signers"), Some(dot));
     if template_edit_disabled {
         vec![keys]
     } else {
         vec![
-            (
-                View::TemplateEdit,
-                SPENDING_POLICY_TAB_LABEL.to_string(),
-                None,
-            ),
+            (View::TemplateEdit, t!("business-spending-policy"), None),
             keys,
         ]
     }
@@ -110,16 +104,8 @@ mod test {
         assert_eq!(
             items,
             [
-                (
-                    View::TemplateEdit,
-                    SPENDING_POLICY_TAB_LABEL.to_string(),
-                    None,
-                ),
-                (
-                    View::Keys,
-                    KEYS_SIGNERS_TAB_LABEL.to_string(),
-                    Some(Dot::Pending),
-                ),
+                (View::TemplateEdit, t!("business-spending-policy"), None,),
+                (View::Keys, t!("business-keys-signers"), Some(Dot::Pending),),
             ]
         );
     }
@@ -136,8 +122,8 @@ mod test {
         );
 
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0].1, SPENDING_POLICY_TAB_LABEL);
-        assert_eq!(items[1].1, KEYS_SIGNERS_TAB_LABEL);
+        assert_eq!(items[0].1, t!("business-spending-policy"));
+        assert_eq!(items[1].1, t!("business-keys-signers"));
     }
 
     #[test]
@@ -152,11 +138,7 @@ mod test {
         assert!(gated);
         assert_eq!(
             items,
-            [(
-                View::Keys,
-                KEYS_SIGNERS_TAB_LABEL.to_string(),
-                Some(Dot::Pending),
-            )]
+            [(View::Keys, t!("business-keys-signers"), Some(Dot::Pending),)]
         );
         assert_eq!(
             wallet_edit_view(
@@ -181,11 +163,7 @@ mod test {
         assert!(gated);
         assert_eq!(
             items,
-            [(
-                View::Keys,
-                KEYS_SIGNERS_TAB_LABEL.to_string(),
-                Some(Dot::Pending),
-            )]
+            [(View::Keys, t!("business-keys-signers"), Some(Dot::Pending),)]
         );
         assert_eq!(
             wallet_edit_view(

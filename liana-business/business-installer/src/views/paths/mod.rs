@@ -10,6 +10,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_connect::ws_business::{UserRole, WalletStatus};
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{
@@ -55,20 +56,15 @@ fn header_content(
             banner_card(
                 card::soft_warning,
                 theme::text::warning,
-                "Template is locked and pending approval. You must approve it to continue."
-                    .to_string(),
+                t!("business-template-locked-approve"),
             )
         } else {
-            card::info(
-                "Template is locked and pending approval. Unlock to make further changes."
-                    .to_string(),
-            )
-            .into()
+            card::info(t!("business-template-locked-unlock")).into()
         });
     }
 
     if is_manager && !is_ws_admin {
-        return Some(card::info("Read-only. Only a WS Admin can edit this template.").into());
+        return Some(card::info(t!("business-template-read-only")).into());
     }
 
     None
@@ -149,13 +145,13 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
         .selected_org
         .and_then(|org_id| state.backend.get_org(org_id))
         .map(|org| org.name.clone())
-        .unwrap_or_else(|| "Organization".to_string());
+        .unwrap_or_else(|| t!("business-organization"));
     let wallet_name = state
         .app
         .selected_wallet
         .and_then(|wallet_id| state.backend.get_wallet(wallet_id))
         .map(|wallet| wallet.alias.clone())
-        .unwrap_or_else(|| "Wallet".to_string());
+        .unwrap_or_else(|| t!("common-wallet"));
     let breadcrumb = vec![org_name, wallet_name];
 
     layout_with_scrollable_list(

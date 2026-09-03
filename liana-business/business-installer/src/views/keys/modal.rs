@@ -1,6 +1,9 @@
 use crate::{
-    state::{views::keys::EditKeyModalState, Message, State},
-    views::format_last_edit_info,
+    state::{
+        views::keys::{EditKeyModalState, TokenWarning},
+        Message, State,
+    },
+    views::{format_last_edit_info, key_kind_label},
 };
 use iced::{
     alignment::Vertical,
@@ -8,6 +11,7 @@ use iced::{
     Alignment,
 };
 use liana_connect::ws_business;
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{btn_cancel, btn_save},
@@ -33,9 +37,9 @@ pub fn edit_key_modal_view<'a>(
     modal_state: &'a EditKeyModalState,
 ) -> Element<'a, Message> {
     let title = if modal_state.is_new {
-        "Add a key"
+        t!("business-add-key-label")
     } else {
-        "Edit key"
+        t!("business-edit-key")
     };
     let current_user_email_lower = state.views.login.email.form.value.to_lowercase();
     let last_edit_info: Option<Element<'_, Message>> = (!modal_state.is_new)
@@ -51,10 +55,8 @@ pub fn edit_key_modal_view<'a>(
         })
         .flatten();
 
-    let intro = text::new::caption(
-        "Define the key's name and who holds it. You'll set it up later, by connecting a device or adding its public key.",
-    )
-    .style(theme::text::secondary);
+    let intro =
+        text::new::caption(t!("business-key-definition-help")).style(theme::text::secondary);
 
     let alias_value = form::Value {
         value: modal_state.alias.clone(),
@@ -62,9 +64,9 @@ pub fn edit_key_modal_view<'a>(
         valid: state.views.keys.is_alias_valid() || modal_state.alias.trim().is_empty(),
     };
     let alias_field = column![
-        field_label("Key Alias"),
+        field_label(t!("business-key-alias")),
         form::Form::new(
-            "e.g. Alice, Treasury, Lawyer…",
+            t!("business-key-alias-placeholder"),
             &alias_value,
             Message::KeyUpdateAlias,
         ),
@@ -73,16 +75,15 @@ pub fn edit_key_modal_view<'a>(
 
     let key_type_options = key_type_options();
     let selected_key_type = KeyTypeOption {
-        label: crate::views::key_kind_label(&modal_state.key_type),
+        label: key_kind_label(&modal_state.key_type),
         key_type: modal_state.key_type,
     };
-    let key_type_hint = "Internal: Held by a member of your organization.\n\
-External: Held by a trusted third party.\n\
-Cosigner: Professional co-signing service.\n\
-SafetyNet: Professional recovery service.";
-    let key_type_label = row![field_label("Key Type"), tooltip::tooltip(key_type_hint),]
-        .align_y(Alignment::Center)
-        .spacing(HSpacing::S);
+    let key_type_label = row![
+        field_label(t!("business-key-type")),
+        tooltip::tooltip(t!("business-key-type-help")),
+    ]
+    .align_y(Alignment::Center)
+    .spacing(HSpacing::S);
     let key_type_field = column![
         key_type_label,
         pick_list::field_pick_list(key_type_options, Some(selected_key_type), |option| {
@@ -113,7 +114,7 @@ SafetyNet: Professional recovery service.";
     .spacing(VSpacing::M);
 
     modal_view(
-        Some(title.to_string()),
+        Some(title),
         None::<Message>,
         Some(Message::KeyCancelModal),
         ModalWidth::M,
@@ -130,31 +131,33 @@ fn token_field(modal_state: &EditKeyModalState) -> Element<'_, Message> {
         warning: if is_empty {
             None
         } else {
-            modal_state.token_warning
+            modal_state
+                .token_warning
+                .as_ref()
+                .map(TokenWarning::message)
         },
         valid: token_valid || is_empty,
     };
 
     let provider_line: Element<'_, Message> = if let Some(provider) = &modal_state.provider {
         row![
-            text::new::caption(format!("Provider · {}", provider.name)).style(theme::text::success),
+            text::new::caption(t!("business-provider-name", provider = &provider.name))
+                .style(theme::text::success),
             icon::check_icon().size(13).style(theme::text::success),
         ]
         .spacing(HSpacing::S)
         .align_y(Alignment::Center)
         .into()
     } else {
-        text::new::caption(
-            "Paste the token from the provider. Their firm name is fetched automatically.",
-        )
-        .style(theme::text::secondary)
-        .into()
+        text::new::caption(t!("business-service-token-help"))
+            .style(theme::text::secondary)
+            .into()
     };
 
     column![
-        field_label("Service token"),
+        field_label(t!("business-service-token")),
         form::Form::new(
-            "e.g. 42-absent-cake-eagle",
+            t!("business-service-token-placeholder"),
             &token_value,
             Message::KeyUpdateToken,
         ),
@@ -168,13 +171,11 @@ fn signer_field<'a>(state: &'a State, modal_state: &'a EditKeyModalState) -> Ele
     let is_empty = modal_state.email.trim().is_empty();
     let email_valid = state.views.keys.is_email_valid();
     let hint = match modal_state.key_type {
-        ws_business::KeyType::Internal => {
-            "The organization member who will set up and sign with this key. They'll be invited by email."
-        }
-        _ => "The third party who will set up and sign with this key. They'll be invited by email.",
+        ws_business::KeyType::Internal => t!("business-internal-signer-help"),
+        _ => t!("business-external-signer-help"),
     };
     let signer_picker = column![combobox::editable_menu_combobox(
-        "Search organization members or enter email",
+        t!("business-search-members-or-email"),
         modal_state.email.clone(),
         |selection| Message::KeySelectSigner(selection.email().to_string()),
         signer_entries(modal_state),
@@ -183,14 +184,14 @@ fn signer_field<'a>(state: &'a State, modal_state: &'a EditKeyModalState) -> Ele
         },
     )];
     let invalid_email: Option<Element<'_, Message>> = (!is_empty && !email_valid).then_some({
-        text::new::small_caption("Invalid email!")
+        text::new::small_caption(t!("settings-email-invalid"))
             .style(theme::text::error)
             .into()
     });
 
     let hint_text = text::new::caption(hint).style(theme::text::secondary);
     column![
-        field_label("Signer email"),
+        field_label(t!("business-signer-email")),
         signer_picker,
         invalid_email,
         hint_text,
@@ -211,9 +212,9 @@ fn signer_entries<'a>(
 
     if !filtered_options.is_empty() {
         let header = if modal_state.key_type == ws_business::KeyType::Internal {
-            "From your organization".to_string()
+            t!("business-from-your-organization")
         } else {
-            crate::views::key_kind_label(&modal_state.key_type)
+            key_kind_label(&modal_state.key_type)
         };
         entries.push(MenuEntry::Header(combobox::menu_header(header)));
         entries.extend(filtered_options.into_iter().map(|option| {
@@ -241,7 +242,7 @@ fn signer_entries<'a>(
         }));
     } else {
         entries.push(MenuEntry::Empty(
-            text::new::small_caption("No members match")
+            text::new::small_caption(t!("business-no-members-match"))
                 .style(theme::text::secondary)
                 .into(),
         ));
@@ -254,10 +255,10 @@ fn signer_entries<'a>(
         } else {
             combobox::Tag::None
         };
-        let name = format!("Use {email}");
+        let name = t!("business-use-email", email = &email);
         entries.push(MenuEntry::Option {
             value: SignerComboboxOption::FreeEmail(email),
-            body: combobox::email_entry("+", &name, "New email address", tag),
+            body: combobox::email_entry("+", &name, t!("business-new-email-address"), tag),
             selected,
         });
     }
@@ -329,7 +330,7 @@ fn key_type_options() -> [KeyTypeOption; 4] {
         ws_business::KeyType::SafetyNet,
     ]
     .map(|key_type| KeyTypeOption {
-        label: crate::views::key_kind_label(&key_type),
+        label: key_kind_label(&key_type),
         key_type,
     })
 }
