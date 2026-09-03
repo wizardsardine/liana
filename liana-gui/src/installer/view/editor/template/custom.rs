@@ -42,7 +42,8 @@ pub fn custom_template_description(
 
     let explanation = caption_block("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.");
 
-    let diagram = image::custom_template_description().width(Length::Fill);
+    let diagram = image::custom_template_description(image::TEMPLATE_IMAGE_FALLBACK_LOCALE)
+        .width(Length::Fill);
 
     let content = column![
         title,
