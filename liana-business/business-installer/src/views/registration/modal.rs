@@ -7,6 +7,7 @@ use iced::{
     widget::{column, row},
     Alignment, Length,
 };
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{btn_cancel, btn_no, btn_retry, btn_yes},
@@ -35,7 +36,7 @@ pub fn registration_modal_view(state: &State) -> Option<Element<'_, Msg>> {
 fn registering_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
     let body = column![
         icon::usb_icon().size(100),
-        text::new::caption("Please confirm on your device...")
+        text::new::caption(t!("business-confirm-device"))
             .style(theme::text::secondary)
             .align_x(Alignment::Center),
         row![btn_cancel(Some(Msg::RegistrationCancelModal))].spacing(HSpacing::M),
@@ -44,14 +45,20 @@ fn registering_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
     .width(Length::Fill)
     .align_x(Alignment::Center);
 
-    modal_view(Some("Registering Wallet"), None, None, ModalWidth::S, body)
+    modal_view(
+        Some(t!("business-registering-wallet")),
+        None,
+        None,
+        ModalWidth::S,
+        body,
+    )
 }
 
 fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
     let error_msg = modal_state
         .error
         .clone()
-        .unwrap_or_else(|| "Unknown error occurred".to_string());
+        .unwrap_or_else(|| t!("error-unknown"));
 
     let body = column![
         icon::warning_icon().size(80),
@@ -67,19 +74,21 @@ fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
     .spacing(VSpacing::M)
     .align_x(Alignment::Center);
 
-    modal_view(Some("Registration Failed"), None, None, ModalWidth::S, body)
+    modal_view(
+        Some(t!("business-registration-failed")),
+        None,
+        None,
+        ModalWidth::S,
+        body,
+    )
 }
 
 fn confirm_coldcard_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
     let body = column![
-        text::new::caption(
-            "Please confirm on your Coldcard that the wallet registration completed successfully."
-                .to_string()
-        )
-        .style(theme::text::secondary)
-        .align_x(Alignment::Center),
-        text::new::b5_bold("Did the registration succeed on your Coldcard?")
+        text::new::caption(t!("business-confirm-coldcard-success"))
+            .style(theme::text::secondary)
             .align_x(Alignment::Center),
+        text::new::b5_bold(t!("business-did-registration-succeed")).align_x(Alignment::Center),
         row![
             btn_no(Some(Msg::RegistrationConfirmNo)),
             btn_yes(Some(Msg::RegistrationConfirmYes)),
@@ -90,7 +99,7 @@ fn confirm_coldcard_view(_modal_state: &RegistrationModalState) -> Element<'_, M
     .align_x(Alignment::Center);
 
     modal_view(
-        Some("Confirm Registration"),
+        Some(t!("business-confirm-registration")),
         None,
         None,
         ModalWidth::S,

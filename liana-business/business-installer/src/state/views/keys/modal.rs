@@ -1,4 +1,5 @@
 use liana_connect::{keys::api::Provider, ws_business};
+use liana_i18n::t;
 use std::fmt::{self, Display};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6,6 +7,21 @@ pub struct SignerOption {
     pub name: String,
     pub email: String,
     pub already_used: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenWarning {
+    Duplicate,
+    Invalid,
+}
+
+impl TokenWarning {
+    pub fn message(&self) -> String {
+        match self {
+            Self::Duplicate => t!("business-token-duplicate"),
+            Self::Invalid => t!("business-token-invalid"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,7 +63,7 @@ pub struct EditKeyModalState {
     pub token: String,
     pub provider: Option<Provider>,
     // Token validation state
-    pub token_warning: Option<&'static str>,
+    pub token_warning: Option<TokenWarning>,
     pub signer_options: Vec<SignerOption>,
 }
 

@@ -4,6 +4,7 @@ use iced::{
     widget::{column, row, Space},
     Padding,
 };
+use liana_i18n::t;
 use liana_ui::{
     component::{button, modal::ModalWidth, text},
     icon,
@@ -15,12 +16,12 @@ use liana_ui::{
 pub fn template_help_modal_view(_modal_state: &TemplateHelpModalState) -> Element<'_, Msg> {
     let title = row![
         icon::tooltip_icon().size(20).style(theme::text::warning),
-        text::new::b1_bold("Can't approve this template?")
+        text::new::b1_bold(t!("business-cannot-approve-template"))
     ]
     .spacing(HSpacing::M)
     .align_y(Vertical::Center);
 
-    let message = text::new::caption("To request edits, reach out to Wizardsardine directly: they can make the changes and send it back for approval.")
+    let message = text::new::caption(t!("business-request-template-edits-help"))
         .style(theme::text::secondary);
 
     let footer = row![

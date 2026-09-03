@@ -4,6 +4,7 @@ use crate::{
 };
 use iced::{widget::column, Alignment, Length};
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
+use liana_i18n::t;
 use liana_ui::{
     component::{
         list::{self, EntryAccent},
@@ -206,7 +207,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                 // Show message when search filter returns no results
                 if wallets_to_display.is_empty() && !search_filter.is_empty() {
                     list_content = list_content.push(
-                        text::new::caption("No wallets found matching your search.")
+                        text::new::caption(t!("business-no-wallets-search"))
                             .style(theme::text::secondary),
                     );
                 } else {
@@ -236,8 +237,8 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         .selected_org
         .and_then(|org_id| state.backend.get_org(org_id))
         .map(|org| org.name.clone())
-        .unwrap_or_else(|| "Organization".to_string());
-    let breadcrumb = vec![org_name, "Wallets".to_string()];
+        .unwrap_or_else(|| t!("business-organization"));
+    let breadcrumb = vec![org_name, t!("business-wallets")];
 
     select_list_view(SelectListView {
         progress: (4, INSTALLER_STEPS),
@@ -245,9 +246,9 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         email: current_user_email,
         is_ws_admin,
         breadcrumb,
-        title: "Wallets".to_string(),
+        title: t!("business-wallets"),
         search: (wallet_count > SEARCH_ENTRY_THRESHOLD).then_some(SelectSearch {
-            placeholder: "Filter wallets...".to_string(),
+            placeholder: t!("business-filter-wallets"),
             value: &state.views.wallet_select.search_filter,
             on_change: Msg::WalletSelectUpdateSearchFilter,
         }),

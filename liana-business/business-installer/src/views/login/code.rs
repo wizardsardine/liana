@@ -6,6 +6,7 @@ use iced::{
     widget::{column, row},
     Length,
 };
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{btn_change_email, btn_resend_token},
@@ -19,9 +20,13 @@ use super::LOGIN_WIDTH;
 
 pub fn login_code_view(state: &State) -> Element<'_, Msg> {
     let form = if !state.views.login.code.processing {
-        form::Form::new_trimmed("Token", &state.views.login.code.form, Msg::LoginUpdateCode)
+        form::Form::new_trimmed(
+            t!("common-token"),
+            &state.views.login.code.form,
+            Msg::LoginUpdateCode,
+        )
     } else {
-        form::Form::new_disabled("Token", &state.views.login.code.form)
+        form::Form::new_disabled(t!("common-token"), &state.views.login.code.form)
     }
     .id("login_code")
     .size(16)
@@ -46,7 +51,7 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
             screen_intro(
                 "Liana Business",
                 Some(intro_prompt(
-                    "An authentication token has been emailed to ",
+                    t!("installer-auth-token-emailed-to"),
                     Some(&state.views.login.email.form.value),
                 )),
                 true,
@@ -64,7 +69,7 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
         (2, INSTALLER_STEPS),
         state.network,
         None,
-        &["Login".to_string()],
+        &[t!("common-login")],
         content,
         Some(Msg::NavigateBack),
     )

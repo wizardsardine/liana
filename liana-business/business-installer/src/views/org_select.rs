@@ -7,6 +7,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
+use liana_i18n::t;
 use liana_ui::{
     component::{
         list,
@@ -93,7 +94,7 @@ pub fn org_card<'a>(name: String, id: Uuid, subtitle: Option<String>) -> Element
 pub fn no_org_card() -> Container<'static, Msg> {
     let content = row![
         Space::fill_width(),
-        text::h5_regular("Contact Wizardsardine to create an account."),
+        text::h5_regular(t!("business-contact-create-account")),
         Space::fill_width(),
     ]
     .align_y(Alignment::Center)
@@ -133,10 +134,8 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
 
     if filtered_orgs.is_empty() && !orgs.is_empty() {
         // Show message when search filter returns no results
-        list_content = list_content.push(
-            text::new::caption("No organizations found matching your search.")
-                .style(theme::text::secondary),
-        );
+        list_content = list_content
+            .push(text::new::caption(t!("business-no-orgs-search")).style(theme::text::secondary));
     } else if orgs.is_empty() {
         list_content = list_content.push(no_org_card());
     } else {
@@ -178,11 +177,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
                 continue;
             }
 
-            let wallet_label = if wallet_count == 1 {
-                "1 wallet".to_string()
-            } else {
-                format!("{wallet_count} wallets")
-            };
+            let wallet_label = t!("business-wallet-count-label", count = wallet_count);
 
             let card = org_card(org.name.clone(), **id, Some(wallet_label));
             list_content = list_content.push(card);
@@ -194,10 +189,10 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         network: state.network,
         email: current_user_email,
         is_ws_admin,
-        breadcrumb: vec!["Organizations".to_string()],
-        title: "Organizations".to_string(),
+        breadcrumb: vec![t!("business-organizations")],
+        title: t!("business-organizations"),
         search: (is_ws_admin && orgs.len() > SEARCH_ENTRY_THRESHOLD).then_some(SelectSearch {
-            placeholder: "Filter organizations...".to_string(),
+            placeholder: t!("business-filter-organizations"),
             value: &state.views.org_select.search_filter,
             on_change: Msg::OrgSelectUpdateSearchFilter,
         }),
