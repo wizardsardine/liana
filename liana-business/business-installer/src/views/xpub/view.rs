@@ -96,7 +96,7 @@ fn short_identity(key: &ws_business::Key) -> String {
     }
 }
 
-fn section_heading<'a>(label: &'a str, top_padding: f32) -> Element<'a, Msg> {
+fn section_heading(label: String, top_padding: f32) -> Element<'static, Msg> {
     Container::new(text::new::h3_semi(label).style(theme::text::primary))
         .width(button::STANDARD_ENTRY_WIDTH)
         .padding(iced::Padding {
@@ -163,14 +163,15 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
 
     let instruction = if is_wallet_manager {
         if all_keys_set {
-            "All keys are set. Once the other participants finish this step, the wallet will be ready."
+            "All keys are set. Once the other participants finish this step, the wallet will be ready.".to_string()
         } else {
-            "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf."
+            "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf.".to_string()
         }
     } else if owned_keys_set {
         "Your assigned keys are set. Waiting for the other participants to finish this step."
+            .to_string()
     } else {
-        "Select a key assigned to you to complete its setup. You can connect a hardware device or add an extended public key manually."
+        "Select a key assigned to you to complete its setup. You can connect a hardware device or add an extended public key manually.".to_string()
     };
 
     let header_content = screen_intro("Set Keys", Some(intro_description(instruction)), false);
@@ -189,7 +190,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     };
 
     let mut list_content = column![
-        section_heading("Your keys", 4.0),
+        section_heading("Your keys".to_string(), 4.0),
         owned_entries,
         Space::with_height(VSpacing::XL)
     ]
@@ -205,7 +206,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
             })
             .width(button::STANDARD_ENTRY_WIDTH);
         list_content = list_content
-            .push(section_heading("Other participants' keys", 0.0))
+            .push(section_heading("Other participants' keys".to_string(), 0.0))
             .push(entries)
             .push(Space::with_height(VSpacing::XL));
     }
@@ -218,7 +219,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
             })
             .width(button::STANDARD_ENTRY_WIDTH);
         list_content = list_content
-            .push(section_heading("External keys", 0.0))
+            .push(section_heading("External keys".to_string(), 0.0))
             .push(entries)
             .push(Space::with_height(VSpacing::XL));
     }

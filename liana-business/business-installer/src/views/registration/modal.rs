@@ -44,20 +44,14 @@ fn registering_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
     .width(Length::Fill)
     .align_x(Alignment::Center);
 
-    modal_view(
-        Some("Registering Wallet".to_string()),
-        None,
-        None,
-        ModalWidth::S,
-        body,
-    )
+    modal_view(Some("Registering Wallet"), None, None, ModalWidth::S, body)
 }
 
 fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
     let error_msg = modal_state
         .error
-        .as_deref()
-        .unwrap_or("Unknown error occurred");
+        .clone()
+        .unwrap_or_else(|| "Unknown error occurred".to_string());
 
     let body = column![
         icon::warning_icon().size(80),
@@ -73,19 +67,14 @@ fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
     .spacing(VSpacing::M)
     .align_x(Alignment::Center);
 
-    modal_view(
-        Some("Registration Failed".to_string()),
-        None,
-        None,
-        ModalWidth::S,
-        body,
-    )
+    modal_view(Some("Registration Failed"), None, None, ModalWidth::S, body)
 }
 
 fn confirm_coldcard_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
     let body = column![
         text::new::caption(
-            "Please confirm on your Coldcard that the wallet registration completed successfully.",
+            "Please confirm on your Coldcard that the wallet registration completed successfully."
+                .to_string()
         )
         .style(theme::text::secondary)
         .align_x(Alignment::Center),
@@ -101,7 +90,7 @@ fn confirm_coldcard_view(_modal_state: &RegistrationModalState) -> Element<'_, M
     .align_x(Alignment::Center);
 
     modal_view(
-        Some("Confirm Registration".to_string()),
+        Some("Confirm Registration"),
         None,
         None,
         ModalWidth::S,

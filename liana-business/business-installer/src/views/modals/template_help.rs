@@ -20,10 +20,8 @@ pub fn template_help_modal_view(_modal_state: &TemplateHelpModalState) -> Elemen
     .spacing(HSpacing::M)
     .align_y(Vertical::Center);
 
-    let message = text::new::caption(
-        "To request edits, reach out to Wizardsardine directly: they can make the changes and send it back for approval.",
-    )
-    .style(theme::text::secondary);
+    let message = text::new::caption("To request edits, reach out to Wizardsardine directly: they can make the changes and send it back for approval.")
+        .style(theme::text::secondary);
 
     let footer = row![
         Space::fill_width(),
