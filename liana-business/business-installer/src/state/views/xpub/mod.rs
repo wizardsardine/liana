@@ -247,7 +247,7 @@ pub fn validate_xpub_format(xpub_str: &str) -> Result<DescriptorPublicKey, Strin
     let trimmed = xpub_str.trim();
 
     if trimmed.is_empty() {
-        return Err("Extended public key cannot be empty".to_string());
+        return Err("Extended public key cannot be empty.".to_string());
     }
 
     // Try to parse as DescriptorPublicKey
@@ -288,7 +288,7 @@ pub fn validate_xpub(xpub_str: &str, network: Network) -> Result<DescriptorPubli
 
     if !check_key_network(&key, network) {
         let expected = network.to_string();
-        return Err(format!("Extended public key is not valid for {expected}"));
+        return Err(format!("Extended public key is not valid for {expected}."));
     }
 
     Ok(key)

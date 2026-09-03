@@ -67,7 +67,7 @@ pub fn verify_address_modal<'a>(
     ));
     if qr_section_open {
         devices = devices.push(btn_show_qr_section(
-            Some("For specter DIY devices"),
+            Some("For Specter DIY devices"),
             Some(Message::ShowAddressQrCode(AddressQrSource::WithIndex(
                 address.clone(),
                 derivation_index,

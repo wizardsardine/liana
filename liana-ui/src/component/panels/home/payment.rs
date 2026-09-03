@@ -76,7 +76,7 @@ impl FiatSource {
         let txt = match self {
             FiatSource::User => "Price you have filled yourself",
             FiatSource::Wizardsardine => {
-                "Price automaticaly processed by WS when you crafted the transaction"
+                "Price automatically processed by WS when you crafted the transaction"
             }
             FiatSource::Timestamp => "Default price at the time the transaction has been confirmed",
         };

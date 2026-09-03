@@ -324,14 +324,14 @@ fn next_disabled_reason(
         ))
     } else if recipients.iter().any(|r| empty_or_invalid(&r.amount)) {
         Some(NextBlocker::Reason(if max_under_dust {
-            "Select or add more funds"
+            "Select or add more funds."
         } else {
             "A recipient amount is missing or invalid"
         }))
     } else if empty_or_invalid(feerate) {
         Some(NextBlocker::Reason("The feerate is missing or invalid"))
     } else if !any_coin_selected {
-        Some(NextBlocker::Reason("Select at least one coin"))
+        Some(NextBlocker::Reason("Select at least one coin."))
     } else if !is_self_send
         && recovery_timelock.is_none()
         && amount_left != Some(&Amount::from_sat(0))

@@ -172,7 +172,7 @@ fn account_picker(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
     };
 
     let label = row![
-        text::new::b5_bold("Key path account").style(theme::text::primary),
+        text::new::b5_bold("Key path account:").style(theme::text::primary),
         tooltip::tooltip(
             "The account number in this key's derivation path. Pick a different account to derive an independent key from the same device."
         ),

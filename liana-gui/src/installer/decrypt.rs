@@ -672,13 +672,13 @@ pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Messag
     let content = match state.error {
         Some(e) => match e {
             Error::InvalidEncoding => invalid_content(
-                "The file cannot be decoded properly, it seems no be an encrypted backup.",
+                "The file cannot be decoded properly, it seems not to be an encrypted backup.",
             ),
             Error::InvalidType => invalid_content(
-                "The file have been decrypted but the content type is not supported.",
+                "The file has been decrypted but the content type is not supported.",
             ),
             Error::InvalidDescriptor => invalid_content(
-                "The file have been decrypted but the descriptor is not a valid Liana descriptor.",
+                "The file has been decrypted but the descriptor is not a valid Liana descriptor.",
             ),
         },
         None => valid_content(state),

@@ -1144,7 +1144,7 @@ impl SelectKeySource {
                     }
                     UnsupportedReason::NotPartOfWallet(_) => None, // unreachable
                     UnsupportedReason::WrongNetwork => {
-                        Some("The device is configured on wrong network".to_string())
+                        Some("The device is configured on the wrong network".to_string())
                     }
                     UnsupportedReason::AppIsNotOpen => {
                         Some("Please open the app on device".to_string())
@@ -1336,7 +1336,7 @@ where
 {
     let pick_account = pick_account
         .map(|pick_account| row![pick_account, Space::with_width(Length::Fill)].spacing(5));
-    let info = "Switch account if you already uses the same hardware in other configurations";
+    let info = "Switch account if you already use the same hardware in other configurations";
 
     let submit = error.is_none().then(|| apply_msg.clone()).flatten();
     let error = error.clone().map(|e| p1_regular(e).color(color::ORANGE));
