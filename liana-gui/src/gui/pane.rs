@@ -7,6 +7,7 @@ use crate::{
     app::{self, settings::SettingsTrait},
     gui::Config,
     installer::{self},
+    t,
 };
 
 use super::tab;
@@ -206,14 +207,14 @@ where
                     };
                     let items = Column::new()
                         .push(
-                            MenuButton::new(p1_regular("Close"))
+                            MenuButton::new(p1_regular(t!("btn-close-tab")))
                                 .style(close_style)
                                 .on_press(ViewMessage::CloseTab(i))
                                 .width(120),
                         )
                         .push_maybe(if has_split {
                             Some(
-                                MenuButton::new(p1_regular("Split"))
+                                MenuButton::new(p1_regular(t!("btn-split-tab")))
                                     .style(theme::button::tab_menu_bottom)
                                     .on_press(ViewMessage::SplitTab(i))
                                     .width(120),

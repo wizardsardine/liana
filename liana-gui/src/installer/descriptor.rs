@@ -4,7 +4,7 @@ use liana::miniscript::{
     descriptor::DescriptorPublicKey,
 };
 
-use crate::{app::settings::ProviderKey, hw::is_compatible_with_tapminiscript};
+use crate::{app::settings::ProviderKey, hw::is_compatible_with_tapminiscript, t};
 use liana_connect::keys::api::KeyKind;
 
 /// Whether to enable cosigner keys on all paths (excluding safety net paths).
@@ -239,13 +239,9 @@ pub enum PathWarning {
 impl PathWarning {
     pub fn message(&self) -> String {
         match self {
-            Self::DuplicateSequence => {
-                "No two recovery options may become available at the very same date."
-            }
-            Self::OnlyCosignerKeys => "A path cannot contain only cosigner keys.",
-            Self::KeySourceKindDisallowed => {
-                "Path contains a key that is disallowed for this kind of path."
-            }
+            Self::DuplicateSequence => t!("installer-path-duplicate-sequence"),
+            Self::OnlyCosignerKeys => t!("installer-path-only-cosigner-keys"),
+            Self::KeySourceKindDisallowed => t!("installer-path-key-source-disallowed"),
         }
         .to_string()
     }

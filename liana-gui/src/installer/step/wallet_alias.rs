@@ -7,6 +7,7 @@ use crate::{
     hw::HardwareWallets,
     installer::{context::Context, message::Message, step::Step, view},
     services::connect::client::backend::WALLET_ALIAS_MAXIMUM_LENGTH,
+    t,
 };
 
 #[derive(Default)]
@@ -27,9 +28,9 @@ impl Step for WalletAlias {
             }
             // No alias at all, we set a default value.
             (true, true) => {
-                self.wallet_alias.value = format!(
-                    "My Liana {} wallet",
-                    match ctx.network {
+                self.wallet_alias.value = t!(
+                    "launcher-default-wallet-name",
+                    network = match ctx.network {
                         Network::Bitcoin => "Bitcoin",
                         Network::Signet => "Signet",
                         Network::Testnet => "Testnet",

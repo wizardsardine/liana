@@ -5,6 +5,8 @@ use liana_ui::{
     icon,
 };
 
+use crate::t;
+
 #[derive(Debug, Clone, Copy)]
 pub enum MenuWidth {
     Normal,
@@ -99,14 +101,14 @@ fn menu_entry<'a>(
 impl Menu {
     pub fn title(&self) -> String {
         match self {
-            Menu::Home => "Dashboard".to_string(),
-            Menu::Receive => "Receive".to_string(),
-            Menu::PSBTs => "Drafts & Approvals".to_string(),
-            Menu::Transactions => "Transactions".to_string(),
-            Menu::Settings => "Settings".to_string(),
-            Menu::Coins => "Coins/UTXOs".to_string(),
-            Menu::CreateSpendTx => "Send".to_string(),
-            Menu::Recovery => "Recovery".to_string(),
+            Menu::Home => t!("menu-dashboard"),
+            Menu::Receive => t!("menu-receive"),
+            Menu::PSBTs => t!("menu-drafts-approvals"),
+            Menu::Transactions => t!("menu-transactions"),
+            Menu::Settings => t!("menu-settings"),
+            Menu::Coins => t!("menu-coins-utxos"),
+            Menu::CreateSpendTx => t!("menu-send"),
+            Menu::Recovery => t!("common-recovery"),
             Menu::RefreshCoins(_)
             | Menu::PsbtPreSelected(_)
             | Menu::TransactionPreSelected(_)

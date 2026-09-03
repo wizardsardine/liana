@@ -33,6 +33,7 @@ use crate::{
         },
         login,
     },
+    t,
 };
 
 #[allow(clippy::large_enum_variant)]
@@ -157,10 +158,10 @@ where
 
     pub fn title(&self) -> String {
         match &self.state {
-            State::Installer(_) => "Installer".to_string(),
-            State::Loader(_) => "Loading...".to_string(),
-            State::Launcher(_) => "Launcher".to_string(),
-            State::Login(_) => "Login".to_string(),
+            State::Installer(_) => t!("tab-installer"),
+            State::Loader(_) => t!("common-loading"),
+            State::Launcher(_) => t!("tab-launcher"),
+            State::Login(_) => t!("common-login"),
             State::App(a) => a.title().to_string(),
             State::_Phantom(_) => unreachable!(),
         }
@@ -592,7 +593,7 @@ pub fn create_app_with_remote_backend(
     let network_directory = liana_dir.network_directory(network);
     let wallet_settings =
         LianaWalletSettings::from_file(&network_directory, |w| w.wallet_id() == wallet_id)?
-            .ok_or_else(|| SettingsError::Unexpected("Wallet not found".to_string()))?;
+            .ok_or_else(|| SettingsError::Unexpected(crate::t!("launcher-wallet-not-found")))?;
 
     // If someone modified the wallet_alias on Liana-Connect,
     // then the new alias is imported and stored in the settings file.
@@ -764,7 +765,12 @@ async fn connect_for_business(
         .map_err(|e| login::Error::Unexpected(e.to_string()))?
         .into_iter()
         .find(|w| w.id == wallet_id)
-        .ok_or_else(|| login::Error::Unexpected(format!("Wallet {wallet_id} not found")))?;
+        .ok_or_else(|| {
+            login::Error::Unexpected(crate::t!(
+                "launcher-wallet-id-not-found",
+                wallet_id = wallet_id
+            ))
+        })?;
 
     // Wallet confirmed to belong to the connected user — safe to stamp the
     // connect-token cache with the authoritative user_id/email. The by_email

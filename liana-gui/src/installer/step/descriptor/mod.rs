@@ -23,7 +23,7 @@ use crate::{
     installer::{
         decrypt::{Decrypt, DecryptModal},
         message::{self, Message},
-        step::import_descriptor::{ImportDescriptorModal, BACKUP_NETWORK_NOT_MATCH},
+        step::import_descriptor::ImportDescriptorModal,
         step::{Context, Step},
         view, Error,
     },
@@ -130,7 +130,7 @@ impl Step for ImportDescriptor {
                         self.imported_descriptor.value = descriptor.to_string();
                         self.imported_aliases = Some(aliases);
                     } else {
-                        self.error = Some(BACKUP_NETWORK_NOT_MATCH.into());
+                        self.error = Some(crate::t!("installer-backup-network-mismatch"));
                     }
                 } else {
                     // The backup have been inferred from a bare descriptor, we check whether
@@ -140,7 +140,7 @@ impl Step for ImportDescriptor {
                         self.imported_descriptor.value = descriptor.to_string();
                         self.imported_aliases = Some(aliases);
                     } else {
-                        self.error = Some(BACKUP_NETWORK_NOT_MATCH.into());
+                        self.error = Some(crate::t!("installer-backup-network-mismatch"));
                     }
                 }
                 None
@@ -184,11 +184,11 @@ impl Step for ImportDescriptor {
                         self.modal = ImportDescriptorModal::None;
                     } else {
                         self.modal = ImportDescriptorModal::None;
-                        self.error = Some(BACKUP_NETWORK_NOT_MATCH.into());
+                        self.error = Some(crate::t!("installer-backup-network-mismatch"));
                     }
                 } else {
                     self.modal = ImportDescriptorModal::None;
-                    self.error = Some("Backup imported but descriptor missing!".into());
+                    self.error = Some(crate::t!("installer-backup-descriptor-missing"));
                 }
                 None
             }
@@ -465,7 +465,7 @@ impl Step for BackupDescriptor {
                     return Task::perform(
                         async move {
                             let descriptor = descriptor.ok_or(encrypted_backup::Error::String(
-                                Box::new("Descriptor missing".to_string()),
+                                Box::new(crate::t!("installer-descriptor-missing")),
                             ))?;
                             Ok(Box::new(descriptor))
                         },

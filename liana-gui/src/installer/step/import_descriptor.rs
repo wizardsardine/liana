@@ -11,8 +11,6 @@ use crate::{
     },
 };
 
-pub const BACKUP_NETWORK_NOT_MATCH: &str = "installer-backup-network-mismatch";
-
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum ImportDescriptorModal {

@@ -10,6 +10,8 @@ use liana::{
     miniscript::bitcoin::{bip32::Fingerprint, Amount, Network},
 };
 
+use lianad::commands::CreateRecoveryWarning;
+
 use liana_ui::{
     component::{
         amount::*,
@@ -37,7 +39,7 @@ use crate::{
 pub fn spend_view<'a>(
     cache: &'a Cache,
     tx: &'a SpendTx,
-    spend_warnings: &'a [String],
+    spend_warnings: &'a [CreateRecoveryWarning],
     saved: bool,
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
@@ -62,8 +64,13 @@ pub fn spend_view<'a>(
 
     let warnings = (!(spend_warnings.is_empty() || saved)).then_some({
         let rows = spend_warnings.iter().map(|warning| {
+            let text = match warning {
+                CreateRecoveryWarning::ToOwnAddress => t!("spend-warning-recovery-own-address"),
+                // Worded by the daemon or the Connect API, so it stays as it comes.
+                CreateRecoveryWarning::String(warning) => warning.clone(),
+            };
             let warn_icon = icon::warning_icon().style(theme::text::warning);
-            let warn_text = new::caption(warning).style(theme::text::warning);
+            let warn_text = new::caption(text).style(theme::text::warning);
             row![warn_icon, warn_text].spacing(5).into()
         });
         Column::with_children(rows).padding(15).spacing(5)

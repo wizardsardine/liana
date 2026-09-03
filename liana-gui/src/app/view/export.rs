@@ -14,7 +14,10 @@ use liana_ui::{
 };
 
 use crate::export::ImportExportState;
-use crate::export::{Error, ImportExportMessage, ImportExportType};
+use crate::{
+    export::{Error, ImportExportMessage, ImportExportType},
+    t,
+};
 
 /// Return the modal view for an export task
 pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
@@ -44,13 +47,13 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
         match state {
             ImportExportState::Init => "".to_string(),
             ImportExportState::ChoosePath => {
-                "Select the path you want to export in the popup window...".to_string()
+                t!("export-select-path")
             }
-            ImportExportState::Path(_) => String::new(),
-            ImportExportState::Started => "Starting export...".to_string(),
-            ImportExportState::Progress(p) => format!("Progress: {}%", p.round()),
-            ImportExportState::TimedOut => "Export failed: timeout".to_string(),
-            ImportExportState::Aborted => "Export canceled".to_string(),
+            ImportExportState::Path(_) => "".into(),
+            ImportExportState::Started => t!("export-starting"),
+            ImportExportState::Progress(p) => t!("export-progress", progress = p.round()),
+            ImportExportState::TimedOut => t!("export-timeout"),
+            ImportExportState::Aborted => t!("export-canceled"),
             ImportExportState::Ended => import_export_type.end_message(),
             ImportExportState::Closed => "".into(),
         }
@@ -65,14 +68,8 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
         .spacing(HSpacing::M)
         .into()
     };
-    let labels_btn = (
-        "Labels conflict, what do you want to do?".to_string(),
-        Some(conflict_buttons()),
-    );
-    let aliases_btn = (
-        "Aliases conflict, what do you want to do?".to_string(),
-        Some(conflict_buttons()),
-    );
+    let labels_btn = (t!("export-labels-conflict"), Some(conflict_buttons()));
+    let aliases_btn = (t!("export-aliases-conflict"), Some(conflict_buttons()));
     let (msg, button) = match import_export_type {
         ImportExportType::ImportBackup {
             overwrite_labels,

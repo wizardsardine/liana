@@ -27,6 +27,7 @@ use crate::{
         view::{hw, warning::warn},
     },
     hw::HardwareWallet,
+    t,
 };
 
 use crate::app::view::message::{AddressQrSource, LabelMessage, Message, NewAddressMessage};
@@ -61,13 +62,13 @@ pub fn verify_address_modal<'a>(
     }
     devices = devices.push(optional_section(
         qr_section_open,
-        "Other options".to_string(),
+        t!("common-other-options"),
         || Message::ShowQrOptSection(true),
         || Message::ShowQrOptSection(false),
     ));
     if qr_section_open {
         devices = devices.push(btn_show_qr_section(
-            Some("For Specter DIY devices"),
+            Some(t!("receive-specter-diy-tooltip")),
             Some(Message::ShowAddressQrCode(AddressQrSource::WithIndex(
                 address.clone(),
                 derivation_index,
@@ -82,12 +83,12 @@ pub fn verify_address_modal<'a>(
             &derivation_index,
             Message::Clipboard(address.to_string()),
         ))
-        .push(text("Select device to verify address on:").width(Length::Fill))
+        .push(text(t!("receive-select-device")).width(Length::Fill))
         .push(devices)
         .spacing(20)
         .width(Length::Fill);
     modal::modal_view(
-        Some("Verify address"),
+        Some(t!("receive-verify-address")),
         None,
         Some(Message::Close),
         modal::ModalWidth::XL,
@@ -97,7 +98,7 @@ pub fn verify_address_modal<'a>(
 
 pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a str) -> Element<'a, Message> {
     modal::modal_view(
-        Some("Address"),
+        Some(t!("common-address")),
         None,
         Some(Message::Close),
         modal::ModalWidth::L,
@@ -114,8 +115,8 @@ pub fn edit_label_modal<'a>(address: &str, value: &'a form::Value<String>) -> El
     let confirm = Message::Label(vec![addr.clone()], LabelMessage::Confirm);
     let cancel = Message::Label(vec![addr], LabelMessage::Cancel);
     label::edit_label_modal(
-        "Edit label",
-        "Enter an address label",
+        t!("label-edit"),
+        t!("receive-address-label-placeholder"),
         value,
         on_change,
         confirm,
@@ -126,8 +127,8 @@ pub fn edit_label_modal<'a>(address: &str, value: &'a form::Value<String>) -> El
 
 pub fn new_address_label_modal<'a>(value: &'a form::Value<String>) -> Element<'a, Message> {
     label::edit_label_modal(
-        "Label",
-        "Enter an address label",
+        t!("label-label"),
+        t!("receive-address-label-placeholder"),
         value,
         |s| Message::NewAddress(NewAddressMessage::LabelEdited(s)),
         Message::NewAddress(NewAddressMessage::Confirm),
@@ -148,10 +149,10 @@ pub fn new_address_show_modal<'a>(address: &Address) -> Element<'a, Message> {
 
 pub fn new_address_processing_modal<'a>() -> Element<'a, Message> {
     modal::modal_view(
-        Some("Generating address"),
+        Some(t!("receive-generating-address-title")),
         None,
         None,
         modal::ModalWidth::M,
-        Container::new(text("Generating address ...")).center_x(Length::Fill),
+        Container::new(text(t!("receive-generating-address"))).center_x(Length::Fill),
     )
 }

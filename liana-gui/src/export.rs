@@ -197,12 +197,12 @@ impl ImportExportType {
             | ImportExportType::ExportProcessBackup(..)
             | ImportExportType::ExportXpub(_)
             | ImportExportType::ExportEncryptedDescriptor(_)
-            | ImportExportType::ExportLabels => "Export successful!".to_string(),
+            | ImportExportType::ExportLabels => crate::t!("export-success"),
             ImportExportType::ImportBackup { .. }
             | ImportExportType::ImportPsbt(_)
             | ImportExportType::ImportXpub(_)
             | ImportExportType::FromBackup(_)
-            | ImportExportType::ImportDescriptor(_) => "Import successful".to_string(),
+            | ImportExportType::ImportDescriptor(_) => crate::t!("import-success"),
         }
     }
 }

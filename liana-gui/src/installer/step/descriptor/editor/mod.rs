@@ -32,6 +32,7 @@ use crate::{
         view,
     },
     signer::Signer,
+    t,
 };
 use liana_connect::keys::api::KeyKind;
 
@@ -647,9 +648,8 @@ impl Step for DefineDescriptor {
         };
         let modal: Option<Element<'a, Message>> = if self.processing {
             Some(spinner::spinner_modal(
-                "Loading...",
-                "Generating and validating your wallet descriptor. This can take a few seconds."
-                    .to_string(),
+                t!("common-loading"),
+                t!("installer-descriptor-generating"),
             ))
         } else {
             self.modal.as_ref().map(|modal| modal.view(hws))

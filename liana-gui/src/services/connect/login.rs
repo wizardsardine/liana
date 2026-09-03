@@ -17,6 +17,7 @@ use crate::{
     },
     daemon::DaemonError,
     dir::{LianaDirectory, NetworkDirectory},
+    t,
 };
 
 use super::client::{
@@ -132,7 +133,20 @@ pub struct LianaLiteLogin {
     // Error due to connection
     connection_error: Option<Error>,
     // Authentication Error
-    auth_error: Option<&'static str>,
+    auth_error: Option<AuthWarning>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AuthWarning {
+    TokenExpired,
+}
+
+impl AuthWarning {
+    fn message(self) -> String {
+        match self {
+            Self::TokenExpired => t!("lianalite-token-expired"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -249,7 +263,7 @@ impl LianaLiteLogin {
                                 .map_err(|e| {
                                     if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
                                         Error::Unexpected(
-                                            "Remote servers are unresponsive".to_string(),
+                                            "connect-remote-servers-unresponsive".to_string(),
                                         )
                                     } else {
                                         Error::Unexpected(e.to_string())
@@ -359,7 +373,7 @@ impl LianaLiteLogin {
                             tracing::warn!("{}", e);
                             if let Error::Auth(AuthError { http_status, .. }) = e {
                                 if http_status == Some(403) {
-                                    self.auth_error = Some("Token is expired or is invalid")
+                                    self.auth_error = Some(AuthWarning::TokenExpired)
                                 } else {
                                     self.connection_error = Some(e);
                                 }
@@ -383,59 +397,33 @@ impl LianaLiteLogin {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let content = Into::<Element<ViewMessage>>::into(
-            Container::new(
-                Column::new().spacing(100).align_x(Alignment::Center).push(
-                    Column::new()
-                        .align_x(Alignment::Center)
-                        .spacing(20)
-                        .width(Length::Fill)
-                        .push(h2("Liana Connect"))
-                        .push(
-                            Column::new()
-                                .max_width(500)
-                                .spacing(20)
-                                .push(match &self.step {
-                                    ConnectionStep::WalletDoesNotExist => Column::new()
-                                        .push(text("This wallet was deleted by its creator for all participants and cannot be opened. To access it again, restore it using a backup file or the wallet descriptor.")),
-                                    ConnectionStep::CheckingAuthFile => Column::new(),
-                                    ConnectionStep::CheckEmail => Column::new()
-                                        .spacing(20)
-                                        .align_x(Alignment::Center)
-                                        .push_maybe(
-                                            self.auth_error
-                                                .map(|e| text(e).style(theme::text::warning)),
-                                        )
-                                        .push(text(&self.email))
-                                        .push(
-                                            button::secondary(None, "Login")
-                                                .width(Length::Fixed(200.0))
-                                                .on_press_maybe(if self.processing {
-                                                    None
-                                                } else {
-                                                    Some(ViewMessage::RequestOTP)
-                                                }),
-                                        ),
-                                    ConnectionStep::EnterOtp { otp, .. } => Column::new()
-                                        .spacing(20)
-                                        .align_x(Alignment::Center)
-                                        .push(text("An authentication was sent to your email:"))
-                                        .push(text(&self.email))
-                                        .push_maybe(
-                                            self.auth_error
-                                                .map(|e| text(e).style(theme::text::warning)),
-                                        )
-                                        .push(
-                                            form::Form::new_trimmed("Token", otp, |msg| {
-                                                ViewMessage::OTPEdited(msg)
-                                            })
-                                            .size(P1_SIZE)
-                                            .padding(10)
-                                            .warning("Token is not valid"),
-                                        )
-                                        .push(
-                                            Row::new().spacing(10).push(
-                                                button::secondary(None, "Resend token")
+        let content =
+            Into::<Element<ViewMessage>>::into(
+                Container::new(
+                    Column::new().spacing(100).align_x(Alignment::Center).push(
+                        Column::new()
+                            .align_x(Alignment::Center)
+                            .spacing(20)
+                            .width(Length::Fill)
+                            .push(h2("Liana Connect"))
+                            .push(
+                                Column::new()
+                                    .max_width(500)
+                                    .spacing(20)
+                                    .push(match &self.step {
+                                        ConnectionStep::WalletDoesNotExist => {
+                                            Column::new().push(text(t!("lianalite-wallet-deleted")))
+                                        }
+                                        ConnectionStep::CheckingAuthFile => Column::new(),
+                                        ConnectionStep::CheckEmail => Column::new()
+                                            .spacing(20)
+                                            .align_x(Alignment::Center)
+                                            .push_maybe(self.auth_error.map(|e| {
+                                                text(e.message()).style(theme::text::warning)
+                                            }))
+                                            .push(text(&self.email))
+                                            .push(
+                                                button::secondary(None, t!("btn-login"))
                                                     .width(Length::Fixed(200.0))
                                                     .on_press_maybe(if self.processing {
                                                         None
@@ -443,16 +431,44 @@ impl LianaLiteLogin {
                                                         Some(ViewMessage::RequestOTP)
                                                     }),
                                             ),
-                                        ),
-                                }),
-                        ),
-                ),
+                                        ConnectionStep::EnterOtp { otp, .. } => Column::new()
+                                            .spacing(20)
+                                            .align_x(Alignment::Center)
+                                            .push(text(t!("lianalite-auth-sent")))
+                                            .push(text(&self.email))
+                                            .push_maybe(self.auth_error.map(|e| {
+                                                text(e.message()).style(theme::text::warning)
+                                            }))
+                                            .push(
+                                                form::Form::new_trimmed(
+                                                    &t!("common-token"),
+                                                    otp,
+                                                    ViewMessage::OTPEdited,
+                                                )
+                                                .size(P1_SIZE)
+                                                .padding(10)
+                                                .warning(t!("lianalite-token-invalid")),
+                                            )
+                                            .push(
+                                                Row::new().spacing(10).push(
+                                                    button::secondary(None, t!("btn-resend-token"))
+                                                        .width(Length::Fixed(200.0))
+                                                        .on_press_maybe(if self.processing {
+                                                            None
+                                                        } else {
+                                                            Some(ViewMessage::RequestOTP)
+                                                        }),
+                                                ),
+                                            ),
+                                    }),
+                            ),
+                    ),
+                )
+                .padding(50)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
             )
-            .padding(50)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill),
-        )
-        .map(Message::View);
+            .map(Message::View);
 
         let mut col = Column::new();
         if self.network != Network::Bitcoin {
@@ -460,7 +476,7 @@ impl LianaLiteLogin {
         }
         if let Some(error) = &self.connection_error {
             col = col.push(
-                notification::warning("Connection failed".to_string(), error.to_string())
+                notification::warning(t!("common-connection-failed"), error.to_string())
                     .width(Length::Fill),
             );
         }
@@ -468,7 +484,7 @@ impl LianaLiteLogin {
         col.push_maybe(if !matches!(self.step, ConnectionStep::CheckingAuthFile) {
             Some(
                 Container::new(
-                    button::secondary(Some(icon::previous_icon()), "Go back")
+                    button::secondary(Some(icon::previous_icon()), t!("btn-go-back"))
                         .width(Length::Fixed(200.0))
                         .on_press(Message::View(ViewMessage::BackToLauncher(self.network))),
                 )

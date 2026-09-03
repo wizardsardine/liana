@@ -19,7 +19,7 @@ use liana::{
     },
     spend::{SpendCreationError, DUST_OUTPUT_SATS, MAX_FEERATE},
 };
-use lianad::commands::ListCoinsEntry;
+use lianad::commands::{CreateRecoveryWarning, ListCoinsEntry};
 
 use liana_ui::{
     component::{
@@ -50,7 +50,7 @@ pub struct TransactionDraft {
     network: Network,
     inputs: Vec<Coin>,
     recipients: Vec<Recipient>,
-    generated: Option<(Psbt, Vec<String>)>,
+    generated: Option<(Psbt, Vec<CreateRecoveryWarning>)>,
     batch_label: Option<String>,
     labels: HashMap<String, String>,
     /// The timelock of the recovery path to use for spending.
@@ -175,7 +175,7 @@ pub struct DefineSpend {
     feerate: form::Value<String>,
     fee_mode: FeeMode,
     fee_amount: Option<Amount>,
-    generated: Option<(Psbt, Vec<String>)>,
+    generated: Option<(Psbt, Vec<CreateRecoveryWarning>)>,
     warning: Option<Error>,
     /// Whether this is the first step of the spend creation.
     /// Required in order to know whether the user can navigate to a previous step.
@@ -737,9 +737,6 @@ impl Step for DefineSpend {
                                         )
                                         .await
                                         .map_err(|e| e.into())
-                                        .map(|(psbt, warnings)| {
-                                            (psbt, warnings.iter().map(|w| w.to_string()).collect())
-                                        })
                                 },
                                 Message::Psbt,
                             );
@@ -758,7 +755,15 @@ impl Step for DefineSpend {
                                         .map_err(|e| e.into())
                                         .and_then(|res| match res {
                                             CreateSpendResult::Success { psbt, warnings } => {
-                                                Ok((psbt, warnings))
+                                                // The daemon returns these already worded, so
+                                                // they pass through untranslated.
+                                                Ok((
+                                                    psbt,
+                                                    warnings
+                                                        .into_iter()
+                                                        .map(CreateRecoveryWarning::String)
+                                                        .collect(),
+                                                ))
                                             }
                                             CreateSpendResult::InsufficientFunds { missing } => {
                                                 Err(SpendCreationError::CoinSelection(
@@ -1133,7 +1138,7 @@ impl Recipient {
 
 pub struct SaveSpend {
     wallet: Arc<Wallet>,
-    spend: Option<(psbt::PsbtState, Vec<String>)>,
+    spend: Option<(psbt::PsbtState, Vec<CreateRecoveryWarning>)>,
     curve: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 }
 

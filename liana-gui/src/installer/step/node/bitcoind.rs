@@ -34,6 +34,7 @@ use crate::{
         InternalBitcoindConfigError, InternalBitcoindNetworkConfig, RpcAuthType, RpcAuthValues,
         StartInternalBitcoindError, VERSION,
     },
+    t,
 };
 
 // The approach for tracking download progress is taken from
@@ -268,9 +269,9 @@ pub fn get_available_port() -> Result<u16, Error> {
             return Ok(port);
         }
     }
-    Err(Error::CannotGetAvailablePort(
-        "Exhausted attempts".to_string(),
-    ))
+    Err(Error::CannotGetAvailablePort(t!(
+        "installer-port-attempts-exhausted"
+    )))
 }
 
 /// Checks if port is valid for use by internal bitcoind.
@@ -364,8 +365,9 @@ impl DefineBitcoind {
         let builder = match self.selected_auth_type {
             RpcAuthType::CookieFile => {
                 let cookie_path = rpc_auth_vals.cookie_path.value;
-                let cookie = std::fs::read_to_string(cookie_path)
-                    .map_err(|e| Error::Bitcoind(format!("Failed to read cookie file: {e}")))?;
+                let cookie = std::fs::read_to_string(cookie_path).map_err(|e| {
+                    Error::Bitcoind(t!("installer-read-cookie-file-failed", error = e))
+                })?;
                 SimpleHttpTransport::builder().cookie_auth(cookie)
             }
             RpcAuthType::UserPass => {
@@ -601,21 +603,22 @@ impl Step for InternalBitcoindStep {
                             (Ok(rpc_port), Ok(p2p_port)) => {
                                 // In case ports are the same, user will need to click button again for another attempt.
                                 if rpc_port == p2p_port {
-                                    self.error = Some(
-                                        "Could not get distinct ports. Please try again."
-                                            .to_string(),
-                                    );
+                                    self.error =
+                                        Some("installer-distinct-ports-unavailable".to_string());
                                     return Task::none();
                                 }
                                 (rpc_port, p2p_port)
                             }
                             (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
-                                self.error = Some(format!("Could not get available port: {e}."));
+                                self.error = Some(t!("installer-available-port-failed", error = e));
                                 return Task::none();
                             }
                             (Err(e1), Err(e2)) => {
-                                self.error =
-                                    Some(format!("Could not get available ports: {e1}; {e2}."));
+                                self.error = Some(t!(
+                                    "installer-available-ports-failed",
+                                    error1 = e1,
+                                    error2 = e2
+                                ));
                                 return Task::none();
                             }
                         }

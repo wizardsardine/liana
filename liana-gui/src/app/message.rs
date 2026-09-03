@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use lianad::commands::CreateRecoveryWarning;
+
 use liana::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     psbt::Psbt,
@@ -48,7 +50,7 @@ pub enum Message {
     CoinsTipHeight(Result<Vec<Coin>, Error>, Result<i32, Error>),
     Labels(Result<HashMap<String, String>, Error>),
     SpendTxs(Result<Vec<SpendTx>, Error>),
-    Psbt(Result<(Psbt, Vec<String>), Error>),
+    Psbt(Result<(Psbt, Vec<CreateRecoveryWarning>), Error>),
     RbfPsbt(Result<Txid, Error>),
     Recovery(Result<SpendTx, Error>),
     Signed(Fingerprint, Result<Psbt, Error>),
