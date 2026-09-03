@@ -48,16 +48,17 @@ pub fn label_editing(
 ) -> Element<'_, view::Message> {
     let e: Element<view::LabelMessage> = Container::new(
         row!(
-            form::Form::new(&"Label", label, view::LabelMessage::Edited)
+            form::Form::new(&t!("label-label"), label, view::LabelMessage::Edited)
                 .warning(t!("label-invalid-length"))
                 .size(size)
                 .padding(10),
             if label.valid {
-                button::secondary(None, "Save").on_press(view::message::LabelMessage::Confirm)
+                button::secondary(None, t!("btn-save"))
+                    .on_press(view::message::LabelMessage::Confirm)
             } else {
-                button::secondary(None, "Save")
+                button::secondary(None, t!("btn-save"))
             },
-            button::secondary(None, "Cancel").on_press(view::message::LabelMessage::Cancel)
+            button::secondary(None, t!("btn-cancel")).on_press(view::message::LabelMessage::Cancel)
         )
         .spacing(5)
         .align_y(Alignment::Center),
@@ -73,7 +74,7 @@ pub fn label_non_editable(
 ) -> Element<'_, view::Message> {
     let label_text = label
         .cloned()
-        .unwrap_or_else(|| "(External Output)".to_string());
+        .unwrap_or_else(|| t!("label-external-output"));
 
     let e: Element<view::LabelMessage> = Container::new(
         row![Container::new(

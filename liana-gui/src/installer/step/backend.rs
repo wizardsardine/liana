@@ -29,8 +29,6 @@ use crate::{
     },
 };
 
-use super::import_descriptor::BACKUP_NETWORK_NOT_MATCH;
-
 pub struct ChooseBackend {
     network: Network,
     remote_backend_is_selected: bool,
@@ -117,7 +115,7 @@ pub struct RemoteBackendLogin {
     processing: bool,
     step: ConnectionStep,
     connection_error: Option<Error>,
-    auth_error: Option<&'static str>,
+    auth_error: Option<view::AuthWarning>,
 }
 
 impl RemoteBackendLogin {
@@ -197,7 +195,7 @@ impl Step for RemoteBackendLogin {
                         Err(e) => {
                             if let Error::Auth(AuthError { http_status, .. }) = e {
                                 if http_status == Some(403) {
-                                    self.auth_error = Some("Token has expired or is invalid")
+                                    self.auth_error = Some(view::AuthWarning::TokenExpiredOrInvalid)
                                 } else {
                                     self.connection_error = Some(e);
                                 }
@@ -255,7 +253,7 @@ impl Step for RemoteBackendLogin {
                                 .map_err(|e| {
                                     if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
                                         Error::Unexpected(
-                                            "Remote servers are unresponsive".to_string(),
+                                            "connect-remote-servers-unresponsive".to_string(),
                                         )
                                     } else {
                                         Error::Unexpected(e.to_string())
@@ -306,7 +304,7 @@ impl Step for RemoteBackendLogin {
                         Err(e) => {
                             if let Error::Auth(AuthError { http_status, .. }) = e {
                                 if http_status == Some(403) {
-                                    self.auth_error = Some("Token has expired or is invalid")
+                                    self.auth_error = Some(view::AuthWarning::TokenExpiredOrInvalid)
                                 } else {
                                     self.connection_error = Some(e);
                                 }
@@ -393,7 +391,7 @@ impl Step for RemoteBackendLogin {
                         Err(e) => {
                             if let Error::Auth(AuthError { http_status, .. }) = e {
                                 if http_status == Some(403) {
-                                    self.auth_error = Some("Token has expired or is invalid")
+                                    self.auth_error = Some(view::AuthWarning::TokenExpiredOrInvalid)
                                 } else {
                                     self.connection_error = Some(e);
                                 }
@@ -524,7 +522,7 @@ pub async fn connect_with_existing_account(
         .await
         .map_err(|e| {
             if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
-                Error::Unexpected("Remote servers are unresponsive".to_string())
+                Error::Unexpected("connect-remote-servers-unresponsive".to_string())
             } else {
                 Error::Unexpected(e.to_string())
             }
@@ -538,8 +536,10 @@ pub async fn connect_with_existing_account(
     );
 
     let mut tokens = cache::Account::from_cache_by_email(&network_dir, &client.email)
-        .map_err(|_| Error::Unexpected("Account must be in cache".to_string()))?
-        .ok_or(Error::Unexpected("Account must be in cache".to_string()))?
+        .map_err(|_| Error::Unexpected("connect-account-missing-from-cache".to_string()))?
+        .ok_or(Error::Unexpected(
+            "connect-account-missing-from-cache".to_string(),
+        ))?
         .tokens;
 
     if tokens.expires_at < chrono::Utc::now().timestamp() {
@@ -548,7 +548,7 @@ pub async fn connect_with_existing_account(
         // user_id the existing row already carries.
         tokens = cache::update_connect_cache(&network_dir, &tokens, &client, true, None)
             .await
-            .map_err(|e| Error::Unexpected(format!("Failed to update cache: {e}")))?;
+            .map_err(|e| Error::Unexpected(crate::t!("connect-cache-update-failed", error = e)))?;
     }
 
     let client = BackendClient::connect(client, config.backend_api_url, tokens, network).await?;
@@ -704,11 +704,11 @@ impl Step for ImportRemoteWallet {
                         return Task::perform(async {}, |_| Message::Next);
                     } else {
                         self.modal = ImportDescriptorModal::None;
-                        self.error = Some(BACKUP_NETWORK_NOT_MATCH.into());
+                        self.error = Some(crate::t!("installer-backup-network-mismatch"));
                     }
                 } else {
                     self.modal = ImportDescriptorModal::None;
-                    self.error = Some("Backup imported but descriptor missing!".into());
+                    self.error = Some(crate::t!("installer-backup-descriptor-missing"));
                 }
             }
             Message::Decrypt(m) => {
@@ -805,9 +805,9 @@ impl Step for ImportRemoteWallet {
                             .into_iter()
                             .find(|w| w.id == invitation.wallet_id)
                             .ok_or(
-                                DaemonError::Unexpected(
-                                    "Wallet of accepted invitation not found".to_string(),
-                                )
+                                DaemonError::Unexpected(crate::t!(
+                                    "installer-accepted-wallet-not-found"
+                                ))
                                 .into(),
                             )
                     },

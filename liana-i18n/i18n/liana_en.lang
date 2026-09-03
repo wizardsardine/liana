@@ -17,7 +17,11 @@ btn-add-safety-net => "Add Safety Net"
 
 btn-add-wallet => "Add wallet"
 
+btn-apply => "Apply"
+
 btn-approve => "Approve"
+
+btn-back => "Back"
 
 btn-back-up-descriptor => "Back Up Descriptor"
 
@@ -25,7 +29,11 @@ btn-backup-encrypted-descriptor => "Back up encrypted descriptor"
 
 btn-broadcast => "Broadcast"
 
+btn-bump-fee => "Bump fee"
+
 btn-cancel => "Cancel"
+
+btn-cancel-transaction => "Cancel transaction"
 
 btn-change-email => "Change Email"
 
@@ -34,6 +42,10 @@ btn-check-connection => "Check connection"
 btn-clear => "Clear"
 
 btn-clear-all => "Clear All"
+
+btn-close-tab => "Close"
+
+btn-confirm => "Confirm"
 
 btn-connect-another-email => "Connect with another email"
 
@@ -65,6 +77,12 @@ btn-generate => "Generate"
 
 btn-generate-address => "Generate address"
 
+btn-go-back => "Go back"
+
+btn-go-back-to-psbts => "Go back to PSBTs"
+
+btn-go-to-replacement => "Go to replacement"
+
 btn-go-to-rescan => "Go to rescan"
 
 btn-ignore => "Ignore"
@@ -72,6 +90,8 @@ btn-ignore => "Ignore"
 btn-import => "Import"
 
 btn-keep-my-changes => "Keep my changes"
+
+btn-login => "Login"
 
 btn-manage-keys => "Manage Keys"
 
@@ -99,6 +119,8 @@ btn-register-on-device => "Register on device"
 
 btn-reload => "Reload"
 
+btn-replace => "Replace"
+
 btn-resend-token => "Resend token"
 
 btn-reset-timelock => "Reset timelock"
@@ -112,6 +134,8 @@ btn-see-transaction-details => "See transaction details"
 btn-select => "Select"
 
 btn-send-for-approval => "Send for approval"
+
+btn-send-invitation => "Send invitation"
 
 btn-send-token => "Send token"
 
@@ -128,6 +152,12 @@ btn-sign => "Sign"
 btn-skip => "Skip"
 
 btn-skip-registration => "Skip registration"
+
+btn-split-tab => "Split"
+
+btn-start-rescan => "Start rescan"
+
+btn-starting-rescan => "Starting rescan..."
 
 btn-template-help => "Something’s wrong with this template?"
 
@@ -150,6 +180,8 @@ business-import-xpub-file => "Import extended public key file"
 business-key-count
 => "{ $count ->\n    [one] (1 key)\n   *[other] ({$count} keys)\n}";;
 
+business-login-email-help => "Enter the email associated with your account"
+
 business-no-hardware-wallets
 => "No hardware device detected. Connect a device and unlock it.";;
 
@@ -159,15 +191,56 @@ business-role-participant => "Participant"
 
 business-wrong-network-device => "Wrong network in device settings"
 
+coins-address-label => "Address label:"
+
+coins-block-height => "Block height:"
+
+coins-deposit-transaction-label => "Deposit transaction label:"
+
+coins-first-recovery-in-blocks
+=> "First recovery path will be available in {$blocks} blocks";;
+
+coins-not-in-block => "Not in a block"
+
+coins-outpoint => "Outpoint:"
+
+coins-recovery-available => "One or more recovery paths are available"
+
+coins-refresh-coin => "Refresh coin"
+
+coins-spend-block-height => "Spend block height:"
+
+coins-spend-txid => "Spend txid:"
+
 combobox-already-signer => "already a signer"
 
 common-address => "Address"
 
 common-address-label => "Address:"
 
+common-and => "and"
+
+common-approx-feerate-value => "(~{$rate} sats/vbyte)"
+
+common-blocks => "blocks"
+
 common-connecting-ellipsis => "Connecting..."
 
+common-connection-failed => "Connection failed"
+
 common-copy => "Copy"
+
+common-descriptor => "Descriptor"
+
+common-descriptor-label => "Descriptor:"
+
+common-email => "Email"
+
+common-error => "Error"
+
+common-feerate => "Feerate"
+
+common-feerate-value => "({$rate} sats/vbyte)"
 
 common-fetching => "Fetching ..."
 
@@ -175,7 +248,17 @@ common-from => "From"
 
 common-learn-more => "Learn more"
 
+common-loading => "Loading..."
+
+common-login => "Login"
+
+common-no-label => "No label"
+
 common-no-label-parenthesized => "(No label)"
+
+common-not-available => "N/A"
+
+common-other-options => "Other options"
 
 common-paste => "Paste"
 
@@ -189,16 +272,65 @@ common-register => "Register"
 
 common-see-more => "See more"
 
+common-select-account => "Select an account to continue"
+
 common-self-transfer => "Self-transfer"
 
+common-something-wrong => "Something wrong happened"
+
+common-token => "Token"
+
 common-wallet => "Wallet"
+
+connect-account-missing-from-cache => "Account must be in cache"
+
+connect-cache-update-failed => "Failed to update cache: {$error}"
+
+connect-remote-servers-unresponsive => "Remote servers are unresponsive"
+
+decrypt-airgap-help
+=> "Using an air-gapped device? Export the xpub from your device, then use the upload or paste option. If you don’t know the correct derivation path, try with the following:";;
+
+decrypt-backup-file => "Decrypt backup file"
+
+decrypt-device-description
+=> "Plug in and unlock a hardware device belonging to this setup to automatically decrypt the backup";;
+
+decrypt-device-failed => "Failed to decrypt file with this device"
 
 decrypt-enter-mnemonic-unsafe => "UNSAFE: Enter mnemonic of one of the keys"
 
 decrypt-enter-mnemonic-warning
 => "This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds.";;
 
+decrypt-invalid-descriptor
+=> "The file has been decrypted but the descriptor is not a valid Liana descriptor.";;
+
+decrypt-invalid-encoding
+=> "The file cannot be decoded properly, it seems not to be an encrypted backup.";;
+
+decrypt-invalid-mnemonic => "Invalid mnemonic"
+
+decrypt-invalid-type
+=> "The file has been decrypted but the content type is not supported.";;
+
+decrypt-invalid-xpub => "Invalid xpub"
+
+decrypt-mnemonic-cannot-decrypt => "Mnemonic is valid but cannot decrypt the file"
+
+decrypt-mnemonic-source => "Mnemonic"
+
+decrypt-pairing-code => "Pairing code: {$code}"
+
 decrypt-paste-xpub => "Paste an extended public key"
+
+decrypt-provide-xpub => "Provide one of the xpubs used in this wallet."
+
+decrypt-try-device => "Try to decrypt with this device..."
+
+decrypt-unlock-device => "Please unlock or open app on the device"
+
+decrypt-xpub-cannot-decrypt => "Xpub is valid but cannot decrypt this file"
 
 device-already-used => "Already used"
 
@@ -219,13 +351,20 @@ device-locked => "Locked"
 
 device-locked-check-code => "Locked, check code: {$code}"
 
+device-open-app => "Please open the app on device"
+
 device-processing-check-device => "Processing, please check your device"
 
 device-registered => "Registered"
 
 device-signed => "Signed"
 
+device-unlock => "Please unlock the device"
+
 device-unrelated-wallet => "This signing device is not related to this Liana wallet."
+
+device-version-unsupported
+=> "Device version not supported, upgrade to version > {$version}";;
 
 duration-days => "{ $count ->\n    [one] 1 day\n   *[other] {$count} days\n}"
 
@@ -252,9 +391,63 @@ duration-years => "{ $count ->\n    [one] 1 year\n   *[other] {$count} years\n}"
 
 duration-years-compact => "{$count}y"
 
+error-unknown => "Unknown error occurred"
+
+export-aliases-conflict => "Aliases conflict, what do you want to do?"
+
+export-canceled => "Export canceled"
+
+export-labels-conflict => "Labels conflict, what do you want to do?"
+
+export-progress => "Progress: {$progress}%"
+
+export-select-path => "Select the path you want to export in the popup window..."
+
+export-starting => "Starting export..."
+
+export-success => "Export successful!"
+
+export-timeout => "Export failed: timeout"
+
+export-title-export-backup => "Export Backup"
+
+export-title-export-descriptor => "Export Descriptor"
+
+export-title-export-encrypted-descriptor => "Export Encrypted Descriptor"
+
+export-title-export-labels => "Export Labels"
+
+export-title-export-psbt => "Export PSBT"
+
+export-title-export-xpub => "Export Xpub"
+
+export-title-import-descriptor => "Import Descriptor"
+
+export-title-import-psbt => "Import PSBT"
+
+export-title-import-wallet-backup => "Import existing wallet from backup"
+
+export-title-import-xpub => "Import Xpub"
+
+export-title-restore-backup => "Restore Backup"
+
+export-title-transactions => "Export Transactions"
+
 fiat-amount-non-negative => "Amount must be non-negative"
 
+fiat-currency-mismatch => "Currency mismatch: expected {$expected}, got {$actual}"
+
+fiat-exchange-rate => "Exchange rate: 1 BTC ~ {$amount} {$currency}"
+
 fiat-invalid-currency => "Invalid currency"
+
+fiat-last-requested => "Last requested: {$time}"
+
+fiat-last-updated-source => "Last updated at source: {$time}"
+
+fiat-price-positive => "Price per BTC must be positive"
+
+fiat-source => "Source: {$source}"
 
 fiat-source-timestamp
 => "Default price at the time the transaction has been confirmed";;
@@ -264,7 +457,11 @@ fiat-source-user => "Price you have filled yourself"
 fiat-source-wizardsardine
 => "Price automatically processed by WS when you crafted the transaction";;
 
+home-balance => "Balance"
+
 home-checking-transactions => "Checking for new transactions"
+
+home-payment-history => "Payment History"
 
 home-recovery-left => "≈ {$units} left before first recovery path becomes available."
 
@@ -292,12 +489,542 @@ hw-no-taproot-miniscript
 
 hw-not-in-spending-path => "This signing device is not part of this spending path."
 
+import-success => "Import successful"
+
+installer-able-to-move-any-time => "Able to move the funds at any time."
+
+installer-accept-invitation-for => "Accept invitation for wallet:"
+
+installer-accepted-wallet-not-found => "Wallet of accepted invitation not found"
+
+installer-add-key => "Add key"
+
+installer-add-safety-net-key => "Add Safety Net key"
+
+installer-advanced-settings => "Advanced settings"
+
+installer-already-have-node => "I already have a node"
+
+installer-already-used-sources => "Already used sources"
+
+installer-auth-token-emailed-to => "An authentication token has been emailed to"
+
+installer-auto-install-node
+=> "I want Liana to automatically install a Bitcoin node on my device";;
+
+installer-available-after-inactivity => "Available after inactivity of ~"
+
+installer-available-port-failed => "Could not get available port: {$error}."
+
+installer-available-ports-failed
+=> "Could not get available ports: {$error1}; {$error2}.";;
+
+installer-backed-up-descriptor-checkbox => "I have backed up my descriptor"
+
+installer-backed-up-mnemonic-checkbox => "I have backed up my mnemonic"
+
+installer-backed-up-mnemonic-show-xpub
+=> "I have backed up the mnemonic, show the extended public key";;
+
+installer-backup-descriptor-help
+=> "In Bitcoin, to spend from a wallet that isn't a standard single-key setup, you need both your private keys (usually stored as seed words) to sign transactions, and your wallet descriptor to locate your coins - like a map of your addresses.\nWithout the descriptor, your wallet may not find your coins - even if you still have the keys.\nWhen you click \"Back Up Descriptor\", Liana creates an encrypted file that can only be decrypted using one of your wallet's public keys.\nLiana handles this automatically during the restore of a wallet process by asking you to connect a device or enter a key.\nThis file is safer and more private than copying the descriptor manually.";;
+
+installer-backup-descriptor-message
+=> "This backup is required to recover your funds.\nClick \"Back Up Descriptor\" to download an encrypted file of your wallet configuration and store it in safe, accessible places.\nYou can also copy the plain-text descriptor string, but it's less private.\nWARNING: This file does not include your seed phrase(s). Back those up separately.";;
+
+installer-backup-descriptor-missing => "Backup imported but descriptor missing!"
+
+installer-backup-descriptor-title => "Back Up your wallet configuration (Descriptor)"
+
+installer-backup-imported => "Backup successfully imported!"
+
+installer-backup-mnemonic-title => "Back Up your mnemonic"
+
+installer-backup-mnemonic-warning
+=> "Beware to back up the mnemonic as it will NOT be stored on the computer.";;
+
+installer-backup-network-mismatch
+=> "The backup network does not match the selected network.";;
+
+installer-bitcoin-node-management => "Bitcoin node management"
+
+installer-bitcoind-already-installed => "Liana-managed bitcoind already installed"
+
+installer-bitcoind-canonicalize-datadir-error
+=> "Failed to canonicalize datadir: {$error}";;
+
+installer-bitcoind-command-error
+=> "Command to start bitcoind returned an error: {$error}";;
+
+installer-bitcoind-connection-error => "bitcoind connection check failed: {$error}"
+
+installer-bitcoind-executable-not-found => "bitcoind executable not found."
+
+installer-bitcoind-lock-error => "lock file error: {$error}"
+
+installer-bitcoind-process-exited
+=> "bitcoind process exited with status '{$status}'.";;
+
+installer-build-your-own => "Build your own"
+
+installer-build-your-own-description
+=> "Create a custom setup that fits all your needs.";;
+
+installer-canonicalize-cookie-failed
+=> "Failed to canonicalize cookie path: {$error}";;
+
+installer-canonicalize-datadir-failed
+=> "Failed to canonicalize datadir path: {$error}";;
+
+installer-change-alias-later
+=> "You will be able to change it later in Settings > Wallet";;
+
+installer-checking-connection => "Checking connection..."
+
+installer-choose-backend => "Choose backend"
+
+installer-choose-wallet-type => "Choose wallet type"
+
+installer-connected-to => "Connected to"
+
+installer-connection-checked => "Connection checked"
+
+installer-cookie-path => "Cookie path"
+
+installer-cosigner-token-disallowed
+=> "Cosigner tokens are not allowed for this path";;
+
+installer-create-datadir-path-failed => "Failed to create datadir path: {$error}"
+
+installer-create-random-key => "Or create a new random key:"
+
+installer-custom-template-description-1
+=> "For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.";;
+
+installer-custom-template-description-2
+=> "The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.";;
+
+installer-descriptor-generating
+=> "Generating and validating your wallet descriptor. This can take a few seconds.";;
+
+installer-descriptor-invalid
+=> "Either descriptor is invalid or incompatible with network";;
+
+installer-descriptor-missing => "Descriptor missing"
+
+installer-descriptor-read-failed => "Failed to read the descriptor"
+
+installer-descriptor-template => "Descriptor template"
+
+installer-descriptor-type => "Descriptor type"
+
+installer-descriptor-wrong-network => "The descriptor is for another network"
+
+installer-detected-hardware => "Detected hardware"
+
+installer-device-method-unsupported => "Device not supported, method: {$method}"
+
+installer-device-no-taproot => "This device does not support Taproot"
+
+installer-device-wrong-network => "The device is configured on the wrong network"
+
+installer-distinct-ports-unavailable
+=> "Could not get distinct ports. Please try again.";;
+
+installer-download-complete => "Download complete"
+
+installer-download-failed => "Download failed: '{$error}'."
+
+installer-downloading-bitcoin-core-progress
+=> "Downloading Bitcoin Core {$version}... {$progress}%";;
+
+installer-duplicate-token => "Duplicate token"
+
+installer-electrum-address-notes
+=> "Note: include \"ssl://\" as a prefix for SSL connections.";;
+
+installer-email-invalid => "Email is not valid"
+
+installer-enter-correct-address => "Please enter correct address"
+
+installer-enter-correct-electrum-address
+=> "Please enter correct address (including port), optionally prefixed with tcp:// or ssl://";;
+
+installer-enter-correct-password => "Please enter correct password"
+
+installer-enter-correct-path => "Please enter correct path"
+
+installer-enter-correct-user => "Please enter correct user"
+
+installer-existing-node-description
+=> "Select this option if you already have a Bitcoin node running locally or remotely. Liana will connect to it.";;
+
+installer-expanding-multisig => "Expanding multisig"
+
+installer-expanding-multisig-description
+=> "Two keys required to spend, with an extra key as a backup.";;
+
+installer-expanding-multisig-wallet => "Expanding multisig wallet"
+
+installer-export-backup-failed => "Failed to export backup"
+
+installer-finalize-installation => "Finalize installation"
+
+installer-generate-mnemonic => "Generate a new mnemonic"
+
+installer-give-wallet-alias => "Give your wallet an alias"
+
+installer-hot-signer => "Hot Signer"
+
+installer-import-backup => "Import a backup"
+
+installer-import-descriptor => "Import a descriptor"
+
+installer-import-mnemonic => "Import mnemonic"
+
+installer-import-mnemonic-title => "Import Mnemonic"
+
+installer-import-wallet-rescan-help
+=> "If you are using a Bitcoin Core node, you will need to perform a rescan of the blockchain after creating the wallet in order to see your coins and past transactions. This can be done in Settings > Node.";;
+
+installer-import-wallet-title => "Import the wallet"
+
+installer-import-xpub-device
+=> "Import an extended public key by selecting a signing device:";;
+
+installer-imported-key-already-used => "Imported key already used"
+
+installer-inheritance-description-1
+=> "For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key.";;
+
+installer-inheritance-description-2
+=> "You will always be able to spend using your Primary Key. After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds.";;
+
+installer-inheritance-key => "Inheritance key"
+
+installer-installation-complete => "Installation complete"
+
+installer-installation-failed => "Installation failed: '{$error}'."
+
+installer-installed => "Installed"
+
+installer-installing => "Installing..."
+
+installer-installing-bitcoind => "Installing bitcoind..."
+
+installer-introduction => "Introduction"
+
+installer-invalid-descriptor => "Invalid descriptor"
+
+installer-invalid-token => "Invalid token!"
+
+installer-invitation-invalid => "Invitation token is invalid or expired"
+
+installer-invitation-token => "Invitation token"
+
+installer-invitation-token-help => "Type the invitation token you received by email"
+
+installer-key-alias-already-used => "This alias is already used for another key"
+
+installer-key-alias-placeholder => "E.g. My Hardware Wallet"
+
+installer-key-already-in-wallet
+=> "Fetched key has already been added to the wallet.";;
+
+installer-key-already-used => "Key already used"
+
+installer-key-already-used-in-path => "Key already used in this path"
+
+installer-key-fetch-wrong-network
+=> "Failed to fetch key. Switch network on device and retry";;
+
+installer-key-index => "Key @{$index}:"
+
+installer-key-name-alias => "Key name (alias):"
+
+installer-key-name-help
+=> "Give this key a friendly name. It will help you identify it later:";;
+
+installer-key-path-account => "Key path account:"
+
+installer-key-wrong-network => "Fetched key does not have the correct network"
+
+installer-keys-inactivity => "Keys can move the funds after inactivity of:"
+
+installer-load-previous-wallet => "Load a previously used wallet"
+
+installer-load-shared-wallet => "Load a shared wallet"
+
+installer-local-wallet-description
+=> "Use your already existing Bitcoin node or automatically install one. The Liana wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet.";;
+
+installer-managed-node-description
+=> "Liana will install a pruned node on your computer. You won't need to do anything except have some disk space available (~30GB required on mainnet) and wait for the initial synchronization with the network (it can take some days depending on your internet connection speed).";;
+
+installer-mnemonic-backup-help
+=> "A hot key generated on this computer was used for creating this wallet. It needs to be backed up. \n Keep it in a safe place. Never share it with anyone.";;
+
+installer-mnemonic-recovery-help
+=> "If you were using a hot key (a key stored on the computer) in your wallet, you will need to recover it from mnemonics to be able to sign transactions again. Otherwise you can directly go the next step.";;
+
+installer-multisig-description-1
+=> "For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key.";;
+
+installer-multisig-description-2
+=> "The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):";;
+
+installer-no-current-wallets => "You have no current wallets"
+
+installer-node-setup-title => "Set up connection to the Bitcoin node"
+
+installer-node-type => "Node type:"
+
+installer-password => "Password"
+
+installer-paste-descriptor => "Paste a descriptor"
+
+installer-paste-descriptor-description
+=> "Creates a new wallet from the pasted descriptor";;
+
+installer-path-duplicate-sequence
+=> "No two recovery options may become available at the very same date.";;
+
+installer-path-key-source-disallowed
+=> "Path contains a key that is disallowed for this kind of path.";;
+
+installer-path-only-cosigner-keys => "A path cannot contain only cosigner keys."
+
+installer-port-attempts-exhausted => "Exhausted attempts"
+
+installer-primary-key => "Primary key"
+
+installer-primary-key-number => "Primary key #{$number}"
+
+installer-primary-spending-option => "Primary spending option:"
+
+installer-read-cookie-file-failed => "Failed to read cookie file: {$error}"
+
+installer-recovery-key => "Recovery key"
+
+installer-recovery-option => "Recovery option #{$number}:"
+
+installer-register-descriptor-failed => "Failed to register descriptor"
+
+installer-register-descriptor-help
+=> "To be used with the wallet, a signing device needs the descriptor. If the descriptor contains one or more keys imported from an external signing device, the descriptor must be registered on it. Registration confirms that the device is able to handle the policy. Registration on a device is not a substitute for backing up the descriptor.";;
+
+installer-register-descriptor-optional
+=> "This step is only necessary if you are using a signing device.";;
+
+installer-register-descriptor-title => "Register descriptor"
+
+installer-registered-descriptor-checkbox
+=> "I have registered the descriptor on my device(s)";;
+
+installer-remote-backend-description
+=> "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead.";;
+
+installer-remote-bitcoin-node-warning
+=> "Connection to a remote Bitcoin node is not supported. Insert an IP address bound to the same machine running Liana (ignore this warning if that's already the case)";;
+
+installer-rpc-auth => "RPC authentication:"
+
+installer-rpc-user-password => "User and password"
+
+installer-safety-net => "Safety Net:"
+
 installer-safety-net-description
 => "This adds a final recovery option containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens.";;
 
+installer-safety-net-key => "Safety Net key"
+
+installer-safety-net-token-disallowed
+=> "SafetyNet tokens are not allowed for this path";;
+
+installer-seed-key-not-in-descriptor
+=> "The descriptor does not use a key derived from this seed";;
+
+installer-select-device-register
+=> "Select hardware wallet to register descriptor on:";;
+
+installer-select-device-register-if-needed
+=> "If necessary, please select the signing device to register descriptor on:";;
+
+installer-select-key-source => "Select key source"
+
+installer-sequence-value-warning
+=> "Value must be greater than 0 and lower than 65535";;
+
+installer-serialize-daemon-config-failed
+=> "Failed to serialize daemon config: {$error}";;
+
+installer-serialize-gui-config-failed => "Failed to serialize GUI config: {$error}"
+
+installer-share-xpubs-title => "Share your public keys (Xpubs)"
+
+installer-shared-wallet-help
+=> "If you received an invitation to join a shared wallet";;
+
+installer-simple-inheritance => "Simple inheritance"
+
+installer-simple-inheritance-description
+=> "Two keys required, one for yourself to spend and another for your heir.";;
+
+installer-simple-inheritance-wallet => "Simple inheritance wallet"
+
+installer-start-bitcoin-node => "Start Bitcoin full node"
+
+installer-start-daemon-failed => "Failed to start Liana daemon: {$error}"
+
+installer-started => "Started"
+
+installer-starting => "Starting..."
+
+installer-stop-daemon-failed => "Failed to stop Liana daemon: {$error}"
+
+installer-store-mnemonic-failed => "Failed to store mnemonic: {$error}"
+
+installer-switch-account-help
+=> "Switch account if you already use the same hardware in other configurations";;
+
+installer-taproot-supported-version
+=> "Taproot is only supported by Liana version 5.0 and above";;
+
+installer-the-descriptor => "The descriptor"
+
+installer-the-descriptor-label => "The descriptor:"
+
+installer-threshold => "Threshold:"
+
+installer-threshold-keys
+=> "{ $total ->\n    [one] {$threshold} out of 1 key\n   *[other] {$threshold} out of {$total} keys\n}";;
+
+installer-token-type-disallowed => "Token type not allowed in this path"
+
+installer-use-liana-connect => "Use Liana Connect"
+
+installer-use-own-node => "Use your own node"
+
+installer-user => "User"
+
+installer-wallet-alias => "Wallet alias"
+
+installer-wallet-alias-too-long => "Wallet alias is too long."
+
+installer-xpub-invalid => "Invalid Xpub"
+
+installer-xpub-origin-missing => "Origin missing"
+
+installer-xpub-wrong-derivation-path => "Wrong derivation path"
+
+installer-xpub-wrong-network => "Wrong network"
+
+label-edit => "Edit label"
+
+label-external-output => "(External Output)"
+
 label-invalid-length => "Invalid label length, must be 80 bytes or less"
 
+label-label => "Label"
+
+launcher-add-existing-wallet => "Add an existing Liana wallet"
+
+launcher-config-descriptor-origin-error
+=> "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin. Liana v0.2 and later only support public keys with origins. Please migrate your funds using Liana v0.1.";;
+
+launcher-create-new-wallet => "Create a new Liana wallet"
+
+launcher-default-wallet-name => "My Liana {$network} wallet"
+
+launcher-delete-all-data-confirmation
+=> "Are you sure you want to delete the configuration and all associated data for the wallet {$wallet}?";;
+
+launcher-delete-connect-all-members
+=> "Also permanently delete this wallet from Liana Connect (for all members).";;
+
+launcher-delete-connect-disassociate
+=> "Also disassociate {$email} from this Liana Connect wallet.";;
+
+launcher-delete-local-config-confirmation
+=> "Are you sure you want to delete locally the configuration for the wallet {$wallet}?";;
+
+launcher-delete-node-not-affected
+=> "(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)";;
+
+launcher-delete-node-not-affected-this-network
+=> "(The Liana-managed Bitcoin node for this network will not be affected by this action.)";;
+
+launcher-delete-title => "Delete configuration for Liana-{$checksum}"
+
+launcher-delete-title-alias
+=> "Delete configuration for {$alias} (Liana-{$checksum})";;
+
+launcher-delete-warning-irreversible => "WARNING: This cannot be undone."
+
+launcher-read-daemon-config-failed
+=> "Failed to read daemon configuration file in the directory: {$path}";;
+
+launcher-read-gui-config-failed
+=> "Failed to read GUI configuration file in the directory: {$path}";;
+
+launcher-unexpected-error => "Unexpected {$error}"
+
+launcher-wallet-deleted => "Wallet successfully deleted"
+
+launcher-wallet-id-not-found => "Wallet {$wallet_id} not found"
+
+launcher-wallet-not-found => "Wallet not found"
+
+launcher-welcome => "Welcome"
+
+launcher-welcome-back => "Welcome back"
+
+lianalite-auth-sent => "An authentication was sent to your email:"
+
+lianalite-token-expired => "Token is expired or is invalid"
+
+lianalite-token-has-expired-or-invalid => "Token has expired or is invalid"
+
+lianalite-token-invalid => "Token is not valid"
+
+lianalite-wallet-deleted
+=> "This wallet was deleted by its creator for all participants and cannot be opened. To access it again, restore it using a backup file or the wallet descriptor.";;
+
+loader-connecting-daemon => "Connecting to daemon..."
+
+loader-failed => "Liana failed to start"
+
+loader-failed-bitcoind
+=> "Liana failed to start, please check if bitcoind is running";;
+
+loader-internal-daemon-error => "Error while starting the internal daemon"
+
+loader-progress => "Progress {$progress}%"
+
+loader-starting-daemon => "Starting daemon..."
+
+loader-sync-progress-1
+=> "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster.";;
+
+loader-sync-progress-2
+=> "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance.";;
+
+loader-sync-progress-3
+=> "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance.";;
+
+menu-coins-utxos => "Coins/UTXOs"
+
+menu-dashboard => "Dashboard"
+
+menu-drafts-approvals => "Drafts & Approvals"
+
+menu-receive => "Receive"
+
+menu-send => "Send"
+
 menu-settings => "Settings"
+
+menu-transactions => "Transactions"
 
 network-coins-have => ", COINS HAVE{ \" \" }"
 
@@ -308,6 +1035,12 @@ network-this-is-a => "THIS IS A{ \" \" }"
 network-wallet => "{$network} WALLET"
 
 payment-address-label => "address label: {$label}"
+
+payment-incoming => "Incoming payment"
+
+payment-outgoing => "Outgoing payment"
+
+payment-title => "Payment"
 
 pill-active => "Active"
 
@@ -389,12 +1122,152 @@ pill-xpub-not-set => "Not Set"
 
 pill-xpub-set => "✓ Set"
 
+policy-block-duration => "{$blocks} blocks (~{$duration})"
+
+policy-by => "by"
+
+policy-inactive-for => "can spend coins inactive for"
+
+policy-out-of-by => "out of {$count} by"
+
+policy-primary-path => "can always spend this wallet's funds (Primary path)"
+
+policy-recovery-path => "(Recovery path #{$number})"
+
+policy-safety-net-path => "(Safety Net path)"
+
+policy-signatures
+=> "{ $count ->\n    [one] 1 signature\n   *[other] {$count} signatures\n}";;
+
+policy-wallet-policy => "The wallet policy:"
+
+psbt-already-signed-by => ", already signed by"
+
+psbt-broadcast-conflicts-one
+=> "The following transaction is spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on it:";;
+
+psbt-broadcast-conflicts-some
+=> "The following transactions are spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on them:";;
+
+psbt-broadcast-invalidates-one
+=> "WARNING: Broadcasting this transaction will invalidate a pending payment.";;
+
+psbt-broadcast-invalidates-some
+=> "WARNING: Broadcasting this transaction will invalidate some pending payments.";;
+
+psbt-broadcast-transaction => "Broadcast the transaction"
+
+psbt-change => "Change"
+
+psbt-coins-spent
+=> "{ $count ->\n    [one] 1 coin spent\n   *[other] {$count} coins spent\n}";;
+
+psbt-delete-success => "Successfully deleted this transaction."
+
+psbt-delete-this => "Delete this PSBT"
+
+psbt-device-sign-failed => "Device failed to sign"
+
+psbt-finalizing-requires => "Finalizing this transaction requires:"
+
+psbt-missing-inputs => "Missing information about transaction inputs"
+
+psbt-more-signatures
+=> "{ $count ->\n    [0] no more signatures\n    [one] 1 more signature from\n   *[other] {$count} more signatures from\n}";;
+
+psbt-no-payment => "0 payment"
+
+psbt-not-ready => "Not ready"
+
+psbt-payments => "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
+
+psbt-save-transaction => "Save this transaction"
+
+psbt-select-signing-device => "Select signing device to sign with:"
+
+psbt-sign-save-before-export => "Sign or save the transaction first to enable export"
+
+psbt-signed-by => "signed by"
+
+psbt-spend-updated => "Spend transaction is updated"
+
+psbt-status => "Status"
+
+psbt-transaction-broadcast => "Transaction is broadcast"
+
+psbt-transaction-saved => "Transaction is saved"
+
+psbts-base64-warning => "Please enter a base64 encoded PSBT"
+
+psbts-imported => "PSBT is imported"
+
+psbts-insert-psbt => "Insert PSBT:"
+
+receive-address-label-placeholder => "Enter an address label"
+
 receive-derivation-index => "Derivation index:"
+
+receive-generate-new-address-help
+=> "Always generate a new address for each deposit.";;
+
+receive-generating-address => "Generating address ..."
+
+receive-generating-address-title => "Generating address"
 
 receive-previous-addresses => "Previously generated addresses still awaiting deposit"
 
+receive-select-device => "Select device to verify address on:"
+
+receive-specter-diy-tooltip => "For Specter DIY devices"
+
+receive-verify-address => "Verify address"
+
+recovery-coins-total
+=> "{ $count ->\n    [one] can recover 1 coin totalling\n   *[other] can recover {$count} coins totalling\n}";;
+
+recovery-info
+=> "Recover your funds by sending them to another wallet if you have lost access to your primary spending path.";;
+
+recovery-none-available => "No recovery path is currently available."
+
+recovery-paths-available
+=> "{ $count ->\n    [one] 1 recovery path is available:\n   *[other] {$count} recovery paths are available:\n}";;
+
+recovery-signatures-from
+=> "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}";;
+
+settings-alias => "Alias"
+
+settings-alias-too-long => "Please enter alias that is not too long"
+
 settings-backup-encrypted-descriptor-tooltip
 => "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.";;
+
+settings-block-height => "Block Height:"
+
+settings-blockchain-rescan => "Blockchain rescan"
+
+settings-change-node-or-connect => "I want to change node type or use Liana Connect"
+
+settings-connect-own-node => "I want to connect to my own node"
+
+settings-cookie-file-path => "Cookie file path"
+
+settings-correct-alias => "Please enter correct alias"
+
+settings-currency => "Currency:"
+
+settings-date-before-prune => "Provided date earlier than the node prune height"
+
+settings-date-future => "Provided date is in the future"
+
+settings-date-invalid => "Provided date is invalid"
+
+settings-day => "Day:"
+
+settings-email-invalid => "Email is invalid"
+
+settings-exchange-rate-source => "Exchange rate source:"
 
 settings-export-descriptor => "Descriptor only - plain-text"
 
@@ -421,9 +1294,37 @@ settings-export-wallet => "Export wallet"
 settings-export-wallet-description
 => "File (not encrypted) with wallet info useful to sync labels and data on other devices.";;
 
+settings-fiat-price => "Fiat price:"
+
+settings-fiat-price-tooltip
+=> "Fiat price data is provided by third-party services. Availability and accuracy are not guaranteed.";;
+
+settings-fingerprint-aliases => "Fingerprint aliases:"
+
+settings-grant-wallet-access => "Grant access to wallet to another user"
+
+settings-import-export-description
+=> "A collection of the export and import functions present in Liana.";;
+
 settings-import-wallet => "Import wallet"
 
 settings-import-wallet-description => "Upload a backup file to update wallet info."
+
+settings-invitation-sent => "Invitation was sent"
+
+settings-month => "Month:"
+
+settings-network => "Network:"
+
+settings-not-running => "Not running"
+
+settings-other-formats => "Other formats"
+
+settings-rescan-success => "Successfully rescanned the blockchain"
+
+settings-rescanning => "Rescanning...{$progress}%"
+
+settings-running => "Running"
 
 settings-section-about => "About"
 
@@ -434,6 +1335,30 @@ settings-section-general => "General"
 settings-section-import-export => "Import/Export"
 
 settings-section-node => "Node"
+
+settings-select-device => "Select device:"
+
+settings-socket-address => "Socket address:"
+
+settings-updated => "Updated"
+
+settings-user-email => "User email"
+
+settings-valid-address => "Please enter a valid address"
+
+settings-valid-filesystem-path => "Please enter a valid filesystem path"
+
+settings-valid-password => "Please enter a valid password"
+
+settings-valid-user => "Please enter a valid user"
+
+settings-version => "Version"
+
+settings-wallet-alias => "Wallet alias:"
+
+settings-wallet-descriptor => "Wallet descriptor:"
+
+settings-year => "Year:"
 
 spend-amount-btc => "Amount (BTC)"
 
@@ -505,4 +1430,54 @@ spend-select-one-coin => "Select at least one coin."
 
 spend-select-or-add-funds => "Select or add more funds."
 
+tab-installer => "Installer"
+
+tab-launcher => "Launcher"
+
 tab-pending => "Pending"
+
+time-seconds-ago
+=> "{ $count ->\n    [one] 1 second ago\n   *[other] {$count} seconds ago\n}";;
+
+transactions-cancel-tooltip
+=> "Best effort attempt at double spending an unconfirmed outgoing transaction";;
+
+transactions-date => "Date:"
+
+transactions-incoming => "Incoming transaction"
+
+transactions-miner-fee => "Miner fee:{ \" \" }"
+
+transactions-outgoing => "Outgoing transaction"
+
+transactions-rbf-bump-help
+=> "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction.";;
+
+transactions-rbf-cancel-help
+=> "Replace the transaction with one paying a higher feerate that sends the coins back to your wallet. There is no guarantee the original transaction won't get mined first. New inputs may be used for the replacement transaction.";;
+
+transactions-rbf-created
+=> "Replacement PSBT created successfully and ready to be signed";;
+
+transactions-rbf-descendants-one
+=> "The following transaction is spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on it:";;
+
+transactions-rbf-descendants-some
+=> "The following transactions are spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on them:";;
+
+transactions-rbf-feerate-warning
+=> "Feerate must be greater than previous value and less than or equal to 1000 sats/vbyte";;
+
+transactions-rbf-invalidates-one
+=> "WARNING: Replacing this transaction will invalidate a later payment.";;
+
+transactions-rbf-invalidates-some
+=> "WARNING: Replacing this transaction will invalidate some later payments.";;
+
+transactions-replacement => "Transaction replacement"
+
+transactions-transaction => "Transaction"
+
+transactions-txid => "Tx ID"
+
+warning-hardware-wallet-error => "Hardware wallet error"

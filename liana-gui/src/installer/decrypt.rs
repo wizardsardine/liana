@@ -106,11 +106,11 @@ pub enum Decrypt {
     Xpub(String),
     PasteXpub,
     SelectXpub,
-    XpubError(&'static str),
+    XpubError(DecryptWarning),
     Mnemonic(String),
     PasteMnemonic,
     SelectMnemonic,
-    MnemonicStatus(Option<&'static str> /* error */, Option<Fingerprint>),
+    MnemonicStatus(Option<DecryptWarning> /* error */, Option<Fingerprint>),
     MnemonicAck(bool),
     SelectImportXpub,
     UnexpectedPayload(Decrypted),
@@ -120,6 +120,25 @@ pub enum Decrypt {
     Close,
     CloseModal,
     None,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum DecryptWarning {
+    InvalidMnemonic,
+    InvalidXpub,
+    MnemonicCannotDecrypt,
+    XpubCannotDecrypt,
+}
+
+impl DecryptWarning {
+    fn message(self) -> String {
+        match self {
+            Self::InvalidMnemonic => crate::t!("decrypt-invalid-mnemonic"),
+            Self::InvalidXpub => crate::t!("decrypt-invalid-xpub"),
+            Self::MnemonicCannotDecrypt => crate::t!("decrypt-mnemonic-cannot-decrypt"),
+            Self::XpubCannotDecrypt => crate::t!("decrypt-xpub-cannot-decrypt"),
+        }
+    }
 }
 
 impl From<Decrypt> for installer::Message {
@@ -224,7 +243,7 @@ impl DecryptModal {
             Decrypt::XpubError(s) => {
                 match self.focus {
                     Focus::ImportXpub => {
-                        self.import_xpub_error = Some(s.to_string());
+                        self.import_xpub_error = Some(s.message());
                     }
                     Focus::Xpub => self.update_xpub_error(s),
                     Focus::Mnemonic | Focus::None => {}
@@ -421,20 +440,19 @@ impl DecryptModal {
             Task::perform(
                 async move {
                     let pk = encrypted_backup::descriptor::dpk_to_pk(&dpk);
-                    decrypt_descriptor_with_pk(&bytes, pk).unwrap_or(Decrypt::XpubError(
-                        "Xpub is valid but cannot decrypt this file",
-                    ))
+                    decrypt_descriptor_with_pk(&bytes, pk)
+                        .unwrap_or(Decrypt::XpubError(DecryptWarning::XpubCannotDecrypt))
                 },
                 |m| m.into(),
             )
         } else {
-            self.xpub.warning = Some("Invalid xpub".to_string());
+            self.xpub.warning = Some(DecryptWarning::InvalidXpub.message());
             self.xpub.valid = false;
             Task::none()
         }
     }
-    fn update_xpub_error(&mut self, error: &'static str) {
-        self.xpub.warning = Some(error.to_string());
+    fn update_xpub_error(&mut self, error: DecryptWarning) {
+        self.xpub.warning = Some(error.message());
         self.xpub.valid = false;
         self.xpub_busy = false;
     }
@@ -455,7 +473,7 @@ impl DecryptModal {
             Ok(m) => m,
             Err(_) => {
                 self.mnemonic.valid = false;
-                self.mnemonic.warning = Some("Invalid mnemonic".to_string());
+                self.mnemonic.warning = Some(DecryptWarning::InvalidMnemonic.message());
                 return Task::none();
             }
         }
@@ -481,21 +499,21 @@ impl DecryptModal {
                     }
                 }
                 backup.unwrap_or(Decrypt::MnemonicStatus(
-                    Some("Mnemonic is valid but cannot decrypt the file"),
+                    Some(DecryptWarning::MnemonicCannotDecrypt),
                     Some(fingerprint),
                 ))
             },
             |m| m.into(),
         )
     }
-    fn update_mnemonic_state(&mut self, error: Option<&'static str>, fg: Option<Fingerprint>) {
+    fn update_mnemonic_state(&mut self, error: Option<DecryptWarning>, fg: Option<Fingerprint>) {
         self.mnemonic_busy = false;
-        self.mnemonic.warning = error.map(str::to_string);
+        self.mnemonic.warning = error.map(DecryptWarning::message);
         self.mnemonic.valid = false;
         if let Some(fg) = fg {
-            self.fetched.insert(fg, "Mnemonic".to_string());
+            self.fetched
+                .insert(fg, crate::t!("decrypt-mnemonic-source"));
         }
-        self.mnemonic.warning = error.map(str::to_string);
     }
 }
 
@@ -526,7 +544,7 @@ fn widget_signing_device(
     let message = if let Some(code) = pairing_code {
         column![
             p1_regular(message),
-            p1_regular(format!("Pairing code: {code}")),
+            p1_regular(crate::t!("decrypt-pairing-code", code = code)),
         ]
     } else {
         column![p1_regular(message)]
@@ -554,22 +572,22 @@ fn cant_fetch_device(
     name: String,
     pairing_code: Option<String>,
 ) -> Button<'static, installer::Message> {
-    let message = "Please unlock or open app on the device".to_string();
+    let message = crate::t!("decrypt-unlock-device");
     widget_signing_device(name, None, message, pairing_code)
 }
 
 fn fetching_device(name: String, fingerprint: Fingerprint) -> Button<'static, installer::Message> {
-    let message = "Try to decrypt with this device...".to_string();
+    let message = crate::t!("decrypt-try-device");
     widget_signing_device(name, Some(fingerprint), message, None)
 }
 
 fn fetched_device(name: String, fingerprint: Fingerprint) -> Button<'static, installer::Message> {
-    let message = "Failed to decrypt file with this device".to_string();
+    let message = crate::t!("decrypt-device-failed");
     widget_signing_device(name, Some(fingerprint), message, None)
 }
 
 fn valid_content(state: &DecryptModal) -> Container<'static, installer::Message> {
-    let description = text::text("Plug in and unlock a hardware device belonging to this setup to \nautomatically decrypt the backup");
+    let description = text::text(crate::t!("decrypt-device-description"));
     let mut devices = state
         .fetching
         .iter()
@@ -584,7 +602,7 @@ fn valid_content(state: &DecryptModal) -> Container<'static, installer::Message>
     }
     let options_btn = modal::optional_section(
         state.show_options,
-        "Other options".to_string(),
+        crate::t!("common-other-options"),
         || Decrypt::ShowOptions(true).into(),
         || Decrypt::ShowOptions(false).into(),
     );
@@ -605,7 +623,7 @@ fn valid_content(state: &DecryptModal) -> Container<'static, installer::Message>
 }
 
 fn optional_content(state: &DecryptModal) -> Container<'static, installer::Message> {
-    let mut tt = Column::new().push(text::text("Using an air-gapped device? Export the xpub from your device, then use the upload or paste option. If you don’t know the correct derivation path, try with the following:"));
+    let mut tt = Column::new().push(text::text(crate::t!("decrypt-airgap-help")));
     for d in &state.derivation_paths {
         tt = tt.push(text::text(format!("{d}")));
     }
@@ -615,7 +633,7 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
         .width(300);
 
     let airgap_hint = Row::new()
-        .push(p1_regular("Provide one of the xpubs used in this wallet."))
+        .push(p1_regular(crate::t!("decrypt-provide-xpub")))
         .push(tooltip::Tooltip::new(
             icon::tooltip_icon(),
             tt,
@@ -664,24 +682,16 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
 /// Return the modal view for an export task
 pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Message> {
     let header = modal::header(
-        Some("Decrypt backup file".to_string()),
+        Some(crate::t!("decrypt-backup-file")),
         None,
         Some(installer::Message::Decrypt(Decrypt::Close)),
     );
 
     let content = match state.error {
         Some(e) => match e {
-            Error::InvalidEncoding => invalid_content(
-                "The file cannot be decoded properly, it seems not to be an encrypted backup."
-                    .to_string(),
-            ),
-            Error::InvalidType => invalid_content(
-                "The file has been decrypted but the content type is not supported.".to_string(),
-            ),
-            Error::InvalidDescriptor => invalid_content(
-                "The file has been decrypted but the descriptor is not a valid Liana descriptor."
-                    .to_string(),
-            ),
+            Error::InvalidEncoding => invalid_content(crate::t!("decrypt-invalid-encoding")),
+            Error::InvalidType => invalid_content(crate::t!("decrypt-invalid-type")),
+            Error::InvalidDescriptor => invalid_content(crate::t!("decrypt-invalid-descriptor")),
         },
         None => valid_content(state),
     };

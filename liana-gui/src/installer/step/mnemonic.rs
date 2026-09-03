@@ -160,8 +160,7 @@ impl Step for RecoverMnemonic {
                 }
             }
             if !descriptor_keys.contains(&fingerprint) {
-                self.error =
-                    Some("The descriptor does not use a key derived from this seed".to_string());
+                self.error = Some(crate::t!("installer-seed-key-not-in-descriptor"));
                 return false;
             }
         }

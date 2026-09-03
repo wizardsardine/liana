@@ -25,6 +25,7 @@ use crate::installer::{
     message::{self, Message},
     view::defined_sequence,
 };
+use crate::t;
 
 use super::defined_threshold;
 
@@ -49,7 +50,7 @@ impl std::fmt::Display for DescriptorKind {
 pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a, Message> {
     let col_wallet = Column::new()
         .spacing(10)
-        .push(text("Descriptor type").bold())
+        .push(text(t!("installer-descriptor-type")).bold())
         .push(container(
             pick_list::pick_list(
                 &DESCRIPTOR_KINDS[..],
@@ -71,7 +72,7 @@ pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a,
             .push(Row::new().push(col_wallet))
             .push_maybe(if use_taproot {
                 Some(
-                    p1_regular("Taproot is only supported by Liana version 5.0 and above")
+                    p1_regular(t!("installer-taproot-supported-version"))
                         .style(theme::text::secondary),
                 )
             } else {
@@ -117,9 +118,9 @@ pub fn path(
                             button::secondary(
                                 Some(icon::plus_icon()),
                                 if sequence.path_kind() == PathKind::SafetyNet {
-                                    "Add Safety Net key"
+                                    t!("installer-add-safety-net-key")
                                 } else {
-                                    "Add key"
+                                    t!("installer-add-key")
                                 },
                             )
                             .on_press(message::DefinePath::AddKey),
@@ -259,54 +260,19 @@ pub fn format_sequence_duration(sequence: u16, short_format: bool) -> Vec<(u32, 
 
     let mut formatted_duration = if short_format {
         vec![
-            (n_years, format!("{n_years}y")),
-            (n_months, format!("{n_months}m")),
-            (n_days, format!("{n_days}d")),
-            (n_hours, format!("{n_hours}h")),
-            (n_minutes, format!("{n_minutes}m")),
+            (n_years, t!("duration-years-compact", count = n_years)),
+            (n_months, t!("duration-months-compact", count = n_months)),
+            (n_days, t!("duration-days-compact", count = n_days)),
+            (n_hours, t!("duration-hours-compact", count = n_hours)),
+            (n_minutes, t!("duration-minutes-compact", count = n_minutes)),
         ]
     } else {
         vec![
-            (
-                n_years,
-                if n_years == 1 {
-                    "1 year".to_string()
-                } else {
-                    format!("{n_years} years")
-                },
-            ),
-            (
-                n_months,
-                if n_months == 1 {
-                    "1 month".to_string()
-                } else {
-                    format!("{n_months} months")
-                },
-            ),
-            (
-                n_days,
-                if n_days == 1 {
-                    "1 day".to_string()
-                } else {
-                    format!("{n_days} days")
-                },
-            ),
-            (
-                n_hours,
-                if n_hours == 1 {
-                    "1 hour".to_string()
-                } else {
-                    format!("{n_hours} hours")
-                },
-            ),
-            (
-                n_minutes,
-                if n_minutes == 1 {
-                    "1 minute".to_string()
-                } else {
-                    format!("{n_minutes} minutes")
-                },
-            ),
+            (n_years, t!("duration-years", count = n_years)),
+            (n_months, t!("duration-months", count = n_months)),
+            (n_days, t!("duration-days", count = n_days)),
+            (n_hours, t!("duration-hours", count = n_hours)),
+            (n_minutes, t!("duration-minutes", count = n_minutes)),
         ]
     };
 
@@ -324,7 +290,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
         .width(Length::Fill)
         .spacing(20)
         .align_x(Alignment::Center)
-        .push(text("Keys can move the funds after inactivity of:"))
+        .push(text(t!("installer-keys-inactivity")))
         .push(
             Row::new()
                 .push(
@@ -336,12 +302,12 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                                 ),
                             )
                         })
-                        .warning("Value must be greater than 0 and lower than 65535"),
+                        .warning(t!("installer-sequence-value-warning")),
                     )
                     .width(Length::Fixed(200.0)),
                 )
                 .spacing(10)
-                .push(text("blocks").bold())
+                .push(text(t!("common-blocks")).bold())
                 .align_y(alignment::Vertical::Center),
         );
 
@@ -380,7 +346,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
     }
 
     card::modal(col.push(if sequence.valid {
-        button::primary(None, "Apply")
+        button::primary(None, t!("btn-apply"))
             .on_press(Message::DefineDescriptor(
                 message::DefineDescriptor::ThresholdSequenceModal(
                     message::ThresholdSequenceModal::Confirm,
@@ -388,7 +354,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
             ))
             .width(Length::Fixed(200.0))
     } else {
-        button::primary(None, "Apply").width(Length::Fixed(200.0))
+        button::primary(None, t!("btn-apply")).width(Length::Fixed(200.0))
     }))
     .width(Length::Fixed(800.0))
     .into()
@@ -410,7 +376,7 @@ pub fn edit_threshold_modal<'a>(threshold: (usize, usize)) -> Element<'a, Messag
                 },
             ))
             .push(
-                button::primary(None, "Apply")
+                button::primary(None, t!("btn-apply"))
                     .on_press(Message::DefineDescriptor(
                         message::DefineDescriptor::ThresholdSequenceModal(
                             message::ThresholdSequenceModal::Confirm,
@@ -497,7 +463,7 @@ mod threshsold_input {
             Column::new()
                 .width(Length::Fixed(150.0))
                 .push(button(icon::up_icon().size(30), Event::IncrementPressed))
-                .push(text("Threshold:").small().bold())
+                .push(text(crate::t!("installer-threshold")).small().bold())
                 .push(
                     Container::new(text(format!("{}/{}", self.value, self.max)).size(30))
                         .align_y(alignment::Vertical::Center),
