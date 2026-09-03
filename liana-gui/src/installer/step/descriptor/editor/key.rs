@@ -565,7 +565,7 @@ impl SelectKeySource {
                 if let Some(key_kind) = k.source.provider_key_kind() {
                     // We don't need to check key's status as redeemed keys are not returned.
                     *warning = if !check_key_network(&k.key, self.network) {
-                        Some("Fetched key does not have the correct network")
+                        Some("Fetched key does not have the correct network".to_string())
                     } else if !self.actual_path.token_kind.contains(&key_kind) {
                         let warn = match key_kind {
                             KeyKind::SafetyNet => {
@@ -575,11 +575,11 @@ impl SelectKeySource {
                                 "Cosigner kind of token is not allowed for this path"
                             }
                         };
-                        Some(warn)
+                        Some(warn.to_string())
                     }
                     // Note that this checks all keys regardless of whether they are currently being used in a path.
                     else if self.keys.contains_key(&k.fingerprint) {
-                        Some("Fetched key has already been added to the wallet.")
+                        Some("Fetched key has already been added to the wallet.".to_string())
                     } else {
                         None
                     };
@@ -638,7 +638,7 @@ impl SelectKeySource {
         if let Ok(DescriptorPublicKey::XPub(key)) = DescriptorPublicKey::from_str(&xpub) {
             if !key.derivation_path.is_master() {
                 self.form_xpub.valid = false;
-                self.form_xpub.warning = Some("Wrong derivation path");
+                self.form_xpub.warning = Some("Wrong derivation path".to_string());
             } else if let Some((fingerprint, _)) = key.origin {
                 self.form_xpub.valid = if self.network == Network::Bitcoin {
                     key.xkey.network == Network::Bitcoin.into()
@@ -646,11 +646,11 @@ impl SelectKeySource {
                     key.xkey.network == Network::Testnet.into()
                 };
                 if !self.form_xpub.valid {
-                    self.form_xpub.warning = Some("Wrong network");
+                    self.form_xpub.warning = Some("Wrong network".to_string());
                     self.form_xpub.valid = false;
                 }
                 if self.keys.contains_key(&fingerprint) {
-                    self.form_xpub.warning = Some("Key already used");
+                    self.form_xpub.warning = Some("Key already used".to_string());
                     self.form_xpub.valid = false;
                 }
 
@@ -659,12 +659,12 @@ impl SelectKeySource {
                 }
             } else {
                 self.form_xpub.valid = false;
-                self.form_xpub.warning = Some("Origin missing");
+                self.form_xpub.warning = Some("Origin missing".to_string());
             }
         } else {
             self.form_xpub.valid = xpub.is_empty();
             if !self.form_xpub.valid {
-                self.form_xpub.warning = Some("Invalid Xpub");
+                self.form_xpub.warning = Some("Invalid Xpub".to_string());
             }
         }
         Task::none()
@@ -740,7 +740,7 @@ impl SelectKeySource {
                     .iter()
                     .any(|(_, (_, k))| k.source.token() == Some(&token))
                 {
-                    Some("Duplicate token")
+                    Some("Duplicate token".to_string())
                 } else {
                     None
                 };
@@ -751,7 +751,7 @@ impl SelectKeySource {
             } else {
                 *valid = value.is_empty();
                 *warning = if !*valid {
-                    Some("Invalid token!")
+                    Some("Invalid token!".to_string())
                 } else {
                     None
                 };
@@ -786,7 +786,8 @@ impl SelectKeySource {
             SelectedKey::New(k) => Some(k.fingerprint),
         } {
             if alias_already_exists(&alias, fg, &self.keys) {
-                self.form_alias.warning = Some("This alias is already used for another key");
+                self.form_alias.warning =
+                    Some("This alias is already used for another key".to_string());
                 self.form_alias.valid = false;
             }
         }
@@ -1457,7 +1458,7 @@ impl super::DescriptorEditModal for EditKeyAlias {
 
                     if alias_already_exists(&alias, self.fingerprint, &self.keys) {
                         self.form_alias.warning =
-                            Some("This alias is already used for another key");
+                            Some("This alias is already used for another key".to_string());
                         self.form_alias.valid = false;
                     }
                     if alias.chars().count() <= MAX_ALIAS_LEN {

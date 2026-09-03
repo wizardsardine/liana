@@ -1082,14 +1082,14 @@ impl State {
 
     fn on_backend_invalid_email(&mut self) {
         self.views.login.email.form.valid = false;
-        self.views.login.email.form.warning = Some("Email is invalid!");
+        self.views.login.email.form.warning = Some("Email is invalid!".to_string());
         self.views.login.email.processing = false;
     }
 
     fn on_backend_auth_code_fail(&mut self) {
         self.views.login.email.form.valid = false;
         self.views.login.email.form.warning =
-            Some("Fail to request authentication code from server!");
+            Some("Fail to request authentication code from server!".to_string());
         self.views.login.email.processing = false;
     }
 
@@ -1116,7 +1116,7 @@ impl State {
 
     fn on_backend_login_fail(&mut self) {
         self.views.login.code.form.valid = false;
-        self.views.login.code.form.warning = Some("Login fail!");
+        self.views.login.code.form.warning = Some("Login fail!".to_string());
         self.views.login.code.processing = false;
     }
 

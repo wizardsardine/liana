@@ -3,3 +3,506 @@
 # Format: id => "English"
 # Use \n for line breaks
 
+btn-accept => "Accept"
+
+btn-add-key => "Add a key"
+
+btn-add-payment => "Add payment"
+
+btn-add-recovery-option => "Add recovery option"
+
+btn-add-recovery-path => "Add a recovery path"
+
+btn-add-safety-net => "Add Safety Net"
+
+btn-add-wallet => "Add wallet"
+
+btn-approve => "Approve"
+
+btn-back-up-descriptor => "Back Up Descriptor"
+
+btn-backup-encrypted-descriptor => "Back up encrypted descriptor"
+
+btn-broadcast => "Broadcast"
+
+btn-cancel => "Cancel"
+
+btn-change-email => "Change Email"
+
+btn-check-connection => "Check connection"
+
+btn-clear => "Clear"
+
+btn-clear-all => "Clear All"
+
+btn-connect-another-email => "Connect with another email"
+
+btn-customize => "Customize"
+
+btn-delete => "Delete"
+
+btn-delete-wallet => "Delete wallet"
+
+btn-dismiss => "Dismiss"
+
+btn-edit => "Edit"
+
+btn-edit-keys => "Edit keys"
+
+btn-edit-label => "Edit label"
+
+btn-email-wizardsardine => "Email WS"
+
+btn-export => "Export"
+
+btn-fee-level-high => "High"
+
+btn-fee-level-low => "Low"
+
+btn-fee-level-medium => "Medium"
+
+btn-generate => "Generate"
+
+btn-generate-address => "Generate address"
+
+btn-go-to-rescan => "Go to rescan"
+
+btn-ignore => "Ignore"
+
+btn-import => "Import"
+
+btn-keep-my-changes => "Keep my changes"
+
+btn-manage-keys => "Manage Keys"
+
+btn-mark-keys-ready => "Mark keys as ready"
+
+btn-more-backend-node-info => "More information about backend and node options"
+
+btn-new => "New"
+
+btn-next => "Next"
+
+btn-no => "No"
+
+btn-ok => "OK"
+
+btn-overwrite => "Overwrite"
+
+btn-previous => "Previous"
+
+btn-previous-arrow => "< Previous"
+
+btn-processing => "Processing..."
+
+btn-register-on-device => "Register on device"
+
+btn-reload => "Reload"
+
+btn-resend-token => "Resend token"
+
+btn-reset-timelock => "Reset timelock"
+
+btn-retry => "Retry"
+
+btn-save => "Save"
+
+btn-see-transaction-details => "See transaction details"
+
+btn-select => "Select"
+
+btn-send-for-approval => "Send for approval"
+
+btn-send-token => "Send token"
+
+btn-set => "Set"
+
+btn-set-keys => "Set keys"
+
+btn-share-xpubs => "Share Xpubs"
+
+btn-show-qr => "Show QR Code"
+
+btn-sign => "Sign"
+
+btn-skip => "Skip"
+
+btn-skip-registration => "Skip registration"
+
+btn-template-help => "Something’s wrong with this template?"
+
+btn-unlock-all => "Unlock all"
+
+btn-update => "Update"
+
+btn-updating => "Updating"
+
+btn-verify-on-device => "Verify on hardware device"
+
+btn-yes => "Yes"
+
+business-account-number => "Account #{$index}"
+
+business-connection-error => "Connection Error"
+
+business-import-xpub-file => "Import extended public key file"
+
+business-key-count
+=> "{ $count ->\n    [one] (1 key)\n   *[other] ({$count} keys)\n}";;
+
+business-no-hardware-wallets
+=> "No hardware device detected. Connect a device and unlock it.";;
+
+business-role-manager => "Manager"
+
+business-role-participant => "Participant"
+
+business-wrong-network-device => "Wrong network in device settings"
+
+combobox-already-signer => "already a signer"
+
+common-address => "Address"
+
+common-address-label => "Address:"
+
+common-connecting-ellipsis => "Connecting..."
+
+common-copy => "Copy"
+
+common-fetching => "Fetching ..."
+
+common-from => "From"
+
+common-learn-more => "Learn more"
+
+common-no-label-parenthesized => "(No label)"
+
+common-paste => "Paste"
+
+common-processing => "Processing..."
+
+common-ready => "Ready"
+
+common-recovery => "Recovery"
+
+common-register => "Register"
+
+common-see-more => "See more"
+
+common-self-transfer => "Self-transfer"
+
+common-wallet => "Wallet"
+
+decrypt-enter-mnemonic-unsafe => "UNSAFE: Enter mnemonic of one of the keys"
+
+decrypt-enter-mnemonic-warning
+=> "This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds.";;
+
+decrypt-paste-xpub => "Paste an extended public key"
+
+device-already-used => "Already used"
+
+device-check-device => "Please check your device"
+
+device-enter-cosigner-token => "Enter a Cosigner token"
+
+device-enter-safety-net-token => "Enter a Safety Net token"
+
+device-generate-hot-key => "Generate hot key stored on this computer"
+
+device-hot-key-test-only => "We recommend using this option only for test purposes"
+
+device-install-firmware-version-or-later
+=> "Install firmware version {$version} \nor later";;
+
+device-locked => "Locked"
+
+device-locked-check-code => "Locked, check code: {$code}"
+
+device-processing-check-device => "Processing, please check your device"
+
+device-registered => "Registered"
+
+device-signed => "Signed"
+
+device-unrelated-wallet => "This signing device is not related to this Liana wallet."
+
+duration-days => "{ $count ->\n    [one] 1 day\n   *[other] {$count} days\n}"
+
+duration-days-approx => "~{$count} days"
+
+duration-days-compact => "{$count}d"
+
+duration-days-compact-approx => "~{$count}d"
+
+duration-hours => "{ $count ->\n    [one] 1 hour\n   *[other] {$count} hours\n}"
+
+duration-hours-compact => "{$count}h"
+
+duration-minutes
+=> "{ $count ->\n    [one] 1 minute\n   *[other] {$count} minutes\n}";;
+
+duration-minutes-compact => "{$count}m"
+
+duration-months => "{ $count ->\n    [one] 1 month\n   *[other] {$count} months\n}"
+
+duration-months-compact => "{$count}m"
+
+duration-years => "{ $count ->\n    [one] 1 year\n   *[other] {$count} years\n}"
+
+duration-years-compact => "{$count}y"
+
+fiat-amount-non-negative => "Amount must be non-negative"
+
+fiat-invalid-currency => "Invalid currency"
+
+fiat-source-timestamp
+=> "Default price at the time the transaction has been confirmed";;
+
+fiat-source-user => "Price you have filled yourself"
+
+fiat-source-wizardsardine
+=> "Price automatically processed by WS when you crafted the transaction";;
+
+home-checking-transactions => "Checking for new transactions"
+
+home-recovery-left => "≈ {$units} left before first recovery path becomes available."
+
+home-recovery-warning
+=> "Recovery path is or will soon be available for {$count} coin(s).";;
+
+home-rescan-warning-backup
+=> "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions.";;
+
+home-rescan-warning-descriptor
+=> "As this wallet was imported from a descriptor, you may need to rescan the blockchain to see past transactions.";;
+
+home-syncing => "Syncing"
+
+home-syncing-blockchain => "Syncing blockchain ({$progress}%)"
+
+hw-descriptor-not-registered
+=> "The wallet descriptor is not registered on the device.\n You can register it in the settings.";;
+
+hw-display-address-unavailable
+=> "Liana cannot request the device to display the address. \n Verify it with the QR code in the options below.";;
+
+hw-no-taproot-miniscript
+=> "Device firmware version does not support taproot miniscript";;
+
+hw-not-in-spending-path => "This signing device is not part of this spending path."
+
+installer-safety-net-description
+=> "This adds a final recovery option containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens.";;
+
+label-invalid-length => "Invalid label length, must be 80 bytes or less"
+
+menu-settings => "Settings"
+
+network-coins-have => ", COINS HAVE{ \" \" }"
+
+network-no-value => "NO VALUE"
+
+network-this-is-a => "THIS IS A{ \" \" }"
+
+network-wallet => "{$network} WALLET"
+
+payment-address-label => "address label: {$label}"
+
+pill-active => "Active"
+
+pill-always-available => "Always available"
+
+pill-available => "Available"
+
+pill-available-compact => "Avail."
+
+pill-batch => "Batch"
+
+pill-batch-tooltip => "This transaction contains multiple payments"
+
+pill-confirmed => "Confirmed"
+
+pill-confirmed-tooltip => "This transaction has been included in a block"
+
+pill-deprecated => "Deprecated"
+
+pill-deprecated-tooltip
+=> "This transaction cannot be included in the blockchain anymore.";;
+
+pill-draft => "Draft"
+
+pill-first-recovery-in => "First recovery option available in {$units}"
+
+pill-first-recovery-today => "First recovery option available today"
+
+pill-key-cosigner => "Cosigner"
+
+pill-key-cosigner-tooltip => "Professional third party co-signing key"
+
+pill-key-external => "External"
+
+pill-key-external-tooltip => "Key held by third parties"
+
+pill-key-internal => "Internal"
+
+pill-key-internal-tooltip => "Key held by your organization"
+
+pill-key-safety-net => "Safety Net"
+
+pill-key-safety-net-tooltip => "Professional third party recovery key"
+
+pill-not-in-policy => "Not in policy yet"
+
+pill-recovery-available-tooltip => "Recovery option(s) already available"
+
+pill-recovery-tooltip => "This transaction is using a recovery path"
+
+pill-rescan-progress => "Rescan... {$progress}%"
+
+pill-signed => "To broadcast"
+
+pill-signed-tooltip => "This transaction is signed & ready to broadcast"
+
+pill-spent => "Spent"
+
+pill-spent-tooltip => "The transaction was included in the blockchain."
+
+pill-to-approve => "To approve"
+
+pill-today => "Today"
+
+pill-unconfirmed => "Unconfirmed"
+
+pill-unconfirmed-tooltip => "Do not treat this as a payment until it is confirmed"
+
+pill-unsigned => "Unsigned"
+
+pill-unsigned-tooltip => "This transaction is missing signature(s)"
+
+pill-used-in-spending-paths
+=> "{ $count ->\n    [one] Used in 1 spending path\n   *[other] Used in {$count} spending paths\n}";;
+
+pill-ws-admin => "WS Admin"
+
+pill-xpub-not-set => "Not Set"
+
+pill-xpub-set => "✓ Set"
+
+receive-derivation-index => "Derivation index:"
+
+receive-previous-addresses => "Previously generated addresses still awaiting deposit"
+
+settings-backup-encrypted-descriptor-tooltip
+=> "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.";;
+
+settings-export-descriptor => "Descriptor only - plain-text"
+
+settings-export-descriptor-description
+=> "Plain-text (not encrypted) descriptor file only, to use with other wallets.";;
+
+settings-export-encrypted-descriptor => "Encrypted descriptor"
+
+settings-export-encrypted-descriptor-description
+=> ".bed file, can be decrypted with one of your signing devices or xpubs.";;
+
+settings-export-labels => "BIP 329 labels"
+
+settings-export-labels-description
+=> "BIP 329 label export, compatible with other wallets.";;
+
+settings-export-transactions => "Transactions table"
+
+settings-export-transactions-description
+=> ".CSV file of past transactions, for accounting purposes.";;
+
+settings-export-wallet => "Export wallet"
+
+settings-export-wallet-description
+=> "File (not encrypted) with wallet info useful to sync labels and data on other devices.";;
+
+settings-import-wallet => "Import wallet"
+
+settings-import-wallet-description => "Upload a backup file to update wallet info."
+
+settings-section-about => "About"
+
+settings-section-backend => "Backend"
+
+settings-section-general => "General"
+
+settings-section-import-export => "Import/Export"
+
+settings-section-node => "Node"
+
+spend-amount-btc => "Amount (BTC)"
+
+spend-amount-truncated => "Amount has been truncated to 8 decimal places"
+
+spend-batch-label => "Batch label"
+
+spend-btc-placeholder => "0.001 (in BTC)"
+
+spend-coins-selection => "Coins selection"
+
+spend-could-not-convert-btc => "Could not convert to BTC"
+
+spend-description => "Description"
+
+spend-duplicate-addresses => "Two payment addresses are the same"
+
+spend-dust-add-funds
+=> "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s).";;
+
+spend-dust-select-more-coins
+=> "Minimum amount is 0.00 000 500 BTC. Select more coins to continue.";;
+
+spend-fee => "Fee:"
+
+spend-fee-manual => "Manual"
+
+spend-fee-rate => "Fee ({$feerate} sats/vb):"
+
+spend-fee-smart-select => "Smart Select"
+
+spend-fee-smart-select-tooltip
+=> "Pick a preset feerate instead of entering one manually.";;
+
+spend-feerate => "Feerate:"
+
+spend-feerate-example => "e.g. 5 (in sats/vb)"
+
+spend-feerate-max-warning
+=> "Feerate must be an integer less than or equal to {$max_feerate} sats/vbyte";;
+
+spend-feerate-missing-invalid => "The feerate is missing or invalid"
+
+spend-fiat-placeholder => "Enter amount in {$currency}"
+
+spend-invalid-address => "Invalid address (maybe it is for another network?)"
+
+spend-invalid-amount
+=> "Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)";;
+
+spend-left-to-select => "left to select"
+
+spend-max => "MAX"
+
+spend-max-tooltip
+=> "Total amount remaining after paying fee and any other recipients";;
+
+spend-payment-description-invalid => "Payment description is missing or invalid"
+
+spend-payment-label => "Payment label"
+
+spend-recipient-address-invalid => "A recipient address is missing or invalid"
+
+spend-recipient-amount-invalid => "A recipient amount is missing or invalid"
+
+spend-select-coins-to-cover-amount => "Select coins to cover the amount"
+
+spend-select-one-coin => "Select at least one coin."
+
+spend-select-or-add-funds => "Select or add more funds."
+
+tab-pending => "Pending"

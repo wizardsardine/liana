@@ -130,7 +130,7 @@ fn token_field(modal_state: &EditKeyModalState) -> Element<'_, Message> {
         warning: if is_empty {
             None
         } else {
-            modal_state.token_warning
+            modal_state.token_warning.map(str::to_string)
         },
         valid: token_valid || is_empty,
     };

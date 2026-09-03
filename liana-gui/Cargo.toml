@@ -21,6 +21,7 @@ async-trait = { workspace = true }
 async-hwi = { workspace = true }
 liana = { path = "../liana" }
 liana-connect = { workspace = true }
+liana-i18n = { workspace = true }
 lianad = { path = "../lianad", default-features = false, features = ["nonblocking_shutdown"] }
 liana-ui = { path = "../liana-ui" }
 backtrace = { workspace = true }

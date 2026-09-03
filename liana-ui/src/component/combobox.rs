@@ -17,6 +17,7 @@ use iced::{
     Alignment, Border, Event, Font, Length, Padding, Pixels, Point, Rectangle, Shadow, Size,
     Vector,
 };
+use liana_i18n::t;
 
 use crate::{
     color,
@@ -135,7 +136,8 @@ pub fn email_entry<'a, M: 'a>(
 }
 
 fn trailing<'a, M: 'a>(tag: Tag) -> Element<'a, M> {
-    let note = || text::new::small_caption("already a signer").style(theme::text::secondary);
+    let note =
+        || text::new::small_caption(t!("combobox-already-signer")).style(theme::text::secondary);
     let check = || icon::check_icon().size(13).style(theme::text::success);
     match tag {
         Tag::None => Space::with_width(Length::Shrink).into(),

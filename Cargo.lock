@@ -3296,6 +3296,7 @@ dependencies = [
  "jsonrpc",
  "liana",
  "liana-connect",
+ "liana-i18n",
  "liana-ui",
  "lianad",
  "libc",
@@ -3339,6 +3340,7 @@ dependencies = [
  "iced_aw",
  "iced_core",
  "iced_runtime",
+ "liana-i18n",
  "unicode-segmentation",
 ]
 

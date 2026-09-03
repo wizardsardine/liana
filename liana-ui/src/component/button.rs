@@ -22,6 +22,7 @@ use iced::{
     },
     Background, Border, Color, Length, Padding,
 };
+use liana_i18n::t;
 
 const MENU_BTN_PADDING: [u16; 2] = [9 /* Top/Bottom */, 22 /* Left/Right */];
 const MENU_TEXT_SIZE: u32 = 22;
@@ -497,15 +498,15 @@ fn btn_feerate<'a, T: Clone + 'a>(
 }
 
 pub fn btn_low<'a, T: Clone + 'a>(selected: bool, msg: Option<T>) -> Button<'a, T> {
-    btn_feerate("Low", selected, msg)
+    btn_feerate(t!("btn-fee-level-low"), selected, msg)
 }
 
 pub fn btn_medium<'a, T: Clone + 'a>(selected: bool, msg: Option<T>) -> Button<'a, T> {
-    btn_feerate("Medium", selected, msg)
+    btn_feerate(t!("btn-fee-level-medium"), selected, msg)
 }
 
 pub fn btn_high<'a, T: Clone + 'a>(selected: bool, msg: Option<T>) -> Button<'a, T> {
-    btn_feerate("High", selected, msg)
+    btn_feerate(t!("btn-fee-level-high"), selected, msg)
 }
 
 fn btn_with_tooltip<'a, T: Clone + 'a>(
@@ -573,32 +574,32 @@ pub fn btn_flat<'a, T: Clone + 'a>(
 /// Save button: primary or secondary. Width M.
 pub fn btn_save<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Button<'a, T> {
     if primary {
-        btn_primary(None, "Save", BtnWidth::M, msg)
+        btn_primary(None, t!("btn-save"), BtnWidth::M, msg)
     } else {
-        btn_secondary(None, "Save", BtnWidth::M, msg)
+        btn_secondary(None, t!("btn-save"), BtnWidth::M, msg)
     }
 }
 
 /// Cancel button: destructive. Width M.
 pub fn btn_cancel<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_destructive(None, "Cancel", BtnWidth::M, msg)
+    btn_destructive(None, t!("btn-cancel"), BtnWidth::M, msg)
 }
 
 /// OK button: primary. Width M.
 pub fn btn_ok<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "OK", BtnWidth::M, msg)
+    btn_primary(None, t!("btn-ok"), BtnWidth::M, msg)
 }
 
 pub fn btn_overwrite<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Overwrite", BtnWidth::M, msg)
+    btn_secondary(None, t!("btn-overwrite"), BtnWidth::M, msg)
 }
 
 pub fn btn_ignore<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Ignore", BtnWidth::M, msg)
+    btn_secondary(None, t!("btn-ignore"), BtnWidth::M, msg)
 }
 
 pub fn btn_email_wizardsardine<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Email WS", BtnWidth::Auto, msg)
+    btn_primary(None, t!("btn-email-wizardsardine"), BtnWidth::Auto, msg)
 }
 
 pub fn btn_modal_close<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -609,76 +610,81 @@ pub fn btn_modal_close<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn btn_generate<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Generate", BtnWidth::M, msg)
+    btn_primary(None, t!("btn-generate"), BtnWidth::M, msg)
 }
 
 /// Clear button: destructive. Width M.
 pub fn btn_clear<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_destructive(None, "Clear", BtnWidth::M, msg)
+    btn_destructive(None, t!("btn-clear"), BtnWidth::M, msg)
 }
 
 /// Retry button: secondary. Width M.
 pub fn btn_retry<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Retry", BtnWidth::M, msg)
+    btn_secondary(None, t!("btn-retry"), BtnWidth::M, msg)
 }
 
 /// Yes button: primary. Width S.
 pub fn btn_yes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Yes", BtnWidth::S, msg)
+    btn_primary(None, t!("btn-yes"), BtnWidth::S, msg)
 }
 
 /// No button: secondary. Width S.
 pub fn btn_no<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "No", BtnWidth::S, msg)
+    btn_secondary(None, t!("btn-no"), BtnWidth::S, msg)
 }
 
 pub fn btn_reset_timelock<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(
         Some(icon::reload_icon()),
-        "Reset timelock",
+        t!("btn-reset-timelock"),
         BtnWidth::Auto,
         msg,
     )
 }
 
 pub fn btn_go_to_rescan<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Go to rescan", BtnWidth::XL, msg)
+    btn_secondary(None, t!("btn-go-to-rescan"), BtnWidth::XL, msg)
 }
 
 pub fn btn_dismiss<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_destructive(Some(icon::big_cross_icon()), "Dismiss", BtnWidth::L, msg)
+    btn_destructive(
+        Some(icon::big_cross_icon()),
+        t!("btn-dismiss"),
+        BtnWidth::L,
+        msg,
+    )
 }
 
 pub fn btn_customize<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(None, "Customize", BtnWidth::M, msg)
+    btn_tertiary(None, t!("btn-customize"), BtnWidth::M, msg)
 }
 
 pub fn btn_clear_all<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(None, "Clear all", BtnWidth::M, msg)
+    btn_tertiary(None, t!("btn-clear-all"), BtnWidth::M, msg)
 }
 
 pub fn btn_unlock<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Unlock all", BtnWidth::M, msg)
+    btn_secondary(None, t!("btn-unlock-all"), BtnWidth::M, msg)
 }
 
 pub fn btn_reload<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Reload", BtnWidth::M, msg)
+    btn_primary(None, t!("btn-reload"), BtnWidth::M, msg)
 }
 
 pub fn btn_approve<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Approve", BtnWidth::XL, msg)
+    btn_primary(None, t!("btn-approve"), BtnWidth::XL, msg)
 }
 
 pub fn btn_send_for_approval<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Send for approval", BtnWidth::XL, msg)
+    btn_primary(None, t!("btn-send-for-approval"), BtnWidth::XL, msg)
 }
 
 pub fn btn_keep_changes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Keep my changes", BtnWidth::XL, msg)
+    btn_secondary(None, t!("btn-keep-my-changes"), BtnWidth::XL, msg)
 }
 
 pub fn btn_send_token<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Send token", BtnWidth::L, msg)
+    btn_primary(None, t!("btn-send-token"), BtnWidth::L, msg)
 }
 
 pub fn btn_paste_icon<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -703,16 +709,21 @@ pub fn subtle_link<'a, T: Clone + 'a>(label: impl Display, msg: Option<T>) -> El
 }
 
 pub fn btn_template_help<'a, T: Clone + 'a>(msg: Option<T>) -> Element<'a, T> {
-    subtle_link("Something’s wrong with this template?", msg)
+    subtle_link(t!("btn-template-help"), msg)
 }
 
 pub fn btn_breadcrumb_previous<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_flat(Some(icon::previous_icon()), "Previous", BtnWidth::L, msg)
+    btn_flat(
+        Some(icon::previous_icon()),
+        t!("btn-previous"),
+        BtnWidth::L,
+        msg,
+    )
 }
 
 pub fn btn_manage_keys<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Button<'a, T> {
     let width = BtnWidth::XL;
-    let label = "Manage Keys";
+    let label = t!("btn-manage-keys");
     let icon = Some(icon::key_icon());
     if primary {
         btn_primary(icon, label, width, msg)
@@ -722,69 +733,74 @@ pub fn btn_manage_keys<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Butt
 }
 
 pub fn btn_mark_keys_ready<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Mark keys as ready", BtnWidth::XL, msg)
+    btn_primary(None, t!("btn-mark-keys-ready"), BtnWidth::XL, msg)
 }
 
 pub fn btn_edit_keys<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(Some(icon::edit_icon()), "Edit keys", BtnWidth::L, msg)
+    btn_secondary(
+        Some(icon::edit_icon()),
+        t!("btn-edit-keys"),
+        BtnWidth::L,
+        msg,
+    )
 }
 
 /// Generate-address button: a plus icon and "Generate address" label.
 pub fn btn_generate_address<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     let icon = Some(icon::plus_icon());
-    let label = "Generate address";
+    let label = t!("btn-generate-address");
     btn_primary(icon, label, BtnWidth::Auto, msg)
 }
 
 pub fn btn_add_key<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    auxiliary(Some(icon::plus_icon()), "Add a key", msg)
+    auxiliary(Some(icon::plus_icon()), t!("btn-add-key"), msg)
 }
 
 pub fn btn_add_recovery_path<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    auxiliary(Some(icon::plus_icon()), "Add a recovery path", msg)
+    auxiliary(Some(icon::plus_icon()), t!("btn-add-recovery-path"), msg)
 }
 
 pub fn btn_skip<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Skip", BtnWidth::M, msg)
+    btn_secondary(None, t!("btn-skip"), BtnWidth::M, msg)
 }
 
 pub fn btn_skip_registration<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Skip registration", BtnWidth::XL, msg)
+    btn_secondary(None, t!("btn-skip-registration"), BtnWidth::XL, msg)
 }
 
 pub fn btn_resend_token<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(None, "Resend token", BtnWidth::XL, msg)
+    btn_tertiary(None, t!("btn-resend-token"), BtnWidth::XL, msg)
 }
 
 pub fn btn_change_email<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_tertiary(
         Some(icon::previous_icon()),
-        "Change email",
+        t!("btn-change-email"),
         BtnWidth::XL,
         msg,
     )
 }
 
 pub fn btn_connect_another_email<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    auxiliary(None, "Connect with another email", msg)
+    auxiliary(None, t!("btn-connect-another-email"), msg)
 }
 
 pub fn btn_verify_compact<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     button_compact(
-        "Verify on hardware device",
+        t!("btn-verify-on-device"),
         theme::button::tertiary,
         Some(msg),
     )
 }
 
 pub fn btn_show_qr_compact<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
-    button_compact("Show QR Code", theme::button::tertiary, Some(msg))
+    button_compact(t!("btn-show-qr"), theme::button::tertiary, Some(msg))
 }
 
 pub fn btn_show_qr<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     btn_tertiary(
         Some(icon::qr_icon()),
-        "Show QR Code",
+        t!("btn-show-qr"),
         BtnWidth::XL,
         Some(msg),
     )
@@ -793,7 +809,7 @@ pub fn btn_show_qr<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
 pub fn btn_verify<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     btn_tertiary(
         Some(icon::usb_icon()),
-        "Verify on hardware device",
+        t!("btn-verify-on-device"),
         BtnWidth::XXL,
         Some(msg),
     )
@@ -802,43 +818,58 @@ pub fn btn_verify<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
 pub fn btn_register_on_device<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     btn_tertiary(
         Some(icon::chip_icon()),
-        "Register on device",
+        t!("btn-register-on-device"),
         BtnWidth::XL,
         Some(msg),
     )
 }
 
 pub fn btn_see_transaction_details<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
-    btn_tertiary(None, "See transaction details", BtnWidth::XL, Some(msg))
+    btn_tertiary(
+        None,
+        t!("btn-see-transaction-details"),
+        BtnWidth::XL,
+        Some(msg),
+    )
 }
 
 pub fn btn_export<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(Some(icon::backup_icon()), "Export", BtnWidth::M, msg)
+    btn_tertiary(
+        Some(icon::backup_icon()),
+        t!("btn-export"),
+        BtnWidth::M,
+        msg,
+    )
 }
 
 pub fn btn_import<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(Some(icon::restore_icon()), "Import", BtnWidth::M, msg)
+    btn_tertiary(
+        Some(icon::restore_icon()),
+        t!("btn-import"),
+        BtnWidth::M,
+        msg,
+    )
 }
 
 pub fn btn_sign<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Sign", BtnWidth::M, msg)
+    btn_primary(None, t!("btn-sign"), BtnWidth::M, msg)
 }
 
 pub fn btn_broadcast<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Broadcast", BtnWidth::M, msg)
+    btn_primary(None, t!("btn-broadcast"), BtnWidth::M, msg)
 }
 
 pub fn btn_new<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(Some(icon::plus_icon()), "New", BtnWidth::M, msg)
+    btn_tertiary(Some(icon::plus_icon()), t!("btn-new"), BtnWidth::M, msg)
 }
 
 pub fn btn_processing<'a, T: Clone + 'a>() -> Button<'a, T> {
-    btn_tertiary(None, "Processing...", BtnWidth::M, None)
+    btn_tertiary(None, t!("btn-processing"), BtnWidth::M, None)
 }
 
 pub fn btn_backup_encrypt_descriptor<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
-    let backup_label = "Back up encrypted descriptor";
-    let backup_tooltip = "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.";
+    let backup_label = t!("btn-backup-encrypted-descriptor");
+    let backup_tooltip = t!("settings-backup-encrypted-descriptor-tooltip");
     btn_with_tooltip(
         Some(icon::backup_icon()),
         backup_label,
@@ -851,36 +882,34 @@ pub fn btn_backup_encrypt_descriptor<'a, T: Clone + 'a>(msg: T) -> Button<'a, T>
 
 pub fn btn_update<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     if let Some(msg) = msg {
-        btn_tertiary(None, "Update", BtnWidth::L, Some(msg))
+        btn_tertiary(None, t!("btn-update"), BtnWidth::L, Some(msg))
     } else {
-        btn_tertiary(None, "Updating", BtnWidth::M, None)
+        btn_tertiary(None, t!("btn-updating"), BtnWidth::M, None)
     }
 }
 
 pub fn btn_edit<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(Some(icon::edit_icon()), "Edit", BtnWidth::S, msg)
+    btn_tertiary(Some(icon::edit_icon()), t!("btn-edit"), BtnWidth::S, msg)
 }
 
 pub fn btn_set<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(Some(icon::edit_icon()), "Set", BtnWidth::S, msg)
+    btn_primary(Some(icon::edit_icon()), t!("btn-set"), BtnWidth::S, msg)
 }
 
 pub fn btn_add_recovery_option<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_tertiary(
         Some(icon::plus_icon()),
-        "Add recovery option",
+        t!("btn-add-recovery-option"),
         BtnWidth::XL,
         msg,
     )
 }
 
-const SAFETY_NET_DESCRIPTION: &str = "This adds a final recovery option containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens.";
-
 pub fn btn_add_safety_net<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_with_tooltip(
         Some(icon::plus_icon()),
-        "Add Safety Net",
-        Some(SAFETY_NET_DESCRIPTION),
+        t!("btn-add-safety-net"),
+        Some(t!("installer-safety-net-description")),
         BtnWidth::XL,
         msg,
         theme::button::tertiary,
@@ -888,15 +917,15 @@ pub fn btn_add_safety_net<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn btn_select<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Select", BtnWidth::M, msg)
+    btn_secondary(None, t!("btn-select"), BtnWidth::M, msg)
 }
 
 pub fn btn_share_xpubs<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(None, "Share Xpubs", BtnWidth::M, msg)
+    btn_tertiary(None, t!("btn-share-xpubs"), BtnWidth::M, msg)
 }
 
 pub fn btn_add_wallet<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    auxiliary(Some(icon::plus_icon()), "Add wallet", msg)
+    auxiliary(Some(icon::plus_icon()), t!("btn-add-wallet"), msg)
 }
 
 /// Full-width "Show QR Code" button for an optional modal section, with an
@@ -908,7 +937,7 @@ pub fn btn_show_qr_section<'a, M: 'a + 'static>(
     let mut btn = Button::new(
         Row::new()
             .push(icon::qr_icon().size(30))
-            .push(button_text("Show QR Code"))
+            .push(button_text(t!("btn-show-qr")))
             .push_maybe(tt.map(tooltip))
             .spacing(20)
             .align_y(Vertical::Center)
@@ -955,31 +984,41 @@ pub fn btn_remove<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn btn_delete<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_destructive(None, "Delete", BtnWidth::M, msg)
+    btn_destructive(None, t!("btn-delete"), BtnWidth::M, msg)
 }
 
 pub fn btn_previous<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(None, "< Previous", BtnWidth::M, msg)
+    btn_tertiary(None, t!("btn-previous-arrow"), BtnWidth::M, msg)
 }
 
 pub fn btn_next<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     if msg.is_some() {
-        btn_primary(None, "Next", BtnWidth::S, msg)
+        btn_primary(None, t!("btn-next"), BtnWidth::S, msg)
     } else {
-        btn_secondary(None, "Next", BtnWidth::S, msg)
+        btn_secondary(None, t!("btn-next"), BtnWidth::S, msg)
     }
 }
 
 pub fn btn_add_payment<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(Some(icon::plus_icon()), "Add payment", BtnWidth::Auto, msg)
+    btn_tertiary(
+        Some(icon::plus_icon()),
+        t!("btn-add-payment"),
+        BtnWidth::Auto,
+        msg,
+    )
 }
 
 pub fn btn_add_label<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(Some(icon::edit_icon()), "Edit label", BtnWidth::L, msg)
+    btn_tertiary(
+        Some(icon::edit_icon()),
+        t!("btn-edit-label"),
+        BtnWidth::L,
+        msg,
+    )
 }
 
 pub fn btn_delete_wallet<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    destructive(None, "Delete wallet")
+    destructive(None, t!("btn-delete-wallet"))
         .width(Length::Fixed(200.0))
         .on_press_maybe(msg)
 }
@@ -992,7 +1031,7 @@ pub fn btn_optional_section<'a, T: Clone + 'a>(content: Row<'a, T>, msg: T) -> B
 
 pub fn btn_backup_descriptor<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Button<'a, T> {
     let icon = Some(icon::backup_icon());
-    let label = "Back Up Descriptor";
+    let label = t!("btn-back-up-descriptor");
     let width = BtnWidth::XL;
     if primary {
         btn_primary(icon, label, width, msg)
@@ -1002,7 +1041,7 @@ pub fn btn_backup_descriptor<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -
 }
 
 pub fn btn_check_connection<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Button<'a, T> {
-    let label = "Check connection";
+    let label = t!("btn-check-connection");
     let width = BtnWidth::L;
 
     if primary {
@@ -1013,15 +1052,11 @@ pub fn btn_check_connection<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) ->
 }
 
 pub fn btn_backend_options_help<T: Clone + 'static>(msg: T) -> Button<'static, T> {
-    link(
-        Some(icon::link_icon()),
-        "More information about backend and node options",
-    )
-    .on_press(msg)
+    link(Some(icon::link_icon()), t!("btn-more-backend-node-info")).on_press(msg)
 }
 
 pub fn btn_accept<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(Some(icon::check_icon()), "Accept", BtnWidth::M, msg)
+    btn_primary(Some(icon::check_icon()), t!("btn-accept"), BtnWidth::M, msg)
 }
 
 pub fn btn_modal_previous<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
