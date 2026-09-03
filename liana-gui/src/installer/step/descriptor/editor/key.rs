@@ -1127,7 +1127,9 @@ impl SelectKeySource {
                 Some(code) => format!("Pairing code: {code}"),
                 None => "Please unlock the device".to_string(),
             }),
-            (_, false, true) => Some("This device doesn't support taproot miniscript".to_string()),
+            (_, false, true) => {
+                Some("Device firmware version does not support taproot miniscript".to_string())
+            }
             (HwState::Unsupported(ur), _, _) => {
                 enabled = false;
                 match ur {

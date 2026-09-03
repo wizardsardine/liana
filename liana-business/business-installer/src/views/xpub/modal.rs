@@ -314,7 +314,9 @@ fn device_title(kind: async_hwi::DeviceKind, version: Option<&async_hwi::Version
 
 fn locked_message(kind: async_hwi::DeviceKind, pairing_code: Option<String>) -> String {
     match kind {
-        async_hwi::DeviceKind::Jade => "This device doesn't support taproot miniscript".to_string(),
+        async_hwi::DeviceKind::Jade => {
+            "Device firmware version does not support taproot miniscript".to_string()
+        }
         _ => pairing_code
             .map(|code| format!("Pairing code: {code}"))
             .unwrap_or_else(|| "Please unlock the device".to_string()),
@@ -331,7 +333,7 @@ fn unsupported_message(kind: async_hwi::DeviceKind, reason: &UnsupportedReason) 
             minimal_supported_version,
         } => match kind {
             async_hwi::DeviceKind::Jade => {
-                "This device doesn't support taproot miniscript".to_string()
+                "Device firmware version does not support taproot miniscript".to_string()
             }
             _ => format!(
                 "Device version not supported, upgrade to version > {minimal_supported_version}"
