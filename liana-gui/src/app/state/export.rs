@@ -70,20 +70,22 @@ impl ExportModal {
         }
     }
 
-    pub fn modal_title(&self) -> &'static str {
+    pub fn modal_title(&self) -> String {
         match self.import_export_type {
-            ImportExportType::Transactions => "Export Transactions",
-            ImportExportType::ExportPsbt(_) => "Export PSBT",
-            ImportExportType::ExportXpub(_) => "Export Xpub",
-            ImportExportType::ImportXpub(_) => "Import Xpub",
-            ImportExportType::ExportProcessBackup(..) => "Export Backup",
-            ImportExportType::ExportEncryptedDescriptor(_) => "Export Encrypted Descriptor",
-            ImportExportType::Descriptor(_) => "Export Descriptor",
-            ImportExportType::ExportLabels => "Export Labels",
-            ImportExportType::ImportPsbt(_) => "Import PSBT",
-            ImportExportType::ImportDescriptor(_) => "Import Descriptor",
-            ImportExportType::ImportBackup { .. } => "Restore Backup",
-            ImportExportType::FromBackup(_) => "Import existing wallet from backup",
+            ImportExportType::Transactions => "Export Transactions".to_string(),
+            ImportExportType::ExportPsbt(_) => "Export PSBT".to_string(),
+            ImportExportType::ExportXpub(_) => "Export Xpub".to_string(),
+            ImportExportType::ImportXpub(_) => "Import Xpub".to_string(),
+            ImportExportType::ExportProcessBackup(..) => "Export Backup".to_string(),
+            ImportExportType::ExportEncryptedDescriptor(_) => {
+                "Export Encrypted Descriptor".to_string()
+            }
+            ImportExportType::Descriptor(_) => "Export Descriptor".to_string(),
+            ImportExportType::ExportLabels => "Export Labels".to_string(),
+            ImportExportType::ImportPsbt(_) => "Import PSBT".to_string(),
+            ImportExportType::ImportDescriptor(_) => "Import Descriptor".to_string(),
+            ImportExportType::ImportBackup { .. } => "Restore Backup".to_string(),
+            ImportExportType::FromBackup(_) => "Import existing wallet from backup".to_string(),
         }
     }
 
@@ -290,7 +292,7 @@ impl ExportModal {
             export_modal(
                 &self.state,
                 self.error.as_ref(),
-                self.modal_title(),
+                &self.modal_title(),
                 &self.import_export_type,
             ),
         );

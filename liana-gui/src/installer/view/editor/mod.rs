@@ -136,8 +136,9 @@ pub fn uneditable_defined_key<'a>(
     alias: &'a str,
     color: iced::Color,
     title: impl Into<Cow<'a, str>> + std::fmt::Display,
-    warning: Option<&'static str>,
+    warning: Option<String>,
 ) -> Element<'a, message::DefineKey> {
+    let valid = warning.is_none();
     card::simple(
         Row::new()
             .spacing(10)
@@ -156,7 +157,7 @@ pub fn uneditable_defined_key<'a>(
                     )
                     .push_maybe(warning.map(|w| p2_regular(w).style(theme::text::error))),
             )
-            .push_maybe(if warning.is_none() {
+            .push_maybe(if valid {
                 Some(icon::check_icon().style(theme::text::success))
             } else {
                 None
@@ -169,9 +170,10 @@ pub fn defined_key<'a>(
     alias: &'a str,
     color: iced::Color,
     title: impl Display,
-    warning: Option<&'static str>,
+    warning: Option<String>,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {
+    let valid = warning.is_none();
     let delete_button = (!fixed).then_some(btn_remove(Some(message::DefineKey::Delete)));
     let edit_button = btn_edit(Some(message::DefineKey::EditAlias));
     card::simple(
@@ -192,7 +194,7 @@ pub fn defined_key<'a>(
                     )
                     .push_maybe(warning.map(|w| p2_regular(w).style(theme::text::error))),
             )
-            .push_maybe(if warning.is_none() {
+            .push_maybe(if valid {
                 Some(icon::check_icon().style(theme::text::success))
             } else {
                 None
@@ -252,24 +254,59 @@ fn duration_from_sequence(sequence: u16) -> (u32, u32, u32, u32, u32) {
 /// - < 144 blocks: show all units (e.g., "3h 45mn")
 ///
 /// `short_format`: true = "y/m/d/h/mn", false = "year/month/day/hour/minute"
-pub fn format_sequence_duration(sequence: u16, short_format: bool) -> Vec<(u32, &'static str)> {
+pub fn format_sequence_duration(sequence: u16, short_format: bool) -> Vec<(u32, String)> {
     let (n_years, n_months, n_days, n_hours, n_minutes) = duration_from_sequence(sequence);
 
     let mut formatted_duration = if short_format {
         vec![
-            (n_years, "y"),
-            (n_months, "m"),
-            (n_days, "d"),
-            (n_hours, "h"),
-            (n_minutes, "mn"),
+            (n_years, format!("{n_years}y")),
+            (n_months, format!("{n_months}m")),
+            (n_days, format!("{n_days}d")),
+            (n_hours, format!("{n_hours}h")),
+            (n_minutes, format!("{n_minutes}m")),
         ]
     } else {
         vec![
-            (n_years, "year"),
-            (n_months, "month"),
-            (n_days, "day"),
-            (n_hours, "hour"),
-            (n_minutes, "minute"),
+            (
+                n_years,
+                if n_years == 1 {
+                    "1 year".to_string()
+                } else {
+                    format!("{n_years} years")
+                },
+            ),
+            (
+                n_months,
+                if n_months == 1 {
+                    "1 month".to_string()
+                } else {
+                    format!("{n_months} months")
+                },
+            ),
+            (
+                n_days,
+                if n_days == 1 {
+                    "1 day".to_string()
+                } else {
+                    format!("{n_days} days")
+                },
+            ),
+            (
+                n_hours,
+                if n_hours == 1 {
+                    "1 hour".to_string()
+                } else {
+                    format!("{n_hours} hours")
+                },
+            ),
+            (
+                n_minutes,
+                if n_minutes == 1 {
+                    "1 minute".to_string()
+                } else {
+                    format!("{n_minutes} minutes")
+                },
+            ),
         ]
     };
 
@@ -315,10 +352,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                     Row::new().spacing(5).push(text("~ ").bold()),
                     |row, (n, unit)| {
                         row.push_maybe(if *n > 0 {
-                            Some(
-                                text(format!("{} {}{}", n, unit, if *n > 1 { "s" } else { "" }))
-                                    .bold(),
-                            )
+                            Some(text(unit).bold())
                         } else {
                             None
                         })

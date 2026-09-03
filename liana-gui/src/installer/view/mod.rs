@@ -75,7 +75,12 @@ pub fn import_wallet_or_descriptor<'a>(
     wallets: Vec<(&'a String, Option<&'a String>)>,
 ) -> Element<'a, Message> {
     // Error banner
-    let error = error.map(|e| card::error("Something wrong happened", e.to_string()));
+    let error = error.map(|e| {
+        card::invalid(new::caption(format!(
+            "{}: {}",
+            "Something wrong happened", e
+        )))
+    });
 
     // Wallet list
     let title = row![
@@ -234,7 +239,7 @@ pub fn import_wallet_or_descriptor<'a>(
         progress,
         network,
         email,
-        "Add wallet",
+        "Add wallet".to_string(),
         content,
         Some(Message::Previous),
     )
@@ -303,7 +308,8 @@ pub fn import_descriptor<'a>(
         btn_next(valid.then_some(Message::Next))
     ];
 
-    let error_card = error.map(|e| card::error("Invalid descriptor", e.to_string()));
+    let error_card =
+        error.map(|e| card::invalid(new::caption(format!("{}: {}", "Invalid descriptor", e))));
 
     let content = column![
         import,
@@ -314,7 +320,7 @@ pub fn import_descriptor<'a>(
                     the blockchain after creating the wallet \
                     in order to see your coins and past \
                     transactions. This can be done in \
-                    Settings > Node.",
+                    Settings > Node."
         ),
         button_next,
         error_card
@@ -328,7 +334,7 @@ pub fn import_descriptor<'a>(
         progress,
         network,
         email,
-        "Import the wallet",
+        "Import the wallet".to_string(),
         content,
         Some(Message::Previous),
     )
@@ -510,7 +516,10 @@ pub fn share_xpubs<'a>(
         .push(Space::with_height(5))
         .push(tooltip::Tooltip::new(
             icon::tooltip_icon(),
-            "Switch account if you already use the same hardware in other configurations",
+            new::caption(
+                "Switch account if you already use the same hardware in other configurations"
+                    .to_string(),
+            ),
             tooltip::Position::Bottom,
         ));
     let title = Row::new()
@@ -524,7 +533,7 @@ pub fn share_xpubs<'a>(
         (0, 0),
         network,
         email,
-        "Share your public keys (Xpubs)",
+        "Share your public keys (Xpubs)".to_string(),
         column![
             title,
             if hws.is_empty() {
@@ -549,7 +558,7 @@ pub fn policy_entry_card(title: String, content: String) -> Container<'static, M
 }
 
 pub fn policy_view(template: String, keys: Vec<String>) -> Element<'static, Message> {
-    let template = policy_entry_card("Descriptor template".into(), template);
+    let template = policy_entry_card("Descriptor template".to_string(), template);
     let mut col = column![template].spacing(5);
 
     for (index, key) in keys.into_iter().enumerate() {
@@ -560,7 +569,7 @@ pub fn policy_view(template: String, keys: Vec<String>) -> Element<'static, Mess
 }
 
 pub fn descriptor_view(descriptor_str: String) -> Element<'static, Message> {
-    policy_entry_card("The descriptor".into(), descriptor_str).into()
+    policy_entry_card("The descriptor".to_string(), descriptor_str).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -588,7 +597,12 @@ pub fn register_descriptor<'a>(
     let warning = (!created_desc).then_some(new::b5_bold(
         "This step is only necessary if you are using a signing device.",
     ));
-    let error_card = error.map(|e| card::error("Failed to register descriptor", e.to_string()));
+    let error_card = error.map(|e| {
+        card::invalid(new::caption(format!(
+            "{}: {e}",
+            "Failed to register descriptor"
+        )))
+    });
 
     let devices_title = Container::new(if created_desc {
         new::b5_bold("Select hardware wallet to register descriptor on:")
@@ -654,7 +668,7 @@ pub fn register_descriptor<'a>(
         progress,
         network,
         email,
-        "Register descriptor",
+        "Register descriptor".to_string(),
         content,
         previous,
     )
@@ -684,7 +698,8 @@ pub fn backup_descriptor<'a>(
         help,
     ];
 
-    let error_card = error.map(|e| card::error("Failed to export backup", e.to_string()));
+    let error_card =
+        error.map(|e| card::invalid(new::caption(format!("{}: {e}", "Failed to export backup"))));
 
     let descriptor_str = descriptor.to_string();
 
@@ -732,7 +747,7 @@ pub fn backup_descriptor<'a>(
         progress,
         network,
         email,
-        "Back Up your wallet configuration (Descriptor)",
+        "Back Up your wallet configuration (Descriptor)".to_string(),
         content,
         Some(Message::Previous),
     )
@@ -748,11 +763,11 @@ fn display_policy(
     primary_keys.sort();
     let recovery_paths = policy.recovery_paths();
 
-    let primary_signature = new::b5_bold(format!(
-        "{} signature{}",
-        primary_threshold,
-        if primary_threshold > 1 { "s" } else { "" }
-    ));
+    let primary_signature = new::b5_bold(if primary_threshold == 1 {
+        "1 signature".to_string()
+    } else {
+        format!("{primary_threshold} signatures")
+    });
     let primary_key_count = if primary_keys.len() > 1 {
         new::caption(format!("out of {} by", primary_keys.len()))
     } else {
@@ -798,11 +813,11 @@ fn display_policy(
         let mut recovery_keys: Vec<Fingerprint> = recovery_keys.into_keys().collect();
         recovery_keys.sort();
 
-        let recovery_signature = new::b5_bold(format!(
-            "{} signature{}",
-            threshold,
-            if threshold > 1 { "s" } else { "" }
-        ));
+        let recovery_signature = new::b5_bold(if threshold == 1 {
+            "1 signature".to_string()
+        } else {
+            format!("{threshold} signatures")
+        });
         let recovery_key_count = if recovery_keys.len() > 1 {
             new::caption(format!("out of {} by", recovery_keys.len()))
         } else {
@@ -882,30 +897,25 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
 
     #[allow(clippy::nonminimal_bool)]
     if n_years != 0 || n_months != 0 || n_days != 0 {
-        [(n_years, "y"), (n_months, "m"), (n_days, "d")]
-            .iter()
-            .filter_map(|(n, u)| {
-                if *n != 0 {
-                    Some(format!("{n}{u}"))
-                } else {
-                    None
-                }
-            })
-            .collect()
+        [
+            (n_years, format!("{n_years}y")),
+            (n_months, format!("{n_months}m")),
+            (n_days, format!("{n_days}d")),
+        ]
+        .iter()
+        .filter_map(|(n, u)| if *n != 0 { Some(u.clone()) } else { None })
+        .collect()
     } else {
         n_minutes -= n_days * 1440;
         let n_hours = n_minutes / 60;
         n_minutes -= n_hours * 60;
-        [(n_hours, "h"), (n_minutes, "m")]
-            .iter()
-            .filter_map(|(n, u)| {
-                if *n != 0 {
-                    Some(format!("{n}{u}"))
-                } else {
-                    None
-                }
-            })
-            .collect()
+        [
+            (n_hours, format!("{n_hours}h")),
+            (n_minutes, format!("{n_minutes}m")),
+        ]
+        .iter()
+        .filter_map(|(n, u)| if *n != 0 { Some(u.clone()) } else { None })
+        .collect()
     }
 }
 
@@ -976,7 +986,7 @@ pub fn define_bitcoin_node<'a>(
         progress,
         network,
         None,
-        "Set up connection to the Bitcoin node",
+        "Set up connection to the Bitcoin node".to_string(),
         content,
         Some(Message::Previous),
     )
@@ -1013,10 +1023,7 @@ pub fn define_bitcoind<'a>(
         .label("Address:")
         .padding(10);
     let loopback_warning = (!is_loopback && address.valid).then_some(
-        text::new::caption(
-            "Connection to a remote Bitcoin node is not supported. Insert an IP address bound to the same machine running Liana (ignore this warning if that's already the case)",
-        )
-        .style(theme::text::warning),
+        text::new::caption("Connection to a remote Bitcoin node is not supported. Insert an IP address bound to the same machine running Liana (ignore this warning if that's already the case)").style(theme::text::warning),
     );
     let address = column![address_input, loopback_warning].spacing(10);
 
@@ -1026,7 +1033,10 @@ pub fn define_bitcoind<'a>(
             row![text::new::b3("RPC authentication:").width(RADIO_TITLE_WIDTH)].spacing(10),
             |row, auth_type| {
                 row.push(radio(
-                    format!("{auth_type}"),
+                    match auth_type {
+                        RpcAuthType::CookieFile => "Cookie file path",
+                        RpcAuthType::UserPass => "User and password",
+                    },
                     *auth_type,
                     Some(*selected_auth_type),
                     |new_selection| {
@@ -1122,7 +1132,7 @@ pub fn define_electrum<'a>(
     let address = column![
         address_input,
         checkbox,
-        text::new::caption(electrum::ADDRESS_NOTES),
+        text::new::caption("Note: include \"ssl://\" as a prefix for SSL connections."),
     ]
     .spacing(10);
 
@@ -1144,18 +1154,12 @@ pub fn select_bitcoind_type<'a>(
     let titles = row![existing_node_title, managed_node_title].spacing(20);
 
     let existing_node_description = Container::new(
-        text::new::caption(
-            "Select this option if you already have a Bitcoin node running locally or remotely. Liana will connect to it.",
-        )
-        .style(theme::text::secondary),
+        text::new::caption("Select this option if you already have a Bitcoin node running locally or remotely. Liana will connect to it.").style(theme::text::secondary),
     )
     .padding(20)
     .width(Length::FillPortion(1));
     let managed_node_description = Container::new(
-        text::new::caption(
-            "Liana will install a pruned node on your computer. You won't need to do anything except have some disk space available (~30GB required on mainnet) and wait for the initial synchronization with the network (it can take some days depending on your internet connection speed).",
-        )
-        .style(theme::text::secondary),
+        text::new::caption("Liana will install a pruned node on your computer. You won't need to do anything except have some disk space available (~30GB required on mainnet) and wait for the initial synchronization with the network (it can take some days depending on your internet connection speed).").style(theme::text::secondary),
     )
     .padding(20)
     .width(Length::FillPortion(1));
@@ -1179,7 +1183,7 @@ pub fn select_bitcoind_type<'a>(
         progress,
         network,
         None,
-        "Bitcoin node management",
+        "Bitcoin node management".to_string(),
         content,
         Some(Message::Previous),
     )
@@ -1260,7 +1264,7 @@ pub fn start_internal_bitcoind<'a>(
         .into(),
         Some(Err(e)) => status(
             Some(icon::circle_cross_icon().style(theme::text::error)),
-            new::caption(e.to_string()).style(theme::text::error),
+            new::caption(start_internal_bitcoind_error(e)).style(theme::text::error),
         )
         .into(),
         None => match (install_state, exe_path) {
@@ -1280,12 +1284,31 @@ pub fn start_internal_bitcoind<'a>(
         progress,
         network,
         None,
-        "Start Bitcoin full node",
+        "Start Bitcoin full node".to_string(),
         content,
         Some(Message::InternalBitcoind(
             message::InternalBitcoindMsg::Previous,
         )),
     )
+}
+
+fn start_internal_bitcoind_error(error: &StartInternalBitcoindError) -> String {
+    match error {
+        StartInternalBitcoindError::Lock(error) => {
+            format!("Failed to lock data directory: {error}")
+        }
+        StartInternalBitcoindError::CommandError(error) => format!("Command error: {error}"),
+        StartInternalBitcoindError::CouldNotCanonicalizeDataDir(error) => {
+            format!("Failed to canonicalize data directory: {error}")
+        }
+        StartInternalBitcoindError::BitcoinDError(error) => format!("Bitcoin Core error: {error}"),
+        StartInternalBitcoindError::ExecutableNotFound => {
+            "Bitcoin Core executable not found".to_string()
+        }
+        StartInternalBitcoindError::ProcessExited(status) => {
+            format!("Bitcoin Core process exited with status {status}")
+        }
+    }
 }
 
 pub fn install<'a>(
@@ -1305,7 +1328,7 @@ pub fn install<'a>(
         progress,
         network,
         email,
-        "Finalize installation",
+        "Finalize installation".to_string(),
         Column::new()
             .push_maybe(warning.map(|e| card::invalid(new::caption(e))))
             .push(if generating {
@@ -1343,12 +1366,11 @@ pub fn defined_threshold<'a>(
                         row.push(icon::round_key_icon())
                     }
                 }))
-                .push(new::caption(format!(
-                    "{} out of {} key{}",
-                    threshold.0,
-                    threshold.1,
-                    if threshold.1 > 1 { "s" } else { "" },
-                )))
+                .push(new::caption(if threshold.1 == 1 {
+                    format!("{} out of 1 key", threshold.0)
+                } else {
+                    format!("{} out of {} keys", threshold.0, threshold.1)
+                }))
                 .push(icon::edit_icon()),
         )
         .padding(10)
@@ -1366,12 +1388,11 @@ pub fn defined_threshold<'a>(
                         row.push(icon::round_key_icon())
                     }
                 }))
-                .push(new::caption(format!(
-                    "{} out of {} key{}",
-                    threshold.0,
-                    threshold.1,
-                    if threshold.1 > 1 { "s" } else { "" },
-                ))),
+                .push(new::caption(if threshold.1 == 1 {
+                    format!("{} out of 1 key", threshold.0)
+                } else {
+                    format!("{} out of {} keys", threshold.0, threshold.1)
+                })),
         )
         .padding(10)
         .into()
@@ -1389,13 +1410,7 @@ pub fn defined_sequence<'a>(
         .push(new::caption(
             format_sequence_duration(sequence.as_u16(), true)
                 .iter()
-                .filter_map(|(n, unit)| {
-                    if *n > 0 {
-                        Some(format!("{n}{unit}"))
-                    } else {
-                        None
-                    }
-                })
+                .filter_map(|(n, unit)| if *n > 0 { Some(unit.clone()) } else { None })
                 .collect::<Vec<String>>()
                 .join(" "),
         ));
@@ -1482,7 +1497,7 @@ pub fn backup_mnemonic<'a>(
         progress,
         network,
         email,
-        "Back Up your mnemonic",
+        "Back Up your mnemonic".to_string(),
         content,
         Some(Message::Previous),
     )
@@ -1609,7 +1624,7 @@ pub fn recover_mnemonic<'a>(
         progress,
         network,
         email,
-        "Import Mnemonic",
+        "Import Mnemonic".to_string(),
         content,
         Some(Message::Previous),
     )
@@ -1670,7 +1685,7 @@ pub fn choose_backend(progress: (usize, usize), network: Network) -> Element<'st
         progress,
         network,
         None,
-        "Choose backend",
+        "Choose backend".to_string(),
         content,
         Some(Message::Previous),
     )
@@ -1679,7 +1694,7 @@ pub fn choose_backend(progress: (usize, usize), network: Network) -> Element<'st
 pub fn login<'a>(
     progress: (usize, usize),
     network: Network,
-    prompt: &'static str,
+    prompt: String,
     accent: Option<&'a str>,
     connection_step: Element<'a, Message>,
     previous_message: Option<Message>,
@@ -1699,7 +1714,14 @@ pub fn login<'a>(
     )
     .center_x(Length::Fill);
 
-    layout(progress, network, None, "Login", content, previous_message)
+    layout(
+        progress,
+        network,
+        None,
+        "Login".to_string(),
+        content,
+        previous_message,
+    )
 }
 
 pub fn connection_step_select_account<'a>(
@@ -1739,9 +1761,7 @@ pub fn connection_step_select_account<'a>(
                 .into()
         }),
         auth_error.map(|error| -> Element<'_, Message> {
-            new::caption(error.to_string())
-                .style(theme::text::warning)
-                .into()
+            new::caption(error).style(theme::text::warning).into()
         }),
         accounts,
     ]
@@ -1806,9 +1826,7 @@ pub fn connection_step_enter_email<'a>(
                 .into()
         }),
         auth_error.map(|error| -> Element<'_, Message> {
-            new::caption(error.to_string())
-                .style(theme::text::warning)
-                .into()
+            new::caption(error).style(theme::text::warning).into()
         }),
         btn_send_token(
             can_send_token.then_some(Message::SelectBackend(message::SelectBackend::RequestOTP,))
@@ -1820,7 +1838,7 @@ pub fn connection_step_enter_email<'a>(
     login(
         progress,
         network,
-        "Enter the email associated with your account",
+        "Enter the email associated with your account".to_string(),
         None,
         content.into(),
         previous,
@@ -1865,9 +1883,7 @@ pub fn connection_step_enter_otp<'a>(
                 .into()
         }),
         auth_error.map(|error| -> Element<'_, Message> {
-            new::caption(error.to_string())
-                .style(theme::text::warning)
-                .into()
+            new::caption(error).style(theme::text::warning).into()
         }),
         row![
             btn_change_email(change_email),
@@ -1881,7 +1897,7 @@ pub fn connection_step_enter_otp<'a>(
     login(
         progress,
         network,
-        "An authentication token has been emailed to ",
+        "An authentication token has been emailed to ".to_string(),
         Some(email),
         content.into(),
         previous,
@@ -1910,9 +1926,7 @@ pub fn connection_step_connected<'a>(
                 .into()
         }),
         auth_error.map(|error| -> Element<'_, Message> {
-            new::caption(error.to_string())
-                .style(theme::text::warning)
-                .into()
+            new::caption(error).style(theme::text::warning).into()
         }),
         Container::new(
             row![
@@ -1932,7 +1946,7 @@ pub fn connection_step_connected<'a>(
     login(
         progress,
         network,
-        "Connected to ",
+        "Connected to ".to_string(),
         Some(email),
         content.into(),
         previous,
@@ -1962,7 +1976,7 @@ pub fn wallet_alias<'a>(
         progress,
         network,
         email,
-        "Give your wallet an alias",
+        "Give your wallet an alias".to_string(),
         content,
         Some(Message::Previous),
     )
@@ -1972,7 +1986,7 @@ fn layout<'a>(
     progress: (usize, usize),
     network: Network,
     email: Option<&'a str>,
-    title: &'static str,
+    title: String,
     content: impl Into<Element<'a, Message>>,
     previous_message: Option<Message>,
 ) -> Element<'a, Message> {

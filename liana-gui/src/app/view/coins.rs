@@ -320,30 +320,49 @@ pub fn expire_message_units(sequence: u32) -> Vec<String> {
 
     #[allow(clippy::nonminimal_bool)]
     if n_years != 0 || n_months != 0 || n_days != 0 {
-        [(n_years, "year"), (n_months, "month"), (n_days, "day")]
-            .iter()
-            .filter_map(|(n, u)| {
-                if *n != 0 {
-                    Some(format!("{} {}{}", n, u, if *n > 1 { "s" } else { "" }))
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let mut units = Vec::new();
+        if n_years != 0 {
+            units.push(if n_years == 1 {
+                "1 year".to_string()
+            } else {
+                format!("{n_years} years")
+            });
+        }
+        if n_months != 0 {
+            units.push(if n_months == 1 {
+                "1 month".to_string()
+            } else {
+                format!("{n_months} months")
+            });
+        }
+        if n_days != 0 {
+            units.push(if n_days == 1 {
+                "1 day".to_string()
+            } else {
+                format!("{n_days} days")
+            });
+        }
+        units
     } else {
         n_minutes -= n_days * 1440;
         let n_hours = n_minutes / 60;
         n_minutes -= n_hours * 60;
-        [(n_hours, "hour"), (n_minutes, "minute")]
-            .iter()
-            .filter_map(|(n, u)| {
-                if *n != 0 {
-                    Some(format!("{} {}{}", n, u, if *n > 1 { "s" } else { "" }))
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let mut units = Vec::new();
+        if n_hours != 0 {
+            units.push(if n_hours == 1 {
+                "1 hour".to_string()
+            } else {
+                format!("{n_hours} hours")
+            });
+        }
+        if n_minutes != 0 {
+            units.push(if n_minutes == 1 {
+                "1 minute".to_string()
+            } else {
+                format!("{n_minutes} minutes")
+            });
+        }
+        units
     }
 }
 
@@ -353,9 +372,9 @@ mod tests {
     #[test]
     fn test_expire_message_units() {
         let testcases = [
-            (61, vec!["10 hours".to_string(), "10 minutes".to_string()]),
-            (1112, vec!["7 days".to_string()]),
-            (52600, vec!["1 year".to_string()]),
+            (61, vec!["10 hours", "10 minutes"]),
+            (1112, vec!["7 days"]),
+            (52600, vec!["1 year"]),
         ];
 
         for (seq, result) in testcases {

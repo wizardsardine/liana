@@ -52,6 +52,7 @@ impl From<&Error> for WarningMessage {
             Error::ImportExport(e) => WarningMessage(format!("{e}")),
             Error::RestoreBackup(e) => WarningMessage(format!("Failed to restore backup: {e}")),
             Error::FiatPrice(e) => WarningMessage(format!("Fiat price error: {e}")),
+            Error::NoAvailableCurrencies => WarningMessage(error.to_string()),
         }
     }
 }
