@@ -21,6 +21,7 @@ use liana_ui::{
     theme,
     widget::*,
 };
+use std::fmt;
 
 fn compact_label<'a>(label: impl Into<String>) -> Element<'a, Msg> {
     text::new::b5_medium(label.into())
@@ -186,7 +187,7 @@ pub fn edit_path_modal_view<'a>(
                 Some(format!(
                     "Max {} {}",
                     modal_state.timelock_unit.max_value(),
-                    modal_state.timelock_unit
+                    timelock_unit_label(modal_state.timelock_unit)
                 )),
             )
         } else {
@@ -213,6 +214,11 @@ pub fn edit_path_modal_view<'a>(
             warning: None,
             valid: valid || is_empty,
         };
+        let timelock_options = timelock_unit_options();
+        let selected_timelock_unit = TimelockUnitOption {
+            label: timelock_unit_label(modal_state.timelock_unit),
+            unit: modal_state.timelock_unit,
+        };
 
         let input = row![
             Container::new(compact_label("Timelock:")).width(LABEL_WIDTH),
@@ -220,11 +226,9 @@ pub fn edit_path_modal_view<'a>(
                 form::Form::new("0", &timelock_value, Msg::TemplateUpdateTimelock).compact(),
             )
             .width(INPUT_WIDTH),
-            pick_list::pick_list(
-                TimelockUnit::ALL.as_slice(),
-                Some(modal_state.timelock_unit),
-                Msg::TemplateUpdateTimelockUnit,
-            )
+            pick_list::pick_list(timelock_options, Some(selected_timelock_unit), |option| {
+                Msg::TemplateUpdateTimelockUnit(option.unit)
+            },)
             .width(100.0)
         ]
         .spacing(HSpacing::M)
@@ -236,7 +240,7 @@ pub fn edit_path_modal_view<'a>(
                 let hint = format!(
                     "Max: {} {}",
                     modal_state.timelock_unit.max_value(),
-                    modal_state.timelock_unit
+                    timelock_unit_label(modal_state.timelock_unit)
                 );
                 Some(text::new::small_caption(hint).style(theme::text::secondary))
             });
@@ -280,4 +284,32 @@ pub fn edit_path_modal_view<'a>(
         ModalWidth::M,
         body,
     )
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct TimelockUnitOption {
+    unit: TimelockUnit,
+    label: String,
+}
+
+impl fmt::Display for TimelockUnitOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
+fn timelock_unit_options() -> [TimelockUnitOption; 4] {
+    TimelockUnit::ALL.map(|unit| TimelockUnitOption {
+        label: timelock_unit_label(unit),
+        unit,
+    })
+}
+
+fn timelock_unit_label(unit: TimelockUnit) -> String {
+    match unit {
+        TimelockUnit::Blocks => "blocks".to_string(),
+        TimelockUnit::Hours => "hours".to_string(),
+        TimelockUnit::Days => "days".to_string(),
+        TimelockUnit::Months => "months".to_string(),
+    }
 }

@@ -178,10 +178,11 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
                 continue;
             }
 
-            let wallet_label = format!(
-                "{wallet_count} wallet{}",
-                if wallet_count == 1 { "" } else { "s" }
-            );
+            let wallet_label = if wallet_count == 1 {
+                "1 wallet".to_string()
+            } else {
+                format!("{wallet_count} wallets")
+            };
 
             let card = org_card(org.name.clone(), **id, Some(wallet_label));
             list_content = list_content.push(card);
@@ -196,7 +197,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         breadcrumb: vec!["Organizations".to_string()],
         title: "Organizations".to_string(),
         search: (is_ws_admin && orgs.len() > SEARCH_ENTRY_THRESHOLD).then_some(SelectSearch {
-            placeholder: "Filter organizations...",
+            placeholder: "Filter organizations...".to_string(),
             value: &state.views.org_select.search_filter,
             on_change: Msg::OrgSelectUpdateSearchFilter,
         }),

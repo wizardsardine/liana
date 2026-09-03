@@ -247,7 +247,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         breadcrumb,
         title: "Wallets".to_string(),
         search: (wallet_count > SEARCH_ENTRY_THRESHOLD).then_some(SelectSearch {
-            placeholder: "Filter wallets...",
+            placeholder: "Filter wallets...".to_string(),
             value: &state.views.wallet_select.search_filter,
             on_change: Msg::WalletSelectUpdateSearchFilter,
         }),
