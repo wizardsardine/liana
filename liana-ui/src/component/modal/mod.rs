@@ -568,7 +568,7 @@ where
     button_entry(
         Tile::KeyHot,
         "Generate hot key stored on this computer",
-        Some("We recommend using this option only for test purposes".to_string()),
+        Some("We recommend using this option only for test purposes"),
         None,
         on_press,
     )

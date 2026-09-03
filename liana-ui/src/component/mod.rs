@@ -37,21 +37,24 @@ pub fn separation<'a, T: 'a>() -> Container<'a, T> {
         .height(Length::Fixed(1.0))
 }
 
+/// The network's name as a banner spells it. Mainnet carries no banner.
+pub(crate) fn network_name(network: Network) -> &'static str {
+    match network {
+        Network::Signet => "SIGNET",
+        Network::Testnet => "TESTNET",
+        Network::Testnet4 => "TESTNET4",
+        Network::Regtest => "REGTEST",
+        Network::Bitcoin => unreachable!(),
+        _ => "NON-MAINNET",
+    }
+}
+
 pub fn network_banner<'a, T: 'a>(network: Network) -> Container<'a, T> {
     Container::new(
         Row::new()
             .push(super::icon::warning_icon())
             .push(text::text("THIS IS A "))
-            .push(
-                text::text(match network {
-                    Network::Signet => "SIGNET WALLET",
-                    Network::Testnet => "TESTNET WALLET",
-                    Network::Testnet4 => "TESTNET4 WALLET",
-                    Network::Regtest => "REGTEST WALLET",
-                    _ => unreachable!(),
-                })
-                .bold(),
-            )
+            .push(text::text(format!("{} WALLET", network_name(network))).bold())
             .push(text::text(", COINS HAVE "))
             .push(text::text("NO VALUE").bold())
             .align_y(iced::Alignment::Center),

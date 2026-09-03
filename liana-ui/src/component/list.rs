@@ -89,7 +89,7 @@ pub enum DeviceStatus {
     Signed,
     Registered,
     Selected,
-    Warning(&'static str),
+    Warning(String),
 }
 
 fn device_success_mark<'a, M: 'static>(label: Option<String>) -> Element<'a, M> {
@@ -146,7 +146,7 @@ impl<'a, M: 'static> From<DeviceStatus> for Option<Element<'a, M>> {
             DeviceStatus::Selected => Some(device_success_mark(None)),
             DeviceStatus::Warning(w) => Some(
                 tooltip::tooltip_custom(
-                    w,
+                    iced::widget::text(w),
                     icon::warning_icon(),
                     iced::widget::tooltip::Position::Bottom,
                 )
@@ -241,8 +241,8 @@ pub struct CollapsibleEntry<'a, M> {
 pub fn entry_collapsible<'a, M: Clone + 'static>(cfg: CollapsibleEntry<'a, M>) -> Element<'a, M> {
     let accent = cfg.accent.map(entry_accent);
     let entry = collapse::Collapse::new(
-        collapsible_entry_header(cfg.tile, cfg.title.to_string(), cfg.collapsed_subtitle),
-        collapsible_entry_header(cfg.tile, cfg.title.to_string(), cfg.expanded_subtitle),
+        collapsible_entry_header(cfg.tile, cfg.title.clone(), cfg.collapsed_subtitle),
+        collapsible_entry_header(cfg.tile, cfg.title, cfg.expanded_subtitle),
         Container::new(cfg.content).padding(iced::Padding {
             left: button::LIST_ENTRY_PADDING[1].into(),
             right: button::LIST_ENTRY_PADDING[1].into(),

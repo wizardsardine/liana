@@ -48,14 +48,14 @@ pub enum SectionKind {
 }
 
 impl SectionKind {
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self) -> String {
         match self {
-            SectionKind::General => "General",
-            SectionKind::Node => "Node",
-            SectionKind::Backend => "Backend",
-            SectionKind::Wallet => "Wallet",
-            SectionKind::ImportExport => "ImportExport",
-            SectionKind::About => "About",
+            SectionKind::General => "General".to_string(),
+            SectionKind::Node => "Node".to_string(),
+            SectionKind::Backend => "Backend".to_string(),
+            SectionKind::Wallet => "Wallet".to_string(),
+            SectionKind::ImportExport => "ImportExport".to_string(),
+            SectionKind::About => "About".to_string(),
         }
     }
 
@@ -79,32 +79,32 @@ pub enum ImportExportKind {
 }
 
 impl ImportExportKind {
-    pub fn title_descr(&self) -> (&'static str, &'static str) {
+    pub fn title_descr(&self) -> (String, String) {
         match self {
             ImportExportKind::ImportWallet => (
-                "Import wallet",
-                "Upload a backup file to update wallet info.",
+                "Import wallet".to_string(),
+                "Upload a backup file to update wallet info.".to_string(),
             ),
             ImportExportKind::ExportWallet => (
-                "Export wallet",
-                "File (not encrypted) with wallet info useful to sync labels and data on other devices."
+                "Export wallet".to_string(),
+                "File (not encrypted) with wallet info useful to sync labels and data on other devices.".to_string(),
             ),
             ImportExportKind::ExportLabels => (
-                "BIP 329 labels",
-                "BIP 329 label export, compatible with other wallets."
+                "BIP 329 labels".to_string(),
+                "BIP 329 label export, compatible with other wallets.".to_string(),
             ),
 
             ImportExportKind::ExportTransactions => (
-                "Transactions table",
-                ".CSV file of past transactions, for accounting purposes."
+                "Transactions table".to_string(),
+                ".CSV file of past transactions, for accounting purposes.".to_string(),
             ),
             ImportExportKind::ExportDescriptor => (
-                "Descriptor only - plain-text",
-                "Plain-text (not encrypted) descriptor file only, to use with other wallets."
+                "Descriptor only - plain-text".to_string(),
+                "Plain-text (not encrypted) descriptor file only, to use with other wallets.".to_string(),
             ),
             ImportExportKind::ExportEncryptedDescriptor => (
-                "Encrypted descriptor",
-                ".bed file, can be decrypted with one of your signing devices or xpubs."
+                "Encrypted descriptor".to_string(),
+                ".bed file, can be decrypted with one of your signing devices or xpubs.".to_string(),
             ),
         }
     }

@@ -116,7 +116,7 @@ fn dot_view<'a, M: 'a>(dot: Dot) -> Element<'a, M> {
             }
         });
 
-    tooltip_custom(help, dot, Position::Top).into()
+    tooltip_custom(iced::widget::text(help), dot, Position::Top).into()
 }
 
 fn strip_line<'a, M: 'a>() -> Container<'a, M> {

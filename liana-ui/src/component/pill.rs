@@ -506,14 +506,22 @@ fn coin_sequence_pill<'a, T: 'a>(sequence: u32, compact: bool) -> Container<'a, 
     let eta = recovery_eta(sequence);
     let (label, tooltip, width): (String, String, PillWidth) = match eta {
         RecoveryEta::Available => (
-            if compact { "Avail." } else { "Available" }.to_string(),
+            if compact {
+                "Avail.".to_string()
+            } else {
+                "Available".to_string()
+            },
             "Recovery option(s) already available".to_string(),
             PillWidth::M,
         ),
         RecoveryEta::Today => ("Today".to_string(), format!("{caption}today"), PillWidth::M),
         RecoveryEta::TwoDays => (
-            if compact { "~2d" } else { "~2 days" }.to_string(),
-            format!("{caption}in ~2 days"),
+            if compact {
+                format!("~{}d", 2)
+            } else {
+                format!("~{} days", 2)
+            },
+            format!("{caption}in ~{} days", 2),
             PillWidth::M,
         ),
         RecoveryEta::Longer if compact => {
@@ -583,23 +591,23 @@ enum ExpireUnit {
 }
 
 impl ExpireUnit {
-    fn name(self) -> &'static str {
+    fn display(self, count: u32) -> String {
         match self {
-            Self::Year => "year",
-            Self::Month => "month",
-            Self::Day => "day",
-            Self::Hour => "hour",
-            Self::Minute => "minute",
+            Self::Year => format!("{count} year{}", if count == 1 { "" } else { "s" }),
+            Self::Month => format!("{count} month{}", if count == 1 { "" } else { "s" }),
+            Self::Day => format!("{count} day{}", if count == 1 { "" } else { "s" }),
+            Self::Hour => format!("{count} hour{}", if count == 1 { "" } else { "s" }),
+            Self::Minute => format!("{count} minute{}", if count == 1 { "" } else { "s" }),
         }
     }
 
-    fn abbr(self) -> &'static str {
+    fn compact(self, count: u32) -> String {
         match self {
-            Self::Year => "y",
-            Self::Month => "m",
-            Self::Day => "d",
-            Self::Hour => "h",
-            Self::Minute => "min",
+            Self::Year => format!("{count}y"),
+            Self::Month => format!("{count}m"),
+            Self::Day => format!("{count}d"),
+            Self::Hour => format!("{count}h"),
+            Self::Minute => format!("{count}min"),
         }
     }
 }
@@ -607,14 +615,14 @@ impl ExpireUnit {
 fn expire_message_units(sequence: u32) -> Vec<String> {
     expire_units(sequence)
         .into_iter()
-        .map(|(n, u)| format!("{} {}{}", n, u.name(), if n > 1 { "s" } else { "" }))
+        .map(|(n, u)| u.display(n))
         .collect()
 }
 
 fn expire_compact_units(sequence: u32) -> String {
     let parts: Vec<String> = expire_units(sequence)
         .into_iter()
-        .map(|(n, u)| format!("{}{}", n, u.abbr()))
+        .map(|(n, u)| u.compact(n))
         .collect();
     format!("~{}", parts.join(","))
 }
@@ -625,9 +633,9 @@ mod tests {
     #[test]
     fn test_expire_message_units() {
         let testcases = [
-            (61, vec!["10 hours".to_string(), "10 minutes".to_string()]),
-            (1112, vec!["7 days".to_string()]),
-            (52600, vec!["1 year".to_string()]),
+            (61, vec!["10 hours", "10 minutes"]),
+            (1112, vec!["7 days"]),
+            (52600, vec!["1 year"]),
         ];
 
         for (seq, result) in testcases {

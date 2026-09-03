@@ -126,15 +126,13 @@ pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment, msg: Option<M>) -> El
             }
         }
         (None, Some(label)) => {
-            let prefix = "address label: ";
-            if label.chars().count() > (MAX_LABEL_LENGTH - prefix.len()) {
-                let short = truncate(&label, MAX_LABEL_LENGTH - prefix.len());
-                let short = h2(format!("{prefix}{short}")).style(theme::text::primary);
+            let inherited = format!("address label: {label}");
+            if inherited.chars().count() > MAX_LABEL_LENGTH {
+                let short = truncate(&inherited, MAX_LABEL_LENGTH);
+                let short = h2(short).style(theme::text::primary);
                 tooltip_custom(h2(label), short, Position::Top).into()
             } else {
-                h2(format!("{prefix}{label}"))
-                    .style(theme::text::primary)
-                    .into()
+                h2(inherited).style(theme::text::primary).into()
             }
         }
     };

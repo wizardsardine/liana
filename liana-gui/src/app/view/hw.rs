@@ -24,7 +24,7 @@ pub fn hw_list_view_verify_address(
         (DeviceStatus::Processing, None)
     } else if matches!(kind, DeviceKind::Specter | DeviceKind::SpecterSimulator) {
         (
-            DeviceStatus::Warning("Liana cannot request the device to display the address. \n Verify it with the QR code in the options below."),
+            DeviceStatus::Warning("Liana cannot request the device to display the address. \n Verify it with the QR code in the options below.".to_string()),
             None,
         )
     } else {
