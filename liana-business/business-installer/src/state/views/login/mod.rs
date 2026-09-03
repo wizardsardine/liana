@@ -4,6 +4,7 @@ pub mod email;
 pub use code::CodeState;
 pub use email::EmailState;
 pub use liana_gui::services::connect::client::auth::AccessTokenResponse;
+use liana_i18n::t;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoginState {
@@ -74,7 +75,7 @@ impl Login {
             )
             .is_ok();
         self.email.form.valid = valid;
-        self.email.form.warning = (!valid).then_some("Invalid email!".to_string());
+        self.email.form.warning = (!valid).then(|| t!("settings-email-invalid"));
         self.email.form.value = email;
     }
     pub fn on_update_code(&mut self, code: String) {
@@ -83,7 +84,7 @@ impl Login {
 
         let is_invalid = code_len > 6 || !all_numerical;
 
-        let warning = is_invalid.then_some("Code must contains only 6 numbers".to_string());
+        let warning = is_invalid.then(|| t!("business-code-six-digits"));
 
         self.code.form = liana_ui::component::form::Value {
             value: code,

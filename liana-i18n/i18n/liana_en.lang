@@ -171,25 +171,370 @@ btn-verify-on-device => "Verify on hardware device"
 
 btn-yes => "Yes"
 
+business-access-error => "Access Error"
+
+business-account-connection-failed
+=> "Failed to connect with account {$email}. The session may have expired.";;
+
 business-account-number => "Account #{$index}"
+
+business-add-key-label => "Add a key"
+
+business-add-two-keys-to-continue => "Add at least 2 keys to continue"
+
+business-admin-name => "Admin{$name}"
+
+business-after-days
+=> "{ $count ->\n    [one] After 1 day\n   *[other] After {$count} days\n}";;
+
+business-after-hours
+=> "{ $count ->\n    [one] After 1 hour\n   *[other] After {$count} hours\n}";;
+
+business-after-months
+=> "{ $count ->\n    [one] After 1 month\n   *[other] After {$count} months\n}";;
+
+business-all-files => "All files"
+
+business-all-keys-set-waiting
+=> "All keys are set. Once the other participants finish this step, the wallet will be ready.";;
+
+business-assigned-keys-set-waiting
+=> "Your assigned keys are set. Waiting for the other participants to finish this step.";;
+
+business-auth-code-request-failed
+=> "Failed to request authentication code from server.";;
+
+business-authenticated => "Authenticated"
+
+business-backend-error => "Backend error"
+
+business-cannot-approve-template => "Can't approve this template?"
+
+business-clipboard-empty => "Clipboard is empty"
+
+business-code-six-digits => "Code must contain only 6 digits."
+
+business-common-you => "You"
+
+business-confirm-coldcard-success
+=> "Please confirm on your Coldcard that the wallet registration completed successfully.";;
+
+business-confirm-device => "Please confirm on your device..."
+
+business-confirm-registration => "Confirm Registration"
+
+business-connect-device-register => "Connect the associated device to register"
 
 business-connection-error => "Connection Error"
 
+business-contact-create-account => "Contact Wizardsardine to create an account."
+
+business-create-new-path => "Create New Path"
+
+business-current-xpub => "Current xpub"
+
+business-detected-devices => "Detected devices"
+
+business-device-disconnected => "Device disconnected"
+
+business-device-locked-unlock => "Device is locked. Please unlock it first."
+
+business-device-not-supported => "Device is not supported"
+
+business-device-unsupported-locked => "Device locked or unsupported"
+
+business-did-registration-succeed => "Did the registration succeed on your Coldcard?"
+
+business-duplicate-timelock => "Duplicate timelock"
+
+business-edit-key => "Edit Key"
+
+business-edit-primary-path => "Edit Primary Path"
+
+business-edit-recovery-path => "Edit Recovery Path"
+
+business-edited => "Edited"
+
+business-edited-by-on => "Edited by {$editor} on {$date}"
+
+business-edited-by-user => "Edited by {$editor}"
+
+business-edited-on => "Edited on {$date}"
+
+business-edited-relative => "Edited{$editor} {$time}"
+
+business-email-app-open-failed => "Couldn't open your email app"
+
+business-email-app-open-failed-message
+=> "Open your email client and contact Wizardsardine to request template edits.";;
+
+business-external-keys => "External keys"
+
+business-external-signer-help
+=> "The third party who will set up and sign with this key. They'll be invited by email.";;
+
+business-fetched-from-device => "Fetched from {$kind} #{$fingerprint}"
+
+business-fetching-device => "Fetching from device..."
+
+business-file-dialog-result-failed
+=> "Failed to receive result from file dialog thread";;
+
+business-file-read-failed => "Failed to read file: {$error}"
+
+business-filter-organizations => "Filter organizations..."
+
+business-filter-wallets => "Filter wallets..."
+
+business-from-your-organization => "From your organization"
+
+business-hardware-wallet-not-found => "Hardware wallet not found"
+
 business-import-xpub-file => "Import extended public key file"
+
+business-internal-signer-help
+=> "The organization member who will set up and sign with this key. They'll be invited by email.";;
+
+business-invalid-threshold => "Invalid threshold value"
+
+business-key-alias => "Key Alias"
+
+business-key-alias-placeholder => "e.g. Alice, Treasury, Lawyer..."
 
 business-key-count
 => "{ $count ->\n    [one] (1 key)\n   *[other] ({$count} keys)\n}";;
 
+business-key-definition-help
+=> "Define the key's name and who holds it. You'll set it up later, by connecting a device or adding its public key.";;
+
+business-key-deleted => "Key Deleted"
+
+business-key-deleted-message
+=> "The key you were editing was deleted by another user.";;
+
+business-key-modified => "Key Modified"
+
+business-key-modified-message
+=> "This key was modified by another user. Would you like to reload the server version or keep your changes?";;
+
+business-key-number => "Key {$id}"
+
+business-key-path-account-help
+=> "The account number in this key's derivation path. Pick a different account to derive an independent key from the same device.";;
+
+business-key-removed => "Key Removed"
+
+business-key-removed-from-path
+=> "\"{$alias}\" was deleted by another user and has been removed from your path selection.";;
+
+business-key-type => "Key Type"
+
+business-key-type-help
+=> "Internal: Held by a member of your organization.\nExternal: Held by a trusted third party.\nCosigner: Professional co-signing service.\nSafetyNet: Professional recovery service.";;
+
+business-keys-awaiting-manager
+=> "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet.";;
+
+business-keys-in-path => "Keys in Path:"
+
+business-keys-manager-instruction
+=> "List the keys that will be part of this wallet and assign a signer to each. The spending policy will be crafted from these keys.";;
+
+business-keys-ready-by-manager
+=> "Marked as ready by the Wallet Manager. They've finished adding keys & signers.";;
+
+business-keys-ready-policy-editable
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys. You can still edit keys if anything needs to change.";;
+
+business-keys-ready-policy-pending
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys.";;
+
+business-keys-required-to-spend
+=> "{ $count ->\n    [one] {$threshold} of 1 key required to spend\n   *[other] {$threshold} of {$count} keys required to spend\n}";;
+
+business-keys-shared-policy-tab
+=> "These keys are shared with the Spending policy tab";;
+
+business-keys-shared-with-policy
+=> "These keys are shared with the Spending policy tab, where you arrange them into spending paths.";;
+
+business-keys-signers => "Keys & Signers"
+
+business-loading-wallet => "Loading wallet..."
+
 business-login-email-help => "Enter the email associated with your account"
+
+business-login-failed => "Login failed."
+
+business-lost-connection-restart
+=> "Lost connection to the server. Please restart the application.";;
+
+business-manager-set-keys-help
+=> "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf.";;
+
+business-max-unit => "Max {$max} {$unit}"
+
+business-max-unit-label => "Max: {$max} {$unit}"
+
+business-new-email-address => "New email address"
+
+business-no-descriptor-available => "No descriptor available"
+
+business-no-devices-to-register => "You have no devices to register."
 
 business-no-hardware-wallets
 => "No hardware device detected. Connect a device and unlock it.";;
+
+business-no-keys-assigned => "No keys assigned to you."
+
+business-no-keys-available => "No keys available. Add keys first."
+
+business-no-members-match => "No members match"
+
+business-no-orgs-search => "No organizations found matching your search."
+
+business-no-timelock => "No timelock"
+
+business-no-user-id-available => "No user ID available"
+
+business-no-wallet-selected => "No wallet selected"
+
+business-no-wallets-search => "No wallets found matching your search."
+
+business-not-part-wallet => "Not part of this wallet (#{$fingerprint})"
+
+business-organization => "Organization"
+
+business-organizations => "Organizations"
+
+business-other-participants-keys => "Other participants' keys"
+
+business-participant-set-keys-help
+=> "Select a key assigned to you to complete its setup. You can connect a hardware device or add an extended public key manually.";;
+
+business-path-deleted => "Path Deleted"
+
+business-path-deleted-message
+=> "The path you were editing was deleted by another user.";;
+
+business-path-modified => "Path Modified"
+
+business-primary-path => "Primary path"
+
+business-primary-path-modified-message
+=> "The primary path was modified by another user. Would you like to reload the server version or keep your changes?";;
+
+business-professional-service => "Professional service"
+
+business-provider-name => "Provider · {$provider}"
+
+business-recovery-path => "Recovery path"
+
+business-recovery-path-modified-message
+=> "This recovery path was modified by another user. Would you like to reload the server version or keep your changes?";;
+
+business-recovery-path-number => "Recovery path {$number}"
+
+business-register-devices => "Register Devices"
+
+business-register-wallet-devices-help
+=> "Register the wallet descriptor on each device, or skip if unavailable.";;
+
+business-registered-on-device => "Registered on device"
+
+business-registering-wallet => "Registering Wallet"
+
+business-registration-failed => "Registration Failed"
+
+business-request-template-edits-help
+=> "To request edits, reach out to Wizardsardine directly: they can make the changes and send it back for approval.";;
 
 business-role-manager => "Manager"
 
 business-role-participant => "Participant"
 
+business-search-members-or-email => "Search organization members or enter email"
+
+business-select-account-placeholder => "Select account"
+
+business-select-key-source => "Select key source · {$alias}"
+
+business-select-xpub-file => "Select xpub file"
+
+business-service-token => "Service token"
+
+business-service-token-help
+=> "Paste the token from the provider. Their firm name is fetched automatically.";;
+
+business-service-token-placeholder => "e.g. 42-absent-cake-eagle"
+
+business-service-unavailable
+=> "The service is temporarily unavailable. Your wallet data and funds are not affected.";;
+
+business-set-keys => "Set Keys"
+
+business-signer-email => "Signer email"
+
+business-spending-policy => "Spending policy"
+
+business-template-locked-approve
+=> "Template is locked and pending approval. You must approve it to continue.";;
+
+business-template-locked-unlock
+=> "Template is locked and pending approval. Unlock to make further changes.";;
+
+business-template-read-only => "Read-only. Only a WS Admin can edit this template."
+
+business-text-files => "Text files"
+
+business-threshold-range => "Threshold (1-{$count}):"
+
+business-timelock => "Timelock:"
+
+business-timelock-unit-days => "days"
+
+business-timelock-unit-hours => "hours"
+
+business-timelock-unit-months => "months"
+
+business-timelock-zero => "Timelock cannot be zero"
+
+business-token-duplicate => "Duplicate token."
+
+business-token-invalid => "Invalid token."
+
+business-try-again-support
+=> "Please try again shortly. If the issue persists, contact support.";;
+
+business-unable-load-wallet => "Unable to load wallet"
+
+business-unsupported-method => "Unsupported method: {$method}"
+
+business-use-email => "Use {$email}"
+
+business-user-session-not-found
+=> "User session not found. Please log in again or contact Wizardsardine.";;
+
+business-wallet-access-denied
+=> "You do not have access to this wallet. Contact Wizardsardine.";;
+
+business-wallet-count-label
+=> "{ $count ->\n    [one] 1 wallet\n   *[other] {$count} wallets\n}";;
+
+business-wallets => "Wallets"
+
 business-wrong-network-device => "Wrong network in device settings"
+
+business-xpub-empty => "Extended public key cannot be empty."
+
+business-xpub-invalid-format => "Invalid extended public key format: {$error}"
+
+business-xpub-invalid-network => "Extended public key is not valid for {$network}."
+
+business-xpub-replace-existing-help
+=> "This key already has an xpub. You can replace it by fetching from a device, importing from file, or pasting.";;
+
+business-your-keys => "Your keys"
 
 coins-address-label => "Address label:"
 
@@ -237,6 +582,8 @@ common-descriptor-label => "Descriptor:"
 common-email => "Email"
 
 common-error => "Error"
+
+common-error-with-detail => "{$message} ({$error})"
 
 common-feerate => "Feerate"
 
@@ -1436,8 +1783,24 @@ tab-launcher => "Launcher"
 
 tab-pending => "Pending"
 
+time-days-ago => "{ $count ->\n    [one] 1 day ago\n   *[other] {$count} days ago\n}"
+
+time-hours-ago
+=> "{ $count ->\n    [one] 1 hour ago\n   *[other] {$count} hours ago\n}";;
+
+time-just-now => "just now"
+
+time-minutes-ago
+=> "{ $count ->\n    [one] 1 minute ago\n   *[other] {$count} minutes ago\n}";;
+
+time-months-ago
+=> "{ $count ->\n    [one] 1 month ago\n   *[other] {$count} months ago\n}";;
+
 time-seconds-ago
 => "{ $count ->\n    [one] 1 second ago\n   *[other] {$count} seconds ago\n}";;
+
+time-weeks-ago
+=> "{ $count ->\n    [one] 1 week ago\n   *[other] {$count} weeks ago\n}";;
 
 transactions-cancel-tooltip
 => "Best effort attempt at double spending an unconfirmed outgoing transaction";;

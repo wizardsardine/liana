@@ -3,6 +3,7 @@ use iced::{
     widget::{column, Space},
     Alignment, Length,
 };
+use liana_i18n::t;
 use liana_ui::{component::text, theme, widget::*};
 use miniscript::bitcoin::Network;
 
@@ -13,18 +14,16 @@ use super::layout;
 pub fn loading_view(network: Network, has_error: bool) -> Element<'static, Msg> {
     let (status_text, status_detail, previous_msg) = if has_error {
         (
-            "Unable to load wallet".to_string(),
+            t!("business-unable-load-wallet"),
             Some([
-                "The service is temporarily unavailable. Your wallet data and funds are not affected."
-                    .to_string(),
-                "Please try again shortly. If the issue persists, contact support.".to_string(),
+                t!("business-service-unavailable"),
+                t!("business-try-again-support"),
             ]),
             Some(Msg::BackToLogin),
         )
     } else {
-        ("Loading wallet...".to_string(), None, None)
+        (t!("business-loading-wallet"), None, None)
     };
-
     let content = Container::new(
         column![
                 text::new::d3("Liana Business"),
