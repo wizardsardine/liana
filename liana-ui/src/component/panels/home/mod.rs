@@ -79,7 +79,7 @@ pub fn unconfirmed_balance<'a, M: 'a>(
     row![
         new::h3("+").style(|t| theme::amount::sats(t, false)),
         amount_with_font(amount, new::H3_SPEC),
-        new::h3("unconfirmed").style(|t| theme::amount::sats(t, false)),
+        new::h3("Unconfirmed").style(|t| theme::amount::sats(t, false)),
         fiat
     ]
     .spacing(10)

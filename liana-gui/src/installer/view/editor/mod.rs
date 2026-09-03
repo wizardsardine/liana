@@ -299,7 +299,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                                 ),
                             )
                         })
-                        .warning("Value must be superior to 0 and inferior to 65535"),
+                        .warning("Value must be greater than 0 and lower than 65535"),
                     )
                     .width(Length::Fixed(200.0)),
                 )

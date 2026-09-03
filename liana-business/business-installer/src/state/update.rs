@@ -361,7 +361,7 @@ impl State {
             );
             self.on_warning_show_modal(
                 "Access Error",
-                "You do not have access to this wallet. Contact WizardSardine.",
+                "You do not have access to this wallet. Contact Wizardsardine.",
             );
             return Task::none();
         }

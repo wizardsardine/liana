@@ -91,7 +91,7 @@ impl ImportExportKind {
             ),
             ImportExportKind::ExportLabels => (
                 "BIP 329 labels",
-                "Bip 329 label export, compatible with other wallets."
+                "BIP 329 label export, compatible with other wallets."
             ),
 
             ImportExportKind::ExportTransactions => (

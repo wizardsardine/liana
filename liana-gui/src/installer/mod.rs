@@ -668,7 +668,7 @@ pub async fn install_local_wallet(
                 // Installer started a bitcoind, it is expected that gui will start it on startup
                 ctx.internal_bitcoind.is_some(),
             ))
-            .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {e}")))?
+            .map_err(|e| Error::Unexpected(format!("Failed to serialize GUI config: {e}")))?
             .as_bytes(),
         )?;
         info!("Gui configuration file created");
@@ -747,7 +747,7 @@ pub async fn create_remote_wallet(
         create_and_write_file(
             &gui_config_path,
             toml::to_string(&gui_config::Config::new(false))
-                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {e}")))?
+                .map_err(|e| Error::Unexpected(format!("Failed to serialize GUI config: {e}")))?
                 .as_bytes(),
         )?;
         info!("Gui configuration file created");
@@ -919,7 +919,7 @@ pub async fn import_remote_wallet(
         create_and_write_file(
             &gui_config_path,
             toml::to_string(&gui_config::Config::new(false))
-                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {e}")))?
+                .map_err(|e| Error::Unexpected(format!("Failed to serialize GUI config: {e}")))?
                 .as_bytes(),
         )?;
         info!("Gui configuration file created");

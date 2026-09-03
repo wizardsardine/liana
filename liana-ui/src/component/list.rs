@@ -130,9 +130,9 @@ impl<'a, M: 'static> From<DeviceStatus> for Option<Element<'a, M>> {
                     .into(),
             ),
             DeviceStatus::WrongNetwork => {
-                Some(text::new::b5_medium("Wrong network in the device settings").into())
+                Some(text::new::b5_medium("Wrong network in device settings").into())
             }
-            DeviceStatus::ConnectionError => Some(text::new::b5_medium("Connection error").into()),
+            DeviceStatus::ConnectionError => Some(text::new::b5_medium("Connection Error").into()),
             DeviceStatus::Locked(Some(code)) => {
                 Some(text::new::b5_medium(format!("Locked, check code: {code}")).into())
             }

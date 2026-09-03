@@ -500,11 +500,11 @@ pub fn bitcoind<'a>(
     if is_configured_node_type {
         match &config.rpc_auth {
             BitcoindRpcAuth::CookieFile(path) => {
-                rows.push(("Cookie file path:", path.to_str().unwrap().to_string()));
+                rows.push(("Cookie file path", path.to_str().unwrap().to_string()));
             }
             BitcoindRpcAuth::UserPass(user, password) => {
-                rows.push(("User:", user.clone()));
-                rows.push(("Password:", password.clone()));
+                rows.push(("User", user.clone()));
+                rows.push(("Password", password.clone()));
             }
         }
         rows.push(("Socket address:", config.addr.to_string()));
@@ -513,7 +513,7 @@ pub fn bitcoind<'a>(
     let mut col_fields = Column::new();
     for (k, v) in rows {
         col_fields = col_fields.push({
-            let t = if k == "Password:" {
+            let t = if k == "Password" {
                 "*".to_string().repeat(v.len())
             } else {
                 v.clone()

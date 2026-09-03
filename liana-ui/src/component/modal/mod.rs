@@ -568,7 +568,7 @@ where
     button_entry(
         Tile::KeyHot,
         "Generate hot key stored on this computer",
-        Some("We recommend to use this option only for test purposes".to_string()),
+        Some("We recommend using this option only for test purposes".to_string()),
         None,
         on_press,
     )
@@ -698,7 +698,7 @@ where
         ack,
         Tile::Mnemonic,
         "UNSAFE: Enter mnemonic of one of the keys",
-        " This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds.",
+        "This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds.",
         MNEMONIC_PLACEHOLDER,
         input_value,
         ack_message,
