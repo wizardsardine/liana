@@ -14,7 +14,6 @@ use liana_ui::{
     component::{
         amount::*,
         button, form,
-        label::LABEL_LENGTH_WARNING,
         panels::spend::{self, DustWarning},
         text::new,
     },
@@ -31,6 +30,7 @@ use crate::{
         view::{dashboard, message::*, psbt, FiatAmountConverter},
     },
     daemon::model::{remaining_sequence, Coin, SpendTx},
+    t,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -144,24 +144,24 @@ pub fn create_spend_tx<'a>(
     let title_text = new::d2(if recovery_timelock.is_some() {
         Menu::Recovery.title()
     } else if is_self_send {
-        "Self-transfer".to_string()
+        t!("common-self-transfer")
     } else {
         Menu::CreateSpendTx.title()
     });
     let self_transfer_btn =
         (!is_self_send && recovery_timelock.is_none()).then_some(button::btn_tertiary(
             None,
-            "Self-transfer",
+            t!("common-self-transfer"),
             button::BtnWidth::Auto,
             Some(Message::CreateSpend(CreateSpendMessage::SelfTransfer)),
         ));
     let title = row![title_text, Space::fill_width(), self_transfer_btn].align_y(Alignment::Center);
 
     let batch_label_input = (recipients.len() > 1).then_some(
-        form::Form::new(&"Batch label", batch_label, |s| {
+        form::Form::new(&t!("spend-batch-label"), batch_label, |s| {
             Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(s))
         })
-        .warning(LABEL_LENGTH_WARNING)
+        .warning(t!("label-invalid-length"))
         .size(30)
         .padding(10),
     );
@@ -179,10 +179,8 @@ pub fn create_spend_tx<'a>(
     let recipients_cards = Column::with_children(recipient_views).spacing(10);
 
     let duplicates_warning = duplicate.then_some(
-        Container::new(
-            new::caption("Two payment addresses are the same").style(theme::text::warning),
-        )
-        .padding(10),
+        Container::new(new::caption(t!("spend-duplicate-addresses")).style(theme::text::warning))
+            .padding(10),
     );
     let add_payment_btn = (!(is_self_send || recovery_timelock.is_some())).then_some(
         button::btn_add_payment(Some(Message::CreateSpend(CreateSpendMessage::AddRecipient))),
@@ -258,38 +256,34 @@ pub fn create_spend_tx<'a>(
 
     let next_reason = next_blocker.map(|blocker| {
         let content: Element<Message> = match blocker {
-            NextBlocker::RecipientAddress => {
-                new::caption("A recipient address is missing or invalid")
-                    .style(theme::text::card_secondary)
-                    .into()
-            }
+            NextBlocker::RecipientAddress => new::caption(t!("spend-recipient-address-invalid"))
+                .style(theme::text::card_secondary)
+                .into(),
             NextBlocker::PaymentDescription => {
-                new::caption("Payment description is missing or invalid")
+                new::caption(t!("spend-payment-description-invalid"))
                     .style(theme::text::card_secondary)
                     .into()
             }
-            NextBlocker::Funds => new::caption("Select or add more funds.")
+            NextBlocker::Funds => new::caption(t!("spend-select-or-add-funds"))
                 .style(theme::text::card_secondary)
                 .into(),
-            NextBlocker::RecipientAmount => {
-                new::caption("A recipient amount is missing or invalid")
-                    .style(theme::text::card_secondary)
-                    .into()
-            }
-            NextBlocker::Feerate => new::caption("The feerate is missing or invalid")
+            NextBlocker::RecipientAmount => new::caption(t!("spend-recipient-amount-invalid"))
                 .style(theme::text::card_secondary)
                 .into(),
-            NextBlocker::Coin => new::caption("Select at least one coin.")
+            NextBlocker::Feerate => new::caption(t!("spend-feerate-missing-invalid"))
+                .style(theme::text::card_secondary)
+                .into(),
+            NextBlocker::Coin => new::caption(t!("spend-select-one-coin"))
                 .style(theme::text::card_secondary)
                 .into(),
             NextBlocker::CoinsLeft => match amount_left {
                 Some(left) if left.to_sat() > 0 => row![
                     amount_with_font(left, new::CAPTION_SPEC),
-                    new::caption("left to select").style(theme::text::card_secondary),
+                    new::caption(t!("spend-left-to-select")).style(theme::text::card_secondary),
                 ]
                 .spacing(5)
                 .into(),
-                _ => new::caption("Select coins to cover the amount")
+                _ => new::caption(t!("spend-select-coins-to-cover-amount"))
                     .style(theme::text::card_secondary)
                     .into(),
             },

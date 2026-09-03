@@ -428,13 +428,13 @@ impl DecryptModal {
                 |m| m.into(),
             )
         } else {
-            self.xpub.warning = Some("Invalid xpub");
+            self.xpub.warning = Some("Invalid xpub".to_string());
             self.xpub.valid = false;
             Task::none()
         }
     }
     fn update_xpub_error(&mut self, error: &'static str) {
-        self.xpub.warning = Some(error);
+        self.xpub.warning = Some(error.to_string());
         self.xpub.valid = false;
         self.xpub_busy = false;
     }
@@ -455,7 +455,7 @@ impl DecryptModal {
             Ok(m) => m,
             Err(_) => {
                 self.mnemonic.valid = false;
-                self.mnemonic.warning = Some("Invalid mnemonic");
+                self.mnemonic.warning = Some("Invalid mnemonic".to_string());
                 return Task::none();
             }
         }
@@ -490,12 +490,12 @@ impl DecryptModal {
     }
     fn update_mnemonic_state(&mut self, error: Option<&'static str>, fg: Option<Fingerprint>) {
         self.mnemonic_busy = false;
-        self.mnemonic.warning = error;
+        self.mnemonic.warning = error.map(str::to_string);
         self.mnemonic.valid = false;
         if let Some(fg) = fg {
             self.fetched.insert(fg, "Mnemonic".to_string());
         }
-        self.mnemonic.warning = error;
+        self.mnemonic.warning = error.map(str::to_string);
     }
 }
 

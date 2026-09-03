@@ -6,6 +6,7 @@ use iced::{
     widget::{column, row},
     Alignment, Length,
 };
+use liana_i18n::t;
 
 use crate::{
     color,
@@ -108,7 +109,7 @@ impl<'a, M: 'static> From<DeviceStatus> for Option<Element<'a, M>> {
         };
         match status {
             DeviceStatus::None => None,
-            DeviceStatus::AlreadyUsed => Some(secondary("Already used".to_string())),
+            DeviceStatus::AlreadyUsed => Some(secondary(t!("device-already-used"))),
             DeviceStatus::Fingerprint(fp) => Some(secondary(format!("#{fp}"))),
             DeviceStatus::Selectable(fp) => Some(
                 row![
@@ -120,29 +121,33 @@ impl<'a, M: 'static> From<DeviceStatus> for Option<Element<'a, M>> {
                 .into(),
             ),
             DeviceStatus::Processing => {
-                Some(text::new::b5_medium("Processing, please check your device").into())
+                Some(text::new::b5_medium(t!("device-processing-check-device")).into())
             }
-            DeviceStatus::NotInPath => Some(
-                text::new::b5_medium("This signer is not part of this \nspending path.").into(),
-            ),
-            DeviceStatus::Unrelated => Some(
-                text::new::b5_medium("This signing device is not related to \nthis Liana wallet.")
-                    .into(),
-            ),
+            DeviceStatus::NotInPath => {
+                Some(text::new::b5_medium(t!("hw-not-in-spending-path")).into())
+            }
+            DeviceStatus::Unrelated => {
+                Some(text::new::b5_medium(t!("device-unrelated-wallet")).into())
+            }
             DeviceStatus::WrongNetwork => {
-                Some(text::new::b5_medium("Wrong network in device settings").into())
+                Some(text::new::b5_medium(t!("business-wrong-network-device")).into())
             }
-            DeviceStatus::ConnectionError => Some(text::new::b5_medium("Connection Error").into()),
+            DeviceStatus::ConnectionError => {
+                Some(text::new::b5_medium(t!("business-connection-error")).into())
+            }
             DeviceStatus::Locked(Some(code)) => {
-                Some(text::new::b5_medium(format!("Locked, check code: {code}")).into())
+                Some(text::new::b5_medium(t!("device-locked-check-code", code = code)).into())
             }
-            DeviceStatus::Locked(None) => Some(text::new::b5_medium("Locked").into()),
+            DeviceStatus::Locked(None) => Some(text::new::b5_medium(t!("device-locked")).into()),
             DeviceStatus::OutdatedFirmware(version) => Some(
-                text::new::b5_medium(format!("Install firmware version {version} \nor later"))
-                    .into(),
+                text::new::b5_medium(t!(
+                    "device-install-firmware-version-or-later",
+                    version = version
+                ))
+                .into(),
             ),
-            DeviceStatus::Signed => Some(device_success_mark(Some("Signed".to_string()))),
-            DeviceStatus::Registered => Some(device_success_mark(Some("Registered".to_string()))),
+            DeviceStatus::Signed => Some(device_success_mark(Some(t!("device-signed")))),
+            DeviceStatus::Registered => Some(device_success_mark(Some(t!("device-registered")))),
             DeviceStatus::Selected => Some(device_success_mark(None)),
             DeviceStatus::Warning(w) => Some(
                 tooltip::tooltip_custom(
@@ -341,7 +346,7 @@ pub fn account_select_entry<'a, M: Clone + 'a>(
 
 fn account_body<'a, M: 'a>(email: impl Display, connecting: bool) -> Element<'a, M> {
     if connecting {
-        text::new::b5_medium("Connecting...")
+        text::new::b5_medium(t!("common-connecting-ellipsis"))
             .width(Length::Fill)
             .align_x(Horizontal::Center)
             .into()
@@ -410,11 +415,10 @@ pub fn list_entry_chevron<'a, M: Clone + 'a>(
 
 /// "(1 key)" / "({n} keys)" caption shown beside a wallet title; `None` for no keys.
 pub fn key_count<'a, M: 'a>(count: usize) -> Option<Element<'a, M>> {
-    let label = match count {
-        0 => return None,
-        1 => "(1 key)".to_string(),
-        n => format!("({n} keys)"),
-    };
+    if count == 0 {
+        return None;
+    }
+    let label = t!("business-key-count", count = count);
     Some(
         text::new::caption(label)
             .style(theme::text::secondary)
@@ -610,9 +614,9 @@ pub fn entry_no_devices<'a, M: Clone + 'a>(
 /// is disabled while `processing`.
 pub fn see_more<'a, M: Clone + 'a>(processing: bool, next: M) -> Element<'a, M> {
     let label = if processing {
-        "Fetching ..."
+        t!("common-fetching")
     } else {
-        "See more"
+        t!("common-see-more")
     };
 
     let button = Button::new(

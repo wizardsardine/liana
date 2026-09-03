@@ -3,6 +3,7 @@ use iced::{
     widget::{column, row, text::Style, Space},
     Alignment, Length,
 };
+use liana_i18n::t;
 use std::fmt::{self, Display};
 
 use bitcoin::{Amount, Denomination};
@@ -13,9 +14,7 @@ use crate::{
         amount::{self, amount_with_fiat, AmountSize, Currency, DisplayAmount, FiatAmount},
         button, card,
         checkbox::{labelled_checkbox, labelled_radio},
-        form,
-        label::LABEL_LENGTH_WARNING,
-        pill, scrollable, section,
+        form, pill, scrollable, section,
         text::{caption, new, P1_SIZE},
         tooltip,
     },
@@ -62,12 +61,8 @@ pub enum DustWarning {
 impl Display for DustWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AddFunds => {
-                "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s)."
-            }
-            Self::SelectMoreCoins => {
-                "Minimum amount is 0.00 000 500 BTC. Select more coins to continue."
-            }
+            Self::AddFunds => t!("spend-dust-add-funds"),
+            Self::SelectMoreCoins => t!("spend-dust-select-more-coins"),
         }
         .fmt(f)
     }
@@ -94,19 +89,21 @@ pub fn recipient_card<'a, M: Clone + 'static>(
         Amount::from_str_in(&amount.value, Denomination::Bitcoin).ok()
     };
 
-    let address_form: Element<'a, M> = form::Form::new("Address", address, on_address_edit)
-        .label("Address")
-        .warning("Invalid address (maybe it is for another network?)")
-        .size(P1_SIZE)
-        .padding(10)
-        .into();
+    let address_form: Element<'a, M> =
+        form::Form::new(t!("common-address"), address, on_address_edit)
+            .label(t!("common-address"))
+            .warning(t!("spend-invalid-address"))
+            .size(P1_SIZE)
+            .padding(10)
+            .into();
 
-    let description_form: Element<'a, M> = form::Form::new("Payment label", label, on_label_edit)
-        .label("Description")
-        .warning(LABEL_LENGTH_WARNING)
-        .size(P1_SIZE)
-        .padding(10)
-        .into();
+    let description_form: Element<'a, M> =
+        form::Form::new(t!("spend-payment-label"), label, on_label_edit)
+            .label(t!("spend-description"))
+            .warning(t!("label-invalid-length"))
+            .size(P1_SIZE)
+            .padding(10)
+            .into();
 
     let btc_input: Element<'a, M> = if is_max_selected {
         let amount_txt = btc_amt
@@ -118,14 +115,14 @@ pub fn recipient_card<'a, M: Clone + 'static>(
                 .style(theme::text::secondary),
         )
         .width(Length::Fill);
-        column![new::b3("Amount (BTC)"), value]
+        column![new::b3(t!("spend-amount-btc")), value]
             .spacing(5)
             .width(Length::Fill)
             .into()
     } else {
-        form::Form::new_amount_btc("0.001 (in BTC)", amount, on_amount_edit)
-            .label("Amount (BTC)")
-            .warning("Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)")
+        form::Form::new_amount_btc(t!("spend-btc-placeholder"), amount, on_amount_edit)
+            .label(t!("spend-amount-btc"))
+            .warning(t!("spend-invalid-amount"))
             .size(P1_SIZE)
             .padding(10)
             .into()
@@ -191,11 +188,15 @@ pub fn recipient_card<'a, M: Clone + 'static>(
             } else {
                 &form::Value::default()
             };
-            let input = form::Form::new(format!("Enter amount in {currency}"), fiat_form, on_edit)
-                .component_label(label)
-                .size(P1_SIZE)
-                .padding(10)
-                .into_container();
+            let input = form::Form::new(
+                t!("spend-fiat-placeholder", currency = currency),
+                fiat_form,
+                on_edit,
+            )
+            .component_label(label)
+            .size(P1_SIZE)
+            .padding(10)
+            .into_container();
             row![Space::with_width(20), input, Space::with_width(10)]
                 .align_y(Alignment::Center)
                 .spacing(5)
@@ -205,9 +206,11 @@ pub fn recipient_card<'a, M: Clone + 'static>(
     // The MAX option cannot be edited for recovery recipients (on_max is None).
     let max = on_max.map(|msg| {
         iced::widget::tooltip::Tooltip::new(
-            labelled_checkbox(new::caption("MAX"), is_max_selected, move |_| msg.clone()),
+            labelled_checkbox(new::caption(t!("spend-max")), is_max_selected, move |_| {
+                msg.clone()
+            }),
             // Add spaces at end so that text is padded at screen edge.
-            "Total amount remaining after paying fee and any other recipients     ",
+            new::caption(format!("{}     ", t!("spend-max-tooltip"))),
             iced::widget::tooltip::Position::Bottom,
         )
     });
@@ -275,10 +278,10 @@ pub fn fee_rate_row<'a, M: Clone + 'static, F: Fn(Amount) -> FiatAmount>(
 ) -> Element<'a, M> {
     let h_spacer = 14;
 
-    let label = new::b3("Feerate:");
+    let label = new::b3(t!("spend-feerate"));
 
     let input: Element<'a, M> = Container::new(
-        form::Form::new_trimmed("e.g. 5 (in sats/vb)", feerate, on_edit)
+        form::Form::new_trimmed(t!("spend-feerate-example"), feerate, on_edit)
             .compact()
             .fee(),
     )
@@ -288,10 +291,10 @@ pub fn fee_rate_row<'a, M: Clone + 'static, F: Fn(Amount) -> FiatAmount>(
     let mode_selector = |manual_active: bool, switch: M| -> Element<'a, M> {
         let switch_smart = switch.clone();
         row![
-            labelled_radio("Manual", manual_active, switch),
+            labelled_radio(t!("spend-fee-manual"), manual_active, switch),
             Space::with_width(h_spacer),
-            labelled_radio("Smart Select", !manual_active, switch_smart),
-            tooltip("Pick a preset feerate instead of entering one manually."),
+            labelled_radio(t!("spend-fee-smart-select"), !manual_active, switch_smart),
+            tooltip(t!("spend-fee-smart-select-tooltip")),
         ]
         .align_y(Alignment::Center)
         .into()
@@ -329,9 +332,9 @@ pub fn fee_rate_row<'a, M: Clone + 'static, F: Fn(Amount) -> FiatAmount>(
 
     let fee = fee.map(move |fee| {
         let label = if is_smart {
-            format!("Fee ({} sats/vb):", feerate.value)
+            t!("spend-fee-rate", feerate = &feerate.value)
         } else {
-            "Fee:".to_string()
+            t!("spend-fee")
         };
         let fee_label = new::caption(label).style(theme::text::secondary);
         let fee_amount = amount_with_fiat(fee, to_fiat, AmountSize::S);
@@ -363,10 +366,7 @@ pub fn fee_rate_row<'a, M: Clone + 'static, F: Fn(Amount) -> FiatAmount>(
     let content = if !is_smart && !feerate.valid {
         rows.push(row![
             Space::with_width(warn_offset),
-            caption(format!(
-                "Feerate must be an integer less than or equal to {max_feerate} sats/vbyte"
-            ))
-            .color(color::RED)
+            caption(t!("spend-feerate-max-warning", max_feerate = max_feerate)).color(color::RED)
         ])
     } else {
         rows
@@ -375,7 +375,7 @@ pub fn fee_rate_row<'a, M: Clone + 'static, F: Fn(Amount) -> FiatAmount>(
 }
 
 pub fn coin_selection<'a, M: 'a>(rows: Vec<Element<'a, M>>) -> Element<'a, M> {
-    let header = section("Coins selection");
+    let header = section(t!("spend-coins-selection"));
 
     let coin_cards: Vec<Element<'a, M>> = rows
         .into_iter()
@@ -429,7 +429,7 @@ pub fn coin_row<'a, M: Clone + 'static>(
     let coin_label: Element<M> = match label {
         CoinLabel::Outpoint(label) => font(short(label)).style(label_style).into(),
         CoinLabel::Transaction(label) => {
-            let from = font("From").style(|t| theme::amount::zeroes(t, false));
+            let from = font(t!("common-from")).style(|t| theme::amount::zeroes(t, false));
             row![from, font(short(label)).style(label_style)]
                 .spacing(5)
                 .into()

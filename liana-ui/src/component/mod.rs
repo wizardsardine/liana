@@ -23,6 +23,7 @@ pub mod toast;
 pub mod tooltip;
 
 use bitcoin::Network;
+use liana_i18n::t;
 pub use tooltip::{tooltip, tooltip_custom};
 
 use iced::{widget::row, Alignment, Length, Padding};
@@ -53,10 +54,10 @@ pub fn network_banner<'a, T: 'a>(network: Network) -> Container<'a, T> {
     Container::new(
         Row::new()
             .push(super::icon::warning_icon())
-            .push(text::text("THIS IS A "))
-            .push(text::text(format!("{} WALLET", network_name(network))).bold())
-            .push(text::text(", COINS HAVE "))
-            .push(text::text("NO VALUE").bold())
+            .push(text::text(t!("network-this-is-a")))
+            .push(text::text(t!("network-wallet", network = network_name(network))).bold())
+            .push(text::text(t!("network-coins-have")))
+            .push(text::text(t!("network-no-value")).bold())
             .align_y(iced::Alignment::Center),
     )
     .padding(5)

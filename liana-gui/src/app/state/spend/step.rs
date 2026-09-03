@@ -1047,7 +1047,7 @@ impl Recipient {
                         self.fiat_amount = Some(form::Value {
                             value: fiat_amt_str,
                             valid: false,
-                            warning: Some("Could not convert to BTC"),
+                            warning: Some(crate::t!("spend-could-not-convert-btc")),
                         });
                     }
                 }
@@ -1070,7 +1070,7 @@ impl Recipient {
                         Amount::from_str_in(truncated, Denomination::Bitcoin).is_ok()
                     })
                     .inspect(|_| {
-                        self.amount.warning = Some("Amount has been truncated to 8 decimal places");
+                        self.amount.warning = Some(crate::t!("spend-amount-truncated"));
                     })
                     .unwrap_or(amount);
 

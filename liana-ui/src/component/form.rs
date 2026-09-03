@@ -13,7 +13,7 @@ use iced::{Length, Padding};
 #[derive(Debug, Clone)]
 pub struct Value<T> {
     pub value: T,
-    pub warning: Option<&'static str>,
+    pub warning: Option<String>,
     pub valid: bool,
 }
 
@@ -88,7 +88,7 @@ where
             input: default_styled(
                 text_input::TextInput::new(placeholder, &value.value).on_input(on_change),
             ),
-            warning: value.warning.map(String::from),
+            warning: value.warning.clone(),
             valid: value.valid,
             label: None,
             fee: false,
@@ -125,7 +125,7 @@ where
                 text_input::TextInput::new(placeholder, &value.value)
                     .on_input(move |s| on_change(s.trim().to_string())),
             ),
-            warning: value.warning.map(String::from),
+            warning: value.warning.clone(),
             valid: value.valid,
             label: None,
             fee: false,
@@ -170,7 +170,7 @@ where
                         on_change_clone(pasted)
                     }),
             ),
-            warning: value.warning.map(String::from),
+            warning: value.warning.clone(),
             valid: value.valid,
             label: None,
             fee: false,
