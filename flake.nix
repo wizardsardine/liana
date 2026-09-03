@@ -65,7 +65,8 @@
 
         # Full development shell with Rust toolchain
         devShell = pkgs.mkShell rec {
-          buildInputs = commonBuildInputs ++ [ toolchain ];
+          # For `cargo xtask gen-images`.
+          buildInputs = commonBuildInputs ++ [ toolchain pkgs.typst ];
 
           LD_LIBRARY_PATH =
             builtins.foldl' (a: b: "${a}:${b}/lib") "${pkgs.vulkan-loader}/lib" buildInputs;

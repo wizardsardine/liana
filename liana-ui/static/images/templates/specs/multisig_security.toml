@@ -1,0 +1,21 @@
+# Expanding multisig: a 2-of-2 that always spends, and a 2-of-3 with a recovery key after the timelock.
+id = "multisig_security"
+title = "Expanding multisig"
+events = ["receipt", "timelock"]
+footnote = "footnote"
+
+[[policies]]
+name = "policy_primary"
+label = "label_primary"
+keys = [{ number = 1, kind = "primary" }, { number = 2, kind = "primary" }]
+segments = ["spend", "spend"]
+
+[[policies]]
+name = "policy_recovery"
+label = "label_recovery"
+keys = [
+    { number = 1, kind = "primary" },
+    { number = 2, kind = "primary" },
+    { number = 3, kind = "recovery" },
+]
+segments = ["locked", "spend"]

@@ -2,6 +2,8 @@ tags
 target/
 __pycache__
 config*.toml
+# The `cargo xtask` alias, not a daemon config.
+!.cargo/config.toml
 dummy_config.toml
 regtest/
 venv/

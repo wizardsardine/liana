@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Repository automation tasks, run with `cargo xtask <task>`"
+license = "BSD-3-Clause"
+
+# Only crates the workspace already vendors: the reproducible builds must not notice this crate.
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+toml = { workspace = true }
