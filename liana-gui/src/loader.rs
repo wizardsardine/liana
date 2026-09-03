@@ -502,7 +502,10 @@ pub fn view(step: &Step) -> Element<'_, ViewMessage> {
                 .push(p2_regular(bitcoind_logs).style(theme::text::secondary)),
         ),
         Step::Error(error) => cover(
-            Some(("Error while starting the internal daemon", error)),
+            Some((
+                "Error while starting the internal daemon".to_string(),
+                error,
+            )),
             Column::new()
                 .spacing(20)
                 .width(Length::Fill)
@@ -537,11 +540,11 @@ pub fn view(step: &Step) -> Element<'_, ViewMessage> {
 }
 
 pub fn cover<'a, T: 'a + Clone, C: Into<Element<'a, T>>>(
-    warn: Option<(&'static str, &Error)>,
+    warn: Option<(String, &Error)>,
     content: C,
 ) -> Element<'a, T> {
     Column::new()
-        .push_maybe(warn.map(|w| notification::warning(w.0.to_string(), w.1.to_string())))
+        .push_maybe(warn.map(|w| notification::warning(w.0, w.1.to_string())))
         .push(
             Container::new(content)
                 .center_x(iced::Length::Fill)

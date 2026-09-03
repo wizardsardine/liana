@@ -376,10 +376,9 @@ pub fn tx_view<'a>(
                                 button::secondary(None, "Cancel transaction")
                                 .width(Length::Fixed(200.0))
                                 .on_press(Message::CreateRbf(super::CreateRbfMessage::New(true))),
-                                "Best effort attempt at double spending an unconfirmed outgoing transaction",
-                                tooltip::Position::Top,
-                            )
-                        )
+                            text("Best effort attempt at double spending an unconfirmed outgoing transaction"),
+                            tooltip::Position::Top,
+                        ))
                         .spacing(10),
                 )
             } else {
@@ -394,21 +393,25 @@ pub fn tx_view<'a>(
                                         .format("%b. %d, %Y - %T");
                         Row::new()
                             .width(Length::Fill)
-                            .push(Container::new(text("Date:").bold()).width(Length::Fill))
+                            .push(
+                                Container::new(text("Date:").bold())
+                                    .width(Length::Fill),
+                            )
                             .push(Container::new(text(format!("{date}"))).width(Length::Shrink))
                     }))
                     .push(
                         Row::new()
                             .width(Length::Fill)
                             .align_y(Alignment::Center)
-                            .push(Container::new(text("Txid:").bold()).width(Length::Fill))
+                            .push(
+                                Container::new(text("Txid:").bold())
+                                    .width(Length::Fill),
+                            )
                             .push(
                                 Row::new()
                                     .align_y(Alignment::Center)
                                     .push(Container::new(text(txid.clone()).small()))
-                                    .push(
-                                        button::btn_copy(Some(Message::Clipboard(txid.clone()))),
-                                    )
+                                    .push(button::btn_copy(Some(Message::Clipboard(txid.clone()))))
                                     .width(Length::Shrink),
                             ),
                     )

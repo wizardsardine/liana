@@ -58,7 +58,7 @@ pub fn multisig_security_template_description(
         progress,
         network,
         None,
-        INTRODUCTION_TITLE,
+        INTRODUCTION_TITLE.to_string(),
         content,
         Some(Message::Previous),
     )
@@ -92,7 +92,7 @@ pub fn multisig_security_template<'a>(
                         color::GREEN,
                         format!("{PRIMARY_KEY} #{}", i + 1),
                         if use_taproot && !key.source.is_compatible_taproot() {
-                            Some(UNSUPPORTED_TAPROOT_WARNING)
+                            Some(UNSUPPORTED_TAPROOT_WARNING.to_string())
                         } else {
                             None
                         },
@@ -140,7 +140,7 @@ pub fn multisig_security_template<'a>(
                             color::GREEN,
                             format!("{PRIMARY_KEY} #{}", j + 1),
                             if use_taproot && !key.source.is_compatible_taproot() {
-                                Some(UNSUPPORTED_TAPROOT_WARNING)
+                                Some(UNSUPPORTED_TAPROOT_WARNING.to_string())
                             } else {
                                 None
                             },
@@ -151,7 +151,7 @@ pub fn multisig_security_template<'a>(
                             color::ORANGE,
                             RECOVERY_KEY,
                             if use_taproot && !key.source.is_compatible_taproot() {
-                                Some(UNSUPPORTED_TAPROOT_WARNING)
+                                Some(UNSUPPORTED_TAPROOT_WARNING.to_string())
                             } else {
                                 None
                             },
@@ -207,7 +207,7 @@ pub fn multisig_security_template<'a>(
         progress,
         network,
         None,
-        SET_KEYS_TITLE,
+        SET_KEYS_TITLE.to_string(),
         content,
         Some(Message::Previous),
     )

@@ -59,7 +59,7 @@ pub fn custom_template_description(
         progress,
         network,
         None,
-        INTRODUCTION_TITLE,
+        INTRODUCTION_TITLE.to_string(),
         content,
         Some(Message::Previous),
     )
@@ -98,7 +98,7 @@ pub fn custom_template<'a>(
                         color::GREEN,
                         PRIMARY_KEY,
                         if use_taproot && !key.source.is_compatible_taproot() {
-                            Some(UNSUPPORTED_TAPROOT_WARNING)
+                            Some(UNSUPPORTED_TAPROOT_WARNING.to_string())
                         } else {
                             None
                         },
@@ -143,7 +143,7 @@ pub fn custom_template<'a>(
                                     color::ORANGE,
                                     RECOVERY_KEY,
                                     if use_taproot && !key.source.is_compatible_taproot() {
-                                        Some(UNSUPPORTED_TAPROOT_WARNING)
+                                        Some(UNSUPPORTED_TAPROOT_WARNING.to_string())
                                     } else {
                                         None
                                     },
@@ -206,7 +206,7 @@ pub fn custom_template<'a>(
                             color::WHITE,
                             SAFETY_NET_KEY,
                             if use_taproot && !key.source.is_compatible_taproot() {
-                                Some(UNSUPPORTED_TAPROOT_WARNING)
+                                Some(UNSUPPORTED_TAPROOT_WARNING.to_string())
                             } else {
                                 None
                             },
@@ -250,7 +250,7 @@ pub fn custom_template<'a>(
         progress,
         network,
         None,
-        SET_KEYS_TITLE,
+        SET_KEYS_TITLE.to_string(),
         content,
         Some(Message::Previous),
     )

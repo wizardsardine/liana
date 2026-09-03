@@ -11,7 +11,7 @@ use crate::{
     },
 };
 
-pub const BACKUP_NETWORK_NOT_MATCH: &str = "Backup network do not match the selected network!";
+pub const BACKUP_NETWORK_NOT_MATCH: &str = "installer-backup-network-mismatch";
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]

@@ -49,7 +49,7 @@ pub fn label_editing(
 ) -> Element<'_, view::Message> {
     let e: Element<view::LabelMessage> = Container::new(
         row!(
-            form::Form::new("Label", label, view::LabelMessage::Edited)
+            form::Form::new(&"Label", label, view::LabelMessage::Edited)
                 .warning(LABEL_LENGTH_WARNING)
                 .size(size)
                 .padding(10),
@@ -72,7 +72,9 @@ pub fn label_non_editable(
     label: Option<&String>,
     size: u32,
 ) -> Element<'_, view::Message> {
-    let label_text = label.map(|s| s.as_str()).unwrap_or("(External Output)");
+    let label_text = label
+        .cloned()
+        .unwrap_or_else(|| "(External Output)".to_string());
 
     let e: Element<view::LabelMessage> = Container::new(
         row![Container::new(
