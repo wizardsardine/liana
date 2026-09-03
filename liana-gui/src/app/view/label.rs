@@ -5,12 +5,11 @@ use liana_ui::{
     component::{
         button::{self, btn_add_label, btn_edit},
         form,
-        label::LABEL_LENGTH_WARNING,
     },
     widget::*,
 };
 
-use crate::app::view;
+use crate::{app::view, t};
 
 pub fn label_editable(
     labelled: Vec<String>,
@@ -50,7 +49,7 @@ pub fn label_editing(
     let e: Element<view::LabelMessage> = Container::new(
         row!(
             form::Form::new(&"Label", label, view::LabelMessage::Edited)
-                .warning(LABEL_LENGTH_WARNING)
+                .warning(t!("label-invalid-length"))
                 .size(size)
                 .padding(10),
             if label.valid {

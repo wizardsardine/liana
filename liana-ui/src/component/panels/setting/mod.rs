@@ -4,6 +4,7 @@ use iced::{
     widget::{column, row},
     Alignment, Length,
 };
+use liana_i18n::t;
 
 use crate::{
     component::{
@@ -26,7 +27,7 @@ pub fn header<M: Clone + 'static>(
     section_title: Option<impl Into<String>>,
     msg: Option<M>,
 ) -> Element<'static, M> {
-    let setting_btn = breadcrumb_btn("Settings", setting_msg);
+    let setting_btn = breadcrumb_btn(t!("menu-settings"), setting_msg);
     let section_btn = section_title.map(|t| breadcrumb_btn(t.into(), msg));
 
     if let Some(s_btn) = section_btn {
@@ -50,12 +51,12 @@ pub enum SectionKind {
 impl SectionKind {
     pub fn title(&self) -> String {
         match self {
-            SectionKind::General => "General".to_string(),
-            SectionKind::Node => "Node".to_string(),
-            SectionKind::Backend => "Backend".to_string(),
-            SectionKind::Wallet => "Wallet".to_string(),
-            SectionKind::ImportExport => "ImportExport".to_string(),
-            SectionKind::About => "About".to_string(),
+            SectionKind::General => t!("settings-section-general"),
+            SectionKind::Node => t!("settings-section-node"),
+            SectionKind::Backend => t!("settings-section-backend"),
+            SectionKind::Wallet => t!("common-wallet"),
+            SectionKind::ImportExport => t!("settings-section-import-export"),
+            SectionKind::About => t!("settings-section-about"),
         }
     }
 
@@ -82,29 +83,29 @@ impl ImportExportKind {
     pub fn title_descr(&self) -> (String, String) {
         match self {
             ImportExportKind::ImportWallet => (
-                "Import wallet".to_string(),
-                "Upload a backup file to update wallet info.".to_string(),
+                t!("settings-import-wallet"),
+                t!("settings-import-wallet-description"),
             ),
             ImportExportKind::ExportWallet => (
-                "Export wallet".to_string(),
-                "File (not encrypted) with wallet info useful to sync labels and data on other devices.".to_string(),
+                t!("settings-export-wallet"),
+                t!("settings-export-wallet-description"),
             ),
             ImportExportKind::ExportLabels => (
-                "BIP 329 labels".to_string(),
-                "BIP 329 label export, compatible with other wallets.".to_string(),
+                t!("settings-export-labels"),
+                t!("settings-export-labels-description"),
             ),
 
             ImportExportKind::ExportTransactions => (
-                "Transactions table".to_string(),
-                ".CSV file of past transactions, for accounting purposes.".to_string(),
+                t!("settings-export-transactions"),
+                t!("settings-export-transactions-description"),
             ),
             ImportExportKind::ExportDescriptor => (
-                "Descriptor only - plain-text".to_string(),
-                "Plain-text (not encrypted) descriptor file only, to use with other wallets.".to_string(),
+                t!("settings-export-descriptor"),
+                t!("settings-export-descriptor-description"),
             ),
             ImportExportKind::ExportEncryptedDescriptor => (
-                "Encrypted descriptor".to_string(),
-                ".bed file, can be decrypted with one of your signing devices or xpubs.".to_string(),
+                t!("settings-export-encrypted-descriptor"),
+                t!("settings-export-encrypted-descriptor-description"),
             ),
         }
     }

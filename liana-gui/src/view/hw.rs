@@ -7,7 +7,10 @@ use liana_ui::{
     widget::*,
 };
 
-use crate::hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason};
+use crate::{
+    hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
+    t,
+};
 
 /// What workflow is asking for a hardware-wallet row, and what state it's in.
 pub enum HwRowMode<'a> {
@@ -153,7 +156,7 @@ fn signing_entry<'a, M: Clone + 'static>(
     } else if registered == Some(false) {
         (
             alias,
-            DeviceStatus::Warning("The wallet descriptor is not registered on the device.\n You can register it in the settings.".to_string()),
+            DeviceStatus::Warning(t!("hw-descriptor-not-registered")),
             None,
         )
     } else if !can_sign {
@@ -197,9 +200,7 @@ fn registration_entry<'a, M: Clone + 'static>(
     } else if not_tapminiscript {
         (
             alias,
-            DeviceStatus::Warning(
-                "Device firmware version does not support taproot miniscript".to_string(),
-            ),
+            DeviceStatus::Warning(t!("hw-no-taproot-miniscript")),
             select_msg,
         )
     } else {

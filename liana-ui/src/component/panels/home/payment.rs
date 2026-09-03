@@ -2,6 +2,7 @@ use iced::{
     widget::{column, row, tooltip::Position, Space},
     Alignment,
 };
+use liana_i18n::t;
 
 use crate::{
     component::{
@@ -74,11 +75,9 @@ pub enum FiatSource {
 impl FiatSource {
     pub fn infotip<'a, M: 'a>(&self) -> Element<'a, M> {
         let txt = match self {
-            FiatSource::User => "Price you have filled yourself",
-            FiatSource::Wizardsardine => {
-                "Price automatically processed by WS when you crafted the transaction"
-            }
-            FiatSource::Timestamp => "Default price at the time the transaction has been confirmed",
+            FiatSource::User => t!("fiat-source-user"),
+            FiatSource::Wizardsardine => t!("fiat-source-wizardsardine"),
+            FiatSource::Timestamp => t!("fiat-source-timestamp"),
         };
         tooltip_with_style(txt, |t| theme::amount::zeroes(t, false)).into()
     }
@@ -115,7 +114,9 @@ pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment, msg: Option<M>) -> El
         fiat_price,
     } = payment;
     let label: Element<'a, M> = match (label, address_label) {
-        (None, None) => h2("(No label)").style(theme::text::primary).into(),
+        (None, None) => h2(t!("common-no-label-parenthesized"))
+            .style(theme::text::primary)
+            .into(),
         (Some(label), _) => {
             if label.chars().count() > MAX_LABEL_LENGTH {
                 let short = truncate(&label, MAX_LABEL_LENGTH);
@@ -126,7 +127,7 @@ pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment, msg: Option<M>) -> El
             }
         }
         (None, Some(label)) => {
-            let inherited = format!("address label: {label}");
+            let inherited = t!("payment-address-label", label = label);
             if inherited.chars().count() > MAX_LABEL_LENGTH {
                 let short = truncate(&inherited, MAX_LABEL_LENGTH);
                 let short = h2(short).style(theme::text::primary);

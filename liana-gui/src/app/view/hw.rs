@@ -3,7 +3,7 @@ use liana_ui::{
     widget::*,
 };
 
-use crate::{app::view::message::*, hw::HardwareWallet, view::hw::unusable_device_entry};
+use crate::{app::view::message::*, hw::HardwareWallet, t, view::hw::unusable_device_entry};
 use async_hwi::DeviceKind;
 
 pub fn hw_list_view_verify_address(
@@ -24,7 +24,7 @@ pub fn hw_list_view_verify_address(
         (DeviceStatus::Processing, None)
     } else if matches!(kind, DeviceKind::Specter | DeviceKind::SpecterSimulator) {
         (
-            DeviceStatus::Warning("Liana cannot request the device to display the address. \n Verify it with the QR code in the options below.".to_string()),
+            DeviceStatus::Warning(t!("hw-display-address-unavailable")),
             None,
         )
     } else {

@@ -6,6 +6,7 @@ use iced::{
     widget::{column, row, Button, Space},
     Alignment,
 };
+use liana_i18n::t;
 
 use crate::{
     component::{
@@ -48,7 +49,7 @@ pub fn previous_addresses_header<'a, M: Clone + 'static>(show: bool, toggle: M) 
     } else {
         icon::collapse_icon()
     };
-    let text = new::d3("Previously generated addresses still awaiting deposit");
+    let text = new::d3(t!("receive-previous-addresses"));
     let header = row![text, chevron]
         .spacing(14)
         .align_y(Alignment::Center)

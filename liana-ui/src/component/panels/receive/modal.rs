@@ -8,6 +8,7 @@ use iced::{
     },
     Alignment, Length,
 };
+use liana_i18n::t;
 
 use crate::{
     component::{
@@ -28,7 +29,7 @@ pub fn verify_address_modal<'a, M: Clone + 'static>(
     clipboard: M,
 ) -> Element<'a, M> {
     let address_row = row![
-        text("Address:").bold(),
+        text(t!("common-address-label")).bold(),
         address_view(address.to_string()),
         btn_copy(Some(clipboard)),
     ]
@@ -36,7 +37,7 @@ pub fn verify_address_modal<'a, M: Clone + 'static>(
     .align_y(Alignment::Center);
 
     let index_row = row![
-        text("Derivation index:").bold(),
+        text(t!("receive-derivation-index")).bold(),
         text(derivation_index.to_string()).small(),
     ]
     .spacing(10)
@@ -72,7 +73,7 @@ pub fn show_address_modal<'a, M: 'a + Clone>(
     ];
     let content = column![addr_row, btn_row].spacing(28);
     component::modal::modal_view(
-        Some("Address"),
+        Some(t!("common-address")),
         None,
         Some(close),
         component::modal::ModalWidth::XL,

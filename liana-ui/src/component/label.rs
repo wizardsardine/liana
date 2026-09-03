@@ -4,6 +4,7 @@ use iced::{
     widget::{column, row, Space},
     Alignment,
 };
+use liana_i18n::t;
 
 use crate::{
     component::text::new,
@@ -19,7 +20,7 @@ use super::{
 pub fn editable_label<'a, M: 'a + Clone>(label: impl Display, msg: M) -> Element<'a, M> {
     let mut label = label.to_string();
     if label.is_empty() {
-        label = "(No label)".to_string();
+        label = t!("common-no-label-parenthesized");
     }
     let edit = btn_icon_edit(Some(msg));
     let label = new::h2(label);
@@ -30,7 +31,6 @@ pub fn editable_label<'a, M: 'a + Clone>(label: impl Display, msg: M) -> Element
 }
 
 pub const LABEL_MAX_LENGTH: usize = 80;
-pub const LABEL_LENGTH_WARNING: &str = "Invalid label length, must be 80 bytes or less";
 
 pub fn edit_label_modal<'a, M: 'a + Clone, C>(
     title: impl Display,
@@ -47,7 +47,7 @@ where
     // An empty label is not an error (no warning shown), but it cannot be saved,
     // so the confirm button stays disabled until a label is entered.
     let confirm = (value.valid && !value.value.is_empty()).then_some(confirm);
-    let input = Form::new(descr, value, on_change).warning(LABEL_LENGTH_WARNING);
+    let input = Form::new(descr, value, on_change).warning(t!("label-invalid-length"));
     let input = match &confirm {
         Some(c) => input.on_submit(c.clone()),
         None => input,
