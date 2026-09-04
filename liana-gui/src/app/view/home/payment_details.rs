@@ -26,6 +26,7 @@ use crate::{
         view::{dashboard, label, message::Message},
     },
     daemon::model::{HistoryTransaction, TransactionKind},
+    t,
 };
 
 pub fn payment_details_view<'a>(
@@ -49,13 +50,13 @@ pub fn payment_details_view<'a>(
             .push(match tx.kind {
                 TransactionKind::OutgoingSinglePayment(_)
                 | TransactionKind::OutgoingPaymentBatch(_) => {
-                    Container::new(legacy::h3("Outgoing payment")).width(Length::Fill)
+                    Container::new(legacy::h3(t!("payment-outgoing"))).width(Length::Fill)
                 }
                 TransactionKind::IncomingSinglePayment(_)
                 | TransactionKind::IncomingPaymentBatch(_) => {
-                    Container::new(legacy::h3("Incoming payment")).width(Length::Fill)
+                    Container::new(legacy::h3(t!("payment-incoming"))).width(Length::Fill)
                 }
-                _ => Container::new(legacy::h3("Payment")).width(Length::Fill),
+                _ => Container::new(legacy::h3(t!("payment-title"))).width(Length::Fill),
             })
             .push(if tx.is_single_payment().is_some() {
                 // if the payment is a payment of a single payment transaction then
@@ -87,7 +88,7 @@ pub fn payment_details_view<'a>(
                 legacy::H3_SPEC,
             )))
             .push(Space::with_height(legacy::H3_SIZE))
-            .push(Container::new(legacy::h3("Transaction")).width(Length::Fill))
+            .push(Container::new(legacy::h3(t!("transactions-transaction"))).width(Length::Fill))
             .push_maybe(if tx.is_batch() {
                 if let Some(label) = labels_editing.get(&txid) {
                     Some(label::label_editing(
@@ -108,13 +109,13 @@ pub fn payment_details_view<'a>(
             .push_maybe(tx.fee_amount.map(|fee_amount| {
                 Row::new()
                     .align_y(Alignment::Center)
-                    .push(legacy::h3("Miner fee: ").style(theme::text::secondary))
+                    .push(legacy::h3(t!("transactions-miner-fee")).style(theme::text::secondary))
                     .push(amount_with_font(&fee_amount, legacy::H3_SPEC))
                     .push(legacy::text(" ").size(legacy::H3_SIZE))
                     .push(
-                        legacy::text(format!(
-                            "({} sats/vbyte)",
-                            fee_amount.to_sat() / tx.tx.vsize() as u64
+                        legacy::text(t!(
+                            "common-feerate-value",
+                            rate = fee_amount.to_sat() / tx.tx.vsize() as u64
                         ))
                         .size(legacy::H4_SIZE)
                         .style(theme::text::secondary),
@@ -129,7 +130,10 @@ pub fn payment_details_view<'a>(
                             .format("%b. %d, %Y - %T");
                         Row::new()
                             .width(Length::Fill)
-                            .push(Container::new(legacy::text("Date:").bold()).width(Length::Fill))
+                            .push(
+                                Container::new(legacy::text(t!("transactions-date")).bold())
+                                    .width(Length::Fill),
+                            )
                             .push(
                                 Container::new(legacy::text(format!("{date}")))
                                     .width(Length::Shrink),
@@ -139,7 +143,10 @@ pub fn payment_details_view<'a>(
                         Row::new()
                             .width(Length::Fill)
                             .align_y(Alignment::Center)
-                            .push(Container::new(legacy::text("Txid:").bold()).width(Length::Fill))
+                            .push(
+                                Container::new(legacy::text(t!("transactions-txid")).bold())
+                                    .width(Length::Fill),
+                            )
                             .push(
                                 Row::new()
                                     .align_y(Alignment::Center)

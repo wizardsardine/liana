@@ -10,6 +10,7 @@ use iced::{
     widget::{column, container, row},
     Alignment, Length,
 };
+use liana_i18n::t;
 
 pub fn warning<'a, T: 'a + Clone>(message: String, error: String) -> Container<'a, T> {
     let message_clone = message.clone();
@@ -26,7 +27,7 @@ pub fn warning<'a, T: 'a + Clone>(message: String, error: String) -> Container<'
                     Row::new()
                         .align_y(Alignment::Center)
                         .spacing(10)
-                        .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
+                        .push(text::p1_bold(t!("common-learn-more")).color(color::LIGHT_BLACK))
                         .push(icon::collapse_icon().color(color::LIGHT_BLACK)),
                 ),
             Row::new()
@@ -38,7 +39,7 @@ pub fn warning<'a, T: 'a + Clone>(message: String, error: String) -> Container<'
                     Row::new()
                         .align_y(Alignment::Center)
                         .spacing(10)
-                        .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
+                        .push(text::p1_bold(t!("common-learn-more")).color(color::LIGHT_BLACK))
                         .push(icon::collapsed_icon().color(color::LIGHT_BLACK)),
                 ),
             text::p2_regular(error.to_owned()),
@@ -73,8 +74,8 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
             .width(Length::Fill)
             .into(),
             column(vec![
-                text::p2_regular("Processing...").into(),
-                text::p2_regular("Please check your device").into(),
+                text::p2_regular(t!("common-processing")).into(),
+                text::p2_regular(t!("device-check-device")).into(),
             ])
             .into(),
         ])
@@ -102,7 +103,7 @@ pub fn processing_hardware_wallet_error<'a, T: 'a + Clone>(
                     Row::new()
                         .align_y(Alignment::Center)
                         .spacing(10)
-                        .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
+                        .push(text::p1_bold(t!("common-learn-more")).color(color::LIGHT_BLACK))
                         .push(icon::collapse_icon().color(color::LIGHT_BLACK)),
                 ),
             Row::new()
@@ -114,7 +115,7 @@ pub fn processing_hardware_wallet_error<'a, T: 'a + Clone>(
                     Row::new()
                         .align_y(Alignment::Center)
                         .spacing(10)
-                        .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
+                        .push(text::p1_bold(t!("common-learn-more")).color(color::LIGHT_BLACK))
                         .push(icon::collapsed_icon().color(color::LIGHT_BLACK)),
                 ),
             text::p2_regular(error.to_owned()),

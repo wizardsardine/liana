@@ -28,6 +28,7 @@ use crate::installer::{
     message::{self, Message},
     view::{editor::define_descriptor_advanced_settings, layout},
 };
+use crate::t;
 
 /// Bottom padding below the footer of the editor templates.
 pub const BOTTOM_PADDING: f32 = 100.0;
@@ -41,16 +42,6 @@ pub const FOOTER_SPACING: f32 = 10.0;
 /// Gap between the key legend items of the template introductions.
 pub const KEY_LEGEND_SPACING: f32 = 30.0;
 
-pub const UNSUPPORTED_TAPROOT_WARNING: &str = "This device does not support Taproot";
-pub const HARDWARE_WALLET_ADVICE: &str =
-    "For security reasons, we suggest you use a separate Hardware Wallet for each key";
-pub const PRIMARY_KEY: &str = "Primary key";
-pub const RECOVERY_KEY: &str = "Recovery key";
-pub const INHERITANCE_KEY: &str = "Inheritance key";
-pub const SAFETY_NET_KEY: &str = "Safety Net key";
-pub const INTRODUCTION_TITLE: &str = "Introduction";
-pub const SET_KEYS_TITLE: &str = "Set keys";
-
 pub fn advanced_settings_collapse<'a>(use_taproot: bool) -> Element<'a, Message> {
     fn collapse<'a>(collapsed: bool) -> Element<'a, Message> {
         let icn = if collapsed {
@@ -58,7 +49,7 @@ pub fn advanced_settings_collapse<'a>(use_taproot: bool) -> Element<'a, Message>
         } else {
             icon::collapse_icon()
         };
-        row![p1_bold("Advanced settings"), icn]
+        row![p1_bold(t!("installer-advanced-settings")), icn]
             .align_y(Alignment::Center)
             .spacing(10)
             .into()
@@ -92,18 +83,18 @@ pub fn template_footer<'a>(valid: bool, processing: bool, customize: bool) -> Ro
 
 pub fn choose_descriptor_template(network: Network) -> Element<'static, Message> {
     let simple_inheritance = template_option(
-        "Simple inheritance",
-        "Two keys required, one for yourself to spend and another for your heir.",
+        t!("installer-simple-inheritance"),
+        t!("installer-simple-inheritance-description"),
         context::DescriptorTemplate::SimpleInheritance,
     );
     let expanding_multisig = template_option(
-        "Expanding multisig",
-        "Two keys required to spend, with an extra key as a backup.",
+        t!("installer-expanding-multisig"),
+        t!("installer-expanding-multisig-description"),
         context::DescriptorTemplate::MultisigSecurity,
     );
     let custom = template_option(
-        "Build your own",
-        "Create a custom setup that fits all your needs.",
+        t!("installer-build-your-own"),
+        t!("installer-build-your-own-description"),
         context::DescriptorTemplate::Custom,
     );
     let content = column![simple_inheritance, expanding_multisig, custom,]
@@ -115,15 +106,15 @@ pub fn choose_descriptor_template(network: Network) -> Element<'static, Message>
         (0, 0),
         network,
         None,
-        "Choose wallet type",
+        t!("installer-choose-wallet-type"),
         content,
         Some(Message::Previous),
     )
 }
 
 fn template_option(
-    title: &'static str,
-    description: &'static str,
+    title: String,
+    description: String,
     template: context::DescriptorTemplate,
 ) -> Element<'static, Message> {
     let content = column![

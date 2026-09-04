@@ -5,6 +5,8 @@ members = [
     "liana",
     "lianad",
     "liana-gui",
+    "liana-i18n",
+    "liana-i18n-toolbox",
     "liana-ui",
     "liana-connect",
     "liana-business",
@@ -14,6 +16,8 @@ default-members = [
     "liana",
     "lianad",
     "liana-gui",
+    "liana-i18n",
+    "liana-i18n-toolbox",
     "liana-ui",
     "liana-connect",
     "liana-business",
@@ -24,6 +28,8 @@ default-members = [
 # Internal crates
 liana = { path = "liana" }
 liana-gui = { path = "liana-gui", default-features = false }
+liana-i18n = { path = "liana-i18n" }
+liana-i18n-toolbox = { path = "liana-i18n-toolbox" }
 liana-ui = { path = "liana-ui" }
 liana-connect = { path = "liana-connect" }
 
@@ -41,6 +47,9 @@ iced_core = "0.14.0"
 chrono = "0.4.38"
 dirs = "5.0"
 jsonrpc = { version = "0.17", default-features = false }
+fluent-bundle = "0.15"
+sys-locale = "0.3"
+unic-langid = "0.9"
 
 # Pinned to this version because they keep breaking their MSRV in point releases...
 # FIXME: this is unfortunate, we don't receive the updates (sometimes critical) from SQLite.

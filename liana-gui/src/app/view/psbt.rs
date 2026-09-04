@@ -40,6 +40,7 @@ use crate::{
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
+    t,
     view::hw::{device_list_entry, HwRowMode},
 };
 
@@ -127,7 +128,7 @@ pub fn psbt_view<'a>(
 
 pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Message> {
     if saved {
-        card::simple(text("Transaction is saved"))
+        card::simple(text(t!("psbt-transaction-saved")))
             .width(Length::Fixed(400.0))
             .align_x(iced::alignment::Horizontal::Center)
             .into()
@@ -136,14 +137,14 @@ pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Mess
             Column::new()
                 .spacing(10)
                 .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(text("Save this transaction"))
+                .push(text(t!("psbt-save-transaction")))
                 .push(
                     Row::new()
                         .spacing(10)
                         .push(Space::with_width(Length::Fill))
-                        .push(button::secondary(None, "Ignore").on_press(Message::Close))
+                        .push(button::secondary(None, t!("btn-ignore")).on_press(Message::Close))
                         .push(
-                            button::primary(None, "Save")
+                            button::primary(None, t!("btn-save"))
                                 .on_press(Message::Spend(SpendTxMessage::Confirm)),
                         ),
                 ),
@@ -163,7 +164,7 @@ pub fn broadcast_action<'a>(
     saved: bool,
 ) -> Element<'a, Message> {
     if saved {
-        card::simple(text("Transaction is broadcast"))
+        card::simple(text(t!("psbt-transaction-broadcast")))
             .width(Length::Fixed(400.0))
             .align_x(iced::alignment::Horizontal::Center)
             .into()
@@ -172,7 +173,7 @@ pub fn broadcast_action<'a>(
             Column::new()
                 .spacing(10)
                 .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(Container::new(h4_bold("Broadcast the transaction")).width(Length::Fill))
+                .push(Container::new(h4_bold(t!("psbt-broadcast-transaction"))).width(Length::Fill))
                 .push_maybe(if conflicting_txids.is_empty() {
                     None
                 } else {
@@ -182,28 +183,16 @@ pub fn broadcast_action<'a>(
                                 .spacing(5)
                                 .push(Row::new().spacing(10).push(icon::warning_icon()).push(text(
                                     if conflicting_txids.len() > 1 {
-                                        "WARNING: Broadcasting this transaction \
-                                        will invalidate some pending payments."
+                                        t!("psbt-broadcast-invalidates-some")
                                     } else {
-                                        "WARNING: Broadcasting this transaction \
-                                        will invalidate a pending payment."
+                                        t!("psbt-broadcast-invalidates-one")
                                     },
                                 )))
                                 .push(Row::new().padding([0, 30]).push(text(
                                     if conflicting_txids.len() > 1 {
-                                        "The following transactions are \
-                                        spending one or more inputs \
-                                        from the transaction to be \
-                                        broadcast and will be \
-                                        dropped, along with any other \
-                                        transactions that depend on them:"
+                                        t!("psbt-broadcast-conflicts-some")
                                     } else {
-                                        "The following transaction is \
-                                        spending one or more inputs \
-                                        from the transaction to be \
-                                        broadcast and will be \
-                                        dropped, along with any other \
-                                        transactions that depend on it:"
+                                        t!("psbt-broadcast-conflicts-one")
                                     },
                                 ))),
                             |col, txid| {
@@ -241,8 +230,8 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
             Column::new()
                 .spacing(20)
                 .align_x(Alignment::Center)
-                .push(text("Successfully deleted this transaction."))
-                .push(button::secondary(None, "Go back to PSBTs").on_press(Message::Close)),
+                .push(text(t!("psbt-delete-success")))
+                .push(button::secondary(None, t!("btn-go-back-to-psbts")).on_press(Message::Close)),
         )
         .align_x(iced::alignment::Horizontal::Center)
         .width(Length::Fixed(400.0))
@@ -252,16 +241,16 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
             Column::new()
                 .spacing(10)
                 .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(text("Delete this PSBT"))
+                .push(text(t!("psbt-delete-this")))
                 .push(
                     Row::new()
                         .push(Column::new().width(Length::Fill))
                         .push(
-                            button::transparent(None, "Cancel")
+                            button::transparent(None, t!("btn-cancel"))
                                 .on_press(Message::Spend(SpendTxMessage::Cancel)),
                         )
                         .push(
-                            button::alert(None, "Delete")
+                            button::alert(None, t!("btn-delete"))
                                 .on_press(Message::Spend(SpendTxMessage::Confirm)),
                         ),
                 ),
@@ -297,23 +286,23 @@ pub fn spend_header<'a>(
         .push(
             Column::new()
                 .push(if tx.is_send_to_self() {
-                    Container::new(h1("Self-transfer"))
+                    Container::new(h1(t!("common-self-transfer")))
                 } else {
                     Container::new(amount_with_font(&tx.spend_amount, H1_SPEC))
                 })
                 .push(
                     Row::new()
                         .align_y(Alignment::Center)
-                        .push(h3("Miner fee: ").style(theme::text::secondary))
+                        .push(h3(t!("transactions-miner-fee")).style(theme::text::secondary))
                         .push_maybe(if tx.fee_amount.is_none() {
-                            Some(text("Missing information about transaction inputs"))
+                            Some(text(t!("psbt-missing-inputs")))
                         } else {
                             None
                         })
                         .push_maybe(tx.fee_amount.map(|fee| amount_with_font(&fee, H3_SPEC)))
                         .push(text(" ").size(H3_SIZE))
                         .push_maybe(tx.min_feerate_vb().map(|rate| {
-                            text(format!("(~{} sats/vbyte)", &rate))
+                            text(t!("common-approx-feerate-value", rate = rate))
                                 .size(H4_SIZE)
                                 .style(theme::text::secondary)
                         })),
@@ -357,8 +346,11 @@ pub fn spend_overview_view<'a>(
                                             } else {
                                                 Container::new(tooltip::Tooltip::new(
                                                     export_button,
-                                                    Container::new(p1_regular("Sign or save the transaction first to enable export"))
-                                                        .style(theme::card::simple).padding(10),
+                                                    Container::new(p1_regular(t!(
+                                                        "psbt-sign-save-before-export"
+                                                    )))
+                                                    .style(theme::card::simple)
+                                                    .padding(10),
                                                     tooltip::Position::Top,
                                                 ))
                                             })
@@ -368,21 +360,19 @@ pub fn spend_overview_view<'a>(
                             )
                             .push(
                                 Row::new()
-                                    .push(p1_bold("Tx ID").width(Length::Fill))
+                                    .push(p1_bold(t!("transactions-txid")).width(Length::Fill))
                                     .push(
                                         p2_regular(tx.psbt.unsigned_tx.compute_txid().to_string())
                                             .style(theme::text::secondary),
                                     )
-                                    .push(
-                                        button::btn_copy(Some(Message::Clipboard(
-                                            tx.psbt.unsigned_tx.compute_txid().to_string(),
-                                        ))),
-                                    )
+                                    .push(button::btn_copy(Some(Message::Clipboard(
+                                        tx.psbt.unsigned_tx.compute_txid().to_string(),
+                                    ))))
                                     .align_y(Alignment::Center),
                             ),
                     )
                     .push(signatures(tx, desc_info, key_aliases))
-                    .push(Space::with_height(5))
+                    .push(Space::with_height(5)),
             )
             .style(theme::card::simple),
         )
@@ -391,13 +381,11 @@ pub fn spend_overview_view<'a>(
                 Row::new()
                     .push(Space::with_width(Length::Fill))
                     .push_maybe(if tx.path_ready().is_none() {
-                        Some(
-                            btn_sign(Some(Message::Spend(SpendTxMessage::Sign))),
-                        )
+                        Some(btn_sign(Some(Message::Spend(SpendTxMessage::Sign))))
                     } else {
-                        Some(
-                            btn_broadcast(Some(Message::Spend(SpendTxMessage::Broadcast))),
-                        )
+                        Some(btn_broadcast(Some(Message::Spend(
+                            SpendTxMessage::Broadcast,
+                        ))))
                     })
                     .align_y(Alignment::Center)
                     .spacing(20),
@@ -420,10 +408,10 @@ pub fn signatures<'a>(
                     .spacing(5)
                     .align_y(Alignment::Center)
                     .spacing(10)
-                    .push(p1_bold("Status"))
+                    .push(p1_bold(t!("psbt-status")))
                     .push(icon::circle_check_icon().style(theme::text::success))
-                    .push(text("Ready").bold().style(theme::text::success))
-                    .push(text("  signed by"))
+                    .push(text(t!("common-ready")).bold().style(theme::text::success))
+                    .push(text(t!("psbt-signed-by")))
                     .push(
                         sigs.signed_pubkeys
                             .keys()
@@ -442,33 +430,33 @@ pub fn signatures<'a>(
                     Row::new()
                         .align_y(Alignment::Center)
                         .spacing(20)
-                        .push(p1_bold("Status"))
+                        .push(p1_bold(t!("psbt-status")))
                         .push(
                             Row::new()
                                 .spacing(5)
                                 .align_y(Alignment::Center)
                                 .push(icon::circle_cross_icon().style(theme::text::error))
-                                .push(text("Not ready").style(theme::text::error))
+                                .push(text(t!("psbt-not-ready")).style(theme::text::error))
                                 .width(Length::Fill),
                         )
                         .push(icon::collapse_icon()),
                     Row::new()
                         .align_y(Alignment::Center)
                         .spacing(20)
-                        .push(p1_bold("Status"))
+                        .push(p1_bold(t!("psbt-status")))
                         .push(
                             Row::new()
                                 .spacing(5)
                                 .align_y(Alignment::Center)
                                 .push(icon::circle_cross_icon().style(theme::text::error))
-                                .push(text("Not ready").style(theme::text::error))
+                                .push(text(t!("psbt-not-ready")).style(theme::text::error))
                                 .width(Length::Fill),
                         )
                         .push(icon::collapsed_icon()),
                     Column::new()
                         .padding(15)
                         .spacing(10)
-                        .push(text("Finalizing this transaction requires:"))
+                        .push(text(t!("psbt-finalizing-requires")))
                         .push_maybe(if tx.sigs.recovery_paths().is_empty() {
                             Some(path_view(
                                 desc_info.primary_path(),
@@ -538,23 +526,14 @@ pub fn path_view<'a>(
                     .push(Space::with_width(Length::Fixed(20.0))),
             )
             .push(
-                p1_regular(format!(
-                    "{} more signature{}",
-                    missing_signatures,
-                    if missing_signatures > 1 {
-                        "s from "
-                    } else if missing_signatures == 0 {
-                        ""
-                    } else {
-                        " from "
-                    }
-                ))
-                .style(theme::text::secondary),
+                p1_regular(t!("psbt-more-signatures", count = missing_signatures))
+                    .style(theme::text::secondary),
             )
             .push_maybe(row_unsigned)
             .push_maybe(
-                (!sigs.signed_pubkeys.is_empty())
-                    .then_some(p1_regular(", already signed by ").style(theme::text::secondary)),
+                (!sigs.signed_pubkeys.is_empty()).then_some(
+                    p1_regular(t!("psbt-already-signed-by")).style(theme::text::secondary),
+                ),
             )
             .push(row_signed),
     )
@@ -571,25 +550,11 @@ pub fn inputs_view<'a>(
         Collapse::new(
             Row::new()
                 .align_y(Alignment::Center)
-                .push(
-                    h4_bold(format!(
-                        "{} coin{} spent",
-                        tx.input.len(),
-                        if tx.input.len() == 1 { "" } else { "s" }
-                    ))
-                    .width(Length::Fill),
-                )
+                .push(h4_bold(t!("psbt-coins-spent", count = tx.input.len())).width(Length::Fill))
                 .push(icon::collapse_icon()),
             Row::new()
                 .align_y(Alignment::Center)
-                .push(
-                    h4_bold(format!(
-                        "{} coin{} spent",
-                        tx.input.len(),
-                        if tx.input.len() == 1 { "" } else { "s" }
-                    ))
-                    .width(Length::Fill),
-                )
+                .push(h4_bold(t!("psbt-coins-spent", count = tx.input.len())).width(Length::Fill))
                 .push(icon::collapsed_icon()),
             tx.input.iter().fold(
                 Column::new().spacing(10).padding(20),
@@ -632,25 +597,11 @@ pub fn outputs_view<'a>(
                     Collapse::new(
                         Row::new()
                             .align_y(Alignment::Center)
-                            .push(
-                                h4_bold(format!(
-                                    "{} payment{}",
-                                    count,
-                                    if count == 1 { "" } else { "s" }
-                                ))
-                                .width(Length::Fill),
-                            )
+                            .push(h4_bold(t!("psbt-payments", count = count)).width(Length::Fill))
                             .push(icon::collapse_icon()),
                         Row::new()
                             .align_y(Alignment::Center)
-                            .push(
-                                h4_bold(format!(
-                                    "{} payment{}",
-                                    count,
-                                    if count == 1 { "" } else { "s" }
-                                ))
-                                .width(Length::Fill),
-                            )
+                            .push(h4_bold(t!("psbt-payments", count = count)).width(Length::Fill))
                             .push(icon::collapsed_icon()),
                         tx.output
                             .iter()
@@ -675,7 +626,7 @@ pub fn outputs_view<'a>(
                     .padding(20),
                 )
             } else {
-                Container::new(h4_bold("0 payment").style(|t| {
+                Container::new(h4_bold(t!("psbt-no-payment")).style(|t| {
                     theme::text::custom(t.colors.buttons.transparent_border.active.text)
                 }))
                 .padding(20)
@@ -689,11 +640,11 @@ pub fn outputs_view<'a>(
                     Collapse::new(
                         Row::new()
                             .align_y(Alignment::Center)
-                            .push(h4_bold("Change").width(Length::Fill))
+                            .push(h4_bold(t!("psbt-change")).width(Length::Fill))
                             .push(icon::collapse_icon()),
                         Row::new()
                             .align_y(Alignment::Center)
-                            .push(h4_bold("Change").width(Length::Fill))
+                            .push(h4_bold(t!("psbt-change")).width(Length::Fill))
                             .push(icon::collapsed_icon()),
                         tx.output
                             .iter()
@@ -749,7 +700,7 @@ fn input_view<'a>(
                     Row::new()
                         .align_y(Alignment::Center)
                         .spacing(5)
-                        .push(p1_bold("Outpoint:").style(theme::text::secondary))
+                        .push(p1_bold(t!("coins-outpoint")).style(theme::text::secondary))
                         .push(p2_regular(outpoint.clone()).style(theme::text::secondary))
                         .push(button::btn_copy(Some(Message::Clipboard(outpoint.clone())))),
                 )
@@ -763,7 +714,10 @@ fn input_view<'a>(
                                 .align_y(Alignment::Center)
                                 .width(Length::Fill)
                                 .spacing(5)
-                                .push(p1_bold("Address:").style(theme::text::secondary))
+                                .push(
+                                    p1_bold(t!("common-address-label"))
+                                        .style(theme::text::secondary),
+                                )
                                 .push(address_view(addr.clone()))
                                 .push(button::btn_copy(Some(Message::Clipboard(addr)))),
                         )
@@ -778,7 +732,10 @@ fn input_view<'a>(
                                     .align_y(Alignment::Center)
                                     .width(Length::Fill)
                                     .spacing(5)
-                                    .push(p1_bold("Address label:").style(theme::text::secondary))
+                                    .push(
+                                        p1_bold(t!("coins-address-label"))
+                                            .style(theme::text::secondary),
+                                    )
                                     .push(p2_regular(label).style(theme::text::secondary)),
                             )
                     })
@@ -846,7 +803,10 @@ fn payment_view<'a>(
                                 .align_y(Alignment::Center)
                                 .width(Length::Fill)
                                 .spacing(5)
-                                .push(p1_bold("Address:").style(theme::text::secondary))
+                                .push(
+                                    p1_bold(t!("common-address-label"))
+                                        .style(theme::text::secondary),
+                                )
                                 .push(address_view(addr.clone()))
                                 .push(button::btn_copy(Some(Message::Clipboard(addr.clone())))),
                         ),
@@ -860,7 +820,10 @@ fn payment_view<'a>(
                                 .align_y(Alignment::Center)
                                 .width(Length::Fill)
                                 .spacing(5)
-                                .push(p1_bold("Address label:").style(theme::text::secondary))
+                                .push(
+                                    p1_bold(t!("coins-address-label"))
+                                        .style(theme::text::secondary),
+                                )
                                 .push(p2_regular(label).style(theme::text::secondary)),
                         )
                 }))
@@ -889,7 +852,7 @@ fn change_view(output: &TxOut, network: Network) -> Element<'_, Message> {
                         .align_y(Alignment::Center)
                         .width(Length::Fill)
                         .spacing(5)
-                        .push(p1_bold("Address:").style(theme::text::secondary))
+                        .push(p1_bold(t!("common-address-label")).style(theme::text::secondary))
                         .push(address_view(addr.clone()))
                         .push(button::btn_copy(Some(Message::Clipboard(addr)))),
                 ),
@@ -908,7 +871,7 @@ pub fn sign_action<'a>(
     signing: &HashSet<Fingerprint>,
     recovery_timelock: Option<u16>,
 ) -> Element<'a, Message> {
-    let title = "Select signing device to sign with:".to_string();
+    let title = t!("psbt-select-signing-device");
 
     let mut signers = vec![];
     if hws.is_empty() {
@@ -1001,7 +964,7 @@ pub fn sign_action_toasts<'a>(
     if let Some(e) = error {
         vec.push(
             liana_ui::component::notification::processing_hardware_wallet_error(
-                "Device failed to sign".to_string(),
+                t!("psbt-device-sign-failed"),
                 e.to_string(),
             )
             .max_width(400.0)
@@ -1016,7 +979,7 @@ pub fn update_spend_success_view<'a>() -> Element<'a, Message> {
     Column::new()
         .push(
             card::simple(Container::new(
-                text("Spend transaction is updated").style(theme::text::secondary),
+                text(t!("psbt-spend-updated")).style(theme::text::secondary),
             ))
             .padding(50),
         )

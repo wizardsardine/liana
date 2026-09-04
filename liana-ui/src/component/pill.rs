@@ -5,6 +5,7 @@ use iced::{
     Alignment, Font, Length,
 };
 use iced_core::text::{LineHeight, Shaping};
+use liana_i18n::t;
 
 use crate::{
     theme::{self, Theme},
@@ -221,7 +222,7 @@ macro_rules! pills {
     ($($name:ident, $label:literal, $tooltip:literal, $width:ident, $style:ident);* $(;)?) => {
         $(
             pub fn $name<'a, T: 'a>() -> Container<'a, T> {
-                pill($label, $tooltip, PillWidth::$width, theme::pill::$style)
+                pill(t!($label), t!($tooltip), PillWidth::$width, theme::pill::$style)
             }
         )*
     };
@@ -229,42 +230,54 @@ macro_rules! pills {
 
 #[rustfmt::skip]
 pills! {
-    recovery,       "Recovery",     "This transaction is using a recovery path",                      M, simple;
-    batch,          "Batch",        "This transaction contains multiple payments",                    M, simple;
-    deprecated,     "Deprecated",   "This transaction cannot be included in the blockchain anymore.", M, simple;
-    spent,          "Spent",        "The transaction was included in the blockchain.",                M, simple;
-    unsigned,       "Unsigned",     "This transaction is missing signature(s)",                       M, soft_warning;
-    signed,         "To broadcast", "This transaction is signed & ready to broadcast",                M, soft_warning;
-    unconfirmed,    "Unconfirmed",  "Do not treat this as a payment until it is confirmed",           M, simple_fill;
-    confirmed,      "Confirmed",    "This transaction has been included in a block",                  M, success;
-    key_internal,   "Internal",     "Key held by your organization",                                  M, internal;
+    recovery,       "common-recovery",     "pill-recovery-tooltip",     M, simple;
+    batch,          "pill-batch",        "pill-batch-tooltip",        M, simple;
+    deprecated,     "pill-deprecated",   "pill-deprecated-tooltip",   M, simple;
+    spent,          "pill-spent",        "pill-spent-tooltip",        M, simple;
+    unsigned,       "pill-unsigned",     "pill-unsigned-tooltip",     M, soft_warning;
+    signed,         "pill-signed",       "pill-signed-tooltip",       M, soft_warning;
+    unconfirmed,    "pill-unconfirmed",  "pill-unconfirmed-tooltip",  M, simple_fill;
+    confirmed,      "pill-confirmed",    "pill-confirmed-tooltip",    M, success;
+    key_internal,   "pill-key-internal", "pill-key-internal-tooltip", M, internal;
     // Business installer only
-    key_external,   "External",     "key held by third parties",                                      M, external;
-    key_cosigner,   "Cosigner",     "Professional third party co-signing key",                        M, safety_net;
-    key_safety_net, "Safety Net",   "Professional third party recovery key",                          M, safety_net;
+    key_external,   "pill-key-external",   "pill-key-external-tooltip",   M, external;
+    key_cosigner,   "pill-key-cosigner",   "pill-key-cosigner-tooltip",   M, safety_net;
+    key_safety_net, "pill-key-safety-net", "pill-key-safety-net-tooltip", M, safety_net;
 }
 
 /// Wallet lifecycle status pills, compact (the wallet list trailing).
 const WALLET_STATUS_WIDTH: PillWidth = PillWidth::WalletStatus;
 
 pub fn register<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill("Register", WALLET_STATUS_WIDTH, theme::pill::warning)
+    compact_pill(
+        t!("common-register"),
+        WALLET_STATUS_WIDTH,
+        theme::pill::warning,
+    )
 }
 
 pub fn draft<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill("Draft", WALLET_STATUS_WIDTH, theme::pill::simple)
+    compact_pill(t!("pill-draft"), WALLET_STATUS_WIDTH, theme::pill::simple)
 }
 
 pub fn to_approve<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill("To approve", WALLET_STATUS_WIDTH, theme::pill::warning)
+    compact_pill(
+        t!("pill-to-approve"),
+        WALLET_STATUS_WIDTH,
+        theme::pill::warning,
+    )
 }
 
 pub fn set_keys<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill("Set keys", WALLET_STATUS_WIDTH, theme::pill::warning)
+    compact_pill(
+        t!("btn-set-keys"),
+        WALLET_STATUS_WIDTH,
+        theme::pill::warning,
+    )
 }
 
 pub fn active<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill("Active", WALLET_STATUS_WIDTH, theme::pill::success)
+    compact_pill(t!("pill-active"), WALLET_STATUS_WIDTH, theme::pill::success)
 }
 
 /// Compact key pill styled by key kind (the key-type and path key-alias pills).
@@ -303,7 +316,7 @@ pub fn path_timelock<'a, T: 'a, L: Display>(label: L) -> Container<'a, T> {
 pub fn path_always_available<'a, T: 'a>() -> Container<'a, T> {
     pill_with_icon(
         Some(crate::icon::check_icon()),
-        "Always available",
+        t!("pill-always-available"),
         "",
         PillWidth::ML,
         theme::pill::success,
@@ -314,7 +327,7 @@ pub fn path_always_available<'a, T: 'a>() -> Container<'a, T> {
 pub fn registered<'a, T: 'a>() -> Container<'a, T> {
     pill_with_icon(
         Some(crate::icon::check_icon().style(theme::text::success)),
-        "Registered",
+        t!("device-registered"),
         "",
         PillWidth::Shrink,
         theme::pill::success,
@@ -350,15 +363,18 @@ pub fn compact_pill<'a, T: 'a>(
 }
 
 pub fn role_manager<'a, T: 'a>() -> Container<'a, T> {
-    compact_metric("Manager", theme::pill::role_manager)
+    compact_metric(t!("business-role-manager"), theme::pill::role_manager)
 }
 
 pub fn role_participant<'a, T: 'a>() -> Container<'a, T> {
-    compact_metric("Participant", theme::pill::role_participant)
+    compact_metric(
+        t!("business-role-participant"),
+        theme::pill::role_participant,
+    )
 }
 
 pub fn ws_admin<'a, T: 'a>() -> Container<'a, T> {
-    compact_metric("WS Admin", theme::pill::simple)
+    compact_metric(t!("pill-ws-admin"), theme::pill::simple)
 }
 
 /// Success pill shown for a key that is used in the template: a checkmark only, with a hover tooltip
@@ -367,10 +383,7 @@ pub fn in_policy<'a, T: 'a>(usage_count: usize) -> Container<'a, T> {
     let pill = Container::new(crate::icon::check_icon().line_height(COMPACT_LINE_HEIGHT))
         .padding(PILL_PADDING_COMPACT)
         .style(theme::pill::success);
-    let tip = format!(
-        "Used in {usage_count} spending path{}",
-        if usage_count == 1 { "" } else { "s" }
-    );
+    let tip = t!("pill-used-in-spending-paths", count = usage_count);
     pill_with_tooltip(pill, Some(tip))
 }
 
@@ -378,7 +391,7 @@ pub fn in_policy<'a, T: 'a>(usage_count: usize) -> Container<'a, T> {
 pub fn not_in_policy<'a, T: 'a>() -> Container<'a, T> {
     pill_with_icon(
         Some(crate::icon::tooltip_icon()),
-        "Not in policy yet",
+        t!("pill-not-in-policy"),
         "",
         PillWidth::Shrink,
         theme::pill::soft_warning,
@@ -387,16 +400,16 @@ pub fn not_in_policy<'a, T: 'a>() -> Container<'a, T> {
 }
 
 pub fn xpub_set<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill("✓ Set", PillWidth::S, theme::pill::success)
+    compact_pill(t!("pill-xpub-set"), PillWidth::S, theme::pill::success)
 }
 
 pub fn xpub_not_set<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill("Not Set", PillWidth::S, theme::pill::warning)
+    compact_pill(t!("pill-xpub-not-set"), PillWidth::S, theme::pill::warning)
 }
 
 pub fn unconfirmed_compact<'a, T: 'a>() -> Container<'a, T> {
     compact_pill_body_with_text_size_and_font(
-        "Unconfirmed",
+        t!("pill-unconfirmed"),
         PillWidth::M,
         theme::pill::simple_fill,
         PILL_FONT,
@@ -416,7 +429,10 @@ pub fn rescan<'a, T: 'a>(progress: f64, compact: bool) -> Container<'a, T> {
         PILL_FONT
     };
     let width = if compact { PillWidth::M } else { PillWidth::L };
-    let label = format!("Rescan… {:.2}%", progress * 100.0);
+    let label = t!(
+        "pill-rescan-progress",
+        progress = format!("{:.2}", progress * 100.0)
+    );
     if compact {
         compact_pill_body_with_text_size_and_font(label, width, theme::pill::simple, font, size)
     } else {
@@ -502,23 +518,41 @@ pub fn coin_sequence_compact<'a, T: 'a>(sequence: u32) -> Container<'a, T> {
 }
 
 fn coin_sequence_pill<'a, T: 'a>(sequence: u32, compact: bool) -> Container<'a, T> {
-    let caption = "First recovery option available ";
     let eta = recovery_eta(sequence);
     let (label, tooltip, width): (String, String, PillWidth) = match eta {
         RecoveryEta::Available => (
-            if compact { "Avail." } else { "Available" }.to_string(),
-            "Recovery option(s) already available".to_string(),
+            if compact {
+                t!("pill-available-compact")
+            } else {
+                t!("pill-available")
+            },
+            t!("pill-recovery-available-tooltip"),
             PillWidth::M,
         ),
-        RecoveryEta::Today => ("Today".to_string(), format!("{caption}today"), PillWidth::M),
+        RecoveryEta::Today => (
+            t!("pill-today"),
+            t!("pill-first-recovery-today"),
+            PillWidth::M,
+        ),
         RecoveryEta::TwoDays => (
-            if compact { "~2d" } else { "~2 days" }.to_string(),
-            format!("{caption}in ~2 days"),
+            if compact {
+                t!("duration-days-compact-approx", count = 2)
+            } else {
+                t!("duration-days-approx", count = 2)
+            },
+            t!(
+                "pill-first-recovery-in",
+                units = t!("duration-days-approx", count = 2)
+            ),
             PillWidth::M,
         ),
         RecoveryEta::Longer if compact => {
             let units = expire_compact_units(sequence);
-            (units.clone(), format!("{caption}in {units}"), PillWidth::M)
+            (
+                units.clone(),
+                t!("pill-first-recovery-in", units = units),
+                PillWidth::M,
+            )
         }
         RecoveryEta::Longer => {
             let mut units = expire_message_units(sequence);
@@ -531,7 +565,11 @@ fn coin_sequence_pill<'a, T: 'a>(sequence: u32, compact: bool) -> Container<'a, 
                 PillWidth::M
             };
             let units = format!("~{}", units.join(", "));
-            (units.clone(), format!("{caption}in {units}"), width)
+            (
+                units.clone(),
+                t!("pill-first-recovery-in", units = units),
+                width,
+            )
         }
     };
 
@@ -583,23 +621,23 @@ enum ExpireUnit {
 }
 
 impl ExpireUnit {
-    fn name(self) -> &'static str {
+    fn display(self, count: u32) -> String {
         match self {
-            Self::Year => "year",
-            Self::Month => "month",
-            Self::Day => "day",
-            Self::Hour => "hour",
-            Self::Minute => "minute",
+            Self::Year => t!("duration-years", count = count),
+            Self::Month => t!("duration-months", count = count),
+            Self::Day => t!("duration-days", count = count),
+            Self::Hour => t!("duration-hours", count = count),
+            Self::Minute => t!("duration-minutes", count = count),
         }
     }
 
-    fn abbr(self) -> &'static str {
+    fn compact(self, count: u32) -> String {
         match self {
-            Self::Year => "y",
-            Self::Month => "m",
-            Self::Day => "d",
-            Self::Hour => "h",
-            Self::Minute => "min",
+            Self::Year => t!("duration-years-compact", count = count),
+            Self::Month => t!("duration-months-compact", count = count),
+            Self::Day => t!("duration-days-compact", count = count),
+            Self::Hour => t!("duration-hours-compact", count = count),
+            Self::Minute => t!("duration-minutes-compact", count = count),
         }
     }
 }
@@ -607,14 +645,14 @@ impl ExpireUnit {
 fn expire_message_units(sequence: u32) -> Vec<String> {
     expire_units(sequence)
         .into_iter()
-        .map(|(n, u)| format!("{} {}{}", n, u.name(), if n > 1 { "s" } else { "" }))
+        .map(|(n, u)| u.display(n))
         .collect()
 }
 
 fn expire_compact_units(sequence: u32) -> String {
     let parts: Vec<String> = expire_units(sequence)
         .into_iter()
-        .map(|(n, u)| format!("{}{}", n, u.abbr()))
+        .map(|(n, u)| u.compact(n))
         .collect();
     format!("~{}", parts.join(","))
 }
@@ -625,8 +663,14 @@ mod tests {
     #[test]
     fn test_expire_message_units() {
         let testcases = [
-            (61, vec!["10 hours".to_string(), "10 minutes".to_string()]),
-            (1112, vec!["7 days".to_string()]),
+            (
+                61,
+                vec![
+                    "\u{2068}10\u{2069} hours".to_string(),
+                    "\u{2068}10\u{2069} minutes".to_string(),
+                ],
+            ),
+            (1112, vec!["\u{2068}7\u{2069} days".to_string()]),
             (52600, vec!["1 year".to_string()]),
         ];
 

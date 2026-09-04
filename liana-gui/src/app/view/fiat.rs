@@ -11,10 +11,12 @@ use liana_ui::{
     widget::Container,
 };
 
-use crate::app::cache;
-use crate::services::fiat::{Currency, PriceSource};
-use crate::utils::now;
-
+use crate::{
+    app::cache,
+    services::fiat::{Currency, PriceSource},
+    t,
+    utils::now,
+};
 #[derive(Debug)]
 pub enum AmountConverterError {
     NonPositivePrice,
@@ -29,10 +31,18 @@ pub enum AmountConverterError {
 impl std::fmt::Display for AmountConverterError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::NonPositivePrice => write!(f, "Price per BTC must be positive"),
+            Self::NonPositivePrice => write!(f, "{}", t!("fiat-price-positive")),
             Self::ParseError(e) => write!(f, "Parse error: {e}"),
             Self::CurrencyMismatch { expected, actual } => {
-                write!(f, "Currency mismatch: expected {expected}, got {actual}")
+                write!(
+                    f,
+                    "{}",
+                    t!(
+                        "fiat-currency-mismatch",
+                        expected = expected,
+                        actual = actual
+                    )
+                )
             }
             Self::ConversionError(e) => write!(f, "Conversion error: {e}"),
         }
@@ -123,21 +133,28 @@ impl FiatAmountConverter {
     pub fn to_container_summary<'a, M: 'a>(&self) -> Container<'a, M> {
         Container::new(
             Column::new()
-                .push(text(format!(
-                    "Exchange rate: 1 BTC ~ {} {}",
-                    self.to_fiat_amount().to_formatted_string(),
-                    self.currency()
+                .push(text(t!(
+                    "fiat-exchange-rate",
+                    amount = self.to_fiat_amount().to_formatted_string(),
+                    currency = self.currency()
                 )))
-                .push(text(format!("Source: {}", self.source())))
-                .push(text(format!(
-                    "Last updated at source: {}",
-                    self.updated_at()
-                        .map(|t| format!("{} seconds ago", now().as_secs().saturating_sub(t)))
-                        .unwrap_or("N/A".to_string())
+                .push(text(t!("fiat-source", source = self.source())))
+                .push(text(t!(
+                    "fiat-last-updated-source",
+                    time = self
+                        .updated_at()
+                        .map(|t| t!(
+                            "time-seconds-ago",
+                            count = now().as_secs().saturating_sub(t)
+                        ))
+                        .unwrap_or_else(|| t!("common-not-available"))
                 )))
-                .push(text(format!(
-                    "Last requested: {} seconds ago",
-                    self.requested_at().elapsed().as_secs()
+                .push(text(t!(
+                    "fiat-last-requested",
+                    time = t!(
+                        "time-seconds-ago",
+                        count = self.requested_at().elapsed().as_secs()
+                    )
                 ))),
         )
         .style(theme::card::simple)

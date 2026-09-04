@@ -2,7 +2,6 @@ mod context;
 mod decrypt;
 mod descriptor;
 mod message;
-mod prompt;
 mod step;
 mod view;
 
@@ -49,6 +48,7 @@ use crate::{
         BackendType,
     },
     signer::Signer,
+    t,
 };
 
 pub use descriptor::{KeySource, KeySourceKind, PathKind, PathSequence};
@@ -546,9 +546,10 @@ pub fn daemon_check(cfg: lianad::config::Config) -> Result<(), Error> {
     match lianad::DaemonHandle::start_default(cfg, false) {
         Ok(daemon) => daemon
             .stop()
-            .map_err(|e| Error::Unexpected(format!("Failed to stop Liana daemon: {e}"))),
-        Err(e) => Err(Error::Unexpected(format!(
-            "Failed to start Liana daemon: {e}"
+            .map_err(|e| Error::Unexpected(t!("installer-stop-daemon-failed", error = e))),
+        Err(e) => Err(Error::Unexpected(t!(
+            "installer-start-daemon-failed",
+            error = e
         ))),
     }
 }
@@ -570,7 +571,7 @@ pub async fn install_local_wallet(
         .network_directory(ctx.bitcoin_config.network);
     network_datadir
         .init()
-        .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {e}")))?;
+        .map_err(|e| Error::Unexpected(t!("installer-create-datadir-path-failed", error = e)))?;
 
     let descriptor = ctx
         .descriptor
@@ -606,8 +607,9 @@ pub async fn install_local_wallet(
     info!("daemon checked");
 
     // Step needed because of ValueAfterTable error in the toml serialize implementation.
-    let daemon_config = toml::Value::try_from(&cfg)
-        .map_err(|e| Error::Unexpected(format!("Failed to serialize daemon config: {e}")))?;
+    let daemon_config = toml::Value::try_from(&cfg).map_err(|e| {
+        Error::Unexpected(t!("installer-serialize-daemon-config-failed", error = e))
+    })?;
 
     // create lianad configuration file
     create_and_write_file(
@@ -636,7 +638,7 @@ pub async fn install_local_wallet(
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
             )
-            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {e}")))?;
+            .map_err(|e| Error::Unexpected(t!("installer-store-mnemonic-failed", error = e)))?;
 
         info!("Hot signer mnemonic stored");
     }
@@ -651,7 +653,7 @@ pub async fn install_local_wallet(
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
             )
-            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {e}")))?;
+            .map_err(|e| Error::Unexpected(t!("installer-store-mnemonic-failed", error = e)))?;
 
         info!("Recovered signer mnemonic stored");
     }
@@ -668,7 +670,7 @@ pub async fn install_local_wallet(
                 // Installer started a bitcoind, it is expected that gui will start it on startup
                 ctx.internal_bitcoind.is_some(),
             ))
-            .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {e}")))?
+            .map_err(|e| Error::Unexpected(t!("installer-serialize-gui-config-failed", error = e)))?
             .as_bytes(),
         )?;
         info!("Gui configuration file created");
@@ -696,7 +698,7 @@ pub async fn create_remote_wallet(
     let network_datadir = ctx.liana_directory.network_directory(ctx.network);
     network_datadir
         .init()
-        .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {e}")))?;
+        .map_err(|e| Error::Unexpected(t!("installer-create-datadir-path-failed", error = e)))?;
 
     let descriptor = ctx
         .descriptor
@@ -718,7 +720,7 @@ pub async fn create_remote_wallet(
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
             )
-            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {e}")))?;
+            .map_err(|e| Error::Unexpected(t!("installer-store-mnemonic-failed", error = e)))?;
 
         info!("Hot signer mnemonic stored");
     }
@@ -733,7 +735,7 @@ pub async fn create_remote_wallet(
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
             )
-            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {e}")))?;
+            .map_err(|e| Error::Unexpected(t!("installer-store-mnemonic-failed", error = e)))?;
 
         info!("Recovered signer mnemonic stored");
     }
@@ -747,7 +749,9 @@ pub async fn create_remote_wallet(
         create_and_write_file(
             &gui_config_path,
             toml::to_string(&gui_config::Config::new(false))
-                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {e}")))?
+                .map_err(|e| {
+                    Error::Unexpected(t!("installer-serialize-gui-config-failed", error = e))
+                })?
                 .as_bytes(),
         )?;
         info!("Gui configuration file created");
@@ -865,7 +869,7 @@ pub async fn import_remote_wallet(
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
             )
-            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {e}")))?;
+            .map_err(|e| Error::Unexpected(t!("installer-store-mnemonic-failed", error = e)))?;
 
         info!("Recovered signer mnemonic stored");
     }
@@ -873,7 +877,7 @@ pub async fn import_remote_wallet(
     let network_datadir = ctx.liana_directory.network_directory(ctx.network);
     network_datadir
         .init()
-        .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {e}")))?;
+        .map_err(|e| Error::Unexpected(t!("installer-create-datadir-path-failed", error = e)))?;
 
     backend
         .update_wallet_metadata(Some(ctx.wallet_alias.clone()), &HashMap::new(), &[])
@@ -919,7 +923,9 @@ pub async fn import_remote_wallet(
         create_and_write_file(
             &gui_config_path,
             toml::to_string(&gui_config::Config::new(false))
-                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {e}")))?
+                .map_err(|e| {
+                    Error::Unexpected(t!("installer-serialize-gui-config-failed", error = e))
+                })?
                 .as_bytes(),
         )?;
         info!("Gui configuration file created");
@@ -966,7 +972,7 @@ pub fn extract_daemon_config(ctx: &Context, settings: &WalletSettings) -> Result
         .path()
         .to_path_buf()
         .canonicalize()
-        .map_err(|e| Error::Unexpected(format!("Failed to canonicalize datadir path: {e}")))?;
+        .map_err(|e| Error::Unexpected(t!("installer-canonicalize-datadir-failed", error = e)))?;
     let bitcoin_backend = if let Some(BitcoinBackend::Bitcoind(BitcoindConfig {
         rpc_auth: BitcoindRpcAuth::CookieFile(cookie_path),
         addr,
@@ -974,9 +980,9 @@ pub fn extract_daemon_config(ctx: &Context, settings: &WalletSettings) -> Result
     {
         // The cookie path must exist for this canonicalization to succeed, which means bitcoind must be running.
         // We already checked in the installer that bitcoind is running.
-        let cookie_path = cookie_path
-            .canonicalize()
-            .map_err(|e| Error::Unexpected(format!("Failed to canonicalize cookie path: {e}")))?;
+        let cookie_path = cookie_path.canonicalize().map_err(|e| {
+            Error::Unexpected(t!("installer-canonicalize-cookie-failed", error = e))
+        })?;
         Some(BitcoinBackend::Bitcoind(BitcoindConfig {
             rpc_auth: BitcoindRpcAuth::CookieFile(cookie_path),
             addr: *addr,
