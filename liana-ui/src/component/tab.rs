@@ -6,6 +6,7 @@ use iced::{
     widget::{button, container, row, tooltip::Position, Space},
     Background, Border, Length,
 };
+use liana_i18n::t;
 
 use crate::{color::TRANSPARENT, component::tooltip_custom, font, theme, widget::*};
 
@@ -94,8 +95,8 @@ fn tab_item<'a, M: Clone + 'a>(
 
 fn dot_view<'a, M: 'a>(dot: Dot) -> Element<'a, M> {
     let help = match dot {
-        Dot::Ready => "Ready",
-        Dot::Pending => "Pending",
+        Dot::Ready => t!("common-ready"),
+        Dot::Pending => t!("tab-pending"),
     };
     let dot = Container::new(Space::new())
         .width(DOT_SIZE)
@@ -116,7 +117,7 @@ fn dot_view<'a, M: 'a>(dot: Dot) -> Element<'a, M> {
             }
         });
 
-    tooltip_custom(help, dot, Position::Top).into()
+    tooltip_custom(iced::widget::text(help), dot, Position::Top).into()
 }
 
 fn strip_line<'a, M: 'a>() -> Container<'a, M> {

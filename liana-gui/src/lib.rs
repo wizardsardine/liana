@@ -11,6 +11,7 @@ pub mod export;
 pub mod gui;
 pub mod help;
 pub mod hw;
+pub use liana_i18n::{self as i18n, t};
 pub mod installer;
 pub mod launcher;
 pub mod loader;

@@ -373,9 +373,7 @@ impl SelectKeySource {
                                 account: Some(account),
                             })
                         } else {
-                            Err(Error::Unexpected(
-                                "Fetched key does not have the correct network".to_string(),
-                            ))
+                            Err(Error::Unexpected("installer-key-wrong-network".to_string()))
                         }
                     }
                 };
@@ -513,7 +511,7 @@ impl SelectKeySource {
             return Task::none();
         }
 
-        self.form_alias.value = "Hot Signer".to_string();
+        self.form_alias.value = crate::t!("installer-hot-signer");
         self.form_alias.valid = true;
 
         let derivation_path = derivation_path(self.network, account);
@@ -565,21 +563,19 @@ impl SelectKeySource {
                 if let Some(key_kind) = k.source.provider_key_kind() {
                     // We don't need to check key's status as redeemed keys are not returned.
                     *warning = if !check_key_network(&k.key, self.network) {
-                        Some("Fetched key does not have the correct network")
+                        Some(crate::t!("installer-key-wrong-network"))
                     } else if !self.actual_path.token_kind.contains(&key_kind) {
                         let warn = match key_kind {
                             KeyKind::SafetyNet => {
-                                "SafetyNet kind of token is not allowed for this path"
+                                crate::t!("installer-safety-net-token-disallowed")
                             }
-                            KeyKind::Cosigner => {
-                                "Cosigner kind of token is not allowed for this path"
-                            }
+                            KeyKind::Cosigner => crate::t!("installer-cosigner-token-disallowed"),
                         };
                         Some(warn)
                     }
                     // Note that this checks all keys regardless of whether they are currently being used in a path.
                     else if self.keys.contains_key(&k.fingerprint) {
-                        Some("Fetched key has already been added to the wallet.")
+                        Some(crate::t!("installer-key-already-in-wallet"))
                     } else {
                         None
                     };
@@ -608,9 +604,9 @@ impl SelectKeySource {
             Err(e) => {
                 self.details_error = match e {
                     Error::Unexpected(u) => match u {
-                        u if u == "Fetched key does not have the correct network" => Some(
-                            "Failed to fetch key. Switch network on device and retry".to_string(),
-                        ),
+                        u if u == "installer-key-wrong-network" => {
+                            Some(crate::t!("installer-key-fetch-wrong-network"))
+                        }
                         u => Some(u),
                     },
                     Error::HardwareWallet(eh) => match eh {
@@ -618,10 +614,7 @@ impl SelectKeySource {
                         async_hwi::Error::Device(d)
                             if d == "Device {\n    command: 0,\n    status: NotSupported,\n}" =>
                         {
-                            Some(
-                                "Failed to fetch key. Switch network on device and retry"
-                                    .to_string(),
-                            )
+                            Some(crate::t!("installer-key-fetch-wrong-network"))
                         }
                         _ => Some(eh.to_string()),
                     },
@@ -638,7 +631,7 @@ impl SelectKeySource {
         if let Ok(DescriptorPublicKey::XPub(key)) = DescriptorPublicKey::from_str(&xpub) {
             if !key.derivation_path.is_master() {
                 self.form_xpub.valid = false;
-                self.form_xpub.warning = Some("Wrong derivation path");
+                self.form_xpub.warning = Some(crate::t!("installer-xpub-wrong-derivation-path"));
             } else if let Some((fingerprint, _)) = key.origin {
                 self.form_xpub.valid = if self.network == Network::Bitcoin {
                     key.xkey.network == Network::Bitcoin.into()
@@ -646,11 +639,11 @@ impl SelectKeySource {
                     key.xkey.network == Network::Testnet.into()
                 };
                 if !self.form_xpub.valid {
-                    self.form_xpub.warning = Some("Wrong network");
+                    self.form_xpub.warning = Some(crate::t!("installer-xpub-wrong-network"));
                     self.form_xpub.valid = false;
                 }
                 if self.keys.contains_key(&fingerprint) {
-                    self.form_xpub.warning = Some("Key already used");
+                    self.form_xpub.warning = Some(crate::t!("installer-key-already-used"));
                     self.form_xpub.valid = false;
                 }
 
@@ -659,12 +652,12 @@ impl SelectKeySource {
                 }
             } else {
                 self.form_xpub.valid = false;
-                self.form_xpub.warning = Some("Origin missing");
+                self.form_xpub.warning = Some(crate::t!("installer-xpub-origin-missing"));
             }
         } else {
             self.form_xpub.valid = xpub.is_empty();
             if !self.form_xpub.valid {
-                self.form_xpub.warning = Some("Invalid Xpub");
+                self.form_xpub.warning = Some(crate::t!("installer-xpub-invalid"));
             }
         }
         Task::none()
@@ -673,7 +666,7 @@ impl SelectKeySource {
         if let Ok(DescriptorPublicKey::XPub(key)) = DescriptorPublicKey::from_str(&xpub) {
             if let Some((fingerprint, _)) = key.origin {
                 if self.keys.contains_key(&fingerprint) {
-                    self.import_xpub_error = Some("Imported key already used".to_string());
+                    self.import_xpub_error = Some(crate::t!("installer-imported-key-already-used"));
                     self.focus = Focus::None;
                 } else {
                     return self.xpub_valid(fingerprint, key);
@@ -740,7 +733,7 @@ impl SelectKeySource {
                     .iter()
                     .any(|(_, (_, k))| k.source.token() == Some(&token))
                 {
-                    Some("Duplicate token")
+                    Some(crate::t!("installer-duplicate-token"))
                 } else {
                     None
                 };
@@ -751,7 +744,7 @@ impl SelectKeySource {
             } else {
                 *valid = value.is_empty();
                 *warning = if !*valid {
-                    Some("Invalid token!")
+                    Some(crate::t!("installer-invalid-token"))
                 } else {
                     None
                 };
@@ -786,7 +779,7 @@ impl SelectKeySource {
             SelectedKey::New(k) => Some(k.fingerprint),
         } {
             if alias_already_exists(&alias, fg, &self.keys) {
-                self.form_alias.warning = Some("This alias is already used for another key");
+                self.form_alias.warning = Some(crate::t!("installer-key-alias-already-used"));
                 self.form_alias.valid = false;
             }
         }
@@ -930,7 +923,7 @@ impl SelectKeySource {
         let scrollable = liana_ui::component::scrollable::vertical_thin(scrollable_content);
 
         liana_ui::component::modal::modal_view(
-            Some("Select key source"),
+            Some(crate::t!("installer-select-key-source")),
             None,
             Some(Message::Close),
             modal::ModalWidth::L,
@@ -1012,7 +1005,7 @@ impl SelectKeySource {
             bool, /* support taproot */
         )>,
     ) -> Element<'_, Message> {
-        let mut col = column![p1_bold("Detected hardware")]
+        let mut col = column![p1_bold(crate::t!("installer-detected-hardware"))]
             .spacing(5)
             .align_x(Alignment::Center)
             .width(modal::BTN_W);
@@ -1026,7 +1019,7 @@ impl SelectKeySource {
     }
     fn view_keys(&self) -> Element<'_, Message> {
         let keys = self.already_used_keys();
-        let mut col = column![p1_bold("Already used sources")].spacing(5);
+        let mut col = column![p1_bold(crate::t!("installer-already-used-sources"))].spacing(5);
         for key in keys {
             col = col.push(self.widget_key(key));
         }
@@ -1039,6 +1032,7 @@ impl SelectKeySource {
         self.actual_path.token_kind.contains(&KeyKind::Cosigner)
     }
     fn view_other_options(&self) -> Element<'_, Message> {
+        let import_xpub_error = self.import_xpub_error.clone();
         let safety_net_token = self.safety_net_enabled().then(|| {
             modal::safety_net_token_entry(
                 self.focus == Focus::EnterSafetyNetToken,
@@ -1074,7 +1068,7 @@ impl SelectKeySource {
 
         let option_section = modal::optional_section(
             collapsed,
-            "Other options".into(),
+            crate::t!("common-other-options"),
             || Self::route(SelectKeySourceMessage::Collapse(true)),
             || Self::route(SelectKeySourceMessage::Collapse(false)),
         );
@@ -1089,7 +1083,7 @@ impl SelectKeySource {
 
         let load_key = safety_net_token.is_none().then(|| {
             modal::import_xpub_entry(
-                self.import_xpub_error.clone(),
+                import_xpub_error,
                 Some(|| Self::route(SelectKeySourceMessage::SelectLoadXpub)),
             )
         });
@@ -1124,10 +1118,10 @@ impl SelectKeySource {
         let mut enabled = true;
         let message = match (state, support_taproot, self.taproot) {
             (HwState::Locked { pairing_code }, _, _) => Some(match pairing_code {
-                Some(code) => format!("Pairing code: {code}"),
-                None => "Please unlock the device".to_string(),
+                Some(code) => crate::t!("decrypt-pairing-code", code = code),
+                None => crate::t!("device-unlock"),
             }),
-            (_, false, true) => Some("This device doesn't support taproot miniscript".to_string()),
+            (_, false, true) => Some(crate::t!("hw-no-taproot-miniscript")),
             (HwState::Unsupported(ur), _, _) => {
                 enabled = false;
                 match ur {
@@ -1135,18 +1129,19 @@ impl SelectKeySource {
                         minimal_supported_version,
                     } => {
                         enabled = true;
-                        Some(format!("Device version not supported, upgrade to version > {minimal_supported_version}"))
+                        Some(crate::t!(
+                            "device-version-unsupported",
+                            version = minimal_supported_version
+                        ))
                     }
                     UnsupportedReason::Method(m) => {
-                        Some(format!("Device not supported, method: {m}"))
+                        Some(crate::t!("installer-device-method-unsupported", method = m))
                     }
                     UnsupportedReason::NotPartOfWallet(_) => None, // unreachable
                     UnsupportedReason::WrongNetwork => {
-                        Some("The device is configured on wrong network".to_string())
+                        Some(crate::t!("installer-device-wrong-network"))
                     }
-                    UnsupportedReason::AppIsNotOpen => {
-                        Some("Please open the app on device".to_string())
-                    }
+                    UnsupportedReason::AppIsNotOpen => Some(crate::t!("device-open-app")),
                 }
             }
             _ => None,
@@ -1188,12 +1183,12 @@ impl SelectKeySource {
         };
         let message = if let KeySource::Token(kind, _) = source {
             if !self.actual_path.token_kind.contains(&kind) {
-                Some("Token type not allowed in this path".to_string())
+                Some(crate::t!("installer-token-type-disallowed"))
             } else {
                 None
             }
         } else {
-            (!available).then_some("Key already used in this path".to_string())
+            (!available).then_some(crate::t!("installer-key-already-used-in-path"))
         };
         let fg_str = format!("#{fg}");
         let on_press = message
@@ -1307,7 +1302,11 @@ impl super::DescriptorEditModal for SelectKeySource {
             Step::Details => self.details_view(),
         };
         let content = Column::new()
-            .push_maybe(self.error.clone().map(|e| card::error("Error", e)))
+            .push_maybe(
+                self.error
+                    .clone()
+                    .map(|e| card::error(crate::t!("common-error"), e)),
+            )
             .push(content)
             .into();
         if let Some(modal) = &self.modal {
@@ -1334,14 +1333,14 @@ where
 {
     let pick_account = pick_account
         .map(|pick_account| row![pick_account, Space::with_width(Length::Fill)].spacing(5));
-    let info = "Switch account if you already uses the same hardware in other configurations";
+    let info = crate::t!("installer-switch-account-help");
 
     let submit = error.is_none().then(|| apply_msg.clone()).flatten();
-    let error = error.clone().map(|e| p1_regular(e).color(color::ORANGE));
+    let error = error.as_deref().map(|e| p1_regular(e).color(color::ORANGE));
 
     let spacer = replace_message.is_some().then_some(Space::with_width(10));
     let replace_btn = replace_message.map(|m| {
-        let mut btn = button::secondary(None, "Replace");
+        let mut btn = button::secondary(None, crate::t!("btn-replace"));
         if alias.valid {
             btn = btn.on_press(m);
         }
@@ -1353,12 +1352,12 @@ where
             .push(Space::with_width(Length::Fill))
             .push_maybe(replace_btn)
             .push_maybe(spacer)
-            .push(button::primary(None, "Apply").on_press_maybe(apply_msg))
+            .push(button::primary(None, crate::t!("btn-apply")).on_press_maybe(apply_msg))
     } else if let Some(retry_msg) = retry_msg {
         row![
             Space::with_width(Length::Fill),
-            button::primary(None, "Retry").on_press(retry_msg),
-            button::secondary(None, "Apply")
+            button::primary(None, crate::t!("btn-retry")).on_press(retry_msg),
+            button::secondary(None, crate::t!("btn-apply"))
         ]
         .spacing(5)
         .align_y(Vertical::Center)
@@ -1367,31 +1366,41 @@ where
             .push(Space::with_width(Length::Fill))
             .push_maybe(replace_btn)
             .push_maybe(spacer)
-            .push(button::primary(None, "Apply"))
+            .push(button::primary(None, crate::t!("btn-apply")))
     };
     let column = Column::new()
         .spacing(5)
         .push(header)
         .push(row![
-            p1_bold("Key name (alias):"),
+            p1_bold(crate::t!("installer-key-name-alias")),
             Space::with_width(Length::Fill)
         ])
         .push(row![
-            p1_regular("Give this key a friendly name. It will help you identify it later:"),
+            p1_regular(crate::t!("installer-key-name-help")),
             Space::with_width(Length::Fill)
         ])
         .push(
             container(
-                form::Form::new("E.g. My Hardware Wallet", alias, alias_msg)
-                    .padding(10)
-                    .id(ALIAS_INPUT_ID)
-                    .on_submit_maybe(submit),
+                form::Form::new(
+                    &crate::t!("installer-key-alias-placeholder"),
+                    alias,
+                    alias_msg,
+                )
+                .padding(10)
+                .id(ALIAS_INPUT_ID)
+                .on_submit_maybe(submit),
             )
             .width(300),
         )
         .push(Space::with_height(10))
         .push_maybe(if pick_account.is_some() {
-            Some(row![p1_bold("Key path account:"), tooltip(info)].align_y(Vertical::Center))
+            Some(
+                row![
+                    p1_bold(crate::t!("installer-key-path-account")),
+                    tooltip(info)
+                ]
+                .align_y(Vertical::Center),
+            )
         } else {
             None
         })
@@ -1455,7 +1464,7 @@ impl super::DescriptorEditModal for EditKeyAlias {
 
                     if alias_already_exists(&alias, self.fingerprint, &self.keys) {
                         self.form_alias.warning =
-                            Some("This alias is already used for another key");
+                            Some(crate::t!("installer-key-alias-already-used"));
                         self.form_alias.valid = false;
                     }
                     if alias.chars().count() <= MAX_ALIAS_LEN {

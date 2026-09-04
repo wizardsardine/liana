@@ -11,6 +11,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_connect::ws_business::Wallet;
+use liana_i18n::t;
 use liana_ui::{
     component::{button::btn_skip_registration, list, pill, text},
     spacing::{HSpacing, VSpacing},
@@ -31,24 +32,24 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
         .selected_org
         .and_then(|org_id| state.backend.get_org(org_id))
         .map(|org| org.name.clone())
-        .unwrap_or_else(|| "Organization".to_string());
+        .unwrap_or_else(|| t!("business-organization"));
     let wallet_name = state
         .app
         .selected_wallet
         .and_then(|wallet_id| state.backend.get_wallet(wallet_id))
         .map(|wallet| wallet.alias.clone())
-        .unwrap_or_else(|| "Wallet".to_string());
-    let breadcrumb = vec![org_name, wallet_name, "Register Devices".to_string()];
+        .unwrap_or_else(|| t!("common-wallet"));
+    let breadcrumb = vec![org_name, wallet_name, t!("business-register-devices")];
 
     // Get current user email
     let current_user_email = &state.views.login.email.form.value;
 
     // Header content
     let header_content = screen_intro(
-        "Register",
-        Some(intro_description(
-            "Register the wallet descriptor on each device, or skip if unavailable.",
-        )),
+        t!("common-register"),
+        Some(intro_description(t!(
+            "business-register-wallet-devices-help"
+        ))),
         false,
     );
 
@@ -84,7 +85,7 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
 
 fn no_devices_view<'a>() -> Element<'a, Msg> {
     Container::new(
-        text::new::caption("You have no devices to register.")
+        text::new::caption(t!("business-no-devices-to-register"))
             .style(theme::text::secondary)
             .align_x(iced::alignment::Horizontal::Center),
     )
@@ -172,13 +173,13 @@ pub fn registration_key_entry(
     let can_register = kind.is_some();
     let enabled = can_register || done;
     let status = if done {
-        Some("Registered on device")
+        Some(t!("business-registered-on-device"))
     } else if can_register {
         None
     } else if device_connected {
-        Some("Device locked or unsupported")
+        Some(t!("business-device-unsupported-locked"))
     } else {
-        Some("Connect the associated device to register")
+        Some(t!("business-connect-device-register"))
     };
     let status: Option<Element<'static, Msg>> = status.map(|status| {
         Container::new(text::new::caption(status).style(theme::text::tertiary))

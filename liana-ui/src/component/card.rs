@@ -74,7 +74,7 @@ pub fn legacy_warning<'a, T: 'a>(message: String) -> Container<'a, T> {
 }
 
 /// display an error card with the message and the error in a tooltip.
-pub fn error<'a, T: 'a>(message: &'static str, error: String) -> Container<'a, T> {
+pub fn error<'a, T: 'a>(message: impl std::fmt::Display, error: String) -> Container<'a, T> {
     Container::new(
         iced::widget::tooltip::Tooltip::new(
             Row::new()

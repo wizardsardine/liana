@@ -70,20 +70,22 @@ impl ExportModal {
         }
     }
 
-    pub fn modal_title(&self) -> &'static str {
+    pub fn modal_title(&self) -> String {
         match self.import_export_type {
-            ImportExportType::Transactions => "Export Transactions",
-            ImportExportType::ExportPsbt(_) => "Export PSBT",
-            ImportExportType::ExportXpub(_) => "Export Xpub",
-            ImportExportType::ImportXpub(_) => "Import Xpub",
-            ImportExportType::ExportProcessBackup(..) => "Export Backup",
-            ImportExportType::ExportEncryptedDescriptor(_) => "Export Encrypted Descriptor",
-            ImportExportType::Descriptor(_) => "Export Descriptor",
-            ImportExportType::ExportLabels => "Export Labels",
-            ImportExportType::ImportPsbt(_) => "Import PSBT",
-            ImportExportType::ImportDescriptor(_) => "Import Descriptor",
-            ImportExportType::ImportBackup { .. } => "Restore Backup",
-            ImportExportType::FromBackup(_) => "Import existing wallet from backup",
+            ImportExportType::Transactions => crate::t!("export-title-transactions"),
+            ImportExportType::ExportPsbt(_) => crate::t!("export-title-export-psbt"),
+            ImportExportType::ExportXpub(_) => crate::t!("export-title-export-xpub"),
+            ImportExportType::ImportXpub(_) => crate::t!("export-title-import-xpub"),
+            ImportExportType::ExportProcessBackup(..) => crate::t!("export-title-export-backup"),
+            ImportExportType::ExportEncryptedDescriptor(_) => {
+                crate::t!("export-title-export-encrypted-descriptor")
+            }
+            ImportExportType::Descriptor(_) => crate::t!("export-title-export-descriptor"),
+            ImportExportType::ExportLabels => crate::t!("export-title-export-labels"),
+            ImportExportType::ImportPsbt(_) => crate::t!("export-title-import-psbt"),
+            ImportExportType::ImportDescriptor(_) => crate::t!("export-title-import-descriptor"),
+            ImportExportType::ImportBackup { .. } => crate::t!("export-title-restore-backup"),
+            ImportExportType::FromBackup(_) => crate::t!("export-title-import-wallet-backup"),
         }
     }
 
@@ -290,7 +292,7 @@ impl ExportModal {
             export_modal(
                 &self.state,
                 self.error.as_ref(),
-                self.modal_title(),
+                &self.modal_title(),
                 &self.import_export_type,
             ),
         );

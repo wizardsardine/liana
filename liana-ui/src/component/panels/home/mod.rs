@@ -7,6 +7,7 @@ use iced::{
     widget::{column, row, Space},
     Alignment, Length,
 };
+use liana_i18n::t;
 
 use crate::{
     component::{
@@ -38,18 +39,16 @@ pub fn rescan_warning<'a, M: Clone + 'static>(
     go_to_rescan: M,
     dismiss: M,
 ) -> Element<'a, M> {
-    let source = match origin {
-        WalletOrigin::Backup => "restored from a backup",
-        WalletOrigin::Descriptor => "imported from a descriptor",
+    let warning = match origin {
+        WalletOrigin::Backup => t!("home-rescan-warning-backup"),
+        WalletOrigin::Descriptor => t!("home-rescan-warning-descriptor"),
     };
     let icon = icon::warning_fill_icon().size(icon::ICON_SIZE_M as u32);
     let msg = row![
         Space::with_width(10),
         icon,
         Space::with_width(15),
-        new::h3(format!(
-            "As this wallet was {source}, you may need to rescan the blockchain to see past transactions."
-        )),
+        new::h3(warning),
     ]
     .align_y(Alignment::Center);
 
@@ -79,7 +78,7 @@ pub fn unconfirmed_balance<'a, M: 'a>(
     row![
         new::h3("+").style(|t| theme::amount::sats(t, false)),
         amount_with_font(amount, new::H3_SPEC),
-        new::h3("unconfirmed").style(|t| theme::amount::sats(t, false)),
+        new::h3(t!("pill-unconfirmed")).style(|t| theme::amount::sats(t, false)),
         fiat
     ]
     .spacing(10)
@@ -122,10 +121,13 @@ pub fn balance<'a, M: Clone + 'a, F: Fn(Amount) -> FiatAmount>(
 pub fn syncing<'a, M: Clone + 'a>(progress: SyncProgress) -> Element<'a, M> {
     let label = match progress {
         SyncProgress::Blockchain(progress) => {
-            format!("Syncing blockchain ({:.2}%)", 100.0 * progress)
+            t!(
+                "home-syncing-blockchain",
+                progress = format!("{:.2}", 100.0 * progress)
+            )
         }
-        SyncProgress::FullScan => "Syncing".to_string(),
-        SyncProgress::Transactions => "Checking for new transactions".to_string(),
+        SyncProgress::FullScan => t!("home-syncing"),
+        SyncProgress::Transactions => t!("home-checking-transactions"),
     };
 
     row![
@@ -143,10 +145,7 @@ pub fn syncing<'a, M: Clone + 'a>(progress: SyncProgress) -> Element<'a, M> {
 pub fn recovery_hint<'a, M: Clone + 'a>(units_left: String) -> Element<'a, M> {
     let icon = icon::tooltip_icon().size(icon::ICON_SIZE_M as u32);
     let content = row![
-        new::h3(format!(
-            "≈ {units_left} left before first recovery path becomes available.",
-        ))
-        .width(Length::Fill),
+        new::h3(t!("home-recovery-left", units = units_left)).width(Length::Fill),
         icon,
     ]
     .spacing(15)
@@ -165,10 +164,7 @@ pub fn recovery_warning<'a, M: Clone + 'static>(coin_count: usize, reset: M) -> 
         Space::with_width(10),
         icon::warning_fill_icon().size(icon::ICON_SIZE_M as u32),
         Space::with_width(15),
-        new::h3(format!(
-            "Recovery path is or will soon be available for {coin_count} coin(s)."
-        ))
-        .width(Length::Fill),
+        new::h3(t!("home-recovery-warning", count = coin_count)).width(Length::Fill),
         btn_reset_timelock(Some(reset.clone())),
     ]
     .align_y(Alignment::Center);

@@ -11,7 +11,12 @@ use liana::{
 };
 
 use liana_ui::{
-    component::{amount::*, button, form, label::LABEL_LENGTH_WARNING, panels::spend, text::new},
+    component::{
+        amount::*,
+        button, form,
+        panels::spend::{self, DustWarning},
+        text::new,
+    },
     icon, theme,
     widget::*,
 };
@@ -25,6 +30,7 @@ use crate::{
         view::{dashboard, message::*, psbt, FiatAmountConverter},
     },
     daemon::model::{remaining_sequence, Coin, SpendTx},
+    t,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -138,24 +144,24 @@ pub fn create_spend_tx<'a>(
     let title_text = new::d2(if recovery_timelock.is_some() {
         Menu::Recovery.title()
     } else if is_self_send {
-        "Self-transfer"
+        t!("common-self-transfer")
     } else {
         Menu::CreateSpendTx.title()
     });
     let self_transfer_btn =
         (!is_self_send && recovery_timelock.is_none()).then_some(button::btn_tertiary(
             None,
-            "Self-transfer",
+            t!("common-self-transfer"),
             button::BtnWidth::Auto,
             Some(Message::CreateSpend(CreateSpendMessage::SelfTransfer)),
         ));
     let title = row![title_text, Space::fill_width(), self_transfer_btn].align_y(Alignment::Center);
 
     let batch_label_input = (recipients.len() > 1).then_some(
-        form::Form::new("Batch label", batch_label, |s| {
+        form::Form::new(&t!("spend-batch-label"), batch_label, |s| {
             Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(s))
         })
-        .warning(LABEL_LENGTH_WARNING)
+        .warning(t!("label-invalid-length"))
         .size(30)
         .padding(10),
     );
@@ -173,10 +179,8 @@ pub fn create_spend_tx<'a>(
     let recipients_cards = Column::with_children(recipient_views).spacing(10);
 
     let duplicates_warning = duplicate.then_some(
-        Container::new(
-            new::caption("Two payment addresses are the same").style(theme::text::warning),
-        )
-        .padding(10),
+        Container::new(new::caption(t!("spend-duplicate-addresses")).style(theme::text::warning))
+            .padding(10),
     );
     let add_payment_btn = (!(is_self_send || recovery_timelock.is_some())).then_some(
         button::btn_add_payment(Some(Message::CreateSpend(CreateSpendMessage::AddRecipient))),
@@ -252,15 +256,34 @@ pub fn create_spend_tx<'a>(
 
     let next_reason = next_blocker.map(|blocker| {
         let content: Element<Message> = match blocker {
-            NextBlocker::Reason(msg) => new::caption(msg).style(theme::text::card_secondary).into(),
+            NextBlocker::RecipientAddress => new::caption(t!("spend-recipient-address-invalid"))
+                .style(theme::text::card_secondary)
+                .into(),
+            NextBlocker::PaymentDescription => {
+                new::caption(t!("spend-payment-description-invalid"))
+                    .style(theme::text::card_secondary)
+                    .into()
+            }
+            NextBlocker::Funds => new::caption(t!("spend-select-or-add-funds"))
+                .style(theme::text::card_secondary)
+                .into(),
+            NextBlocker::RecipientAmount => new::caption(t!("spend-recipient-amount-invalid"))
+                .style(theme::text::card_secondary)
+                .into(),
+            NextBlocker::Feerate => new::caption(t!("spend-feerate-missing-invalid"))
+                .style(theme::text::card_secondary)
+                .into(),
+            NextBlocker::Coin => new::caption(t!("spend-select-one-coin"))
+                .style(theme::text::card_secondary)
+                .into(),
             NextBlocker::CoinsLeft => match amount_left {
                 Some(left) if left.to_sat() > 0 => row![
                     amount_with_font(left, new::CAPTION_SPEC),
-                    new::caption("left to select").style(theme::text::card_secondary),
+                    new::caption(t!("spend-left-to-select")).style(theme::text::card_secondary),
                 ]
                 .spacing(5)
                 .into(),
-                _ => new::caption("Select coins to cover the amount")
+                _ => new::caption(t!("spend-select-coins-to-cover-amount"))
                     .style(theme::text::card_secondary)
                     .into(),
             },
@@ -296,7 +319,12 @@ pub fn create_spend_tx<'a>(
 }
 
 enum NextBlocker {
-    Reason(&'static str),
+    RecipientAddress,
+    PaymentDescription,
+    Funds,
+    RecipientAmount,
+    Feerate,
+    Coin,
     CoinsLeft,
 }
 
@@ -313,25 +341,21 @@ fn next_disabled_reason(
 ) -> Option<NextBlocker> {
     let empty_or_invalid = |v: &form::Value<String>| v.value.is_empty() || !v.valid;
     if recipients.iter().any(|r| empty_or_invalid(&r.address)) {
-        Some(NextBlocker::Reason(
-            "A recipient address is missing or invalid",
-        ))
+        Some(NextBlocker::RecipientAddress)
     } else if recipients.iter().any(|r| empty_or_invalid(&r.label))
         || (recipients.len() >= 2 && !batch_label.valid)
     {
-        Some(NextBlocker::Reason(
-            "Payment description is missing or invalid",
-        ))
+        Some(NextBlocker::PaymentDescription)
     } else if recipients.iter().any(|r| empty_or_invalid(&r.amount)) {
-        Some(NextBlocker::Reason(if max_under_dust {
-            "Select or add more funds"
+        Some(if max_under_dust {
+            NextBlocker::Funds
         } else {
-            "A recipient amount is missing or invalid"
-        }))
+            NextBlocker::RecipientAmount
+        })
     } else if empty_or_invalid(feerate) {
-        Some(NextBlocker::Reason("The feerate is missing or invalid"))
+        Some(NextBlocker::Feerate)
     } else if !any_coin_selected {
-        Some(NextBlocker::Reason("Select at least one coin"))
+        Some(NextBlocker::Coin)
     } else if !is_self_send
         && recovery_timelock.is_none()
         && amount_left != Some(&Amount::from_sat(0))
@@ -353,7 +377,7 @@ pub fn recipient_view<'a>(
     is_max_selected: bool,
     is_recovery: bool,
     can_delete: bool,
-    dust_warning: &'a Option<String>,
+    dust_warning: Option<DustWarning>,
     max_estimated_amount: Option<Amount>,
 ) -> Element<'a, CreateSpendMessage> {
     let fiat = fiat_converter.map(|conv| {
@@ -379,7 +403,7 @@ pub fn recipient_view<'a>(
         amount,
         fiat,
         is_max_selected,
-        dust_warning.as_deref(),
+        dust_warning,
         max_estimated_amount,
         move |msg| CreateSpendMessage::RecipientEdited(index, "address", msg.trim().to_string()),
         move |msg| CreateSpendMessage::RecipientEdited(index, "label", msg),

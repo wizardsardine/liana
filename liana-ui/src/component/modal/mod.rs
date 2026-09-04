@@ -15,6 +15,7 @@ use bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Network,
 };
+use liana_i18n::t;
 
 use crate::{
     color,
@@ -378,7 +379,7 @@ impl Account {
 impl Display for Account {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let index = self.index.to_string().replace('\'', "");
-        write!(f, "Account #{index}")
+        write!(f, "{}", t!("business-account-number", index = index))
     }
 }
 
@@ -552,7 +553,7 @@ where
 {
     button_entry(
         Tile::Import,
-        "Import extended public key file",
+        t!("business-import-xpub-file"),
         None::<String>,
         error,
         on_press,
@@ -567,8 +568,8 @@ where
 {
     button_entry(
         Tile::KeyHot,
-        "Generate hot key stored on this computer",
-        Some("We recommend to use this option only for test purposes".to_string()),
+        t!("device-generate-hot-key"),
+        Some(t!("device-hot-key-test-only")),
         None,
         on_press,
     )
@@ -592,7 +593,7 @@ where
     collapsible_input_button(
         collapsed,
         Tile::Paste,
-        "Paste an extended public key".to_string(),
+        t!("decrypt-paste-xpub"),
         example_xpub(network),
         input_value,
         input_message,
@@ -616,7 +617,7 @@ where
     Message: Clone + 'static,
 {
     token_entry(
-        "Enter a Safety Net token",
+        t!("device-enter-safety-net-token"),
         collapsed,
         input_value,
         input_message,
@@ -640,7 +641,7 @@ where
     Message: Clone + 'static,
 {
     token_entry(
-        "Enter a Cosigner token",
+        t!("device-enter-cosigner-token"),
         collapsed,
         input_value,
         input_message,
@@ -697,8 +698,8 @@ where
         collapsed,
         ack,
         Tile::Mnemonic,
-        "UNSAFE: Enter mnemonic of one of the keys",
-        " This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds.",
+        t!("decrypt-enter-mnemonic-unsafe"),
+        t!("decrypt-enter-mnemonic-warning"),
         MNEMONIC_PLACEHOLDER,
         input_value,
         ack_message,
@@ -717,7 +718,7 @@ fn example_xpub(network: Network) -> String {
 pub fn modal_no_devices_placeholder<'a, M: 'a>() -> Element<'a, M> {
     column![
         icon::usb_icon().size(100),
-        caption("No hardware device detected. Connect a device and unlock it."),
+        caption(t!("business-no-hardware-wallets")),
     ]
     .align_x(Horizontal::Center)
     .spacing(20)

@@ -9,7 +9,9 @@ use crate::{
         cache::Cache,
         error::Error,
         message::{FiatMessage, Message},
-        settings::{fiat::PriceSetting, update_settings_file, LianaSettings},
+        settings::{
+            fiat::PriceSetting, global::GlobalSettings, update_settings_file, LianaSettings,
+        },
         state::State,
         view,
         wallet::Wallet,
@@ -162,9 +164,7 @@ impl State for GeneralSettingsState {
                     } else if let Some(curr) = self.currencies.first() {
                         self.new_price_setting.currency = *curr;
                     } else {
-                        self.error = Some(Error::Unexpected(
-                            "No available currencies in the list.".to_string(),
-                        ));
+                        self.error = Some(Error::NoAvailableCurrencies);
                         return Task::none();
                     }
                 }
@@ -219,6 +219,18 @@ impl State for GeneralSettingsState {
                             FiatMessage::ValidateCurrencySetting.into()
                         });
                     }
+                }
+                Task::none()
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::LanguageEdited(
+                locale,
+            ))) => {
+                liana_i18n::set_locale(locale);
+                let path = GlobalSettings::path(&cache.datadir_path);
+                if let Err(e) = GlobalSettings::update_locale(&path, locale) {
+                    self.error = Some(Error::SaveLanguage(e));
+                } else {
+                    self.error = None;
                 }
                 Task::none()
             }

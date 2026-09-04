@@ -3,6 +3,7 @@ use crate::{
     views::{intro_prompt, layout, screen_intro, INSTALLER_STEPS},
 };
 use iced::{widget::column, Length};
+use liana_i18n::t;
 use liana_ui::{
     component::{button::btn_send_token, form},
     spacing::VSpacing,
@@ -15,13 +16,13 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
     let can_submit = state.views.login.email.can_send();
     let form = if !state.views.login.email.processing {
         form::Form::new_trimmed(
-            "Email",
+            t!("common-email"),
             &state.views.login.email.form,
             Msg::LoginUpdateEmail,
         )
         .on_submit_maybe(can_submit.then_some(Msg::LoginSendToken))
     } else {
-        form::Form::new_disabled("Email", &state.views.login.email.form)
+        form::Form::new_disabled(t!("common-email"), &state.views.login.email.form)
     }
     .id("login_email")
     .size(16)
@@ -35,7 +36,7 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
             screen_intro(
                 "Liana Business",
                 Some(intro_prompt(
-                    "Enter the email associated with your account",
+                    t!("business-login-email-help"),
                     None::<String>,
                 )),
                 true,
@@ -55,7 +56,7 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
         (1, INSTALLER_STEPS),
         state.network,
         None,
-        &["Login".to_string()],
+        &[t!("common-login")],
         content,
         previous,
     )

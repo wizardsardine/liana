@@ -16,14 +16,17 @@ use liana_ui::{
     widget::*,
 };
 
-use crate::app::{
-    cache::Cache,
-    menu::Menu,
-    view::{
-        dashboard,
-        message::{CreateSpendMessage, Message},
+use crate::{
+    app::{
+        cache::Cache,
+        menu::Menu,
+        view::{
+            dashboard,
+            message::{CreateSpendMessage, Message},
+        },
+        Error,
     },
-    Error,
+    t,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -34,31 +37,22 @@ pub fn recovery<'a>(
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     let no_recovery_paths = recovery_paths.is_empty();
-    const INFO_TEXT: &str = "Recover your funds by sending them to another wallet if you have lost access to your primary spending path.";
     dashboard(
         &Menu::Recovery,
         cache,
         warning,
         Column::new()
             .push(Container::new(panel_title(Menu::Recovery.title())).width(Length::Fill))
-            .push(Container::new(text(INFO_TEXT)))
+            .push(Container::new(text(t!("recovery-info"))))
             .push(Space::with_height(Length::Fixed(20.0)))
             .push(
                 Container::new(
                     Column::new()
                         .push(
                             text(if no_recovery_paths {
-                                "No recovery path is currently available.".to_string()
+                                t!("recovery-none-available")
                             } else {
-                                format!(
-                                    "{} recovery path{} available:",
-                                    recovery_paths.len(),
-                                    if recovery_paths.len() > 1 {
-                                        "s are"
-                                    } else {
-                                        " is"
-                                    },
-                                )
+                                t!("recovery-paths-available", count = recovery_paths.len())
                             })
                             .width(Length::Fill),
                         )
@@ -103,14 +97,7 @@ pub fn recovery_path_view<'a>(
                     Row::new()
                         .align_y(Alignment::Center)
                         .spacing(10)
-                        .push(
-                            text(format!(
-                                "{} signature{} from",
-                                threshold,
-                                if threshold > 1 { "s" } else { "" }
-                            ))
-                            .bold(),
-                        )
+                        .push(text(t!("recovery-signatures-from", count = threshold)).bold())
                         .push(origins.iter().fold(
                             Row::new().align_y(Alignment::Center).spacing(5),
                             |row, (fg, _)| {
@@ -124,12 +111,7 @@ pub fn recovery_path_view<'a>(
                 .push(
                     Row::new()
                         .spacing(5)
-                        .push(text("can recover"))
-                        .push(text(format!(
-                            "{} coin{} totalling",
-                            number_of_coins,
-                            if number_of_coins > 1 { "s" } else { "" }
-                        )))
+                        .push(text(t!("recovery-coins-total", count = number_of_coins)))
                         .push(amount(&total_amount)),
                 )
                 .spacing(5),

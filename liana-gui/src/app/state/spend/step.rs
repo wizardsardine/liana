@@ -22,7 +22,10 @@ use liana::{
 use lianad::commands::ListCoinsEntry;
 
 use liana_ui::{
-    component::{form, panels::spend::FeeLevel},
+    component::{
+        form,
+        panels::spend::{DustWarning, FeeLevel},
+    },
     widget::Element,
 };
 
@@ -541,15 +544,11 @@ fn handle_max_under_dust(
         *amount_left_to_select = None;
         // In this case an output has MAX selected, but the available amount
         // is lower than the dust limit.
-        if all_selected {
-            recipient.dust_warning = Some(
-                            "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s)."
-                                .to_string());
+        recipient.dust_warning = Some(if all_selected {
+            DustWarning::AddFunds
         } else {
-            recipient.dust_warning = Some(
-                "Minimum amount is 0.00 000 500 BTC. Select more coins to continue.".to_string(),
-            );
-        }
+            DustWarning::SelectMoreCoins
+        });
         let amount = String::new();
         recipient.update(
             network,
@@ -939,7 +938,7 @@ pub struct Recipient {
     pub fiat_amount: Option<form::Value<String>>,
     pub fiat_converter: Option<view::FiatAmountConverter>,
     pub is_recovery: bool,
-    pub dust_warning: Option<String>,
+    pub dust_warning: Option<DustWarning>,
 }
 
 impl Recipient {
@@ -1046,7 +1045,7 @@ impl Recipient {
                         self.fiat_amount = Some(form::Value {
                             value: fiat_amt_str,
                             valid: false,
-                            warning: Some("Could not convert to BTC"),
+                            warning: Some(crate::t!("spend-could-not-convert-btc")),
                         });
                     }
                 }
@@ -1069,7 +1068,7 @@ impl Recipient {
                         Amount::from_str_in(truncated, Denomination::Bitcoin).is_ok()
                     })
                     .inspect(|_| {
-                        self.amount.warning = Some("Amount has been truncated to 8 decimal places");
+                        self.amount.warning = Some(crate::t!("spend-amount-truncated"));
                     })
                     .unwrap_or(amount);
 
@@ -1124,7 +1123,7 @@ impl Recipient {
             is_max_selected,
             self.is_recovery,
             can_delete,
-            &self.dust_warning,
+            self.dust_warning,
             self.estimated_max,
         )
     }

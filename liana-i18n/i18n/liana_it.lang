@@ -1,0 +1,2496 @@
+# Translator-friendly catalog
+# Language: Italiano
+# Format: id => "English" => "Translation"
+# Use \n for line breaks
+
+btn-accept => "Accept" => "Accetta"
+
+btn-add-key => "Add a key" => "Aggiungi una chiave"
+
+btn-add-payment => "Add payment" => "Aggiungi pagamento"
+
+btn-add-recovery-option => "Add recovery option" => "Aggiungi opzione di recupero"
+
+btn-add-recovery-path => "Add a recovery path" => "Aggiungi percorso di recupero"
+
+btn-add-safety-net => "Add Safety Net" => "Aggiungi Safety Net"
+
+btn-add-wallet => "Add wallet" => "Aggiungi portafoglio"
+
+btn-apply => "Apply" => "Applica"
+
+btn-approve => "Approve" => "Approva"
+
+btn-back => "Back" => "Indietro"
+
+btn-back-up-descriptor => "Back Up Descriptor" => "Backup descriptor"
+
+btn-backup-encrypted-descriptor
+=> "Back up encrypted descriptor"
+=> "Backup descriptor cifrato";;
+
+btn-broadcast => "Broadcast" => "Trasmetti"
+
+btn-bump-fee => "Bump fee" => "Aumenta fee"
+
+btn-cancel => "Cancel" => "Annulla"
+
+btn-cancel-transaction => "Cancel transaction" => "Annulla transazione"
+
+btn-change-email => "Change Email" => "Cambia email"
+
+btn-check-connection => "Check connection" => "Controlla connessione"
+
+btn-clear => "Clear" => "Cancella"
+
+btn-clear-all => "Clear All" => "Cancella tutto"
+
+btn-close-tab => "Close" => "Chiudi"
+
+btn-confirm => "Confirm" => "Conferma"
+
+btn-connect-another-email
+=> "Connect with another email"
+=> "Connettiti con un'altra email";;
+
+btn-customize => "Customize" => "Personalizza"
+
+btn-delete => "Delete" => "Elimina"
+
+btn-delete-wallet => "Delete wallet" => "Elimina portafoglio"
+
+btn-dismiss => "Dismiss" => "Ignora"
+
+btn-edit => "Edit" => "Modifica"
+
+btn-edit-keys => "Edit keys" => "Modifica chiavi"
+
+btn-edit-label => "Edit label" => "Modifica etichetta"
+
+btn-email-wizardsardine => "Email WS" => "Email WS"
+
+btn-export => "Export" => "Esporta"
+
+btn-fee-level-high => "High" => "Alta"
+
+btn-fee-level-low => "Low" => "Bassa"
+
+btn-fee-level-medium => "Medium" => "Media"
+
+btn-generate => "Generate" => "Genera"
+
+btn-generate-address => "Generate address" => "Genera indirizzo"
+
+btn-go-back => "Go back" => "Torna indietro"
+
+btn-go-back-to-psbts => "Go back to PSBTs" => "Torna ai PSBT"
+
+btn-go-to-replacement => "Go to replacement" => "Vai alla sostituzione"
+
+btn-go-to-rescan => "Go to rescan" => "Vai alla nuova scansione"
+
+btn-ignore => "Ignore" => "Ignora"
+
+btn-import => "Import" => "Importa"
+
+btn-keep-my-changes => "Keep my changes" => "Mantieni le mie modifiche"
+
+btn-login => "Login" => "Accedi"
+
+btn-manage-keys => "Manage Keys" => "Gestisci chiavi"
+
+btn-mark-keys-ready => "Mark keys as ready" => "Segna chiavi come pronte"
+
+btn-more-backend-node-info
+=> "More information about backend and node options"
+=> "Maggiori informazioni su backend e opzioni del nodo";;
+
+btn-new => "New" => "Nuovo"
+
+btn-next => "Next" => "Avanti"
+
+btn-no => "No" => "No"
+
+btn-ok => "OK" => "OK"
+
+btn-overwrite => "Overwrite" => "Sovrascrivi"
+
+btn-previous => "Previous" => "Indietro"
+
+btn-previous-arrow => "< Previous" => "< Indietro"
+
+btn-processing => "Processing..." => "Elaborazione..."
+
+btn-register-on-device => "Register on device" => "Registra su portafoglio hardware"
+
+btn-reload => "Reload" => "Ricarica"
+
+btn-replace => "Replace" => "Sostituisci"
+
+btn-resend-token => "Resend token" => "Reinvia token"
+
+btn-reset-timelock => "Reset timelock" => "Reimposta timelock"
+
+btn-retry => "Retry" => "Riprova"
+
+btn-save => "Save" => "Salva"
+
+btn-see-transaction-details
+=> "See transaction details"
+=> "Vedi dettagli transazione";;
+
+btn-select => "Select" => "Seleziona"
+
+btn-send-for-approval => "Send for approval" => "Invia per approvazione"
+
+btn-send-invitation => "Send invitation" => "Invia invito"
+
+btn-send-token => "Send token" => "Invia token"
+
+btn-set => "Set" => "Imposta"
+
+btn-set-keys => "Set keys" => "Imposta chiavi"
+
+btn-share-xpubs => "Share Xpubs" => "Condividi xpub"
+
+btn-show-qr => "Show QR Code" => "Mostra codice QR"
+
+btn-sign => "Sign" => "Firma"
+
+btn-skip => "Skip" => "Salta"
+
+btn-skip-registration => "Skip registration" => "Salta registrazione"
+
+btn-split-tab => "Split" => "Dividi"
+
+btn-start-rescan => "Start rescan" => "Avvia nuova scansione"
+
+btn-starting-rescan => "Starting rescan..." => "Avvio nuova scansione..."
+
+btn-template-help
+=> "Something’s wrong with this template?"
+=> "Qualcosa non va con questo modello?";;
+
+btn-unlock-all => "Unlock all" => "Sblocca tutto"
+
+btn-update => "Update" => "Aggiorna"
+
+btn-updating => "Updating" => "Aggiornamento"
+
+btn-verify-on-device
+=> "Verify on hardware device"
+=> "Verifica su portafoglio hardware";;
+
+btn-yes => "Yes" => "Sì"
+
+business-access-error => "Access Error" => "Errore di accesso"
+
+business-account-connection-failed
+=> "Failed to connect with account {$email}. The session may have expired."
+=> "Connessione con l'account {$email} non riuscita. La sessione potrebbe essere scaduta.";;
+
+business-account-number => "Account #{$index}" => "Account n. {$index}"
+
+business-add-key-label => "Add a key" => "Aggiungi una chiave"
+
+business-add-two-keys-to-continue
+=> "Add at least 2 keys to continue"
+=> "Aggiungi almeno 2 chiavi per continuare";;
+
+business-admin-name => "Admin{$name}" => "Admin{$name}"
+
+business-after-days
+=> "{ $count ->\n    [one] After 1 day\n   *[other] After {$count} days\n}"
+=> "{ $count ->\n    [one] Dopo 1 giorno\n   *[other] Dopo {$count} giorni\n}";;
+
+business-after-hours
+=> "{ $count ->\n    [one] After 1 hour\n   *[other] After {$count} hours\n}"
+=> "{ $count ->\n    [one] Dopo 1 ora\n   *[other] Dopo {$count} ore\n}";;
+
+business-after-months
+=> "{ $count ->\n    [one] After 1 month\n   *[other] After {$count} months\n}"
+=> "{ $count ->\n    [one] Dopo 1 mese\n   *[other] Dopo {$count} mesi\n}";;
+
+business-all-files => "All files" => "Tutti i file"
+
+business-all-keys-set-waiting
+=> "All keys are set. Once the other participants finish this step, the wallet will be ready."
+=> "Tutte le chiavi sono impostate. Quando gli altri partecipanti termineranno questo passaggio, il portafoglio sarà pronto.";;
+
+business-assigned-keys-set-waiting
+=> "Your assigned keys are set. Waiting for the other participants to finish this step."
+=> "Le chiavi a te assegnate sono impostate. In attesa che gli altri partecipanti terminino questo passaggio.";;
+
+business-auth-code-request-failed
+=> "Failed to request authentication code from server."
+=> "Impossibile richiedere il codice di autenticazione al server.";;
+
+business-authenticated => "Authenticated" => "Autenticato"
+
+business-backend-error => "Backend error" => "Errore backend"
+
+business-cannot-approve-template
+=> "Can't approve this template?"
+=> "Non riesci ad approvare questo modello?";;
+
+business-clipboard-empty => "Clipboard is empty" => "Gli appunti sono vuoti"
+
+business-code-six-digits
+=> "Code must contain only 6 digits."
+=> "Il codice deve contenere solo 6 cifre.";;
+
+business-common-you => "You" => "Tu"
+
+business-confirm-coldcard-success
+=> "Please confirm on your Coldcard that the wallet registration completed successfully."
+=> "Conferma sulla tua Coldcard che la registrazione del portafoglio è stata completata correttamente.";;
+
+business-confirm-device
+=> "Please confirm on your device..."
+=> "Conferma sul dispositivo...";;
+
+business-confirm-registration => "Confirm Registration" => "Conferma registrazione"
+
+business-connect-device-register
+=> "Connect the associated device to register"
+=> "Collega il dispositivo associato per registrare";;
+
+business-connection-error => "Connection Error" => "Errore di connessione"
+
+business-contact-create-account
+=> "Contact Wizardsardine to create an account."
+=> "Contatta Wizardsardine per creare un account.";;
+
+business-create-new-path => "Create New Path" => "Crea nuovo percorso"
+
+business-current-xpub => "Current xpub" => "Xpub attuale:"
+
+business-detected-devices => "Detected devices" => "Dispositivi rilevati:"
+
+business-device-disconnected => "Device disconnected" => "Dispositivo disconnesso"
+
+business-device-locked-unlock
+=> "Device is locked. Please unlock it first."
+=> "Il dispositivo è bloccato. Sbloccalo prima.";;
+
+business-device-not-supported
+=> "Device is not supported"
+=> "Dispositivo non supportato";;
+
+business-device-unsupported-locked
+=> "Device locked or unsupported"
+=> "Dispositivo non supportato o bloccato";;
+
+business-did-registration-succeed
+=> "Did the registration succeed on your Coldcard?"
+=> "La registrazione sulla Coldcard è riuscita?";;
+
+business-duplicate-timelock => "Duplicate timelock" => "Timelock duplicato"
+
+business-edit-key => "Edit Key" => "Modifica chiave"
+
+business-edit-primary-path => "Edit Primary Path" => "Modifica percorso primario"
+
+business-edit-recovery-path
+=> "Edit Recovery Path"
+=> "Modifica percorso di recupero";;
+
+business-edited => "Edited" => "Modificato"
+
+business-edited-by-on
+=> "Edited by {$editor} on {$date}"
+=> "Modificato da {$editor} il {$date}";;
+
+business-edited-by-user => "Edited by {$editor}" => "Modificato da {$editor}"
+
+business-edited-on => "Edited on {$date}" => "Modificato il {$date}"
+
+business-edited-relative
+=> "Edited{$editor} {$time}"
+=> "Modificato{$editor} {$time}";;
+
+business-email-app-open-failed
+=> "Couldn't open your email app"
+=> "Impossibile aprire l'app email";;
+
+business-email-app-open-failed-message
+=> "Open your email client and contact Wizardsardine to request template edits."
+=> "Apri il tuo client email e contatta Wizardsardine per richiedere modifiche al modello.";;
+
+business-external-keys => "External keys" => "Chiavi esterne"
+
+business-external-signer-help
+=> "The third party who will set up and sign with this key. They'll be invited by email."
+=> "La terza parte che configurerà e firmerà con questa chiave. Sarà invitata via email.";;
+
+business-fetched-from-device
+=> "Fetched from {$kind} #{$fingerprint}"
+=> "Recuperata da {$kind} #{$fingerprint}";;
+
+business-fetching-device
+=> "Fetching from device..."
+=> "Recupero dal dispositivo...";;
+
+business-file-dialog-result-failed
+=> "Failed to receive result from file dialog thread"
+=> "Impossibile ricevere il risultato dalla finestra di dialogo file";;
+
+business-file-read-failed
+=> "Failed to read file: {$error}"
+=> "Impossibile leggere il file: {$error}";;
+
+business-filter-organizations
+=> "Filter organizations..."
+=> "Filtra organizzazioni...";;
+
+business-filter-wallets => "Filter wallets..." => "Filtra portafogli..."
+
+business-from-your-organization
+=> "From your organization"
+=> "Dalla tua organizzazione";;
+
+business-hardware-wallet-not-found
+=> "Hardware wallet not found"
+=> "Portafoglio hardware non trovato";;
+
+business-import-xpub-file
+=> "Import extended public key file"
+=> "Importa file chiave pubblica estesa";;
+
+business-internal-signer-help
+=> "The organization member who will set up and sign with this key. They'll be invited by email."
+=> "Il membro dell'organizzazione che configurerà e firmerà con questa chiave. Sarà invitato via email.";;
+
+business-invalid-threshold => "Invalid threshold value" => "Valore soglia non valido"
+
+business-key-alias => "Key Alias" => "Alias chiave"
+
+business-key-alias-placeholder
+=> "e.g. Alice, Treasury, Lawyer..."
+=> "es. Alice, Tesoreria, Avvocato...";;
+
+business-key-count
+=> "{ $count ->\n    [one] (1 key)\n   *[other] ({$count} keys)\n}"
+=> "{ $count ->\n    [one] (1 chiave)\n   *[other] ({$count} chiavi)\n}";;
+
+business-key-definition-help
+=> "Define the key's name and who holds it. You'll set it up later, by connecting a device or adding its public key."
+=> "Definisci il nome della chiave e chi la detiene. La configurerai più tardi collegando un dispositivo o aggiungendo la sua chiave pubblica.";;
+
+business-key-deleted => "Key Deleted" => "Chiave eliminata"
+
+business-key-deleted-message
+=> "The key you were editing was deleted by another user."
+=> "La chiave che stavi modificando è stata eliminata da un altro utente.";;
+
+business-key-modified => "Key Modified" => "Chiave modificata"
+
+business-key-modified-message
+=> "This key was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "Questa chiave è stata modificata da un altro utente. Vuoi ricaricare la versione del server o mantenere le modifiche?";;
+
+business-key-number => "Key {$id}" => "Chiave {$id}"
+
+business-key-path-account-help
+=> "The account number in this key's derivation path. Pick a different account to derive an independent key from the same device."
+=> "Il numero account nel percorso di derivazione di questa chiave. Scegli un account diverso per derivare una chiave indipendente dallo stesso dispositivo.";;
+
+business-key-removed => "Key Removed" => "Chiave rimossa"
+
+business-key-removed-from-path
+=> "\"{$alias}\" was deleted by another user and has been removed from your path selection."
+=> "\"{$alias}\" è stata eliminata da un altro utente ed è stata rimossa dalla selezione del percorso.";;
+
+business-key-type => "Key Type" => "Tipo chiave"
+
+business-key-type-help
+=> "Internal: Held by a member of your organization.\nExternal: Held by a trusted third party.\nCosigner: Professional co-signing service.\nSafetyNet: Professional recovery service."
+=> "Internal: detenuta da un membro della tua organizzazione.\nExternal: detenuta da una terza parte fidata.\nCosigner: servizio professionale di cofirma.\nSafetyNet: servizio professionale di recupero.";;
+
+business-keys-awaiting-manager
+=> "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet."
+=> "In attesa del gestore del portafoglio. Non ha ancora segnato chiavi e firmatari come pronti.";;
+
+business-keys-in-path => "Keys in Path:" => "Chiavi nel percorso:"
+
+business-keys-manager-instruction
+=> "List the keys that will be part of this wallet and assign a signer to each. The spending policy will be crafted from these keys."
+=> "Elenca le chiavi che faranno parte di questo portafoglio e assegna un firmatario a ciascuna. La policy di spesa sarà creata da queste chiavi.";;
+
+business-keys-ready-by-manager
+=> "Marked as ready by the Wallet Manager. They've finished adding keys & signers."
+=> "Segnate come pronte dal gestore del portafoglio. Ha terminato di aggiungere chiavi e firmatari.";;
+
+business-keys-ready-policy-editable
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys. You can still edit keys if anything needs to change."
+=> "Chiavi e firmatari segnati come pronti. La policy di spesa sarà creata da queste chiavi. Puoi ancora modificare le chiavi se serve cambiare qualcosa.";;
+
+business-keys-ready-policy-pending
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys."
+=> "Chiavi e firmatari segnati come pronti. La policy di spesa sarà creata da queste chiavi.";;
+
+business-keys-required-to-spend
+=> "{ $count ->\n    [one] {$threshold} of 1 key required to spend\n   *[other] {$threshold} of {$count} keys required to spend\n}"
+=> "{ $count ->\n    [one] {$threshold} chiave su 1 richiesta per spendere\n   *[other] {$threshold} chiavi su {$count} richieste per spendere\n}";;
+
+business-keys-shared-policy-tab
+=> "These keys are shared with the Spending policy tab"
+=> "Queste chiavi sono condivise con la scheda policy di spesa";;
+
+business-keys-shared-with-policy
+=> "These keys are shared with the Spending policy tab, where you arrange them into spending paths."
+=> "Queste chiavi sono condivise con la scheda policy di spesa, dove le organizzi in percorsi di spesa.";;
+
+business-keys-signers => "Keys & Signers" => "Chiavi e firmatari"
+
+business-loading-wallet => "Loading wallet..." => "Caricamento portafoglio..."
+
+business-login-email-help
+=> "Enter the email associated with your account"
+=> "Inserisci l'email associata al tuo account";;
+
+business-login-failed => "Login failed." => "Accesso non riuscito."
+
+business-lost-connection-restart
+=> "Lost connection to the server. Please restart the application."
+=> "Connessione al server persa. Riavvia l'applicazione.";;
+
+business-manager-set-keys-help
+=> "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf."
+=> "Seleziona una chiave per completarne la configurazione. Le chiavi possono essere configurate individualmente da ogni gestore della chiave, oppure dal gestore del portafoglio per loro conto.";;
+
+business-max-unit => "Max {$max} {$unit}" => "Max {$max} {$unit}"
+
+business-max-unit-label => "Max: {$max} {$unit}" => "Max: {$max} {$unit}"
+
+business-new-email-address => "New email address" => "Nuovo indirizzo email"
+
+business-no-descriptor-available
+=> "No descriptor available"
+=> "Nessun descriptor disponibile";;
+
+business-no-devices-to-register
+=> "You have no devices to register."
+=> "Non hai dispositivi da registrare.";;
+
+business-no-hardware-wallets
+=> "No hardware device detected. Connect a device and unlock it."
+=> "Nessun portafoglio hardware rilevato. Collega un dispositivo e sbloccalo.";;
+
+business-no-keys-assigned
+=> "No keys assigned to you."
+=> "Nessuna chiave assegnata a te";;
+
+business-no-keys-available
+=> "No keys available. Add keys first."
+=> "Nessuna chiave disponibile. Aggiungi prima le chiavi.";;
+
+business-no-members-match => "No members match" => "Nessun membro corrisponde"
+
+business-no-orgs-search
+=> "No organizations found matching your search."
+=> "Nessuna organizzazione trovata per la tua ricerca.";;
+
+business-no-timelock => "No timelock" => "Nessun timelock"
+
+business-no-user-id-available
+=> "No user ID available"
+=> "Nessun ID utente disponibile";;
+
+business-no-wallet-selected
+=> "No wallet selected"
+=> "Nessun portafoglio selezionato";;
+
+business-no-wallets-search
+=> "No wallets found matching your search."
+=> "Nessun portafoglio trovato per la tua ricerca.";;
+
+business-not-part-wallet
+=> "Not part of this wallet (#{$fingerprint})"
+=> "Non fa parte di questo portafoglio (#{$fingerprint})";;
+
+business-organization => "Organization" => "Organizzazione"
+
+business-organizations => "Organizations" => "Organizzazioni"
+
+business-other-participants-keys
+=> "Other participants' keys"
+=> "Chiavi degli altri partecipanti:";;
+
+business-participant-set-keys-help
+=> "Select a key assigned to you to complete its setup. You can connect a hardware device or add an extended public key manually."
+=> "Seleziona una chiave assegnata a te per completarne la configurazione. Puoi collegare un dispositivo hardware o aggiungere manualmente una chiave pubblica estesa.";;
+
+business-path-deleted => "Path Deleted" => "Percorso eliminato"
+
+business-path-deleted-message
+=> "The path you were editing was deleted by another user."
+=> "Il percorso che stavi modificando è stato eliminato da un altro utente.";;
+
+business-path-modified => "Path Modified" => "Percorso modificato"
+
+business-primary-path => "Primary path" => "Percorso primario"
+
+business-primary-path-modified-message
+=> "The primary path was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "Il percorso primario è stato modificato da un altro utente. Vuoi ricaricare la versione del server o mantenere le modifiche?";;
+
+business-professional-service => "Professional service" => "Servizio professionale"
+
+business-provider-name => "Provider · {$provider}" => "Provider · {$provider}"
+
+business-recovery-path => "Recovery path" => "Percorso di recupero"
+
+business-recovery-path-modified-message
+=> "This recovery path was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "Questo percorso di recupero è stato modificato da un altro utente. Vuoi ricaricare la versione del server o mantenere le modifiche?";;
+
+business-recovery-path-number
+=> "Recovery path {$number}"
+=> "Percorso di recupero {$number}";;
+
+business-register-devices => "Register Devices" => "Registra dispositivi"
+
+business-register-wallet-devices-help
+=> "Register the wallet descriptor on each device, or skip if unavailable."
+=> "Registra il descriptor del portafoglio su ogni dispositivo, oppure salta se non disponibile.";;
+
+business-registered-on-device
+=> "Registered on device"
+=> "Registrato sul dispositivo";;
+
+business-registering-wallet => "Registering Wallet" => "Registrazione portafoglio"
+
+business-registration-failed => "Registration Failed" => "Registrazione non riuscita"
+
+business-request-template-edits-help
+=> "To request edits, reach out to Wizardsardine directly: they can make the changes and send it back for approval."
+=> "Per richiedere modifiche, contatta direttamente Wizardsardine: possono apportare le modifiche e rimandarlo per l'approvazione.";;
+
+business-role-manager => "Manager" => "Manager"
+
+business-role-participant => "Participant" => "Partecipante"
+
+business-search-members-or-email
+=> "Search organization members or enter email"
+=> "Cerca membri dell'organizzazione o inserisci email";;
+
+business-select-account-placeholder => "Select account" => "Seleziona account"
+
+business-select-key-source
+=> "Select key source · {$alias}"
+=> "Seleziona origine chiave - {$alias}";;
+
+business-select-xpub-file => "Select xpub file" => "Seleziona file xpub"
+
+business-service-token => "Service token" => "Token servizio"
+
+business-service-token-help
+=> "Paste the token from the provider. Their firm name is fetched automatically."
+=> "Incolla il token del provider. Il nome dell'azienda viene recuperato automaticamente.";;
+
+business-service-token-placeholder
+=> "e.g. 42-absent-cake-eagle"
+=> "es. 42-absent-cake-eagle";;
+
+business-service-unavailable
+=> "The service is temporarily unavailable. Your wallet data and funds are not affected."
+=> "Il servizio è temporaneamente non disponibile. I dati del portafoglio e i fondi non sono stati interessati.";;
+
+business-set-keys => "Set Keys" => "Imposta chiavi"
+
+business-signer-email => "Signer email" => "Email firmatario"
+
+business-spending-policy => "Spending policy" => "Policy di spesa"
+
+business-template-locked-approve
+=> "Template is locked and pending approval. You must approve it to continue."
+=> "Il modello è bloccato e in attesa di approvazione. Devi approvarlo per continuare.";;
+
+business-template-locked-unlock
+=> "Template is locked and pending approval. Unlock to make further changes."
+=> "Il modello è bloccato e in attesa di approvazione. Sbloccalo per apportare ulteriori modifiche.";;
+
+business-template-read-only
+=> "Read-only. Only a WS Admin can edit this template."
+=> "Sola lettura. Solo un WS Admin può modificare questo modello.";;
+
+business-text-files => "Text files" => "File di testo"
+
+business-threshold-range => "Threshold (1-{$count}):" => "Soglia (1-{$count}):"
+
+business-timelock => "Timelock:" => "Timelock:"
+
+business-timelock-unit-days => "days" => "giorni"
+
+business-timelock-unit-hours => "hours" => "ore"
+
+business-timelock-unit-months => "months" => "mesi"
+
+business-timelock-zero
+=> "Timelock cannot be zero"
+=> "Il timelock non può essere zero";;
+
+business-token-duplicate => "Duplicate token." => "Token duplicato."
+
+business-token-invalid => "Invalid token." => "Token non valido."
+
+business-try-again-support
+=> "Please try again shortly. If the issue persists, contact support."
+=> "Riprova tra poco. Se il problema persiste, contatta il supporto.";;
+
+business-unable-load-wallet
+=> "Unable to load wallet"
+=> "Impossibile caricare il portafoglio";;
+
+business-unsupported-method
+=> "Unsupported method: {$method}"
+=> "Metodo non supportato: {$method}";;
+
+business-use-email => "Use {$email}" => "Usa {$email}"
+
+business-user-session-not-found
+=> "User session not found. Please log in again or contact Wizardsardine."
+=> "Sessione utente non trovata. Accedi di nuovo o contatta Wizardsardine.";;
+
+business-wallet-access-denied
+=> "You do not have access to this wallet. Contact Wizardsardine."
+=> "Non hai accesso a questo portafoglio. Contatta Wizardsardine.";;
+
+business-wallet-count-label
+=> "{ $count ->\n    [one] 1 wallet\n   *[other] {$count} wallets\n}"
+=> "{ $count ->\n    [one] 1 portafoglio\n   *[other] {$count} portafogli\n}";;
+
+business-wallets => "Wallets" => "Portafogli"
+
+business-wrong-network-device
+=> "Wrong network in device settings"
+=> "Rete errata nelle impostazioni del dispositivo";;
+
+business-xpub-empty
+=> "Extended public key cannot be empty."
+=> "La chiave pubblica estesa non può essere vuota.";;
+
+business-xpub-invalid-format
+=> "Invalid extended public key format: {$error}"
+=> "Formato chiave pubblica estesa non valido: {$error}";;
+
+business-xpub-invalid-network
+=> "Extended public key is not valid for {$network}."
+=> "La chiave pubblica estesa non è valida per {$network}.";;
+
+business-xpub-replace-existing-help
+=> "This key already has an xpub. You can replace it by fetching from a device, importing from file, or pasting."
+=> "Questa chiave ha già un xpub. Puoi sostituirlo recuperandolo da un dispositivo, importandolo da file o incollandolo.";;
+
+business-your-keys => "Your keys" => "Le tue chiavi:"
+
+coins-address-label => "Address label:" => "Etichetta indirizzo:"
+
+coins-block-height => "Block height:" => "Altezza blocco:"
+
+coins-deposit-transaction-label
+=> "Deposit transaction label:"
+=> "Etichetta transazione di deposito:";;
+
+coins-first-recovery-in-blocks
+=> "First recovery path will be available in {$blocks} blocks"
+=> "Il primo percorso di recupero sarà disponibile tra {$blocks} blocchi";;
+
+coins-not-in-block => "Not in a block" => "Non in un blocco"
+
+coins-outpoint => "Outpoint:" => "Outpoint:"
+
+coins-recovery-available
+=> "One or more recovery paths are available"
+=> "Uno o più percorsi di recupero sono disponibili";;
+
+coins-refresh-coin => "Refresh coin" => "Aggiorna moneta"
+
+coins-spend-block-height => "Spend block height:" => "Altezza blocco di spesa:"
+
+coins-spend-txid => "Spend txid:" => "Txid di spesa:"
+
+combobox-already-signer => "already a signer" => "già firmatario"
+
+common-address => "Address" => "Indirizzo"
+
+common-address-label => "Address:" => "Indirizzo:"
+
+common-and => "and" => "e"
+
+common-approx-feerate-value => "(~{$rate} sats/vbyte)" => "(~{$rate} sats/vbyte)"
+
+common-blocks => "blocks" => "blocchi"
+
+common-connecting-ellipsis => "Connecting..." => "Connessione..."
+
+common-connection-failed => "Connection failed" => "Connessione non riuscita"
+
+common-copy => "Copy" => "Copia"
+
+common-descriptor => "Descriptor" => "Descriptor"
+
+common-descriptor-label => "Descriptor:" => "Descriptor:"
+
+common-email => "Email" => "Email"
+
+common-error => "Error" => "Errore"
+
+common-error-with-detail => "{$message} ({$error})" => "{$message} ({$error})"
+
+common-feerate => "Feerate" => "Tasso di commissione"
+
+common-feerate-value => "({$rate} sats/vbyte)" => "({$rate} sats/vbyte)"
+
+common-fetching => "Fetching ..." => "Recupero ..."
+
+common-from => "From" => "Da"
+
+common-learn-more => "Learn more" => "Scopri di più"
+
+common-loading => "Loading..." => "Caricamento..."
+
+common-login => "Login" => "Accedi"
+
+common-no-label => "No label" => "Nessuna etichetta"
+
+common-no-label-parenthesized => "(No label)" => "(Nessuna etichetta)"
+
+common-not-available => "N/A" => "N/D"
+
+common-other-options => "Other options" => "Altre opzioni"
+
+common-paste => "Paste" => "Incolla"
+
+common-processing => "Processing..." => "Elaborazione..."
+
+common-ready => "Ready" => "Pronto"
+
+common-recovery => "Recovery" => "Recupero"
+
+common-register => "Register" => "Registra"
+
+common-see-more => "See more" => "Vedi altro"
+
+common-select-account
+=> "Select an account to continue"
+=> "Seleziona un account per continuare";;
+
+common-self-transfer => "Self-transfer" => "Autotrasferimento"
+
+common-something-wrong => "Something wrong happened" => "Qualcosa è andato storto"
+
+common-token => "Token" => "Token"
+
+common-wallet => "Wallet" => "Portafoglio"
+
+connect-account-missing-from-cache
+=> "Account must be in cache"
+=> "L'account deve essere nella cache";;
+
+connect-cache-update-failed
+=> "Failed to update cache: {$error}"
+=> "Impossibile aggiornare la cache: {$error}";;
+
+connect-remote-servers-unresponsive
+=> "Remote servers are unresponsive"
+=> "I server remoti non rispondono";;
+
+decrypt-airgap-help
+=> "Using an air-gapped device? Export the xpub from your device, then use the upload or paste option. If you don’t know the correct derivation path, try with the following:"
+=> "Usi un dispositivo air-gapped? Esporta l'xpub dal dispositivo, poi usa l'opzione di caricamento o incolla. Se non conosci il percorso di derivazione corretto, prova con il seguente:";;
+
+decrypt-backup-file => "Decrypt backup file" => "Decifra file di backup"
+
+decrypt-device-description
+=> "Plug in and unlock a hardware device belonging to this setup to automatically decrypt the backup"
+=> "Collega e sblocca un dispositivo hardware appartenente a questa configurazione per decifrare automaticamente il backup";;
+
+decrypt-device-failed
+=> "Failed to decrypt file with this device"
+=> "Impossibile decifrare il file con questo dispositivo";;
+
+decrypt-enter-mnemonic-unsafe
+=> "UNSAFE: Enter mnemonic of one of the keys"
+=> "NON SICURO: Inserisci la mnemonica di una delle chiavi";;
+
+decrypt-enter-mnemonic-warning
+=> "This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds."
+=> "Questa opzione non è sicura. Capisco che inserire una mnemonica su un computer può causare il furto dei miei fondi.";;
+
+decrypt-invalid-descriptor
+=> "The file has been decrypted but the descriptor is not a valid Liana descriptor."
+=> "Il file è stato decifrato ma il descriptor non è un descriptor Liana valido.";;
+
+decrypt-invalid-encoding
+=> "The file cannot be decoded properly, it seems not to be an encrypted backup."
+=> "Il file non può essere decodificato correttamente; sembra non essere un backup cifrato.";;
+
+decrypt-invalid-mnemonic => "Invalid mnemonic" => "Mnemonica non valida"
+
+decrypt-invalid-type
+=> "The file has been decrypted but the content type is not supported."
+=> "Il file è stato decifrato ma il tipo di contenuto non è supportato.";;
+
+decrypt-invalid-xpub => "Invalid xpub" => "Xpub non valido"
+
+decrypt-mnemonic-cannot-decrypt
+=> "Mnemonic is valid but cannot decrypt the file"
+=> "La mnemonica è valida ma non può decifrare il file";;
+
+decrypt-mnemonic-source => "Mnemonic" => "Mnemonica"
+
+decrypt-pairing-code => "Pairing code: {$code}" => "Codice di pairing: {$code}"
+
+decrypt-paste-xpub
+=> "Paste an extended public key"
+=> "Incolla una chiave pubblica estesa";;
+
+decrypt-provide-xpub
+=> "Provide one of the xpubs used in this wallet."
+=> "Fornisci uno degli xpub usati in questo portafoglio.";;
+
+decrypt-try-device
+=> "Try to decrypt with this device..."
+=> "Prova a decifrare con questo dispositivo...";;
+
+decrypt-unlock-device
+=> "Please unlock or open app on the device"
+=> "Sblocca o apri l'app sul dispositivo";;
+
+decrypt-xpub-cannot-decrypt
+=> "Xpub is valid but cannot decrypt this file"
+=> "L'Xpub è valido ma non può decifrare questo file";;
+
+device-already-used => "Already used" => "Già usato"
+
+device-check-device => "Please check your device" => "Controlla il dispositivo"
+
+device-enter-cosigner-token
+=> "Enter a Cosigner token"
+=> "Inserisci un token Cosigner";;
+
+device-enter-safety-net-token
+=> "Enter a Safety Net token"
+=> "Inserisci un token Safety Net";;
+
+device-generate-hot-key
+=> "Generate hot key stored on this computer"
+=> "Genera hot key salvata su questo computer";;
+
+device-hot-key-test-only
+=> "We recommend using this option only for test purposes"
+=> "Consigliamo di usare questa opzione solo per test";;
+
+device-install-firmware-version-or-later
+=> "Install firmware version {$version} \nor later"
+=> "Installa la versione firmware {$version} \no successiva";;
+
+device-locked => "Locked" => "Bloccato"
+
+device-locked-check-code
+=> "Locked, check code: {$code}"
+=> "Bloccato, controlla codice: {$code}";;
+
+device-open-app => "Please open the app on device" => "Apri l'app sul dispositivo"
+
+device-processing-check-device
+=> "Processing, please check your device"
+=> "Elaborazione, controlla il dispositivo";;
+
+device-registered => "Registered" => "Registrato"
+
+device-signed => "Signed" => "Firmato"
+
+device-unlock => "Please unlock the device" => "Sblocca il dispositivo"
+
+device-unrelated-wallet
+=> "This signing device is not related to this Liana wallet."
+=> "Questo dispositivo di firma non è relativo a questo portafoglio Liana.";;
+
+device-version-unsupported
+=> "Device version not supported, upgrade to version > {$version}"
+=> "Versione dispositivo non supportata, aggiorna a una versione > {$version}";;
+
+duration-days
+=> "{ $count ->\n    [one] 1 day\n   *[other] {$count} days\n}"
+=> "{ $count ->\n    [one] 1 giorno\n   *[other] {$count} giorni\n}";;
+
+duration-days-approx => "~{$count} days" => "~{$count} giorni"
+
+duration-days-compact => "{$count}d" => "{$count}g"
+
+duration-days-compact-approx => "~{$count}d" => "~{$count}g"
+
+duration-hours
+=> "{ $count ->\n    [one] 1 hour\n   *[other] {$count} hours\n}"
+=> "{ $count ->\n    [one] 1 ora\n   *[other] {$count} ore\n}";;
+
+duration-hours-compact => "{$count}h" => "{$count}h"
+
+duration-minutes
+=> "{ $count ->\n    [one] 1 minute\n   *[other] {$count} minutes\n}"
+=> "{ $count ->\n    [one] 1 minuto\n   *[other] {$count} minuti\n}";;
+
+duration-minutes-compact => "{$count}m" => "{$count}m"
+
+duration-months
+=> "{ $count ->\n    [one] 1 month\n   *[other] {$count} months\n}"
+=> "{ $count ->\n    [one] 1 mese\n   *[other] {$count} mesi\n}";;
+
+duration-months-compact => "{$count}m" => "{$count}m"
+
+duration-years
+=> "{ $count ->\n    [one] 1 year\n   *[other] {$count} years\n}"
+=> "{ $count ->\n    [one] 1 anno\n   *[other] {$count} anni\n}";;
+
+duration-years-compact => "{$count}y" => "{$count}a"
+
+error-unknown => "Unknown error occurred" => "Errore sconosciuto"
+
+export-aliases-conflict
+=> "Aliases conflict, what do you want to do?"
+=> "Conflitto alias, cosa vuoi fare?";;
+
+export-canceled => "Export canceled" => "Esportazione annullata"
+
+export-labels-conflict
+=> "Labels conflict, what do you want to do?"
+=> "Conflitto etichette, cosa vuoi fare?";;
+
+export-progress => "Progress: {$progress}%" => "Avanzamento: {$progress}%"
+
+export-select-path
+=> "Select the path you want to export in the popup window..."
+=> "Seleziona il percorso da esportare nella finestra popup...";;
+
+export-starting => "Starting export..." => "Avvio esportazione..."
+
+export-success => "Export successful!" => "Esportazione riuscita!"
+
+export-timeout => "Export failed: timeout" => "Esportazione non riuscita: timeout"
+
+export-title-export-backup => "Export Backup" => "Esporta backup"
+
+export-title-export-descriptor => "Export Descriptor" => "Esporta descriptor"
+
+export-title-export-encrypted-descriptor
+=> "Export Encrypted Descriptor"
+=> "Esporta descriptor criptato";;
+
+export-title-export-labels => "Export Labels" => "Esporta etichette"
+
+export-title-export-psbt => "Export PSBT" => "Esporta PSBT"
+
+export-title-export-xpub => "Export Xpub" => "Esporta Xpub"
+
+export-title-import-descriptor => "Import Descriptor" => "Importa descriptor"
+
+export-title-import-psbt => "Import PSBT" => "Importa PSBT"
+
+export-title-import-wallet-backup
+=> "Import existing wallet from backup"
+=> "Importa portafoglio esistente da backup";;
+
+export-title-import-xpub => "Import Xpub" => "Importa Xpub"
+
+export-title-restore-backup => "Restore Backup" => "Ripristina backup"
+
+export-title-transactions => "Export Transactions" => "Esporta transazioni"
+
+fiat-amount-non-negative
+=> "Amount must be non-negative"
+=> "L'importo deve essere non negativo";;
+
+fiat-currency-mismatch
+=> "Currency mismatch: expected {$expected}, got {$actual}"
+=> "Valuta non corrispondente: attesa {$expected}, ottenuta {$actual}";;
+
+fiat-exchange-rate
+=> "Exchange rate: 1 BTC ~ {$amount} {$currency}"
+=> "Tasso di cambio: 1 BTC ~ {$amount} {$currency}";;
+
+fiat-invalid-currency => "Invalid currency" => "Valuta non valida"
+
+fiat-last-requested => "Last requested: {$time}" => "Ultima richiesta: {$time}"
+
+fiat-last-updated-source
+=> "Last updated at source: {$time}"
+=> "Ultimo aggiornamento alla fonte: {$time}";;
+
+fiat-price-positive
+=> "Price per BTC must be positive"
+=> "Il prezzo per BTC deve essere positivo";;
+
+fiat-source => "Source: {$source}" => "Fonte: {$source}"
+
+fiat-source-timestamp
+=> "Default price at the time the transaction has been confirmed"
+=> "Prezzo predefinito al momento della conferma della transazione";;
+
+fiat-source-user
+=> "Price you have filled yourself"
+=> "Prezzo inserito manualmente da te";;
+
+fiat-source-wizardsardine
+=> "Price automatically processed by WS when you crafted the transaction"
+=> "Prezzo elaborato automaticamente da WS quando hai creato la transazione";;
+
+home-balance => "Balance" => "Saldo"
+
+home-checking-transactions
+=> "Checking for new transactions"
+=> "Controllo nuove transazioni";;
+
+home-payment-history => "Payment History" => "Storico pagamenti"
+
+home-recovery-left
+=> "≈ {$units} left before first recovery path becomes available."
+=> "≈ {$units} rimanenti prima che il primo percorso di recupero diventi disponibile.";;
+
+home-recovery-warning
+=> "Recovery path is or will soon be available for {$count} coin(s)."
+=> "Il percorso di recupero è o sarà presto disponibile per {$count} monete.";;
+
+home-rescan-warning-backup
+=> "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions."
+=> "Poiché questo portafoglio è stato ripristinato da un backup, potrebbe essere necessario eseguire una nuova scansione della blockchain per vedere le transazioni passate.";;
+
+home-rescan-warning-descriptor
+=> "As this wallet was imported from a descriptor, you may need to rescan the blockchain to see past transactions."
+=> "Poiché questo portafoglio è stato importato da un descriptor, potrebbe essere necessario eseguire una nuova scansione della blockchain per vedere le transazioni passate.";;
+
+home-syncing => "Syncing" => "Sincronizzazione"
+
+home-syncing-blockchain
+=> "Syncing blockchain ({$progress}%)"
+=> "Sincronizzazione blockchain ({$progress}%)";;
+
+hw-descriptor-not-registered
+=> "The wallet descriptor is not registered on the device.\n You can register it in the settings."
+=> "Il descriptor del portafoglio non è registrato sul dispositivo.\n Puoi registrarlo nelle impostazioni.";;
+
+hw-display-address-unavailable
+=> "Liana cannot request the device to display the address. \n Verify it with the QR code in the options below."
+=> "Liana non può chiedere al dispositivo di mostrare l'indirizzo.\nVerificalo con il codice QR nelle opzioni qui sotto.";;
+
+hw-no-taproot-miniscript
+=> "Device firmware version does not support taproot miniscript"
+=> "Questo dispositivo non supporta taproot miniscript";;
+
+hw-not-in-spending-path
+=> "This signing device is not part of this spending path."
+=> "Questo dispositivo di firma non fa parte di questo percorso di spesa.";;
+
+import-success => "Import successful" => "Importazione riuscita"
+
+installer-able-to-move-any-time
+=> "Able to move the funds at any time."
+=> "Può spostare i fondi in qualsiasi momento.";;
+
+installer-accept-invitation-for
+=> "Accept invitation for wallet:"
+=> "Accetta invito per il portafoglio:";;
+
+installer-accepted-wallet-not-found
+=> "Wallet of accepted invitation not found"
+=> "Portafoglio dell'invito accettato non trovato";;
+
+installer-add-key => "Add key" => "Aggiungi chiave"
+
+installer-add-safety-net-key => "Add Safety Net key" => "Aggiungi chiave Safety Net"
+
+installer-advanced-settings => "Advanced settings" => "Impostazioni avanzate"
+
+installer-already-have-node => "I already have a node" => "Ho già un nodo"
+
+installer-already-used-sources => "Already used sources" => "Fonti già usate"
+
+installer-auth-token-emailed-to
+=> "An authentication token has been emailed to"
+=> "Ti è stato inviato via email un token di autenticazione a";;
+
+installer-auto-install-node
+=> "I want Liana to automatically install a Bitcoin node on my device"
+=> "Voglio che Liana installi automaticamente un nodo Bitcoin sul mio dispositivo";;
+
+installer-available-after-inactivity
+=> "Available after inactivity of ~"
+=> "Disponibile dopo inattività di ~";;
+
+installer-available-port-failed
+=> "Could not get available port: {$error}."
+=> "Impossibile ottenere una porta disponibile: {$error}.";;
+
+installer-available-ports-failed
+=> "Could not get available ports: {$error1}; {$error2}."
+=> "Impossibile ottenere porte disponibili: {$error1}; {$error2}.";;
+
+installer-backed-up-descriptor-checkbox
+=> "I have backed up my descriptor"
+=> "Ho fatto il backup del mio descriptor";;
+
+installer-backed-up-mnemonic-checkbox
+=> "I have backed up my mnemonic"
+=> "Ho eseguito il backup della mia mnemonica";;
+
+installer-backed-up-mnemonic-show-xpub
+=> "I have backed up the mnemonic, show the extended public key"
+=> "Ho eseguito il backup della mnemonica, mostra la chiave pubblica estesa";;
+
+installer-backup-descriptor-help
+=> "In Bitcoin, to spend from a wallet that isn't a standard single-key setup, you need both your private keys (usually stored as seed words) to sign transactions, and your wallet descriptor to locate your coins - like a map of your addresses.\nWithout the descriptor, your wallet may not find your coins - even if you still have the keys.\nWhen you click \"Back Up Descriptor\", Liana creates an encrypted file that can only be decrypted using one of your wallet's public keys.\nLiana handles this automatically during the restore of a wallet process by asking you to connect a device or enter a key.\nThis file is safer and more private than copying the descriptor manually."
+=> "In Bitcoin, per spendere da un portafoglio che non è una configurazione standard a chiave singola, ti servono sia le tue chiavi private (di solito salvate come parole seed) per firmare le transazioni, sia il descriptor del portafoglio per trovare le tue monete, come una mappa dei tuoi indirizzi.\nSenza il descriptor, il portafoglio potrebbe non trovare le tue monete, anche se hai ancora le chiavi.\nQuando clicchi \"Backup descriptor\", Liana crea un file cifrato che può essere decifrato solo usando una delle chiavi pubbliche del tuo portafoglio.\nLiana lo gestisce automaticamente durante il processo di ripristino di un portafoglio chiedendoti di collegare un dispositivo o inserire una chiave.\nQuesto file è più sicuro e più privato rispetto alla copia manuale del descriptor.";;
+
+installer-backup-descriptor-message
+=> "This backup is required to recover your funds.\nClick \"Back Up Descriptor\" to download an encrypted file of your wallet configuration and store it in safe, accessible places.\nYou can also copy the plain-text descriptor string, but it's less private.\nWARNING: This file does not include your seed phrase(s). Back those up separately."
+=> "Questo backup è necessario per recuperare i tuoi fondi.\nClicca \"Backup descriptor\" per scaricare un file cifrato della configurazione del tuo portafoglio e salvalo in luoghi sicuri e accessibili.\nPuoi anche copiare la stringa descriptor in testo semplice, ma è meno privata.\nATTENZIONE: questo file non include le tue frasi seed. Fanne il backup separatamente.";;
+
+installer-backup-descriptor-missing
+=> "Backup imported but descriptor missing!"
+=> "Backup importato ma descriptor mancante!";;
+
+installer-backup-descriptor-title
+=> "Back Up your wallet configuration (Descriptor)"
+=> "Fai il backup della configurazione del portafoglio (Descriptor)";;
+
+installer-backup-imported
+=> "Backup successfully imported!"
+=> "Backup importato correttamente!";;
+
+installer-backup-mnemonic-title
+=> "Back Up your mnemonic"
+=> "Backup della mnemonica";;
+
+installer-backup-mnemonic-warning
+=> "Beware to back up the mnemonic as it will NOT be stored on the computer."
+=> "Ricordati di fare il backup della mnemonica perché NON sarà salvata sul computer.";;
+
+installer-backup-network-mismatch
+=> "The backup network does not match the selected network."
+=> "La rete del backup non corrisponde alla rete selezionata.";;
+
+installer-bitcoin-node-management
+=> "Bitcoin node management"
+=> "Gestione nodo Bitcoin";;
+
+installer-bitcoind-already-installed
+=> "Liana-managed bitcoind already installed"
+=> "bitcoind gestito da Liana già installato";;
+
+installer-bitcoind-canonicalize-datadir-error
+=> "Failed to canonicalize datadir: {$error}"
+=> "Impossibile canonicalizzare la datadir: {$error}";;
+
+installer-bitcoind-command-error
+=> "Command to start bitcoind returned an error: {$error}"
+=> "Il comando per avviare bitcoind ha restituito un errore: {$error}";;
+
+installer-bitcoind-connection-error
+=> "bitcoind connection check failed: {$error}"
+=> "Controllo connessione bitcoind non riuscito: {$error}";;
+
+installer-bitcoind-executable-not-found
+=> "bitcoind executable not found."
+=> "Eseguibile bitcoind non trovato.";;
+
+installer-bitcoind-lock-error
+=> "lock file error: {$error}"
+=> "Errore file lock: {$error}";;
+
+installer-bitcoind-process-exited
+=> "bitcoind process exited with status '{$status}'."
+=> "Il processo bitcoind è uscito con stato '{$status}'.";;
+
+installer-build-your-own => "Build your own" => "Crea il tuo setup"
+
+installer-build-your-own-description
+=> "Create a custom setup that fits all your needs."
+=> "Crea una configurazione personalizzata adatta alle tue esigenze.";;
+
+installer-canonicalize-cookie-failed
+=> "Failed to canonicalize cookie path: {$error}"
+=> "Impossibile canonicalizzare il percorso cookie: {$error}";;
+
+installer-canonicalize-datadir-failed
+=> "Failed to canonicalize datadir path: {$error}"
+=> "Impossibile canonicalizzare il percorso datadir: {$error}";;
+
+installer-change-alias-later
+=> "You will be able to change it later in Settings > Wallet"
+=> "Potrai modificarlo più tardi in Impostazioni > portafoglio";;
+
+installer-checking-connection
+=> "Checking connection..."
+=> "Controllo connessione...";;
+
+installer-choose-backend => "Choose backend" => "Scegli backend"
+
+installer-choose-wallet-type => "Choose wallet type" => "Scegli tipo di portafoglio"
+
+installer-connected-to => "Connected to" => "Connesso a"
+
+installer-connection-checked => "Connection checked" => "Connessione verificata"
+
+installer-cookie-path => "Cookie path" => "Percorso cookie"
+
+installer-cosigner-token-disallowed
+=> "Cosigner tokens are not allowed for this path"
+=> "I token Cosigner non sono consentiti per questo percorso";;
+
+installer-create-datadir-path-failed
+=> "Failed to create datadir path: {$error}"
+=> "Impossibile creare il percorso datadir: {$error}";;
+
+installer-create-random-key
+=> "Or create a new random key:"
+=> "Oppure crea una nuova chiave casuale:";;
+
+installer-custom-template-description-1
+=> "For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them."
+=> "Per questa configurazione dovrai definire le policy di spesa primaria e di recupero. Per motivi di sicurezza, suggeriamo di usare un portafoglio hardware separato per ogni chiave che vi appartiene.";;
+
+installer-custom-template-description-2
+=> "The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies."
+=> "Le chiavi appartenenti alla policy primaria possono sempre spendere. Quelle delle policy di recupero potranno spendere solo dopo un tempo definito di inattività del portafoglio, consentendo recupero sicuro e policy di spesa avanzate.";;
+
+installer-descriptor-generating
+=> "Generating and validating your wallet descriptor. This can take a few seconds."
+=> "Generazione e validazione del descriptor del portafoglio. Può richiedere alcuni secondi.";;
+
+installer-descriptor-invalid
+=> "Either descriptor is invalid or incompatible with network"
+=> "Il descriptor non è valido o non è compatibile con la rete";;
+
+installer-descriptor-missing => "Descriptor missing" => "Descriptor mancante"
+
+installer-descriptor-read-failed
+=> "Failed to read the descriptor"
+=> "Impossibile leggere il descriptor";;
+
+installer-descriptor-template => "Descriptor template" => "Modello descriptor"
+
+installer-descriptor-type => "Descriptor type" => "Tipo di descriptor"
+
+installer-descriptor-wrong-network
+=> "The descriptor is for another network"
+=> "Il descriptor è per un'altra rete";;
+
+installer-detected-hardware => "Detected hardware" => "Hardware rilevato"
+
+installer-device-method-unsupported
+=> "Device not supported, method: {$method}"
+=> "Dispositivo non supportato, metodo: {$method}";;
+
+installer-device-no-taproot
+=> "This device does not support Taproot"
+=> "Questo dispositivo non supporta Taproot";;
+
+installer-device-wrong-network
+=> "The device is configured on the wrong network"
+=> "Il dispositivo è configurato sulla rete sbagliata";;
+
+installer-distinct-ports-unavailable
+=> "Could not get distinct ports. Please try again."
+=> "Impossibile ottenere porte distinte. Riprova.";;
+
+installer-download-complete => "Download complete" => "Download completato"
+
+installer-download-failed
+=> "Download failed: '{$error}'."
+=> "Download non riuscito: '{$error}'.";;
+
+installer-downloading-bitcoin-core-progress
+=> "Downloading Bitcoin Core {$version}... {$progress}%"
+=> "Download di Bitcoin Core {$version}... {$progress}%";;
+
+installer-duplicate-token => "Duplicate token" => "Token duplicato"
+
+installer-electrum-address-notes
+=> "Note: include \"ssl://\" as a prefix for SSL connections."
+=> "Nota: includi \"ssl://\" come prefisso per le connessioni SSL.";;
+
+installer-email-invalid => "Email is not valid" => "Email non valida"
+
+installer-enter-correct-address
+=> "Please enter correct address"
+=> "Inserisci un indirizzo corretto";;
+
+installer-enter-correct-electrum-address
+=> "Please enter correct address (including port), optionally prefixed with tcp:// or ssl://"
+=> "Inserisci un indirizzo corretto (porta inclusa), opzionalmente preceduto da tcp:// o ssl://";;
+
+installer-enter-correct-password
+=> "Please enter correct password"
+=> "Inserisci una password corretta";;
+
+installer-enter-correct-path
+=> "Please enter correct path"
+=> "Inserisci un percorso corretto";;
+
+installer-enter-correct-user
+=> "Please enter correct user"
+=> "Inserisci un utente corretto";;
+
+installer-existing-node-description
+=> "Select this option if you already have a Bitcoin node running locally or remotely. Liana will connect to it."
+=> "Seleziona questa opzione se hai già un nodo Bitcoin in esecuzione localmente o da remoto. Liana si connetterà ad esso.";;
+
+installer-expanding-multisig => "Expanding multisig" => "Multisig espandibile"
+
+installer-expanding-multisig-description
+=> "Two keys required to spend, with an extra key as a backup."
+=> "Due chiavi richieste per spendere, con una chiave extra come backup.";;
+
+installer-expanding-multisig-wallet
+=> "Expanding multisig wallet"
+=> "Portafoglio multisig espandibile";;
+
+installer-export-backup-failed
+=> "Failed to export backup"
+=> "Esportazione backup non riuscita";;
+
+installer-finalize-installation
+=> "Finalize installation"
+=> "Finalizza installazione";;
+
+installer-generate-mnemonic
+=> "Generate a new mnemonic"
+=> "Genera una nuova mnemonica";;
+
+installer-give-wallet-alias
+=> "Give your wallet an alias"
+=> "Dai un alias al tuo portafoglio";;
+
+installer-hot-signer => "Hot Signer" => "Hot Signer"
+
+installer-import-backup => "Import a backup" => "Importa backup"
+
+installer-import-descriptor => "Import a descriptor" => "Importa descriptor"
+
+installer-import-mnemonic => "Import mnemonic" => "Importa mnemonica"
+
+installer-import-mnemonic-title => "Import Mnemonic" => "Importa mnemonica"
+
+installer-import-wallet-rescan-help
+=> "If you are using a Bitcoin Core node, you will need to perform a rescan of the blockchain after creating the wallet in order to see your coins and past transactions. This can be done in Settings > Node."
+=> "Se usi un nodo Bitcoin Core, dovrai eseguire una nuova scansione della blockchain dopo aver creato il portafoglio per vedere le tue monete e le transazioni passate. Puoi farlo in Impostazioni > Nodo.";;
+
+installer-import-wallet-title => "Import the wallet" => "Importa il portafoglio"
+
+installer-import-xpub-device
+=> "Import an extended public key by selecting a signing device:"
+=> "Importa una chiave pubblica estesa selezionando un dispositivo di firma:";;
+
+installer-imported-key-already-used
+=> "Imported key already used"
+=> "Chiave importata già usata";;
+
+installer-inheritance-description-1
+=> "For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key."
+=> "Per questa configurazione servono 2 chiavi: la tua chiave primaria (per te) e una chiave di eredità (per il tuo erede). Per motivi di sicurezza, suggeriamo di usare un portafoglio hardware separato per ogni chiave.";;
+
+installer-inheritance-description-2
+=> "You will always be able to spend using your Primary Key. After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds."
+=> "Potrai sempre spendere usando la tua chiave primaria. Dopo un periodo di inattività (ma non prima), la tua chiave di eredità potrà recuperare i fondi.";;
+
+installer-inheritance-key => "Inheritance key" => "Chiave di eredità"
+
+installer-installation-complete
+=> "Installation complete"
+=> "Installazione completata";;
+
+installer-installation-failed
+=> "Installation failed: '{$error}'."
+=> "Installazione non riuscita: '{$error}'.";;
+
+installer-installed => "Installed" => "Installato"
+
+installer-installing => "Installing..." => "Installazione..."
+
+installer-installing-bitcoind
+=> "Installing bitcoind..."
+=> "Installazione di bitcoind...";;
+
+installer-introduction => "Introduction" => "Introduzione"
+
+installer-invalid-descriptor => "Invalid descriptor" => "Descriptor non valido"
+
+installer-invalid-token => "Invalid token!" => "Token non valido!"
+
+installer-invitation-invalid
+=> "Invitation token is invalid or expired"
+=> "Il token di invito non è valido o è scaduto";;
+
+installer-invitation-token => "Invitation token" => "Token di invito"
+
+installer-invitation-token-help
+=> "Type the invitation token you received by email"
+=> "Digita il token di invito ricevuto via email";;
+
+installer-key-alias-already-used
+=> "This alias is already used for another key"
+=> "Questo alias è già usato per un'altra chiave";;
+
+installer-key-alias-placeholder
+=> "E.g. My Hardware Wallet"
+=> "Es. Il mio portafoglio hardware";;
+
+installer-key-already-in-wallet
+=> "Fetched key has already been added to the wallet."
+=> "La chiave recuperata è già stata aggiunta al portafoglio.";;
+
+installer-key-already-used => "Key already used" => "Chiave già usata"
+
+installer-key-already-used-in-path
+=> "Key already used in this path"
+=> "Chiave già usata in questo percorso";;
+
+installer-key-fetch-wrong-network
+=> "Failed to fetch key. Switch network on device and retry"
+=> "Recupero chiave non riuscito. Cambia rete sul dispositivo e riprova";;
+
+installer-key-index => "Key @{$index}:" => "Chiave @{$index}:"
+
+installer-key-name-alias => "Key name (alias):" => "Nome chiave (alias):"
+
+installer-key-name-help
+=> "Give this key a friendly name. It will help you identify it later:"
+=> "Dai a questa chiave un nome descrittivo. Ti aiuterà a identificarla più tardi:";;
+
+installer-key-path-account => "Key path account:" => "Account del percorso chiave:"
+
+installer-key-wrong-network
+=> "Fetched key does not have the correct network"
+=> "La chiave recuperata non ha la rete corretta";;
+
+installer-keys-inactivity
+=> "Keys can move the funds after inactivity of:"
+=> "Le chiavi possono spostare i fondi dopo inattività di:";;
+
+installer-load-previous-wallet
+=> "Load a previously used wallet"
+=> "Carica un portafoglio usato in precedenza";;
+
+installer-load-shared-wallet
+=> "Load a shared wallet"
+=> "Carica un portafoglio condiviso";;
+
+installer-local-wallet-description
+=> "Use your already existing Bitcoin node or automatically install one. The Liana wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet."
+=> "Usa il tuo nodo Bitcoin esistente o installane uno automaticamente. Il portafoglio Liana non si connetterà ad alcun server esterno.\n\nQuesta è l'opzione più privata, ma i dati sono conservati solo localmente su questo computer. Devi eseguire i tuoi backup e condividere il descriptor con le altre persone a cui vuoi consentire l'accesso al portafoglio.";;
+
+installer-managed-node-description
+=> "Liana will install a pruned node on your computer. You won't need to do anything except have some disk space available (~30GB required on mainnet) and wait for the initial synchronization with the network (it can take some days depending on your internet connection speed)."
+=> "Liana installerà un nodo pruned sul tuo computer. Non dovrai fare nulla tranne avere spazio su disco disponibile (~30 GB richiesti su mainnet) e attendere la sincronizzazione iniziale con la rete (può richiedere alcuni giorni, a seconda della velocità della tua connessione internet).";;
+
+installer-mnemonic-backup-help
+=> "A hot key generated on this computer was used for creating this wallet. It needs to be backed up. \n Keep it in a safe place. Never share it with anyone."
+=> "Per creare questo portafoglio è stata usata una hot key generata su questo computer. È necessario farne il backup.\nConservala in un luogo sicuro. Non condividerla mai con nessuno.";;
+
+installer-mnemonic-recovery-help
+=> "If you were using a hot key (a key stored on the computer) in your wallet, you will need to recover it from mnemonics to be able to sign transactions again. Otherwise you can directly go the next step."
+=> "Se nel portafoglio usavi una hot key (una chiave salvata sul computer), dovrai recuperarla dalle mnemoniche per poter firmare di nuovo le transazioni. Altrimenti puoi andare direttamente al passaggio successivo.";;
+
+installer-multisig-description-1
+=> "For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key."
+=> "Per questa configurazione servono 3 chiavi: due chiavi primarie e una chiave di recupero. Per motivi di sicurezza, suggeriamo di usare un portafoglio hardware separato per ogni chiave.";;
+
+installer-multisig-description-2
+=> "The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):"
+=> "Le chiavi primarie comporranno una multisig 2-di-2 sempre in grado di spendere. Se una delle chiavi diventa non disponibile, dopo un periodo di inattività potrai recuperare i fondi usando la chiave di recupero insieme a una delle chiavi primarie (multisig 2-di-3):";;
+
+installer-no-current-wallets
+=> "You have no current wallets"
+=> "Non hai portafogli attuali";;
+
+installer-node-setup-title
+=> "Set up connection to the Bitcoin node"
+=> "Configura connessione al nodo Bitcoin";;
+
+installer-node-type => "Node type:" => "Tipo nodo:"
+
+installer-password => "Password" => "Password"
+
+installer-paste-descriptor => "Paste a descriptor" => "Incolla descriptor"
+
+installer-paste-descriptor-description
+=> "Creates a new wallet from the pasted descriptor"
+=> "Crea un nuovo portafoglio dal descriptor incollato";;
+
+installer-path-duplicate-sequence
+=> "No two recovery options may become available at the very same date."
+=> "Due opzioni di recupero non possono diventare disponibili nella stessa identica data.";;
+
+installer-path-key-source-disallowed
+=> "Path contains a key that is disallowed for this kind of path."
+=> "Il percorso contiene una chiave non consentita per questo tipo di percorso.";;
+
+installer-path-only-cosigner-keys
+=> "A path cannot contain only cosigner keys."
+=> "Un percorso non può contenere solo chiavi Cosigner.";;
+
+installer-port-attempts-exhausted => "Exhausted attempts" => "Tentativi esauriti"
+
+installer-primary-key => "Primary key" => "Chiave primaria"
+
+installer-primary-key-number
+=> "Primary key #{$number}"
+=> "Chiave primaria n. {$number}";;
+
+installer-primary-spending-option
+=> "Primary spending option:"
+=> "Opzione di spesa primaria:";;
+
+installer-read-cookie-file-failed
+=> "Failed to read cookie file: {$error}"
+=> "Impossibile leggere il file cookie: {$error}";;
+
+installer-recovery-key => "Recovery key" => "Chiave di recupero"
+
+installer-recovery-option
+=> "Recovery option #{$number}:"
+=> "Opzione di recupero n. {$number}:";;
+
+installer-register-descriptor-failed
+=> "Failed to register descriptor"
+=> "Registrazione descriptor non riuscita";;
+
+installer-register-descriptor-help
+=> "To be used with the wallet, a signing device needs the descriptor. If the descriptor contains one or more keys imported from an external signing device, the descriptor must be registered on it. Registration confirms that the device is able to handle the policy. Registration on a device is not a substitute for backing up the descriptor."
+=> "Per essere usato con il portafoglio, un dispositivo di firma ha bisogno del descriptor. Se il descriptor contiene una o più chiavi importate da un dispositivo di firma esterno, il descriptor deve essere registrato su di esso. La registrazione conferma che il dispositivo è in grado di gestire la policy. La registrazione su un dispositivo non sostituisce il backup del descriptor.";;
+
+installer-register-descriptor-optional
+=> "This step is only necessary if you are using a signing device."
+=> "Questo passaggio è necessario solo se usi un dispositivo di firma.";;
+
+installer-register-descriptor-title => "Register descriptor" => "Registra descriptor"
+
+installer-registered-descriptor-checkbox
+=> "I have registered the descriptor on my device(s)"
+=> "Ho registrato il descriptor sul/i mio/i dispositivo/i";;
+
+installer-remote-backend-description
+=> "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead."
+=> "Usa il nostro servizio per essere subito pronto a transare. Wizardsardine gestisce l'infrastruttura, consentendo a più computer o partecipanti di connettersi e sincronizzarsi.\n\nÈ un'opzione più semplice e sicura per chi vuole che Wizardsardine conservi un backup del descriptor. Mantieni il controllo delle tue chiavi, e Wizardsardine non ha alcun controllo sui tuoi fondi, ma potrà vedere le informazioni del tuo portafoglio associate a un indirizzo email. Gli utenti attenti alla privacy dovrebbero gestire la propria infrastruttura.";;
+
+installer-remote-bitcoin-node-warning
+=> "Connection to a remote Bitcoin node is not supported. Insert an IP address bound to the same machine running Liana (ignore this warning if that's already the case)"
+=> "La connessione a un nodo Bitcoin remoto non è supportata. Inserisci un indirizzo IP associato alla stessa macchina su cui è in esecuzione Liana (ignora questo avviso se è già così)";;
+
+installer-rpc-auth => "RPC authentication:" => "Autenticazione RPC:"
+
+installer-rpc-user-password => "User and password" => "Utente e password"
+
+installer-safety-net => "Safety Net:" => "Safety Net:"
+
+installer-safety-net-description
+=> "This adds a final recovery option containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens."
+=> "Aggiunge un'opzione finale di recupero contenente chiavi di agenti professionali.\n\nUsa questa opzione se ti sono stati forniti uno o più token Safety Net.";;
+
+installer-safety-net-key => "Safety Net key" => "Chiave Safety Net"
+
+installer-safety-net-token-disallowed
+=> "SafetyNet tokens are not allowed for this path"
+=> "I token SafetyNet non sono consentiti per questo percorso";;
+
+installer-seed-key-not-in-descriptor
+=> "The descriptor does not use a key derived from this seed"
+=> "Il descriptor non usa una chiave derivata da questo seed";;
+
+installer-select-device-register
+=> "Select hardware wallet to register descriptor on:"
+=> "Seleziona portafoglio hardware su cui registrare il descriptor:";;
+
+installer-select-device-register-if-needed
+=> "If necessary, please select the signing device to register descriptor on:"
+=> "Se necessario, seleziona il dispositivo di firma su cui registrare il descriptor:";;
+
+installer-select-key-source => "Select key source" => "Seleziona origine chiave"
+
+installer-sequence-value-warning
+=> "Value must be greater than 0 and lower than 65535"
+=> "Il valore deve essere superiore a 0 e inferiore a 65535";;
+
+installer-serialize-daemon-config-failed
+=> "Failed to serialize daemon config: {$error}"
+=> "Impossibile serializzare la configurazione daemon: {$error}";;
+
+installer-serialize-gui-config-failed
+=> "Failed to serialize GUI config: {$error}"
+=> "Impossibile serializzare la configurazione GUI: {$error}";;
+
+installer-share-xpubs-title
+=> "Share your public keys (Xpubs)"
+=> "Condividi le tue chiavi pubbliche (xpub)";;
+
+installer-shared-wallet-help
+=> "If you received an invitation to join a shared wallet"
+=> "Se hai ricevuto un invito a unirti a un portafoglio condiviso";;
+
+installer-simple-inheritance => "Simple inheritance" => "Eredità semplice"
+
+installer-simple-inheritance-description
+=> "Two keys required, one for yourself to spend and another for your heir."
+=> "Sono richieste due chiavi, una per spendere e una per il tuo erede.";;
+
+installer-simple-inheritance-wallet
+=> "Simple inheritance wallet"
+=> "Portafoglio con eredità semplice";;
+
+installer-start-bitcoin-node
+=> "Start Bitcoin full node"
+=> "Avvia nodo completo Bitcoin";;
+
+installer-start-daemon-failed
+=> "Failed to start Liana daemon: {$error}"
+=> "Impossibile avviare il daemon Liana: {$error}";;
+
+installer-started => "Started" => "Avviato"
+
+installer-starting => "Starting..." => "Avvio..."
+
+installer-stop-daemon-failed
+=> "Failed to stop Liana daemon: {$error}"
+=> "Impossibile arrestare il daemon Liana: {$error}";;
+
+installer-store-mnemonic-failed
+=> "Failed to store mnemonic: {$error}"
+=> "Impossibile salvare la mnemonica: {$error}";;
+
+installer-switch-account-help
+=> "Switch account if you already use the same hardware in other configurations"
+=> "Cambia account se usi già lo stesso hardware in altre configurazioni";;
+
+installer-taproot-supported-version
+=> "Taproot is only supported by Liana version 5.0 and above"
+=> "Taproot è supportato solo da Liana versione 5.0 e successive";;
+
+installer-the-descriptor => "The descriptor" => "Il descriptor"
+
+installer-the-descriptor-label => "The descriptor:" => "Il descriptor:"
+
+installer-threshold => "Threshold:" => "Soglia:"
+
+installer-threshold-keys
+=> "{ $total ->\n    [one] {$threshold} out of 1 key\n   *[other] {$threshold} out of {$total} keys\n}"
+=> "{ $total ->\n    [one] {$threshold} su 1 chiave\n   *[other] {$threshold} su {$total} chiavi\n}";;
+
+installer-token-type-disallowed
+=> "Token type not allowed in this path"
+=> "Tipo di token non consentito in questo percorso";;
+
+installer-use-liana-connect => "Use Liana Connect" => "Usa Liana Connect"
+
+installer-use-own-node => "Use your own node" => "Usa il tuo nodo"
+
+installer-user => "User" => "Utente"
+
+installer-wallet-alias => "Wallet alias" => "Alias portafoglio"
+
+installer-wallet-alias-too-long
+=> "Wallet alias is too long."
+=> "L'alias del portafoglio è troppo lungo.";;
+
+installer-xpub-invalid => "Invalid Xpub" => "Xpub non valido"
+
+installer-xpub-origin-missing => "Origin missing" => "Origine mancante"
+
+installer-xpub-wrong-derivation-path
+=> "Wrong derivation path"
+=> "Percorso di derivazione errato";;
+
+installer-xpub-wrong-network => "Wrong network" => "Rete errata"
+
+label-edit => "Edit label" => "Modifica etichetta"
+
+label-external-output => "(External Output)" => "(Output esterno)"
+
+label-invalid-length
+=> "Invalid label length, must be 80 bytes or less"
+=> "Lunghezza etichetta non valida, deve essere di 80 byte o meno";;
+
+label-label => "Label" => "Etichetta"
+
+launcher-add-existing-wallet
+=> "Add an existing Liana wallet"
+=> "Aggiungi un portafoglio Liana esistente";;
+
+launcher-config-descriptor-origin-error
+=> "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin. Liana v0.2 and later only support public keys with origins. Please migrate your funds using Liana v0.1."
+=> "C'è un problema con la configurazione di questa rete. Probabilmente usi un descriptor che contiene una o più chiavi pubbliche senza origine. Liana v0.2 e successive supportano solo chiavi pubbliche con origine. Migra i fondi usando Liana v0.1.";;
+
+launcher-create-new-wallet
+=> "Create a new Liana wallet"
+=> "Crea un nuovo portafoglio Liana";;
+
+launcher-default-wallet-name
+=> "My Liana {$network} wallet"
+=> "Il mio portafoglio Liana {$network}";;
+
+launcher-delete-all-data-confirmation
+=> "Are you sure you want to delete the configuration and all associated data for the wallet {$wallet}?"
+=> "Vuoi davvero eliminare la configurazione e tutti i dati associati del portafoglio {$wallet}?";;
+
+launcher-delete-connect-all-members
+=> "Also permanently delete this wallet from Liana Connect (for all members)."
+=> "Elimina definitivamente questo portafoglio da Liana Connect (per tutti i membri).";;
+
+launcher-delete-connect-disassociate
+=> "Also disassociate {$email} from this Liana Connect wallet."
+=> "Dissocia anche {$email} da questo portafoglio Liana Connect.";;
+
+launcher-delete-local-config-confirmation
+=> "Are you sure you want to delete locally the configuration for the wallet {$wallet}?"
+=> "Vuoi davvero eliminare localmente la configurazione del portafoglio {$wallet}?";;
+
+launcher-delete-node-not-affected
+=> "(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)"
+=> "(Se usi un nodo Bitcoin gestito da Liana, non sarà interessato da questa azione.)";;
+
+launcher-delete-node-not-affected-this-network
+=> "(The Liana-managed Bitcoin node for this network will not be affected by this action.)"
+=> "(Il nodo Bitcoin gestito da Liana per questa rete non sarà interessato da questa azione.)";;
+
+launcher-delete-title
+=> "Delete configuration for Liana-{$checksum}"
+=> "Elimina configurazione per Liana-{$checksum}";;
+
+launcher-delete-title-alias
+=> "Delete configuration for {$alias} (Liana-{$checksum})"
+=> "Elimina configurazione per {$alias} (Liana-{$checksum})";;
+
+launcher-delete-warning-irreversible
+=> "WARNING: This cannot be undone."
+=> "ATTENZIONE: questa azione non può essere annullata.";;
+
+launcher-read-daemon-config-failed
+=> "Failed to read daemon configuration file in the directory: {$path}"
+=> "Impossibile leggere il file di configurazione daemon nella directory: {$path}";;
+
+launcher-read-gui-config-failed
+=> "Failed to read GUI configuration file in the directory: {$path}"
+=> "Impossibile leggere il file di configurazione GUI nella directory: {$path}";;
+
+launcher-unexpected-error => "Unexpected {$error}" => "Errore inatteso {$error}"
+
+launcher-wallet-deleted
+=> "Wallet successfully deleted"
+=> "Portafoglio eliminato correttamente";;
+
+launcher-wallet-id-not-found
+=> "Wallet {$wallet_id} not found"
+=> "Portafoglio {$wallet_id} non trovato";;
+
+launcher-wallet-not-found => "Wallet not found" => "Portafoglio non trovato"
+
+launcher-welcome => "Welcome" => "Benvenuto"
+
+launcher-welcome-back => "Welcome back" => "Bentornato"
+
+lianalite-auth-sent
+=> "An authentication was sent to your email:"
+=> "È stata inviata un'autenticazione alla tua email:";;
+
+lianalite-token-expired
+=> "Token is expired or is invalid"
+=> "Il token è scaduto o non è valido";;
+
+lianalite-token-has-expired-or-invalid
+=> "Token has expired or is invalid"
+=> "Il token è scaduto o non è valido";;
+
+lianalite-token-invalid => "Token is not valid" => "Il token non è valido"
+
+lianalite-wallet-deleted
+=> "This wallet was deleted by its creator for all participants and cannot be opened. To access it again, restore it using a backup file or the wallet descriptor."
+=> "Questo portafoglio è stato eliminato dal suo creatore per tutti i partecipanti e non può essere aperto. Per accedervi di nuovo, ripristinalo usando un file di backup o il descriptor del portafoglio.";;
+
+loader-connecting-daemon => "Connecting to daemon..." => "Connessione al daemon..."
+
+loader-failed => "Liana failed to start" => "Liana non è riuscita ad avviarsi"
+
+loader-failed-bitcoind
+=> "Liana failed to start, please check if bitcoind is running"
+=> "Liana non è riuscita ad avviarsi, verifica che bitcoind sia in esecuzione";;
+
+loader-internal-daemon-error
+=> "Error while starting the internal daemon"
+=> "Errore durante l'avvio del daemon interno";;
+
+loader-progress => "Progress {$progress}%" => "Progresso {$progress}%"
+
+loader-starting-daemon => "Starting daemon..." => "Avvio daemon..."
+
+loader-sync-progress-1
+=> "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster."
+=> "Bitcoin Core sta sincronizzando la blockchain. Una sincronizzazione completa richiede in genere alcuni giorni ed è intensiva in risorse. Una volta completata la sincronizzazione iniziale, le successive saranno molto più rapide.";;
+
+loader-sync-progress-2
+=> "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance."
+=> "Bitcoin Core sta sincronizzando la blockchain. Ci vorrà un po', a seconda dell'ultima volta in cui è stata eseguita, della connessione internet e delle prestazioni del computer.";;
+
+loader-sync-progress-3
+=> "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance."
+=> "Bitcoin Core sta sincronizzando la blockchain. Potrebbero volerci alcuni minuti, a seconda dell'ultima volta in cui è stata eseguita, della connessione internet e delle prestazioni del computer.";;
+
+menu-coins-utxos => "Coins/UTXOs" => "Monete/UTXO"
+
+menu-dashboard => "Dashboard" => "Dashboard"
+
+menu-drafts-approvals => "Drafts & Approvals" => "Bozze e approvazioni"
+
+menu-receive => "Receive" => "Ricevi"
+
+menu-send => "Send" => "Invia"
+
+menu-settings => "Settings" => "Impostazioni"
+
+menu-transactions => "Transactions" => "Transazioni"
+
+network-coins-have => ", COINS HAVE{ \" \" }" => ", LE MONETE{ \" \" }"
+
+network-no-value => "NO VALUE" => "NON HANNO VALORE"
+
+network-this-is-a => "THIS IS A{ \" \" }" => "QUESTO È UN{ \" \" }"
+
+network-wallet => "{$network} WALLET" => "PORTAFOGLIO {$network}"
+
+payment-address-label => "address label: {$label}" => "etichetta indirizzo: {$label}"
+
+payment-incoming => "Incoming payment" => "Pagamento in entrata"
+
+payment-outgoing => "Outgoing payment" => "Pagamento in uscita"
+
+payment-title => "Payment" => "Pagamento"
+
+pill-active => "Active" => "Attiva"
+
+pill-always-available => "Always available" => "Sempre disponibile"
+
+pill-available => "Available" => "Disponibile"
+
+pill-available-compact => "Avail." => "Disp."
+
+pill-batch => "Batch" => "Batch"
+
+pill-batch-tooltip
+=> "This transaction contains multiple payments"
+=> "Questa transazione contiene più pagamenti";;
+
+pill-confirmed => "Confirmed" => "Confermata"
+
+pill-confirmed-tooltip
+=> "This transaction has been included in a block"
+=> "Questa transazione è stata inclusa in un blocco";;
+
+pill-deprecated => "Deprecated" => "Deprecata"
+
+pill-deprecated-tooltip
+=> "This transaction cannot be included in the blockchain anymore."
+=> "Questa transazione non può più essere inclusa nella blockchain.";;
+
+pill-draft => "Draft" => "Bozza"
+
+pill-first-recovery-in
+=> "First recovery option available in {$units}"
+=> "Prima opzione di recupero disponibile tra {$units}";;
+
+pill-first-recovery-today
+=> "First recovery option available today"
+=> "Prima opzione di recupero disponibile oggi";;
+
+pill-key-cosigner => "Cosigner" => "Cosigner"
+
+pill-key-cosigner-tooltip
+=> "Professional third party co-signing key"
+=> "Chiave professionale di cofirma di terza parte";;
+
+pill-key-external => "External" => "External"
+
+pill-key-external-tooltip
+=> "Key held by third parties"
+=> "Chiave detenuta da terzi";;
+
+pill-key-internal => "Internal" => "Internal"
+
+pill-key-internal-tooltip
+=> "Key held by your organization"
+=> "Chiave detenuta dalla tua organizzazione";;
+
+pill-key-safety-net => "Safety Net" => "Safety Net"
+
+pill-key-safety-net-tooltip
+=> "Professional third party recovery key"
+=> "Chiave professionale di recupero di terza parte";;
+
+pill-not-in-policy => "Not in policy yet" => "Non ancora nella policy"
+
+pill-recovery-available-tooltip
+=> "Recovery option(s) already available"
+=> "Opzioni di recupero già disponibili";;
+
+pill-recovery-tooltip
+=> "This transaction is using a recovery path"
+=> "Questa transazione usa un percorso di recupero";;
+
+pill-rescan-progress => "Rescan... {$progress}%" => "Scansione... {$progress}%"
+
+pill-signed => "To broadcast" => "Da trasmettere"
+
+pill-signed-tooltip
+=> "This transaction is signed & ready to broadcast"
+=> "Questa transazione è firmata e pronta per la trasmissione";;
+
+pill-spent => "Spent" => "Spesa"
+
+pill-spent-tooltip
+=> "The transaction was included in the blockchain."
+=> "La transazione è stata inclusa nella blockchain.";;
+
+pill-to-approve => "To approve" => "Da approvare"
+
+pill-today => "Today" => "Oggi"
+
+pill-unconfirmed => "Unconfirmed" => "Non confermata"
+
+pill-unconfirmed-tooltip
+=> "Do not treat this as a payment until it is confirmed"
+=> "Non considerarla un pagamento finché non è confermata";;
+
+pill-unsigned => "Unsigned" => "Non firmata"
+
+pill-unsigned-tooltip
+=> "This transaction is missing signature(s)"
+=> "A questa transazione mancano una o più firme";;
+
+pill-used-in-spending-paths
+=> "{ $count ->\n    [one] Used in 1 spending path\n   *[other] Used in {$count} spending paths\n}"
+=> "{ $count ->\n    [one] Usata in 1 percorso di spesa\n   *[other] Usata in {$count} percorsi di spesa\n}";;
+
+pill-ws-admin => "WS Admin" => "WS Admin"
+
+pill-xpub-not-set => "Not Set" => "Non impostata"
+
+pill-xpub-set => "✓ Set" => "✓ Impostata"
+
+policy-block-duration
+=> "{$blocks} blocks (~{$duration})"
+=> "{$blocks} blocchi (~{$duration})";;
+
+policy-by => "by" => "da"
+
+policy-inactive-for
+=> "can spend coins inactive for"
+=> "possono spendere monete inattive per";;
+
+policy-out-of-by => "out of {$count} by" => "su {$count} da"
+
+policy-primary-path
+=> "can always spend this wallet's funds (Primary path)"
+=> "possono sempre spendere i fondi di questo portafoglio (percorso primario)";;
+
+policy-recovery-path
+=> "(Recovery path #{$number})"
+=> "(percorso di recupero n. {$number})";;
+
+policy-safety-net-path => "(Safety Net path)" => "(percorso Safety Net)"
+
+policy-signatures
+=> "{ $count ->\n    [one] 1 signature\n   *[other] {$count} signatures\n}"
+=> "{ $count ->\n    [one] 1 firma\n   *[other] {$count} firme\n}";;
+
+policy-wallet-policy => "The wallet policy:" => "La policy del portafoglio:"
+
+psbt-already-signed-by => ", already signed by" => ", già firmato da"
+
+psbt-broadcast-conflicts-one
+=> "The following transaction is spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on it:"
+=> "La seguente transazione sta spendendo uno o più input della transazione da trasmettere e sarà scartata, insieme a qualsiasi altra transazione che dipende da essa:";;
+
+psbt-broadcast-conflicts-some
+=> "The following transactions are spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on them:"
+=> "Le seguenti transazioni stanno spendendo uno o più input della transazione da trasmettere e saranno scartate, insieme a qualsiasi altra transazione che dipende da esse:";;
+
+psbt-broadcast-invalidates-one
+=> "WARNING: Broadcasting this transaction will invalidate a pending payment."
+=> "ATTENZIONE: trasmettere questa transazione invaliderà un pagamento in sospeso.";;
+
+psbt-broadcast-invalidates-some
+=> "WARNING: Broadcasting this transaction will invalidate some pending payments."
+=> "ATTENZIONE: trasmettere questa transazione invaliderà alcuni pagamenti in sospeso.";;
+
+psbt-broadcast-transaction
+=> "Broadcast the transaction"
+=> "Trasmetti la transazione";;
+
+psbt-change => "Change" => "Resto"
+
+psbt-coins-spent
+=> "{ $count ->\n    [one] 1 coin spent\n   *[other] {$count} coins spent\n}"
+=> "{ $count ->\n    [one] 1 moneta spesa\n   *[other] {$count} monete spese\n}";;
+
+psbt-delete-success
+=> "Successfully deleted this transaction."
+=> "Transazione eliminata correttamente.";;
+
+psbt-delete-this => "Delete this PSBT" => "Elimina questo PSBT"
+
+psbt-device-sign-failed => "Device failed to sign" => "Il dispositivo non ha firmato"
+
+psbt-finalizing-requires
+=> "Finalizing this transaction requires:"
+=> "Per finalizzare questa transazione serve:";;
+
+psbt-missing-inputs
+=> "Missing information about transaction inputs"
+=> "Informazioni mancanti sugli input della transazione";;
+
+psbt-more-signatures
+=> "{ $count ->\n    [0] no more signatures\n    [one] 1 more signature from\n   *[other] {$count} more signatures from\n}"
+=> "{ $count ->\n    [0] nessun'altra firma\n    [one] 1 altra firma da\n   *[other] {$count} altre firme da\n}";;
+
+psbt-no-payment => "0 payment" => "0 pagamenti"
+
+psbt-not-ready => "Not ready" => "Non pronto"
+
+psbt-payments
+=> "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
+=> "{ $count ->\n    [one] 1 pagamento\n   *[other] {$count} pagamenti\n}";;
+
+psbt-save-transaction => "Save this transaction" => "Salva questa transazione"
+
+psbt-select-signing-device
+=> "Select signing device to sign with:"
+=> "Seleziona dispositivo di firma:";;
+
+psbt-sign-save-before-export
+=> "Sign or save the transaction first to enable export"
+=> "Firma o salva prima la transazione per abilitare l'esportazione";;
+
+psbt-signed-by => "signed by" => "firmato da"
+
+psbt-spend-updated
+=> "Spend transaction is updated"
+=> "Transazione di spesa aggiornata";;
+
+psbt-status => "Status" => "Stato"
+
+psbt-transaction-broadcast => "Transaction is broadcast" => "Transazione trasmessa"
+
+psbt-transaction-saved => "Transaction is saved" => "Transazione salvata"
+
+psbts-base64-warning
+=> "Please enter a base64 encoded PSBT"
+=> "Inserisci una PSBT codificata in base64";;
+
+psbts-imported => "PSBT is imported" => "PSBT importata"
+
+psbts-insert-psbt => "Insert PSBT:" => "Inserisci PSBT:"
+
+receive-address-label-placeholder
+=> "Enter an address label"
+=> "Inserisci un'etichetta indirizzo";;
+
+receive-derivation-index => "Derivation index:" => "Indice di derivazione:"
+
+receive-generate-new-address-help
+=> "Always generate a new address for each deposit."
+=> "Genera sempre un nuovo indirizzo per ogni deposito.";;
+
+receive-generating-address => "Generating address ..." => "Generazione indirizzo ..."
+
+receive-generating-address-title => "Generating address" => "Generazione indirizzo"
+
+receive-previous-addresses
+=> "Previously generated addresses still awaiting deposit"
+=> "Indirizzi generati in precedenza ancora in attesa di deposito";;
+
+receive-select-device
+=> "Select device to verify address on:"
+=> "Seleziona il dispositivo su cui verificare l'indirizzo:";;
+
+receive-specter-diy-tooltip
+=> "For Specter DIY devices"
+=> "Per dispositivi Specter DIY";;
+
+receive-verify-address => "Verify address" => "Verifica indirizzo"
+
+recovery-coins-total
+=> "{ $count ->\n    [one] can recover 1 coin totalling\n   *[other] can recover {$count} coins totalling\n}"
+=> "{ $count ->\n    [one] 1 moneta per un totale di\n   *[other] {$count} monete per un totale di\n}";;
+
+recovery-info
+=> "Recover your funds by sending them to another wallet if you have lost access to your primary spending path."
+=> "Recupera i tuoi fondi inviandoli a un altro portafoglio se hai perso l'accesso al percorso di spesa principale.";;
+
+recovery-none-available
+=> "No recovery path is currently available."
+=> "Nessun percorso di recupero è attualmente disponibile.";;
+
+recovery-paths-available
+=> "{ $count ->\n    [one] 1 recovery path is available:\n   *[other] {$count} recovery paths are available:\n}"
+=> "{ $count ->\n    [one] 1 percorso di recupero disponibile:\n   *[other] {$count} percorsi di recupero disponibili:\n}";;
+
+recovery-signatures-from
+=> "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}"
+=> "{ $count ->\n    [one] 1 firma da\n   *[other] {$count} firme da\n}";;
+
+settings-alias => "Alias" => "Alias"
+
+settings-alias-too-long
+=> "Please enter alias that is not too long"
+=> "Inserisci un alias non troppo lungo";;
+
+settings-backup-encrypted-descriptor-tooltip
+=> "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs."
+=> "Un file descriptor cifrato (.bed) che puoi conservare ovunque. Per decifrarlo, serve uno dei tuoi dispositivi di firma o xpub.";;
+
+settings-block-height => "Block Height:" => "Altezza blocco:"
+
+settings-blockchain-rescan
+=> "Blockchain rescan"
+=> "Nuova scansione della blockchain";;
+
+settings-change-node-or-connect
+=> "I want to change node type or use Liana Connect"
+=> "Voglio cambiare tipo di nodo o usare Liana Connect";;
+
+settings-connect-own-node
+=> "I want to connect to my own node"
+=> "Voglio connettermi al mio nodo";;
+
+settings-cookie-file-path => "Cookie file path" => "Percorso file cookie"
+
+settings-correct-alias
+=> "Please enter correct alias"
+=> "Inserisci un alias corretto";;
+
+settings-currency => "Currency:" => "Valuta:"
+
+settings-date-before-prune
+=> "Provided date earlier than the node prune height"
+=> "La data fornita è precedente all'altezza di prune del nodo";;
+
+settings-date-future
+=> "Provided date is in the future"
+=> "La data fornita è nel futuro";;
+
+settings-date-invalid => "Provided date is invalid" => "La data fornita non è valida"
+
+settings-day => "Day:" => "Giorno:"
+
+settings-email-invalid => "Email is invalid" => "Email non valida"
+
+settings-exchange-rate-source
+=> "Exchange rate source:"
+=> "Fonte del tasso di cambio:";;
+
+settings-export-descriptor
+=> "Descriptor only - plain-text"
+=> "Solo descriptor - testo semplice";;
+
+settings-export-descriptor-description
+=> "Plain-text (not encrypted) descriptor file only, to use with other wallets."
+=> "File descriptor in testo semplice (non criptato), da usare con altri portafogli.";;
+
+settings-export-encrypted-descriptor
+=> "Encrypted descriptor"
+=> "Descriptor criptato";;
+
+settings-export-encrypted-descriptor-description
+=> ".bed file, can be decrypted with one of your signing devices or xpubs."
+=> "File .bed, decifrabile con uno dei tuoi dispositivi di firma o xpub.";;
+
+settings-export-labels => "BIP 329 labels" => "Etichette BIP 329"
+
+settings-export-labels-description
+=> "BIP 329 label export, compatible with other wallets."
+=> "Esportazione etichette BIP 329, compatibile con altri portafogli.";;
+
+settings-export-transactions => "Transactions table" => "Tabella transazioni"
+
+settings-export-transactions-description
+=> ".CSV file of past transactions, for accounting purposes."
+=> "File .CSV delle transazioni passate, per fini contabili.";;
+
+settings-export-wallet => "Export wallet" => "Esporta portafoglio"
+
+settings-export-wallet-description
+=> "File (not encrypted) with wallet info useful to sync labels and data on other devices."
+=> "File (non criptato) con informazioni del portafoglio utile per sincronizzare etichette e dati su altri dispositivi.";;
+
+settings-fiat-price => "Fiat price:" => "Prezzo fiat:"
+
+settings-fiat-price-tooltip
+=> "Fiat price data is provided by third-party services. Availability and accuracy are not guaranteed."
+=> "I dati sui prezzi fiat sono forniti da servizi di terze parti. Disponibilità e accuratezza non sono garantite.";;
+
+settings-fingerprint-aliases => "Fingerprint aliases:" => "Alias fingerprint:"
+
+settings-grant-wallet-access
+=> "Grant access to wallet to another user"
+=> "Concedi accesso al portafoglio a un altro utente";;
+
+settings-import-export-description
+=> "A collection of the export and import functions present in Liana."
+=> "Una raccolta delle funzioni di esportazione e importazione presenti in Liana.";;
+
+settings-import-wallet => "Import wallet" => "Importa portafoglio"
+
+settings-import-wallet-description
+=> "Upload a backup file to update wallet info."
+=> "Carica un file di backup per aggiornare le informazioni del portafoglio.";;
+
+settings-invitation-sent => "Invitation was sent" => "Invito inviato"
+
+settings-language => "Language" => "Lingua"
+
+settings-language-description
+=> "Choose the language used by the application."
+=> "Scegli la lingua usata dall'applicazione.";;
+
+settings-month => "Month:" => "Mese:"
+
+settings-network => "Network:" => "Rete:"
+
+settings-not-running => "Not running" => "Non in esecuzione"
+
+settings-other-formats => "Other formats" => "Altri formati"
+
+settings-rescan-success
+=> "Successfully rescanned the blockchain"
+=> "Nuova scansione della blockchain completata";;
+
+settings-rescanning
+=> "Rescanning...{$progress}%"
+=> "Scansione in corso...{$progress}%";;
+
+settings-running => "Running" => "In esecuzione"
+
+settings-section-about => "About" => "Informazioni"
+
+settings-section-backend => "Backend" => "Backend"
+
+settings-section-general => "General" => "Generale"
+
+settings-section-import-export => "Import/Export" => "Importa/Esporta"
+
+settings-section-node => "Node" => "Nodo"
+
+settings-select-device => "Select device:" => "Seleziona dispositivo:"
+
+settings-socket-address => "Socket address:" => "Indirizzo socket:"
+
+settings-updated => "Updated" => "Aggiornato"
+
+settings-user-email => "User email" => "Email utente"
+
+settings-valid-address
+=> "Please enter a valid address"
+=> "Inserisci un indirizzo valido";;
+
+settings-valid-filesystem-path
+=> "Please enter a valid filesystem path"
+=> "Inserisci un percorso filesystem valido";;
+
+settings-valid-password
+=> "Please enter a valid password"
+=> "Inserisci una password valida";;
+
+settings-valid-user => "Please enter a valid user" => "Inserisci un utente valido"
+
+settings-version => "Version" => "Versione"
+
+settings-wallet-alias => "Wallet alias:" => "Alias portafoglio:"
+
+settings-wallet-descriptor => "Wallet descriptor:" => "Descriptor portafoglio:"
+
+settings-year => "Year:" => "Anno:"
+
+spend-amount-btc => "Amount (BTC)" => "Importo (BTC)"
+
+spend-amount-truncated
+=> "Amount has been truncated to 8 decimal places"
+=> "L'importo è stato troncato a 8 decimali";;
+
+spend-batch-label => "Batch label" => "Etichetta batch"
+
+spend-btc-placeholder => "0.001 (in BTC)" => "0.001 (in BTC)"
+
+spend-coins-selection => "Coins selection" => "Selezione monete"
+
+spend-could-not-convert-btc
+=> "Could not convert to BTC"
+=> "Impossibile convertire in BTC";;
+
+spend-description => "Description" => "Descrizione"
+
+spend-duplicate-addresses
+=> "Two payment addresses are the same"
+=> "Due indirizzi di pagamento sono uguali";;
+
+spend-dust-add-funds
+=> "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s)."
+=> "L'importo minimo è 0.00 000 500 BTC. Aggiungi fondi al portafoglio per spendere le monete.";;
+
+spend-dust-select-more-coins
+=> "Minimum amount is 0.00 000 500 BTC. Select more coins to continue."
+=> "L'importo minimo è 0.00 000 500 BTC. Seleziona più monete per continuare.";;
+
+spend-fee => "Fee:" => "Fee:"
+
+spend-fee-manual => "Manual" => "Manuale"
+
+spend-fee-rate => "Fee ({$feerate} sats/vb):" => "Commissione ({$feerate} sats/vb):"
+
+spend-fee-smart-select => "Smart Select" => "Selezione smart"
+
+spend-fee-smart-select-tooltip
+=> "Pick a preset feerate instead of entering one manually."
+=> "Scegli un tasso di commissione preimpostato invece di inserirne uno manualmente.";;
+
+spend-feerate => "Feerate:" => "Tasso di commissione:"
+
+spend-feerate-example => "e.g. 5 (in sats/vb)" => "es. 5 (in sats/vb)"
+
+spend-feerate-max-warning
+=> "Feerate must be an integer less than or equal to {$max_feerate} sats/vbyte"
+=> "Il tasso di commissione deve essere un intero minore o uguale a {$max_feerate} sats/vbyte";;
+
+spend-feerate-missing-invalid
+=> "The feerate is missing or invalid"
+=> "Il tasso di commissione manca o non è valido";;
+
+spend-fiat-placeholder
+=> "Enter amount in {$currency}"
+=> "Inserisci importo in {$currency}";;
+
+spend-invalid-address
+=> "Invalid address (maybe it is for another network?)"
+=> "Indirizzo non valido (forse è per un'altra rete?)";;
+
+spend-invalid-amount
+=> "Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)"
+=> "Importo non valido. (Gli importi inferiori a 0.000005 BTC non sono validi.)";;
+
+spend-left-to-select => "left to select" => "ancora da selezionare"
+
+spend-max => "MAX" => "MAX"
+
+spend-max-tooltip
+=> "Total amount remaining after paying fee and any other recipients"
+=> "Importo totale rimanente dopo fee ed eventuali altri destinatari";;
+
+spend-payment-description-invalid
+=> "Payment description is missing or invalid"
+=> "La descrizione del pagamento manca o non è valida";;
+
+spend-payment-label => "Payment label" => "Etichetta pagamento"
+
+spend-recipient-address-invalid
+=> "A recipient address is missing or invalid"
+=> "Un indirizzo destinatario manca o non è valido";;
+
+spend-recipient-amount-invalid
+=> "A recipient amount is missing or invalid"
+=> "Un importo destinatario manca o non è valido";;
+
+spend-select-coins-to-cover-amount
+=> "Select coins to cover the amount"
+=> "Seleziona monete per coprire l'importo";;
+
+spend-select-one-coin
+=> "Select at least one coin."
+=> "Seleziona almeno una moneta.";;
+
+spend-select-or-add-funds
+=> "Select or add more funds."
+=> "Seleziona o aggiungi altri fondi.";;
+
+tab-installer => "Installer" => "Installazione"
+
+tab-launcher => "Launcher" => "Avvio"
+
+tab-pending => "Pending" => "In attesa"
+
+time-days-ago
+=> "{ $count ->\n    [one] 1 day ago\n   *[other] {$count} days ago\n}"
+=> "{ $count ->\n    [one] 1 giorno fa\n   *[other] {$count} giorni fa\n}";;
+
+time-hours-ago
+=> "{ $count ->\n    [one] 1 hour ago\n   *[other] {$count} hours ago\n}"
+=> "{ $count ->\n    [one] 1 ora fa\n   *[other] {$count} ore fa\n}";;
+
+time-just-now => "just now" => "adesso"
+
+time-minutes-ago
+=> "{ $count ->\n    [one] 1 minute ago\n   *[other] {$count} minutes ago\n}"
+=> "{ $count ->\n    [one] 1 minuto fa\n   *[other] {$count} minuti fa\n}";;
+
+time-months-ago
+=> "{ $count ->\n    [one] 1 month ago\n   *[other] {$count} months ago\n}"
+=> "{ $count ->\n    [one] 1 mese fa\n   *[other] {$count} mesi fa\n}";;
+
+time-seconds-ago
+=> "{ $count ->\n    [one] 1 second ago\n   *[other] {$count} seconds ago\n}"
+=> "{ $count ->\n    [one] 1 secondo fa\n   *[other] {$count} secondi fa\n}";;
+
+time-weeks-ago
+=> "{ $count ->\n    [one] 1 week ago\n   *[other] {$count} weeks ago\n}"
+=> "{ $count ->\n    [one] 1 settimana fa\n   *[other] {$count} settimane fa\n}";;
+
+transactions-cancel-tooltip
+=> "Best effort attempt at double spending an unconfirmed outgoing transaction"
+=> "Tentativo best-effort di double spend di una transazione in uscita non confermata";;
+
+transactions-date => "Date:" => "Data:"
+
+transactions-incoming => "Incoming transaction" => "Transazione in entrata"
+
+transactions-miner-fee => "Miner fee:{ \" \" }" => "Commissione miner:{ \" \" }"
+
+transactions-outgoing => "Outgoing transaction" => "Transazione in uscita"
+
+transactions-rbf-bump-help
+=> "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction."
+=> "Sostituisce la transazione con una che paga un tasso di commissione più alto per incentivare una conferma più rapida. La transazione sostitutiva può usare nuovi input.";;
+
+transactions-rbf-cancel-help
+=> "Replace the transaction with one paying a higher feerate that sends the coins back to your wallet. There is no guarantee the original transaction won't get mined first. New inputs may be used for the replacement transaction."
+=> "Sostituisce la transazione con una che paga un tasso di commissione più alto e rimanda le monete al tuo portafoglio. Non c'è garanzia che la transazione originale non venga minata per prima. La transazione sostitutiva può usare nuovi input.";;
+
+transactions-rbf-created
+=> "Replacement PSBT created successfully and ready to be signed"
+=> "PSBT sostitutiva creata correttamente e pronta per la firma";;
+
+transactions-rbf-descendants-one
+=> "The following transaction is spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on it:"
+=> "La seguente transazione spende uno o più output della transazione da sostituire e sarà scartata quando la sostituzione verrà trasmessa, insieme a qualsiasi altra transazione che dipende da essa:";;
+
+transactions-rbf-descendants-some
+=> "The following transactions are spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on them:"
+=> "Le seguenti transazioni spendono uno o più output della transazione da sostituire e saranno scartate quando la sostituzione verrà trasmessa, insieme a qualsiasi altra transazione che dipende da esse:";;
+
+transactions-rbf-feerate-warning
+=> "Feerate must be greater than previous value and less than or equal to 1000 sats/vbyte"
+=> "Il tasso di commissione deve essere maggiore del valore precedente e minore o uguale a 1000 sats/vbyte";;
+
+transactions-rbf-invalidates-one
+=> "WARNING: Replacing this transaction will invalidate a later payment."
+=> "ATTENZIONE: sostituire questa transazione invaliderà un pagamento successivo.";;
+
+transactions-rbf-invalidates-some
+=> "WARNING: Replacing this transaction will invalidate some later payments."
+=> "ATTENZIONE: sostituire questa transazione invaliderà alcuni pagamenti successivi.";;
+
+transactions-replacement => "Transaction replacement" => "Sostituzione transazione"
+
+transactions-transaction => "Transaction" => "Transazione"
+
+transactions-txid => "Tx ID" => "Tx ID"
+
+warning-hardware-wallet-error
+=> "Hardware wallet error"
+=> "Errore portafoglio hardware";;

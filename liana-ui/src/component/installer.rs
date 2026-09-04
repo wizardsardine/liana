@@ -5,6 +5,7 @@ use iced::{
 use std::fmt::Display;
 
 use bitcoin::Network;
+use liana_i18n::t;
 
 use crate::{
     component, icon, image,
@@ -216,17 +217,10 @@ fn identity_bar<'a, M: 'static + 'a + Clone>(
 fn network_warning<'a, M: 'a>(network: Network) -> Element<'a, M> {
     row![
         icon::warning_icon(),
-        text::new::caption("THIS IS A "),
-        text::new::b5_bold(match network {
-            Network::Signet => "SIGNET WALLET",
-            Network::Testnet => "TESTNET WALLET",
-            Network::Testnet4 => "TESTNET4 WALLET",
-            Network::Regtest => "REGTEST WALLET",
-            Network::Bitcoin => unreachable!(),
-            _ => "NON-MAINNET WALLET",
-        }),
-        text::new::caption(", COINS HAVE "),
-        text::new::b5_bold("NO VALUE"),
+        text::new::caption(t!("network-this-is-a")),
+        text::new::b5_bold(t!("network-wallet", network = super::network_name(network))),
+        text::new::caption(t!("network-coins-have")),
+        text::new::b5_bold(t!("network-no-value")),
     ]
     .align_y(Alignment::Center)
     .into()

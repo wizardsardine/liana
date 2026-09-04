@@ -37,6 +37,7 @@ use crate::app::{
     error::Error,
     menu::{Menu, MenuWidth},
 };
+use crate::t;
 
 pub fn sidebar<'a>(
     active: &Menu,
@@ -156,14 +157,18 @@ pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
                     .push(if is_previous {
                         Column::new()
                             .push(
-                                button::transparent(None, "< Previous").on_press(Message::Previous),
+                                button::transparent(None, t!("btn-previous-arrow"))
+                                    .on_press(Message::Previous),
                             )
                             .width(Length::Fill)
                     } else {
                         Column::new().width(Length::Fill)
                     })
                     .align_y(iced::Alignment::Center)
-                    .push(button::secondary(Some(cross_icon()), "Close").on_press(Message::Close)),
+                    .push(
+                        button::secondary(Some(cross_icon()), t!("btn-close-tab"))
+                            .on_press(Message::Close),
+                    ),
             )
             .padding(10)
             .style(theme::container::background),

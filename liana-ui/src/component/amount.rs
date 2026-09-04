@@ -5,6 +5,7 @@ use iced::{
     widget::{row, Space},
     Alignment,
 };
+use liana_i18n::t;
 
 use crate::{component::text::*, theme::amount, widget::*};
 
@@ -147,7 +148,7 @@ macro_rules! currency_enum {
             fn from_str(s: &str) -> Result<Self, Self::Err> {
                 match s.to_uppercase().as_str() {
                     $(stringify!($variant) => Ok(Self::$variant),)*
-                    _ => Err("Invalid currency".to_string()),
+                    _ => Err(t!("fiat-invalid-currency")),
                 }
             }
         }
@@ -244,7 +245,7 @@ pub enum AmountError {
 impl std::fmt::Display for AmountError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Negative => write!(f, "Amount must be non-negative"),
+            Self::Negative => write!(f, "{}", t!("fiat-amount-non-negative")),
             Self::ParseError(e) => write!(f, "Parse error: {e}"),
         }
     }

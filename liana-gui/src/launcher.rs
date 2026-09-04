@@ -5,12 +5,13 @@ use iced::{
 };
 
 use liana::miniscript::bitcoin::Network;
+use liana_i18n::{self as i18n, SupportedLocale};
 use liana_ui::{
     component::{
         button::{btn_add_wallet, btn_delete_wallet, btn_remove, btn_select, EntryWidth},
         card, installer as installer_layout,
         list::{self, EntryAccent},
-        notification,
+        notification, pick_list,
         text::{new, short_email},
     },
     icon, image, theme,
@@ -31,6 +32,7 @@ use crate::{
         client::{auth::AuthClient, backend::UserRole, get_service_config, BackendType},
         login::{connect_with_credentials, BackendState},
     },
+    t,
 };
 
 const NETWORKS: [Network; 5] = [
@@ -104,6 +106,14 @@ impl Launcher {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::View(ViewMessage::LanguageEdited(locale)) => {
+                i18n::set_locale(locale);
+                let path = settings::global::GlobalSettings::path(&self.datadir_path);
+                if let Err(e) = settings::global::GlobalSettings::update_locale(&path, locale) {
+                    tracing::error!("Failed to save language: {e}");
+                }
+                Task::none()
+            }
             Message::View(ViewMessage::ImportWallet) => {
                 let datadir_path = self.datadir_path.clone();
                 let network = self.network;
@@ -226,9 +236,9 @@ impl Launcher {
         };
 
         let title = if matches!(self.state, State::Wallets { .. }) {
-            new::d0("Welcome back")
+            new::d0(t!("launcher-welcome-back"))
         } else {
-            new::d0("Welcome")
+            new::d0(t!("launcher-welcome"))
         };
 
         let error = self.error.as_ref().map(|e| card::simple(new::caption(e)));
@@ -258,7 +268,16 @@ impl Launcher {
             State::NoWallet => column![add_wallet_menu().map(Message::View)].into(),
         };
 
-        let body = column![title, error, wallets]
+        let language_selector = row![
+            Space::fill_width(),
+            pick_list::pick_list(
+                &SupportedLocale::ALL[..],
+                Some(i18n::current_locale()),
+                |locale| Message::View(ViewMessage::LanguageEdited(locale)),
+            )
+            .padding(10),
+        ];
+        let body = column![language_selector, title, error, wallets]
             .align_x(Alignment::Center)
             .spacing(30);
 
@@ -312,7 +331,7 @@ fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
     const ICON_SIZE: u32 = 100;
     let create_wallet = column![
         image::create_new_wallet_icon().width(ICON_SIZE),
-        new::caption("Create a new Liana wallet").style(theme::text::secondary),
+        new::caption(t!("launcher-create-new-wallet")).style(theme::text::secondary),
         btn_select(Some(ViewMessage::CreateWallet)),
     ]
     .spacing(20)
@@ -320,7 +339,7 @@ fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
 
     let add_existing_wallet = column![
         image::restore_wallet_icon().width(ICON_SIZE),
-        new::caption("Add an existing Liana wallet").style(theme::text::secondary),
+        new::caption(t!("launcher-add-existing-wallet")).style(theme::text::secondary),
         btn_select(Some(ViewMessage::ImportWallet)),
     ]
     .spacing(20)
@@ -336,10 +355,19 @@ fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
 }
 
 fn entry_wallet(network: Network, settings: &WalletSettings, i: usize) -> Element<'_, ViewMessage> {
-    let title = settings
-        .alias
-        .clone()
-        .unwrap_or(format!("My Liana {network:?} wallet"));
+    let title = settings.alias.clone().unwrap_or_else(|| {
+        t!(
+            "launcher-default-wallet-name",
+            network = match network {
+                Network::Bitcoin => "Bitcoin",
+                Network::Signet => "Signet",
+                Network::Testnet => "Testnet",
+                Network::Testnet4 => "Testnet4",
+                Network::Regtest => "Regtest",
+                _ => "",
+            }
+        )
+    });
 
     let checksum = new::caption(format!("Liana-{}", settings.descriptor_checksum))
         .style(theme::text::secondary);
@@ -413,6 +441,7 @@ pub enum ViewMessage {
     Check,
     Run(usize),
     DeleteWallet(DeleteWalletMessage),
+    LanguageEdited(SupportedLocale),
 }
 
 #[derive(Debug, Clone)]
@@ -511,37 +540,35 @@ impl DeleteWalletModal {
             btn_delete_wallet(self.warning.is_none().then_some(ViewMessage::DeleteWallet(
                 DeleteWalletMessage::Confirm(self.wallet_settings.wallet_id()),
             )));
-        let help_text_1 = format!(
-            "Are you sure you want to {} for the wallet {}",
-            if self.wallet_settings.remote_backend_auth.is_some() {
-                "delete locally the configuration"
-            } else {
-                "delete the configuration and all associated data"
-            },
-            if let Some(alias) = &self.wallet_settings.alias {
-                format!(
-                    "{} (Liana-{})?",
-                    alias, self.wallet_settings.descriptor_checksum
-                )
-            } else {
-                format!("Liana-{}?", &self.wallet_settings.descriptor_checksum)
-            }
-        );
-        let help_text_2 = match self.internal_bitcoind {
-            Some(true) => Some("(The Liana-managed Bitcoin node for this network will not be affected by this action.)"),
-            Some(false) => None,
-            None => Some("(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)"),
-        };
-        let help_text_3 = "WARNING: This cannot be undone.";
-        let title = if let Some(alias) = &self.wallet_settings.alias {
+        let wallet = if let Some(alias) = &self.wallet_settings.alias {
             format!(
-                "Delete configuration for {} (Liana-{})",
-                alias, &self.wallet_settings.descriptor_checksum
+                "{} (Liana-{})",
+                alias, self.wallet_settings.descriptor_checksum
             )
         } else {
-            format!(
-                "Delete configuration for Liana-{}",
-                &self.wallet_settings.descriptor_checksum
+            format!("Liana-{}", &self.wallet_settings.descriptor_checksum)
+        };
+        let help_text_1 = if self.wallet_settings.remote_backend_auth.is_some() {
+            t!("launcher-delete-local-config-confirmation", wallet = wallet)
+        } else {
+            t!("launcher-delete-all-data-confirmation", wallet = wallet)
+        };
+        let help_text_2 = match self.internal_bitcoind {
+            Some(true) => Some(t!("launcher-delete-node-not-affected-this-network")),
+            Some(false) => None,
+            None => Some(t!("launcher-delete-node-not-affected")),
+        };
+        let help_text_3 = t!("launcher-delete-warning-irreversible");
+        let title = if let Some(alias) = &self.wallet_settings.alias {
+            t!(
+                "launcher-delete-title-alias",
+                alias = alias,
+                checksum = &self.wallet_settings.descriptor_checksum
+            )
+        } else {
+            t!(
+                "launcher-delete-title",
+                checksum = &self.wallet_settings.descriptor_checksum
             )
         };
         let title = Container::new(
@@ -555,13 +582,11 @@ impl DeleteWalletModal {
             checkbox(self.delete_liana_connect)
                 .label(match self.user_role {
                     Some(UserRole::Owner) | None => {
-                        "Also permanently delete this wallet from Liana Connect (for all members)."
-                            .to_string()
+                        t!("launcher-delete-connect-all-members")
                     }
-                    Some(UserRole::Member) => format!(
-                        "Also disassociate {} from this Liana Connect wallet.",
-                        a.email
-                    ),
+                    Some(UserRole::Member) => {
+                        t!("launcher-delete-connect-disassociate", email = a.email)
+                    }
                 })
                 .on_toggle_maybe(if !self.deleted {
                     Some(|v| ViewMessage::DeleteWallet(DeleteWalletMessage::DeleteLianaConnect(v)))
@@ -579,7 +604,7 @@ impl DeleteWalletModal {
         } else {
             row![
                 icon::circle_check_icon().style(theme::text::success),
-                new::caption("Wallet successfully deleted").style(theme::text::success),
+                new::caption(t!("launcher-wallet-deleted")).style(theme::text::success),
             ]
             .spacing(10)
         })
@@ -645,9 +670,9 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
         if e == app::config::ConfigError::NotFound {
             return Ok(State::NoWallet);
         } else {
-            return Err(format!(
-                "Failed to read GUI configuration file in the directory: {}",
-                path.path().to_string_lossy()
+            return Err(t!(
+                "launcher-read-gui-config-failed",
+                path = path.path().to_string_lossy()
             ));
         }
     };
@@ -656,31 +681,32 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
     daemon_config_path.push("daemon.toml");
 
     if daemon_config_path.exists() {
-        lianad::config::Config::from_file(Some(daemon_config_path.clone())).map_err(|e| match e {
-        ConfigError::FileNotFound
-        | ConfigError::DatadirNotFound => {
-            format!(
-                "Failed to read daemon configuration file in the directory: {}",
-                daemon_config_path.to_string_lossy()
-            )
-        }
-        ConfigError::ReadingFile(e) => {
-            if e.starts_with("Parsing configuration file: Error parsing descriptor") {
-                "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin. Liana v0.2 and later only support public keys with origins. Please migrate your funds using Liana v0.1.".to_string()
-            } else {
-                format!(
-                    "Failed to read daemon configuration file in the directory: {}",
-                    daemon_config_path.to_string_lossy()
-                )
-            }
-        }
-        ConfigError::UnexpectedDescriptor(_) => {
-            "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin. Liana v0.2 and later only support public keys with origins. Please migrate your funds using Liana v0.1.".to_string()
-        }
-        ConfigError::Unexpected(e) => {
-            format!("Unexpected {e}")
-        }
-    })?;
+        lianad::config::Config::from_file(Some(daemon_config_path.clone())).map_err(
+            |e| match e {
+                ConfigError::FileNotFound | ConfigError::DatadirNotFound => {
+                    t!(
+                        "launcher-read-daemon-config-failed",
+                        path = daemon_config_path.to_string_lossy()
+                    )
+                }
+                ConfigError::ReadingFile(e) => {
+                    if e.starts_with("Parsing configuration file: Error parsing descriptor") {
+                        t!("launcher-config-descriptor-origin-error")
+                    } else {
+                        t!(
+                            "launcher-read-daemon-config-failed",
+                            path = daemon_config_path.to_string_lossy()
+                        )
+                    }
+                }
+                ConfigError::UnexpectedDescriptor(_) => {
+                    t!("launcher-config-descriptor-origin-error")
+                }
+                ConfigError::Unexpected(e) => {
+                    t!("launcher-unexpected-error", error = e)
+                }
+            },
+        )?;
     }
 
     match settings::Settings::from_file(&path) {

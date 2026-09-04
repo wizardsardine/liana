@@ -30,6 +30,7 @@ use iced::{
     widget::{column, container, Space},
     Alignment, Length,
 };
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{self, EntryWidth},
@@ -57,30 +58,33 @@ fn format_last_edit_info_strings(
     current_user_email_lower: &str,
 ) -> Option<(String, String)> {
     let timestamp = last_edited?;
-    let visible = format!("Edited {}", state.app.format_relative_time(timestamp));
+    let visible = t!(
+        "business-edited-relative",
+        editor = "",
+        time = state.app.format_relative_time(timestamp)
+    );
 
-    let editor = last_editor
-        .and_then(|editor_id| {
-            state.backend.get_user(editor_id).map(|user| {
-                if user.email.to_lowercase() == current_user_email_lower {
-                    "You".to_string()
-                } else if user.role == UserRole::WizardSardineAdmin {
-                    let name = admin_name_from_email(&user.email).unwrap_or_default();
-                    format!("Admin{name}")
-                } else {
-                    user.email.clone()
-                }
-            })
+    let editor = last_editor.and_then(|editor_id| {
+        state.backend.get_user(editor_id).map(|user| {
+            if user.email.to_lowercase() == current_user_email_lower {
+                t!("business-common-you")
+            } else if user.role == UserRole::WizardSardineAdmin {
+                let name = admin_name_from_email(&user.email).unwrap_or_default();
+                t!("business-admin-name", name = name)
+            } else {
+                user.email.clone()
+            }
         })
-        .map(|name| format!(" by {name}"))
-        .unwrap_or_default();
+    });
     let absolute = state.app.format_absolute_time(timestamp);
-    let on = if absolute.is_empty() {
-        String::new()
-    } else {
-        format!(" on {absolute}")
+    let hover = match (editor, absolute.is_empty()) {
+        (Some(editor), false) => {
+            t!("business-edited-by-on", editor = editor, date = absolute)
+        }
+        (Some(editor), true) => t!("business-edited-by-user", editor = editor),
+        (None, false) => t!("business-edited-on", date = absolute),
+        (None, true) => t!("business-edited"),
     };
-    let hover = format!("Edited{editor}{on}");
 
     Some((visible, hover))
 }
@@ -223,18 +227,13 @@ pub fn menu_key_entry(
     )
 }
 
-pub(crate) const KEY_KIND_LABEL: [(ws_business::KeyType, &str); 4] = [
-    (ws_business::KeyType::Internal, "Internal"),
-    (ws_business::KeyType::External, "External"),
-    (ws_business::KeyType::Cosigner, "Cosigner"),
-    (ws_business::KeyType::SafetyNet, "Safety Net"),
-];
-
-pub(crate) fn key_kind_label(key_type: &ws_business::KeyType) -> &'static str {
-    KEY_KIND_LABEL
-        .iter()
-        .find_map(|(kind, label)| (kind == key_type).then_some(*label))
-        .expect("every key type must have a label")
+pub(crate) fn key_kind_label(key_type: &ws_business::KeyType) -> String {
+    match key_type {
+        ws_business::KeyType::Internal => t!("pill-key-internal"),
+        ws_business::KeyType::External => t!("pill-key-external"),
+        ws_business::KeyType::Cosigner => t!("pill-key-cosigner"),
+        ws_business::KeyType::SafetyNet => t!("pill-key-safety-net"),
+    }
 }
 
 pub(crate) fn entry_key_kind(key_type: &ws_business::KeyType) -> list::EntryKeyKind {
@@ -251,7 +250,7 @@ pub(crate) const SEARCH_ENTRY_THRESHOLD: usize = 5;
 
 /// Optional centered search bar inside a select list view.
 pub struct SelectSearch<'a> {
-    pub placeholder: &'static str,
+    pub placeholder: String,
     pub value: &'a str,
     pub on_change: fn(String) -> Msg,
 }
@@ -281,7 +280,7 @@ pub fn select_list_view(cfg: SelectListView<'_>) -> Element<'_, Msg> {
             warning: None,
             valid: true,
         };
-        let search_form = form::Form::new_trimmed(search.placeholder, &value, search.on_change)
+        let search_form = form::Form::new_trimmed(&search.placeholder, &value, search.on_change)
             .size(16)
             .padding(10);
         let search_container = Container::new(search_form).align_x(Alignment::Center);
