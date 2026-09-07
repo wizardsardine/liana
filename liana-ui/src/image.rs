@@ -89,27 +89,3 @@ pub fn key_mark_icon() -> Svg<'static> {
     let h = Handle::from_memory(KEY_MARK_ICON.to_vec());
     Svg::new(h)
 }
-
-const INHERITANCE_TEMPLATE_DESC: &[u8] =
-    include_bytes!("../static/images/inheritance_template_description.svg");
-
-pub fn inheritance_template_description() -> Svg<'static> {
-    let h = Handle::from_memory(INHERITANCE_TEMPLATE_DESC.to_vec());
-    Svg::new(h)
-}
-
-const CUSTOM_TEMPLATE_DESC: &[u8] =
-    include_bytes!("../static/images/custom_template_description.svg");
-
-pub fn custom_template_description() -> Svg<'static> {
-    let h = Handle::from_memory(CUSTOM_TEMPLATE_DESC.to_vec());
-    Svg::new(h)
-}
-
-const MULTISIG_SECURITY_TEMPLATE_DESC: &[u8] =
-    include_bytes!("../static/images/multisig_security_template.svg");
-
-pub fn multisig_security_template_description() -> Svg<'static> {
-    let h = Handle::from_memory(MULTISIG_SECURITY_TEMPLATE_DESC.to_vec());
-    Svg::new(h)
-}
