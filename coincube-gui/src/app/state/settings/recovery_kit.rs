@@ -662,8 +662,8 @@ pub fn update(
                     // actually sealed (per-method drift, PR 3). Mirror
                     // `next_fingerprint_to_persist`'s rule: only a seal that
                     // included a descriptor writes the slot — never wipe a stored
-                    // fingerprint on a descriptor-less seal (the seal path always
-                    // seals a descriptor today, so this is normally `Some`).
+                    // fingerprint on a descriptor-less seal (a vaultless Cube seals
+                    // seed-only, so `None` is the normal case until it has a Vault).
                     let persist = if let Some(fp) = descriptor_fingerprint {
                         persist_descriptor_fingerprint(
                             cache,
@@ -1369,10 +1369,20 @@ fn start_phone_seal(
 /// is included iff the recipient's registered tier is Full-Cube. The seed
 /// plaintext stays `Zeroizing` exactly as the password path keeps it.
 ///
+/// The descriptor half is included iff a live Vault exists on this device
+/// (`descriptor_blob.is_some()`) — the same rule as the password path's
+/// `include_halves`. A Cube backs up its Master Seed Phrase the moment it is
+/// created, before it has a Vault, and adds the Wallet Descriptor later by
+/// re-sealing (the card's "Finish backing up" → Rotate); a seed-only set is a
+/// legitimate kit. What is refused is an *empty* set — no Vault **and** a
+/// Vault-only phone key — which `build_owner_self_envelope_set` reports as
+/// `OwnerSelfError::NothingToSeal` with copy that names the way out.
+///
 /// On success returns the SHA-256 fingerprint of the descriptor blob that was
 /// sealed — the same helper the password path uses — so the handler can persist
-/// the keychain drift slot (per-method drift, PR 3). `None` only if the
-/// fingerprint couldn't be computed; the seal always includes a descriptor.
+/// the keychain drift slot (per-method drift, PR 3). `None` when no descriptor
+/// was sealed (vaultless Cube) or the fingerprint couldn't be computed; the
+/// handler treats `None` as "leave the drift slot untouched".
 async fn seal_phone(
     client: CoincubeClient,
     cube_id: u64,
@@ -1383,15 +1393,19 @@ async fn seal_phone(
     let recipient = find_owner_self_recipient(&client, cube_id)
         .await
         .map_err(|e| e.to_string())?;
-    let descriptor_blob = descriptor_blob.ok_or_else(|| {
-        "Create a Vault first — phone recovery needs a Wallet Descriptor to back up.".to_string()
-    })?;
     // Fingerprint the exact descriptor being sealed, before it's serialized into
     // the envelope, so the keychain drift slot reflects what the phone now holds.
-    let descriptor_fingerprint = descriptor_blob_fingerprint(&descriptor_blob);
-    let descriptor_json: Zeroizing<Vec<u8>> = Zeroizing::new(
-        serde_json::to_vec(&descriptor_blob).map_err(|e| format!("serialize descriptor: {}", e))?,
-    );
+    let descriptor_fingerprint = descriptor_blob
+        .as_ref()
+        .and_then(descriptor_blob_fingerprint);
+    let descriptor_json: Option<Zeroizing<Vec<u8>>> = descriptor_blob
+        .as_ref()
+        .map(|blob| {
+            serde_json::to_vec(blob)
+                .map(Zeroizing::new)
+                .map_err(|e| format!("serialize descriptor: {}", e))
+        })
+        .transpose()?;
     let include_seed = recipient.tier.map(|t| t.includes_seed()).unwrap_or(false);
     let seed_json = if include_seed {
         let words = mnemonic
@@ -1410,9 +1424,15 @@ async fn seal_phone(
     } else {
         None
     };
-    seal_and_upload_owner_self(&client, cube_id, &recipient, &descriptor_json, seed_json)
-        .await
-        .map_err(|e| e.to_string())?;
+    seal_and_upload_owner_self(
+        &client,
+        cube_id,
+        &recipient,
+        descriptor_json.as_deref().map(Vec::as_slice),
+        seed_json,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(descriptor_fingerprint)
 }
 

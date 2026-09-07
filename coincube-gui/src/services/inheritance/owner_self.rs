@@ -29,7 +29,7 @@ use std::str::FromStr;
 use coincube_core::miniscript::bitcoin::bip32::Xpub;
 use zeroize::Zeroizing;
 
-use super::escrow::{build_escrow_set, EscrowError, KeyholderXpub};
+use super::escrow::{build_escrow_set_parts, EscrowError, KeyholderXpub};
 use crate::services::coincube::{
     CoincubeClient, CoincubeError, InheritanceEnvelopeWire, RecoveryKitRecipient,
 };
@@ -49,6 +49,10 @@ pub enum OwnerSelfError {
     /// A `seed_json`/tier mismatch: the recipient's tier wants the seed but the
     /// caller didn't supply it (or vice-versa).
     TierMismatch,
+    /// There is nothing to seal: the Cube has no Vault (so no descriptor) and
+    /// the recipient's tier is Vault-only (so no seed either). The owner needs
+    /// a Vault, or a Full-Cube phone key, before phone backup can hold anything.
+    NothingToSeal,
     /// Building the envelope set failed (a seal error).
     Escrow(EscrowError),
     /// A Connect call failed (register / read recipients / upload).
@@ -74,6 +78,12 @@ impl std::fmt::Display for OwnerSelfError {
             Self::TierMismatch => write!(
                 f,
                 "The recovery material doesn't match what your phone key is set up to protect."
+            ),
+            Self::NothingToSeal => write!(
+                f,
+                "Nothing to back up to your phone yet: this Cube has no Vault, and your phone \
+                 key is set up for Vault-only recovery. Create a Vault, or set up Full-Cube \
+                 recovery in your Keychain app, then try again."
             ),
             Self::Escrow(e) => write!(f, "{}", e),
             Self::Connect(e) => write!(f, "{}", e),
@@ -117,11 +127,19 @@ pub async fn find_owner_self_recipient(
 /// Build the owner-self envelope set by reusing the heir escrow builder with a
 /// **single keyholder** — the owner's own key. `seed_json` must be `Some` iff
 /// the Full-Cube tier (the recipient's `tier`, when known, is the authority).
-/// Returns one descriptor envelope (+ one seed envelope for Full-Cube).
+/// Returns one descriptor envelope (when `descriptor_json` is `Some`) plus one
+/// seed envelope (for Full-Cube).
+///
+/// `descriptor_json` is optional because a Cube backs up its Master Seed Phrase
+/// the moment it is created — before it has a Vault — and adds the Wallet
+/// Descriptor later by re-sealing (the card's "Finish backing up" → Rotate).
+/// A seed-only set is a legitimate kit; an *empty* set is refused with
+/// [`OwnerSelfError::NothingToSeal`] so a Vault-only phone key on a vaultless
+/// Cube can never upload nothing and report "backed up".
 pub fn build_owner_self_envelope_set(
     recipient: &RecoveryKitRecipient,
     cube_id: u64,
-    descriptor_json: &[u8],
+    descriptor_json: Option<&[u8]>,
     seed_json: Option<&[u8]>,
 ) -> Result<Vec<InheritanceEnvelopeWire>, OwnerSelfError> {
     // Defense in depth: only ever seal the owner's recovery material — which
@@ -140,6 +158,12 @@ pub fn build_owner_self_envelope_set(
             return Err(OwnerSelfError::TierMismatch);
         }
     }
+    // Checked here (not only in `build_escrow_set_parts`) so the user-facing
+    // message can name the actual situation — no Vault + Vault-only key —
+    // rather than the generic "nothing supplied".
+    if descriptor_json.is_none() && seed_json.is_none() {
+        return Err(OwnerSelfError::NothingToSeal);
+    }
     let key = recipient
         .key
         .as_ref()
@@ -150,7 +174,8 @@ pub fn build_owner_self_envelope_set(
         xpub,
         account_derivation: key.derivation_path.clone(),
     }];
-    build_escrow_set(&khs, cube_id, descriptor_json, seed_json).map_err(OwnerSelfError::Escrow)
+    build_escrow_set_parts(&khs, cube_id, descriptor_json, seed_json)
+        .map_err(OwnerSelfError::Escrow)
 }
 
 /// Seal the owner's recovery material to their `owner-self` key and upload it
@@ -163,7 +188,7 @@ pub async fn seal_and_upload_owner_self(
     client: &CoincubeClient,
     cube_id: u64,
     recipient: &RecoveryKitRecipient,
-    descriptor_json: &[u8],
+    descriptor_json: Option<&[u8]>,
     seed_json: Option<Zeroizing<Vec<u8>>>,
 ) -> Result<(), OwnerSelfError> {
     let set = build_owner_self_envelope_set(
@@ -254,7 +279,7 @@ mod tests {
             let mut r = recipient(&key, None);
             r.key.as_mut().expect("recipient key").derivation_path = bad.to_string();
 
-            let err = build_owner_self_envelope_set(&r, CUBE, b"wsh(...)#ck", None)
+            let err = build_owner_self_envelope_set(&r, CUBE, Some(&b"wsh(...)#ck"[..]), None)
                 .expect_err("a malformed derivation path must never be sealed");
             assert!(
                 matches!(
@@ -270,7 +295,9 @@ mod tests {
         // The registered form still seals — the gate refuses the malformed
         // path, not the flow.
         let good = recipient(&key, None);
-        assert!(build_owner_self_envelope_set(&good, CUBE, b"wsh(...)#ck", None).is_ok());
+        assert!(
+            build_owner_self_envelope_set(&good, CUBE, Some(&b"wsh(...)#ck"[..]), None).is_ok()
+        );
     }
 
     /// Detect-then-seal (PR 1 "detect" + PR 2): the Keychain app has already
@@ -326,16 +353,26 @@ mod tests {
             br#"{"version":1,"cube":{},"mnemonic":{"phrase":"abandon about","language":"en"}}"#
                 .to_vec(),
         );
-        let set =
-            build_owner_self_envelope_set(&recipient, CUBE, b"wsh(desc)#ck", Some(seed.as_slice()))
-                .unwrap();
+        let set = build_owner_self_envelope_set(
+            &recipient,
+            CUBE,
+            Some(&b"wsh(desc)#ck"[..]),
+            Some(seed.as_slice()),
+        )
+        .unwrap();
         assert!(
             set.iter().any(|e| e.artifact_kind == "seed"),
             "full-cube detect-then-seal must include the seed envelope"
         );
-        seal_and_upload_owner_self(&client, CUBE, &recipient, b"wsh(desc)#ck", Some(seed))
-            .await
-            .expect("seal+upload should succeed");
+        seal_and_upload_owner_self(
+            &client,
+            CUBE,
+            &recipient,
+            Some(&b"wsh(desc)#ck"[..]),
+            Some(seed),
+        )
+        .await
+        .expect("seal+upload should succeed");
         list.assert();
         put.assert();
     }
@@ -346,7 +383,7 @@ mod tests {
         let r = recipient(&key, Some(OwnerRecoveryTier::VaultOnly));
         let descriptor = b"wsh(or_d(multi(2,A,B),and_v(...)))#cksum";
 
-        let set = build_owner_self_envelope_set(&r, CUBE, descriptor, None).unwrap();
+        let set = build_owner_self_envelope_set(&r, CUBE, Some(descriptor), None).unwrap();
         assert_eq!(set.len(), 1);
         assert_eq!(set[0].artifact_kind, "descriptor");
         assert_eq!(set[0].keyholder_key_id, Some(77));
@@ -360,10 +397,47 @@ mod tests {
         let descriptor = b"wsh(...)#ck";
         let seed = br#"{"version":1,"mnemonic":{"phrase":"abandon ... about","language":"en"}}"#;
 
-        let set = build_owner_self_envelope_set(&r, CUBE, descriptor, Some(seed)).unwrap();
+        let set = build_owner_self_envelope_set(&r, CUBE, Some(descriptor), Some(seed)).unwrap();
         assert_eq!(set.len(), 2);
         let seed_wire = set.iter().find(|e| e.artifact_kind == "seed").unwrap();
         assert_eq!(open(&key, seed_wire).as_slice(), seed.as_slice());
+    }
+
+    /// The vaultless-Cube case: a Cube backs up its Master Seed Phrase at
+    /// creation, before any Vault exists, so the phone seal must accept a
+    /// seed with no descriptor. The set is a single seed envelope that the
+    /// owner's Keychain can open; the descriptor is added later by re-sealing.
+    #[test]
+    fn full_cube_without_vault_builds_seed_only_set_that_round_trips() {
+        let key = owner_key(b"owner-self-seed-only-seed-vector-0000000000");
+        let r = recipient(&key, Some(OwnerRecoveryTier::FullCube));
+        let seed = br#"{"version":1,"mnemonic":{"phrase":"abandon ... about","language":"en"}}"#;
+
+        let set = build_owner_self_envelope_set(&r, CUBE, None, Some(seed)).unwrap();
+        assert_eq!(set.len(), 1, "seed-only seals exactly one envelope");
+        assert_eq!(set[0].artifact_kind, "seed");
+        assert_eq!(set[0].keyholder_key_id, Some(77));
+        assert_eq!(open(&key, &set[0]).as_slice(), seed.as_slice());
+    }
+
+    /// No Vault *and* a Vault-only phone key leaves nothing to seal. Refuse
+    /// with the specific variant (not the generic escrow error) so the wizard
+    /// can tell the owner what to do — an empty upload would otherwise read as
+    /// "backed up" while restoring nothing.
+    #[test]
+    fn vault_only_without_vault_has_nothing_to_seal() {
+        let key = owner_key(b"owner-self-nothing-seed-vector-000000000000");
+        let r = recipient(&key, Some(OwnerRecoveryTier::VaultOnly));
+        assert!(matches!(
+            build_owner_self_envelope_set(&r, CUBE, None, None),
+            Err(OwnerSelfError::NothingToSeal)
+        ));
+        // Unknown tier (older API) with nothing supplied is the same refusal.
+        let r_unknown = recipient(&key, None);
+        assert!(matches!(
+            build_owner_self_envelope_set(&r_unknown, CUBE, None, None),
+            Err(OwnerSelfError::NothingToSeal)
+        ));
     }
 
     #[test]
@@ -372,13 +446,13 @@ mod tests {
         // Recipient says vault-only but caller supplied a seed → reject.
         let r = recipient(&key, Some(OwnerRecoveryTier::VaultOnly));
         assert!(matches!(
-            build_owner_self_envelope_set(&r, CUBE, b"d", Some(b"seed")),
+            build_owner_self_envelope_set(&r, CUBE, Some(&b"d"[..]), Some(&b"seed"[..])),
             Err(OwnerSelfError::TierMismatch)
         ));
         // Recipient says full-cube but caller omitted the seed → reject.
         let r2 = recipient(&key, Some(OwnerRecoveryTier::FullCube));
         assert!(matches!(
-            build_owner_self_envelope_set(&r2, CUBE, b"d", None),
+            build_owner_self_envelope_set(&r2, CUBE, Some(&b"d"[..]), None),
             Err(OwnerSelfError::TierMismatch)
         ));
     }
@@ -391,7 +465,7 @@ mod tests {
         );
         r.key = None;
         assert!(matches!(
-            build_owner_self_envelope_set(&r, CUBE, b"d", None),
+            build_owner_self_envelope_set(&r, CUBE, Some(&b"d"[..]), None),
             Err(OwnerSelfError::RecipientMissingKey)
         ));
     }
@@ -406,7 +480,7 @@ mod tests {
         let mut r = recipient(&key, Some(OwnerRecoveryTier::VaultOnly));
         r.role = "heir".to_string();
         assert!(matches!(
-            build_owner_self_envelope_set(&r, CUBE, b"d", None),
+            build_owner_self_envelope_set(&r, CUBE, Some(&b"d"[..]), None),
             Err(OwnerSelfError::NoRecipient)
         ));
     }
@@ -430,7 +504,7 @@ mod tests {
         });
 
         let client = CoincubeClient::for_test(server.base_url());
-        seal_and_upload_owner_self(&client, CUBE, &r, b"wsh(desc)#ck", None)
+        seal_and_upload_owner_self(&client, CUBE, &r, Some(&b"wsh(desc)#ck"[..]), None)
             .await
             .expect("seal+upload should succeed");
         mock.assert();
