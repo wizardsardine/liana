@@ -9,7 +9,11 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    lipo.url = "github:edouardparis/lipo-flake";
+    lipo = {
+      url = "github:edouardparis/lipo-flake";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+    };
   };
 
   outputs = { self, nixpkgs, flake-utils, crane, fenix, lipo, ... }:
