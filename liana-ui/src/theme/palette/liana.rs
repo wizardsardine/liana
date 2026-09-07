@@ -1,3 +1,4 @@
+use iced::widget::canvas::LineDash;
 use iced::Color;
 
 use crate::color::TRANSPARENT;
@@ -20,6 +21,13 @@ color!(BTN_SECONDARY_PRESSED_BGD, 0x1A432B);
 color!(BTN_SECONDARY_TEXT, 0x21C55E);
 color!(BTN_SECONDARY_HOVER_TEXT, 0x49DE80);
 color!(BTN_SECONDARY_PRESSED_TEXT, 0x86EFAC);
+
+// The timeline diagram's tints: one per key kind, and one per rail state.
+color!(TIMELINE_RECOVERY_FILL, 0x2E2410);
+color!(TIMELINE_RECOVERY_RIM, 0x4D3D14);
+color!(TIMELINE_NEUTRAL_FILL, 0x2C2C2C);
+color!(TIMELINE_LOCKED_INK, 0xB4B4B4);
+color!(TIMELINE_RAIL_LOCKED, 0x555555);
 
 color!(BTN_TERTIARY_BGD, 0x3A3A3E);
 color!(BTN_TERTIARY_HOVER_BGD, 0x48484E);
@@ -837,6 +845,45 @@ impl Palette {
             spinner: Spinner {
                 track: color::GREY_5,
                 arc: color::GREEN,
+            },
+            timeline: Timeline {
+                primary: TimelineTone {
+                    ink: color::GREEN,
+                    fill: color::FINGERPRINT_BACKGROUND,
+                    rim: color::FINGERPRINT_BORDER,
+                },
+                recovery: TimelineTone {
+                    ink: color::ORANGE,
+                    fill: TIMELINE_RECOVERY_FILL,
+                    rim: TIMELINE_RECOVERY_RIM,
+                },
+                inheritance: TimelineTone {
+                    ink: color::GREY_1,
+                    fill: TIMELINE_NEUTRAL_FILL,
+                    rim: color::GREY_7,
+                },
+                spendable: TimelineTone {
+                    ink: color::GREEN,
+                    fill: color::FINGERPRINT_BACKGROUND,
+                    rim: color::FINGERPRINT_BORDER,
+                },
+                locked: TimelineTone {
+                    ink: TIMELINE_LOCKED_INK,
+                    fill: TIMELINE_NEUTRAL_FILL,
+                    rim: color::GREY_7,
+                },
+                rail_spend: TimelineRail {
+                    color: color::GREEN,
+                    dash: None,
+                },
+                rail_locked: TimelineRail {
+                    color: TIMELINE_RAIL_LOCKED,
+                    dash: Some(LineDash {
+                        segments: &[3.0, 6.0],
+                        offset: 0,
+                    }),
+                },
+                badge_ink: color::LIGHT_BLACK,
             },
         }
     }

@@ -67,6 +67,7 @@ Use these; do not build equivalents.
   `FormSize`.
 - **amount**: `amount(..)`, `amount_with_font(..)`, `amount_with_fiat(..)`.
 - **tab**: `tab_header(items, active, on_select)`; `Dot`.
+- **timeline**: `spending_timeline(Template::..)`, the installer's wallet-template diagram.
 - **widget traits** (`widget/mod.rs`): `RowExt` / `ColumnExt::push_maybe` (dynamic building only), `SpaceExt`.
 
 ## Installer Layout

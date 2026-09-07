@@ -4,7 +4,7 @@ use iced::Shadow;
 pub mod liana;
 pub mod liana_business;
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone)]
 pub struct Palette {
     pub general: General,
     pub text: Text,
@@ -28,6 +28,7 @@ pub struct Palette {
     pub togglers: Togglers,
     pub menus: Menus,
     pub spinner: Spinner,
+    pub timeline: Timeline,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -299,6 +300,37 @@ pub struct ProgressBars {
     pub background: iced::Color,
     pub bar: iced::Color,
     pub border: Option<iced::Color>,
+}
+
+/// Tints of the installer's spending timeline.
+#[derive(Debug, Copy, Clone)]
+pub struct Timeline {
+    pub primary: TimelineTone,
+    pub recovery: TimelineTone,
+    pub inheritance: TimelineTone,
+    pub spendable: TimelineTone,
+    pub locked: TimelineTone,
+    /// The rail and its markers while a policy can spend, and while it cannot.
+    pub rail_spend: TimelineRail,
+    pub rail_locked: TimelineRail,
+    /// Ink on a key's coloured number badge.
+    pub badge_ink: iced::Color,
+}
+
+/// How a rail is drawn: its colour and whether it is a solid or a broken line.
+#[derive(Debug, Copy, Clone)]
+pub struct TimelineRail {
+    pub color: iced::Color,
+    /// `None` draws a solid line.
+    pub dash: Option<iced::widget::canvas::LineDash<'static>>,
+}
+
+/// A tinted surface, its rim, and the ink drawn on it.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct TimelineTone {
+    pub ink: iced::Color,
+    pub fill: iced::Color,
+    pub rim: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
