@@ -26,6 +26,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
+use coincube_gui::dir::NetworkDirectory;
 use coincube_gui::phone_signer::{
     identity::{pin_hex8, DesktopIdentity},
     pairing_store::PairedPhone,
@@ -34,9 +35,34 @@ use coincube_gui::phone_signer::{
     transport::PairedTransport,
     PhoneSigner,
 };
+use coincube_gui::services::connect::crypto::{seal_to_device, DeviceTransportKey};
+use coincube_gui::services::connect::grpc::connect_v1 as cv1;
 
 /// Self-signed Ed25519 cert + key, returned as the rustls-pki-types
 /// `Der` newtypes the runtime expects.
+/// A real ECIES transport keypair in a throwaway directory.
+///
+/// The LAN rail is ECIES_V1 now: the desktop seals the PSBT and descriptor to
+/// the phone's key and the phone seals the signature back to the desktop's, so
+/// both sides of these loopback tests need real keys rather than placeholders.
+fn fresh_transport_key(tag: &str) -> DeviceTransportKey {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "coincube-loopback-{}-{}-{}",
+        tag,
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&path).expect("temp transport key dir");
+    DeviceTransportKey::load_or_create(&NetworkDirectory::new(path)).expect("mint transport key")
+}
+
+/// A descriptor for the signer to seal. These tests assert on transport
+/// behaviour, not descriptor content, but it must be real bytes.
+const TEST_DESCRIPTOR: &str = "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn";
+
 fn mint_ed25519_cert(common_name: &str) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
     let key_pair = KeyPair::generate_for(&PKCS_ED25519).expect("ed25519 keygen");
     let mut params = CertificateParams::new(vec!["test.local".to_string()]).expect("params");
@@ -93,6 +119,7 @@ async fn fake_phone(
     key: PrivateKeyDer<'static>,
     desktop_cert_pin: tls::CertFingerprint,
     response: FakeResponse,
+    phone_transport: DeviceTransportKey,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let cfg = ServerConfig::builder_with_provider(provider)
@@ -111,24 +138,60 @@ async fn fake_phone(
     let mut payload = vec![0u8; len];
     tls.read_exact(&mut payload).await?;
     let envelope = LocalEnvelope::decode(payload.as_slice())?;
-    let (session_id, psbt_bytes) = match envelope.payload {
+    let (session_id, request_id, psbt_bytes, creator_pub) = match envelope.payload {
         Some(local_v1::local_envelope::Payload::PresentSession(p)) => {
             let s = p.session.expect("session present");
-            (s.session_id, s.psbt)
+            assert_eq!(
+                s.payload_scheme,
+                cv1::PayloadScheme::EciesV1 as i32,
+                "LAN sessions must be ECIES_V1",
+            );
+            assert!(s.psbt.is_empty(), "ECIES_V1 carries no plaintext PSBT");
+            assert_eq!(
+                s.descriptor_envelopes.len(),
+                1,
+                "the descriptor must be sealed to this phone",
+            );
+            let pe = s.psbt_envelopes.first().expect("psbt envelope").clone();
+            let psbt = phone_transport
+                .open(
+                    &pe.ephemeral_pubkey,
+                    &pe.nonce,
+                    &pe.ciphertext,
+                    &s.request_id,
+                )
+                .expect("open sealed PSBT");
+            (
+                s.session_id,
+                s.request_id,
+                psbt.to_vec(),
+                s.creator_transport_pubkey,
+            )
         }
         other => panic!("expected PresentSession, got {:?}", other),
     };
 
     let reply = match response {
-        FakeResponse::EchoPartial => Some(LocalEnvelope {
-            payload: Some(local_v1::local_envelope::Payload::Partial(
-                local_v1::PartialSignature {
-                    session_id,
-                    signed_psbt: psbt_bytes,
-                    signed_key_ids: Vec::new(),
-                },
-            )),
-        }),
+        FakeResponse::EchoPartial => {
+            let sealed = seal_to_device(&creator_pub, &request_id, &psbt_bytes)
+                .expect("seal the signature back to the desktop");
+            Some(LocalEnvelope {
+                payload: Some(local_v1::local_envelope::Payload::Partial(
+                    local_v1::PartialSignature {
+                        session_id,
+                        // Empty under ECIES_V1.
+                        signed_psbt: Vec::new(),
+                        signed_key_ids: Vec::new(),
+                        signature_envelope: Some(cv1::PayloadEnvelope {
+                            device_id: String::new(),
+                            ephemeral_pubkey: sealed.ephemeral_pubkey,
+                            nonce: sealed.nonce,
+                            ciphertext: sealed.ciphertext,
+                        }),
+                    },
+                )),
+            })
+        }
         FakeResponse::Error { code, message } => Some(LocalEnvelope {
             payload: Some(local_v1::local_envelope::Payload::Error(
                 local_v1::ErrorEnvelope {
@@ -199,6 +262,8 @@ async fn sign_tx_round_trips_through_fake_phone() {
         .await
         .expect("bind fake phone");
     let phone_addr = listener.local_addr().expect("local_addr");
+    let phone_transport = fresh_transport_key("phone");
+    let phone_pubkey = phone_transport.public_key().to_vec();
     let phone_handle = tokio::spawn(async move {
         fake_phone(
             listener,
@@ -206,6 +271,7 @@ async fn sign_tx_round_trips_through_fake_phone() {
             phone_key,
             desktop_pin,
             FakeResponse::EchoPartial,
+            phone_transport,
         )
         .await
         .expect("fake phone");
@@ -221,9 +287,17 @@ async fn sign_tx_round_trips_through_fake_phone() {
         paired_at_unix: 0,
         wallet_fingerprints: vec![Fingerprint::default()],
         vault_fingerprint: Fingerprint::default(),
+        transport_pubkey: phone_pubkey,
         fallback_addr: None,
     };
-    let signer = PhoneSigner::new(transport, Fingerprint::default(), None, paired);
+    let signer = PhoneSigner::new(
+        transport,
+        Fingerprint::default(),
+        None,
+        paired,
+        TEST_DESCRIPTOR.to_string(),
+        Some(Arc::new(fresh_transport_key("desktop"))),
+    );
     let mut psbt = empty_psbt();
     let original = psbt.serialize();
     async_hwi::HWI::sign_tx(&signer, &mut psbt)
@@ -266,10 +340,19 @@ async fn signer_against_response(
         .await
         .expect("bind fake phone");
     let phone_addr = listener.local_addr().expect("local_addr");
+    let phone_transport = fresh_transport_key("phone");
+    let phone_pubkey = phone_transport.public_key().to_vec();
     let handle = tokio::spawn(async move {
-        fake_phone(listener, phone_cert, phone_key, desktop_pin, response)
-            .await
-            .expect("fake phone");
+        fake_phone(
+            listener,
+            phone_cert,
+            phone_key,
+            desktop_pin,
+            response,
+            phone_transport,
+        )
+        .await
+        .expect("fake phone");
     });
 
     let transport = PairedTransport::connect(phone_addr, &desktop, phone_pin)
@@ -281,9 +364,17 @@ async fn signer_against_response(
         paired_at_unix: 0,
         wallet_fingerprints: vec![Fingerprint::default()],
         vault_fingerprint: Fingerprint::default(),
+        transport_pubkey: phone_pubkey,
         fallback_addr: None,
     };
-    let signer = PhoneSigner::new(transport, Fingerprint::default(), None, paired);
+    let signer = PhoneSigner::new(
+        transport,
+        Fingerprint::default(),
+        None,
+        paired,
+        TEST_DESCRIPTOR.to_string(),
+        Some(Arc::new(fresh_transport_key("desktop"))),
+    );
     (signer, handle)
 }
 

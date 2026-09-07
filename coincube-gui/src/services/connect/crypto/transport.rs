@@ -193,6 +193,25 @@ pub struct SealedPayload {
     pub ciphertext: Vec<u8>,
 }
 
+/// Whether `bytes` is a key [`seal_to_device`] can actually seal to: exactly
+/// [`PUBKEY_LEN`] bytes *and* a real point on the curve.
+///
+/// Both halves matter, and the length half is the easy one to miss.
+/// `PublicKey::from_slice` also accepts a **65-byte uncompressed** point, which
+/// parses cleanly and then fails the length gate inside [`seal_to_device`]. A
+/// validator that calls only `from_slice` therefore admits keys it can never
+/// seal to — and at an enrolment or pairing gate that means persisting a peer
+/// which fails every subsequent operation, on a different screen, with a
+/// generic crypto error and no hint that re-enrolment is the fix.
+///
+/// Use this at every point where key material arrives from a peer, a server or
+/// the user. Deliberately *not* `Result`: callers want their own domain error
+/// (`PairingError::TransportKeyMissing`, a target screened out of a session),
+/// not an `EciesError` from a context where nothing is being sealed yet.
+pub fn is_sealable_transport_pubkey(bytes: &[u8]) -> bool {
+    bytes.len() == PUBKEY_LEN && PublicKey::from_slice(bytes).is_ok()
+}
+
 /// Seals `plaintext` to a device's registered transport public key.
 ///
 /// `recipient_pub` is the 33-byte compressed key from
@@ -514,5 +533,61 @@ mod tests {
         let rendered = format!("{:?}", device);
         assert!(rendered.contains("<redacted>"));
         assert!(!rendered.contains(&hex::encode(*device.secret)));
+    }
+
+    /// The sealable predicate must agree with [`seal_to_device`] exactly:
+    /// everything it accepts seals, everything it rejects fails.
+    ///
+    /// The uncompressed encoding is the case that motivated it. The SAME key
+    /// serialises to 33 bytes compressed and 65 uncompressed; both parse
+    /// through `PublicKey::from_slice`, but only the compressed form clears the
+    /// length gate in `seal_to_device`. A `from_slice`-only validator would
+    /// admit the 65-byte form at a pairing or enrolment gate, persist it, and
+    /// fail every later seal.
+    #[test]
+    fn sealable_predicate_agrees_with_seal_to_device() {
+        let secp = Secp256k1::new();
+        let sk = random_secret_key();
+        let pk = PublicKey::from_secret_key(&secp, &sk);
+
+        let compressed = pk.serialize().to_vec();
+        let uncompressed = pk.serialize_uncompressed().to_vec();
+        assert_eq!(compressed.len(), PUBKEY_LEN);
+        assert_eq!(uncompressed.len(), 65);
+
+        // The precondition that makes the bug possible: the 65-byte form is a
+        // perfectly valid point as far as `from_slice` is concerned.
+        assert!(
+            PublicKey::from_slice(&uncompressed).is_ok(),
+            "precondition: the uncompressed encoding parses",
+        );
+
+        assert!(is_sealable_transport_pubkey(&compressed));
+        assert!(
+            !is_sealable_transport_pubkey(&uncompressed),
+            "an uncompressed point parses but can never be sealed to",
+        );
+
+        // Predicate predicts the real outcome in both directions.
+        assert!(seal_to_device(&compressed, REQUEST_ID, PSBT).is_ok());
+        assert!(seal_to_device(&uncompressed, REQUEST_ID, PSBT).is_err());
+
+        for bad in [
+            Vec::new(),     // absent
+            vec![0x02; 32], // one short
+            vec![0x02; 34], // one long
+            vec![0xff; 33], // right length, not a point
+        ] {
+            assert!(
+                !is_sealable_transport_pubkey(&bad),
+                "must reject a {}-byte key",
+                bad.len(),
+            );
+            assert!(
+                seal_to_device(&bad, REQUEST_ID, PSBT).is_err(),
+                "seal_to_device must also reject a {}-byte key",
+                bad.len(),
+            );
+        }
     }
 }

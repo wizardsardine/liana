@@ -296,6 +296,26 @@ async fn try_pair_once(
         });
     }
 
+    // The phone's ECIES transport key. Validated here rather than at first
+    // sign so a phone we could never seal to fails pairing loudly, instead of
+    // pairing cleanly and then failing every signing attempt — and, more to
+    // the point, instead of leaving a plaintext LAN path as the only way it
+    // could ever sign.
+    //
+    // The gate must match what `seal_to_device` will accept, not merely what
+    // parses: `PublicKey::from_slice` also admits a 65-byte UNCOMPRESSED point,
+    // which would pair cleanly here and then fail the 33-byte length check at
+    // every sign. `is_sealable_transport_pubkey` checks length *and* curve.
+    let transport_pubkey = complete.transport_pubkey.clone();
+    if !crate::services::connect::crypto::is_sealable_transport_pubkey(&transport_pubkey) {
+        tracing::warn!(
+            target: "phone_signer::pairing",
+            len = transport_pubkey.len(),
+            "phone reported no usable ECIES transport key — refusing to pair",
+        );
+        return Err(PairingError::TransportKeyMissing);
+    }
+
     // Best-effort ack so the phone can render "pairing complete".
     let ack = LocalEnvelope {
         payload: Some(local_v1::local_envelope::Payload::Pong(
@@ -328,6 +348,8 @@ async fn try_pair_once(
         // actually paired with (not just any vault that shares a
         // signer key).
         vault_fingerprint: expected_vault_id,
+        // Validated just above; `sign_tx` seals every LAN session to this.
+        transport_pubkey,
         fallback_addr: None,
     };
 

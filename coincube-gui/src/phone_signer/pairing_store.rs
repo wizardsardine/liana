@@ -83,6 +83,28 @@ pub struct PairedPhone {
     #[serde(default)]
     pub vault_fingerprint: Fingerprint,
 
+    /// The phone's ECIES transport public key (33-byte compressed
+    /// secp256k1), reported in `PairingComplete.transport_pubkey` and
+    /// validated at pairing.
+    ///
+    /// This is what makes the LAN rail ECIES_V1 like every other rail:
+    /// [`crate::phone_signer::PhoneSigner::sign_tx`] seals the PSBT and the
+    /// full descriptor to this key, so a paired phone gets the same sealed
+    /// protos — and runs the same fingerprint + xpub-membership checks — as
+    /// a Connect-mediated one. There is deliberately no `descriptor_id`-only
+    /// path for LAN.
+    ///
+    /// Capturing it once at pairing is sound: a phone that reinstalls mints a
+    /// fresh TLS identity too, so it fails [`Self::cert_pin`] and must re-pair
+    /// before it could ever present a stale transport key.
+    ///
+    /// `#[serde(default)]` gives rows written before this field an empty vec.
+    /// That is *not* treated as "seal nothing" — `sign_tx` refuses to build a
+    /// session at all, telling the user to re-pair, because the alternative is
+    /// exactly the plaintext fallback this field exists to remove.
+    #[serde(default)]
+    pub transport_pubkey: Vec<u8>,
+
     /// Optional manually-entered fallback target. Phase 3 surfaces a
     /// "Connect by IP" field for networks where mDNS is blocked.
     /// `host:port` form; `None` means rely on mDNS.
@@ -212,6 +234,7 @@ mod tests {
             paired_at_unix: 1_700_000_000 + seed as u64,
             wallet_fingerprints: vec![Fingerprint::from([seed, seed, seed, seed])],
             vault_fingerprint: Fingerprint::from([0xaa, 0xbb, seed, seed]),
+            transport_pubkey: Vec::new(),
             fallback_addr: if seed.is_multiple_of(2) {
                 Some(format!("10.0.0.{}:8443", seed))
             } else {
@@ -296,6 +319,7 @@ mod tests {
             paired_at_unix: 1_700_000_000,
             wallet_fingerprints: Vec::new(),
             vault_fingerprint: Fingerprint::from([0xaa, 0xaa, 0xaa, 0xaa]),
+            transport_pubkey: Vec::new(),
             fallback_addr: Some("10.0.0.5:8443".into()),
         };
         save(
@@ -312,6 +336,7 @@ mod tests {
             paired_at_unix: 1_700_999_999,
             wallet_fingerprints: vec![Fingerprint::from([1, 2, 3, 4])],
             vault_fingerprint: Fingerprint::from([0xbb, 0xbb, 0xbb, 0xbb]),
+            transport_pubkey: Vec::new(),
             fallback_addr: None,
         };
         let written = upsert_preserving_user_fields(&dir, fresh).expect("upsert");

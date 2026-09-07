@@ -55,9 +55,54 @@ pub fn wallet_name(main_descriptor: &CoincubeDescriptor) -> String {
 /// assert it — the installer's Connect vault registration, and the
 /// `CubeSettings` write the home cube list reads back — hold a descriptor but
 /// no `Wallet` (`plans/PLAN-vault-identity-unification.md` D1/D3).
+///
+/// # Canonicalisation contract
+///
+/// This value crosses two repo boundaries — Keychain recomputes it from the
+/// descriptor it decrypts out of `SigningSession.descriptor_envelopes`, and
+/// Connect compares it against `connect_vaults.fingerprint` — so what exactly
+/// gets hashed is a wire contract, not an implementation detail. The hashed
+/// bytes are `CoincubeDescriptor`'s `Display` output verbatim, which is also
+/// the exact plaintext the signing rail seals:
+///
+/// - the trailing `#checksum` **is** included. `Display` forwards to the inner
+///   multipath descriptor through a hard-coded non-alternate `write!`, so
+///   miniscript's `write_checksum_if_not_alt` gate can never be bypassed —
+///   there is no checksum-free rendering, not even `format!("{:#}", d)`. An
+///   input parsed without a checksum has one re-appended, so it hashes the same.
+/// - multipath `<0;1>` is hashed **verbatim**, never expanded. Only
+///   `multi_desc` is ever hashed; the receive/change halves are unreachable.
+/// - keys are hashed **as written** — nothing is sorted. `sortedmulti` cannot
+///   reach this function at all: `CoincubeDescriptor::from_str` rejects it.
+/// - `h` hardened markers normalise to `'`, and origin fingerprint hex
+///   lowercases, both via `Display`.
+///
+/// Vectors live in `grpc/descriptor_fingerprint_vectors.json` — the file the
+/// Keychain and coincube-api teams are pointed at — and are asserted by
+/// [`tests::descriptor_id_fingerprint_matches_committed_vectors`]. Changing any
+/// id there breaks signing for every already-paired Keychain.
 pub fn descriptor_id_fingerprint(main_descriptor: &CoincubeDescriptor) -> Fingerprint {
+    descriptor_id_fingerprint_of_bytes(main_descriptor.to_string().as_bytes())
+}
+
+/// The signer-side form of [`descriptor_id_fingerprint`]: hash descriptor bytes
+/// directly, without parsing them first.
+///
+/// This is the operation a *signer* performs. It holds the descriptor as the
+/// bytes it just decrypted out of `descriptor_envelopes`, and the contract is
+/// to hash exactly those bytes verbatim — never to re-parse or re-serialise
+/// first. The desktop's sealing path holds a parsed `CoincubeDescriptor` and
+/// goes through [`descriptor_id_fingerprint`]; the LAN rail holds only the
+/// string it is about to seal and comes here.
+///
+/// Both reduce to this one function, so the two entry points cannot drift
+/// apart. See the canonicalisation contract on [`descriptor_id_fingerprint`],
+/// and the vectors in `grpc/descriptor_fingerprint_vectors.json`, which
+/// [`tests::descriptor_id_fingerprint_matches_committed_vectors`] asserts
+/// against *both* forms.
+pub fn descriptor_id_fingerprint_of_bytes(descriptor_bytes: &[u8]) -> Fingerprint {
     use sha2::Digest;
-    let digest = sha2::Sha256::digest(main_descriptor.to_string().as_bytes());
+    let digest = sha2::Sha256::digest(descriptor_bytes);
     let mut bytes = [0u8; 4];
     bytes.copy_from_slice(&digest[..4]);
     Fingerprint::from(bytes)
@@ -724,6 +769,164 @@ mod tests {
     use std::str::FromStr;
 
     const DESC: &str = "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp";
+
+    /// The canonicalisation contract for [`descriptor_id_fingerprint`], pinned
+    /// against `grpc/descriptor_fingerprint_vectors.json` — the file Keychain
+    /// and coincube-api are pointed at.
+    ///
+    /// A change that moves any id here is a wire-contract break, not a
+    /// refactor: the phone recomputes this from the descriptor it decrypts and
+    /// refuses to sign when it disagrees with `SigningSession.descriptor_id`.
+    #[test]
+    fn descriptor_id_fingerprint_matches_committed_vectors() {
+        use sha2::Digest;
+
+        let raw = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../grpc/descriptor_fingerprint_vectors.json"
+        ))
+        .expect("read grpc/descriptor_fingerprint_vectors.json");
+        let doc: serde_json::Value = serde_json::from_str(&raw).expect("parse vectors json");
+
+        let vectors = doc["vectors"].as_array().expect("vectors array");
+        assert!(!vectors.is_empty(), "the vector file must not be empty");
+        for v in vectors {
+            let name = v["name"].as_str().expect("name");
+            let input = v["input"].as_str().expect("input");
+
+            let desc = CoincubeDescriptor::from_str(input)
+                .unwrap_or_else(|e| panic!("vector {}: input must parse: {}", name, e));
+
+            // The exact bytes hashed — and, on the signing rail, the exact
+            // plaintext sealed into `descriptor_envelopes`.
+            let canonical = desc.to_string();
+            assert_eq!(
+                canonical,
+                v["canonical"].as_str().expect("canonical"),
+                "vector {}: canonical form",
+                name,
+            );
+            assert!(
+                canonical.contains('#'),
+                "vector {}: the checksum must survive into the hashed bytes",
+                name,
+            );
+
+            let sha = hex::encode(sha2::Sha256::digest(canonical.as_bytes()));
+            assert_eq!(
+                sha,
+                v["sha256"].as_str().expect("sha256"),
+                "vector {}: sha256 over the canonical bytes",
+                name,
+            );
+
+            let id = descriptor_id_fingerprint(&desc).to_string();
+            assert_eq!(
+                id,
+                v["descriptor_id"].as_str().expect("descriptor_id"),
+                "vector {}: descriptor_id",
+                name,
+            );
+            assert_eq!(
+                id,
+                &sha[..8],
+                "vector {}: id is the first 4 digest bytes",
+                name,
+            );
+
+            // The signer-side entry point hashes the same bytes and must agree;
+            // this is what the LAN rail derives its `descriptor_id` through.
+            assert_eq!(
+                descriptor_id_fingerprint_of_bytes(canonical.as_bytes()).to_string(),
+                id,
+                "vector {}: bytes form must match the parsed form",
+                name,
+            );
+        }
+
+        // `sortedmulti` is the reason "are keys reordered before hashing?" has
+        // a clean answer: it never reaches the hash.
+        for r in doc["rejected"].as_array().expect("rejected array") {
+            let name = r["name"].as_str().expect("name");
+            let input = r["input"].as_str().expect("input");
+            let needle = r["error_contains"].as_str().expect("error_contains");
+            let err = CoincubeDescriptor::from_str(input)
+                .err()
+                .unwrap_or_else(|| panic!("rejected vector {} must not parse", name));
+            assert!(
+                err.to_string().contains(needle),
+                "rejected vector {}: error {:?} should mention {:?}",
+                name,
+                err,
+                needle,
+            );
+        }
+    }
+
+    /// The Cubes-list fingerprint and the signing rail's `descriptor_id` must
+    /// be one digest of one string.
+    ///
+    /// `Wallet::id_fingerprint` feeds `connect_vaults.fingerprint` (what the
+    /// Cubes list displays); `descriptor_id_fingerprint` feeds
+    /// `SigningSession.descriptor_id`. Connect logs a "Descriptor fingerprint
+    /// mismatch" line when the two disagree but deliberately never refuses, so
+    /// nothing server-side would catch a split — this test is the enforcement.
+    #[test]
+    fn vault_fingerprint_and_descriptor_id_are_the_same_digest() {
+        let desc = CoincubeDescriptor::from_str(DESC).unwrap();
+        let wallet = Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap());
+
+        // The signing rail's value (app/state/vault/keychain_sign.rs).
+        let signing_rail = descriptor_id_fingerprint(&desc).to_string();
+        // The pairing / hw-scoping value (hw.rs, phone_signer/pairing_listener.rs).
+        let vault_id = wallet.id_fingerprint().to_string();
+        // The value registered on the Cube (installer/step/mod.rs), which the
+        // API stores as `connect_vaults.fingerprint`.
+        let registered = crate::app::settings::VaultIdentity::generate(&desc)
+            .fingerprint
+            .expect("VaultIdentity::generate always derives a fingerprint");
+
+        assert_eq!(signing_rail, vault_id, "vault id vs signing rail");
+        assert_eq!(
+            signing_rail, registered,
+            "registered vault fingerprint vs signing rail"
+        );
+
+        // The shape both surfaces agree on: 8 lowercase hex.
+        assert_eq!(signing_rail.len(), 8);
+        assert!(
+            signing_rail
+                .chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+            "descriptor_id must be lowercase hex, got {}",
+            signing_rail,
+        );
+    }
+
+    /// The fingerprint is taken from two different `CoincubeDescriptor` values
+    /// at two different lifecycle points: the installer hashes the freshly
+    /// *compiled* descriptor, while every later read hashes one *re-parsed*
+    /// from `settings.json`. Nothing else pins those to the same bytes — and
+    /// the policy compiler is documented as not deterministic — so assert the
+    /// round-trip directly. If this ever fails, a Vault's id silently changes
+    /// between install and first open.
+    #[test]
+    fn descriptor_display_round_trips_so_the_fingerprint_cannot_drift() {
+        let compiled = CoincubeDescriptor::from_str(DESC).unwrap();
+        let reparsed = CoincubeDescriptor::from_str(&compiled.to_string())
+            .expect("a descriptor's own Display output must re-parse");
+
+        assert_eq!(
+            compiled.to_string(),
+            reparsed.to_string(),
+            "compile -> Display -> FromStr -> Display must be byte-identical",
+        );
+        assert_eq!(
+            descriptor_id_fingerprint(&compiled),
+            descriptor_id_fingerprint(&reparsed),
+            "a re-parsed descriptor must keep its vault id",
+        );
+    }
 
     /// `id_fingerprint` must be deterministic: the same descriptor
     /// produces the same 4-byte identifier across constructions.

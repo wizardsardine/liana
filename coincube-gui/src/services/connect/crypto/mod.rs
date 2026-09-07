@@ -28,4 +28,6 @@ pub use cube_enc_key::{
     SCHEME as XPUB_ENVELOPE_SCHEME,
 };
 pub use key_resolve::{resolve_key_xpub, ConnectKeyRow, KeyResolveError};
-pub use transport::{seal_to_device, DeviceTransportKey, SealedPayload};
+pub use transport::{
+    is_sealable_transport_pubkey, seal_to_device, DeviceTransportKey, SealedPayload,
+};

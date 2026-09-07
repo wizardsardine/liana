@@ -167,10 +167,12 @@ pub fn keyholders_from_vault(
                 source,
             }
         })?;
-        // CC-DESK-002: validate the account derivation path parses before we
-        // build the enc-child path from it and seal an envelope. A malformed
-        // path from the server would otherwise yield an envelope the heir can
-        // never open, discoverable only at recovery time. Fail closed here.
+        // CC-DESK-002 fail-fast. `build_escrow_set` is the authoritative gate
+        // (it catches every caller, including those that build a
+        // `KeyholderXpub` by hand); this one runs earlier so the vault path
+        // rejects a malformed server row while building the list, naming the
+        // offending key before any sealing work starts. Deliberate belt and
+        // braces on a value whose failure mode is invisible until recovery.
         validate_account_derivation(&key.derivation_path).map_err(|_| {
             EscrowError::BadKeyholderDerivation {
                 key_id: key.id,
@@ -205,6 +207,27 @@ pub fn build_escrow_set(
     descriptor_json: &[u8],
     seed_json: Option<&[u8]>,
 ) -> Result<Vec<InheritanceEnvelopeWire>, EscrowError> {
+    // CC-DESK-002, enforced where it cannot be bypassed. Every `KeyholderXpub`
+    // that reaches a seal passes through this function, so validating here also
+    // covers callers that build the struct themselves rather than going through
+    // `keyholders_from_vault` — `owner_self::build_owner_self_envelope_set`
+    // does exactly that, and previously skipped the check, sealing the owner's
+    // OWN recovery material to an account path the Keychain can never derive.
+    //
+    // That is the worst shape this bug can take: the upload succeeds, the
+    // Recovery card reports phone recovery as on, and the failure only surfaces
+    // when recovery is attempted — at which point re-running the flow re-seals
+    // the same bad path. Validating the whole slice up front, before any
+    // sealing, keeps the failure cheap and never leaves a half-built set.
+    for kh in keyholders {
+        validate_account_derivation(&kh.account_derivation).map_err(|_| {
+            EscrowError::BadKeyholderDerivation {
+                key_id: kh.key_id,
+                path: kh.account_derivation.clone(),
+            }
+        })?;
+    }
+
     let mut envelopes =
         Vec::with_capacity(keyholders.len() * if seed_json.is_some() { 2 } else { 1 });
     for kh in keyholders {
@@ -457,6 +480,38 @@ mod tests {
         let env = wire_to_envelope(&set[0]).unwrap();
         let pt = open_with_shared_key(&k, &env, CUBE, 10).unwrap();
         assert_eq!(pt.as_slice(), descriptor.as_slice());
+    }
+
+    /// The CC-DESK-002 gate must live in `build_escrow_set`, not only in
+    /// `keyholders_from_vault` — otherwise any caller that builds a
+    /// `KeyholderXpub` itself seals to an unvalidated path. `owner_self` is
+    /// such a caller, and this is the check that covers it.
+    #[test]
+    fn build_escrow_set_refuses_a_malformed_account_derivation() {
+        let alice = keyholder(b"bad-path-seed-vector-0000000000000000000000");
+        for bad in ["", "  ", "m/", "not-a-path", "m/48'/0'/0'/2'/x", "m//0'"] {
+            let khs = vec![KeyholderXpub {
+                key_id: 10,
+                xpub: alice.account_xpub,
+                account_derivation: bad.to_string(),
+            }];
+            let err = build_escrow_set(&khs, CUBE, b"wsh(...)#ck", None)
+                .expect_err(&format!("{bad:?} must be refused before sealing"));
+            assert!(
+                matches!(err, EscrowError::BadKeyholderDerivation { key_id: 10, .. }),
+                "{:?} gave {:?}",
+                bad,
+                err,
+            );
+        }
+
+        // The valid form still seals, so the gate isn't just refusing everything.
+        let khs = vec![KeyholderXpub {
+            key_id: 10,
+            xpub: alice.account_xpub,
+            account_derivation: "m/48'/0'/0'/2'".to_string(),
+        }];
+        assert!(build_escrow_set(&khs, CUBE, b"wsh(...)#ck", None).is_ok());
     }
 
     #[test]

@@ -376,10 +376,6 @@ pub struct KeychainSignModal {
     /// Cube UUID — used to call `GET /connect/cubes/{uuid}/keys`.
     /// Read from `cache.cube_id`.
     cube_uuid: String,
-    /// Wallet alias / descriptor identity. Used for the
-    /// `descriptor_id` field on `CreateSigningSession` so the API can
-    /// reject mismatched-descriptor sessions later.
-    descriptor_id: String,
     /// PSBT snapshot at session-open time. Cloned per session so each
     /// signer gets the same starting point; merges happen via the
     /// daemon's `update_spend_tx` rather than by mutating this copy.
@@ -431,7 +427,6 @@ impl KeychainSignModal {
         desktop_device_id: String,
         cube_server_id: u64,
         cube_uuid: String,
-        descriptor_id: String,
         psbt: Psbt,
         transport_key: Option<Arc<crate::services::connect::crypto::DeviceTransportKey>>,
     ) -> Self {
@@ -445,7 +440,6 @@ impl KeychainSignModal {
             vault_id: None,
             cube_server_id,
             cube_uuid,
-            descriptor_id,
             psbt,
             classified: None,
             pending: Vec::new(),
@@ -979,22 +973,23 @@ impl KeychainSignModal {
         };
         let psbt_bytes = psbt_to_sign.serialize();
 
-        // Seal the PSBT to this signer's registered transport key so Connect
+        // Seal the PSBT and descriptor to this signer's transport key so Connect
         // relays ciphertext it cannot read. The `request_id` minted here binds
         // both directions' envelopes to this session (see `transport.rs`), so
         // it is recorded on the row for the signature-open later.
         let request_id = uuid_v4();
-        let psbt_envelope = match crate::services::connect::crypto::seal_to_device(
+        let (psbt_envelope, descriptor_envelope) = match seal_signing_payloads(
             &transport_pubkey,
             &request_id,
             &psbt_bytes,
+            &self.wallet.main_descriptor.to_string(),
         ) {
             Ok(sealed) => sealed,
             Err(e) => {
                 tracing::warn!(
                     target: "coincube_gui::signing",
                     error = %e,
-                    "Could not encrypt the PSBT to the signer's transport key"
+                    "Could not encrypt the signing payloads to the signer's transport key"
                 );
                 if let Some(entry) = self.pending.get_mut(index) {
                     entry.status = PendingSessionStatus::Failed;
@@ -1013,7 +1008,8 @@ impl KeychainSignModal {
         let envelope_device_id = device_id.clone();
 
         let vault_id = self.vault_id.unwrap_or(0).to_string();
-        let descriptor_id = self.descriptor_id.clone();
+        let descriptor_id =
+            crate::app::wallet::descriptor_id_fingerprint(&self.wallet.main_descriptor).to_string();
         let tokens = self.tokens.clone();
         let grpc_url = self.grpc_url.clone();
         let desktop_device_id = self.desktop_device_id.clone();
@@ -1038,10 +1034,18 @@ impl KeychainSignModal {
                         crate::services::connect::grpc::connect_v1::PayloadScheme::EciesV1 as i32,
                     psbt_envelopes: vec![
                         crate::services::connect::grpc::connect_v1::PayloadEnvelope {
-                            device_id: envelope_device_id,
+                            device_id: envelope_device_id.clone(),
                             ephemeral_pubkey: psbt_envelope.ephemeral_pubkey,
                             nonce: psbt_envelope.nonce,
                             ciphertext: psbt_envelope.ciphertext,
+                        },
+                    ],
+                    descriptor_envelopes: vec![
+                        crate::services::connect::grpc::connect_v1::PayloadEnvelope {
+                            device_id: envelope_device_id,
+                            ephemeral_pubkey: descriptor_envelope.ephemeral_pubkey,
+                            nonce: descriptor_envelope.nonce,
+                            ciphertext: descriptor_envelope.ciphertext,
                         },
                     ],
                     targets: vec![crate::services::connect::grpc::connect_v1::SignerTarget {
@@ -1468,9 +1472,24 @@ impl KeychainSignModal {
         let transport_key = self.transport_key.clone();
         let open_signature = |sig: &crate::services::connect::grpc::connect_v1::SubmittedSignature| -> Result<Vec<u8>, String> {
             let Some(env) = sig.signature_envelope.as_ref() else {
-                // Plaintext session (pre-E2E signer, or an old server). Nothing
-                // to open.
-                return Ok(sig.signed_psbt.clone());
+                // No plaintext fallback. This branch used to return
+                // `sig.signed_psbt` verbatim, which meant a session this
+                // desktop created as ECIES_V1 could still complete in
+                // plaintext if the peer or server returned no envelope —
+                // decided by envelope *shape*, never by `payload_scheme`. That
+                // is a silent downgrade, and `merge_signatures` below performs
+                // no validation and overwrites `tap_key_sig`, so the merged
+                // result would be trusted unconditionally.
+                //
+                // Connect now refuses to advance a plaintext session at all
+                // (`SubmitPartialSignature` returns `FailedPrecondition`), so
+                // an envelope-less signature on a live session no longer has a
+                // legitimate origin. Fail closed.
+                return Err(
+                    "This Keychain returned an unencrypted signature for an encrypted \
+                     request. Update the Keychain app, then start the signature again."
+                        .to_string(),
+                );
             };
             let key = transport_key
                 .as_ref()
@@ -2118,6 +2137,28 @@ fn friendly_grpc_error(status: tonic::Status) -> (String, bool) {
     }
 }
 
+/// Keep the full descriptor available for the phone's local xpub membership
+/// check, while exposing only ciphertext to Connect. Each seal uses fresh
+/// randomness and the same request-bound AAD as the PSBT.
+fn seal_signing_payloads(
+    transport_pubkey: &[u8],
+    request_id: &str,
+    psbt: &[u8],
+    descriptor: &str,
+) -> Result<
+    (
+        crate::services::connect::crypto::SealedPayload,
+        crate::services::connect::crypto::SealedPayload,
+    ),
+    crate::services::inheritance::EciesError,
+> {
+    use crate::services::connect::crypto::seal_to_device;
+    Ok((
+        seal_to_device(transport_pubkey, request_id, psbt)?,
+        seal_to_device(transport_pubkey, request_id, descriptor.as_bytes())?,
+    ))
+}
+
 fn uuid_v4() -> String {
     // Avoid adding a `uuid` crate dep for a single call: format eight
     // bytes from `rand` as `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx` per
@@ -2205,10 +2246,65 @@ mod tests {
             "desktop-device".to_string(),
             42,
             "cube-local".to_string(),
-            RECOVERY_DESC.to_string(),
             empty_psbt(),
             Some(Arc::new(test_transport_key())),
         )
+    }
+
+    /// Verifies that `seal_signing_payloads` produces distinct ephemeral keys
+    /// for PSBT and descriptor envelopes, both decrypt correctly with the
+    /// request-bound AAD, and reject tampering or AAD mismatch.
+    #[test]
+    fn signing_descriptor_is_sealed_intact_and_bound_to_request() {
+        let target = test_transport_key();
+        let request_id = "descriptor-sealing-test";
+        let (psbt, descriptor) =
+            seal_signing_payloads(&target.public_key(), request_id, b"psbt", RECOVERY_DESC)
+                .unwrap();
+        assert_ne!(psbt.ephemeral_pubkey, descriptor.ephemeral_pubkey);
+        assert_eq!(
+            target
+                .open(
+                    &psbt.ephemeral_pubkey,
+                    &psbt.nonce,
+                    &psbt.ciphertext,
+                    request_id
+                )
+                .unwrap()
+                .as_slice(),
+            b"psbt"
+        );
+        assert_eq!(
+            target
+                .open(
+                    &descriptor.ephemeral_pubkey,
+                    &descriptor.nonce,
+                    &descriptor.ciphertext,
+                    request_id
+                )
+                .unwrap()
+                .as_slice(),
+            RECOVERY_DESC.as_bytes()
+        );
+        assert!(target
+            .open(
+                &descriptor.ephemeral_pubkey,
+                &descriptor.nonce,
+                &descriptor.ciphertext,
+                "another-request"
+            )
+            .is_err());
+        let mut tampered = descriptor.ciphertext.clone();
+        tampered[0] ^= 1;
+        assert!(target
+            .open(
+                &descriptor.ephemeral_pubkey,
+                &descriptor.nonce,
+                &tampered,
+                request_id
+            )
+            .is_err());
+        assert!(seal_signing_payloads(&[], request_id, b"psbt", RECOVERY_DESC).is_err());
     }
 
     /// A throwaway transport keypair for the modal under test — the real one
@@ -2253,6 +2349,7 @@ mod tests {
             payload_scheme: crate::services::connect::grpc::connect_v1::PayloadScheme::EciesV1
                 as i32,
             psbt_envelopes: Vec::new(),
+            descriptor_envelopes: Vec::new(),
             creator_transport_pubkey: Vec::new(),
         }
     }

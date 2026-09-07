@@ -1,0 +1,70 @@
+{
+  "$comment": "Cross-repo test vectors for SigningSession.descriptor_id / connect_vaults.fingerprint. Authoritative for coincube (desktop), keychain-app (Keychain), and coincube-api. Regenerated and asserted by coincube-gui/src/app/wallet.rs::descriptor_id_fingerprint_matches_committed_vectors — if you change this file, that test must still pass.",
+  "algorithm": {
+    "name": "descriptor_id_fingerprint",
+    "definition": "first 4 bytes of SHA-256 over the canonical descriptor string's UTF-8 bytes, rendered as 8 lowercase hex characters",
+    "preimage": "the descriptor exactly as rust-miniscript's Display emits it — which is also exactly the plaintext sealed into SigningSession.descriptor_envelopes",
+    "signer_rule": "A signer MUST hash the decrypted descriptor_envelopes plaintext verbatim. Do not re-parse, re-serialise, normalise, or strip the '#checksum' before hashing. Never interpret descriptor_id itself as a descriptor.",
+    "checksum_included": true,
+    "multipath_preserved": true,
+    "key_order_normalised": false
+  },
+  "canonicalisation": {
+    "checksum": "The 8-character '#checksum' suffix is ALWAYS part of the hashed bytes. CoincubeDescriptor's Display forwards to the inner multipath descriptor with a hard-coded non-alternate write!, so miniscript's write_checksum_if_not_alt gate can never be bypassed — even format!(\"{:#}\", desc) carries the checksum. An input with the checksum omitted has it re-appended by parse -> to_string before hashing, so it yields the SAME id.",
+    "multipath": "A multipath key '<a;b>' is preserved verbatim and in written order. It is NOT expanded into separate receive/change descriptors before hashing; only the multipath descriptor is ever hashed.",
+    "key_order": "Keys are hashed exactly as written. Nothing is sorted. Swapping two keys inside multi() produces a DIFFERENT descriptor_id (see vector multipath_2of2_keys_swapped). sortedmulti cannot arise: CoincubeDescriptor rejects it at parse.",
+    "hardened_markers": "'h' hardened markers are normalised to \"'\" by Display, so the two spellings share one id.",
+    "origin_fingerprint_case": "Origin fingerprint hex is lowercased by Display.",
+    "whitespace": "Whitespace inside a descriptor is a parse error; inputs are trimmed at the UI edge before parsing."
+  },
+  "vectors": [
+    {
+      "name": "multipath_2of2_with_checksum",
+      "note": "Baseline: 2-of-2 primary path plus a single-key recovery path behind older(3).",
+      "input": "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp",
+      "canonical": "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp",
+      "sha256": "4c54fda363689811fb780d65a104eb4d9125c4d54af5603b2dd02ee0b03d87a1",
+      "descriptor_id": "4c54fda3"
+    },
+    {
+      "name": "multipath_2of2_checksum_stripped",
+      "note": "PROVES checksum handling: same descriptor as the baseline with '#p9ax3xxp' removed from the input. Display re-appends it, so the preimage and the id are identical to the baseline. A signer that hashes the stripped form gets a different id and is wrong.",
+      "input": "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))",
+      "canonical": "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp",
+      "sha256": "4c54fda363689811fb780d65a104eb4d9125c4d54af5603b2dd02ee0b03d87a1",
+      "descriptor_id": "4c54fda3"
+    },
+    {
+      "name": "multipath_2of2_keys_swapped",
+      "note": "PROVES key order is significant: the baseline's two multi() keys are swapped. Nothing re-sorts them, so the canonical form takes a different checksum (#9f7e4449) and the vault gets a DIFFERENT id.",
+      "input": "wsh(or_d(multi(2,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))",
+      "canonical": "wsh(or_d(multi(2,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#9f7e4449",
+      "sha256": "a0cb728baaa97e2023401635fa42b52a0035ee17853e6522fa04d0bd11357a74",
+      "descriptor_id": "a0cb728b"
+    },
+    {
+      "name": "multipath_2of2_h_hardened",
+      "note": "PROVES hardened-marker normalisation: the baseline written with 'h' instead of apostrophes. Display normalises to apostrophes, so the id matches the baseline exactly.",
+      "input": "wsh(or_d(multi(2,[ffd63c8d/48h/1h/0h/2h]tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48h/1h/0h/2h]tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48h/1h/0h/2h]tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))",
+      "canonical": "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp",
+      "sha256": "4c54fda363689811fb780d65a104eb4d9125c4d54af5603b2dd02ee0b03d87a1",
+      "descriptor_id": "4c54fda3"
+    },
+    {
+      "name": "singlesig_timelock_with_checksum",
+      "note": "A second real policy shape: single primary key with a timelocked recovery key.",
+      "input": "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn",
+      "canonical": "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn",
+      "sha256": "cdeea32f3356b468986dfc2dac3651538bc9dc4d4d12752bc2d8b964d3dfb100",
+      "descriptor_id": "cdeea32f"
+    }
+  ],
+  "rejected": [
+    {
+      "name": "sortedmulti",
+      "note": "ANSWERS 'are keys reordered before hashing?': they are not, because sortedmulti never reaches the hash. CoincubeDescriptor::from_str rejects it — CoincubePolicy::from_multipath_descriptor accepts only WshInner::Ms, not WshInner::SortedMulti. A signer receiving a sortedmulti descriptor should refuse it rather than attempt to canonicalise key order.",
+      "input": "wsh(sortedmulti(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*))",
+      "error_contains": "not compatible with a Coincube spending policy"
+    }
+  ]
+}

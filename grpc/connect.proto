@@ -137,6 +137,29 @@ message SigningSession {
   string request_id = 2;
   string user_id = 3;
   string vault_id = 4;
+  // descriptor_id is SHA-256(descriptor UTF-8)[0:4] as eight lowercase hex
+  // characters. A correlation hint — never a descriptor, never an authorization
+  // proof, never collision-resistant.
+  //
+  // THE PREIMAGE IS THE SEALED PLAINTEXT, VERBATIM. A signer hashes exactly the
+  // bytes it decrypted from its descriptor_envelopes entry. Do NOT re-parse,
+  // re-serialise, normalise or strip anything first — each of these changes the
+  // digest:
+  //   - the trailing "#checksum" IS part of the hashed bytes. Stripping it is
+  //     the canonical way to get this wrong;
+  //   - multipath "<a;b>" is hashed verbatim, in written order. It is never
+  //     expanded into separate receive/change descriptors;
+  //   - keys are hashed as written. Nothing is sorted; sortedmulti is refused
+  //     at parse upstream rather than canonicalised here.
+  //
+  // Hardened markers ('h' -> "'") and origin-fingerprint case are already
+  // normalised by the desktop's Display before sealing, so both spellings of an
+  // input reach the wire as one string.
+  //
+  // Vectors, including the checksum-stripped and key-swapped negatives:
+  // grpc/descriptor_fingerprint_vectors.json in the desktop repo (coincube),
+  // authoritative for desktop, Keychain and this API. `make pull-vectors`
+  // fetches a local, uncommitted copy to the same path here.
   string descriptor_id = 5;
   // psbt carries the real PSBT on a PLAINTEXT session, and is EMPTY on an
   // ECIES_V1 session (see psbt_envelopes).
@@ -178,11 +201,20 @@ message SigningSession {
   // something it cannot return (the server refuses to create one, so an empty
   // value here should only ever appear on a PLAINTEXT session).
   bytes creator_transport_pubkey = 19;
+  // Full descriptor sealed separately to each target's transport_pubkey, using
+  // the same request_id-bound transport AAD as its PSBT and fresh randomness.
+  // Signers decrypt, verify descriptor_id and their xpub membership locally.
+  repeated PayloadEnvelope descriptor_envelopes = 20;
 }
 
 message CreateSigningSessionRequest {
   string request_id = 1;
   string vault_id = 2;
+  // Same value and the same preimage rules as SigningSession.descriptor_id:
+  // checksum included, multipath and key order preserved, no re-serialisation.
+  // Connect validates the SHAPE only — eight lowercase hex — and refuses
+  // anything else without echoing the value back in the error. It cannot verify
+  // the digest, never having seen a descriptor.
   string descriptor_id = 3;
   bytes psbt = 4;
   repeated SignerTarget targets = 5;
@@ -196,12 +228,15 @@ message CreateSigningSessionRequest {
   // owner not under duress). Ignored (false) for ordinary owner-branch spends.
   bool is_recovery_spend = 9;
   // payload_scheme selects the rail contract. Omitted/UNSPECIFIED is treated as
-  // PLAINTEXT so pre-blinding desktops keep working.
+  // PLAINTEXT; new sessions reject it and require ECIES_V1.
   PayloadScheme payload_scheme = 10;
   // psbt_envelopes is REQUIRED for ECIES_V1 and must contain exactly one entry
   // per declared target; `psbt` must then be empty. The reverse holds for
   // PLAINTEXT. Mixing the two is rejected at create — there is no downgrade.
   repeated PayloadEnvelope psbt_envelopes = 11;
+  // Required for ECIES_V1: exactly one sealed descriptor per target. Same
+  // recipient and request_id-bound AAD as the PSBT, independently sealed.
+  repeated PayloadEnvelope descriptor_envelopes = 12;
 }
 
 message CreateSigningSessionResponse {
@@ -296,6 +331,21 @@ message UpdatePushTokenRequest {
 }
 
 message UpdatePushTokenResponse {}
+
+// RevokeDeviceRequest retires one of the CALLER'S OWN signer devices: an old
+// handset, a reinstall that stranded a row, or a device the user no longer
+// trusts. A retired row stops being a signing target, a realtime stream
+// endpoint and a push destination, and surrenders its push token.
+//
+// Without this the only way to retire a row was an operator UPDATE against the
+// database, so stale rows accumulated holding live push tokens and transport
+// keys — and one of them could win the account-recency fallback and be targeted
+// for signing.
+message RevokeDeviceRequest {
+  string device_id = 1;
+}
+
+message RevokeDeviceResponse {}
 
 message StreamEnvelope {
   oneof body {
@@ -535,6 +585,9 @@ service SessionService {
 service DeviceService {
   rpc RegisterDevice(RegisterDeviceRequest) returns (RegisterDeviceResponse);
   rpc UpdatePushToken(UpdatePushTokenRequest) returns (UpdatePushTokenResponse);
+  // Retire one of the caller's own devices. Owner-scoped: a device belonging to
+  // anyone else is refused, and refused the same way a missing one is.
+  rpc RevokeDevice(RevokeDeviceRequest) returns (RevokeDeviceResponse);
 }
 
 service RealtimeService {

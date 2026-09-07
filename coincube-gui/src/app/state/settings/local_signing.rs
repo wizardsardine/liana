@@ -686,6 +686,7 @@ mod tests {
             paired_at_unix: 1_700_000_000,
             wallet_fingerprints: Vec::new(),
             vault_fingerprint: Fingerprint::default(),
+            transport_pubkey: Vec::new(),
             fallback_addr: fallback.map(|s| s.to_string()),
         }
     }

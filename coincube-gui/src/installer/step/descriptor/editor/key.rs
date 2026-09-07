@@ -3320,6 +3320,26 @@ mod tests {
         assert_eq!(picker.step, Step::Details);
     }
 
+    /// Verifies that a blinded personal key (marked `is_own_key`) decrypts and
+    /// builds a valid descriptor key with the unblinded xpub.
+    #[test]
+    fn blinded_personal_key_builds_a_descriptor_key() {
+        let mut picker = blinded_picker();
+        let mut key = blinded_key(BLIND_KEY_ID, BLIND_CT);
+        key.raw.is_own_key = true;
+        key.owner = KeychainKeyOwner::SelfUser {
+            primary_owner_id: 7,
+        };
+        assert!(key.raw.xpub.is_empty());
+        let _ = picker.on_select_keychain_key(key);
+        assert!(picker.error.is_none(), "error: {:?}", picker.error);
+        let SelectedKey::New(key) = &picker.selected_key else {
+            panic!("blinded personal key should be selectable");
+        };
+        assert!(key.key.to_string().contains(TESTNET_ACCOUNT_XPUB));
+        assert_eq!(picker.step, Step::Details);
+    }
+
     #[test]
     fn an_already_reported_key_is_refused_without_re_reporting() {
         // After an A4 report the server clears the ciphertext and flags the

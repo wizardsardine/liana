@@ -55,6 +55,25 @@ message PairingComplete {
   // desktop recomputes this using the cert fp it captured from the
   // live TLS handshake (not field 1) and constant-time compares.
   string pairing_proof         = 5;
+  // The phone's ECIES transport public key (33-byte compressed
+  // secp256k1), same construction and key separation as the Connect
+  // rail's per-device transport key.
+  //
+  // REQUIRED as of descriptor blinding. LAN sessions are ECIES_V1 like
+  // every other rail: the desktop seals the PSBT and the full descriptor
+  // to this key, one envelope each, and the phone verifies its own xpub
+  // membership in what it decrypts. There is deliberately no
+  // descriptor_id-only path for LAN — a LAN peer is exactly the
+  // untrusted party such a fallback would empower.
+  //
+  // Captured once, at pairing, and persisted on the desktop's
+  // `PairedPhone`. That is sound because a phone that reinstalls mints a
+  // fresh TLS identity too, which fails the cert pin and forces a
+  // re-pair; the transport key never outlives the pin that carries it.
+  // A phone that omits this (or sends a malformed point) cannot be sent
+  // a sealed session and is refused at pairing rather than silently
+  // downgraded.
+  bytes transport_pubkey       = 6;
 }
 
 // Desktop -> phone: a PSBT to sign, wrapped in the same SigningSession
@@ -78,8 +97,18 @@ message SessionStatusUpdate {
 // Phone -> desktop: signed PSBT and which key_ids were signed for.
 message PartialSignature {
   string session_id = 1;
+  // signed_psbt carries the real partially-signed PSBT only on a
+  // PLAINTEXT session. It is EMPTY on an ECIES_V1 session, which is
+  // every session this desktop now creates over LAN.
   bytes  signed_psbt = 2;
   repeated string signed_key_ids = 3;
+  // signature_envelope is the ECIES_V1 counterpart: the signed PSBT
+  // sealed back to the desktop's transport key, which the desktop
+  // published as `SigningSession.creator_transport_pubkey` on the
+  // PresentSession it sent. Same AAD as the outbound direction, so a
+  // signature lifted from another session fails to open rather than
+  // being merged into this one.
+  connect.v1.PayloadEnvelope signature_envelope = 4;
 }
 
 // Either side -> peer: out-of-band error. Code is machine-readable;

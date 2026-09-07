@@ -237,6 +237,42 @@ mod tests {
         open_with_shared_key(&k, &env, CUBE, 77).unwrap()
     }
 
+    /// The gap this closes. `build_owner_self_envelope_set` builds its own
+    /// `KeyholderXpub` and therefore never passed through
+    /// `keyholders_from_vault`'s CC-DESK-002 check: a malformed
+    /// `derivationPath` from the server was sealed verbatim, the upload
+    /// reported success, and the Recovery card showed phone recovery as on. The
+    /// failure surfaced only when recovery was attempted — and re-running
+    /// "Protect with my phone" would re-seal the same bad path.
+    ///
+    /// `build_escrow_set` now validates every keyholder before sealing any, so
+    /// this path fails closed at seal time instead.
+    #[test]
+    fn owner_self_refuses_a_malformed_recipient_derivation() {
+        let key = owner_key(b"owner-self-bad-derivation-vector-000000000000");
+        for bad in ["", "   ", "m/", "not-a-path", "m/48'/0'/0'/2'/x"] {
+            let mut r = recipient(&key, None);
+            r.key.as_mut().expect("recipient key").derivation_path = bad.to_string();
+
+            let err = build_owner_self_envelope_set(&r, CUBE, b"wsh(...)#ck", None)
+                .expect_err("a malformed derivation path must never be sealed");
+            assert!(
+                matches!(
+                    err,
+                    OwnerSelfError::Escrow(EscrowError::BadKeyholderDerivation { .. })
+                ),
+                "{:?} gave {:?}",
+                bad,
+                err,
+            );
+        }
+
+        // The registered form still seals — the gate refuses the malformed
+        // path, not the flow.
+        let good = recipient(&key, None);
+        assert!(build_owner_self_envelope_set(&good, CUBE, b"wsh(...)#ck", None).is_ok());
+    }
+
     /// Detect-then-seal (PR 1 "detect" + PR 2): the Keychain app has already
     /// minted + registered the `owner-self` recipient (tier `full_cube`); the
     /// desktop reads it back via `find_owner_self_recipient`, then seals the

@@ -45,6 +45,17 @@ pub enum PairingError {
     /// `crate::phone_signer::pairing::verify_pairing_proof`.
     PhoneVerificationFailed,
 
+    /// The phone completed the handshake but reported no usable ECIES
+    /// transport key in `PairingComplete.transport_pubkey` — missing, the
+    /// wrong length, or not a valid compressed secp256k1 point.
+    ///
+    /// This is fatal to pairing on purpose. LAN sessions are ECIES_V1: the
+    /// desktop seals the PSBT and the full descriptor to this key. Pairing a
+    /// phone we cannot seal to would leave only a plaintext path, handing the
+    /// fallback to the LAN peer — precisely the untrusted party. Refusing here
+    /// converts that into a re-pair prompt against a current Keychain build.
+    TransportKeyMissing,
+
     /// Anything below the application layer: socket bind failure,
     /// mDNS registration error, TLS handshake failure, framed-read
     /// error, frame size limit hit. The string is the underlying
@@ -73,6 +84,11 @@ impl std::fmt::Display for PairingError {
             Self::ReplayRefused => {
                 write!(f, "Pairing rejected: the QR code has already been used.")
             }
+            Self::TransportKeyMissing => write!(
+                f,
+                "This Keychain didn't send an encryption key, so signing requests \
+                 to it couldn't be encrypted. Update the Keychain app, then pair again."
+            ),
             Self::PhoneVerificationFailed => write!(
                 f,
                 "Pairing rejected: couldn't verify the phone that scanned the QR."

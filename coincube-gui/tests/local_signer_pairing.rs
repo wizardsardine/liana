@@ -53,6 +53,16 @@ fn proof_for(offer: &PairingOffer, phone_cert_fp_hex: &str) -> String {
     pairing::pairing_proof(&offer.psk_b64, &offer.cert_fp, phone_cert_fp_hex).expect("proof")
 }
 
+/// A valid compressed secp256k1 point for `PairingComplete.transport_pubkey`.
+///
+/// Pairing now refuses a phone that reports no usable ECIES transport key, so
+/// every fake phone that expects to pair must send one. The value is the
+/// generator point — any on-curve point works; these tests never seal to it.
+fn valid_transport_pubkey() -> Vec<u8> {
+    hex::decode("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
+        .expect("static generator point")
+}
+
 fn mint_ed25519_cert(common_name: &str) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
     let key_pair = KeyPair::generate_for(&PKCS_ED25519).expect("ed25519 keygen");
     let mut params = CertificateParams::new(vec!["test.local".to_string()]).expect("params");
@@ -111,6 +121,31 @@ async fn fake_phone_server(
     phone_cert_fp_hex: String,
     pairing_proof: String,
 ) {
+    fake_phone_server_with_transport_key(
+        listener,
+        phone_cert,
+        phone_key,
+        device_name,
+        phone_cert_fp_hex,
+        pairing_proof,
+        valid_transport_pubkey(),
+    )
+    .await
+}
+
+/// As [`fake_phone_server`], but the caller chooses what goes in
+/// `PairingComplete.transport_pubkey` — including nothing, to exercise the
+/// refusal path.
+#[allow(clippy::too_many_arguments)]
+async fn fake_phone_server_with_transport_key(
+    listener: TcpListener,
+    phone_cert: CertificateDer<'static>,
+    phone_key: PrivateKeyDer<'static>,
+    device_name: String,
+    phone_cert_fp_hex: String,
+    pairing_proof: String,
+    transport_pubkey: Vec<u8>,
+) {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let cfg = ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
@@ -135,6 +170,7 @@ async fn fake_phone_server(
                 app_version: "test-1.0".into(),
                 capabilities: vec!["sign-psbt".into()],
                 pairing_proof,
+                transport_pubkey,
             },
         )),
     };
@@ -579,6 +615,7 @@ async fn fake_phone_close_then_serve(
                 app_version: "test-1.0".into(),
                 capabilities: vec!["sign-psbt".into()],
                 pairing_proof,
+                transport_pubkey: valid_transport_pubkey(),
             },
         )),
     };
@@ -696,4 +733,85 @@ async fn run_pairing_redials_after_phone_closes_early() {
     assert_eq!(paired.name, "Pixel");
 
     let _ = phone_handle.await;
+}
+
+/// Pairing fails closed when the phone reports no usable ECIES transport key.
+///
+/// This is the gate that keeps the LAN rail sealed. The desktop seals the PSBT
+/// and the full descriptor to this key, so a phone we cannot seal to could only
+/// ever sign over a plaintext path — and a LAN peer is exactly the untrusted
+/// party such a fallback would empower. Refusing at pairing turns that into a
+/// "update the Keychain app" prompt instead of a phone that pairs cleanly and
+/// then fails, or worse, silently downgrades.
+#[tokio::test]
+async fn run_pairing_refuses_a_phone_with_no_transport_key() {
+    // x = 2^256-1 exceeds the secp256k1 field prime, so this is the right
+    // length and a legal prefix but not a point at all. (Note `[0x02; 33]`
+    // would NOT work here: that x is genuinely on the curve.)
+    let off_curve = {
+        let mut v = Vec::with_capacity(33);
+        v.push(0x02);
+        v.extend_from_slice(&[0xff; 32]);
+        v
+    };
+    // A real point in the UNCOMPRESSED encoding. `PublicKey::from_slice`
+    // accepts it, so a parse-only gate would pair this phone and then fail
+    // every sign against the 33-byte requirement in `seal_to_device`.
+    let uncompressed = {
+        use coincube_core::miniscript::bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey};
+        let secp = Secp256k1::new();
+        let sk = SecretKey::from_slice(&[0x11; 32]).expect("static secret");
+        PublicKey::from_secret_key(&secp, &sk)
+            .serialize_uncompressed()
+            .to_vec()
+    };
+    for bad_key in [
+        Vec::new(),     // pre-blinding Keychain: field absent
+        vec![0x02; 10], // truncated
+        off_curve,
+        uncompressed,
+    ] {
+        let (phone_cert, phone_key) = mint_ed25519_cert("Coincube Phone (test)");
+        let phone_pin = tls::fingerprint_of(&phone_cert);
+        let phone_cert_fp_hex = phone_pin
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+
+        let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
+        let identity = fresh_desktop_identity();
+        let offer = fresh_offer(wallet_fp, identity.cert_fp(), 30);
+        let proof = proof_for(&offer, &phone_cert_fp_hex);
+
+        let handle = tokio::spawn(fake_phone_server_with_transport_key(
+            listener,
+            phone_cert.clone(),
+            phone_key,
+            "Test Pixel".into(),
+            phone_cert_fp_hex.clone(),
+            proof,
+            bad_key.clone(),
+        ));
+
+        let phone = DiscoveredPhone {
+            cert_fp8: phone_cert_fp_hex[..8].to_string(),
+            addr,
+            instance_name: "keychain-test".into(),
+        };
+        let res =
+            pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp]).await;
+
+        assert!(
+            matches!(res, Err(PairingError::TransportKeyMissing)),
+            "a phone reporting transport_pubkey {:?} must be refused, got {:?}",
+            bad_key,
+            res.map(|p| p.name),
+        );
+        let _ = handle.await;
+    }
 }

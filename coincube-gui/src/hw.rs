@@ -752,6 +752,38 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                     // for the vault it was paired against. `None` means
                     // no vault is loaded, so nothing is in scope.
                     let active_vault_id = state.wallet.as_ref().map(|w| w.id_fingerprint());
+                    // What every LAN session gets sealed with. Loaded once per
+                    // tick rather than per phone: `load_or_create` touches the
+                    // sidecar, and a tick can dial several phones.
+                    //
+                    // The descriptor comes from the same `Wallet` that scopes
+                    // the dial below, and `PhoneSigner::new` derives the
+                    // session's `descriptor_id` from it, so the LAN rail and
+                    // the Cubes list are the same digest of the same string by
+                    // construction, not by coincidence.
+                    let lan_descriptor = state
+                        .wallet
+                        .as_ref()
+                        .map(|w| w.main_descriptor.to_string())
+                        .unwrap_or_default();
+                    // A phone can still be listed and dialled without this —
+                    // it just can't be sent a session. `sign_tx` turns the
+                    // absence into an actionable error rather than a silent
+                    // plaintext downgrade.
+                    let lan_transport_key =
+                        match crate::services::connect::crypto::DeviceTransportKey::load_or_create(
+                            &state.datadir_path.network_directory(state.network),
+                        ) {
+                            Ok(k) => Some(Arc::new(k)),
+                            Err(e) => {
+                                warn!(
+                                    "local-signer transport key unavailable, \
+                                     LAN signing will refuse to seal: {}",
+                                    e
+                                );
+                                None
+                            }
+                        };
                     for paired in &store.phones {
                         // Skip phones paired for a different vault (or all
                         // phones when no vault is loaded). Without this a
@@ -862,6 +894,8 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                                     fingerprint,
                                     None,
                                     paired.clone(),
+                                    lan_descriptor.clone(),
+                                    lan_transport_key.clone(),
                                 ));
                                 // Stash a clone so the next refresh
                                 // tick can probe `is_alive()` before
@@ -1277,6 +1311,7 @@ mod tests {
             paired_at_unix: 0,
             wallet_fingerprints: Vec::new(),
             vault_fingerprint: Default::default(),
+            transport_pubkey: Vec::new(),
             fallback_addr: fallback.map(|s| s.to_string()),
         }
     }

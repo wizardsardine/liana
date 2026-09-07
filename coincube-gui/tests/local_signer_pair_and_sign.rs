@@ -33,7 +33,7 @@ use tokio_rustls::TlsAcceptor;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 
-use coincube_gui::dir::CoincubeDirectory;
+use coincube_gui::dir::{CoincubeDirectory, NetworkDirectory};
 use coincube_gui::phone_signer::{
     identity::DesktopIdentity,
     mdns::DiscoveredPhone,
@@ -45,6 +45,28 @@ use coincube_gui::phone_signer::{
     transport::PairedTransport,
     PhoneSigner,
 };
+use coincube_gui::services::connect::crypto::{seal_to_device, DeviceTransportKey};
+use coincube_gui::services::connect::grpc::connect_v1 as cv1;
+
+/// A real ECIES transport keypair, minted in a throwaway directory.
+///
+/// Both sides of the LAN rail need one now: the desktop seals the PSBT and the
+/// descriptor to the phone's, and the phone seals the signature back to the
+/// desktop's. `DeviceTransportKey` is the production type, so these tests
+/// exercise the same primitives the rail uses rather than a stand-in.
+fn fresh_transport_key(tag: &str) -> DeviceTransportKey {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "coincube-lan-test-{}-{}-{}",
+        tag,
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&path).expect("temp transport key dir");
+    DeviceTransportKey::load_or_create(&NetworkDirectory::new(path)).expect("mint transport key")
+}
 
 fn mint_ed25519_cert(common_name: &str) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
     let key_pair = KeyPair::generate_for(&PKCS_ED25519).expect("ed25519 keygen");
@@ -128,6 +150,9 @@ async fn fake_phone_pair_then_sign(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cfg = fake_phone_server_config(phone_cert, phone_key, trust_desktop_pin);
     let acceptor = TlsAcceptor::from(Arc::new(cfg));
+    // The phone's ECIES key: advertised at pairing, used below to open what
+    // the desktop sealed to it.
+    let phone_transport = fresh_transport_key("phone");
 
     // ── Accept #1: pairing.
     {
@@ -142,6 +167,7 @@ async fn fake_phone_pair_then_sign(
                     app_version: "test-1.0".into(),
                     capabilities: vec!["sign-psbt".into()],
                     pairing_proof,
+                    transport_pubkey: phone_transport.public_key().to_vec(),
                 },
             )),
         };
@@ -172,20 +198,94 @@ async fn fake_phone_pair_then_sign(
         let mut payload = vec![0u8; len];
         tls.read_exact(&mut payload).await?;
         let env = LocalEnvelope::decode(payload.as_slice())?;
-        let (session_id, psbt_bytes) = match env.payload {
+        let (session_id, request_id, psbt_bytes, creator_pub) = match env.payload {
             Some(local_v1::local_envelope::Payload::PresentSession(p)) => {
                 let s = p.session.expect("session");
-                (s.session_id, s.psbt)
+
+                // The LAN rail is ECIES_V1 like every other rail.
+                assert_eq!(
+                    s.payload_scheme,
+                    cv1::PayloadScheme::EciesV1 as i32,
+                    "LAN sessions must be ECIES_V1, never plaintext",
+                );
+                assert!(
+                    s.psbt.is_empty(),
+                    "an ECIES_V1 session must not carry a plaintext PSBT",
+                );
+                assert!(
+                    !s.creator_transport_pubkey.is_empty(),
+                    "the desktop must publish a key to seal the signature back to",
+                );
+
+                let pe = s.psbt_envelopes.first().expect("one psbt envelope").clone();
+                let de = s
+                    .descriptor_envelopes
+                    .first()
+                    .expect("one descriptor envelope")
+                    .clone();
+                assert_ne!(
+                    (&pe.ephemeral_pubkey, &pe.nonce),
+                    (&de.ephemeral_pubkey, &de.nonce),
+                    "each envelope needs an independent ephemeral key and nonce",
+                );
+
+                let psbt = phone_transport
+                    .open(
+                        &pe.ephemeral_pubkey,
+                        &pe.nonce,
+                        &pe.ciphertext,
+                        &s.request_id,
+                    )
+                    .expect("open the sealed PSBT");
+                let descriptor = phone_transport
+                    .open(
+                        &de.ephemeral_pubkey,
+                        &de.nonce,
+                        &de.ciphertext,
+                        &s.request_id,
+                    )
+                    .expect("open the sealed descriptor");
+
+                // The check the real Keychain runs: recompute the fingerprint
+                // from the descriptor it decrypted and compare. This is what
+                // makes `descriptor_id` a correlation hint rather than
+                // something the phone has to trust.
+                let recomputed = hex::encode(&Sha256::digest(&descriptor[..])[..4]);
+                assert_eq!(
+                    recomputed, s.descriptor_id,
+                    "descriptor_id must be sha256(sealed descriptor)[..4]",
+                );
+                assert!(
+                    String::from_utf8_lossy(&descriptor).contains('#'),
+                    "the sealed descriptor must carry its checksum",
+                );
+
+                (
+                    s.session_id,
+                    s.request_id,
+                    psbt.to_vec(),
+                    s.creator_transport_pubkey,
+                )
             }
             other => panic!("expected PresentSession, got {:?}", other),
         };
 
+        // Seal the signature back to the desktop, same AAD binding.
+        let sealed = seal_to_device(&creator_pub, &request_id, &psbt_bytes)
+            .expect("seal the signature back to the desktop");
         let reply = LocalEnvelope {
             payload: Some(local_v1::local_envelope::Payload::Partial(
                 local_v1::PartialSignature {
                     session_id,
-                    signed_psbt: psbt_bytes,
+                    // Empty under ECIES_V1.
+                    signed_psbt: Vec::new(),
                     signed_key_ids: Vec::new(),
+                    signature_envelope: Some(cv1::PayloadEnvelope {
+                        device_id: String::new(),
+                        ephemeral_pubkey: sealed.ephemeral_pubkey,
+                        nonce: sealed.nonce,
+                        ciphertext: sealed.ciphertext,
+                    }),
                 },
             )),
         };
@@ -263,15 +363,36 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
     let transport = PairedTransport::connect(addr, &identity, phone_pin)
         .await
         .expect("steady-state dial");
+    // Pairing must have captured the phone's ECIES key; without it the signer
+    // below would refuse to build a session at all.
+    assert_eq!(
+        paired.transport_pubkey.len(),
+        33,
+        "pairing must capture the phone's compressed transport pubkey",
+    );
     let paired_clone = PairedPhone {
         cert_pin: paired.cert_pin,
         name: paired.name.clone(),
         paired_at_unix: paired.paired_at_unix,
         wallet_fingerprints: paired.wallet_fingerprints.clone(),
         vault_fingerprint: paired.vault_fingerprint,
+        transport_pubkey: paired.transport_pubkey.clone(),
         fallback_addr: paired.fallback_addr.clone(),
     };
-    let signer = PhoneSigner::new(transport, wallet_fp, None, paired_clone);
+    // A real descriptor, so the fake phone's fingerprint check is meaningful.
+    const DESC: &str = "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn";
+    // No id passed: `PhoneSigner::new` derives it from DESC. The fake phone
+    // recomputes the same digest over the descriptor it decrypts and asserts it
+    // matches `session.descriptor_id`, so that check now covers the derivation
+    // end to end rather than a value the test handed in.
+    let signer = PhoneSigner::new(
+        transport,
+        wallet_fp,
+        None,
+        paired_clone,
+        DESC.to_string(),
+        Some(Arc::new(fresh_transport_key("desktop"))),
+    );
 
     let mut psbt = empty_psbt();
     let original = psbt.serialize();

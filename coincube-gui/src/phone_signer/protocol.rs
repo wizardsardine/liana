@@ -223,6 +223,9 @@ mod tests {
                     session_id: session_id.into(),
                     signed_psbt: psbt.into(),
                     signed_key_ids: Vec::new(),
+                    // Classification is transport-level and runs before any
+                    // decrypt, so it stays scheme-agnostic.
+                    signature_envelope: None,
                 },
             )),
         }

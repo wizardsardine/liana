@@ -471,6 +471,21 @@ mod tests {
         }
     }
 
+    /// Verifies that both personal keys (`is_own_key = true`) and invitee keys
+    /// (`is_own_key = false`) decrypt to the same xpub when using the same cube key.
+    #[test]
+    fn blinded_personal_and_invitee_keys_resolve_through_the_same_cube_key() {
+        for is_own_key in [true, false] {
+            let mut key = row(Some(enrol_time_envelope()), "", PATH);
+            key.is_own_key = is_own_key;
+            key.owner_user_id = 7;
+            key.primary_owner_id = 7;
+            let xpub =
+                resolve_key_xpub(&key, Some(&cube_key()), KAT_CUBE_ID, Network::Testnet).unwrap();
+            assert_eq!(xpub.to_string(), XPUB);
+        }
+    }
+
     #[test]
     fn opens_a_blinded_key_and_validates_it() {
         let resolved = resolve_key_xpub(

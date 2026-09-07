@@ -69,8 +69,34 @@ pub struct PhoneSigner {
     pub(crate) version: Option<Version>,
 
     /// The persisted record so we can surface a name and reuse the
-    /// identity pubkey on re-dial.
+    /// identity pubkey on re-dial. Also carries
+    /// [`PairedPhone::transport_pubkey`], the ECIES key every LAN session is
+    /// sealed to.
     pub(crate) paired_phone: PairedPhone,
+
+    /// The vault's canonical descriptor — exactly
+    /// `CoincubeDescriptor::to_string()`, checksum included.
+    ///
+    /// Sealed per session into `descriptor_envelopes` so the phone can verify
+    /// its own xpub membership in what it decrypts rather than trusting the
+    /// desktop's word. Held here because `HWI::sign_tx` takes only a PSBT, and
+    /// `register_wallet` (the trait's one descriptor-shaped hook) is a no-op
+    /// for this signer.
+    pub(crate) descriptor: String,
+
+    /// `descriptor_id_fingerprint` of [`Self::descriptor`], 8 lowercase hex.
+    ///
+    /// Derived in [`PhoneSigner::new`] from that exact field rather than passed
+    /// in beside it, so the id and the descriptor it names cannot disagree.
+    /// That makes the LAN rail's `descriptor_id` the same digest of the same
+    /// string as the Cubes list by construction rather than by coincidence —
+    /// both reduce to `app::wallet::descriptor_id_fingerprint_of_bytes`.
+    pub(crate) descriptor_id: String,
+
+    /// This desktop's Connect transport key. The phone seals its partial
+    /// signature back to the public half, which rides the session as
+    /// `creator_transport_pubkey`; the secret half opens it here.
+    pub(crate) transport_key: Option<Arc<crate::services::connect::crypto::DeviceTransportKey>>,
 }
 
 impl std::fmt::Debug for PhoneSigner {
@@ -83,20 +109,36 @@ impl std::fmt::Debug for PhoneSigner {
 }
 
 impl PhoneSigner {
+    /// `descriptor` is the vault's canonical descriptor — exactly
+    /// `CoincubeDescriptor::to_string()`, checksum included. It is both what
+    /// gets sealed into `descriptor_envelopes` and the preimage of the
+    /// session's `descriptor_id`, which is why the id is **derived here rather
+    /// than taken as a parameter**: the two are one value, and accepting them
+    /// separately let a caller supply a pair that disagree. The phone
+    /// recomputes the same digest over the bytes it decrypts and refuses to
+    /// sign on a mismatch, so a disagreement is not a cosmetic bug.
     pub fn new(
         transport: PairedTransport,
         fingerprint: Fingerprint,
         version: Option<Version>,
         paired_phone: PairedPhone,
+        descriptor: String,
+        transport_key: Option<Arc<crate::services::connect::crypto::DeviceTransportKey>>,
     ) -> Self {
         let (reader, writer) = transport.split();
         let correlator = Arc::new(Correlator::spawn(reader));
+        let descriptor_id =
+            crate::app::wallet::descriptor_id_fingerprint_of_bytes(descriptor.as_bytes())
+                .to_string();
         Self {
             writer: Arc::new(Mutex::new(writer)),
             correlator,
             fingerprint,
             version,
             paired_phone,
+            descriptor,
+            descriptor_id,
+            transport_key,
         }
     }
 
@@ -164,30 +206,90 @@ impl HWI for PhoneSigner {
         let request_id = uuid::Uuid::new_v4().to_string();
         let psbt_bytes = psbt.serialize();
 
+        // LAN is ECIES_V1, the same as the Connect rail. Both halves of the
+        // key exchange must be present or we refuse the session outright:
+        // there is deliberately no `descriptor_id`-only path "just for LAN",
+        // because the LAN peer is exactly the untrusted party such a fallback
+        // would empower. A missing key is a re-pair prompt, not a downgrade.
+        let transport_key = self.transport_key.as_ref().ok_or_else(|| {
+            HwiError::Device(
+                "This computer has no Connect transport key, so the signing request \
+                 couldn't be encrypted. Restart COINCUBE and try again."
+                    .to_string(),
+            )
+        })?;
+        // Same predicate the pairing gate uses. A stored key can still be
+        // unusable here: a row written before that gate existed (empty), or one
+        // persisted by an older build that accepted an uncompressed point. Both
+        // must produce the actionable re-pair message rather than falling
+        // through to a generic "could not encrypt" from `seal_to_device`.
+        if !crate::services::connect::crypto::is_sealable_transport_pubkey(
+            &self.paired_phone.transport_pubkey,
+        ) {
+            return Err(HwiError::Device(
+                "This Keychain's encryption key is missing or unusable. Pair it again \
+                 to sign over the local network."
+                    .to_string(),
+            ));
+        }
+
+        // One envelope each, independent ephemeral key and nonce per call
+        // (`seal_to_device` mints both), AAD = label || utf8(request_id).
+        let seal = |plaintext: &[u8]| {
+            crate::services::connect::crypto::transport::seal_to_device(
+                &self.paired_phone.transport_pubkey,
+                &request_id,
+                plaintext,
+            )
+        };
+        let psbt_envelope = seal(&psbt_bytes).map_err(|e| {
+            HwiError::Device(format!(
+                "could not encrypt the transaction for this Keychain: {}",
+                e
+            ))
+        })?;
+        let descriptor_envelope = seal(self.descriptor.as_bytes()).map_err(|e| {
+            HwiError::Device(format!(
+                "could not encrypt the descriptor for this Keychain: {}",
+                e
+            ))
+        })?;
+        let to_proto = |sealed: crate::services::connect::crypto::transport::SealedPayload| {
+            cv1::PayloadEnvelope {
+                // LAN has no Connect device registry, so the phone matches its
+                // envelope by being the sole target rather than by device id.
+                device_id: String::new(),
+                ephemeral_pubkey: sealed.ephemeral_pubkey,
+                nonce: sealed.nonce,
+                ciphertext: sealed.ciphertext,
+            }
+        };
+
         let session = cv1::SigningSession {
             session_id: session_id.clone(),
-            request_id,
+            request_id: request_id.clone(),
             user_id: String::new(),
             vault_id: String::new(),
-            descriptor_id: String::new(),
-            psbt: psbt_bytes,
+            // The opaque vault fingerprint, never the descriptor. Same digest
+            // of the same string as the Cubes list and the Connect rail.
+            descriptor_id: self.descriptor_id.clone(),
+            // Empty under ECIES_V1 — the real PSBT rides `psbt_envelopes`.
+            psbt: Vec::new(),
             tx_summary: None,
             policy_summary: None,
             targets: vec![cv1::SignerTarget {
                 device_id: String::new(),
                 key_fingerprint: self.fingerprint.to_string(),
                 key_id: String::new(),
-                // Rail 2 (LAN) is end-to-end by construction — mutually-pinned
-                // TLS 1.3 with no relay — so it carries no ECIES transport key
-                // and stays untouched by Connect blinding (PR D4).
-                transport_pubkey: Vec::new(),
+                // Echoed back so the phone can confirm the session was sealed
+                // to the key it reported at pairing.
+                transport_pubkey: self.paired_phone.transport_pubkey.clone(),
             }],
-            // Likewise: the LAN rail's payload is the plaintext `psbt` above,
-            // protected by the pinned TLS channel rather than an envelope, so
-            // there is no creator key for a signer to seal anything back to.
-            payload_scheme: cv1::PayloadScheme::Plaintext as i32,
-            psbt_envelopes: Vec::new(),
-            creator_transport_pubkey: Vec::new(),
+            payload_scheme: cv1::PayloadScheme::EciesV1 as i32,
+            psbt_envelopes: vec![to_proto(psbt_envelope)],
+            descriptor_envelopes: vec![to_proto(descriptor_envelope)],
+            // The key the phone seals its partial signature back to.
+            creator_transport_pubkey: transport_key.public_key().to_vec(),
             status: cv1::SessionStatus::Pending as i32,
             created_at: None,
             expires_at: None,
@@ -233,7 +335,31 @@ impl HWI for PhoneSigner {
             }
         };
 
-        let signed: Psbt = Psbt::deserialize(&partial.signed_psbt)
+        // The session went out as ECIES_V1, so the signature must come back
+        // sealed. A phone that answers with a plaintext `signed_psbt` is either
+        // too old to have decrypted the descriptor it was sent, or is trying to
+        // walk the session back to plaintext — refuse either way rather than
+        // merging signatures we can't attribute to the request we sealed.
+        let Some(env) = partial.signature_envelope.as_ref() else {
+            return Err(HwiError::Device(
+                "This Keychain returned an unencrypted signature for an encrypted \
+                 request. Update the Keychain app, then try again."
+                    .to_string(),
+            ));
+        };
+        // Opening with this session's `request_id` in the AAD is what stops a
+        // signature captured from another session being merged into this one.
+        let signed_bytes = transport_key
+            .open(
+                &env.ephemeral_pubkey,
+                &env.nonce,
+                &env.ciphertext,
+                &request_id,
+            )
+            .map_err(|e| {
+                HwiError::Device(format!("could not decrypt the signed transaction: {}", e))
+            })?;
+        let signed: Psbt = Psbt::deserialize(&signed_bytes)
             .map_err(|e| HwiError::Device(format!("decode signed psbt: {}", e)))?;
 
         merge_signatures(psbt, &signed);

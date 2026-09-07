@@ -220,6 +220,13 @@ fn error_body<'a>(err: &'a PairingError) -> Element<'a, Message> {
              trust, then start a fresh pairing."
                 .to_string(),
         ),
+        PairingError::TransportKeyMissing => (
+            "Keychain needs updating",
+            "This Keychain didn't send an encryption key, so signing requests \
+             to it couldn't be encrypted. Update the Keychain app on the phone, \
+             then pair again."
+                .to_string(),
+        ),
         PairingError::NetworkError(s) => (
             "Network error",
             format!(

@@ -766,7 +766,6 @@ fn build_keychain_if_ready(
     // `KeychainSignModal::launch()` (an async context) rather than here on
     // the synchronous `update` path, which can't `blocking_read` the token.
     let coincube_client = crate::services::coincube::CoincubeClient::new();
-    let descriptor_id = wallet.main_descriptor.to_string();
     let modal = super::keychain_sign::KeychainSignModal::new(
         wallet.clone(),
         coincube_client,
@@ -775,7 +774,6 @@ fn build_keychain_if_ready(
         device_id,
         cube_server_id,
         cache.cube_id.clone(),
-        descriptor_id,
         psbt.clone(),
         cache.connect_transport_key.clone(),
     );
