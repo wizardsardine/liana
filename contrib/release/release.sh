@@ -45,9 +45,9 @@ else
     # Find latest matching tag by version sorting (works even if tag is not an ancestor of HEAD)
     LATEST_TAG="$(git tag --sort=-v:refname --list "$TAG_PATTERN" | head -1)"
     if [ -n "$LATEST_TAG" ]; then
-        VERSION="$(echo "$LATEST_TAG" | sed "s/^${TAG_PREFIX}//")-$(git rev-parse --short HEAD)"
+        VERSION="$(echo "$LATEST_TAG" | sed "s/^${TAG_PREFIX}//")-$(git rev-parse --short=8 HEAD)"
     else
-        VERSION="0-$(git rev-parse --short HEAD)"
+        VERSION="0-$(git rev-parse --short=8 HEAD)"
     fi
 fi
 
