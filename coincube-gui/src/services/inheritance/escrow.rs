@@ -77,6 +77,10 @@ pub enum EscrowError {
     /// envelope the heir's phone can never derive `d` for, so it would silently
     /// fail to open at recovery time (CC-DESK-002). Fail closed at seal instead.
     BadKeyholderDerivation { key_id: u64, path: String },
+    /// Neither a descriptor nor a seed was supplied — there is nothing to
+    /// seal, and an empty envelope set would read as "backed up" on the card
+    /// while restoring nothing. Fail closed at build time instead.
+    NoArtifacts,
     /// Sealing failed (e.g. a hardened derivation). Wraps the ECIES error.
     Ecies(EciesError),
 }
@@ -97,6 +101,10 @@ impl std::fmt::Display for EscrowError {
                 f,
                 "keyholder key #{} has an unreadable derivation path ({:?}); can't set up recovery for them",
                 key_id, path
+            ),
+            Self::NoArtifacts => write!(
+                f,
+                "nothing to back up: neither a Wallet Descriptor nor a Master Seed Phrase was supplied"
             ),
             Self::Ecies(e) => write!(f, "{}", e),
         }
@@ -201,12 +209,39 @@ pub fn keyholders_from_vault(
 /// `2 * keyholders` envelopes for Full-Cube, `keyholders` for Vault-only.
 /// `cube_id` is the Connect vault's cube id, bound into each envelope's AAD
 /// (SPEC §1) so a relayed envelope can't be re-targeted at another cube.
+///
+/// This is the **heir** escrow entry point, where a Vault — and so a
+/// descriptor — always exists. The owner-self path, which must also serve a
+/// Cube that has no Vault yet, goes through [`build_escrow_set_parts`].
 pub fn build_escrow_set(
     keyholders: &[KeyholderXpub],
     cube_id: u64,
     descriptor_json: &[u8],
     seed_json: Option<&[u8]>,
 ) -> Result<Vec<InheritanceEnvelopeWire>, EscrowError> {
+    build_escrow_set_parts(keyholders, cube_id, Some(descriptor_json), seed_json)
+}
+
+/// [`build_escrow_set`] with **both** halves optional. Seals whichever of the
+/// descriptor / seed are supplied, in that order per keyholder, and refuses an
+/// empty set ([`EscrowError::NoArtifacts`]).
+///
+/// The optional descriptor exists for the owner-self ("protect with my phone")
+/// path: a Cube backs up its Master Seed Phrase the moment it is created, before
+/// any Vault exists, and adds the Wallet Descriptor later by re-sealing. A
+/// seed-only kit is a legitimate kit (brain decision
+/// `2026-06-08-cube-recovery-kit-server-blind-encrypted-backup`), and the
+/// restore side (`heir::assemble` → `stage_restore`) already treats each half as
+/// independently optional.
+pub fn build_escrow_set_parts(
+    keyholders: &[KeyholderXpub],
+    cube_id: u64,
+    descriptor_json: Option<&[u8]>,
+    seed_json: Option<&[u8]>,
+) -> Result<Vec<InheritanceEnvelopeWire>, EscrowError> {
+    if descriptor_json.is_none() && seed_json.is_none() {
+        return Err(EscrowError::NoArtifacts);
+    }
     // CC-DESK-002, enforced where it cannot be bypassed. Every `KeyholderXpub`
     // that reaches a seal passes through this function, so validating here also
     // covers callers that build the struct themselves rather than going through
@@ -228,21 +263,23 @@ pub fn build_escrow_set(
         })?;
     }
 
-    let mut envelopes =
-        Vec::with_capacity(keyholders.len() * if seed_json.is_some() { 2 } else { 1 });
+    let per_keyholder = usize::from(descriptor_json.is_some()) + usize::from(seed_json.is_some());
+    let mut envelopes = Vec::with_capacity(keyholders.len() * per_keyholder);
     for kh in keyholders {
         // Full path from the seed root to the dedicated enc child (SPEC §2),
         // stored in the envelope so Keychain derives the matching `d`.
         let full_derivation = format!("{}/{}", kh.account_derivation, ENCRYPTION_CHILD_INDEX);
-        let descriptor_env = seal_to_xpub(
-            &kh.xpub,
-            &full_derivation,
-            ArtifactKind::Descriptor,
-            cube_id,
-            kh.key_id,
-            descriptor_json,
-        )?;
-        envelopes.push(envelope_to_wire(&descriptor_env, kh.key_id));
+        if let Some(descriptor) = descriptor_json {
+            let descriptor_env = seal_to_xpub(
+                &kh.xpub,
+                &full_derivation,
+                ArtifactKind::Descriptor,
+                cube_id,
+                kh.key_id,
+                descriptor,
+            )?;
+            envelopes.push(envelope_to_wire(&descriptor_env, kh.key_id));
+        }
 
         if let Some(seed) = seed_json {
             let seed_env = seal_to_xpub(
@@ -446,6 +483,45 @@ mod tests {
         assert!(matches!(
             keyholders_from_vault(&vault, None, CUBE, Network::Bitcoin).unwrap_err(),
             EscrowError::NoKeyholders
+        ));
+    }
+
+    /// The owner-self builder's vaultless case: a seed with no descriptor
+    /// seals exactly one seed envelope per keyholder, and it round-trips.
+    #[test]
+    fn parts_seed_only_builds_seed_envelopes_only_and_roundtrips() {
+        let alice = keyholder(b"so-alice-seed-vector-0000000000000000000000");
+        let khs = vec![KeyholderXpub {
+            key_id: 10,
+            xpub: alice.account_xpub,
+            account_derivation: "m/48'/0'/0'/2'".to_string(),
+        }];
+        let seed = br#"{"version":1,"mnemonic":{"phrase":"abandon ... about","language":"en"}}"#;
+
+        let set = build_escrow_set_parts(&khs, CUBE, None, Some(seed)).unwrap();
+        assert_eq!(set.len(), 1);
+        assert_eq!(set[0].artifact_kind, "seed");
+        assert_eq!(set[0].keyholder_key_id, Some(10));
+
+        let k = recover_key(&alice, &set[0]);
+        let env = wire_to_envelope(&set[0]).unwrap();
+        let pt = open_with_shared_key(&k, &env, CUBE, 10).unwrap();
+        assert_eq!(pt.as_slice(), seed.as_slice());
+    }
+
+    /// Nothing supplied → refused before any sealing, so an empty set can
+    /// never be uploaded and read as "backed up".
+    #[test]
+    fn parts_with_no_artifacts_is_refused() {
+        let alice = keyholder(b"na-alice-seed-vector-0000000000000000000000");
+        let khs = vec![KeyholderXpub {
+            key_id: 10,
+            xpub: alice.account_xpub,
+            account_derivation: "m/48'/0'/0'/2'".to_string(),
+        }];
+        assert!(matches!(
+            build_escrow_set_parts(&khs, CUBE, None, None),
+            Err(EscrowError::NoArtifacts)
         ));
     }
 
