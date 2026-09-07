@@ -457,6 +457,21 @@ mod tests {
         ));
     }
 
+    /// Both guards apply when a Full-Cube recipient is given neither half:
+    /// the missing seed violates the registered tier and the set would also be
+    /// empty. The tier check deliberately wins so callers are told that their
+    /// recovery material does not match the phone key configuration.
+    #[test]
+    fn full_cube_with_no_artifacts_reports_tier_mismatch_first() {
+        let key = owner_key(b"owner-self-empty-full-seed-vector-00000000000");
+        let r = recipient(&key, Some(OwnerRecoveryTier::FullCube));
+
+        assert!(matches!(
+            build_owner_self_envelope_set(&r, CUBE, None, None),
+            Err(OwnerSelfError::TierMismatch)
+        ));
+    }
+
     #[test]
     fn missing_key_fails_closed() {
         let mut r = recipient(

@@ -3006,6 +3006,138 @@ mod tests {
         })
     }
 
+    fn phone_seal_cube_meta() -> SeedBlobCube {
+        SeedBlobCube {
+            uuid: "cube-uuid".to_string(),
+            name: "Vaultless Cube".to_string(),
+            network: "bitcoin".to_string(),
+            created_at: "2026-09-07T00:00:00Z".to_string(),
+            lightning_address: None,
+        }
+    }
+
+    fn phone_seal_xpub() -> String {
+        use coincube_core::miniscript::bitcoin::bip32::{DerivationPath, Xpriv, Xpub};
+        use coincube_core::miniscript::bitcoin::secp256k1::Secp256k1;
+        use std::str::FromStr;
+
+        let secp = Secp256k1::new();
+        let master = Xpriv::new_master(
+            Network::Bitcoin,
+            b"recovery-kit-phone-seal-test-vector-0000000000",
+        )
+        .unwrap();
+        let path = DerivationPath::from_str("m/48'/0'/0'/2'").unwrap();
+        let account = master.derive_priv(&secp, &path).unwrap();
+        Xpub::from_priv(&secp, &account).to_string()
+    }
+
+    /// End-to-end regression for PR #354: a Full-Cube phone key can protect a
+    /// Cube before its first Vault exists. The orchestration must upload the
+    /// seed envelope and return no descriptor fingerprint for the caller to
+    /// persist.
+    #[tokio::test]
+    async fn seal_phone_without_vault_uploads_seed_only_and_has_no_fingerprint() {
+        let server = MockServer::start();
+        let xpub = phone_seal_xpub();
+        let recipients = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
+            then.status(200).json_body(json!({
+                "success": true,
+                "data": [{
+                    "id": 1,
+                    "keyId": 7,
+                    "role": "owner-self",
+                    "tier": "full_cube",
+                    "key": {
+                        "id": 7,
+                        "xpub": xpub,
+                        "derivationPath": "m/48'/0'/0'/2'"
+                    }
+                }]
+            }));
+        });
+        let upload = server.mock(|when, then| {
+            when.method(MockMethod::PUT)
+                .path("/api/v1/connect/cubes/42/recovery-kit/envelope")
+                .json_body_partial(
+                    r#"{"envelopes":[{"artifactKind":"seed","keyholderKeyId":7}]}"#,
+                );
+            then.status(200)
+                .json_body(json!({ "success": true, "data": {} }));
+        });
+
+        let fingerprint = seal_phone(
+            CoincubeClient::for_test(server.base_url()),
+            42,
+            None,
+            Some(Zeroizing::new(vec!["abandon".to_string(); 12])),
+            phone_seal_cube_meta(),
+        )
+        .await
+        .expect("a vaultless Full-Cube recipient should accept a seed-only seal");
+
+        assert_eq!(fingerprint, None);
+        recipients.assert();
+        upload.assert();
+    }
+
+    /// A Vault-only phone key cannot protect a Cube that has no Vault. Verify
+    /// the specific refusal reaches the orchestration layer and, critically,
+    /// that no empty envelope set is sent to Connect.
+    #[tokio::test]
+    async fn seal_phone_without_vault_rejects_vault_only_before_upload() {
+        let server = MockServer::start();
+        let xpub = phone_seal_xpub();
+        let recipients = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/recipients");
+            then.status(200).json_body(json!({
+                "success": true,
+                "data": [{
+                    "id": 1,
+                    "keyId": 7,
+                    "role": "owner-self",
+                    "tier": "vault_only",
+                    "key": {
+                        "id": 7,
+                        "xpub": xpub,
+                        "derivationPath": "m/48'/0'/0'/2'"
+                    }
+                }]
+            }));
+        });
+        let upload = server.mock(|when, then| {
+            when.method(MockMethod::PUT)
+                .path("/api/v1/connect/cubes/42/recovery-kit/envelope");
+            then.status(200)
+                .json_body(json!({ "success": true, "data": {} }));
+        });
+
+        let error = seal_phone(
+            CoincubeClient::for_test(server.base_url()),
+            42,
+            None,
+            Some(Zeroizing::new(vec!["abandon".to_string(); 12])),
+            phone_seal_cube_meta(),
+        )
+        .await
+        .expect_err("a vaultless Cube plus a Vault-only key has nothing to seal");
+
+        recipients.assert();
+        assert_eq!(
+            upload.hits(),
+            0,
+            "an empty envelope set must never be uploaded"
+        );
+        assert!(
+            error.contains("Nothing to back up to your phone yet"),
+            "the user-facing error should explain the empty-set refusal: {}",
+            error
+        );
+    }
+
     // ---- Remove is confirm-gated: it deletes nothing, Cancel is intact ----
 
     #[test]
