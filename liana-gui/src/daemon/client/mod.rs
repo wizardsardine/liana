@@ -3,8 +3,10 @@ use std::fmt::Debug;
 use std::iter::FromIterator;
 
 use async_trait::async_trait;
-use lianad::bip329::Labels;
-use lianad::commands::{GetLabelsBip329Result, UpdateDerivIndexesResult};
+use lianad::{
+    bip329::Labels,
+    commands::{CreateRecoveryWarning, GetLabelsBip329Result, UpdateDerivIndexesResult},
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -209,7 +211,7 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
         coins_outpoints: &[OutPoint],
         feerate_vb: u64,
         sequence: Option<u16>,
-    ) -> Result<Psbt, DaemonError> {
+    ) -> Result<(Psbt, Vec<CreateRecoveryWarning>), DaemonError> {
         let mut params = serde_json::Map::new();
         params.insert("address".to_string(), json!(address));
         params.insert("outpoints".to_string(), json!(coins_outpoints));
@@ -218,7 +220,7 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
             params.insert("timelock".to_string(), json!(sequence));
         }
         let res: CreateRecoveryResult = self.call("createrecovery", Some(params))?;
-        Ok(res.psbt)
+        Ok((res.psbt, res.warnings))
     }
 
     async fn get_labels(

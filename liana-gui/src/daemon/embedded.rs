@@ -1,5 +1,9 @@
-use lianad::bip329::Labels;
-use lianad::commands::UpdateDerivIndexesResult;
+use lianad::{
+    bip329::Labels,
+    commands::{CoinStatus, CreateRecoveryWarning, LabelItem, UpdateDerivIndexesResult},
+    config::Config,
+    DaemonControl, DaemonHandle,
+};
 use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
 
@@ -8,11 +12,6 @@ use crate::dir::LianaDirectory;
 use async_trait::async_trait;
 use liana::miniscript::bitcoin::{
     address, bip32::ChildNumber, psbt::Psbt, Address, Network, OutPoint, Txid,
-};
-use lianad::{
-    commands::{CoinStatus, LabelItem},
-    config::Config,
-    DaemonControl, DaemonHandle,
 };
 
 pub struct EmbeddedDaemon {
@@ -236,11 +235,11 @@ impl Daemon for EmbeddedDaemon {
         coins_outpoints: &[OutPoint],
         feerate_vb: u64,
         sequence: Option<u16>,
-    ) -> Result<Psbt, DaemonError> {
+    ) -> Result<(Psbt, Vec<CreateRecoveryWarning>), DaemonError> {
         self.command(|daemon| {
             daemon
                 .create_recovery(address, coins_outpoints, feerate_vb, sequence)
-                .map(|res| res.psbt)
+                .map(|res| (res.psbt, res.warnings))
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
         .await
