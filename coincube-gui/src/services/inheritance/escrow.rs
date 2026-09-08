@@ -509,6 +509,41 @@ mod tests {
         assert_eq!(pt.as_slice(), seed.as_slice());
     }
 
+    /// The optional-parts entry point is also used by callers with more than
+    /// one recipient. A seed-only kit must produce one independently-openable
+    /// envelope per keyholder, preserving the keyholder association and order.
+    #[test]
+    fn parts_seed_only_builds_one_envelope_per_keyholder() {
+        let alice = keyholder(b"so-many-alice-seed-vector-00000000000000000");
+        let bob = keyholder(b"so-many-bob-seed-vector-00000000000000000000");
+        let khs = vec![
+            KeyholderXpub {
+                key_id: 10,
+                xpub: alice.account_xpub,
+                account_derivation: "m/48'/0'/0'/2'".to_string(),
+            },
+            KeyholderXpub {
+                key_id: 20,
+                xpub: bob.account_xpub,
+                account_derivation: "m/48'/0'/0'/2'".to_string(),
+            },
+        ];
+        let seed = br#"{"version":1,"mnemonic":{"phrase":"abandon ... about","language":"en"}}"#;
+
+        let set = build_escrow_set_parts(&khs, CUBE, None, Some(seed)).unwrap();
+        assert_eq!(set.len(), 2);
+        assert_eq!(set[0].keyholder_key_id, Some(10));
+        assert_eq!(set[1].keyholder_key_id, Some(20));
+        assert!(set.iter().all(|wire| wire.artifact_kind == "seed"));
+
+        for (keyholder, wire, key_id) in [(&alice, &set[0], 10), (&bob, &set[1], 20)] {
+            let k = recover_key(keyholder, wire);
+            let env = wire_to_envelope(wire).unwrap();
+            let plaintext = open_with_shared_key(&k, &env, CUBE, key_id).unwrap();
+            assert_eq!(plaintext.as_slice(), seed.as_slice());
+        }
+    }
+
     /// Nothing supplied → refused before any sealing, so an empty set can
     /// never be uploaded and read as "backed up".
     #[test]
