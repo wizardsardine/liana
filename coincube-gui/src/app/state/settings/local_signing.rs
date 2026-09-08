@@ -63,6 +63,15 @@ pub struct RowDraft {
 
 pub struct LocalSigningState {
     pub vault_keys: Vec<(String, String)>,
+    /// Origin (master) fingerprint of each entry in [`Self::vault_keys`],
+    /// keyed by the same xpub string.
+    ///
+    /// A signer's origin fingerprint is *not* derivable from its account
+    /// xpub — it belongs to the master key several levels up — so binding
+    /// the two halves of a phone's reported identity needs this lookup
+    /// from the local descriptor. See the `expected_signer_fp` argument of
+    /// [`crate::phone_signer::pairing_listener::run_pairing`].
+    pub vault_key_fingerprints: Vec<(String, Fingerprint)>,
     pub selected_key: Option<String>,
     pub descriptor_sha256: String,
     pub phones: PairingStoreFile,
@@ -114,6 +123,7 @@ impl Default for LocalSigningState {
     fn default() -> Self {
         Self {
             vault_keys: Vec::new(),
+            vault_key_fingerprints: Vec::new(),
             selected_key: None,
             descriptor_sha256: String::new(),
             phones: PairingStoreFile::default(),
@@ -177,17 +187,31 @@ impl LocalSigningState {
             self.selected_key = None;
         }
         self.descriptor_sha256 = hash;
-        self.vault_keys = wallet
+        let spendable: Vec<_> = wallet
             .main_descriptor
             .spendable_keys()
             .into_iter()
             .filter_map(|key| {
                 let label = key.to_string();
                 match key {
-                    DescriptorPublicKey::XPub(k) => Some((k.xkey.to_string(), label)),
+                    DescriptorPublicKey::XPub(k) => Some((k.xkey.to_string(), label, k.origin)),
                     _ => None,
                 }
             })
+            .collect();
+        // Record each key's origin fingerprint alongside its xpub. This is
+        // the same fingerprint `descriptor_keys()` collects below (both read
+        // `DescriptorXKey::origin`), so a pairing bound against this map can
+        // never disagree with the membership set. Keys without an origin are
+        // skipped rather than guessed: `thresh_origins` requires one, so a
+        // descriptor missing it would not have produced a usable vault.
+        self.vault_key_fingerprints = spendable
+            .iter()
+            .filter_map(|(xpub, _, origin)| origin.as_ref().map(|(fp, _)| (xpub.clone(), *fp)))
+            .collect();
+        self.vault_keys = spendable
+            .into_iter()
+            .map(|(xpub, label, _)| (xpub, label))
             .collect();
         // Identify the **vault as a whole**, not one of its signers
         // — `id_fingerprint` is a stable 4-byte digest of the
@@ -523,13 +547,15 @@ impl State for LocalSigningState {
                             return Task::none();
                         }
                     };
-                let GeneratedOffer { mut offer } = crate::phone_signer::pairing::generate_offer(
+                let GeneratedOffer { offer } = crate::phone_signer::pairing::generate_offer(
                     fingerprint,
                     &identity,
                     phone.instance_name.clone(),
+                    crate::phone_signer::pairing::OfferedKey {
+                        signer_xpub: selected_key,
+                        descriptor_sha256: self.descriptor_sha256.clone(),
+                    },
                 );
-                offer.signer_xpub = selected_key;
-                offer.descriptor_sha256 = self.descriptor_sha256.clone();
                 // Build the QR up front and fail closed if it can't be
                 // rendered. Entering `Waiting` with `qr: None` would
                 // show the user a "scan this QR" prompt with no code
@@ -555,6 +581,23 @@ impl State for LocalSigningState {
                 };
                 let expected_vault_id = fingerprint;
                 let signer_fps = self.wallet_signer_fingerprints.clone();
+                // Resolve the selected key's origin fingerprint from the
+                // local descriptor so the listener can require the phone to
+                // report that exact key, not merely some key in this vault.
+                // Fail closed if the descriptor has no origin for it: pairing
+                // without the binding is what we're trying to prevent.
+                let Some(expected_signer_fp) = self
+                    .vault_key_fingerprints
+                    .iter()
+                    .find(|(xpub, _)| *xpub == offer.signer_xpub)
+                    .map(|(_, fp)| *fp)
+                else {
+                    self.flow = PairingFlow::Error(PairingError::InternalError(
+                        "Couldn't identify the selected vault key; reload the wallet and try again."
+                            .into(),
+                    ));
+                    return Task::none();
+                };
                 let dir = cache.datadir_path.clone();
                 let run_id = self.start_pairing_run();
                 let tombstones = self.tombstones.clone();
@@ -581,6 +624,7 @@ impl State for LocalSigningState {
                             phone,
                             expected_vault_id,
                             signer_fps,
+                            expected_signer_fp,
                         )
                         .await
                         {
@@ -682,6 +726,7 @@ impl State for LocalSigningState {
         } else {
             self.wallet_fingerprint = None;
             self.wallet_signer_fingerprints = Vec::new();
+            self.vault_key_fingerprints = Vec::new();
         }
         // Cache isn't passed to reload; the panel reads it on the
         // first update tick instead.

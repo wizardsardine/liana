@@ -547,27 +547,27 @@ mod tests {
             Address::from_str("tb1qkldgvljmjpxrjq2ev5qxe8dvhn0dph9q85pwtfkjeanmwdue2akqj4twxj")
                 .unwrap()
                 .assume_checked();
-        // The mock daemon is a strict ordered queue (see
-        // `utils::mock::Daemon`). Each entry consumes the next
-        // outgoing RPC. The Receive panel's `reload` and
-        // `NextReceiveAddress` paths both kick an eager
-        // `requestsync` after their primary RPC, so the queue
-        // interleaves them:
+        // The mock daemon's `requests` queue is strictly positional (see
+        // `utils::mock::Daemon`): each entry consumes the next outgoing
+        // RPC. Only the two calls the panel awaits inline go in it, in the
+        // order the panel makes them:
         //   1. listrevealedaddresses    (reload's primary)
-        //   2. requestsync              (reload's eager-sync kick)
-        //   3. getnewaddress            (NextReceiveAddress primary)
-        //   4. requestsync              (NextReceiveAddress kick)
-        // Each kick is detached onto the runtime rather than
-        // awaited, so its position relative to the *next* primary
-        // RPC is up to the scheduler, not the panel — this ordering
-        // is what the current scheduler produces, not a guarantee
-        // the panel makes. The mock also never asserts the queue
-        // drains, so a run where a kick lands after the test ends
-        // still passes. If this ever goes flaky, drop the
-        // `requestsync` entries and stop asserting on the kicks
-        // rather than trying to force an order.
-        // The daemon answers `requestsync` with the empty JSON
-        // object `{}`; the client deserialises into a discarded
+        //   2. getnewaddress            (NextReceiveAddress primary)
+        //
+        // Both paths also kick an eager `requestsync`, but each is
+        // detached with `tokio::spawn` and never awaited, so it lands
+        // whenever the scheduler gets to it — possibly after the next
+        // ordered call, possibly after this test ends. Ordering it in the
+        // queue would make the test depend on runtime scheduling, so it
+        // gets a standing response matched by method name instead and
+        // can't shift the queue. That does mean the kicks themselves
+        // aren't asserted: a fire-and-forget side effect has no
+        // race-free moment to assert on from here. `reload`'s and
+        // `NextReceiveAddress`'s call to it is covered by reading the
+        // source, not by this test.
+        //
+        // The daemon answers `requestsync` with the empty JSON object
+        // `{}`; the client deserialises into a discarded
         // `serde_json::Value`.
         let daemon = Daemon::new(vec![
             (
@@ -580,21 +580,14 @@ mod tests {
                 })),
             ),
             (
-                Some(json!({"method": "requestsync", "params": Option::<Request>::None})),
-                Ok(json!({})),
-            ),
-            (
                 Some(json!({"method": "getnewaddress", "params": Option::<Request>::None})),
                 Ok(json!(GetAddressResult::new(
                     addr.clone(),
                     ChildNumber::from_normal_idx(0).unwrap()
                 ))),
             ),
-            (
-                Some(json!({"method": "requestsync", "params": Option::<Request>::None})),
-                Ok(json!({})),
-            ),
-        ]);
+        ])
+        .with_standing_response("requestsync", json!({}));
         let wallet = Arc::new(Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap()));
         let sandbox: Sandbox<VaultReceivePanel> = Sandbox::new(VaultReceivePanel::new(
             CoincubeDirectory::new(PathBuf::new()),

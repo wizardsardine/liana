@@ -27,6 +27,10 @@ use crate::phone_signer::identity::DesktopIdentity;
 /// trusting whatever cert answered on the LAN. See
 /// `plans/PLAN-local-signer-pairing-phone-auth.md`.
 pub const PAIRING_PROTOCOL_VERSION: u32 = 2;
+/// Resource ceiling shared with Keychain: 283 bytes below QR version 40,
+/// medium ECC byte capacity. The production budget test reserves more margin.
+/// This is not a physical-camera scanning guarantee.
+pub const MAX_PAIRING_QR_BYTES: usize = 2048;
 
 /// Length of the per-offer pairing secret, in bytes. 128-bit: the
 /// secret is online, single-use, and TTL-bounded, so this is well
@@ -54,8 +58,8 @@ pub const PAIRING_OFFER_TTL_SECONDS: u64 = 120;
 /// QR was generated for it, and uses `wfp` + `exp` to gate the
 /// pairing flow.
 ///
-/// Authoritative shape — must stay byte-for-byte in lockstep with
-/// the Flutter side. See
+/// Shared field meanings; Rust and Dart JSON field ordering may differ.
+/// The HMAC covers the specified fields, not the serialized JSON. See
 /// `plans/PLAN-local-signer-lan-cert-in-qr-desktop.md` §1.1.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairingOffer {
@@ -123,6 +127,20 @@ pub struct GeneratedOffer {
     pub offer: PairingOffer,
 }
 
+/// The vault key a v2 offer commits to: the spendable xpub the user picked
+/// and the hash of the descriptor it belongs to.
+///
+/// Bundled so [`generate_offer`] can require both without growing a third
+/// bare `String` parameter. `PairingOffer`'s own fields stay public and
+/// `#[serde(default)]` — a decoded v1 QR legitimately has them empty, which
+/// is what `run_pairing` rejects — so this constrains offers this desktop
+/// *generates*, not every offer that can exist.
+#[derive(Debug, Clone, Default)]
+pub struct OfferedKey {
+    pub signer_xpub: String,
+    pub descriptor_sha256: String,
+}
+
 /// Generate a fresh pairing offer aimed at a specific phone.
 ///
 /// Takes `&DesktopIdentity` directly so `cert` and `certFp` are
@@ -133,10 +151,19 @@ pub struct GeneratedOffer {
 /// `phone_service_name` is the mDNS instance name resolved from a
 /// `_coincube-signer._tcp.local.` browse just before this call —
 /// embedded so the phone can confirm receipt of the right QR.
+///
+/// `key` is required rather than filled in by the caller afterwards:
+/// [`crate::phone_signer::pairing_listener::run_pairing`] refuses an offer
+/// carrying an empty `signer_xpub`, so an offer built without one is dead on
+/// arrival. Passing it here means that can't be forgotten. (It stays a
+/// *struct* rather than two more `String` arguments so it can't be
+/// transposed with `phone_service_name` — all three are strings, and a swap
+/// would compile.)
 pub fn generate_offer(
     wallet_fingerprint: Fingerprint,
     identity: &DesktopIdentity,
     phone_service_name: String,
+    key: OfferedKey,
 ) -> GeneratedOffer {
     let expires_at_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -153,8 +180,8 @@ pub fn generate_offer(
 
     GeneratedOffer {
         offer: PairingOffer {
-            signer_xpub: String::new(),
-            descriptor_sha256: String::new(),
+            signer_xpub: key.signer_xpub,
+            descriptor_sha256: key.descriptor_sha256,
             version: PAIRING_PROTOCOL_VERSION,
             cert_der_b64: identity.cert_der_b64(),
             cert_fp: identity.cert_fp(),
@@ -237,12 +264,19 @@ pub fn verify_pairing_proof(
 /// expects inside the QR code.
 pub fn encode_offer(offer: &PairingOffer) -> Result<String, String> {
     let json = serde_json::to_vec(offer).map_err(|e| format!("encode offer json: {}", e))?;
-    Ok(URL_SAFE_NO_PAD.encode(json))
+    let encoded = URL_SAFE_NO_PAD.encode(json);
+    if encoded.len() > MAX_PAIRING_QR_BYTES {
+        return Err("Pairing QR is too large".into());
+    }
+    Ok(encoded)
 }
 
 /// Decode a pairing offer from the base64url(JSON) form. Useful for
 /// tests and for the Phase-3 "Connect by IP" fallback.
 pub fn decode_offer(payload: &str) -> Result<PairingOffer, String> {
+    if payload.len() > MAX_PAIRING_QR_BYTES {
+        return Err("Pairing QR is too large".into());
+    }
     let bytes = URL_SAFE_NO_PAD
         .decode(payload)
         .map_err(|e| format!("decode base64url: {}", e))?;
@@ -282,12 +316,39 @@ mod tests {
     }
 
     #[test]
+    fn qr_capacity_and_resource_ceiling() {
+        use iced::widget::qr_code::{Data, ErrorCorrection, Version};
+        Data::with_version(
+            "a".repeat(2331),
+            Version::Normal(40),
+            ErrorCorrection::Medium,
+        )
+        .unwrap();
+        assert!(Data::with_version(
+            "a".repeat(2332),
+            Version::Normal(40),
+            ErrorCorrection::Medium
+        )
+        .is_err());
+        assert!(decode_offer(&"a".repeat(MAX_PAIRING_QR_BYTES + 1)).is_err());
+        let offer = generate_offer(
+            Fingerprint::default(),
+            &fresh_identity(),
+            "s".repeat(MAX_PAIRING_QR_BYTES),
+            OfferedKey::default(),
+        )
+        .offer;
+        assert!(encode_offer(&offer).is_err());
+    }
+
+    #[test]
     fn offer_roundtrips_through_base64url_json() {
         let identity = fresh_identity();
         let g = generate_offer(
             Fingerprint::default(),
             &identity,
             "keychain-12345678".into(),
+            OfferedKey::default(),
         );
         let encoded = encode_offer(&g.offer).expect("encode");
         let decoded = decode_offer(&encoded).expect("decode");
@@ -303,8 +364,20 @@ mod tests {
     #[test]
     fn generated_offer_psk_is_fresh_and_correct_length() {
         let identity = fresh_identity();
-        let a = generate_offer(Fingerprint::default(), &identity, "x".into()).offer;
-        let b = generate_offer(Fingerprint::default(), &identity, "x".into()).offer;
+        let a = generate_offer(
+            Fingerprint::default(),
+            &identity,
+            "x".into(),
+            OfferedKey::default(),
+        )
+        .offer;
+        let b = generate_offer(
+            Fingerprint::default(),
+            &identity,
+            "x".into(),
+            OfferedKey::default(),
+        )
+        .offer;
         // Distinct per offer (a reused psk would let a captured proof
         // replay across pairings).
         assert_ne!(a.psk_b64, b.psk_b64, "psk must be fresh per offer");
@@ -318,27 +391,66 @@ mod tests {
         );
     }
 
-    /// The whole encoded QR (not just the cert field) must stay inside
-    /// the phone's ~1 KB QR budget after adding the psk.
+    /// The whole encoded QR (not just the cert field) must stay inside the
+    /// QR budget, measured at the widest payload the protocol allows: a
+    /// 111-char xpub, a 64-char descriptor hash, and a 63-char mDNS service
+    /// label (the DNS maximum). That worst case is ~1239 bytes today.
+    ///
+    /// `QR_BUDGET` is derived from a real, measured ceiling rather than a
+    /// guess: `iced::widget::qr_code::Data::new` encodes at error-correction
+    /// Medium and tops out at **2331 bytes** (QR v40, byte mode), past which
+    /// it returns `Err` and the pairing wizard shows "Couldn't render the
+    /// pairing QR code." The budget sits between the two so it catches
+    /// meaningful bloat — an RSA-2048 cert chain would push this to ~2.4 KB
+    /// and break rendering outright — without tripping on ordinary drift.
+    ///
+    /// The `Data::new` call below is the assertion that actually matters;
+    /// the byte budget is the early warning.
     #[test]
-    fn encoded_offer_stays_within_qr_budget() {
-        let identity = fresh_identity();
-        let g = generate_offer(
+    fn production_offer_qr_budget() {
+        const QR_BUDGET: usize = 1600;
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+        let root = coincube_core::miniscript::bitcoin::bip32::Xpriv::new_master(
+            coincube_core::miniscript::bitcoin::Network::Bitcoin,
+            &[1; 32],
+        )
+        .unwrap();
+        let xpub =
+            coincube_core::miniscript::bitcoin::bip32::Xpub::from_priv(&secp, &root).to_string();
+        assert_eq!(xpub.len(), 111);
+        let offer = generate_offer(
             Fingerprint::default(),
-            &identity,
-            "keychain-12345678".into(),
-        );
-        let encoded = encode_offer(&g.offer).expect("encode");
-        assert!(
-            encoded.len() < 1024,
-            "encoded QR len {} >= 1024",
+            &fresh_identity(),
+            "s".repeat(63),
+            OfferedKey {
+                signer_xpub: xpub,
+                descriptor_sha256: "ab".repeat(32),
+            },
+        )
+        .offer;
+        let encoded = encode_offer(&offer).unwrap();
+        println!(
+            "production offer with maximum DNS service label: {} bytes",
             encoded.len()
+        );
+        iced::widget::qr_code::Data::new(&encoded).unwrap();
+        assert!(
+            encoded.len() < QR_BUDGET,
+            "production payload is {} bytes, budget {}",
+            encoded.len(),
+            QR_BUDGET,
         );
     }
 
     #[test]
     fn pairing_proof_verifies_for_matching_inputs() {
-        let g = generate_offer(Fingerprint::default(), &fresh_identity(), "x".into()).offer;
+        let g = generate_offer(
+            Fingerprint::default(),
+            &fresh_identity(),
+            "x".into(),
+            OfferedKey::default(),
+        )
+        .offer;
         let desktop_fp = &g.cert_fp;
         let phone_fp = "ab".repeat(32); // any 64-hex string
         let proof = pairing_proof(&g.psk_b64, desktop_fp, &phone_fp).expect("compute");
@@ -350,7 +462,13 @@ mod tests {
 
     #[test]
     fn pairing_proof_is_bound_to_both_fingerprints() {
-        let g = generate_offer(Fingerprint::default(), &fresh_identity(), "x".into()).offer;
+        let g = generate_offer(
+            Fingerprint::default(),
+            &fresh_identity(),
+            "x".into(),
+            OfferedKey::default(),
+        )
+        .offer;
         let desktop_fp = &g.cert_fp;
         let phone_fp = "ab".repeat(32);
         let proof = pairing_proof(&g.psk_b64, desktop_fp, &phone_fp).expect("compute");
@@ -398,8 +516,20 @@ mod tests {
 
     #[test]
     fn pairing_proof_rejects_wrong_psk_tamper_and_empty() {
-        let g = generate_offer(Fingerprint::default(), &fresh_identity(), "x".into()).offer;
-        let other = generate_offer(Fingerprint::default(), &fresh_identity(), "x".into()).offer;
+        let g = generate_offer(
+            Fingerprint::default(),
+            &fresh_identity(),
+            "x".into(),
+            OfferedKey::default(),
+        )
+        .offer;
+        let other = generate_offer(
+            Fingerprint::default(),
+            &fresh_identity(),
+            "x".into(),
+            OfferedKey::default(),
+        )
+        .offer;
         let desktop_fp = &g.cert_fp;
         let phone_fp = "ab".repeat(32);
         let proof = pairing_proof(&g.psk_b64, desktop_fp, &phone_fp).expect("compute");
@@ -428,6 +558,7 @@ mod tests {
             Fingerprint::default(),
             &identity,
             "keychain-deadbeef".into(),
+            OfferedKey::default(),
         );
         assert_eq!(g.offer.service_name, "keychain-deadbeef");
     }
@@ -439,6 +570,7 @@ mod tests {
             Fingerprint::default(),
             &identity,
             "keychain-00000000".into(),
+            OfferedKey::default(),
         );
         assert!(!is_expired(&g.offer));
         assert!(seconds_remaining(&g.offer) > 0);
@@ -454,6 +586,7 @@ mod tests {
             Fingerprint::default(),
             &identity,
             "keychain-12345678".into(),
+            OfferedKey::default(),
         );
         let raw = URL_SAFE_NO_PAD
             .decode(&g.offer.cert_der_b64)
@@ -475,6 +608,7 @@ mod tests {
             Fingerprint::default(),
             &identity,
             "keychain-12345678".into(),
+            OfferedKey::default(),
         );
         assert!(
             g.offer.cert_der_b64.len() < 1024,

@@ -118,22 +118,50 @@ impl PairedPhone {
         use sha2::{Digest, Sha256};
         use std::str::FromStr;
         let error = "Pair this Keychain again and select its exact vault key.";
-        let binding = self.signer_binding.as_ref().ok_or(error)?;
         let parsed = CoincubeDescriptor::from_str(descriptor).map_err(|_| error)?;
-        let member = parsed.spendable_keys().iter().any(|key| match key {
-            DescriptorPublicKey::XPub(k) => {
-                k.xkey.to_string() == binding.xpub
-                    && k.origin.as_ref().map(|o| o.0) == Some(binding.fingerprint)
-            }
-            _ => false,
-        });
+        let vault_keys: Vec<(String, Fingerprint)> = parsed
+            .spendable_keys()
+            .iter()
+            .filter_map(|key| match key {
+                DescriptorPublicKey::XPub(k) => {
+                    k.origin.as_ref().map(|(fp, _)| (k.xkey.to_string(), *fp))
+                }
+                _ => None,
+            })
+            .collect();
+        self.exact_signer_against(
+            &hex::encode(Sha256::digest(descriptor.as_bytes())),
+            &vault_keys,
+        )
+    }
+
+    /// [`Self::exact_signer`] against inputs a caller has already resolved:
+    /// the hex SHA-256 of the loaded descriptor, and its `(xpub, origin
+    /// fingerprint)` pairs.
+    ///
+    /// Exists so callers that hold those already — the settings view renders
+    /// per phone, per frame — get the *same* verdict without re-parsing the
+    /// descriptor. Checking a subset here is what makes a row read "Exact
+    /// vault key paired" while signing and the hw refresh loop reject the
+    /// phone, so this is the only predicate either path should use.
+    pub fn exact_signer_against(
+        &self,
+        descriptor_sha256_hex: &str,
+        vault_keys: &[(String, Fingerprint)],
+    ) -> Result<&SignerBinding, String> {
+        let error = "Pair this Keychain again and select its exact vault key.";
+        let binding = self.signer_binding.as_ref().ok_or(error)?;
+        let member = vault_keys
+            .iter()
+            .any(|(xpub, fp)| *xpub == binding.xpub && *fp == binding.fingerprint);
         if binding
             .key_id
             .parse::<u64>()
             .ok()
             .filter(|id| *id > 0)
             .is_none()
-            || binding.descriptor_sha256 != Sha256::digest(descriptor.as_bytes()).to_vec()
+            || binding.descriptor_sha256.len() != 32
+            || hex::encode(&binding.descriptor_sha256) != descriptor_sha256_hex
             || self.vault_fingerprint.to_string() != hex::encode(&binding.descriptor_sha256[..4])
             || !member
         {
@@ -257,6 +285,88 @@ mod tests {
         path.push(format!("coincube-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).expect("mkdir tempdir");
         CoincubeDirectory::new(path)
+    }
+
+    /// A binding whose descriptor commitment matches but whose other
+    /// halves don't must NOT read as an exact signer.
+    ///
+    /// This is the settings-row status bug: matching `descriptor_sha256`
+    /// alone rendered "Exact vault key paired" for phones that signing and
+    /// the hw refresh loop reject, because `exact_signer` also requires a
+    /// usable backend key id, a matching vault id, and the reported
+    /// xpub/fingerprint to actually name a descriptor key.
+    #[test]
+    fn exact_signer_against_requires_more_than_the_descriptor_hash() {
+        let digest = [7u8; 32];
+        let hash_hex = hex::encode(digest);
+        let vault_fp: Fingerprint = hex::encode(&digest[..4]).parse().expect("vault fp");
+        let key_fp = Fingerprint::from([1, 2, 3, 4]);
+        let vault_keys = vec![("xpub-selected".to_string(), key_fp)];
+
+        let phone = |binding: SignerBinding| PairedPhone {
+            signer_binding: Some(binding),
+            vault_fingerprint: vault_fp,
+            ..sample_phone(1)
+        };
+        let good = SignerBinding {
+            key_id: "10".into(),
+            xpub: "xpub-selected".into(),
+            fingerprint: key_fp,
+            descriptor_sha256: digest.to_vec(),
+        };
+
+        assert!(
+            phone(good.clone())
+                .exact_signer_against(&hash_hex, &vault_keys)
+                .is_ok(),
+            "a fully consistent binding is an exact signer",
+        );
+
+        // Each of these matches `descriptor_sha256` — the only thing the
+        // settings row used to check — but must still be rejected.
+        for (label, binding) in [
+            (
+                "unusable backend key id",
+                SignerBinding {
+                    key_id: "0".into(),
+                    ..good.clone()
+                },
+            ),
+            (
+                "xpub not in the descriptor",
+                SignerBinding {
+                    xpub: "xpub-other".into(),
+                    ..good.clone()
+                },
+            ),
+            (
+                "fingerprint of a different key",
+                SignerBinding {
+                    fingerprint: Fingerprint::from([9, 9, 9, 9]),
+                    ..good.clone()
+                },
+            ),
+        ] {
+            assert!(
+                phone(binding)
+                    .exact_signer_against(&hash_hex, &vault_keys)
+                    .is_err(),
+                "{} must not read as an exact signer",
+                label,
+            );
+        }
+
+        // Same binding, but the row belongs to a different vault.
+        assert!(
+            PairedPhone {
+                signer_binding: Some(good),
+                vault_fingerprint: Fingerprint::from([0, 0, 0, 1]),
+                ..sample_phone(1)
+            }
+            .exact_signer_against(&hash_hex, &vault_keys)
+            .is_err(),
+            "a vault id that doesn't match the descriptor commitment must not read as exact",
+        );
     }
 
     fn sample_phone(seed: u8) -> PairedPhone {

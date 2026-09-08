@@ -265,7 +265,7 @@ fn verifier_pinning(
 // across `recv().await` would actually deadlock instead of being
 // papered over by single-threaded cooperative scheduling.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn sign_tx_round_trips_through_fake_phone() {
+async fn sign_tx_rejects_unsigned_echo_through_fake_phone() {
     // 1. Mint desktop and phone identities.
     let (desk_cert, desk_key) = mint_ed25519_cert("Coincube Desktop (test)");
     let (phone_cert, phone_key) = mint_ed25519_cert("Coincube Phone (test)");
@@ -325,7 +325,7 @@ async fn sign_tx_round_trips_through_fake_phone() {
     let original = psbt.serialize();
     async_hwi::HWI::sign_tx(&signer, &mut psbt)
         .await
-        .expect("sign_tx ok");
+        .expect_err("echo without a selected-key signature must be rejected");
     // Round-trip: the fake phone echoed back unchanged, so the
     // PSBT serialises to the same bytes.
     let returned = psbt.serialize();

@@ -68,12 +68,21 @@ pub(crate) const REDIAL_BACKOFF: Duration = Duration::from_millis(750);
 /// `signer_fingerprints` is the local wallet's descriptor fingerprint set,
 /// used only as an additional consistency check. The phone must report the
 /// exact QR-selected xpub and backend key ID before a pairing can complete.
+///
+/// `expected_signer_fp` is the origin fingerprint the *local descriptor*
+/// records for `offer.signer_xpub`. Membership in `signer_fingerprints`
+/// only proves the reported fingerprint names some key in the vault, not
+/// that it names the selected one, so the phone's claim is required to
+/// equal this. The caller resolves it because an origin fingerprint
+/// belongs to a master key several levels above the account xpub and so
+/// cannot be derived from `offer.signer_xpub` here.
 pub async fn run_pairing(
     identity: DesktopIdentity,
     offer: PairingOffer,
     phone: mdns::DiscoveredPhone,
     expected_vault_id: Fingerprint,
     signer_fingerprints: Vec<Fingerprint>,
+    expected_signer_fp: Fingerprint,
 ) -> Result<PairedPhone, PairingError> {
     if crate::phone_signer::pairing::is_expired(&offer) {
         return Err(PairingError::OfferExpired);
@@ -117,6 +126,7 @@ pub async fn run_pairing(
             &current,
             expected_vault_id,
             &signer_fingerprints,
+            expected_signer_fp,
         )
         .await
         {
@@ -189,6 +199,7 @@ async fn try_pair_once(
     phone: &mdns::DiscoveredPhone,
     expected_vault_id: Fingerprint,
     signer_fingerprints: &[Fingerprint],
+    expected_signer_fp: Fingerprint,
 ) -> Result<PairedPhone, PairingError> {
     // Dial unpinned so we accept whatever cert the phone presents;
     // we'll capture and pin its SHA-256 right after the handshake.
@@ -311,6 +322,29 @@ async fn try_pair_once(
         return Err(PairingError::TransportKeyMissing);
     }
 
+    // Checked before anything the phone sent, and reported separately: these
+    // are faults in the offer *this desktop generated*, not in the response.
+    // Folding them into the identity-mismatch error below sends the user to
+    // re-select a key on their phone when the QR on their screen is the thing
+    // that's wrong — a legacy offer built before the exact-key fields existed,
+    // or one aimed at a different vault. Only regenerating fixes those.
+    if offer.signer_xpub.is_empty()
+        || !offer
+            .descriptor_sha256
+            .starts_with(&expected_vault_id.to_string())
+    {
+        tracing::warn!(
+            target: "phone_signer::pairing",
+            has_signer_xpub = !offer.signer_xpub.is_empty(),
+            "pairing offer carries no usable exact-key identity — refusing to pair",
+        );
+        return Err(PairingError::InternalError(
+            "This pairing QR predates exact-key pairing, or was generated for a \
+             different vault. Start pairing again to get a fresh one."
+                .into(),
+        ));
+    }
+
     // The v2 proof authenticates this TLS peer. It must report the one key
     // selected in the scanned QR; only the phone's local record supplies ID.
     let reported = complete.signer_binding.as_ref().ok_or_else(|| {
@@ -318,13 +352,9 @@ async fn try_pair_once(
             "Pair again with an updated Keychain and select its exact vault key.".into(),
         )
     })?;
-    if offer.signer_xpub.is_empty()
-        || reported.xpub != offer.signer_xpub
+    if reported.xpub != offer.signer_xpub
         || reported.descriptor_sha256.len() != 32
         || hex::encode(&reported.descriptor_sha256) != offer.descriptor_sha256
-        || !offer
-            .descriptor_sha256
-            .starts_with(&expected_vault_id.to_string())
         || reported
             .key_id
             .parse::<u64>()
@@ -345,6 +375,27 @@ async fn try_pair_once(
             "Selected key is not in this vault; pair again.".into(),
         ));
     }
+    // Membership only proves the reported fingerprint names *some* key in
+    // this vault — not the one the QR selected. Without this, a phone could
+    // report the selected xpub alongside a different vault signer's
+    // fingerprint and pass every check above, and we'd persist a
+    // `SignerBinding` whose two halves identify different keys plus a
+    // `wallet_fingerprints` entry advertising the phone for a key it can't
+    // sign for. Bind them: the caller resolved this fingerprint from the
+    // local descriptor entry for `offer.signer_xpub` (checked equal to
+    // `reported.xpub` above), so requiring equality here ties the reported
+    // xpub and fingerprint to the same key.
+    if fingerprint != expected_signer_fp {
+        tracing::warn!(
+            target: "phone_signer::pairing",
+            reported = %fingerprint,
+            expected = %expected_signer_fp,
+            "phone reported a fingerprint that isn't the selected key's — refusing to pair",
+        );
+        return Err(PairingError::InternalError(
+            "Reported key fingerprint doesn't match the selected key; pair again.".into(),
+        ));
+    }
     let signer_binding = Some(crate::phone_signer::pairing_store::SignerBinding {
         key_id: reported.key_id.clone(),
         xpub: reported.xpub.clone(),
@@ -352,13 +403,15 @@ async fn try_pair_once(
         descriptor_sha256: reported.descriptor_sha256.clone(),
     });
 
-    // Best-effort ack so the phone can render "pairing complete".
+    // Required acknowledgement: the phone persists only after exact admission.
     let ack = LocalEnvelope {
         payload: Some(local_v1::local_envelope::Payload::Pong(
             crate::services::connect::grpc::connect_v1::Pong { ts_unix_ms: 0 },
         )),
     };
-    let _ = writer.send(&ack).await;
+    writer.send(&ack).await.map_err(|e| {
+        PairingError::InternalError(format!("Pairing acknowledgement failed: {}", e))
+    })?;
 
     let name = if complete.device_name.is_empty() {
         "Keychain phone".to_string()

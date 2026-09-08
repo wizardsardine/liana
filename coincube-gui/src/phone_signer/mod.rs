@@ -16,6 +16,7 @@ pub mod pairing;
 pub mod pairing_listener;
 pub mod pairing_store;
 pub mod protocol;
+mod signatures;
 pub mod tls;
 pub mod transport;
 
@@ -377,7 +378,8 @@ impl HWI for PhoneSigner {
                 "Signed transaction differs from the request.".into(),
             ));
         }
-        merge_signatures(psbt, &signed);
+        signatures::merge_verified(psbt, &signed, &self.descriptor, binding)
+            .map_err(HwiError::Device)?;
         Ok(())
     }
 }
@@ -397,26 +399,6 @@ fn map_phone_error(msg: String) -> HwiError {
         ))
     } else {
         HwiError::Device(msg)
-    }
-}
-
-/// Merge `partial_sigs`, `tap_key_sig`, and `tap_script_sigs` from
-/// `signed` into `target`. Mirrors the post-`sign_tx` merge logic in
-/// `app::state::vault::psbt::sign_psbt`, so the phone signer behaves
-/// like a hardware wallet that signs one path at a time.
-fn merge_signatures(target: &mut Psbt, signed: &Psbt) {
-    for (i, target_in) in target.inputs.iter_mut().enumerate() {
-        if let Some(signed_in) = signed.inputs.get(i) {
-            for (pk, sig) in &signed_in.partial_sigs {
-                target_in.partial_sigs.insert(*pk, *sig);
-            }
-            if let Some(tap_key_sig) = signed_in.tap_key_sig {
-                target_in.tap_key_sig = Some(tap_key_sig);
-            }
-            for (k, v) in &signed_in.tap_script_sigs {
-                target_in.tap_script_sigs.insert(*k, *v);
-            }
-        }
     }
 }
 
@@ -449,3 +431,7 @@ mod tests {
         assert_eq!(msg, "USER_DECLINED: tap reject");
     }
 }
+
+#[cfg(test)]
+#[path = "signature_tests.rs"]
+mod signature_tests;

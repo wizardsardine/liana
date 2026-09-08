@@ -38,20 +38,50 @@ impl Client for DaemonClient {
 
 pub struct Daemon {
     requests: Vec<(Option<Value>, Result<Value, DaemonError>)>,
+    standing: Vec<(String, Value)>,
 }
 
 impl Daemon {
     pub fn new(requests: Vec<(Option<Value>, Result<Value, DaemonError>)>) -> Self {
-        Self { requests }
+        Self {
+            requests,
+            standing: Vec::new(),
+        }
+    }
+
+    /// Answer `method` from a standing response matched by name, however many
+    /// times it arrives — including zero — instead of consuming an entry from
+    /// the ordered `requests` queue.
+    ///
+    /// The queue is strictly positional, so it can only describe calls whose
+    /// order the code under test actually fixes. A call a panel kicks off in a
+    /// detached task (`tokio::spawn`) is not one of those: it lands whenever
+    /// the scheduler gets to it, which may be after the next ordered call or
+    /// after the test has finished. Register those here so they can't shift the
+    /// queue out from under the calls that *are* ordered.
+    pub fn with_standing_response(mut self, method: &str, response: Value) -> Self {
+        self.standing.push((method.to_string(), response));
+        self
     }
 
     pub fn run(self) -> DaemonClient {
-        let (client_sender, daemon_receiver) = channel();
+        let (client_sender, daemon_receiver) = channel::<Value>();
         let (daemon_sender, client_receiver) = channel();
 
         thread::spawn(move || {
             let mut requests = self.requests.into_iter();
+            let standing = self.standing;
             while let Ok(msg) = daemon_receiver.recv() {
+                let method = msg.get("method").and_then(Value::as_str);
+                if let Some((_, response)) = standing
+                    .iter()
+                    .find(|(name, _)| Some(name.as_str()) == method)
+                {
+                    daemon_sender
+                        .send(Ok(response.clone()))
+                        .expect("Mock daemon failed to send standing response");
+                    continue;
+                }
                 let request = requests
                     .next()
                     .expect("Mock Daemon must have all requests mocked in the right order");

@@ -39,7 +39,9 @@ use coincube_gui::dir::{CoincubeDirectory, NetworkDirectory};
 use coincube_gui::phone_signer::{
     identity::DesktopIdentity,
     mdns::DiscoveredPhone,
-    pairing::{decode_offer, encode_offer, generate_offer, pairing_proof, PairingOffer},
+    pairing::{
+        decode_offer, encode_offer, generate_offer, pairing_proof, OfferedKey, PairingOffer,
+    },
     pairing_listener,
     pairing_store::PairedPhone,
     protocol::{local_v1, LocalEnvelope},
@@ -320,9 +322,15 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
     let addr = listener.local_addr().expect("local_addr");
 
     let wallet_fp = lan_binding::vault(DESC);
-    let mut g = generate_offer(wallet_fp, &identity, "keychain-test".into());
-    g.offer.signer_xpub = lan_binding::binding(DESC).xpub;
-    g.offer.descriptor_sha256 = hex::encode(lan_binding::binding(DESC).descriptor_sha256);
+    let g = generate_offer(
+        wallet_fp,
+        &identity,
+        "keychain-test".into(),
+        OfferedKey {
+            signer_xpub: lan_binding::binding(DESC).xpub,
+            descriptor_sha256: hex::encode(lan_binding::binding(DESC).descriptor_sha256),
+        },
+    );
     let encoded = encode_offer(&g.offer).expect("encode offer");
     let decoded = decode_offer(&encoded).expect("decode offer");
 
@@ -361,6 +369,7 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
         phone_discovered,
         wallet_fp,
         vec![lan_binding::binding(DESC).fingerprint],
+        lan_binding::binding(DESC).fingerprint,
     )
     .await
     .expect("pairing ok");
@@ -406,7 +415,7 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
     let original = psbt.serialize();
     async_hwi::HWI::sign_tx(&signer, &mut psbt)
         .await
-        .expect("sign_tx ok");
+        .expect_err("echo without a selected-key signature must be rejected");
     assert_eq!(
         psbt.serialize(),
         original,
@@ -460,7 +469,15 @@ async fn handshake_fails_when_phone_pins_a_different_cert() {
         instance_name: "keychain-test".into(),
     };
     let wallet_fp = lan_binding::vault(DESC);
-    let mut g = generate_offer(wallet_fp, &identity, "keychain-test".into());
+    let mut g = generate_offer(
+        wallet_fp,
+        &identity,
+        "keychain-test".into(),
+        OfferedKey {
+            signer_xpub: lan_binding::binding(DESC).xpub,
+            descriptor_sha256: hex::encode(lan_binding::binding(DESC).descriptor_sha256),
+        },
+    );
     // Shorten the offer TTL: `run_pairing` now retries failed dials
     // until the offer expires (so a user has time to scan the QR
     // after the phone's first inbound-close). A 2 s budget is
@@ -479,6 +496,7 @@ async fn handshake_fails_when_phone_pins_a_different_cert() {
         phone_discovered,
         wallet_fp,
         vec![lan_binding::binding(DESC).fingerprint],
+        lan_binding::binding(DESC).fingerprint,
     )
     .await;
 

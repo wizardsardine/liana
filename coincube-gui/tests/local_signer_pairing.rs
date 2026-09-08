@@ -98,9 +98,14 @@ fn fresh_offer(wallet_fp: Fingerprint, cert_fp: String, ttl_secs: u64) -> Pairin
         // the test crate doesn't need base64 directly. The value is
         // arbitrary; what matters is that the fake phone's proof is
         // computed over this same psk (via `proof_for`).
-        psk_b64: pairing::generate_offer(wallet_fp, &fresh_desktop_identity(), "x".into())
-            .offer
-            .psk_b64,
+        psk_b64: pairing::generate_offer(
+            wallet_fp,
+            &fresh_desktop_identity(),
+            "x".into(),
+            pairing::OfferedKey::default(),
+        )
+        .offer
+        .psk_b64,
     }
 }
 
@@ -259,9 +264,16 @@ async fn run_pairing_happy_path_returns_paired_phone() {
         instance_name: "keychain-test".into(),
     };
 
-    let paired = pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp])
-        .await
-        .expect("run_pairing ok");
+    let paired = pairing_listener::run_pairing(
+        identity,
+        offer,
+        phone,
+        wallet_fp,
+        vec![wallet_fp],
+        wallet_fp,
+    )
+    .await
+    .expect("run_pairing ok");
 
     assert_eq!(paired.name, "Test Pixel");
     assert_eq!(paired.wallet_fingerprints, vec![wallet_fp]);
@@ -290,6 +302,7 @@ async fn run_pairing_returns_offer_expired_when_ttl_in_past() {
         phone,
         Fingerprint::default(),
         vec![Fingerprint::default()],
+        Fingerprint::default(),
     )
     .await;
     assert!(
@@ -341,7 +354,8 @@ async fn run_pairing_returns_wallet_fingerprint_mismatch() {
     // expected_vault_id = `actual`; offer.wallet_fingerprint = `wanted`.
     // The listener compares them as scalars and surfaces the typed
     // mismatch.
-    let result = pairing_listener::run_pairing(identity, offer, phone, actual, vec![actual]).await;
+    let result =
+        pairing_listener::run_pairing(identity, offer, phone, actual, vec![actual], actual).await;
     match result {
         Err(PairingError::WalletFingerprintMismatch { expected, claimed }) => {
             assert_eq!(expected, vec![actual]);
@@ -389,8 +403,15 @@ async fn run_pairing_rejects_phone_reporting_mismatched_cert_fp() {
         instance_name: "keychain-test".into(),
     };
 
-    let result =
-        pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp]).await;
+    let result = pairing_listener::run_pairing(
+        identity,
+        offer,
+        phone,
+        wallet_fp,
+        vec![wallet_fp],
+        wallet_fp,
+    )
+    .await;
 
     match result {
         Err(PairingError::InternalError(msg)) => {
@@ -448,8 +469,15 @@ async fn run_pairing_rejects_invalid_pairing_proof() {
         instance_name: "keychain-test".into(),
     };
 
-    let result =
-        pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp]).await;
+    let result = pairing_listener::run_pairing(
+        identity,
+        offer,
+        phone,
+        wallet_fp,
+        vec![wallet_fp],
+        wallet_fp,
+    )
+    .await;
 
     assert!(
         matches!(result, Err(PairingError::PhoneVerificationFailed)),
@@ -524,7 +552,14 @@ async fn run_pairing_returns_offer_expired_when_phone_stalls_after_tls() {
     // CI; ~5 s is plenty given the 2 s offer TTL.
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp]),
+        pairing_listener::run_pairing(
+            identity,
+            offer,
+            phone,
+            wallet_fp,
+            vec![wallet_fp],
+            wallet_fp,
+        ),
     )
     .await
     .expect("run_pairing must return within the outer cap");
@@ -599,10 +634,16 @@ async fn run_pairing_returns_signer_fps_not_vault_id() {
         instance_name: "keychain-test".into(),
     };
 
-    let paired =
-        pairing_listener::run_pairing(identity, offer, phone, vault_id, signer_fps.clone())
-            .await
-            .expect("run_pairing ok");
+    let paired = pairing_listener::run_pairing(
+        identity,
+        offer,
+        phone,
+        vault_id,
+        signer_fps.clone(),
+        signer_fps[1],
+    )
+    .await
+    .expect("run_pairing ok");
 
     assert_eq!(
         paired.wallet_fingerprints, vec![signer_fps[1]],
@@ -614,6 +655,152 @@ async fn run_pairing_returns_signer_fps_not_vault_id() {
     );
 
     let _ = phone_handle.await;
+}
+
+/// A legacy offer — one with no `signer_xpub`, as generated before
+/// exact-key pairing existed — must say so, not blame the phone.
+///
+/// Both failures used to share "Exact pairing identity mismatch; pair
+/// again.", which sends the user to re-pick a key on their handset when the
+/// QR on their screen is what's stale. Only regenerating the offer fixes it.
+#[tokio::test]
+async fn run_pairing_reports_a_legacy_offer_rather_than_blaming_the_phone() {
+    let (phone_cert, phone_key) = mint_ed25519_cert("Coincube Phone (test)");
+    let phone_pin = tls::fingerprint_of(&phone_cert);
+    let phone_cert_fp_hex = phone_pin
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
+    let identity = fresh_desktop_identity();
+    let mut offer = fresh_offer(wallet_fp, identity.cert_fp(), 30);
+    // Exactly what a pre-exact-key desktop would have put on screen.
+    offer.signer_xpub = String::new();
+    let proof = proof_for(&offer, &phone_cert_fp_hex);
+    let phone_handle = tokio::spawn(fake_phone_server(
+        listener,
+        phone_cert,
+        phone_key,
+        "Test Pixel".into(),
+        phone_cert_fp_hex.clone(),
+        proof,
+    ));
+
+    let phone = DiscoveredPhone {
+        cert_fp8: phone_cert_fp_hex[..8].to_string(),
+        addr,
+        instance_name: "keychain-test".into(),
+    };
+
+    let result = pairing_listener::run_pairing(
+        identity,
+        offer,
+        phone,
+        wallet_fp,
+        vec![wallet_fp],
+        wallet_fp,
+    )
+    .await;
+
+    match result {
+        Err(PairingError::InternalError(msg)) => {
+            assert!(
+                msg.contains("Start pairing again"),
+                "expected the regenerate-the-QR error, got: {}",
+                msg,
+            );
+            assert!(
+                !msg.contains("Exact pairing identity mismatch"),
+                "a stale offer must not be reported as a phone-side mismatch: {}",
+                msg,
+            );
+        }
+        other => panic!(
+            "an offer with no signer_xpub must be refused; got {:?}",
+            other.map(|p| p.wallet_fingerprints),
+        ),
+    }
+
+    phone_handle.abort();
+}
+
+/// A phone that reports the QR-selected xpub alongside a *different*
+/// vault signer's fingerprint must be refused.
+///
+/// Vault membership alone doesn't bind the two halves of the reported
+/// identity: both keys here are legitimately in the descriptor, so the
+/// membership check passes and only the xpub/fingerprint binding can
+/// reject this. Without it the desktop would persist a `SignerBinding`
+/// whose xpub and fingerprint name different keys, and advertise the
+/// phone under `wallet_fingerprints` for a key it cannot sign for.
+#[tokio::test]
+async fn run_pairing_rejects_fingerprint_of_a_different_vault_key() {
+    let (phone_cert, phone_key) = mint_ed25519_cert("Coincube Phone (test)");
+    let phone_pin = tls::fingerprint_of(&phone_cert);
+    let phone_cert_fp_hex = phone_pin
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    let vault_id = Fingerprint::from([0xaa, 0xbb, 0xcc, 0xdd]);
+    let selected = Fingerprint::from([1, 2, 3, 4]);
+    let other = Fingerprint::from([5, 6, 7, 8]);
+    let signer_fps = vec![selected, other];
+
+    let identity = fresh_desktop_identity();
+    let offer = fresh_offer(vault_id, identity.cert_fp(), 30);
+    let proof = proof_for(&offer, &phone_cert_fp_hex);
+    let phone_handle = tokio::spawn(fake_phone_server_with_identity(
+        listener,
+        phone_cert,
+        phone_key,
+        "Test Pixel".into(),
+        phone_cert_fp_hex.clone(),
+        proof,
+        valid_transport_pubkey(),
+        local_v1::SignerBinding {
+            key_id: "11".into(),
+            // The selected xpub, so every other identity check passes...
+            xpub: offer.signer_xpub.clone(),
+            // ...but a fingerprint belonging to the vault's *other* key.
+            fingerprint: other.to_string(),
+            descriptor_sha256: hex::decode(&offer.descriptor_sha256).unwrap(),
+        },
+    ));
+
+    let phone = DiscoveredPhone {
+        cert_fp8: phone_cert_fp_hex[..8].to_string(),
+        addr,
+        instance_name: "keychain-test".into(),
+    };
+
+    let result =
+        pairing_listener::run_pairing(identity, offer, phone, vault_id, signer_fps, selected).await;
+
+    match result {
+        Err(PairingError::InternalError(msg)) => assert!(
+            msg.contains("doesn't match the selected key"),
+            "expected the xpub/fingerprint binding error, got: {}",
+            msg,
+        ),
+        other => panic!(
+            "pairing must fail when the reported fingerprint is a different vault key; got {:?}",
+            other.map(|p| p.wallet_fingerprints),
+        ),
+    }
+
+    phone_handle.abort();
 }
 
 /// Two-shot fake phone: completes TLS on the first inbound
@@ -712,7 +899,14 @@ async fn run_pairing_returns_offer_expired_when_retries_exhaust_ttl() {
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp]),
+        pairing_listener::run_pairing(
+            identity,
+            offer,
+            phone,
+            wallet_fp,
+            vec![wallet_fp],
+            wallet_fp,
+        ),
     )
     .await
     .expect("run_pairing must complete within outer cap");
@@ -768,7 +962,14 @@ async fn run_pairing_redials_after_phone_closes_early() {
     // successful dial should land inside a second or two.
     let paired = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp]),
+        pairing_listener::run_pairing(
+            identity,
+            offer,
+            phone,
+            wallet_fp,
+            vec![wallet_fp],
+            wallet_fp,
+        ),
     )
     .await
     .expect("run_pairing must complete within cap")
@@ -848,8 +1049,15 @@ async fn run_pairing_refuses_a_phone_with_no_transport_key() {
             addr,
             instance_name: "keychain-test".into(),
         };
-        let res =
-            pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp]).await;
+        let res = pairing_listener::run_pairing(
+            identity,
+            offer,
+            phone,
+            wallet_fp,
+            vec![wallet_fp],
+            wallet_fp,
+        )
+        .await;
 
         assert!(
             matches!(res, Err(PairingError::TransportKeyMissing)),

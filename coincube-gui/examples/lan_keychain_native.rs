@@ -27,9 +27,18 @@ async fn main() {
     let vault: Fingerprint = hex::encode(&hash[..4]).parse().unwrap();
     let identity = identity::load_or_create(&CoincubeDirectory::new(dir.clone())).unwrap();
     if args[1] == "offer" {
-        let mut offer = pairing::generate_offer(vault, &identity, "native-interop".into()).offer;
-        offer.signer_xpub = fixture["keys"][index]["xpub"].as_str().unwrap().into();
-        offer.descriptor_sha256 = hex::encode(hash);
+        let offer = pairing::generate_offer(
+            vault,
+            &identity,
+            "native-interop".into(),
+            pairing::OfferedKey {
+                signer_xpub: fixture["keys"][index]["xpub"].as_str().unwrap().into(),
+                descriptor_sha256: hex::encode(hash),
+            },
+        )
+        .offer;
+        let encoded = pairing::encode_offer(&offer).unwrap();
+        iced::widget::qr_code::Data::new(&encoded).expect("production QR must render");
         std::fs::write(dir.join("offer.json"), serde_json::to_vec(&offer).unwrap()).unwrap();
         println!("{}", pairing::encode_offer(&offer).unwrap());
         return;
@@ -55,6 +64,7 @@ async fn main() {
         },
         vault,
         vec![fingerprint],
+        fingerprint,
     )
     .await
     .unwrap();

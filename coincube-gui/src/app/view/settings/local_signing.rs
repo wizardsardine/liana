@@ -317,10 +317,14 @@ fn paired_phones_card<'a>(state: &'a LocalSigningState) -> Element<'a, Message> 
             let fp8_for_name = fp8.clone();
             let fp8_for_fb = fp8.clone();
             let fp8_for_save = fp8.clone();
+            // Must be the same predicate signing and the hw refresh loop
+            // apply. Matching only `descriptor_sha256` here would report
+            // "Exact vault key paired" for a phone whose binding fails on
+            // key id, vault id, or key membership — a healthy row the user
+            // then can't sign with.
             let identity_status = if p
-                .signer_binding
-                .as_ref()
-                .is_some_and(|b| hex::encode(&b.descriptor_sha256) == state.descriptor_sha256)
+                .exact_signer_against(&state.descriptor_sha256, &state.vault_key_fingerprints)
+                .is_ok()
             {
                 "Exact vault key paired"
             } else {

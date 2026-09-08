@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "generatedAt": "2026-09-08T20:41:35Z",
+  "baseRef": "15d2375638fd3c231a1dbd69ae8d22253be54a93",
+  "headRef": "819b2a6321b5dbd0f7f02751e7d2c12d81b43e57",
+  "files": [
+    {"filePath":"coincube-gui/examples/lan_keychain_native.rs","status":"added","additions":97,"deletions":0},
+    {"filePath":"coincube-gui/src/app/state/settings/local_signing.rs","status":"modified","additions":63,"deletions":10},
+    {"filePath":"coincube-gui/src/app/view/message.rs","status":"modified","additions":2,"deletions":0},
+    {"filePath":"coincube-gui/src/app/view/settings/local_signing.rs","status":"modified","additions":29,"deletions":1},
+    {"filePath":"coincube-gui/src/hw.rs","status":"modified","additions":9,"deletions":5},
+    {"filePath":"coincube-gui/src/phone_signer/mod.rs","status":"modified","additions":17,"deletions":2},
+    {"filePath":"coincube-gui/src/phone_signer/pairing.rs","status":"modified","additions":8,"deletions":0},
+    {"filePath":"coincube-gui/src/phone_signer/pairing_listener.rs","status":"modified","additions":48,"deletions":15},
+    {"filePath":"coincube-gui/src/phone_signer/pairing_store.rs","status":"modified","additions":51,"deletions":16},
+    {"filePath":"coincube-gui/tests/common/lan_binding.rs","status":"added","additions":38,"deletions":0},
+    {"filePath":"coincube-gui/tests/local_signer_loopback.rs","status":"modified","additions":78,"deletions":8},
+    {"filePath":"coincube-gui/tests/local_signer_pair_and_sign.rs","status":"modified","additions":16,"deletions":8},
+    {"filePath":"coincube-gui/tests/local_signer_pairing.rs","status":"modified","additions":48,"deletions":3},
+    {"filePath":"grpc/local_envelope.proto","status":"modified","additions":73,"deletions":82}
+  ],
+  "impactedNodes": [
+    {"nodeId":"file:coincube-gui/src/app/state/settings/local_signing.rs","impact":"direct","reason":"Pairing now requires an explicitly selected descriptor xpub and carries the full descriptor commitment."},
+    {"nodeId":"function:coincube-gui/src/app/state/settings/local_signing.rs:update","impact":"direct","reason":"Creates the exact-key pairing offer and persists the authenticated result."},
+    {"nodeId":"file:coincube-gui/src/hw.rs","impact":"direct","reason":"Phone discovery now rejects pairings without a valid exact signer binding."},
+    {"nodeId":"function:coincube-gui/src/hw.rs:refresh","impact":"direct","reason":"Surfaces only a phone whose persisted key is an exact parsed member of the active descriptor."},
+    {"nodeId":"file:coincube-gui/src/phone_signer/pairing.rs","impact":"direct","reason":"QR v2 carries the selected xpub and descriptor SHA-256."},
+    {"nodeId":"file:coincube-gui/src/phone_signer/pairing_listener.rs","impact":"direct","reason":"Validates the phone-returned binding before persistence."},
+    {"nodeId":"function:coincube-gui/src/phone_signer/pairing_listener.rs:try_pair_once","impact":"direct","reason":"Checks backend key ID, descriptor commitment, selected xpub and signer fingerprint."},
+    {"nodeId":"file:coincube-gui/src/phone_signer/pairing_store.rs","impact":"direct","reason":"Persists and revalidates exact signer authority."},
+    {"nodeId":"file:coincube-gui/src/phone_signer/mod.rs","impact":"direct","reason":"Sends the exact target key ID and validates the signed response before merging."},
+    {"nodeId":"function:coincube-gui/src/phone_signer/mod.rs:sign_tx","impact":"direct","reason":"Uses the validated binding for session construction and response attribution."},
+    {"nodeId":"schema:grpc/local_envelope.proto","impact":"direct","reason":"Adds PairingComplete.signer_binding and the SignerBinding wire message."},
+    {"nodeId":"file:coincube-gui/src/phone_signer/transport.rs","impact":"indirect","reason":"Carries the newly identity-bound pairing and signing envelopes over pinned TLS."},
+    {"nodeId":"file:coincube-gui/src/phone_signer/protocol.rs","impact":"indirect","reason":"Correlates the exact-key signing response consumed by PhoneSigner."}
+  ],
+  "impactedEdges": [
+    {"source":"function:coincube-gui/src/app/state/settings/local_signing.rs:update","target":"file:coincube-gui/src/phone_signer/pairing.rs","type":"imports","impact":"Pairing offer gains selected-key and descriptor commitments."},
+    {"source":"file:coincube-gui/src/phone_signer/pairing_listener.rs","target":"file:coincube-gui/src/phone_signer/pairing_store.rs","type":"imports","impact":"Authenticated phone binding is persisted as signing authority."},
+    {"source":"function:coincube-gui/src/phone_signer/mod.rs:sign_tx","target":"function:coincube-gui/src/phone_signer/transport.rs:send","type":"calls","impact":"Exact backend key ID and sealed descriptor are sent to Keychain."}
+  ],
+  "summary": "P1-B replaces broad descriptor-fingerprint selection with one QR-selected, phone-resolved signer binding. The authority path now runs from settings selection through pairing proof and persistent exact membership to PhoneSigner session construction. The highest-risk dependents are pairing admission, paired-phone migration, hardware-wallet discovery, and response merging. Receive-panel changes in the same desktop commit were intentionally excluded as unrelated concurrent work."
+}
