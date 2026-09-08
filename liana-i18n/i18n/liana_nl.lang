@@ -1,0 +1,2514 @@
+# Translator-friendly catalog
+# Language: Nederlands
+# Format: id => "English" => "Translation"
+# Use \n for line breaks
+
+btn-accept => "Accept" => "Accepteren"
+
+btn-add-key => "Add a key" => "Sleutel toevoegen"
+
+btn-add-payment => "Add payment" => "Betaling toevoegen"
+
+btn-add-recovery-option => "Add recovery option" => "Hersteloptie toevoegen"
+
+btn-add-recovery-path => "Add a recovery path" => "Herstelpad toevoegen"
+
+btn-add-safety-net => "Add Safety Net" => "Safety Net toevoegen"
+
+btn-add-wallet => "Add wallet" => "Wallet toevoegen"
+
+btn-apply => "Apply" => "Toepassen"
+
+btn-approve => "Approve" => "Goedkeuren"
+
+btn-back => "Back" => "Terug"
+
+btn-back-up-descriptor => "Back Up Descriptor" => "Descriptor back-uppen"
+
+btn-backup-encrypted-descriptor
+=> "Back up encrypted descriptor"
+=> "Versleutelde descriptor back-uppen";;
+
+btn-broadcast => "Broadcast" => "Uitzenden"
+
+btn-bump-fee => "Bump fee" => "Tarief verhogen"
+
+btn-cancel => "Cancel" => "Annuleren"
+
+btn-cancel-transaction => "Cancel transaction" => "Transactie annuleren"
+
+btn-change-email => "Change Email" => "E-mail wijzigen"
+
+btn-check-connection => "Check connection" => "Verbinding testen"
+
+btn-clear => "Clear" => "Wissen"
+
+btn-clear-all => "Clear All" => "Alles wissen"
+
+btn-close-tab => "Close" => "Sluiten"
+
+btn-confirm => "Confirm" => "Bevestigen"
+
+btn-connect-another-email
+=> "Connect with another email"
+=> "Verbinden met ander e-mailadres";;
+
+btn-customize => "Customize" => "Aanpassen"
+
+btn-delete => "Delete" => "Verwijderen"
+
+btn-delete-wallet => "Delete wallet" => "Wallet verwijderen"
+
+btn-dismiss => "Dismiss" => "Sluiten"
+
+btn-edit => "Edit" => "Bewerken"
+
+btn-edit-keys => "Edit keys" => "Sleutels bewerken"
+
+btn-edit-label => "Edit label" => "Label bewerken"
+
+btn-email-wizardsardine => "Email WS" => "E-mail WS"
+
+btn-export => "Export" => "Exporteren"
+
+btn-fee-level-high => "High" => "Hoog"
+
+btn-fee-level-low => "Low" => "Laag"
+
+btn-fee-level-medium => "Medium" => "Gemiddeld"
+
+btn-generate => "Generate" => "Genereren"
+
+btn-generate-address => "Generate address" => "Adres genereren"
+
+btn-go-back => "Go back" => "Terug"
+
+btn-go-back-to-psbts => "Go back to PSBTs" => "Terug naar PSBT's"
+
+btn-go-to-replacement => "Go to replacement" => "Naar vervanging"
+
+btn-go-to-rescan => "Go to rescan" => "Naar herscan"
+
+btn-ignore => "Ignore" => "Negeren"
+
+btn-import => "Import" => "Importeren"
+
+btn-keep-my-changes => "Keep my changes" => "Mijn wijzigingen behouden"
+
+btn-login => "Login" => "Inloggen"
+
+btn-manage-keys => "Manage Keys" => "Sleutels beheren"
+
+btn-mark-keys-ready => "Mark keys as ready" => "Sleutels als gereed markeren"
+
+btn-more-backend-node-info
+=> "More information about backend and node options"
+=> "Meer informatie over backend- en node-opties";;
+
+btn-new => "New" => "Nieuw"
+
+btn-next => "Next" => "Volgende"
+
+btn-no => "No" => "Nee"
+
+btn-ok => "OK" => "OK"
+
+btn-overwrite => "Overwrite" => "Overschrijven"
+
+btn-previous => "Previous" => "Vorige"
+
+btn-previous-arrow => "< Previous" => "< Vorige"
+
+btn-processing => "Processing..." => "Bezig..."
+
+btn-register-on-device => "Register on device" => "Registreren op apparaat"
+
+btn-reload => "Reload" => "Herladen"
+
+btn-replace => "Replace" => "Vervangen"
+
+btn-resend-token => "Resend token" => "Token opnieuw sturen"
+
+btn-reset-timelock => "Reset timelock" => "Timelock resetten"
+
+btn-retry => "Retry" => "Opnieuw proberen"
+
+btn-save => "Save" => "Opslaan"
+
+btn-see-transaction-details
+=> "See transaction details"
+=> "Transactiedetails bekijken";;
+
+btn-select => "Select" => "Selecteren"
+
+btn-send-for-approval => "Send for approval" => "Ter goedkeuring sturen"
+
+btn-send-invitation => "Send invitation" => "Uitnodiging sturen"
+
+btn-send-token => "Send token" => "Token sturen"
+
+btn-set => "Set" => "Instellen"
+
+btn-set-keys => "Set keys" => "Sleutels instellen"
+
+btn-share-xpubs => "Share Xpubs" => "Xpubs delen"
+
+btn-show-qr => "Show QR Code" => "QR-code tonen"
+
+btn-sign => "Sign" => "Ondertekenen"
+
+btn-skip => "Skip" => "Overslaan"
+
+btn-skip-registration => "Skip registration" => "Registratie overslaan"
+
+btn-split-tab => "Split" => "Splitsen"
+
+btn-start-rescan => "Start rescan" => "Herscan starten"
+
+btn-starting-rescan => "Starting rescan..." => "Herscan starten..."
+
+btn-template-help
+=> "Something’s wrong with this template?"
+=> "Klopt er iets niet aan dit sjabloon?";;
+
+btn-unlock-all => "Unlock all" => "Alles ontgrendelen"
+
+btn-update => "Update" => "Bijwerken"
+
+btn-updating => "Updating" => "Bijwerken..."
+
+btn-verify-on-device
+=> "Verify on hardware device"
+=> "Verifiëren op hardwareapparaat";;
+
+btn-yes => "Yes" => "Ja"
+
+business-access-error => "Access Error" => "Toegangsfout"
+
+business-account-connection-failed
+=> "Failed to connect with account {$email}. The session may have expired."
+=> "Verbinden met account {$email} is mislukt. De sessie is mogelijk verlopen.";;
+
+business-account-number => "Account #{$index}" => "Account #{$index}"
+
+business-add-key-label => "Add a key" => "Een sleutel toevoegen"
+
+business-add-two-keys-to-continue
+=> "Add at least 2 keys to continue"
+=> "Voeg minstens 2 sleutels toe om door te gaan";;
+
+business-admin-name => "Admin{$name}" => "Admin{$name}"
+
+business-after-days
+=> "{ $count ->\n    [one] After 1 day\n   *[other] After {$count} days\n}"
+=> "{ $count ->\n    [one] Na 1 dag\n   *[other] Na {$count} dagen\n}";;
+
+business-after-hours
+=> "{ $count ->\n    [one] After 1 hour\n   *[other] After {$count} hours\n}"
+=> "{ $count ->\n    [one] Na 1 uur\n   *[other] Na {$count} uur\n}";;
+
+business-after-months
+=> "{ $count ->\n    [one] After 1 month\n   *[other] After {$count} months\n}"
+=> "{ $count ->\n    [one] Na 1 maand\n   *[other] Na {$count} maanden\n}";;
+
+business-all-files => "All files" => "Alle bestanden"
+
+business-all-keys-set-waiting
+=> "All keys are set. Once the other participants finish this step, the wallet will be ready."
+=> "Alle sleutels zijn ingesteld. Zodra de andere deelnemers deze stap hebben afgerond, is de wallet gereed.";;
+
+business-assigned-keys-set-waiting
+=> "Your assigned keys are set. Waiting for the other participants to finish this step."
+=> "Uw toegewezen sleutels zijn ingesteld. Wachten tot de andere deelnemers deze stap afronden.";;
+
+business-auth-code-request-failed
+=> "Failed to request authentication code from server."
+=> "Aanvragen van de authenticatiecode bij de server is mislukt.";;
+
+business-authenticated => "Authenticated" => "Geauthenticeerd"
+
+business-backend-error => "Backend error" => "Backend-fout"
+
+business-cannot-approve-template
+=> "Can't approve this template?"
+=> "Kunt u dit sjabloon niet goedkeuren?";;
+
+business-clipboard-empty => "Clipboard is empty" => "Klembord is leeg"
+
+business-code-six-digits
+=> "Code must contain only 6 digits."
+=> "De code mag alleen 6 cijfers bevatten.";;
+
+business-common-you => "You" => "U"
+
+business-confirm-coldcard-success
+=> "Please confirm on your Coldcard that the wallet registration completed successfully."
+=> "Bevestig op uw Coldcard dat de walletregistratie succesvol is voltooid.";;
+
+business-confirm-device
+=> "Please confirm on your device..."
+=> "Bevestig op uw apparaat...";;
+
+business-confirm-registration => "Confirm Registration" => "Registratie bevestigen"
+
+business-connect-device-register
+=> "Connect the associated device to register"
+=> "Sluit het bijbehorende apparaat aan om te registreren";;
+
+business-connection-error => "Connection Error" => "Verbindingsfout"
+
+business-contact-create-account
+=> "Contact Wizardsardine to create an account."
+=> "Neem contact op met Wizardsardine om een account aan te maken.";;
+
+business-create-new-path => "Create New Path" => "Nieuw pad aanmaken"
+
+business-current-xpub => "Current xpub" => "Huidige xpub"
+
+business-detected-devices => "Detected devices" => "Gedetecteerde apparaten"
+
+business-device-disconnected => "Device disconnected" => "Apparaat losgekoppeld"
+
+business-device-locked-unlock
+=> "Device is locked. Please unlock it first."
+=> "Apparaat is vergrendeld. Ontgrendel het eerst.";;
+
+business-device-not-supported
+=> "Device is not supported"
+=> "Apparaat wordt niet ondersteund";;
+
+business-device-unsupported-locked
+=> "Device locked or unsupported"
+=> "Apparaat vergrendeld of niet ondersteund";;
+
+business-did-registration-succeed
+=> "Did the registration succeed on your Coldcard?"
+=> "Is de registratie op uw Coldcard gelukt?";;
+
+business-duplicate-timelock => "Duplicate timelock" => "Dubbele timelock"
+
+business-edit-key => "Edit Key" => "Sleutel bewerken"
+
+business-edit-primary-path => "Edit Primary Path" => "Primair pad bewerken"
+
+business-edit-recovery-path => "Edit Recovery Path" => "Herstelpad bewerken"
+
+business-edited => "Edited" => "Bewerkt"
+
+business-edited-by-on
+=> "Edited by {$editor} on {$date}"
+=> "Bewerkt door {$editor} op {$date}";;
+
+business-edited-by-user => "Edited by {$editor}" => "Bewerkt door {$editor}"
+
+business-edited-on => "Edited on {$date}" => "Bewerkt op {$date}"
+
+business-edited-relative => "Edited{$editor} {$time}" => "Bewerkt{$editor} {$time}"
+
+business-email-app-open-failed
+=> "Couldn't open your email app"
+=> "Uw e-mailprogramma kon niet worden geopend";;
+
+business-email-app-open-failed-message
+=> "Open your email client and contact Wizardsardine to request template edits."
+=> "Open uw e-mailprogramma en neem contact op met Wizardsardine om wijzigingen aan het sjabloon aan te vragen.";;
+
+business-external-keys => "External keys" => "Externe sleutels"
+
+business-external-signer-help
+=> "The third party who will set up and sign with this key. They'll be invited by email."
+=> "De derde partij die deze sleutel instelt en ermee ondertekent. Zij worden per e-mail uitgenodigd.";;
+
+business-fetched-from-device
+=> "Fetched from {$kind} #{$fingerprint}"
+=> "Opgehaald van {$kind} #{$fingerprint}";;
+
+business-fetching-device => "Fetching from device..." => "Ophalen van apparaat..."
+
+business-file-dialog-result-failed
+=> "Failed to receive result from file dialog thread"
+=> "Ontvangen van het resultaat van de bestandsdialoog is mislukt";;
+
+business-file-read-failed
+=> "Failed to read file: {$error}"
+=> "Lezen van bestand mislukt: {$error}";;
+
+business-filter-organizations
+=> "Filter organizations..."
+=> "Organisaties filteren...";;
+
+business-filter-wallets => "Filter wallets..." => "Wallets filteren..."
+
+business-from-your-organization => "From your organization" => "Uit uw organisatie"
+
+business-hardware-wallet-not-found
+=> "Hardware wallet not found"
+=> "Hardwarewallet niet gevonden";;
+
+business-import-xpub-file
+=> "Import extended public key file"
+=> "Bestand met uitgebreide publieke sleutel importeren";;
+
+business-internal-signer-help
+=> "The organization member who will set up and sign with this key. They'll be invited by email."
+=> "Het lid van uw organisatie dat deze sleutel instelt en ermee ondertekent. Diegene wordt per e-mail uitgenodigd.";;
+
+business-invalid-threshold => "Invalid threshold value" => "Ongeldige drempelwaarde"
+
+business-key-alias => "Key Alias" => "Sleutelalias"
+
+business-key-alias-placeholder
+=> "e.g. Alice, Treasury, Lawyer..."
+=> "bijv. Alice, Treasury, Advocaat...";;
+
+business-key-count
+=> "{ $count ->\n    [one] (1 key)\n   *[other] ({$count} keys)\n}"
+=> "{ $count ->\n    [one] (1 sleutel)\n   *[other] ({$count} sleutels)\n}";;
+
+business-key-definition-help
+=> "Define the key's name and who holds it. You'll set it up later, by connecting a device or adding its public key."
+=> "Bepaal de naam van de sleutel en wie hem beheert. U stelt de sleutel later in door een apparaat aan te sluiten of de publieke sleutel toe te voegen.";;
+
+business-key-deleted => "Key Deleted" => "Sleutel verwijderd"
+
+business-key-deleted-message
+=> "The key you were editing was deleted by another user."
+=> "De sleutel die u bewerkte is door een andere gebruiker verwijderd.";;
+
+business-key-modified => "Key Modified" => "Sleutel gewijzigd"
+
+business-key-modified-message
+=> "This key was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "Deze sleutel is door een andere gebruiker gewijzigd. Wilt u de serverversie herladen of uw wijzigingen behouden?";;
+
+business-key-number => "Key {$id}" => "Sleutel {$id}"
+
+business-key-path-account-help
+=> "The account number in this key's derivation path. Pick a different account to derive an independent key from the same device."
+=> "Het accountnummer in het afleidingspad van deze sleutel. Kies een ander account om een onafhankelijke sleutel van hetzelfde apparaat af te leiden.";;
+
+business-key-removed => "Key Removed" => "Sleutel verwijderd"
+
+business-key-removed-from-path
+=> "\"{$alias}\" was deleted by another user and has been removed from your path selection."
+=> "\"{$alias}\" is door een andere gebruiker verwijderd en is uit uw padselectie gehaald.";;
+
+business-key-type => "Key Type" => "Sleuteltype"
+
+business-key-type-help
+=> "Internal: Held by a member of your organization.\nExternal: Held by a trusted third party.\nCosigner: Professional co-signing service.\nSafetyNet: Professional recovery service."
+=> "Intern: In handen van een lid van uw organisatie.\nExtern: In handen van een vertrouwde derde partij.\nCosigner: Professionele medeondertekendienst.\nSafetyNet: Professionele hersteldienst.";;
+
+business-keys-awaiting-manager
+=> "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet."
+=> "Wachten op de Wallet Manager. Die heeft de sleutels en ondertekenaars nog niet als gereed gemarkeerd.";;
+
+business-keys-in-path => "Keys in Path:" => "Sleutels in pad:"
+
+business-keys-manager-instruction
+=> "List the keys that will be part of this wallet and assign a signer to each. The spending policy will be crafted from these keys."
+=> "Noteer de sleutels die deel gaan uitmaken van deze wallet en wijs aan elke sleutel een ondertekenaar toe. Het uitgavebeleid wordt op basis van deze sleutels opgesteld.";;
+
+business-keys-ready-by-manager
+=> "Marked as ready by the Wallet Manager. They've finished adding keys & signers."
+=> "Door de Wallet Manager als gereed gemarkeerd. Die is klaar met het toevoegen van sleutels en ondertekenaars.";;
+
+business-keys-ready-policy-editable
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys. You can still edit keys if anything needs to change."
+=> "Sleutels en ondertekenaars zijn als gereed gemarkeerd. Het uitgavebeleid wordt op basis van deze sleutels opgesteld. U kunt sleutels nog steeds bewerken als er iets moet veranderen.";;
+
+business-keys-ready-policy-pending
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys."
+=> "Sleutels en ondertekenaars zijn als gereed gemarkeerd. Het uitgavebeleid wordt op basis van deze sleutels opgesteld.";;
+
+business-keys-required-to-spend
+=> "{ $count ->\n    [one] {$threshold} of 1 key required to spend\n   *[other] {$threshold} of {$count} keys required to spend\n}"
+=> "{ $count ->\n    [one] {$threshold} van 1 sleutel vereist om uit te geven\n   *[other] {$threshold} van {$count} sleutels vereist om uit te geven\n}";;
+
+business-keys-shared-policy-tab
+=> "These keys are shared with the Spending policy tab"
+=> "Deze sleutels worden gedeeld met het tabblad Uitgavebeleid";;
+
+business-keys-shared-with-policy
+=> "These keys are shared with the Spending policy tab, where you arrange them into spending paths."
+=> "Deze sleutels worden gedeeld met het tabblad Uitgavebeleid, waar u ze in uitgavepaden indeelt.";;
+
+business-keys-signers => "Keys & Signers" => "Sleutels en ondertekenaars"
+
+business-loading-wallet => "Loading wallet..." => "Wallet laden..."
+
+business-login-email-help
+=> "Enter the email associated with your account"
+=> "Voer het e-mailadres in dat bij uw account hoort";;
+
+business-login-failed => "Login failed." => "Inloggen mislukt."
+
+business-lost-connection-restart
+=> "Lost connection to the server. Please restart the application."
+=> "Verbinding met de server verbroken. Start de applicatie opnieuw.";;
+
+business-manager-set-keys-help
+=> "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf."
+=> "Selecteer een sleutel om de instelling ervan af te ronden. Sleutels kunnen door elke sleutelbeheerder afzonderlijk worden ingesteld, of namens hen door de wallet manager.";;
+
+business-max-unit => "Max {$max} {$unit}" => "Max {$max} {$unit}"
+
+business-max-unit-label => "Max: {$max} {$unit}" => "Max: {$max} {$unit}"
+
+business-new-email-address => "New email address" => "Nieuw e-mailadres"
+
+business-no-descriptor-available
+=> "No descriptor available"
+=> "Geen descriptor beschikbaar";;
+
+business-no-devices-to-register
+=> "You have no devices to register."
+=> "U hebt geen apparaten om te registreren.";;
+
+business-no-hardware-wallets
+=> "No hardware device detected. Connect a device and unlock it."
+=> "Geen hardwareapparaat gedetecteerd. Sluit een apparaat aan en ontgrendel het.";;
+
+business-no-keys-assigned
+=> "No keys assigned to you."
+=> "Geen sleutels aan u toegewezen.";;
+
+business-no-keys-available
+=> "No keys available. Add keys first."
+=> "Geen sleutels beschikbaar. Voeg eerst sleutels toe.";;
+
+business-no-members-match => "No members match" => "Geen overeenkomende leden"
+
+business-no-orgs-search
+=> "No organizations found matching your search."
+=> "Geen organisaties gevonden die aan uw zoekopdracht voldoen.";;
+
+business-no-timelock => "No timelock" => "Geen timelock"
+
+business-no-user-id-available
+=> "No user ID available"
+=> "Geen gebruikers-ID beschikbaar";;
+
+business-no-wallet-selected => "No wallet selected" => "Geen wallet geselecteerd"
+
+business-no-wallets-search
+=> "No wallets found matching your search."
+=> "Geen wallets gevonden die aan uw zoekopdracht voldoen.";;
+
+business-not-part-wallet
+=> "Not part of this wallet (#{$fingerprint})"
+=> "Maakt geen deel uit van deze wallet (#{$fingerprint})";;
+
+business-organization => "Organization" => "Organisatie"
+
+business-organizations => "Organizations" => "Organisaties"
+
+business-other-participants-keys
+=> "Other participants' keys"
+=> "Sleutels van andere deelnemers";;
+
+business-participant-set-keys-help
+=> "Select a key assigned to you to complete its setup. You can connect a hardware device or add an extended public key manually."
+=> "Selecteer een aan u toegewezen sleutel om de instelling ervan af te ronden. U kunt een hardwareapparaat aansluiten of handmatig een uitgebreide publieke sleutel toevoegen.";;
+
+business-path-deleted => "Path Deleted" => "Pad verwijderd"
+
+business-path-deleted-message
+=> "The path you were editing was deleted by another user."
+=> "Het pad dat u bewerkte is door een andere gebruiker verwijderd.";;
+
+business-path-modified => "Path Modified" => "Pad gewijzigd"
+
+business-primary-path => "Primary path" => "Primair pad"
+
+business-primary-path-modified-message
+=> "The primary path was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "Het primaire pad is door een andere gebruiker gewijzigd. Wilt u de serverversie herladen of uw wijzigingen behouden?";;
+
+business-professional-service => "Professional service" => "Professionele dienst"
+
+business-provider-name => "Provider · {$provider}" => "Aanbieder · {$provider}"
+
+business-recovery-path => "Recovery path" => "Herstelpad"
+
+business-recovery-path-modified-message
+=> "This recovery path was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "Dit herstelpad is door een andere gebruiker gewijzigd. Wilt u de serverversie herladen of uw wijzigingen behouden?";;
+
+business-recovery-path-number => "Recovery path {$number}" => "Herstelpad {$number}"
+
+business-register-devices => "Register Devices" => "Apparaten registreren"
+
+business-register-wallet-devices-help
+=> "Register the wallet descriptor on each device, or skip if unavailable."
+=> "Registreer de wallet-descriptor op elk apparaat, of sla dit over als het niet mogelijk is.";;
+
+business-registered-on-device
+=> "Registered on device"
+=> "Geregistreerd op apparaat";;
+
+business-registering-wallet => "Registering Wallet" => "Wallet registreren"
+
+business-registration-failed => "Registration Failed" => "Registratie mislukt"
+
+business-request-template-edits-help
+=> "To request edits, reach out to Wizardsardine directly: they can make the changes and send it back for approval."
+=> "Neem voor wijzigingen rechtstreeks contact op met Wizardsardine: zij kunnen de aanpassingen doen en het sjabloon ter goedkeuring terugsturen.";;
+
+business-role-manager => "Manager" => "Manager"
+
+business-role-participant => "Participant" => "Deelnemer"
+
+business-search-members-or-email
+=> "Search organization members or enter email"
+=> "Zoek leden van de organisatie of voer een e-mailadres in";;
+
+business-select-account-placeholder => "Select account" => "Selecteer account"
+
+business-select-key-source
+=> "Select key source · {$alias}"
+=> "Selecteer sleutelbron · {$alias}";;
+
+business-select-xpub-file => "Select xpub file" => "Selecteer xpub-bestand"
+
+business-service-token => "Service token" => "Servicetoken"
+
+business-service-token-help
+=> "Paste the token from the provider. Their firm name is fetched automatically."
+=> "Plak het token van de aanbieder. De bedrijfsnaam wordt automatisch opgehaald.";;
+
+business-service-token-placeholder
+=> "e.g. 42-absent-cake-eagle"
+=> "bijv. 42-absent-cake-eagle";;
+
+business-service-unavailable
+=> "The service is temporarily unavailable. Your wallet data and funds are not affected."
+=> "De dienst is tijdelijk niet beschikbaar. Uw walletgegevens en fondsen worden hierdoor niet geraakt.";;
+
+business-set-keys => "Set Keys" => "Sleutels instellen"
+
+business-signer-email => "Signer email" => "E-mailadres ondertekenaar"
+
+business-spending-policy => "Spending policy" => "Uitgavebeleid"
+
+business-template-locked-approve
+=> "Template is locked and pending approval. You must approve it to continue."
+=> "Het sjabloon is vergrendeld en wacht op goedkeuring. U moet het goedkeuren om door te gaan.";;
+
+business-template-locked-unlock
+=> "Template is locked and pending approval. Unlock to make further changes."
+=> "Het sjabloon is vergrendeld en wacht op goedkeuring. Ontgrendel het om verdere wijzigingen te maken.";;
+
+business-template-read-only
+=> "Read-only. Only a WS Admin can edit this template."
+=> "Alleen-lezen. Alleen een WS-admin kan dit sjabloon bewerken.";;
+
+business-text-files => "Text files" => "Tekstbestanden"
+
+business-threshold-range => "Threshold (1-{$count}):" => "Drempel (1-{$count}):"
+
+business-timelock => "Timelock:" => "Timelock:"
+
+business-timelock-unit-days => "days" => "dagen"
+
+business-timelock-unit-hours => "hours" => "uur"
+
+business-timelock-unit-months => "months" => "maanden"
+
+business-timelock-zero => "Timelock cannot be zero" => "Timelock kan niet nul zijn"
+
+business-token-duplicate => "Duplicate token." => "Dubbel token."
+
+business-token-invalid => "Invalid token." => "Ongeldig token."
+
+business-try-again-support
+=> "Please try again shortly. If the issue persists, contact support."
+=> "Probeer het zo dadelijk opnieuw. Neem contact op met support als het probleem aanhoudt.";;
+
+business-unable-load-wallet => "Unable to load wallet" => "Kan wallet niet laden"
+
+business-unsupported-method
+=> "Unsupported method: {$method}"
+=> "Niet-ondersteunde methode: {$method}";;
+
+business-use-email => "Use {$email}" => "{$email} gebruiken"
+
+business-user-session-not-found
+=> "User session not found. Please log in again or contact Wizardsardine."
+=> "Gebruikerssessie niet gevonden. Log opnieuw in of neem contact op met Wizardsardine.";;
+
+business-wallet-access-denied
+=> "You do not have access to this wallet. Contact Wizardsardine."
+=> "U hebt geen toegang tot deze wallet. Neem contact op met Wizardsardine.";;
+
+business-wallet-count-label
+=> "{ $count ->\n    [one] 1 wallet\n   *[other] {$count} wallets\n}"
+=> "{ $count ->\n    [one] 1 wallet\n   *[other] {$count} wallets\n}";;
+
+business-wallets => "Wallets" => "Wallets"
+
+business-wrong-network-device
+=> "Wrong network in device settings"
+=> "Verkeerd netwerk in de apparaatinstellingen";;
+
+business-xpub-empty
+=> "Extended public key cannot be empty."
+=> "De uitgebreide publieke sleutel mag niet leeg zijn.";;
+
+business-xpub-invalid-format
+=> "Invalid extended public key format: {$error}"
+=> "Ongeldig formaat voor uitgebreide publieke sleutel: {$error}";;
+
+business-xpub-invalid-network
+=> "Extended public key is not valid for {$network}."
+=> "De uitgebreide publieke sleutel is niet geldig voor {$network}.";;
+
+business-xpub-replace-existing-help
+=> "This key already has an xpub. You can replace it by fetching from a device, importing from file, or pasting."
+=> "Deze sleutel heeft al een xpub. U kunt die vervangen door hem van een apparaat op te halen, uit een bestand te importeren of te plakken.";;
+
+business-your-keys => "Your keys" => "Uw sleutels"
+
+coins-address-label => "Address label:" => "Adreslabel:"
+
+coins-block-height => "Block height:" => "Blokhoogte:"
+
+coins-deposit-transaction-label
+=> "Deposit transaction label:"
+=> "Label van stortingstransactie:";;
+
+coins-first-recovery-in-blocks
+=> "First recovery path will be available in {$blocks} blocks"
+=> "Het eerste herstelpad wordt over {$blocks} blokken beschikbaar";;
+
+coins-not-in-block => "Not in a block" => "Niet in een blok"
+
+coins-outpoint => "Outpoint:" => "Outpoint:"
+
+coins-recovery-available
+=> "One or more recovery paths are available"
+=> "Een of meer herstelpaden zijn beschikbaar";;
+
+coins-refresh-coin => "Refresh coin" => "Coin vernieuwen"
+
+coins-spend-block-height => "Spend block height:" => "Blokhoogte van uitgave:"
+
+coins-spend-txid => "Spend txid:" => "Txid van uitgave:"
+
+combobox-already-signer => "already a signer" => "al ondertekenaar"
+
+common-address => "Address" => "Adres"
+
+common-address-label => "Address:" => "Adres:"
+
+common-and => "and" => "en"
+
+common-approx-feerate-value => "(~{$rate} sats/vbyte)" => "(~{$rate} sats/vbyte)"
+
+common-blocks => "blocks" => "blokken"
+
+common-connecting-ellipsis => "Connecting..." => "Verbinden..."
+
+common-connection-failed => "Connection failed" => "Verbinding mislukt"
+
+common-copy => "Copy" => "Kopiëren"
+
+common-descriptor => "Descriptor" => "Descriptor"
+
+common-descriptor-label => "Descriptor:" => "Descriptor:"
+
+common-email => "Email" => "E-mail"
+
+common-error => "Error" => "Fout"
+
+common-error-with-detail => "{$message} ({$error})" => "{$message} ({$error})"
+
+common-feerate => "Feerate" => "Tarief"
+
+common-feerate-value => "({$rate} sats/vbyte)" => "({$rate} sats/vbyte)"
+
+common-fetching => "Fetching ..." => "Ophalen ..."
+
+common-from => "From" => "Van"
+
+common-learn-more => "Learn more" => "Meer informatie"
+
+common-loading => "Loading..." => "Laden..."
+
+common-login => "Login" => "Inloggen"
+
+common-no-label => "No label" => "Geen label"
+
+common-no-label-parenthesized => "(No label)" => "(Geen label)"
+
+common-not-available => "N/A" => "N.v.t."
+
+common-other-options => "Other options" => "Andere opties"
+
+common-paste => "Paste" => "Plakken"
+
+common-processing => "Processing..." => "Bezig..."
+
+common-ready => "Ready" => "Gereed"
+
+common-recovery => "Recovery" => "Herstel"
+
+common-register => "Register" => "Registreren"
+
+common-see-more => "See more" => "Meer bekijken"
+
+common-select-account
+=> "Select an account to continue"
+=> "Selecteer een account om door te gaan";;
+
+common-self-transfer => "Self-transfer" => "Overboeking naar uzelf"
+
+common-something-wrong => "Something wrong happened" => "Er is iets misgegaan"
+
+common-token => "Token" => "Token"
+
+common-wallet => "Wallet" => "Wallet"
+
+connect-account-missing-from-cache
+=> "Account must be in cache"
+=> "Account moet in de cache staan";;
+
+connect-cache-update-failed
+=> "Failed to update cache: {$error}"
+=> "Bijwerken van de cache mislukt: {$error}";;
+
+connect-remote-servers-unresponsive
+=> "Remote servers are unresponsive"
+=> "Externe servers reageren niet";;
+
+decrypt-airgap-help
+=> "Using an air-gapped device? Export the xpub from your device, then use the upload or paste option. If you don’t know the correct derivation path, try with the following:"
+=> "Gebruikt u een air-gapped apparaat? Exporteer de xpub van uw apparaat en gebruik daarna de upload- of plakoptie. Als u het juiste afleidingspad niet kent, probeer dan het volgende:";;
+
+decrypt-backup-file => "Decrypt backup file" => "Back-upbestand ontsleutelen"
+
+decrypt-device-description
+=> "Plug in and unlock a hardware device belonging to this setup to automatically decrypt the backup"
+=> "Sluit een hardwareapparaat van deze opzet aan en ontgrendel het om de back-up automatisch te ontsleutelen";;
+
+decrypt-device-failed
+=> "Failed to decrypt file with this device"
+=> "Ontsleutelen van het bestand met dit apparaat is mislukt";;
+
+decrypt-enter-mnemonic-unsafe
+=> "UNSAFE: Enter mnemonic of one of the keys"
+=> "ONVEILIG: Voer de mnemonic van een van de sleutels in";;
+
+decrypt-enter-mnemonic-warning
+=> "This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds."
+=> "Deze optie is niet veilig. Ik begrijp dat het invoeren van een mnemonic op een computer kan leiden tot diefstal van mijn fondsen.";;
+
+decrypt-invalid-descriptor
+=> "The file has been decrypted but the descriptor is not a valid Liana descriptor."
+=> "Het bestand is ontsleuteld, maar de descriptor is geen geldige Liana-descriptor.";;
+
+decrypt-invalid-encoding
+=> "The file cannot be decoded properly, it seems not to be an encrypted backup."
+=> "Het bestand kan niet correct worden gedecodeerd; het lijkt geen versleutelde back-up te zijn.";;
+
+decrypt-invalid-mnemonic => "Invalid mnemonic" => "Ongeldige mnemonic"
+
+decrypt-invalid-type
+=> "The file has been decrypted but the content type is not supported."
+=> "Het bestand is ontsleuteld, maar het inhoudstype wordt niet ondersteund.";;
+
+decrypt-invalid-xpub => "Invalid xpub" => "Ongeldige xpub"
+
+decrypt-mnemonic-cannot-decrypt
+=> "Mnemonic is valid but cannot decrypt the file"
+=> "De mnemonic is geldig, maar kan het bestand niet ontsleutelen";;
+
+decrypt-mnemonic-source => "Mnemonic" => "Mnemonic"
+
+decrypt-pairing-code => "Pairing code: {$code}" => "Koppelcode: {$code}"
+
+decrypt-paste-xpub
+=> "Paste an extended public key"
+=> "Plak een uitgebreide publieke sleutel";;
+
+decrypt-provide-xpub
+=> "Provide one of the xpubs used in this wallet."
+=> "Geef een van de xpubs op die in deze wallet worden gebruikt.";;
+
+decrypt-try-device
+=> "Try to decrypt with this device..."
+=> "Proberen te ontsleutelen met dit apparaat...";;
+
+decrypt-unlock-device
+=> "Please unlock or open app on the device"
+=> "Ontgrendel het apparaat of open de app erop";;
+
+decrypt-xpub-cannot-decrypt
+=> "Xpub is valid but cannot decrypt this file"
+=> "De xpub is geldig, maar kan dit bestand niet ontsleutelen";;
+
+device-already-used => "Already used" => "Al gebruikt"
+
+device-check-device => "Please check your device" => "Controleer uw apparaat"
+
+device-enter-cosigner-token
+=> "Enter a Cosigner token"
+=> "Voer een Cosigner-token in";;
+
+device-enter-safety-net-token
+=> "Enter a Safety Net token"
+=> "Voer een Safety Net-token in";;
+
+device-generate-hot-key
+=> "Generate hot key stored on this computer"
+=> "Genereer een hot key die op deze computer wordt opgeslagen";;
+
+device-hot-key-test-only
+=> "We recommend using this option only for test purposes"
+=> "Wij raden deze optie alleen aan voor testdoeleinden";;
+
+device-install-firmware-version-or-later
+=> "Install firmware version {$version} \nor later"
+=> "Installeer firmwareversie {$version} \nof hoger";;
+
+device-locked => "Locked" => "Vergrendeld"
+
+device-locked-check-code
+=> "Locked, check code: {$code}"
+=> "Vergrendeld, controlecode: {$code}";;
+
+device-open-app => "Please open the app on device" => "Open de app op het apparaat"
+
+device-processing-check-device
+=> "Processing, please check your device"
+=> "Bezig, controleer uw apparaat";;
+
+device-registered => "Registered" => "Geregistreerd"
+
+device-signed => "Signed" => "Ondertekend"
+
+device-unlock => "Please unlock the device" => "Ontgrendel het apparaat"
+
+device-unrelated-wallet
+=> "This signing device is not related to this Liana wallet."
+=> "Dit ondertekenapparaat hoort niet bij deze Liana-wallet.";;
+
+device-version-unsupported
+=> "Device version not supported, upgrade to version > {$version}"
+=> "Apparaatversie wordt niet ondersteund, upgrade naar versie > {$version}";;
+
+duration-days
+=> "{ $count ->\n    [one] 1 day\n   *[other] {$count} days\n}"
+=> "{ $count ->\n    [one] 1 dag\n   *[other] {$count} dagen\n}";;
+
+duration-days-approx => "~{$count} days" => "~{$count} dagen"
+
+duration-days-compact => "{$count}d" => "{$count}d"
+
+duration-days-compact-approx => "~{$count}d" => "~{$count}d"
+
+duration-hours
+=> "{ $count ->\n    [one] 1 hour\n   *[other] {$count} hours\n}"
+=> "{ $count ->\n    [one] 1 uur\n   *[other] {$count} uur\n}";;
+
+duration-hours-compact => "{$count}h" => "{$count}u"
+
+duration-minutes
+=> "{ $count ->\n    [one] 1 minute\n   *[other] {$count} minutes\n}"
+=> "{ $count ->\n    [one] 1 minuut\n   *[other] {$count} minuten\n}";;
+
+duration-minutes-compact => "{$count}m" => "{$count}m"
+
+duration-months
+=> "{ $count ->\n    [one] 1 month\n   *[other] {$count} months\n}"
+=> "{ $count ->\n    [one] 1 maand\n   *[other] {$count} maanden\n}";;
+
+duration-months-compact => "{$count}m" => "{$count}mnd"
+
+duration-years
+=> "{ $count ->\n    [one] 1 year\n   *[other] {$count} years\n}"
+=> "{ $count ->\n    [one] 1 jaar\n   *[other] {$count} jaar\n}";;
+
+duration-years-compact => "{$count}y" => "{$count}j"
+
+error-unknown => "Unknown error occurred" => "Er is een onbekende fout opgetreden"
+
+export-aliases-conflict
+=> "Aliases conflict, what do you want to do?"
+=> "De aliassen botsen, wat wilt u doen?";;
+
+export-canceled => "Export canceled" => "Export geannuleerd"
+
+export-labels-conflict
+=> "Labels conflict, what do you want to do?"
+=> "De labels botsen, wat wilt u doen?";;
+
+export-progress => "Progress: {$progress}%" => "Voortgang: {$progress}%"
+
+export-select-path
+=> "Select the path you want to export in the popup window..."
+=> "Selecteer in het pop-upvenster het pad waarnaar u wilt exporteren...";;
+
+export-starting => "Starting export..." => "Export starten..."
+
+export-success => "Export successful!" => "Export geslaagd!"
+
+export-timeout => "Export failed: timeout" => "Export mislukt: time-out"
+
+export-title-export-backup => "Export Backup" => "Back-up exporteren"
+
+export-title-export-descriptor => "Export Descriptor" => "Descriptor exporteren"
+
+export-title-export-encrypted-descriptor
+=> "Export Encrypted Descriptor"
+=> "Versleutelde descriptor exporteren";;
+
+export-title-export-labels => "Export Labels" => "Labels exporteren"
+
+export-title-export-psbt => "Export PSBT" => "PSBT exporteren"
+
+export-title-export-xpub => "Export Xpub" => "Xpub exporteren"
+
+export-title-import-descriptor => "Import Descriptor" => "Descriptor importeren"
+
+export-title-import-psbt => "Import PSBT" => "PSBT importeren"
+
+export-title-import-wallet-backup
+=> "Import existing wallet from backup"
+=> "Bestaande wallet importeren uit back-up";;
+
+export-title-import-xpub => "Import Xpub" => "Xpub importeren"
+
+export-title-restore-backup => "Restore Backup" => "Back-up herstellen"
+
+export-title-transactions => "Export Transactions" => "Transacties exporteren"
+
+fiat-amount-non-negative
+=> "Amount must be non-negative"
+=> "Het bedrag mag niet negatief zijn";;
+
+fiat-currency-mismatch
+=> "Currency mismatch: expected {$expected}, got {$actual}"
+=> "Valuta komt niet overeen: {$expected} verwacht, {$actual} gekregen";;
+
+fiat-exchange-rate
+=> "Exchange rate: 1 BTC ~ {$amount} {$currency}"
+=> "Wisselkoers: 1 BTC ~ {$amount} {$currency}";;
+
+fiat-invalid-currency => "Invalid currency" => "Ongeldige valuta"
+
+fiat-last-requested => "Last requested: {$time}" => "Laatst opgevraagd: {$time}"
+
+fiat-last-updated-source
+=> "Last updated at source: {$time}"
+=> "Laatst bijgewerkt bij de bron: {$time}";;
+
+fiat-price-positive
+=> "Price per BTC must be positive"
+=> "De prijs per BTC moet positief zijn";;
+
+fiat-source => "Source: {$source}" => "Bron: {$source}"
+
+fiat-source-timestamp
+=> "Default price at the time the transaction has been confirmed"
+=> "Standaardprijs op het moment dat de transactie werd bevestigd";;
+
+fiat-source-user
+=> "Price you have filled yourself"
+=> "Prijs die u zelf hebt ingevuld";;
+
+fiat-source-wizardsardine
+=> "Price automatically processed by WS when you crafted the transaction"
+=> "Prijs die automatisch door WS is verwerkt toen u de transactie opstelde";;
+
+home-balance => "Balance" => "Saldo"
+
+home-checking-transactions
+=> "Checking for new transactions"
+=> "Controleren op nieuwe transacties";;
+
+home-payment-history => "Payment History" => "Betalingsgeschiedenis"
+
+home-recovery-left
+=> "≈ {$units} left before first recovery path becomes available."
+=> "≈ {$units} resterend voordat het eerste herstelpad beschikbaar wordt.";;
+
+home-recovery-warning
+=> "Recovery path is or will soon be available for {$count} coin(s)."
+=> "Het herstelpad is of wordt binnenkort beschikbaar voor {$count} coin(s).";;
+
+home-rescan-warning-backup
+=> "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions."
+=> "Omdat deze wallet uit een back-up is hersteld, moet u de blockchain mogelijk opnieuw scannen om eerdere transacties te zien.";;
+
+home-rescan-warning-descriptor
+=> "As this wallet was imported from a descriptor, you may need to rescan the blockchain to see past transactions."
+=> "Omdat deze wallet uit een descriptor is geïmporteerd, moet u de blockchain mogelijk opnieuw scannen om eerdere transacties te zien.";;
+
+home-syncing => "Syncing" => "Synchroniseren"
+
+home-syncing-blockchain
+=> "Syncing blockchain ({$progress}%)"
+=> "Blockchain synchroniseren ({$progress}%)";;
+
+hw-descriptor-not-registered
+=> "The wallet descriptor is not registered on the device.\n You can register it in the settings."
+=> "De wallet-descriptor is niet op het apparaat geregistreerd.\n U kunt hem registreren in de instellingen.";;
+
+hw-display-address-unavailable
+=> "Liana cannot request the device to display the address. \n Verify it with the QR code in the options below."
+=> "Liana kan het apparaat niet vragen om het adres te tonen. \n Verifieer het met de QR-code in de opties hieronder.";;
+
+hw-no-taproot-miniscript
+=> "Device firmware version does not support taproot miniscript"
+=> "De firmwareversie van het apparaat ondersteunt geen taproot-miniscript";;
+
+hw-not-in-spending-path
+=> "This signing device is not part of this spending path."
+=> "Dit ondertekenapparaat maakt geen deel uit van dit uitgavepad.";;
+
+import-success => "Import successful" => "Import geslaagd"
+
+installer-able-to-move-any-time
+=> "Able to move the funds at any time."
+=> "Kan de fondsen op elk moment verplaatsen.";;
+
+installer-accept-invitation-for
+=> "Accept invitation for wallet:"
+=> "Uitnodiging accepteren voor wallet:";;
+
+installer-accepted-wallet-not-found
+=> "Wallet of accepted invitation not found"
+=> "De wallet van de geaccepteerde uitnodiging is niet gevonden";;
+
+installer-add-key => "Add key" => "Sleutel toevoegen"
+
+installer-add-safety-net-key
+=> "Add Safety Net key"
+=> "Safety Net-sleutel toevoegen";;
+
+installer-advanced-settings => "Advanced settings" => "Geavanceerde instellingen"
+
+installer-already-have-node => "I already have a node" => "Ik heb al een node"
+
+installer-already-used-sources => "Already used sources" => "Reeds gebruikte bronnen"
+
+installer-auth-token-emailed-to
+=> "An authentication token has been emailed to"
+=> "Er is een authenticatietoken gemaild naar";;
+
+installer-auto-install-node
+=> "I want Liana to automatically install a Bitcoin node on my device"
+=> "Ik wil dat Liana automatisch een Bitcoin-node op mijn apparaat installeert";;
+
+installer-available-after-inactivity
+=> "Available after inactivity of ~"
+=> "Beschikbaar na inactiviteit van ~";;
+
+installer-available-port-failed
+=> "Could not get available port: {$error}."
+=> "Kon geen beschikbare poort verkrijgen: {$error}.";;
+
+installer-available-ports-failed
+=> "Could not get available ports: {$error1}; {$error2}."
+=> "Kon geen beschikbare poorten verkrijgen: {$error1}; {$error2}.";;
+
+installer-backed-up-descriptor-checkbox
+=> "I have backed up my descriptor"
+=> "Ik heb een back-up van mijn descriptor gemaakt";;
+
+installer-backed-up-mnemonic-checkbox
+=> "I have backed up my mnemonic"
+=> "Ik heb een back-up van mijn mnemonic gemaakt";;
+
+installer-backed-up-mnemonic-show-xpub
+=> "I have backed up the mnemonic, show the extended public key"
+=> "Ik heb een back-up van de mnemonic gemaakt, toon de uitgebreide publieke sleutel";;
+
+installer-backup-descriptor-help
+=> "In Bitcoin, to spend from a wallet that isn't a standard single-key setup, you need both your private keys (usually stored as seed words) to sign transactions, and your wallet descriptor to locate your coins - like a map of your addresses.\nWithout the descriptor, your wallet may not find your coins - even if you still have the keys.\nWhen you click \"Back Up Descriptor\", Liana creates an encrypted file that can only be decrypted using one of your wallet's public keys.\nLiana handles this automatically during the restore of a wallet process by asking you to connect a device or enter a key.\nThis file is safer and more private than copying the descriptor manually."
+=> "Om in Bitcoin uit te geven vanuit een wallet die geen standaardopzet met één sleutel is, hebt u zowel uw private sleutels nodig (meestal bewaard als seed-woorden) om transacties te ondertekenen, als uw wallet-descriptor om uw coins te vinden - een soort kaart van uw adressen.\nZonder de descriptor vindt uw wallet uw coins mogelijk niet - zelfs niet als u de sleutels nog hebt.\nAls u op \"Descriptor back-uppen\" klikt, maakt Liana een versleuteld bestand dat alleen met een van de publieke sleutels van uw wallet kan worden ontsleuteld.\nLiana regelt dit automatisch tijdens het herstelproces van een wallet door u te vragen een apparaat aan te sluiten of een sleutel in te voeren.\nDit bestand is veiliger en privacyvriendelijker dan de descriptor handmatig kopiëren.";;
+
+installer-backup-descriptor-message
+=> "This backup is required to recover your funds.\nClick \"Back Up Descriptor\" to download an encrypted file of your wallet configuration and store it in safe, accessible places.\nYou can also copy the plain-text descriptor string, but it's less private.\nWARNING: This file does not include your seed phrase(s). Back those up separately."
+=> "Deze back-up is vereist om uw fondsen te kunnen herstellen.\nKlik op \"Descriptor back-uppen\" om een versleuteld bestand met uw walletconfiguratie te downloaden en bewaar het op veilige, bereikbare plaatsen.\nU kunt ook de descriptor als platte tekst kopiëren, maar dat is minder privacyvriendelijk.\nWAARSCHUWING: Dit bestand bevat uw seed-woorden niet. Maak daar apart een back-up van.";;
+
+installer-backup-descriptor-missing
+=> "Backup imported but descriptor missing!"
+=> "Back-up geïmporteerd, maar de descriptor ontbreekt!";;
+
+installer-backup-descriptor-title
+=> "Back Up your wallet configuration (Descriptor)"
+=> "Maak een back-up van uw walletconfiguratie (descriptor)";;
+
+installer-backup-imported
+=> "Backup successfully imported!"
+=> "Back-up succesvol geïmporteerd!";;
+
+installer-backup-mnemonic-title
+=> "Back Up your mnemonic"
+=> "Maak een back-up van uw mnemonic";;
+
+installer-backup-mnemonic-warning
+=> "Beware to back up the mnemonic as it will NOT be stored on the computer."
+=> "Zorg dat u een back-up van de mnemonic maakt, want die wordt NIET op de computer opgeslagen.";;
+
+installer-backup-network-mismatch
+=> "The backup network does not match the selected network."
+=> "Het netwerk van de back-up komt niet overeen met het geselecteerde netwerk.";;
+
+installer-bitcoin-node-management
+=> "Bitcoin node management"
+=> "Beheer van de Bitcoin-node";;
+
+installer-bitcoind-already-installed
+=> "Liana-managed bitcoind already installed"
+=> "Door Liana beheerde bitcoind is al geïnstalleerd";;
+
+installer-bitcoind-canonicalize-datadir-error
+=> "Failed to canonicalize datadir: {$error}"
+=> "Canoniek maken van datadir mislukt: {$error}";;
+
+installer-bitcoind-command-error
+=> "Command to start bitcoind returned an error: {$error}"
+=> "Het commando om bitcoind te starten gaf een fout: {$error}";;
+
+installer-bitcoind-connection-error
+=> "bitcoind connection check failed: {$error}"
+=> "Controle van de bitcoind-verbinding mislukt: {$error}";;
+
+installer-bitcoind-executable-not-found
+=> "bitcoind executable not found."
+=> "bitcoind-executable niet gevonden.";;
+
+installer-bitcoind-lock-error
+=> "lock file error: {$error}"
+=> "fout met vergrendelingsbestand: {$error}";;
+
+installer-bitcoind-process-exited
+=> "bitcoind process exited with status '{$status}'."
+=> "bitcoind-proces afgesloten met status '{$status}'.";;
+
+installer-build-your-own => "Build your own" => "Zelf samenstellen"
+
+installer-build-your-own-description
+=> "Create a custom setup that fits all your needs."
+=> "Maak een opzet op maat die aan al uw wensen voldoet.";;
+
+installer-canonicalize-cookie-failed
+=> "Failed to canonicalize cookie path: {$error}"
+=> "Canoniek maken van het cookiepad mislukt: {$error}";;
+
+installer-canonicalize-datadir-failed
+=> "Failed to canonicalize datadir path: {$error}"
+=> "Canoniek maken van het datadir-pad mislukt: {$error}";;
+
+installer-change-alias-later
+=> "You will be able to change it later in Settings > Wallet"
+=> "U kunt dit later wijzigen via Instellingen > Wallet";;
+
+installer-checking-connection
+=> "Checking connection..."
+=> "Verbinding controleren...";;
+
+installer-choose-backend => "Choose backend" => "Kies backend"
+
+installer-choose-wallet-type => "Choose wallet type" => "Kies wallettype"
+
+installer-connected-to => "Connected to" => "Verbonden met"
+
+installer-connection-checked => "Connection checked" => "Verbinding gecontroleerd"
+
+installer-cookie-path => "Cookie path" => "Cookiepad"
+
+installer-cosigner-token-disallowed
+=> "Cosigner tokens are not allowed for this path"
+=> "Cosigner-tokens zijn niet toegestaan voor dit pad";;
+
+installer-create-datadir-path-failed
+=> "Failed to create datadir path: {$error}"
+=> "Aanmaken van het datadir-pad mislukt: {$error}";;
+
+installer-create-random-key
+=> "Or create a new random key:"
+=> "Of maak een nieuwe willekeurige sleutel:";;
+
+installer-custom-template-description-1
+=> "For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them."
+=> "Voor deze opzet moet u uw primaire uitgavebeleid en uw herstelbeleid bepalen. Om veiligheidsredenen raden wij u aan voor elke sleutel daarvan een aparte hardwarewallet te gebruiken.";;
+
+installer-custom-template-description-2
+=> "The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies."
+=> "De sleutels van uw primaire beleid kunnen altijd uitgeven. Die van het herstelbeleid kunnen pas uitgeven na een vastgestelde periode van inactiviteit van de wallet, wat veilig herstel en geavanceerd uitgavebeleid mogelijk maakt.";;
+
+installer-descriptor-generating
+=> "Generating and validating your wallet descriptor. This can take a few seconds."
+=> "Uw wallet-descriptor wordt gegenereerd en gevalideerd. Dit kan enkele seconden duren.";;
+
+installer-descriptor-invalid
+=> "Either descriptor is invalid or incompatible with network"
+=> "De descriptor is ongeldig of niet compatibel met het netwerk";;
+
+installer-descriptor-missing => "Descriptor missing" => "Descriptor ontbreekt"
+
+installer-descriptor-read-failed
+=> "Failed to read the descriptor"
+=> "Lezen van de descriptor mislukt";;
+
+installer-descriptor-template => "Descriptor template" => "Descriptorsjabloon"
+
+installer-descriptor-type => "Descriptor type" => "Descriptortype"
+
+installer-descriptor-wrong-network
+=> "The descriptor is for another network"
+=> "De descriptor is voor een ander netwerk";;
+
+installer-detected-hardware => "Detected hardware" => "Gedetecteerde hardware"
+
+installer-device-method-unsupported
+=> "Device not supported, method: {$method}"
+=> "Apparaat niet ondersteund, methode: {$method}";;
+
+installer-device-no-taproot
+=> "This device does not support Taproot"
+=> "Dit apparaat ondersteunt geen Taproot";;
+
+installer-device-wrong-network
+=> "The device is configured on the wrong network"
+=> "Het apparaat is op het verkeerde netwerk ingesteld";;
+
+installer-distinct-ports-unavailable
+=> "Could not get distinct ports. Please try again."
+=> "Kon geen verschillende poorten verkrijgen. Probeer het opnieuw.";;
+
+installer-download-complete => "Download complete" => "Download voltooid"
+
+installer-download-failed
+=> "Download failed: '{$error}'."
+=> "Download mislukt: '{$error}'.";;
+
+installer-downloading-bitcoin-core-progress
+=> "Downloading Bitcoin Core {$version}... {$progress}%"
+=> "Bitcoin Core {$version} downloaden... {$progress}%";;
+
+installer-duplicate-token => "Duplicate token" => "Dubbel token"
+
+installer-electrum-address-notes
+=> "Note: include \"ssl://\" as a prefix for SSL connections."
+=> "Let op: gebruik \"ssl://\" als voorvoegsel voor SSL-verbindingen.";;
+
+installer-email-invalid => "Email is not valid" => "Het e-mailadres is niet geldig"
+
+installer-enter-correct-address
+=> "Please enter correct address"
+=> "Voer een correct adres in";;
+
+installer-enter-correct-electrum-address
+=> "Please enter correct address (including port), optionally prefixed with tcp:// or ssl://"
+=> "Voer een correct adres in (inclusief poort), eventueel voorafgegaan door tcp:// of ssl://";;
+
+installer-enter-correct-password
+=> "Please enter correct password"
+=> "Voer een correct wachtwoord in";;
+
+installer-enter-correct-path
+=> "Please enter correct path"
+=> "Voer een correct pad in";;
+
+installer-enter-correct-user
+=> "Please enter correct user"
+=> "Voer een correcte gebruiker in";;
+
+installer-existing-node-description
+=> "Select this option if you already have a Bitcoin node running locally or remotely. Liana will connect to it."
+=> "Kies deze optie als u al een Bitcoin-node lokaal of extern draait. Liana maakt er verbinding mee.";;
+
+installer-expanding-multisig => "Expanding multisig" => "Uitbreidende multisig"
+
+installer-expanding-multisig-description
+=> "Two keys required to spend, with an extra key as a backup."
+=> "Twee sleutels vereist om uit te geven, met een extra sleutel als reserve.";;
+
+installer-expanding-multisig-wallet
+=> "Expanding multisig wallet"
+=> "Uitbreidende multisig-wallet";;
+
+installer-export-backup-failed
+=> "Failed to export backup"
+=> "Exporteren van de back-up mislukt";;
+
+installer-finalize-installation => "Finalize installation" => "Installatie afronden"
+
+installer-generate-mnemonic
+=> "Generate a new mnemonic"
+=> "Genereer een nieuwe mnemonic";;
+
+installer-give-wallet-alias
+=> "Give your wallet an alias"
+=> "Geef uw wallet een alias";;
+
+installer-hot-signer => "Hot Signer" => "Hot Signer"
+
+installer-import-backup => "Import a backup" => "Een back-up importeren"
+
+installer-import-descriptor => "Import a descriptor" => "Een descriptor importeren"
+
+installer-import-mnemonic => "Import mnemonic" => "Mnemonic importeren"
+
+installer-import-mnemonic-title => "Import Mnemonic" => "Mnemonic importeren"
+
+installer-import-wallet-rescan-help
+=> "If you are using a Bitcoin Core node, you will need to perform a rescan of the blockchain after creating the wallet in order to see your coins and past transactions. This can be done in Settings > Node."
+=> "Als u een Bitcoin Core-node gebruikt, moet u na het aanmaken van de wallet de blockchain opnieuw scannen om uw coins en eerdere transacties te zien. Dat kan via Instellingen > Node.";;
+
+installer-import-wallet-title => "Import the wallet" => "De wallet importeren"
+
+installer-import-xpub-device
+=> "Import an extended public key by selecting a signing device:"
+=> "Importeer een uitgebreide publieke sleutel door een ondertekenapparaat te selecteren:";;
+
+installer-imported-key-already-used
+=> "Imported key already used"
+=> "Geïmporteerde sleutel is al gebruikt";;
+
+installer-inheritance-description-1
+=> "For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key."
+=> "Voor deze opzet hebt u 2 sleutels nodig: uw primaire sleutel (voor uzelf) en een erfenissleutel (voor uw erfgenaam). Om veiligheidsredenen raden wij u aan voor elke sleutel een aparte hardwarewallet te gebruiken.";;
+
+installer-inheritance-description-2
+=> "You will always be able to spend using your Primary Key. After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds."
+=> "U kunt altijd uitgeven met uw primaire sleutel. Na een periode van inactiviteit (en niet eerder) kan uw erfenissleutel uw fondsen herstellen.";;
+
+installer-inheritance-key => "Inheritance key" => "Erfenissleutel"
+
+installer-installation-complete => "Installation complete" => "Installatie voltooid"
+
+installer-installation-failed
+=> "Installation failed: '{$error}'."
+=> "Installatie mislukt: '{$error}'.";;
+
+installer-installed => "Installed" => "Geïnstalleerd"
+
+installer-installing => "Installing..." => "Installeren..."
+
+installer-installing-bitcoind
+=> "Installing bitcoind..."
+=> "bitcoind installeren...";;
+
+installer-introduction => "Introduction" => "Introductie"
+
+installer-invalid-descriptor => "Invalid descriptor" => "Ongeldige descriptor"
+
+installer-invalid-token => "Invalid token!" => "Ongeldig token!"
+
+installer-invitation-invalid
+=> "Invitation token is invalid or expired"
+=> "Het uitnodigingstoken is ongeldig of verlopen";;
+
+installer-invitation-token => "Invitation token" => "Uitnodigingstoken"
+
+installer-invitation-token-help
+=> "Type the invitation token you received by email"
+=> "Typ het uitnodigingstoken dat u per e-mail hebt ontvangen";;
+
+installer-key-alias-already-used
+=> "This alias is already used for another key"
+=> "Deze alias is al voor een andere sleutel in gebruik";;
+
+installer-key-alias-placeholder
+=> "E.g. My Hardware Wallet"
+=> "Bijv. Mijn hardwarewallet";;
+
+installer-key-already-in-wallet
+=> "Fetched key has already been added to the wallet."
+=> "De opgehaalde sleutel is al aan de wallet toegevoegd.";;
+
+installer-key-already-used => "Key already used" => "Sleutel al gebruikt"
+
+installer-key-already-used-in-path
+=> "Key already used in this path"
+=> "Sleutel al gebruikt in dit pad";;
+
+installer-key-fetch-wrong-network
+=> "Failed to fetch key. Switch network on device and retry"
+=> "Ophalen van de sleutel mislukt. Wissel van netwerk op het apparaat en probeer opnieuw";;
+
+installer-key-index => "Key @{$index}:" => "Sleutel @{$index}:"
+
+installer-key-name-alias => "Key name (alias):" => "Sleutelnaam (alias):"
+
+installer-key-name-help
+=> "Give this key a friendly name. It will help you identify it later:"
+=> "Geef deze sleutel een herkenbare naam. Zo vindt u hem later gemakkelijk terug:";;
+
+installer-key-path-account => "Key path account:" => "Account van het sleutelpad:"
+
+installer-key-wrong-network
+=> "Fetched key does not have the correct network"
+=> "De opgehaalde sleutel heeft niet het juiste netwerk";;
+
+installer-keys-inactivity
+=> "Keys can move the funds after inactivity of:"
+=> "Sleutels kunnen de fondsen verplaatsen na inactiviteit van:";;
+
+installer-load-previous-wallet
+=> "Load a previously used wallet"
+=> "Een eerder gebruikte wallet laden";;
+
+installer-load-shared-wallet => "Load a shared wallet" => "Een gedeelde wallet laden"
+
+installer-local-wallet-description
+=> "Use your already existing Bitcoin node or automatically install one. The Liana wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet."
+=> "Gebruik uw bestaande Bitcoin-node of installeer er automatisch een. De Liana-wallet maakt met geen enkele externe server verbinding.\n\nDit is de meest privacyvriendelijke optie, maar de gegevens worden uitsluitend lokaal op deze computer bewaard. U moet zelf back-ups maken en de descriptor delen met anderen die toegang tot de wallet moeten hebben.";;
+
+installer-managed-node-description
+=> "Liana will install a pruned node on your computer. You won't need to do anything except have some disk space available (~30GB required on mainnet) and wait for the initial synchronization with the network (it can take some days depending on your internet connection speed)."
+=> "Liana installeert een pruned node op uw computer. U hoeft niets te doen behalve wat schijfruimte vrij te houden (~30 GB vereist op mainnet) en te wachten op de eerste synchronisatie met het netwerk (dat kan enkele dagen duren, afhankelijk van de snelheid van uw internetverbinding).";;
+
+installer-mnemonic-backup-help
+=> "A hot key generated on this computer was used for creating this wallet. It needs to be backed up. \n Keep it in a safe place. Never share it with anyone."
+=> "Voor het aanmaken van deze wallet is een hot key gebruikt die op deze computer is gegenereerd. Daarvan moet een back-up worden gemaakt. \n Bewaar hem op een veilige plek. Deel hem nooit met iemand.";;
+
+installer-mnemonic-recovery-help
+=> "If you were using a hot key (a key stored on the computer) in your wallet, you will need to recover it from mnemonics to be able to sign transactions again. Otherwise you can directly go the next step."
+=> "Als u in uw wallet een hot key gebruikte (een sleutel die op de computer is opgeslagen), moet u die uit de mnemonic herstellen om weer transacties te kunnen ondertekenen. Anders kunt u direct naar de volgende stap.";;
+
+installer-multisig-description-1
+=> "For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key."
+=> "Voor deze opzet hebt u 3 sleutels nodig: twee primaire sleutels en een herstelsleutel. Om veiligheidsredenen raden wij u aan voor elke sleutel een aparte hardwarewallet te gebruiken.";;
+
+installer-multisig-description-2
+=> "The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):"
+=> "De primaire sleutels vormen een 2-van-2-multisig die altijd kan uitgeven. Als een van uw sleutels niet meer beschikbaar is, kunt u na een periode van inactiviteit uw fondsen herstellen met de herstelsleutel samen met een van uw primaire sleutels (2-van-3-multisig):";;
+
+installer-no-current-wallets
+=> "You have no current wallets"
+=> "U hebt momenteel geen wallets";;
+
+installer-node-setup-title
+=> "Set up connection to the Bitcoin node"
+=> "Verbinding met de Bitcoin-node instellen";;
+
+installer-node-type => "Node type:" => "Nodetype:"
+
+installer-password => "Password" => "Wachtwoord"
+
+installer-paste-descriptor => "Paste a descriptor" => "Een descriptor plakken"
+
+installer-paste-descriptor-description
+=> "Creates a new wallet from the pasted descriptor"
+=> "Maakt een nieuwe wallet aan op basis van de geplakte descriptor";;
+
+installer-path-duplicate-sequence
+=> "No two recovery options may become available at the very same date."
+=> "Er mogen geen twee herstelopties op exact dezelfde datum beschikbaar komen.";;
+
+installer-path-key-source-disallowed
+=> "Path contains a key that is disallowed for this kind of path."
+=> "Het pad bevat een sleutel die niet is toegestaan voor dit soort pad.";;
+
+installer-path-only-cosigner-keys
+=> "A path cannot contain only cosigner keys."
+=> "Een pad mag niet uitsluitend cosigner-sleutels bevatten.";;
+
+installer-port-attempts-exhausted
+=> "Exhausted attempts"
+=> "Aantal pogingen uitgeput";;
+
+installer-primary-key => "Primary key" => "Primaire sleutel"
+
+installer-primary-key-number
+=> "Primary key #{$number}"
+=> "Primaire sleutel #{$number}";;
+
+installer-primary-spending-option
+=> "Primary spending option:"
+=> "Primaire uitgaveoptie:";;
+
+installer-read-cookie-file-failed
+=> "Failed to read cookie file: {$error}"
+=> "Lezen van het cookiebestand mislukt: {$error}";;
+
+installer-recovery-key => "Recovery key" => "Herstelsleutel"
+
+installer-recovery-option
+=> "Recovery option #{$number}:"
+=> "Hersteloptie #{$number}:";;
+
+installer-register-descriptor-failed
+=> "Failed to register descriptor"
+=> "Registreren van de descriptor mislukt";;
+
+installer-register-descriptor-help
+=> "To be used with the wallet, a signing device needs the descriptor. If the descriptor contains one or more keys imported from an external signing device, the descriptor must be registered on it. Registration confirms that the device is able to handle the policy. Registration on a device is not a substitute for backing up the descriptor."
+=> "Om met de wallet te kunnen worden gebruikt, heeft een ondertekenapparaat de descriptor nodig. Als de descriptor een of meer sleutels bevat die van een extern ondertekenapparaat zijn geïmporteerd, moet de descriptor daarop worden geregistreerd. De registratie bevestigt dat het apparaat met het beleid overweg kan. Registratie op een apparaat vervangt geen back-up van de descriptor.";;
+
+installer-register-descriptor-optional
+=> "This step is only necessary if you are using a signing device."
+=> "Deze stap is alleen nodig als u een ondertekenapparaat gebruikt.";;
+
+installer-register-descriptor-title
+=> "Register descriptor"
+=> "Descriptor registreren";;
+
+installer-registered-descriptor-checkbox
+=> "I have registered the descriptor on my device(s)"
+=> "Ik heb de descriptor op mijn apparaat/apparaten geregistreerd";;
+
+installer-remote-backend-description
+=> "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead."
+=> "Gebruik onze dienst om direct te kunnen transacteren. Wizardsardine beheert de infrastructuur, waardoor meerdere computers of deelnemers verbinding kunnen maken en kunnen synchroniseren.\n\nDit is een eenvoudigere en veiligere optie voor wie wil dat Wizardsardine een back-up van hun descriptor bewaart. U houdt de controle over uw sleutels en Wizardsardine heeft geen enkele controle over uw fondsen, maar kan wel de gegevens van uw wallet zien, gekoppeld aan een e-mailadres. Gebruikers die veel waarde hechten aan privacy kunnen beter hun eigen infrastructuur draaien.";;
+
+installer-remote-bitcoin-node-warning
+=> "Connection to a remote Bitcoin node is not supported. Insert an IP address bound to the same machine running Liana (ignore this warning if that's already the case)"
+=> "Verbinding met een externe Bitcoin-node wordt niet ondersteund. Voer een IP-adres in dat hoort bij dezelfde machine waarop Liana draait (negeer deze waarschuwing als dat al zo is)";;
+
+installer-rpc-auth => "RPC authentication:" => "RPC-authenticatie:"
+
+installer-rpc-user-password => "User and password" => "Gebruiker en wachtwoord"
+
+installer-safety-net => "Safety Net:" => "Safety Net:"
+
+installer-safety-net-description
+=> "This adds a final recovery option containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens."
+=> "Dit voegt een laatste hersteloptie toe met sleutels van professionele key agents.\n\nGebruik deze optie als u een of meer Safety Net-tokens hebt ontvangen.";;
+
+installer-safety-net-key => "Safety Net key" => "Safety Net-sleutel"
+
+installer-safety-net-token-disallowed
+=> "SafetyNet tokens are not allowed for this path"
+=> "SafetyNet-tokens zijn niet toegestaan voor dit pad";;
+
+installer-seed-key-not-in-descriptor
+=> "The descriptor does not use a key derived from this seed"
+=> "De descriptor gebruikt geen sleutel die van deze seed is afgeleid";;
+
+installer-select-device-register
+=> "Select hardware wallet to register descriptor on:"
+=> "Selecteer de hardwarewallet waarop de descriptor moet worden geregistreerd:";;
+
+installer-select-device-register-if-needed
+=> "If necessary, please select the signing device to register descriptor on:"
+=> "Selecteer indien nodig het ondertekenapparaat waarop de descriptor moet worden geregistreerd:";;
+
+installer-select-key-source => "Select key source" => "Selecteer sleutelbron"
+
+installer-sequence-value-warning
+=> "Value must be greater than 0 and lower than 65535"
+=> "De waarde moet groter zijn dan 0 en kleiner dan 65535";;
+
+installer-serialize-daemon-config-failed
+=> "Failed to serialize daemon config: {$error}"
+=> "Serialiseren van de daemonconfiguratie mislukt: {$error}";;
+
+installer-serialize-gui-config-failed
+=> "Failed to serialize GUI config: {$error}"
+=> "Serialiseren van de GUI-configuratie mislukt: {$error}";;
+
+installer-share-xpubs-title
+=> "Share your public keys (Xpubs)"
+=> "Deel uw publieke sleutels (xpubs)";;
+
+installer-shared-wallet-help
+=> "If you received an invitation to join a shared wallet"
+=> "Als u een uitnodiging hebt ontvangen om deel te nemen aan een gedeelde wallet";;
+
+installer-simple-inheritance => "Simple inheritance" => "Eenvoudige erfenis"
+
+installer-simple-inheritance-description
+=> "Two keys required, one for yourself to spend and another for your heir."
+=> "Twee sleutels vereist: één voor uzelf om uit te geven en één voor uw erfgenaam.";;
+
+installer-simple-inheritance-wallet
+=> "Simple inheritance wallet"
+=> "Eenvoudige erfeniswallet";;
+
+installer-start-bitcoin-node
+=> "Start Bitcoin full node"
+=> "Bitcoin full node starten";;
+
+installer-start-daemon-failed
+=> "Failed to start Liana daemon: {$error}"
+=> "Starten van de Liana-daemon mislukt: {$error}";;
+
+installer-started => "Started" => "Gestart"
+
+installer-starting => "Starting..." => "Starten..."
+
+installer-stop-daemon-failed
+=> "Failed to stop Liana daemon: {$error}"
+=> "Stoppen van de Liana-daemon mislukt: {$error}";;
+
+installer-store-mnemonic-failed
+=> "Failed to store mnemonic: {$error}"
+=> "Opslaan van de mnemonic mislukt: {$error}";;
+
+installer-switch-account-help
+=> "Switch account if you already use the same hardware in other configurations"
+=> "Wissel van account als u dezelfde hardware al in andere opzetten gebruikt";;
+
+installer-taproot-supported-version
+=> "Taproot is only supported by Liana version 5.0 and above"
+=> "Taproot wordt alleen ondersteund door Liana versie 5.0 en hoger";;
+
+installer-template-custom-primary => "Primary keys" => "Primaire sleutels"
+
+installer-template-custom-recovery => "Recovery keys" => "Herstelsleutels"
+
+installer-template-event-receipt => "Receipt of funds" => "Ontvangst van fondsen"
+
+installer-template-event-timelock
+=> "After some time* of wallet inactivity"
+=> "Na enige tijd* van inactiviteit van de wallet";;
+
+installer-template-footnote
+=> "*The time range (timelock) for the activation of keys can be configured in the next step."
+=> "*Het tijdsbereik (timelock) voor het activeren van sleutels kan in de volgende stap worden ingesteld.";;
+
+installer-template-multisig-primary => "2-of-2 multisig" => "2-van-2-multisig"
+
+installer-template-multisig-recovery => "2-of-3 multisig" => "2-van-3-multisig"
+
+installer-template-policy-primary
+=> "Primary spending policy"
+=> "Primair uitgavebeleid";;
+
+installer-template-policy-recovery
+=> "Recovery spending policy"
+=> "Herstel-uitgavebeleid";;
+
+installer-template-state-locked => "Can't spend" => "Kan niet uitgeven"
+
+installer-template-state-spend => "Can spend" => "Kan uitgeven"
+
+installer-the-descriptor => "The descriptor" => "De descriptor"
+
+installer-the-descriptor-label => "The descriptor:" => "De descriptor:"
+
+installer-threshold => "Threshold:" => "Drempel:"
+
+installer-threshold-keys
+=> "{ $total ->\n    [one] {$threshold} out of 1 key\n   *[other] {$threshold} out of {$total} keys\n}"
+=> "{ $total ->\n    [one] {$threshold} van 1 sleutel\n   *[other] {$threshold} van {$total} sleutels\n}";;
+
+installer-token-type-disallowed
+=> "Token type not allowed in this path"
+=> "Dit tokentype is niet toegestaan in dit pad";;
+
+installer-use-liana-connect => "Use Liana Connect" => "Liana Connect gebruiken"
+
+installer-use-own-node => "Use your own node" => "Uw eigen node gebruiken"
+
+installer-user => "User" => "Gebruiker"
+
+installer-wallet-alias => "Wallet alias" => "Walletalias"
+
+installer-wallet-alias-too-long
+=> "Wallet alias is too long."
+=> "De walletalias is te lang.";;
+
+installer-xpub-invalid => "Invalid Xpub" => "Ongeldige xpub"
+
+installer-xpub-origin-missing => "Origin missing" => "Origin ontbreekt"
+
+installer-xpub-wrong-derivation-path
+=> "Wrong derivation path"
+=> "Verkeerd afleidingspad";;
+
+installer-xpub-wrong-network => "Wrong network" => "Verkeerd netwerk"
+
+label-edit => "Edit label" => "Label bewerken"
+
+label-external-output => "(External Output)" => "(Externe output)"
+
+label-invalid-length
+=> "Invalid label length, must be 80 bytes or less"
+=> "Ongeldige labellengte, maximaal 80 bytes";;
+
+label-label => "Label" => "Label"
+
+launcher-add-existing-wallet
+=> "Add an existing Liana wallet"
+=> "Een bestaande Liana-wallet toevoegen";;
+
+launcher-config-descriptor-origin-error
+=> "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin. Liana v0.2 and later only support public keys with origins. Please migrate your funds using Liana v0.1."
+=> "Er is een probleem met de configuratie voor dit netwerk. U gebruikt waarschijnlijk een descriptor met een of meer publieke sleutels zonder origin. Liana v0.2 en later ondersteunen alleen publieke sleutels met origin. Verplaats uw fondsen met Liana v0.1.";;
+
+launcher-create-new-wallet
+=> "Create a new Liana wallet"
+=> "Een nieuwe Liana-wallet aanmaken";;
+
+launcher-default-wallet-name
+=> "My Liana {$network} wallet"
+=> "Mijn Liana {$network} wallet";;
+
+launcher-delete-all-data-confirmation
+=> "Are you sure you want to delete the configuration and all associated data for the wallet {$wallet}?"
+=> "Weet u zeker dat u de configuratie en alle bijbehorende gegevens van de wallet {$wallet} wilt verwijderen?";;
+
+launcher-delete-connect-all-members
+=> "Also permanently delete this wallet from Liana Connect (for all members)."
+=> "Deze wallet ook definitief uit Liana Connect verwijderen (voor alle leden).";;
+
+launcher-delete-connect-disassociate
+=> "Also disassociate {$email} from this Liana Connect wallet."
+=> "Ook {$email} loskoppelen van deze Liana Connect-wallet.";;
+
+launcher-delete-local-config-confirmation
+=> "Are you sure you want to delete locally the configuration for the wallet {$wallet}?"
+=> "Weet u zeker dat u de configuratie van de wallet {$wallet} lokaal wilt verwijderen?";;
+
+launcher-delete-node-not-affected
+=> "(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)"
+=> "(Als u een door Liana beheerde Bitcoin-node gebruikt, heeft deze actie daar geen invloed op.)";;
+
+launcher-delete-node-not-affected-this-network
+=> "(The Liana-managed Bitcoin node for this network will not be affected by this action.)"
+=> "(Deze actie heeft geen invloed op de door Liana beheerde Bitcoin-node voor dit netwerk.)";;
+
+launcher-delete-title
+=> "Delete configuration for Liana-{$checksum}"
+=> "Configuratie voor Liana-{$checksum} verwijderen";;
+
+launcher-delete-title-alias
+=> "Delete configuration for {$alias} (Liana-{$checksum})"
+=> "Configuratie voor {$alias} (Liana-{$checksum}) verwijderen";;
+
+launcher-delete-warning-irreversible
+=> "WARNING: This cannot be undone."
+=> "WAARSCHUWING: Dit kan niet ongedaan worden gemaakt.";;
+
+launcher-read-daemon-config-failed
+=> "Failed to read daemon configuration file in the directory: {$path}"
+=> "Lezen van het daemonconfiguratiebestand in de map is mislukt: {$path}";;
+
+launcher-read-gui-config-failed
+=> "Failed to read GUI configuration file in the directory: {$path}"
+=> "Lezen van het GUI-configuratiebestand in de map is mislukt: {$path}";;
+
+launcher-unexpected-error => "Unexpected {$error}" => "Onverwacht {$error}"
+
+launcher-wallet-deleted
+=> "Wallet successfully deleted"
+=> "Wallet succesvol verwijderd";;
+
+launcher-wallet-id-not-found
+=> "Wallet {$wallet_id} not found"
+=> "Wallet {$wallet_id} niet gevonden";;
+
+launcher-wallet-not-found => "Wallet not found" => "Wallet niet gevonden"
+
+launcher-welcome => "Welcome" => "Welkom"
+
+launcher-welcome-back => "Welcome back" => "Welkom terug"
+
+lianalite-auth-sent
+=> "An authentication was sent to your email:"
+=> "Er is een authenticatie verstuurd naar uw e-mailadres:";;
+
+lianalite-token-expired
+=> "Token is expired or is invalid"
+=> "Het token is verlopen of ongeldig";;
+
+lianalite-token-has-expired-or-invalid
+=> "Token has expired or is invalid"
+=> "Het token is verlopen of ongeldig";;
+
+lianalite-token-invalid => "Token is not valid" => "Het token is niet geldig"
+
+lianalite-wallet-deleted
+=> "This wallet was deleted by its creator for all participants and cannot be opened. To access it again, restore it using a backup file or the wallet descriptor."
+=> "Deze wallet is door de maker voor alle deelnemers verwijderd en kan niet worden geopend. Herstel hem met een back-upbestand of de wallet-descriptor om er weer toegang toe te krijgen.";;
+
+loader-connecting-daemon => "Connecting to daemon..." => "Verbinden met daemon..."
+
+loader-failed => "Liana failed to start" => "Liana kon niet starten"
+
+loader-failed-bitcoind
+=> "Liana failed to start, please check if bitcoind is running"
+=> "Liana kon niet starten; controleer of bitcoind draait";;
+
+loader-internal-daemon-error
+=> "Error while starting the internal daemon"
+=> "Fout bij het starten van de interne daemon";;
+
+loader-progress => "Progress {$progress}%" => "Voortgang {$progress}%"
+
+loader-starting-daemon => "Starting daemon..." => "Daemon starten..."
+
+loader-sync-progress-1
+=> "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster."
+=> "Bitcoin Core synchroniseert de blockchain. Een volledige synchronisatie duurt doorgaans enkele dagen en vergt veel systeembronnen. Zodra de eerste synchronisatie klaar is, gaan de volgende veel sneller.";;
+
+loader-sync-progress-2
+=> "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance."
+=> "Bitcoin Core synchroniseert de blockchain. Dit duurt even, afhankelijk van wanneer dit voor het laatst is gebeurd, uw internetverbinding en de prestaties van uw computer.";;
+
+loader-sync-progress-3
+=> "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance."
+=> "Bitcoin Core synchroniseert de blockchain. Dit kan enkele minuten duren, afhankelijk van wanneer dit voor het laatst is gebeurd, uw internetverbinding en de prestaties van uw computer.";;
+
+menu-coins-utxos => "Coins/UTXOs" => "Coins/UTXO's"
+
+menu-dashboard => "Dashboard" => "Dashboard"
+
+menu-drafts-approvals => "Drafts & Approvals" => "Concepten en goedkeuringen"
+
+menu-receive => "Receive" => "Ontvangen"
+
+menu-send => "Send" => "Verzenden"
+
+menu-settings => "Settings" => "Instellingen"
+
+menu-transactions => "Transactions" => "Transacties"
+
+network-coins-have => ", COINS HAVE{ \" \" }" => ", COINS HEBBEN{ \" \" }"
+
+network-no-value => "NO VALUE" => "GEEN WAARDE"
+
+network-this-is-a => "THIS IS A{ \" \" }" => "DIT IS EEN{ \" \" }"
+
+network-wallet => "{$network} WALLET" => "{$network} WALLET"
+
+payment-address-label => "address label: {$label}" => "adreslabel: {$label}"
+
+payment-incoming => "Incoming payment" => "Inkomende betaling"
+
+payment-outgoing => "Outgoing payment" => "Uitgaande betaling"
+
+payment-title => "Payment" => "Betaling"
+
+pill-active => "Active" => "Actief"
+
+pill-always-available => "Always available" => "Altijd beschikbaar"
+
+pill-available => "Available" => "Beschikbaar"
+
+pill-available-compact => "Avail." => "Besch."
+
+pill-batch => "Batch" => "Batch"
+
+pill-batch-tooltip
+=> "This transaction contains multiple payments"
+=> "Deze transactie bevat meerdere betalingen";;
+
+pill-confirmed => "Confirmed" => "Bevestigd"
+
+pill-confirmed-tooltip
+=> "This transaction has been included in a block"
+=> "Deze transactie is in een blok opgenomen";;
+
+pill-deprecated => "Deprecated" => "Verouderd"
+
+pill-deprecated-tooltip
+=> "This transaction cannot be included in the blockchain anymore."
+=> "Deze transactie kan niet meer in de blockchain worden opgenomen.";;
+
+pill-draft => "Draft" => "Concept"
+
+pill-first-recovery-in
+=> "First recovery option available in {$units}"
+=> "Eerste hersteloptie beschikbaar over {$units}";;
+
+pill-first-recovery-today
+=> "First recovery option available today"
+=> "Eerste hersteloptie vandaag beschikbaar";;
+
+pill-key-cosigner => "Cosigner" => "Cosigner"
+
+pill-key-cosigner-tooltip
+=> "Professional third party co-signing key"
+=> "Professionele medeondertekensleutel van een derde partij";;
+
+pill-key-external => "External" => "Extern"
+
+pill-key-external-tooltip
+=> "Key held by third parties"
+=> "Sleutel in handen van derden";;
+
+pill-key-internal => "Internal" => "Intern"
+
+pill-key-internal-tooltip
+=> "Key held by your organization"
+=> "Sleutel in handen van uw organisatie";;
+
+pill-key-safety-net => "Safety Net" => "Safety Net"
+
+pill-key-safety-net-tooltip
+=> "Professional third party recovery key"
+=> "Professionele herstelsleutel van een derde partij";;
+
+pill-not-in-policy => "Not in policy yet" => "Nog niet in het beleid"
+
+pill-recovery-available-tooltip
+=> "Recovery option(s) already available"
+=> "Hersteloptie(s) al beschikbaar";;
+
+pill-recovery-tooltip
+=> "This transaction is using a recovery path"
+=> "Deze transactie gebruikt een herstelpad";;
+
+pill-rescan-progress => "Rescan... {$progress}%" => "Herscan... {$progress}%"
+
+pill-signed => "To broadcast" => "Uit te zenden"
+
+pill-signed-tooltip
+=> "This transaction is signed & ready to broadcast"
+=> "Deze transactie is ondertekend en klaar om uit te zenden";;
+
+pill-spent => "Spent" => "Uitgegeven"
+
+pill-spent-tooltip
+=> "The transaction was included in the blockchain."
+=> "De transactie is in de blockchain opgenomen.";;
+
+pill-to-approve => "To approve" => "Goed te keuren"
+
+pill-today => "Today" => "Vandaag"
+
+pill-unconfirmed => "Unconfirmed" => "Onbevestigd"
+
+pill-unconfirmed-tooltip
+=> "Do not treat this as a payment until it is confirmed"
+=> "Beschouw dit pas als een betaling wanneer het bevestigd is";;
+
+pill-unsigned => "Unsigned" => "Niet ondertekend"
+
+pill-unsigned-tooltip
+=> "This transaction is missing signature(s)"
+=> "Deze transactie mist handtekening(en)";;
+
+pill-used-in-spending-paths
+=> "{ $count ->\n    [one] Used in 1 spending path\n   *[other] Used in {$count} spending paths\n}"
+=> "{ $count ->\n    [one] Gebruikt in 1 uitgavepad\n   *[other] Gebruikt in {$count} uitgavepaden\n}";;
+
+pill-ws-admin => "WS Admin" => "WS-admin"
+
+pill-xpub-not-set => "Not Set" => "Niet ingesteld"
+
+pill-xpub-set => "✓ Set" => "✓ Ingesteld"
+
+policy-block-duration
+=> "{$blocks} blocks (~{$duration})"
+=> "{$blocks} blokken (~{$duration})";;
+
+policy-by => "by" => "door"
+
+policy-inactive-for
+=> "can spend coins inactive for"
+=> "kan coins uitgeven die inactief zijn gedurende";;
+
+policy-out-of-by => "out of {$count} by" => "van de {$count} door"
+
+policy-primary-path
+=> "can always spend this wallet's funds (Primary path)"
+=> "kan de fondsen van deze wallet altijd uitgeven (primair pad)";;
+
+policy-recovery-path => "(Recovery path #{$number})" => "(herstelpad #{$number})"
+
+policy-safety-net-path => "(Safety Net path)" => "(Safety Net-pad)"
+
+policy-signatures
+=> "{ $count ->\n    [one] 1 signature\n   *[other] {$count} signatures\n}"
+=> "{ $count ->\n    [one] 1 handtekening\n   *[other] {$count} handtekeningen\n}";;
+
+policy-wallet-policy => "The wallet policy:" => "Het walletbeleid:"
+
+psbt-already-signed-by => ", already signed by" => ", al ondertekend door"
+
+psbt-broadcast-conflicts-one
+=> "The following transaction is spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on it:"
+=> "De volgende transactie geeft een of meer inputs uit van de transactie die wordt uitgezonden en wordt verworpen, samen met alle transacties die ervan afhangen:";;
+
+psbt-broadcast-conflicts-some
+=> "The following transactions are spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on them:"
+=> "De volgende transacties geven een of meer inputs uit van de transactie die wordt uitgezonden en worden verworpen, samen met alle transacties die ervan afhangen:";;
+
+psbt-broadcast-invalidates-one
+=> "WARNING: Broadcasting this transaction will invalidate a pending payment."
+=> "WAARSCHUWING: Het uitzenden van deze transactie maakt een openstaande betaling ongeldig.";;
+
+psbt-broadcast-invalidates-some
+=> "WARNING: Broadcasting this transaction will invalidate some pending payments."
+=> "WAARSCHUWING: Het uitzenden van deze transactie maakt enkele openstaande betalingen ongeldig.";;
+
+psbt-broadcast-transaction
+=> "Broadcast the transaction"
+=> "De transactie uitzenden";;
+
+psbt-change => "Change" => "Wisselgeld"
+
+psbt-coins-spent
+=> "{ $count ->\n    [one] 1 coin spent\n   *[other] {$count} coins spent\n}"
+=> "{ $count ->\n    [one] 1 coin uitgegeven\n   *[other] {$count} coins uitgegeven\n}";;
+
+psbt-delete-success
+=> "Successfully deleted this transaction."
+=> "Deze transactie is verwijderd.";;
+
+psbt-delete-this => "Delete this PSBT" => "Deze PSBT verwijderen"
+
+psbt-device-sign-failed
+=> "Device failed to sign"
+=> "Het apparaat kon niet ondertekenen";;
+
+psbt-finalizing-requires
+=> "Finalizing this transaction requires:"
+=> "Voor het finaliseren van deze transactie is nodig:";;
+
+psbt-missing-inputs
+=> "Missing information about transaction inputs"
+=> "Informatie over de transactie-inputs ontbreekt";;
+
+psbt-more-signatures
+=> "{ $count ->\n    [0] no more signatures\n    [one] 1 more signature from\n   *[other] {$count} more signatures from\n}"
+=> "{ $count ->\n    [0] geen handtekeningen meer\n    [one] nog 1 handtekening van\n   *[other] nog {$count} handtekeningen van\n}";;
+
+psbt-no-payment => "0 payment" => "0 betalingen"
+
+psbt-not-ready => "Not ready" => "Niet gereed"
+
+psbt-payments
+=> "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
+=> "{ $count ->\n    [one] 1 betaling\n   *[other] {$count} betalingen\n}";;
+
+psbt-save-transaction => "Save this transaction" => "Deze transactie opslaan"
+
+psbt-select-signing-device
+=> "Select signing device to sign with:"
+=> "Selecteer het ondertekenapparaat om mee te ondertekenen:";;
+
+psbt-sign-save-before-export
+=> "Sign or save the transaction first to enable export"
+=> "Onderteken of sla de transactie eerst op om te kunnen exporteren";;
+
+psbt-signed-by => "signed by" => "ondertekend door"
+
+psbt-spend-updated
+=> "Spend transaction is updated"
+=> "De uitgavetransactie is bijgewerkt";;
+
+psbt-status => "Status" => "Status"
+
+psbt-transaction-broadcast
+=> "Transaction is broadcast"
+=> "De transactie is uitgezonden";;
+
+psbt-transaction-saved => "Transaction is saved" => "De transactie is opgeslagen"
+
+psbts-base64-warning
+=> "Please enter a base64 encoded PSBT"
+=> "Voer een base64-gecodeerde PSBT in";;
+
+psbts-imported => "PSBT is imported" => "PSBT is geïmporteerd"
+
+psbts-insert-psbt => "Insert PSBT:" => "PSBT invoegen:"
+
+receive-address-label-placeholder
+=> "Enter an address label"
+=> "Voer een adreslabel in";;
+
+receive-derivation-index => "Derivation index:" => "Afleidingsindex:"
+
+receive-generate-new-address-help
+=> "Always generate a new address for each deposit."
+=> "Genereer altijd een nieuw adres voor elke storting.";;
+
+receive-generating-address => "Generating address ..." => "Adres genereren ..."
+
+receive-generating-address-title => "Generating address" => "Adres genereren"
+
+receive-previous-addresses
+=> "Previously generated addresses still awaiting deposit"
+=> "Eerder gegenereerde adressen die nog op een storting wachten";;
+
+receive-select-device
+=> "Select device to verify address on:"
+=> "Selecteer het apparaat om het adres op te verifiëren:";;
+
+receive-specter-diy-tooltip
+=> "For Specter DIY devices"
+=> "Voor Specter DIY-apparaten";;
+
+receive-verify-address => "Verify address" => "Adres verifiëren"
+
+recovery-coins-total
+=> "{ $count ->\n    [one] can recover 1 coin totalling\n   *[other] can recover {$count} coins totalling\n}"
+=> "{ $count ->\n    [one] kan 1 coin herstellen met een totaal van\n   *[other] kan {$count} coins herstellen met een totaal van\n}";;
+
+recovery-info
+=> "Recover your funds by sending them to another wallet if you have lost access to your primary spending path."
+=> "Herstel uw fondsen door ze naar een andere wallet te sturen als u de toegang tot uw primaire uitgavepad hebt verloren.";;
+
+recovery-none-available
+=> "No recovery path is currently available."
+=> "Er is momenteel geen herstelpad beschikbaar.";;
+
+recovery-paths-available
+=> "{ $count ->\n    [one] 1 recovery path is available:\n   *[other] {$count} recovery paths are available:\n}"
+=> "{ $count ->\n    [one] 1 herstelpad is beschikbaar:\n   *[other] {$count} herstelpaden zijn beschikbaar:\n}";;
+
+recovery-signatures-from
+=> "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}"
+=> "{ $count ->\n    [one] 1 handtekening van\n   *[other] {$count} handtekeningen van\n}";;
+
+settings-alias => "Alias" => "Alias"
+
+settings-alias-too-long
+=> "Please enter alias that is not too long"
+=> "Voer een alias in die niet te lang is";;
+
+settings-backup-encrypted-descriptor-tooltip
+=> "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs."
+=> "Een versleuteld descriptorbestand (.bed) dat u overal kunt bewaren. Om het te ontsleutelen hebt u een van uw ondertekenapparaten of xpubs nodig.";;
+
+settings-block-height => "Block Height:" => "Blokhoogte:"
+
+settings-blockchain-rescan => "Blockchain rescan" => "Blockchain herscannen"
+
+settings-change-node-or-connect
+=> "I want to change node type or use Liana Connect"
+=> "Ik wil het nodetype wijzigen of Liana Connect gebruiken";;
+
+settings-connect-own-node
+=> "I want to connect to my own node"
+=> "Ik wil verbinding maken met mijn eigen node";;
+
+settings-cookie-file-path => "Cookie file path" => "Pad naar cookiebestand"
+
+settings-correct-alias
+=> "Please enter correct alias"
+=> "Voer een correcte alias in";;
+
+settings-currency => "Currency:" => "Valuta:"
+
+settings-date-before-prune
+=> "Provided date earlier than the node prune height"
+=> "De opgegeven datum ligt vóór de prune-hoogte van de node";;
+
+settings-date-future
+=> "Provided date is in the future"
+=> "De opgegeven datum ligt in de toekomst";;
+
+settings-date-invalid
+=> "Provided date is invalid"
+=> "De opgegeven datum is ongeldig";;
+
+settings-day => "Day:" => "Dag:"
+
+settings-email-invalid => "Email is invalid" => "Het e-mailadres is ongeldig"
+
+settings-exchange-rate-source
+=> "Exchange rate source:"
+=> "Bron van de wisselkoers:";;
+
+settings-export-descriptor
+=> "Descriptor only - plain-text"
+=> "Alleen descriptor - platte tekst";;
+
+settings-export-descriptor-description
+=> "Plain-text (not encrypted) descriptor file only, to use with other wallets."
+=> "Alleen het descriptorbestand als platte tekst (niet versleuteld), voor gebruik met andere wallets.";;
+
+settings-export-encrypted-descriptor
+=> "Encrypted descriptor"
+=> "Versleutelde descriptor";;
+
+settings-export-encrypted-descriptor-description
+=> ".bed file, can be decrypted with one of your signing devices or xpubs."
+=> ".bed-bestand, te ontsleutelen met een van uw ondertekenapparaten of xpubs.";;
+
+settings-export-labels => "BIP 329 labels" => "BIP 329-labels"
+
+settings-export-labels-description
+=> "BIP 329 label export, compatible with other wallets."
+=> "BIP 329-labelexport, compatibel met andere wallets.";;
+
+settings-export-transactions => "Transactions table" => "Transactietabel"
+
+settings-export-transactions-description
+=> ".CSV file of past transactions, for accounting purposes."
+=> ".CSV-bestand met eerdere transacties, voor boekhoudkundige doeleinden.";;
+
+settings-export-wallet => "Export wallet" => "Wallet exporteren"
+
+settings-export-wallet-description
+=> "File (not encrypted) with wallet info useful to sync labels and data on other devices."
+=> "Bestand (niet versleuteld) met walletgegevens, handig om labels en gegevens op andere apparaten te synchroniseren.";;
+
+settings-fiat-price => "Fiat price:" => "Fiatprijs:"
+
+settings-fiat-price-tooltip
+=> "Fiat price data is provided by third-party services. Availability and accuracy are not guaranteed."
+=> "Fiatprijsgegevens komen van diensten van derden. Beschikbaarheid en juistheid zijn niet gegarandeerd.";;
+
+settings-fingerprint-aliases
+=> "Fingerprint aliases:"
+=> "Aliassen voor vingerafdrukken:";;
+
+settings-grant-wallet-access
+=> "Grant access to wallet to another user"
+=> "Een andere gebruiker toegang tot de wallet geven";;
+
+settings-import-export-description
+=> "A collection of the export and import functions present in Liana."
+=> "Een overzicht van de export- en importfuncties in Liana.";;
+
+settings-import-wallet => "Import wallet" => "Wallet importeren"
+
+settings-import-wallet-description
+=> "Upload a backup file to update wallet info."
+=> "Upload een back-upbestand om de walletgegevens bij te werken.";;
+
+settings-invitation-sent => "Invitation was sent" => "De uitnodiging is verstuurd"
+
+settings-language => "Language" => "Taal"
+
+settings-language-description
+=> "Choose the language used by the application."
+=> "Kies de taal die de applicatie gebruikt.";;
+
+settings-month => "Month:" => "Maand:"
+
+settings-network => "Network:" => "Netwerk:"
+
+settings-not-running => "Not running" => "Draait niet"
+
+settings-other-formats => "Other formats" => "Andere formaten"
+
+settings-rescan-success
+=> "Successfully rescanned the blockchain"
+=> "De blockchain is succesvol opnieuw gescand";;
+
+settings-rescanning => "Rescanning...{$progress}%" => "Herscannen...{$progress}%"
+
+settings-running => "Running" => "Draait"
+
+settings-section-about => "About" => "Over"
+
+settings-section-backend => "Backend" => "Backend"
+
+settings-section-general => "General" => "Algemeen"
+
+settings-section-import-export => "Import/Export" => "Importeren/Exporteren"
+
+settings-section-node => "Node" => "Node"
+
+settings-select-device => "Select device:" => "Selecteer apparaat:"
+
+settings-socket-address => "Socket address:" => "Socketadres:"
+
+settings-updated => "Updated" => "Bijgewerkt"
+
+settings-user-email => "User email" => "E-mailadres gebruiker"
+
+settings-valid-address
+=> "Please enter a valid address"
+=> "Voer een geldig adres in";;
+
+settings-valid-filesystem-path
+=> "Please enter a valid filesystem path"
+=> "Voer een geldig bestandspad in";;
+
+settings-valid-password
+=> "Please enter a valid password"
+=> "Voer een geldig wachtwoord in";;
+
+settings-valid-user => "Please enter a valid user" => "Voer een geldige gebruiker in"
+
+settings-version => "Version" => "Versie"
+
+settings-wallet-alias => "Wallet alias:" => "Walletalias:"
+
+settings-wallet-descriptor => "Wallet descriptor:" => "Wallet-descriptor:"
+
+settings-year => "Year:" => "Jaar:"
+
+spend-amount-btc => "Amount (BTC)" => "Bedrag (BTC)"
+
+spend-amount-truncated
+=> "Amount has been truncated to 8 decimal places"
+=> "Het bedrag is afgekapt tot 8 decimalen";;
+
+spend-batch-label => "Batch label" => "Batchlabel"
+
+spend-btc-placeholder => "0.001 (in BTC)" => "0.001 (in BTC)"
+
+spend-coins-selection => "Coins selection" => "Coinselectie"
+
+spend-could-not-convert-btc
+=> "Could not convert to BTC"
+=> "Kon niet naar BTC converteren";;
+
+spend-description => "Description" => "Omschrijving"
+
+spend-duplicate-addresses
+=> "Two payment addresses are the same"
+=> "Twee betalingsadressen zijn hetzelfde";;
+
+spend-dust-add-funds
+=> "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s)."
+=> "Het minimumbedrag is 0.00 000 500 BTC. Voeg fondsen aan uw wallet toe om de coin(s) uit te geven.";;
+
+spend-dust-select-more-coins
+=> "Minimum amount is 0.00 000 500 BTC. Select more coins to continue."
+=> "Het minimumbedrag is 0.00 000 500 BTC. Selecteer meer coins om door te gaan.";;
+
+spend-fee => "Fee:" => "Kosten:"
+
+spend-fee-manual => "Manual" => "Handmatig"
+
+spend-fee-rate => "Fee ({$feerate} sats/vb):" => "Kosten ({$feerate} sats/vb):"
+
+spend-fee-smart-select => "Smart Select" => "Slimme selectie"
+
+spend-fee-smart-select-tooltip
+=> "Pick a preset feerate instead of entering one manually."
+=> "Kies een vooraf ingesteld tarief in plaats van er zelf een in te voeren.";;
+
+spend-feerate => "Feerate:" => "Tarief:"
+
+spend-feerate-example => "e.g. 5 (in sats/vb)" => "bijv. 5 (in sats/vb)"
+
+spend-feerate-max-warning
+=> "Feerate must be an integer less than or equal to {$max_feerate} sats/vbyte"
+=> "Het tarief moet een geheel getal zijn dat kleiner is dan of gelijk is aan {$max_feerate} sats/vbyte";;
+
+spend-feerate-missing-invalid
+=> "The feerate is missing or invalid"
+=> "Het tarief ontbreekt of is ongeldig";;
+
+spend-fiat-placeholder
+=> "Enter amount in {$currency}"
+=> "Voer het bedrag in {$currency} in";;
+
+spend-invalid-address
+=> "Invalid address (maybe it is for another network?)"
+=> "Ongeldig adres (misschien is het voor een ander netwerk?)";;
+
+spend-invalid-amount
+=> "Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)"
+=> "Ongeldig bedrag. (Let op: bedragen lager dan 0.000005 BTC zijn ongeldig.)";;
+
+spend-left-to-select => "left to select" => "nog te selecteren"
+
+spend-max => "MAX" => "MAX"
+
+spend-max-tooltip
+=> "Total amount remaining after paying fee and any other recipients"
+=> "Het totale bedrag dat overblijft na betaling van de kosten en eventuele andere ontvangers";;
+
+spend-payment-description-invalid
+=> "Payment description is missing or invalid"
+=> "De omschrijving van de betaling ontbreekt of is ongeldig";;
+
+spend-payment-label => "Payment label" => "Betalingslabel"
+
+spend-recipient-address-invalid
+=> "A recipient address is missing or invalid"
+=> "Een ontvangeradres ontbreekt of is ongeldig";;
+
+spend-recipient-amount-invalid
+=> "A recipient amount is missing or invalid"
+=> "Een bedrag voor een ontvanger ontbreekt of is ongeldig";;
+
+spend-select-coins-to-cover-amount
+=> "Select coins to cover the amount"
+=> "Selecteer coins om het bedrag te dekken";;
+
+spend-select-one-coin
+=> "Select at least one coin."
+=> "Selecteer minstens één coin.";;
+
+spend-select-or-add-funds
+=> "Select or add more funds."
+=> "Selecteer of voeg meer fondsen toe.";;
+
+spend-warning-recovery-own-address
+=> "Recovery address belongs to the same wallet. If you can no longer spend with the primary path, use an address from a different wallet instead."
+=> "Het hersteladres hoort bij dezelfde wallet. Als u niet langer met het primaire pad kunt uitgeven, gebruik dan een adres van een andere wallet.";;
+
+tab-installer => "Installer" => "Installatie"
+
+tab-launcher => "Launcher" => "Startscherm"
+
+tab-pending => "Pending" => "In afwachting"
+
+time-days-ago
+=> "{ $count ->\n    [one] 1 day ago\n   *[other] {$count} days ago\n}"
+=> "{ $count ->\n    [one] 1 dag geleden\n   *[other] {$count} dagen geleden\n}";;
+
+time-hours-ago
+=> "{ $count ->\n    [one] 1 hour ago\n   *[other] {$count} hours ago\n}"
+=> "{ $count ->\n    [one] 1 uur geleden\n   *[other] {$count} uur geleden\n}";;
+
+time-just-now => "just now" => "zojuist"
+
+time-minutes-ago
+=> "{ $count ->\n    [one] 1 minute ago\n   *[other] {$count} minutes ago\n}"
+=> "{ $count ->\n    [one] 1 minuut geleden\n   *[other] {$count} minuten geleden\n}";;
+
+time-months-ago
+=> "{ $count ->\n    [one] 1 month ago\n   *[other] {$count} months ago\n}"
+=> "{ $count ->\n    [one] 1 maand geleden\n   *[other] {$count} maanden geleden\n}";;
+
+time-seconds-ago
+=> "{ $count ->\n    [one] 1 second ago\n   *[other] {$count} seconds ago\n}"
+=> "{ $count ->\n    [one] 1 seconde geleden\n   *[other] {$count} seconden geleden\n}";;
+
+time-weeks-ago
+=> "{ $count ->\n    [one] 1 week ago\n   *[other] {$count} weeks ago\n}"
+=> "{ $count ->\n    [one] 1 week geleden\n   *[other] {$count} weken geleden\n}";;
+
+transactions-cancel-tooltip
+=> "Best effort attempt at double spending an unconfirmed outgoing transaction"
+=> "Poging naar beste vermogen om een onbevestigde uitgaande transactie dubbel uit te geven";;
+
+transactions-date => "Date:" => "Datum:"
+
+transactions-incoming => "Incoming transaction" => "Inkomende transactie"
+
+transactions-miner-fee => "Miner fee:{ \" \" }" => "Minerkosten:{ \" \" }"
+
+transactions-outgoing => "Outgoing transaction" => "Uitgaande transactie"
+
+transactions-rbf-bump-help
+=> "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction."
+=> "Vervang de transactie door een transactie met een hoger tarief om snellere bevestiging te stimuleren. Voor de vervangende transactie kunnen nieuwe inputs worden gebruikt.";;
+
+transactions-rbf-cancel-help
+=> "Replace the transaction with one paying a higher feerate that sends the coins back to your wallet. There is no guarantee the original transaction won't get mined first. New inputs may be used for the replacement transaction."
+=> "Vervang de transactie door een transactie met een hoger tarief die de coins naar uw eigen wallet terugstuurt. Er is geen garantie dat de oorspronkelijke transactie niet eerst wordt gemined. Voor de vervangende transactie kunnen nieuwe inputs worden gebruikt.";;
+
+transactions-rbf-created
+=> "Replacement PSBT created successfully and ready to be signed"
+=> "Vervangende PSBT succesvol aangemaakt en klaar om te ondertekenen";;
+
+transactions-rbf-descendants-one
+=> "The following transaction is spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on it:"
+=> "De volgende transactie geeft een of meer outputs uit van de te vervangen transactie en wordt verworpen zodra de vervanging wordt uitgezonden, samen met alle transacties die ervan afhangen:";;
+
+transactions-rbf-descendants-some
+=> "The following transactions are spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on them:"
+=> "De volgende transacties geven een of meer outputs uit van de te vervangen transactie en worden verworpen zodra de vervanging wordt uitgezonden, samen met alle transacties die ervan afhangen:";;
+
+transactions-rbf-feerate-warning
+=> "Feerate must be greater than previous value and less than or equal to 1000 sats/vbyte"
+=> "Het tarief moet hoger zijn dan de vorige waarde en kleiner dan of gelijk aan 1000 sats/vbyte";;
+
+transactions-rbf-invalidates-one
+=> "WARNING: Replacing this transaction will invalidate a later payment."
+=> "WAARSCHUWING: Het vervangen van deze transactie maakt een latere betaling ongeldig.";;
+
+transactions-rbf-invalidates-some
+=> "WARNING: Replacing this transaction will invalidate some later payments."
+=> "WAARSCHUWING: Het vervangen van deze transactie maakt enkele latere betalingen ongeldig.";;
+
+transactions-replacement => "Transaction replacement" => "Transactievervanging"
+
+transactions-transaction => "Transaction" => "Transactie"
+
+transactions-txid => "Tx ID" => "Tx-ID"
+
+warning-hardware-wallet-error => "Hardware wallet error" => "Hardwarewalletfout"
