@@ -243,7 +243,10 @@ impl State for VaultReceivePanel {
                         // the poller for a per-SPK rescan on the
                         // next tick instead of waiting up to 10
                         // min for the smart-poll cadence.
-                        let _ = daemon.request_sync().await;
+                        let sync_daemon = daemon.clone();
+                        tokio::spawn(async move {
+                            let _ = sync_daemon.request_sync().await;
+                        });
                         res
                     },
                     Message::ReceiveAddress,
@@ -349,6 +352,7 @@ impl State for VaultReceivePanel {
         let wallet = wallet.expect("Vault panels require wallet");
         let data_dir = self.data_dir.clone();
         *self = Self::new(data_dir, wallet);
+        self.processing = true;
         Task::perform(
             async move {
                 let res = daemon
@@ -362,6 +366,10 @@ impl State for VaultReceivePanel {
                 // promptly instead of waiting for the smart-poll
                 // safety-net rescan.
                 let _ = daemon.request_sync().await;
+                let sync_daemon = daemon.clone();
+                tokio::spawn(async move {
+                    let _ = sync_daemon.request_sync().await;
+                });
                 res
             },
             |res| Message::RevealedAddresses(res, None),

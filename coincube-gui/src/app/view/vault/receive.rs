@@ -26,6 +26,7 @@ use coincube_ui::{
 
 use crate::{
     app::view::{
+        loading_placeholder,
         message::VaultReceiveMessage,
         placeholder,
         vault::{hw, label},
@@ -139,11 +140,20 @@ pub fn receive<'a>(
                 }),
         )
         .push((prev_addresses.is_empty() && addresses.is_empty()).then(|| {
-            placeholder(
-                icon::receive_icon().size(80),
-                "No addresses yet",
-                "Generate a new address to receive bitcoin. Always generate a new address for each deposit.",
-            )
+            // placeholder(
+            //     icon::receive_icon().size(80),
+            //     "No addresses yet",
+            //     "Generate a new address to receive bitcoin. Always generate a new address for each deposit.",
+            // )
+            if processing {
+                loading_placeholder(icon::receive_icon().size(80), "Loading addresses...")
+            } else {
+                placeholder(
+                    icon::receive_icon().size(80),
+                    "No addresses yet",
+                    "Generate a new address to receive bitcoin. Always generate a new address for each deposit.",
+                )
+            }
         }))
         .push(
             Row::new()
