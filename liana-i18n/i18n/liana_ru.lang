@@ -1,0 +1,2526 @@
+# Translator-friendly catalog
+# Language: Русский
+# Format: id => "English" => "Translation"
+# Use \n for line breaks
+
+btn-accept => "Accept" => "Принять"
+
+btn-add-key => "Add a key" => "Добавить ключ"
+
+btn-add-payment => "Add payment" => "Добавить платёж"
+
+btn-add-recovery-option => "Add recovery option" => "Добавить вариант восстановления"
+
+btn-add-recovery-path => "Add a recovery path" => "Добавить путь восстановления"
+
+btn-add-safety-net => "Add Safety Net" => "Добавить Safety Net"
+
+btn-add-wallet => "Add wallet" => "Добавить кошелёк"
+
+btn-apply => "Apply" => "Применить"
+
+btn-approve => "Approve" => "Одобрить"
+
+btn-back => "Back" => "Назад"
+
+btn-back-up-descriptor => "Back Up Descriptor" => "Резервная копия дескриптора"
+
+btn-backup-encrypted-descriptor
+=> "Back up encrypted descriptor"
+=> "Резервная копия зашифрованного дескриптора";;
+
+btn-broadcast => "Broadcast" => "Транслировать"
+
+btn-bump-fee => "Bump fee" => "Повысить комиссию"
+
+btn-cancel => "Cancel" => "Отмена"
+
+btn-cancel-transaction => "Cancel transaction" => "Отменить транзакцию"
+
+btn-change-email => "Change Email" => "Изменить email"
+
+btn-check-connection => "Check connection" => "Проверить соединение"
+
+btn-clear => "Clear" => "Очистить"
+
+btn-clear-all => "Clear All" => "Очистить всё"
+
+btn-close-tab => "Close" => "Закрыть"
+
+btn-confirm => "Confirm" => "Подтвердить"
+
+btn-connect-another-email => "Connect with another email" => "Войти с другим email"
+
+btn-customize => "Customize" => "Настроить"
+
+btn-delete => "Delete" => "Удалить"
+
+btn-delete-wallet => "Delete wallet" => "Удалить кошелёк"
+
+btn-dismiss => "Dismiss" => "Скрыть"
+
+btn-edit => "Edit" => "Изменить"
+
+btn-edit-keys => "Edit keys" => "Изменить ключи"
+
+btn-edit-label => "Edit label" => "Изменить метку"
+
+btn-email-wizardsardine => "Email WS" => "Письмо в WS"
+
+btn-export => "Export" => "Экспорт"
+
+btn-fee-level-high => "High" => "Высокая"
+
+btn-fee-level-low => "Low" => "Низкая"
+
+btn-fee-level-medium => "Medium" => "Средняя"
+
+btn-generate => "Generate" => "Создать"
+
+btn-generate-address => "Generate address" => "Создать адрес"
+
+btn-go-back => "Go back" => "Назад"
+
+btn-go-back-to-psbts => "Go back to PSBTs" => "Вернуться к PSBT"
+
+btn-go-to-replacement => "Go to replacement" => "К замене"
+
+btn-go-to-rescan => "Go to rescan" => "К повторному сканированию"
+
+btn-ignore => "Ignore" => "Игнорировать"
+
+btn-import => "Import" => "Импорт"
+
+btn-keep-my-changes => "Keep my changes" => "Оставить мои изменения"
+
+btn-login => "Login" => "Войти"
+
+btn-manage-keys => "Manage Keys" => "Управление ключами"
+
+btn-mark-keys-ready => "Mark keys as ready" => "Отметить ключи как готовые"
+
+btn-more-backend-node-info
+=> "More information about backend and node options"
+=> "Подробнее о вариантах бэкенда и узла";;
+
+btn-new => "New" => "Новый"
+
+btn-next => "Next" => "Далее"
+
+btn-no => "No" => "Нет"
+
+btn-ok => "OK" => "OK"
+
+btn-overwrite => "Overwrite" => "Перезаписать"
+
+btn-previous => "Previous" => "Назад"
+
+btn-previous-arrow => "< Previous" => "< Назад"
+
+btn-processing => "Processing..." => "Обработка..."
+
+btn-register-on-device => "Register on device" => "Зарегистрировать на устройстве"
+
+btn-reload => "Reload" => "Перезагрузить"
+
+btn-replace => "Replace" => "Заменить"
+
+btn-resend-token => "Resend token" => "Отправить токен ещё раз"
+
+btn-reset-timelock => "Reset timelock" => "Сбросить таймлок"
+
+btn-retry => "Retry" => "Повторить"
+
+btn-save => "Save" => "Сохранить"
+
+btn-see-transaction-details => "See transaction details" => "Детали транзакции"
+
+btn-select => "Select" => "Выбрать"
+
+btn-send-for-approval => "Send for approval" => "Отправить на одобрение"
+
+btn-send-invitation => "Send invitation" => "Отправить приглашение"
+
+btn-send-token => "Send token" => "Отправить токен"
+
+btn-set => "Set" => "Задать"
+
+btn-set-keys => "Set keys" => "Задать ключи"
+
+btn-share-xpubs => "Share Xpubs" => "Поделиться xpub"
+
+btn-show-qr => "Show QR Code" => "Показать QR-код"
+
+btn-sign => "Sign" => "Подписать"
+
+btn-skip => "Skip" => "Пропустить"
+
+btn-skip-registration => "Skip registration" => "Пропустить регистрацию"
+
+btn-split-tab => "Split" => "Разделить"
+
+btn-start-rescan => "Start rescan" => "Начать повторное сканирование"
+
+btn-starting-rescan => "Starting rescan..." => "Запуск повторного сканирования..."
+
+btn-template-help
+=> "Something’s wrong with this template?"
+=> "Что-то не так с этим шаблоном?";;
+
+btn-unlock-all => "Unlock all" => "Разблокировать все"
+
+btn-update => "Update" => "Обновить"
+
+btn-updating => "Updating" => "Обновление"
+
+btn-verify-on-device
+=> "Verify on hardware device"
+=> "Проверить на аппаратном устройстве";;
+
+btn-yes => "Yes" => "Да"
+
+business-access-error => "Access Error" => "Ошибка доступа"
+
+business-account-connection-failed
+=> "Failed to connect with account {$email}. The session may have expired."
+=> "Не удалось подключиться к аккаунту {$email}. Возможно, сессия истекла.";;
+
+business-account-number => "Account #{$index}" => "Аккаунт №{$index}"
+
+business-add-key-label => "Add a key" => "Добавить ключ"
+
+business-add-two-keys-to-continue
+=> "Add at least 2 keys to continue"
+=> "Добавьте минимум 2 ключа, чтобы продолжить";;
+
+business-admin-name => "Admin{$name}" => "Администратор{$name}"
+
+business-after-days
+=> "{ $count ->\n    [one] After 1 day\n   *[other] After {$count} days\n}"
+=> "{ $count ->\n    [one] Через {$count} день\n    [few] Через {$count} дня\n    [many] Через {$count} дней\n   *[other] Через {$count} дня\n}";;
+
+business-after-hours
+=> "{ $count ->\n    [one] After 1 hour\n   *[other] After {$count} hours\n}"
+=> "{ $count ->\n    [one] Через {$count} час\n    [few] Через {$count} часа\n    [many] Через {$count} часов\n   *[other] Через {$count} часа\n}";;
+
+business-after-months
+=> "{ $count ->\n    [one] After 1 month\n   *[other] After {$count} months\n}"
+=> "{ $count ->\n    [one] Через {$count} месяц\n    [few] Через {$count} месяца\n    [many] Через {$count} месяцев\n   *[other] Через {$count} месяца\n}";;
+
+business-all-files => "All files" => "Все файлы"
+
+business-all-keys-set-waiting
+=> "All keys are set. Once the other participants finish this step, the wallet will be ready."
+=> "Все ключи заданы. Когда остальные участники завершат этот шаг, кошелёк будет готов.";;
+
+business-assigned-keys-set-waiting
+=> "Your assigned keys are set. Waiting for the other participants to finish this step."
+=> "Назначенные вам ключи заданы. Ожидание, пока остальные участники завершат этот шаг.";;
+
+business-auth-code-request-failed
+=> "Failed to request authentication code from server."
+=> "Не удалось запросить код аутентификации у сервера.";;
+
+business-authenticated => "Authenticated" => "Аутентифицирован"
+
+business-backend-error => "Backend error" => "Ошибка бэкенда"
+
+business-cannot-approve-template
+=> "Can't approve this template?"
+=> "Не можете одобрить этот шаблон?";;
+
+business-clipboard-empty => "Clipboard is empty" => "Буфер обмена пуст"
+
+business-code-six-digits
+=> "Code must contain only 6 digits."
+=> "Код должен содержать только 6 цифр.";;
+
+business-common-you => "You" => "Вы"
+
+business-confirm-coldcard-success
+=> "Please confirm on your Coldcard that the wallet registration completed successfully."
+=> "Подтвердите на вашем Coldcard, что регистрация кошелька завершилась успешно.";;
+
+business-confirm-device
+=> "Please confirm on your device..."
+=> "Подтвердите на устройстве...";;
+
+business-confirm-registration
+=> "Confirm Registration"
+=> "Подтверждение регистрации";;
+
+business-connect-device-register
+=> "Connect the associated device to register"
+=> "Подключите связанное устройство для регистрации";;
+
+business-connection-error => "Connection Error" => "Ошибка соединения"
+
+business-contact-create-account
+=> "Contact Wizardsardine to create an account."
+=> "Обратитесь в Wizardsardine, чтобы создать аккаунт.";;
+
+business-create-new-path => "Create New Path" => "Создать новый путь"
+
+business-current-xpub => "Current xpub" => "Текущий xpub"
+
+business-detected-devices => "Detected devices" => "Обнаруженные устройства"
+
+business-device-disconnected => "Device disconnected" => "Устройство отключено"
+
+business-device-locked-unlock
+=> "Device is locked. Please unlock it first."
+=> "Устройство заблокировано. Сначала разблокируйте его.";;
+
+business-device-not-supported
+=> "Device is not supported"
+=> "Устройство не поддерживается";;
+
+business-device-unsupported-locked
+=> "Device locked or unsupported"
+=> "Устройство заблокировано или не поддерживается";;
+
+business-did-registration-succeed
+=> "Did the registration succeed on your Coldcard?"
+=> "Регистрация на вашем Coldcard прошла успешно?";;
+
+business-duplicate-timelock => "Duplicate timelock" => "Повторяющийся таймлок"
+
+business-edit-key => "Edit Key" => "Изменить ключ"
+
+business-edit-primary-path => "Edit Primary Path" => "Изменить основной путь"
+
+business-edit-recovery-path => "Edit Recovery Path" => "Изменить путь восстановления"
+
+business-edited => "Edited" => "Изменено"
+
+business-edited-by-on
+=> "Edited by {$editor} on {$date}"
+=> "Изменено пользователем {$editor} {$date}";;
+
+business-edited-by-user
+=> "Edited by {$editor}"
+=> "Изменено пользователем {$editor}";;
+
+business-edited-on => "Edited on {$date}" => "Изменено {$date}"
+
+business-edited-relative => "Edited{$editor} {$time}" => "Изменено{$editor} {$time}"
+
+business-email-app-open-failed
+=> "Couldn't open your email app"
+=> "Не удалось открыть почтовое приложение";;
+
+business-email-app-open-failed-message
+=> "Open your email client and contact Wizardsardine to request template edits."
+=> "Откройте почтовый клиент и напишите в Wizardsardine, чтобы запросить изменения шаблона.";;
+
+business-external-keys => "External keys" => "Внешние ключи"
+
+business-external-signer-help
+=> "The third party who will set up and sign with this key. They'll be invited by email."
+=> "Третья сторона, которая настроит этот ключ и будет им подписывать. Приглашение придёт ей по email.";;
+
+business-fetched-from-device
+=> "Fetched from {$kind} #{$fingerprint}"
+=> "Получено с {$kind} #{$fingerprint}";;
+
+business-fetching-device => "Fetching from device..." => "Получение с устройства..."
+
+business-file-dialog-result-failed
+=> "Failed to receive result from file dialog thread"
+=> "Не удалось получить результат из потока диалога выбора файла";;
+
+business-file-read-failed
+=> "Failed to read file: {$error}"
+=> "Не удалось прочитать файл: {$error}";;
+
+business-filter-organizations => "Filter organizations..." => "Фильтр организаций..."
+
+business-filter-wallets => "Filter wallets..." => "Фильтр кошельков..."
+
+business-from-your-organization => "From your organization" => "Из вашей организации"
+
+business-hardware-wallet-not-found
+=> "Hardware wallet not found"
+=> "Аппаратный кошелёк не найден";;
+
+business-import-xpub-file
+=> "Import extended public key file"
+=> "Импортировать файл расширенного публичного ключа";;
+
+business-internal-signer-help
+=> "The organization member who will set up and sign with this key. They'll be invited by email."
+=> "Участник вашей организации, который настроит этот ключ и будет им подписывать. Приглашение придёт ему по email.";;
+
+business-invalid-threshold
+=> "Invalid threshold value"
+=> "Недопустимое значение порога";;
+
+business-key-alias => "Key Alias" => "Псевдоним ключа"
+
+business-key-alias-placeholder
+=> "e.g. Alice, Treasury, Lawyer..."
+=> "напр. Алиса, Казначейство, Юрист...";;
+
+business-key-count
+=> "{ $count ->\n    [one] (1 key)\n   *[other] ({$count} keys)\n}"
+=> "{ $count ->\n    [one] ({$count} ключ)\n    [few] ({$count} ключа)\n    [many] ({$count} ключей)\n   *[other] ({$count} ключа)\n}";;
+
+business-key-definition-help
+=> "Define the key's name and who holds it. You'll set it up later, by connecting a device or adding its public key."
+=> "Задайте имя ключа и укажите, кто им владеет. Настроить его вы сможете позже, подключив устройство или добавив его публичный ключ.";;
+
+business-key-deleted => "Key Deleted" => "Ключ удалён"
+
+business-key-deleted-message
+=> "The key you were editing was deleted by another user."
+=> "Ключ, который вы редактировали, был удалён другим пользователем.";;
+
+business-key-modified => "Key Modified" => "Ключ изменён"
+
+business-key-modified-message
+=> "This key was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "Этот ключ был изменён другим пользователем. Загрузить версию с сервера или сохранить ваши изменения?";;
+
+business-key-number => "Key {$id}" => "Ключ {$id}"
+
+business-key-path-account-help
+=> "The account number in this key's derivation path. Pick a different account to derive an independent key from the same device."
+=> "Номер аккаунта в пути деривации этого ключа. Выберите другой аккаунт, чтобы получить независимый ключ с того же устройства.";;
+
+business-key-removed => "Key Removed" => "Ключ исключён"
+
+business-key-removed-from-path
+=> "\"{$alias}\" was deleted by another user and has been removed from your path selection."
+=> "\"{$alias}\" был удалён другим пользователем и исключён из выбранных вами ключей пути.";;
+
+business-key-type => "Key Type" => "Тип ключа"
+
+business-key-type-help
+=> "Internal: Held by a member of your organization.\nExternal: Held by a trusted third party.\nCosigner: Professional co-signing service.\nSafetyNet: Professional recovery service."
+=> "Внутренний: принадлежит участнику вашей организации.\nВнешний: принадлежит доверенной третьей стороне.\nCosigner: профессиональный сервис совместной подписи.\nSafetyNet: профессиональный сервис восстановления.";;
+
+business-keys-awaiting-manager
+=> "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet."
+=> "Ожидание менеджера кошелька. Он ещё не отметил ключи и подписантов как готовые.";;
+
+business-keys-in-path => "Keys in Path:" => "Ключи в пути:"
+
+business-keys-manager-instruction
+=> "List the keys that will be part of this wallet and assign a signer to each. The spending policy will be crafted from these keys."
+=> "Перечислите ключи, которые войдут в этот кошелёк, и назначьте подписанта для каждого. Политика расходования будет составлена из этих ключей.";;
+
+business-keys-ready-by-manager
+=> "Marked as ready by the Wallet Manager. They've finished adding keys & signers."
+=> "Отмечено как готовое менеджером кошелька. Он завершил добавление ключей и подписантов.";;
+
+business-keys-ready-policy-editable
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys. You can still edit keys if anything needs to change."
+=> "Ключи и подписанты отмечены как готовые. Политика расходования будет составлена из этих ключей. Вы всё ещё можете изменить ключи, если что-то нужно поправить.";;
+
+business-keys-ready-policy-pending
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys."
+=> "Ключи и подписанты отмечены как готовые. Политика расходования будет составлена из этих ключей.";;
+
+business-keys-required-to-spend
+=> "{ $count ->\n    [one] {$threshold} of 1 key required to spend\n   *[other] {$threshold} of {$count} keys required to spend\n}"
+=> "{ $count ->\n    [one] Для траты требуется {$threshold} из {$count} ключа\n    [few] Для траты требуется {$threshold} из {$count} ключей\n    [many] Для траты требуется {$threshold} из {$count} ключей\n   *[other] Для траты требуется {$threshold} из {$count} ключей\n}";;
+
+business-keys-shared-policy-tab
+=> "These keys are shared with the Spending policy tab"
+=> "Эти ключи общие с вкладкой «Политика расходования»";;
+
+business-keys-shared-with-policy
+=> "These keys are shared with the Spending policy tab, where you arrange them into spending paths."
+=> "Эти ключи общие с вкладкой «Политика расходования», где вы распределяете их по путям расходования.";;
+
+business-keys-signers => "Keys & Signers" => "Ключи и подписанты"
+
+business-loading-wallet => "Loading wallet..." => "Загрузка кошелька..."
+
+business-login-email-help
+=> "Enter the email associated with your account"
+=> "Введите email, привязанный к вашему аккаунту";;
+
+business-login-failed => "Login failed." => "Не удалось войти."
+
+business-lost-connection-restart
+=> "Lost connection to the server. Please restart the application."
+=> "Соединение с сервером потеряно. Перезапустите приложение.";;
+
+business-manager-set-keys-help
+=> "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf."
+=> "Выберите ключ, чтобы завершить его настройку. Ключи может настроить каждый менеджер ключа сам или менеджер кошелька от их имени.";;
+
+business-max-unit => "Max {$max} {$unit}" => "Макс. {$max} {$unit}"
+
+business-max-unit-label => "Max: {$max} {$unit}" => "Макс.: {$max} {$unit}"
+
+business-new-email-address => "New email address" => "Новый адрес email"
+
+business-no-descriptor-available
+=> "No descriptor available"
+=> "Дескриптор недоступен";;
+
+business-no-devices-to-register
+=> "You have no devices to register."
+=> "У вас нет устройств для регистрации.";;
+
+business-no-hardware-wallets
+=> "No hardware device detected. Connect a device and unlock it."
+=> "Аппаратное устройство не обнаружено. Подключите устройство и разблокируйте его.";;
+
+business-no-keys-assigned
+=> "No keys assigned to you."
+=> "Вам не назначено ни одного ключа.";;
+
+business-no-keys-available
+=> "No keys available. Add keys first."
+=> "Нет доступных ключей. Сначала добавьте ключи.";;
+
+business-no-members-match => "No members match" => "Нет подходящих участников"
+
+business-no-orgs-search
+=> "No organizations found matching your search."
+=> "По вашему запросу организаций не найдено.";;
+
+business-no-timelock => "No timelock" => "Без таймлока"
+
+business-no-user-id-available
+=> "No user ID available"
+=> "ID пользователя недоступен";;
+
+business-no-wallet-selected => "No wallet selected" => "Кошелёк не выбран"
+
+business-no-wallets-search
+=> "No wallets found matching your search."
+=> "По вашему запросу кошельков не найдено.";;
+
+business-not-part-wallet
+=> "Not part of this wallet (#{$fingerprint})"
+=> "Не входит в этот кошелёк (#{$fingerprint})";;
+
+business-organization => "Organization" => "Организация"
+
+business-organizations => "Organizations" => "Организации"
+
+business-other-participants-keys
+=> "Other participants' keys"
+=> "Ключи других участников";;
+
+business-participant-set-keys-help
+=> "Select a key assigned to you to complete its setup. You can connect a hardware device or add an extended public key manually."
+=> "Выберите назначенный вам ключ, чтобы завершить его настройку. Вы можете подключить аппаратное устройство или добавить расширенный публичный ключ вручную.";;
+
+business-path-deleted => "Path Deleted" => "Путь удалён"
+
+business-path-deleted-message
+=> "The path you were editing was deleted by another user."
+=> "Путь, который вы редактировали, был удалён другим пользователем.";;
+
+business-path-modified => "Path Modified" => "Путь изменён"
+
+business-primary-path => "Primary path" => "Основной путь"
+
+business-primary-path-modified-message
+=> "The primary path was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "Основной путь был изменён другим пользователем. Загрузить версию с сервера или сохранить ваши изменения?";;
+
+business-professional-service => "Professional service" => "Профессиональный сервис"
+
+business-provider-name => "Provider · {$provider}" => "Поставщик · {$provider}"
+
+business-recovery-path => "Recovery path" => "Путь восстановления"
+
+business-recovery-path-modified-message
+=> "This recovery path was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "Этот путь восстановления был изменён другим пользователем. Загрузить версию с сервера или сохранить ваши изменения?";;
+
+business-recovery-path-number
+=> "Recovery path {$number}"
+=> "Путь восстановления {$number}";;
+
+business-register-devices => "Register Devices" => "Регистрация устройств"
+
+business-register-wallet-devices-help
+=> "Register the wallet descriptor on each device, or skip if unavailable."
+=> "Зарегистрируйте дескриптор кошелька на каждом устройстве или пропустите, если это недоступно.";;
+
+business-registered-on-device
+=> "Registered on device"
+=> "Зарегистрировано на устройстве";;
+
+business-registering-wallet => "Registering Wallet" => "Регистрация кошелька"
+
+business-registration-failed => "Registration Failed" => "Регистрация не удалась"
+
+business-request-template-edits-help
+=> "To request edits, reach out to Wizardsardine directly: they can make the changes and send it back for approval."
+=> "Чтобы запросить изменения, напишите напрямую в Wizardsardine: там внесут правки и вернут шаблон на одобрение.";;
+
+business-role-manager => "Manager" => "Менеджер"
+
+business-role-participant => "Participant" => "Участник"
+
+business-search-members-or-email
+=> "Search organization members or enter email"
+=> "Найдите участника организации или введите email";;
+
+business-select-account-placeholder => "Select account" => "Выберите аккаунт"
+
+business-select-key-source
+=> "Select key source · {$alias}"
+=> "Выберите источник ключа · {$alias}";;
+
+business-select-xpub-file => "Select xpub file" => "Выберите файл xpub"
+
+business-service-token => "Service token" => "Токен сервиса"
+
+business-service-token-help
+=> "Paste the token from the provider. Their firm name is fetched automatically."
+=> "Вставьте токен, полученный от поставщика. Название его компании определится автоматически.";;
+
+business-service-token-placeholder
+=> "e.g. 42-absent-cake-eagle"
+=> "напр. 42-absent-cake-eagle";;
+
+business-service-unavailable
+=> "The service is temporarily unavailable. Your wallet data and funds are not affected."
+=> "Сервис временно недоступен. Данные вашего кошелька и средства это не затрагивает.";;
+
+business-set-keys => "Set Keys" => "Задать ключи"
+
+business-signer-email => "Signer email" => "Email подписанта"
+
+business-spending-policy => "Spending policy" => "Политика расходования"
+
+business-template-locked-approve
+=> "Template is locked and pending approval. You must approve it to continue."
+=> "Шаблон заблокирован и ожидает одобрения. Чтобы продолжить, вы должны его одобрить.";;
+
+business-template-locked-unlock
+=> "Template is locked and pending approval. Unlock to make further changes."
+=> "Шаблон заблокирован и ожидает одобрения. Разблокируйте, чтобы вносить дальнейшие изменения.";;
+
+business-template-read-only
+=> "Read-only. Only a WS Admin can edit this template."
+=> "Только для чтения. Изменять этот шаблон может только администратор WS.";;
+
+business-text-files => "Text files" => "Текстовые файлы"
+
+business-threshold-range => "Threshold (1-{$count}):" => "Порог (1-{$count}):"
+
+business-timelock => "Timelock:" => "Таймлок:"
+
+business-timelock-unit-days => "days" => "дней"
+
+business-timelock-unit-hours => "hours" => "часов"
+
+business-timelock-unit-months => "months" => "месяцев"
+
+business-timelock-zero
+=> "Timelock cannot be zero"
+=> "Таймлок не может быть нулевым";;
+
+business-token-duplicate => "Duplicate token." => "Повторяющийся токен."
+
+business-token-invalid => "Invalid token." => "Недействительный токен."
+
+business-try-again-support
+=> "Please try again shortly. If the issue persists, contact support."
+=> "Повторите попытку чуть позже. Если проблема сохраняется, обратитесь в поддержку.";;
+
+business-unable-load-wallet
+=> "Unable to load wallet"
+=> "Не удалось загрузить кошелёк";;
+
+business-unsupported-method
+=> "Unsupported method: {$method}"
+=> "Неподдерживаемый метод: {$method}";;
+
+business-use-email => "Use {$email}" => "Использовать {$email}"
+
+business-user-session-not-found
+=> "User session not found. Please log in again or contact Wizardsardine."
+=> "Сессия пользователя не найдена. Войдите заново или обратитесь в Wizardsardine.";;
+
+business-wallet-access-denied
+=> "You do not have access to this wallet. Contact Wizardsardine."
+=> "У вас нет доступа к этому кошельку. Обратитесь в Wizardsardine.";;
+
+business-wallet-count-label
+=> "{ $count ->\n    [one] 1 wallet\n   *[other] {$count} wallets\n}"
+=> "{ $count ->\n    [one] {$count} кошелёк\n    [few] {$count} кошелька\n    [many] {$count} кошельков\n   *[other] {$count} кошелька\n}";;
+
+business-wallets => "Wallets" => "Кошельки"
+
+business-wrong-network-device
+=> "Wrong network in device settings"
+=> "Неверная сеть в настройках устройства";;
+
+business-xpub-empty
+=> "Extended public key cannot be empty."
+=> "Расширенный публичный ключ не может быть пустым.";;
+
+business-xpub-invalid-format
+=> "Invalid extended public key format: {$error}"
+=> "Неверный формат расширенного публичного ключа: {$error}";;
+
+business-xpub-invalid-network
+=> "Extended public key is not valid for {$network}."
+=> "Расширенный публичный ключ недействителен для сети {$network}.";;
+
+business-xpub-replace-existing-help
+=> "This key already has an xpub. You can replace it by fetching from a device, importing from file, or pasting."
+=> "У этого ключа уже есть xpub. Вы можете заменить его, получив ключ с устройства, импортировав из файла или вставив вручную.";;
+
+business-your-keys => "Your keys" => "Ваши ключи"
+
+coins-address-label => "Address label:" => "Метка адреса:"
+
+coins-block-height => "Block height:" => "Высота блока:"
+
+coins-deposit-transaction-label
+=> "Deposit transaction label:"
+=> "Метка транзакции пополнения:";;
+
+coins-first-recovery-in-blocks
+=> "First recovery path will be available in {$blocks} blocks"
+=> "Первый путь восстановления станет доступен через {$blocks} блоков";;
+
+coins-not-in-block => "Not in a block" => "Не в блоке"
+
+coins-outpoint => "Outpoint:" => "Outpoint:"
+
+coins-recovery-available
+=> "One or more recovery paths are available"
+=> "Доступен один или несколько путей восстановления";;
+
+coins-refresh-coin => "Refresh coin" => "Обновить монету"
+
+coins-spend-block-height => "Spend block height:" => "Высота блока траты:"
+
+coins-spend-txid => "Spend txid:" => "Txid траты:"
+
+combobox-already-signer => "already a signer" => "уже подписант"
+
+common-address => "Address" => "Адрес"
+
+common-address-label => "Address:" => "Адрес:"
+
+common-and => "and" => "и"
+
+common-approx-feerate-value => "(~{$rate} sats/vbyte)" => "(~{$rate} sats/vbyte)"
+
+common-blocks => "blocks" => "блоков"
+
+common-connecting-ellipsis => "Connecting..." => "Подключение..."
+
+common-connection-failed => "Connection failed" => "Не удалось подключиться"
+
+common-copy => "Copy" => "Копировать"
+
+common-descriptor => "Descriptor" => "Дескриптор"
+
+common-descriptor-label => "Descriptor:" => "Дескриптор:"
+
+common-email => "Email" => "Email"
+
+common-error => "Error" => "Ошибка"
+
+common-error-with-detail => "{$message} ({$error})" => "{$message} ({$error})"
+
+common-feerate => "Feerate" => "Ставка комиссии"
+
+common-feerate-value => "({$rate} sats/vbyte)" => "({$rate} sats/vbyte)"
+
+common-fetching => "Fetching ..." => "Получение ..."
+
+common-from => "From" => "От"
+
+common-learn-more => "Learn more" => "Подробнее"
+
+common-loading => "Loading..." => "Загрузка..."
+
+common-login => "Login" => "Вход"
+
+common-no-label => "No label" => "Без метки"
+
+common-no-label-parenthesized => "(No label)" => "(Без метки)"
+
+common-not-available => "N/A" => "Н/Д"
+
+common-other-options => "Other options" => "Другие варианты"
+
+common-paste => "Paste" => "Вставить"
+
+common-processing => "Processing..." => "Обработка..."
+
+common-ready => "Ready" => "Готово"
+
+common-recovery => "Recovery" => "Восстановление"
+
+common-register => "Register" => "Зарегистрировать"
+
+common-see-more => "See more" => "Показать ещё"
+
+common-select-account
+=> "Select an account to continue"
+=> "Выберите аккаунт, чтобы продолжить";;
+
+common-self-transfer => "Self-transfer" => "Перевод себе"
+
+common-something-wrong => "Something wrong happened" => "Что-то пошло не так"
+
+common-token => "Token" => "Токен"
+
+common-wallet => "Wallet" => "Кошелёк"
+
+connect-account-missing-from-cache
+=> "Account must be in cache"
+=> "Аккаунт должен быть в кэше";;
+
+connect-cache-update-failed
+=> "Failed to update cache: {$error}"
+=> "Не удалось обновить кэш: {$error}";;
+
+connect-remote-servers-unresponsive
+=> "Remote servers are unresponsive"
+=> "Удалённые серверы не отвечают";;
+
+decrypt-airgap-help
+=> "Using an air-gapped device? Export the xpub from your device, then use the upload or paste option. If you don’t know the correct derivation path, try with the following:"
+=> "Используете устройство, изолированное от сети? Экспортируйте xpub с устройства, затем воспользуйтесь загрузкой файла или вставкой. Если вы не знаете правильный путь деривации, попробуйте следующие:";;
+
+decrypt-backup-file => "Decrypt backup file" => "Расшифровать файл резервной копии"
+
+decrypt-device-description
+=> "Plug in and unlock a hardware device belonging to this setup to automatically decrypt the backup"
+=> "Подключите и разблокируйте аппаратное устройство из этой конфигурации, чтобы автоматически расшифровать резервную копию";;
+
+decrypt-device-failed
+=> "Failed to decrypt file with this device"
+=> "Не удалось расшифровать файл этим устройством";;
+
+decrypt-enter-mnemonic-unsafe
+=> "UNSAFE: Enter mnemonic of one of the keys"
+=> "НЕБЕЗОПАСНО: ввести мнемоническую фразу одного из ключей";;
+
+decrypt-enter-mnemonic-warning
+=> "This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds."
+=> "Этот вариант небезопасен. Я понимаю, что ввод мнемонической фразы на компьютере может привести к краже моих средств.";;
+
+decrypt-invalid-descriptor
+=> "The file has been decrypted but the descriptor is not a valid Liana descriptor."
+=> "Файл расшифрован, но дескриптор не является действительным дескриптором Liana.";;
+
+decrypt-invalid-encoding
+=> "The file cannot be decoded properly, it seems not to be an encrypted backup."
+=> "Файл не удаётся корректно декодировать, похоже, это не зашифрованная резервная копия.";;
+
+decrypt-invalid-mnemonic
+=> "Invalid mnemonic"
+=> "Недействительная мнемоническая фраза";;
+
+decrypt-invalid-type
+=> "The file has been decrypted but the content type is not supported."
+=> "Файл расшифрован, но тип содержимого не поддерживается.";;
+
+decrypt-invalid-xpub => "Invalid xpub" => "Недействительный xpub"
+
+decrypt-mnemonic-cannot-decrypt
+=> "Mnemonic is valid but cannot decrypt the file"
+=> "Мнемоническая фраза верна, но не расшифровывает файл";;
+
+decrypt-mnemonic-source => "Mnemonic" => "Мнемоническая фраза"
+
+decrypt-pairing-code => "Pairing code: {$code}" => "Код сопряжения: {$code}"
+
+decrypt-paste-xpub
+=> "Paste an extended public key"
+=> "Вставьте расширенный публичный ключ";;
+
+decrypt-provide-xpub
+=> "Provide one of the xpubs used in this wallet."
+=> "Укажите один из xpub, используемых в этом кошельке.";;
+
+decrypt-try-device
+=> "Try to decrypt with this device..."
+=> "Попробовать расшифровать этим устройством...";;
+
+decrypt-unlock-device
+=> "Please unlock or open app on the device"
+=> "Разблокируйте устройство или откройте на нём приложение";;
+
+decrypt-xpub-cannot-decrypt
+=> "Xpub is valid but cannot decrypt this file"
+=> "Xpub верен, но не расшифровывает этот файл";;
+
+device-already-used => "Already used" => "Уже используется"
+
+device-check-device => "Please check your device" => "Проверьте ваше устройство"
+
+device-enter-cosigner-token => "Enter a Cosigner token" => "Введите токен Cosigner"
+
+device-enter-safety-net-token
+=> "Enter a Safety Net token"
+=> "Введите токен Safety Net";;
+
+device-generate-hot-key
+=> "Generate hot key stored on this computer"
+=> "Создать горячий ключ, хранящийся на этом компьютере";;
+
+device-hot-key-test-only
+=> "We recommend using this option only for test purposes"
+=> "Мы рекомендуем использовать этот вариант только для тестов";;
+
+device-install-firmware-version-or-later
+=> "Install firmware version {$version} \nor later"
+=> "Установите прошивку версии {$version} \nили новее";;
+
+device-locked => "Locked" => "Заблокировано"
+
+device-locked-check-code
+=> "Locked, check code: {$code}"
+=> "Заблокировано, проверьте код: {$code}";;
+
+device-open-app
+=> "Please open the app on device"
+=> "Откройте приложение на устройстве";;
+
+device-processing-check-device
+=> "Processing, please check your device"
+=> "Обработка, проверьте ваше устройство";;
+
+device-registered => "Registered" => "Зарегистрировано"
+
+device-signed => "Signed" => "Подписано"
+
+device-unlock => "Please unlock the device" => "Разблокируйте устройство"
+
+device-unrelated-wallet
+=> "This signing device is not related to this Liana wallet."
+=> "Это подписывающее устройство не связано с этим кошельком Liana.";;
+
+device-version-unsupported
+=> "Device version not supported, upgrade to version > {$version}"
+=> "Версия устройства не поддерживается, обновите до версии > {$version}";;
+
+duration-days
+=> "{ $count ->\n    [one] 1 day\n   *[other] {$count} days\n}"
+=> "{ $count ->\n    [one] {$count} день\n    [few] {$count} дня\n    [many] {$count} дней\n   *[other] {$count} дня\n}";;
+
+duration-days-approx => "~{$count} days" => "~{$count} дн."
+
+duration-days-compact => "{$count}d" => "{$count}д"
+
+duration-days-compact-approx => "~{$count}d" => "~{$count}д"
+
+duration-hours
+=> "{ $count ->\n    [one] 1 hour\n   *[other] {$count} hours\n}"
+=> "{ $count ->\n    [one] {$count} час\n    [few] {$count} часа\n    [many] {$count} часов\n   *[other] {$count} часа\n}";;
+
+duration-hours-compact => "{$count}h" => "{$count}ч"
+
+duration-minutes
+=> "{ $count ->\n    [one] 1 minute\n   *[other] {$count} minutes\n}"
+=> "{ $count ->\n    [one] {$count} минута\n    [few] {$count} минуты\n    [many] {$count} минут\n   *[other] {$count} минуты\n}";;
+
+duration-minutes-compact => "{$count}m" => "{$count}мин"
+
+duration-months
+=> "{ $count ->\n    [one] 1 month\n   *[other] {$count} months\n}"
+=> "{ $count ->\n    [one] {$count} месяц\n    [few] {$count} месяца\n    [many] {$count} месяцев\n   *[other] {$count} месяца\n}";;
+
+duration-months-compact => "{$count}m" => "{$count}мес"
+
+duration-years
+=> "{ $count ->\n    [one] 1 year\n   *[other] {$count} years\n}"
+=> "{ $count ->\n    [one] {$count} год\n    [few] {$count} года\n    [many] {$count} лет\n   *[other] {$count} года\n}";;
+
+duration-years-compact => "{$count}y" => "{$count}г"
+
+error-unknown => "Unknown error occurred" => "Произошла неизвестная ошибка"
+
+export-aliases-conflict
+=> "Aliases conflict, what do you want to do?"
+=> "Конфликт псевдонимов, что вы хотите сделать?";;
+
+export-canceled => "Export canceled" => "Экспорт отменён"
+
+export-labels-conflict
+=> "Labels conflict, what do you want to do?"
+=> "Конфликт меток, что вы хотите сделать?";;
+
+export-progress => "Progress: {$progress}%" => "Прогресс: {$progress}%"
+
+export-select-path
+=> "Select the path you want to export in the popup window..."
+=> "Выберите путь для экспорта во всплывающем окне...";;
+
+export-starting => "Starting export..." => "Запуск экспорта..."
+
+export-success => "Export successful!" => "Экспорт выполнен!"
+
+export-timeout
+=> "Export failed: timeout"
+=> "Экспорт не удался: истекло время ожидания";;
+
+export-title-export-backup => "Export Backup" => "Экспорт резервной копии"
+
+export-title-export-descriptor => "Export Descriptor" => "Экспорт дескриптора"
+
+export-title-export-encrypted-descriptor
+=> "Export Encrypted Descriptor"
+=> "Экспорт зашифрованного дескриптора";;
+
+export-title-export-labels => "Export Labels" => "Экспорт меток"
+
+export-title-export-psbt => "Export PSBT" => "Экспорт PSBT"
+
+export-title-export-xpub => "Export Xpub" => "Экспорт xpub"
+
+export-title-import-descriptor => "Import Descriptor" => "Импорт дескриптора"
+
+export-title-import-psbt => "Import PSBT" => "Импорт PSBT"
+
+export-title-import-wallet-backup
+=> "Import existing wallet from backup"
+=> "Импорт существующего кошелька из резервной копии";;
+
+export-title-import-xpub => "Import Xpub" => "Импорт xpub"
+
+export-title-restore-backup
+=> "Restore Backup"
+=> "Восстановление из резервной копии";;
+
+export-title-transactions => "Export Transactions" => "Экспорт транзакций"
+
+fiat-amount-non-negative
+=> "Amount must be non-negative"
+=> "Сумма не может быть отрицательной";;
+
+fiat-currency-mismatch
+=> "Currency mismatch: expected {$expected}, got {$actual}"
+=> "Несовпадение валюты: ожидалось {$expected}, получено {$actual}";;
+
+fiat-exchange-rate
+=> "Exchange rate: 1 BTC ~ {$amount} {$currency}"
+=> "Обменный курс: 1 BTC ~ {$amount} {$currency}";;
+
+fiat-invalid-currency => "Invalid currency" => "Недопустимая валюта"
+
+fiat-last-requested => "Last requested: {$time}" => "Последний запрос: {$time}"
+
+fiat-last-updated-source
+=> "Last updated at source: {$time}"
+=> "Последнее обновление у источника: {$time}";;
+
+fiat-price-positive
+=> "Price per BTC must be positive"
+=> "Цена за BTC должна быть положительной";;
+
+fiat-source => "Source: {$source}" => "Источник: {$source}"
+
+fiat-source-timestamp
+=> "Default price at the time the transaction has been confirmed"
+=> "Цена по умолчанию на момент подтверждения транзакции";;
+
+fiat-source-user
+=> "Price you have filled yourself"
+=> "Цена, которую вы указали сами";;
+
+fiat-source-wizardsardine
+=> "Price automatically processed by WS when you crafted the transaction"
+=> "Цена, автоматически определённая WS при создании транзакции";;
+
+home-balance => "Balance" => "Баланс"
+
+home-checking-transactions
+=> "Checking for new transactions"
+=> "Проверка новых транзакций";;
+
+home-payment-history => "Payment History" => "История платежей"
+
+home-recovery-left
+=> "≈ {$units} left before first recovery path becomes available."
+=> "≈ {$units} до того, как станет доступен первый путь восстановления.";;
+
+home-recovery-warning
+=> "Recovery path is or will soon be available for {$count} coin(s)."
+=> "Путь восстановления доступен или скоро станет доступен для {$count} монет(ы).";;
+
+home-rescan-warning-backup
+=> "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions."
+=> "Так как этот кошелёк восстановлен из резервной копии, для отображения прошлых транзакций может потребоваться повторное сканирование блокчейна.";;
+
+home-rescan-warning-descriptor
+=> "As this wallet was imported from a descriptor, you may need to rescan the blockchain to see past transactions."
+=> "Так как этот кошелёк импортирован из дескриптора, для отображения прошлых транзакций может потребоваться повторное сканирование блокчейна.";;
+
+home-syncing => "Syncing" => "Синхронизация"
+
+home-syncing-blockchain
+=> "Syncing blockchain ({$progress}%)"
+=> "Синхронизация блокчейна ({$progress}%)";;
+
+hw-descriptor-not-registered
+=> "The wallet descriptor is not registered on the device.\n You can register it in the settings."
+=> "Дескриптор кошелька не зарегистрирован на устройстве.\n Вы можете зарегистрировать его в настройках.";;
+
+hw-display-address-unavailable
+=> "Liana cannot request the device to display the address. \n Verify it with the QR code in the options below."
+=> "Liana не может запросить у устройства показ адреса. \n Проверьте его по QR-коду в вариантах ниже.";;
+
+hw-no-taproot-miniscript
+=> "Device firmware version does not support taproot miniscript"
+=> "Версия прошивки устройства не поддерживает taproot miniscript";;
+
+hw-not-in-spending-path
+=> "This signing device is not part of this spending path."
+=> "Это подписывающее устройство не входит в этот путь расходования.";;
+
+import-success => "Import successful" => "Импорт выполнен"
+
+installer-able-to-move-any-time
+=> "Able to move the funds at any time."
+=> "Может перемещать средства в любое время.";;
+
+installer-accept-invitation-for
+=> "Accept invitation for wallet:"
+=> "Принять приглашение в кошелёк:";;
+
+installer-accepted-wallet-not-found
+=> "Wallet of accepted invitation not found"
+=> "Кошелёк из принятого приглашения не найден";;
+
+installer-add-key => "Add key" => "Добавить ключ"
+
+installer-add-safety-net-key => "Add Safety Net key" => "Добавить ключ Safety Net"
+
+installer-advanced-settings => "Advanced settings" => "Дополнительные настройки"
+
+installer-already-have-node => "I already have a node" => "У меня уже есть узел"
+
+installer-already-used-sources
+=> "Already used sources"
+=> "Уже использованные источники";;
+
+installer-auth-token-emailed-to
+=> "An authentication token has been emailed to"
+=> "Токен аутентификации отправлен на";;
+
+installer-auto-install-node
+=> "I want Liana to automatically install a Bitcoin node on my device"
+=> "Я хочу, чтобы Liana автоматически установила узел Bitcoin на моём устройстве";;
+
+installer-available-after-inactivity
+=> "Available after inactivity of ~"
+=> "Доступно после бездействия в ~";;
+
+installer-available-port-failed
+=> "Could not get available port: {$error}."
+=> "Не удалось получить свободный порт: {$error}.";;
+
+installer-available-ports-failed
+=> "Could not get available ports: {$error1}; {$error2}."
+=> "Не удалось получить свободные порты: {$error1}; {$error2}.";;
+
+installer-backed-up-descriptor-checkbox
+=> "I have backed up my descriptor"
+=> "Я сохранил резервную копию дескриптора";;
+
+installer-backed-up-mnemonic-checkbox
+=> "I have backed up my mnemonic"
+=> "Я сохранил резервную копию мнемонической фразы";;
+
+installer-backed-up-mnemonic-show-xpub
+=> "I have backed up the mnemonic, show the extended public key"
+=> "Я сохранил мнемоническую фразу, показать расширенный публичный ключ";;
+
+installer-backup-descriptor-help
+=> "In Bitcoin, to spend from a wallet that isn't a standard single-key setup, you need both your private keys (usually stored as seed words) to sign transactions, and your wallet descriptor to locate your coins - like a map of your addresses.\nWithout the descriptor, your wallet may not find your coins - even if you still have the keys.\nWhen you click \"Back Up Descriptor\", Liana creates an encrypted file that can only be decrypted using one of your wallet's public keys.\nLiana handles this automatically during the restore of a wallet process by asking you to connect a device or enter a key.\nThis file is safer and more private than copying the descriptor manually."
+=> "В Bitcoin, чтобы тратить из кошелька, который не является обычной конфигурацией с одним ключом, вам нужны и приватные ключи (обычно хранящиеся в виде сид-фразы) для подписи транзакций, и дескриптор кошелька, чтобы найти ваши монеты: это своего рода карта ваших адресов.\nБез дескриптора кошелёк может не найти ваши монеты, даже если ключи у вас остались.\nКогда вы нажимаете \"Резервная копия дескриптора\", Liana создаёт зашифрованный файл, который можно расшифровать только одним из публичных ключей вашего кошелька.\nПри восстановлении кошелька Liana делает это автоматически, предлагая подключить устройство или ввести ключ.\nЭтот файл безопаснее и приватнее, чем копирование дескриптора вручную.";;
+
+installer-backup-descriptor-message
+=> "This backup is required to recover your funds.\nClick \"Back Up Descriptor\" to download an encrypted file of your wallet configuration and store it in safe, accessible places.\nYou can also copy the plain-text descriptor string, but it's less private.\nWARNING: This file does not include your seed phrase(s). Back those up separately."
+=> "Эта резервная копия необходима для восстановления ваших средств.\nНажмите \"Резервная копия дескриптора\", чтобы скачать зашифрованный файл с конфигурацией вашего кошелька, и храните его в надёжных и доступных местах.\nВы также можете скопировать дескриптор в виде обычного текста, но это менее приватно.\nПРЕДУПРЕЖДЕНИЕ: Этот файл не содержит вашу сид-фразу (или фразы). Сохраните их отдельно.";;
+
+installer-backup-descriptor-missing
+=> "Backup imported but descriptor missing!"
+=> "Резервная копия импортирована, но дескриптор отсутствует!";;
+
+installer-backup-descriptor-title
+=> "Back Up your wallet configuration (Descriptor)"
+=> "Сохраните конфигурацию вашего кошелька (дескриптор)";;
+
+installer-backup-imported
+=> "Backup successfully imported!"
+=> "Резервная копия успешно импортирована!";;
+
+installer-backup-mnemonic-title
+=> "Back Up your mnemonic"
+=> "Сохраните вашу мнемоническую фразу";;
+
+installer-backup-mnemonic-warning
+=> "Beware to back up the mnemonic as it will NOT be stored on the computer."
+=> "Обязательно сохраните мнемоническую фразу: она НЕ будет храниться на компьютере.";;
+
+installer-backup-network-mismatch
+=> "The backup network does not match the selected network."
+=> "Сеть резервной копии не совпадает с выбранной сетью.";;
+
+installer-bitcoin-node-management
+=> "Bitcoin node management"
+=> "Управление узлом Bitcoin";;
+
+installer-bitcoind-already-installed
+=> "Liana-managed bitcoind already installed"
+=> "bitcoind под управлением Liana уже установлен";;
+
+installer-bitcoind-canonicalize-datadir-error
+=> "Failed to canonicalize datadir: {$error}"
+=> "Не удалось привести путь к каталогу данных к каноническому виду: {$error}";;
+
+installer-bitcoind-command-error
+=> "Command to start bitcoind returned an error: {$error}"
+=> "Команда запуска bitcoind вернула ошибку: {$error}";;
+
+installer-bitcoind-connection-error
+=> "bitcoind connection check failed: {$error}"
+=> "Проверка соединения с bitcoind не удалась: {$error}";;
+
+installer-bitcoind-executable-not-found
+=> "bitcoind executable not found."
+=> "Исполняемый файл bitcoind не найден.";;
+
+installer-bitcoind-lock-error
+=> "lock file error: {$error}"
+=> "ошибка файла блокировки: {$error}";;
+
+installer-bitcoind-process-exited
+=> "bitcoind process exited with status '{$status}'."
+=> "Процесс bitcoind завершился со статусом '{$status}'.";;
+
+installer-build-your-own => "Build your own" => "Собрать свой вариант"
+
+installer-build-your-own-description
+=> "Create a custom setup that fits all your needs."
+=> "Создайте собственную конфигурацию под все ваши задачи.";;
+
+installer-canonicalize-cookie-failed
+=> "Failed to canonicalize cookie path: {$error}"
+=> "Не удалось привести путь к cookie-файлу к каноническому виду: {$error}";;
+
+installer-canonicalize-datadir-failed
+=> "Failed to canonicalize datadir path: {$error}"
+=> "Не удалось привести путь к каталогу данных к каноническому виду: {$error}";;
+
+installer-change-alias-later
+=> "You will be able to change it later in Settings > Wallet"
+=> "Вы сможете изменить его позже в Настройки > Кошелёк";;
+
+installer-checking-connection => "Checking connection..." => "Проверка соединения..."
+
+installer-choose-backend => "Choose backend" => "Выберите бэкенд"
+
+installer-choose-wallet-type => "Choose wallet type" => "Выберите тип кошелька"
+
+installer-connected-to => "Connected to" => "Подключено к"
+
+installer-connection-checked => "Connection checked" => "Соединение проверено"
+
+installer-cookie-path => "Cookie path" => "Путь к cookie-файлу"
+
+installer-cosigner-token-disallowed
+=> "Cosigner tokens are not allowed for this path"
+=> "Токены Cosigner не разрешены для этого пути";;
+
+installer-create-datadir-path-failed
+=> "Failed to create datadir path: {$error}"
+=> "Не удалось создать путь к каталогу данных: {$error}";;
+
+installer-create-random-key
+=> "Or create a new random key:"
+=> "Или создайте новый случайный ключ:";;
+
+installer-custom-template-description-1
+=> "For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them."
+=> "Для этой конфигурации вам нужно определить основную политику расходования и политики восстановления. По соображениям безопасности мы советуем использовать отдельный аппаратный кошелёк для каждого входящего в них ключа.";;
+
+installer-custom-template-description-2
+=> "The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies."
+=> "Ключи основной политики могут тратить всегда. Ключи политик восстановления смогут тратить только после заданного времени бездействия кошелька, что позволяет безопасно восстанавливать доступ и строить продвинутые политики расходования.";;
+
+installer-descriptor-generating
+=> "Generating and validating your wallet descriptor. This can take a few seconds."
+=> "Создание и проверка дескриптора вашего кошелька. Это может занять несколько секунд.";;
+
+installer-descriptor-invalid
+=> "Either descriptor is invalid or incompatible with network"
+=> "Дескриптор недействителен или несовместим с сетью";;
+
+installer-descriptor-missing => "Descriptor missing" => "Дескриптор отсутствует"
+
+installer-descriptor-read-failed
+=> "Failed to read the descriptor"
+=> "Не удалось прочитать дескриптор";;
+
+installer-descriptor-template => "Descriptor template" => "Шаблон дескриптора"
+
+installer-descriptor-type => "Descriptor type" => "Тип дескриптора"
+
+installer-descriptor-wrong-network
+=> "The descriptor is for another network"
+=> "Дескриптор предназначен для другой сети";;
+
+installer-detected-hardware => "Detected hardware" => "Обнаруженные устройства"
+
+installer-device-method-unsupported
+=> "Device not supported, method: {$method}"
+=> "Устройство не поддерживается, метод: {$method}";;
+
+installer-device-no-taproot
+=> "This device does not support Taproot"
+=> "Это устройство не поддерживает Taproot";;
+
+installer-device-wrong-network
+=> "The device is configured on the wrong network"
+=> "Устройство настроено на неверную сеть";;
+
+installer-distinct-ports-unavailable
+=> "Could not get distinct ports. Please try again."
+=> "Не удалось получить разные порты. Попробуйте ещё раз.";;
+
+installer-download-complete => "Download complete" => "Загрузка завершена"
+
+installer-download-failed
+=> "Download failed: '{$error}'."
+=> "Загрузка не удалась: '{$error}'.";;
+
+installer-downloading-bitcoin-core-progress
+=> "Downloading Bitcoin Core {$version}... {$progress}%"
+=> "Загрузка Bitcoin Core {$version}... {$progress}%";;
+
+installer-duplicate-token => "Duplicate token" => "Повторяющийся токен"
+
+installer-electrum-address-notes
+=> "Note: include \"ssl://\" as a prefix for SSL connections."
+=> "Примечание: для SSL-соединений добавьте префикс \"ssl://\".";;
+
+installer-email-invalid => "Email is not valid" => "Некорректный email"
+
+installer-enter-correct-address
+=> "Please enter correct address"
+=> "Введите корректный адрес";;
+
+installer-enter-correct-electrum-address
+=> "Please enter correct address (including port), optionally prefixed with tcp:// or ssl://"
+=> "Введите корректный адрес (с портом), при необходимости с префиксом tcp:// или ssl://";;
+
+installer-enter-correct-password
+=> "Please enter correct password"
+=> "Введите корректный пароль";;
+
+installer-enter-correct-path
+=> "Please enter correct path"
+=> "Введите корректный путь";;
+
+installer-enter-correct-user
+=> "Please enter correct user"
+=> "Введите корректное имя пользователя";;
+
+installer-existing-node-description
+=> "Select this option if you already have a Bitcoin node running locally or remotely. Liana will connect to it."
+=> "Выберите этот вариант, если у вас уже есть узел Bitcoin, работающий локально или удалённо. Liana подключится к нему.";;
+
+installer-expanding-multisig => "Expanding multisig" => "Расширяемый мультисиг"
+
+installer-expanding-multisig-description
+=> "Two keys required to spend, with an extra key as a backup."
+=> "Для траты нужны два ключа, плюс дополнительный ключ как резервный.";;
+
+installer-expanding-multisig-wallet
+=> "Expanding multisig wallet"
+=> "Кошелёк с расширяемым мультисигом";;
+
+installer-export-backup-failed
+=> "Failed to export backup"
+=> "Не удалось экспортировать резервную копию";;
+
+installer-finalize-installation => "Finalize installation" => "Завершить установку"
+
+installer-generate-mnemonic
+=> "Generate a new mnemonic"
+=> "Создать новую мнемоническую фразу";;
+
+installer-give-wallet-alias
+=> "Give your wallet an alias"
+=> "Задайте псевдоним кошелька";;
+
+installer-hot-signer => "Hot Signer" => "Горячий подписант"
+
+installer-import-backup => "Import a backup" => "Импортировать резервную копию"
+
+installer-import-descriptor => "Import a descriptor" => "Импортировать дескриптор"
+
+installer-import-mnemonic => "Import mnemonic" => "Импортировать мнемоническую фразу"
+
+installer-import-mnemonic-title => "Import Mnemonic" => "Импорт мнемонической фразы"
+
+installer-import-wallet-rescan-help
+=> "If you are using a Bitcoin Core node, you will need to perform a rescan of the blockchain after creating the wallet in order to see your coins and past transactions. This can be done in Settings > Node."
+=> "Если вы используете узел Bitcoin Core, после создания кошелька потребуется повторное сканирование блокчейна, чтобы увидеть ваши монеты и прошлые транзакции. Это можно сделать в Настройки > Узел.";;
+
+installer-import-wallet-title => "Import the wallet" => "Импорт кошелька"
+
+installer-import-xpub-device
+=> "Import an extended public key by selecting a signing device:"
+=> "Импортируйте расширенный публичный ключ, выбрав подписывающее устройство:";;
+
+installer-imported-key-already-used
+=> "Imported key already used"
+=> "Импортированный ключ уже используется";;
+
+installer-inheritance-description-1
+=> "For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key."
+=> "Для этой конфигурации вам нужны 2 ключа: ваш основной ключ (для вас) и ключ наследования (для вашего наследника). По соображениям безопасности мы советуем использовать отдельный аппаратный кошелёк для каждого ключа.";;
+
+installer-inheritance-description-2
+=> "You will always be able to spend using your Primary Key. After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds."
+=> "Вы всегда сможете тратить с помощью основного ключа. После периода бездействия (но не раньше) ключ наследования сможет восстановить ваши средства.";;
+
+installer-inheritance-key => "Inheritance key" => "Ключ наследования"
+
+installer-installation-complete => "Installation complete" => "Установка завершена"
+
+installer-installation-failed
+=> "Installation failed: '{$error}'."
+=> "Установка не удалась: '{$error}'.";;
+
+installer-installed => "Installed" => "Установлено"
+
+installer-installing => "Installing..." => "Установка..."
+
+installer-installing-bitcoind => "Installing bitcoind..." => "Установка bitcoind..."
+
+installer-introduction => "Introduction" => "Введение"
+
+installer-invalid-descriptor => "Invalid descriptor" => "Недействительный дескриптор"
+
+installer-invalid-token => "Invalid token!" => "Недействительный токен!"
+
+installer-invitation-invalid
+=> "Invitation token is invalid or expired"
+=> "Токен приглашения недействителен или истёк";;
+
+installer-invitation-token => "Invitation token" => "Токен приглашения"
+
+installer-invitation-token-help
+=> "Type the invitation token you received by email"
+=> "Введите токен приглашения, полученный по email";;
+
+installer-key-alias-already-used
+=> "This alias is already used for another key"
+=> "Этот псевдоним уже используется для другого ключа";;
+
+installer-key-alias-placeholder
+=> "E.g. My Hardware Wallet"
+=> "Напр. Мой аппаратный кошелёк";;
+
+installer-key-already-in-wallet
+=> "Fetched key has already been added to the wallet."
+=> "Полученный ключ уже добавлен в кошелёк.";;
+
+installer-key-already-used => "Key already used" => "Ключ уже используется"
+
+installer-key-already-used-in-path
+=> "Key already used in this path"
+=> "Ключ уже используется в этом пути";;
+
+installer-key-fetch-wrong-network
+=> "Failed to fetch key. Switch network on device and retry"
+=> "Не удалось получить ключ. Переключите сеть на устройстве и повторите";;
+
+installer-key-index => "Key @{$index}:" => "Ключ @{$index}:"
+
+installer-key-name-alias => "Key name (alias):" => "Имя ключа (псевдоним):"
+
+installer-key-name-help
+=> "Give this key a friendly name. It will help you identify it later:"
+=> "Дайте этому ключу понятное имя. Оно поможет вам узнать его позже:";;
+
+installer-key-path-account => "Key path account:" => "Аккаунт в пути ключа:"
+
+installer-key-wrong-network
+=> "Fetched key does not have the correct network"
+=> "Полученный ключ не соответствует нужной сети";;
+
+installer-keys-inactivity
+=> "Keys can move the funds after inactivity of:"
+=> "Ключи могут перемещать средства после бездействия в течение:";;
+
+installer-load-previous-wallet
+=> "Load a previously used wallet"
+=> "Загрузить ранее использованный кошелёк";;
+
+installer-load-shared-wallet => "Load a shared wallet" => "Загрузить общий кошелёк"
+
+installer-local-wallet-description
+=> "Use your already existing Bitcoin node or automatically install one. The Liana wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet."
+=> "Используйте свой уже существующий узел Bitcoin или установите его автоматически. Кошелёк Liana не будет подключаться ни к каким внешним серверам.\n\nЭто самый приватный вариант, но данные хранятся только локально на этом компьютере. Вы должны сами делать резервные копии и передать дескриптор тем, кому хотите дать доступ к кошельку.";;
+
+installer-managed-node-description
+=> "Liana will install a pruned node on your computer. You won't need to do anything except have some disk space available (~30GB required on mainnet) and wait for the initial synchronization with the network (it can take some days depending on your internet connection speed)."
+=> "Liana установит на ваш компьютер узел с обрезкой данных (pruned). От вас потребуется только свободное место на диске (~30 ГБ для mainnet) и ожидание первичной синхронизации с сетью (она может занять несколько дней, в зависимости от скорости вашего интернет-соединения).";;
+
+installer-mnemonic-backup-help
+=> "A hot key generated on this computer was used for creating this wallet. It needs to be backed up. \n Keep it in a safe place. Never share it with anyone."
+=> "Для создания этого кошелька использовался горячий ключ, сгенерированный на этом компьютере. Его нужно сохранить. \n Храните его в безопасном месте. Никогда никому его не передавайте.";;
+
+installer-mnemonic-recovery-help
+=> "If you were using a hot key (a key stored on the computer) in your wallet, you will need to recover it from mnemonics to be able to sign transactions again. Otherwise you can directly go the next step."
+=> "Если в вашем кошельке использовался горячий ключ (ключ, хранящийся на компьютере), вам потребуется восстановить его из мнемонической фразы, чтобы снова подписывать транзакции. Иначе можете сразу перейти к следующему шагу.";;
+
+installer-multisig-description-1
+=> "For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key."
+=> "Для этой конфигурации вам нужны 3 ключа: два основных ключа и ключ восстановления. По соображениям безопасности мы советуем использовать отдельный аппаратный кошелёк для каждого ключа.";;
+
+installer-multisig-description-2
+=> "The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):"
+=> "Основные ключи составят мультисиг 2 из 2, который сможет тратить всегда. Если один из ваших ключей станет недоступен, после периода бездействия вы сможете восстановить средства с помощью ключа восстановления вместе с одним из основных ключей (мультисиг 2 из 3):";;
+
+installer-no-current-wallets
+=> "You have no current wallets"
+=> "У вас нет текущих кошельков";;
+
+installer-node-setup-title
+=> "Set up connection to the Bitcoin node"
+=> "Настройте подключение к узлу Bitcoin";;
+
+installer-node-type => "Node type:" => "Тип узла:"
+
+installer-password => "Password" => "Пароль"
+
+installer-paste-descriptor => "Paste a descriptor" => "Вставить дескриптор"
+
+installer-paste-descriptor-description
+=> "Creates a new wallet from the pasted descriptor"
+=> "Создаёт новый кошелёк из вставленного дескриптора";;
+
+installer-path-duplicate-sequence
+=> "No two recovery options may become available at the very same date."
+=> "Никакие два варианта восстановления не могут становиться доступными в одну и ту же дату.";;
+
+installer-path-key-source-disallowed
+=> "Path contains a key that is disallowed for this kind of path."
+=> "Путь содержит ключ, недопустимый для пути такого типа.";;
+
+installer-path-only-cosigner-keys
+=> "A path cannot contain only cosigner keys."
+=> "Путь не может содержать только ключи Cosigner.";;
+
+installer-port-attempts-exhausted => "Exhausted attempts" => "Попытки исчерпаны"
+
+installer-primary-key => "Primary key" => "Основной ключ"
+
+installer-primary-key-number
+=> "Primary key #{$number}"
+=> "Основной ключ №{$number}";;
+
+installer-primary-spending-option
+=> "Primary spending option:"
+=> "Основной вариант расходования:";;
+
+installer-read-cookie-file-failed
+=> "Failed to read cookie file: {$error}"
+=> "Не удалось прочитать cookie-файл: {$error}";;
+
+installer-recovery-key => "Recovery key" => "Ключ восстановления"
+
+installer-recovery-option
+=> "Recovery option #{$number}:"
+=> "Вариант восстановления №{$number}:";;
+
+installer-register-descriptor-failed
+=> "Failed to register descriptor"
+=> "Не удалось зарегистрировать дескриптор";;
+
+installer-register-descriptor-help
+=> "To be used with the wallet, a signing device needs the descriptor. If the descriptor contains one or more keys imported from an external signing device, the descriptor must be registered on it. Registration confirms that the device is able to handle the policy. Registration on a device is not a substitute for backing up the descriptor."
+=> "Чтобы работать с кошельком, подписывающему устройству нужен дескриптор. Если дескриптор содержит один или несколько ключей, импортированных с внешнего подписывающего устройства, дескриптор должен быть зарегистрирован на нём. Регистрация подтверждает, что устройство способно работать с этой политикой. Регистрация на устройстве не заменяет резервную копию дескриптора.";;
+
+installer-register-descriptor-optional
+=> "This step is only necessary if you are using a signing device."
+=> "Этот шаг нужен, только если вы используете подписывающее устройство.";;
+
+installer-register-descriptor-title
+=> "Register descriptor"
+=> "Регистрация дескриптора";;
+
+installer-registered-descriptor-checkbox
+=> "I have registered the descriptor on my device(s)"
+=> "Я зарегистрировал дескриптор на своём устройстве (устройствах)";;
+
+installer-remote-backend-description
+=> "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead."
+=> "Используйте наш сервис, чтобы сразу быть готовым к транзакциям. Инфраструктуру обслуживает Wizardsardine, что позволяет нескольким компьютерам или участникам подключаться и синхронизироваться.\n\nЭто более простой и безопасный вариант для тех, кто хочет, чтобы Wizardsardine хранил резервную копию их дескриптора. Ваши ключи остаются под вашим контролем, и Wizardsardine никак не контролирует ваши средства, но сможет видеть информацию о вашем кошельке, связанную с адресом email. Тем, для кого важна приватность, лучше использовать собственную инфраструктуру.";;
+
+installer-remote-bitcoin-node-warning
+=> "Connection to a remote Bitcoin node is not supported. Insert an IP address bound to the same machine running Liana (ignore this warning if that's already the case)"
+=> "Подключение к удалённому узлу Bitcoin не поддерживается. Укажите IP-адрес той же машины, на которой работает Liana (проигнорируйте это предупреждение, если так и есть)";;
+
+installer-rpc-auth => "RPC authentication:" => "Аутентификация RPC:"
+
+installer-rpc-user-password => "User and password" => "Имя пользователя и пароль"
+
+installer-safety-net => "Safety Net:" => "Safety Net:"
+
+installer-safety-net-description
+=> "This adds a final recovery option containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens."
+=> "Это добавляет последний вариант восстановления с ключами профессиональных хранителей ключей.\n\nИспользуйте этот вариант, если вам выдали один или несколько токенов Safety Net.";;
+
+installer-safety-net-key => "Safety Net key" => "Ключ Safety Net"
+
+installer-safety-net-token-disallowed
+=> "SafetyNet tokens are not allowed for this path"
+=> "Токены SafetyNet не разрешены для этого пути";;
+
+installer-seed-key-not-in-descriptor
+=> "The descriptor does not use a key derived from this seed"
+=> "Дескриптор не использует ключ, производный от этой сид-фразы";;
+
+installer-select-device-register
+=> "Select hardware wallet to register descriptor on:"
+=> "Выберите аппаратный кошелёк для регистрации дескриптора:";;
+
+installer-select-device-register-if-needed
+=> "If necessary, please select the signing device to register descriptor on:"
+=> "При необходимости выберите подписывающее устройство для регистрации дескриптора:";;
+
+installer-select-key-source => "Select key source" => "Выберите источник ключа"
+
+installer-sequence-value-warning
+=> "Value must be greater than 0 and lower than 65535"
+=> "Значение должно быть больше 0 и меньше 65535";;
+
+installer-serialize-daemon-config-failed
+=> "Failed to serialize daemon config: {$error}"
+=> "Не удалось сериализовать конфигурацию демона: {$error}";;
+
+installer-serialize-gui-config-failed
+=> "Failed to serialize GUI config: {$error}"
+=> "Не удалось сериализовать конфигурацию GUI: {$error}";;
+
+installer-share-xpubs-title
+=> "Share your public keys (Xpubs)"
+=> "Поделитесь своими публичными ключами (xpub)";;
+
+installer-shared-wallet-help
+=> "If you received an invitation to join a shared wallet"
+=> "Если вы получили приглашение присоединиться к общему кошельку";;
+
+installer-simple-inheritance => "Simple inheritance" => "Простое наследование"
+
+installer-simple-inheritance-description
+=> "Two keys required, one for yourself to spend and another for your heir."
+=> "Нужны два ключа: один для ваших трат, другой для вашего наследника.";;
+
+installer-simple-inheritance-wallet
+=> "Simple inheritance wallet"
+=> "Кошелёк простого наследования";;
+
+installer-start-bitcoin-node
+=> "Start Bitcoin full node"
+=> "Запустить полный узел Bitcoin";;
+
+installer-start-daemon-failed
+=> "Failed to start Liana daemon: {$error}"
+=> "Не удалось запустить демон Liana: {$error}";;
+
+installer-started => "Started" => "Запущено"
+
+installer-starting => "Starting..." => "Запуск..."
+
+installer-stop-daemon-failed
+=> "Failed to stop Liana daemon: {$error}"
+=> "Не удалось остановить демон Liana: {$error}";;
+
+installer-store-mnemonic-failed
+=> "Failed to store mnemonic: {$error}"
+=> "Не удалось сохранить мнемоническую фразу: {$error}";;
+
+installer-switch-account-help
+=> "Switch account if you already use the same hardware in other configurations"
+=> "Смените аккаунт, если вы уже используете это же устройство в других конфигурациях";;
+
+installer-taproot-supported-version
+=> "Taproot is only supported by Liana version 5.0 and above"
+=> "Taproot поддерживается только в Liana версии 5.0 и выше";;
+
+installer-template-custom-primary => "Primary keys" => "Основные ключи"
+
+installer-template-custom-recovery => "Recovery keys" => "Ключи восстановления"
+
+installer-template-event-receipt => "Receipt of funds" => "Получение средств"
+
+installer-template-event-timelock
+=> "After some time* of wallet inactivity"
+=> "После некоторого времени* бездействия кошелька";;
+
+installer-template-footnote
+=> "*The time range (timelock) for the activation of keys can be configured in the next step."
+=> "*Срок (таймлок) активации ключей можно настроить на следующем шаге.";;
+
+installer-template-multisig-primary => "2-of-2 multisig" => "Мультисиг 2 из 2"
+
+installer-template-multisig-recovery => "2-of-3 multisig" => "Мультисиг 2 из 3"
+
+installer-template-policy-primary
+=> "Primary spending policy"
+=> "Основная политика расходования";;
+
+installer-template-policy-recovery
+=> "Recovery spending policy"
+=> "Политика восстановления";;
+
+installer-template-state-locked => "Can't spend" => "Нельзя тратить"
+
+installer-template-state-spend => "Can spend" => "Можно тратить"
+
+installer-the-descriptor => "The descriptor" => "Дескриптор"
+
+installer-the-descriptor-label => "The descriptor:" => "Дескриптор:"
+
+installer-threshold => "Threshold:" => "Порог:"
+
+installer-threshold-keys
+=> "{ $total ->\n    [one] {$threshold} out of 1 key\n   *[other] {$threshold} out of {$total} keys\n}"
+=> "{ $total ->\n    [one] {$threshold} из {$total} ключа\n    [few] {$threshold} из {$total} ключей\n    [many] {$threshold} из {$total} ключей\n   *[other] {$threshold} из {$total} ключей\n}";;
+
+installer-token-type-disallowed
+=> "Token type not allowed in this path"
+=> "Тип токена не разрешён в этом пути";;
+
+installer-use-liana-connect => "Use Liana Connect" => "Использовать Liana Connect"
+
+installer-use-own-node => "Use your own node" => "Использовать свой узел"
+
+installer-user => "User" => "Пользователь"
+
+installer-wallet-alias => "Wallet alias" => "Псевдоним кошелька"
+
+installer-wallet-alias-too-long
+=> "Wallet alias is too long."
+=> "Псевдоним кошелька слишком длинный.";;
+
+installer-xpub-invalid => "Invalid Xpub" => "Недействительный xpub"
+
+installer-xpub-origin-missing => "Origin missing" => "Отсутствует origin"
+
+installer-xpub-wrong-derivation-path
+=> "Wrong derivation path"
+=> "Неверный путь деривации";;
+
+installer-xpub-wrong-network => "Wrong network" => "Неверная сеть"
+
+label-edit => "Edit label" => "Изменить метку"
+
+label-external-output => "(External Output)" => "(Внешний выход)"
+
+label-invalid-length
+=> "Invalid label length, must be 80 bytes or less"
+=> "Недопустимая длина метки, не более 80 байт";;
+
+label-label => "Label" => "Метка"
+
+launcher-add-existing-wallet
+=> "Add an existing Liana wallet"
+=> "Добавить существующий кошелёк Liana";;
+
+launcher-config-descriptor-origin-error
+=> "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin. Liana v0.2 and later only support public keys with origins. Please migrate your funds using Liana v0.1."
+=> "Возникла проблема с конфигурацией для этой сети. Скорее всего, вы используете дескриптор с одним или несколькими публичными ключами без origin. Liana v0.2 и новее поддерживает только публичные ключи с origin. Переместите ваши средства с помощью Liana v0.1.";;
+
+launcher-create-new-wallet
+=> "Create a new Liana wallet"
+=> "Создать новый кошелёк Liana";;
+
+launcher-default-wallet-name
+=> "My Liana {$network} wallet"
+=> "Мой кошелёк Liana {$network}";;
+
+launcher-delete-all-data-confirmation
+=> "Are you sure you want to delete the configuration and all associated data for the wallet {$wallet}?"
+=> "Вы уверены, что хотите удалить конфигурацию и все связанные данные кошелька {$wallet}?";;
+
+launcher-delete-connect-all-members
+=> "Also permanently delete this wallet from Liana Connect (for all members)."
+=> "Также безвозвратно удалить этот кошелёк из Liana Connect (для всех участников).";;
+
+launcher-delete-connect-disassociate
+=> "Also disassociate {$email} from this Liana Connect wallet."
+=> "Также отвязать {$email} от этого кошелька Liana Connect.";;
+
+launcher-delete-local-config-confirmation
+=> "Are you sure you want to delete locally the configuration for the wallet {$wallet}?"
+=> "Вы уверены, что хотите локально удалить конфигурацию кошелька {$wallet}?";;
+
+launcher-delete-node-not-affected
+=> "(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)"
+=> "(Если вы используете узел Bitcoin под управлением Liana, это действие его не затронет.)";;
+
+launcher-delete-node-not-affected-this-network
+=> "(The Liana-managed Bitcoin node for this network will not be affected by this action.)"
+=> "(Узел Bitcoin под управлением Liana для этой сети не будет затронут этим действием.)";;
+
+launcher-delete-title
+=> "Delete configuration for Liana-{$checksum}"
+=> "Удалить конфигурацию Liana-{$checksum}";;
+
+launcher-delete-title-alias
+=> "Delete configuration for {$alias} (Liana-{$checksum})"
+=> "Удалить конфигурацию {$alias} (Liana-{$checksum})";;
+
+launcher-delete-warning-irreversible
+=> "WARNING: This cannot be undone."
+=> "ПРЕДУПРЕЖДЕНИЕ: Это действие необратимо.";;
+
+launcher-read-daemon-config-failed
+=> "Failed to read daemon configuration file in the directory: {$path}"
+=> "Не удалось прочитать файл конфигурации демона в каталоге: {$path}";;
+
+launcher-read-gui-config-failed
+=> "Failed to read GUI configuration file in the directory: {$path}"
+=> "Не удалось прочитать файл конфигурации GUI в каталоге: {$path}";;
+
+launcher-unexpected-error
+=> "Unexpected {$error}"
+=> "Непредвиденная ошибка: {$error}";;
+
+launcher-wallet-deleted => "Wallet successfully deleted" => "Кошелёк успешно удалён"
+
+launcher-wallet-id-not-found
+=> "Wallet {$wallet_id} not found"
+=> "Кошелёк {$wallet_id} не найден";;
+
+launcher-wallet-not-found => "Wallet not found" => "Кошелёк не найден"
+
+launcher-welcome => "Welcome" => "Добро пожаловать"
+
+launcher-welcome-back => "Welcome back" => "С возвращением"
+
+lianalite-auth-sent
+=> "An authentication was sent to your email:"
+=> "Запрос на аутентификацию отправлен на ваш email:";;
+
+lianalite-token-expired
+=> "Token is expired or is invalid"
+=> "Токен истёк или недействителен";;
+
+lianalite-token-has-expired-or-invalid
+=> "Token has expired or is invalid"
+=> "Срок действия токена истёк или токен недействителен";;
+
+lianalite-token-invalid => "Token is not valid" => "Токен недействителен"
+
+lianalite-wallet-deleted
+=> "This wallet was deleted by its creator for all participants and cannot be opened. To access it again, restore it using a backup file or the wallet descriptor."
+=> "Этот кошелёк был удалён его создателем для всех участников и не может быть открыт. Чтобы снова получить к нему доступ, восстановите его из файла резервной копии или из дескриптора кошелька.";;
+
+loader-connecting-daemon => "Connecting to daemon..." => "Подключение к демону..."
+
+loader-failed => "Liana failed to start" => "Не удалось запустить Liana"
+
+loader-failed-bitcoind
+=> "Liana failed to start, please check if bitcoind is running"
+=> "Не удалось запустить Liana, проверьте, работает ли bitcoind";;
+
+loader-internal-daemon-error
+=> "Error while starting the internal daemon"
+=> "Ошибка при запуске внутреннего демона";;
+
+loader-progress => "Progress {$progress}%" => "Прогресс {$progress}%"
+
+loader-starting-daemon => "Starting daemon..." => "Запуск демона..."
+
+loader-sync-progress-1
+=> "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster."
+=> "Bitcoin Core синхронизирует блокчейн. Полная синхронизация обычно занимает несколько дней и требует много ресурсов. После первичной синхронизации последующие будут гораздо быстрее.";;
+
+loader-sync-progress-2
+=> "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance."
+=> "Bitcoin Core синхронизирует блокчейн. Это займёт некоторое время, в зависимости от того, когда синхронизация выполнялась в последний раз, вашего интернет-соединения и производительности компьютера.";;
+
+loader-sync-progress-3
+=> "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance."
+=> "Bitcoin Core синхронизирует блокчейн. Это может занять несколько минут, в зависимости от того, когда синхронизация выполнялась в последний раз, вашего интернет-соединения и производительности компьютера.";;
+
+menu-coins-utxos => "Coins/UTXOs" => "Монеты/UTXO"
+
+menu-dashboard => "Dashboard" => "Обзор"
+
+menu-drafts-approvals => "Drafts & Approvals" => "Черновики и одобрения"
+
+menu-receive => "Receive" => "Получить"
+
+menu-send => "Send" => "Отправить"
+
+menu-settings => "Settings" => "Настройки"
+
+menu-transactions => "Transactions" => "Транзакции"
+
+network-coins-have => ", COINS HAVE{ \" \" }" => ", МОНЕТЫ НЕ ИМЕЮТ{ \" \" }"
+
+network-no-value => "NO VALUE" => "ЦЕННОСТИ"
+
+network-this-is-a => "THIS IS A{ \" \" }" => "ЭТО{ \" \" }"
+
+network-wallet => "{$network} WALLET" => "{$network}-КОШЕЛЁК"
+
+payment-address-label => "address label: {$label}" => "метка адреса: {$label}"
+
+payment-incoming => "Incoming payment" => "Входящий платёж"
+
+payment-outgoing => "Outgoing payment" => "Исходящий платёж"
+
+payment-title => "Payment" => "Платёж"
+
+pill-active => "Active" => "Активен"
+
+pill-always-available => "Always available" => "Всегда доступен"
+
+pill-available => "Available" => "Доступен"
+
+pill-available-compact => "Avail." => "Дост."
+
+pill-batch => "Batch" => "Пакет"
+
+pill-batch-tooltip
+=> "This transaction contains multiple payments"
+=> "Эта транзакция содержит несколько платежей";;
+
+pill-confirmed => "Confirmed" => "Подтверждена"
+
+pill-confirmed-tooltip
+=> "This transaction has been included in a block"
+=> "Эта транзакция включена в блок";;
+
+pill-deprecated => "Deprecated" => "Устарела"
+
+pill-deprecated-tooltip
+=> "This transaction cannot be included in the blockchain anymore."
+=> "Эта транзакция больше не может быть включена в блокчейн.";;
+
+pill-draft => "Draft" => "Черновик"
+
+pill-first-recovery-in
+=> "First recovery option available in {$units}"
+=> "Первый вариант восстановления доступен через {$units}";;
+
+pill-first-recovery-today
+=> "First recovery option available today"
+=> "Первый вариант восстановления доступен сегодня";;
+
+pill-key-cosigner => "Cosigner" => "Cosigner"
+
+pill-key-cosigner-tooltip
+=> "Professional third party co-signing key"
+=> "Ключ профессионального стороннего сервиса совместной подписи";;
+
+pill-key-external => "External" => "Внешний"
+
+pill-key-external-tooltip => "Key held by third parties" => "Ключ у третьих лиц"
+
+pill-key-internal => "Internal" => "Внутренний"
+
+pill-key-internal-tooltip
+=> "Key held by your organization"
+=> "Ключ у вашей организации";;
+
+pill-key-safety-net => "Safety Net" => "Safety Net"
+
+pill-key-safety-net-tooltip
+=> "Professional third party recovery key"
+=> "Ключ профессионального стороннего сервиса восстановления";;
+
+pill-not-in-policy => "Not in policy yet" => "Ещё не в политике"
+
+pill-recovery-available-tooltip
+=> "Recovery option(s) already available"
+=> "Вариант(ы) восстановления уже доступны";;
+
+pill-recovery-tooltip
+=> "This transaction is using a recovery path"
+=> "Эта транзакция использует путь восстановления";;
+
+pill-rescan-progress
+=> "Rescan... {$progress}%"
+=> "Повторное сканирование... {$progress}%";;
+
+pill-signed => "To broadcast" => "К трансляции"
+
+pill-signed-tooltip
+=> "This transaction is signed & ready to broadcast"
+=> "Эта транзакция подписана и готова к трансляции";;
+
+pill-spent => "Spent" => "Потрачена"
+
+pill-spent-tooltip
+=> "The transaction was included in the blockchain."
+=> "Транзакция была включена в блокчейн.";;
+
+pill-to-approve => "To approve" => "На одобрение"
+
+pill-today => "Today" => "Сегодня"
+
+pill-unconfirmed => "Unconfirmed" => "Не подтверждена"
+
+pill-unconfirmed-tooltip
+=> "Do not treat this as a payment until it is confirmed"
+=> "Не считайте это платежом, пока он не подтверждён";;
+
+pill-unsigned => "Unsigned" => "Не подписана"
+
+pill-unsigned-tooltip
+=> "This transaction is missing signature(s)"
+=> "У этой транзакции не хватает подписей";;
+
+pill-used-in-spending-paths
+=> "{ $count ->\n    [one] Used in 1 spending path\n   *[other] Used in {$count} spending paths\n}"
+=> "{ $count ->\n    [one] Используется в {$count} пути расходования\n    [few] Используется в {$count} путях расходования\n    [many] Используется в {$count} путях расходования\n   *[other] Используется в {$count} путях расходования\n}";;
+
+pill-ws-admin => "WS Admin" => "Администратор WS"
+
+pill-xpub-not-set => "Not Set" => "Не задан"
+
+pill-xpub-set => "✓ Set" => "✓ Задан"
+
+policy-block-duration
+=> "{$blocks} blocks (~{$duration})"
+=> "{$blocks} блоков (~{$duration})";;
+
+policy-by => "by" => "от"
+
+policy-inactive-for
+=> "can spend coins inactive for"
+=> "может тратить монеты, неактивные в течение";;
+
+policy-out-of-by => "out of {$count} by" => "из {$count} от"
+
+policy-primary-path
+=> "can always spend this wallet's funds (Primary path)"
+=> "может всегда тратить средства этого кошелька (Основной путь)";;
+
+policy-recovery-path
+=> "(Recovery path #{$number})"
+=> "(Путь восстановления №{$number})";;
+
+policy-safety-net-path => "(Safety Net path)" => "(Путь Safety Net)"
+
+policy-signatures
+=> "{ $count ->\n    [one] 1 signature\n   *[other] {$count} signatures\n}"
+=> "{ $count ->\n    [one] {$count} подпись\n    [few] {$count} подписи\n    [many] {$count} подписей\n   *[other] {$count} подписи\n}";;
+
+policy-wallet-policy => "The wallet policy:" => "Политика кошелька:"
+
+psbt-already-signed-by => ", already signed by" => ", уже подписана"
+
+psbt-broadcast-conflicts-one
+=> "The following transaction is spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on it:"
+=> "Следующая транзакция тратит один или несколько входов транзакции, которую вы собираетесь транслировать, и будет отброшена вместе со всеми зависящими от неё транзакциями:";;
+
+psbt-broadcast-conflicts-some
+=> "The following transactions are spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on them:"
+=> "Следующие транзакции тратят один или несколько входов транзакции, которую вы собираетесь транслировать, и будут отброшены вместе со всеми зависящими от них транзакциями:";;
+
+psbt-broadcast-invalidates-one
+=> "WARNING: Broadcasting this transaction will invalidate a pending payment."
+=> "ПРЕДУПРЕЖДЕНИЕ: Трансляция этой транзакции сделает недействительным один ожидающий платёж.";;
+
+psbt-broadcast-invalidates-some
+=> "WARNING: Broadcasting this transaction will invalidate some pending payments."
+=> "ПРЕДУПРЕЖДЕНИЕ: Трансляция этой транзакции сделает недействительными некоторые ожидающие платежи.";;
+
+psbt-broadcast-transaction
+=> "Broadcast the transaction"
+=> "Транслировать транзакцию";;
+
+psbt-change => "Change" => "Сдача"
+
+psbt-coins-spent
+=> "{ $count ->\n    [one] 1 coin spent\n   *[other] {$count} coins spent\n}"
+=> "{ $count ->\n    [one] потрачена {$count} монета\n    [few] потрачено {$count} монеты\n    [many] потрачено {$count} монет\n   *[other] потрачено {$count} монеты\n}";;
+
+psbt-delete-success
+=> "Successfully deleted this transaction."
+=> "Эта транзакция успешно удалена.";;
+
+psbt-delete-this => "Delete this PSBT" => "Удалить этот PSBT"
+
+psbt-device-sign-failed
+=> "Device failed to sign"
+=> "Устройству не удалось подписать";;
+
+psbt-finalizing-requires
+=> "Finalizing this transaction requires:"
+=> "Для завершения этой транзакции требуется:";;
+
+psbt-missing-inputs
+=> "Missing information about transaction inputs"
+=> "Отсутствует информация о входах транзакции";;
+
+psbt-more-signatures
+=> "{ $count ->\n    [0] no more signatures\n    [one] 1 more signature from\n   *[other] {$count} more signatures from\n}"
+=> "{ $count ->\n    [0] больше подписей не требуется\n    [one] ещё {$count} подпись от\n    [few] ещё {$count} подписи от\n    [many] ещё {$count} подписей от\n   *[other] ещё {$count} подписи от\n}";;
+
+psbt-no-payment => "0 payment" => "0 платежей"
+
+psbt-not-ready => "Not ready" => "Не готово"
+
+psbt-payments
+=> "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
+=> "{ $count ->\n    [one] {$count} платёж\n    [few] {$count} платежа\n    [many] {$count} платежей\n   *[other] {$count} платежа\n}";;
+
+psbt-save-transaction => "Save this transaction" => "Сохранить эту транзакцию"
+
+psbt-select-signing-device
+=> "Select signing device to sign with:"
+=> "Выберите подписывающее устройство:";;
+
+psbt-sign-save-before-export
+=> "Sign or save the transaction first to enable export"
+=> "Сначала подпишите или сохраните транзакцию, чтобы включить экспорт";;
+
+psbt-signed-by => "signed by" => "подписана"
+
+psbt-spend-updated => "Spend transaction is updated" => "Транзакция траты обновлена"
+
+psbt-status => "Status" => "Статус"
+
+psbt-transaction-broadcast
+=> "Transaction is broadcast"
+=> "Транзакция транслирована";;
+
+psbt-transaction-saved => "Transaction is saved" => "Транзакция сохранена"
+
+psbts-base64-warning
+=> "Please enter a base64 encoded PSBT"
+=> "Введите PSBT в кодировке base64";;
+
+psbts-imported => "PSBT is imported" => "PSBT импортирован"
+
+psbts-insert-psbt => "Insert PSBT:" => "Вставьте PSBT:"
+
+receive-address-label-placeholder
+=> "Enter an address label"
+=> "Введите метку адреса";;
+
+receive-derivation-index => "Derivation index:" => "Индекс деривации:"
+
+receive-generate-new-address-help
+=> "Always generate a new address for each deposit."
+=> "Всегда создавайте новый адрес для каждого пополнения.";;
+
+receive-generating-address => "Generating address ..." => "Создание адреса ..."
+
+receive-generating-address-title => "Generating address" => "Создание адреса"
+
+receive-previous-addresses
+=> "Previously generated addresses still awaiting deposit"
+=> "Ранее созданные адреса, всё ещё ожидающие пополнения";;
+
+receive-select-device
+=> "Select device to verify address on:"
+=> "Выберите устройство для проверки адреса:";;
+
+receive-specter-diy-tooltip
+=> "For Specter DIY devices"
+=> "Для устройств Specter DIY";;
+
+receive-verify-address => "Verify address" => "Проверить адрес"
+
+recovery-coins-total
+=> "{ $count ->\n    [one] can recover 1 coin totalling\n   *[other] can recover {$count} coins totalling\n}"
+=> "{ $count ->\n    [one] можно восстановить {$count} монету на общую сумму\n    [few] можно восстановить {$count} монеты на общую сумму\n    [many] можно восстановить {$count} монет на общую сумму\n   *[other] можно восстановить {$count} монеты на общую сумму\n}";;
+
+recovery-info
+=> "Recover your funds by sending them to another wallet if you have lost access to your primary spending path."
+=> "Восстановите свои средства, отправив их на другой кошелёк, если вы потеряли доступ к основному пути расходования.";;
+
+recovery-none-available
+=> "No recovery path is currently available."
+=> "Сейчас нет доступных путей восстановления.";;
+
+recovery-paths-available
+=> "{ $count ->\n    [one] 1 recovery path is available:\n   *[other] {$count} recovery paths are available:\n}"
+=> "{ $count ->\n    [one] Доступен {$count} путь восстановления:\n    [few] Доступно {$count} пути восстановления:\n    [many] Доступно {$count} путей восстановления:\n   *[other] Доступно {$count} пути восстановления:\n}";;
+
+recovery-signatures-from
+=> "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}"
+=> "{ $count ->\n    [one] {$count} подпись от\n    [few] {$count} подписи от\n    [many] {$count} подписей от\n   *[other] {$count} подписи от\n}";;
+
+settings-alias => "Alias" => "Псевдоним"
+
+settings-alias-too-long
+=> "Please enter alias that is not too long"
+=> "Введите псевдоним покороче";;
+
+settings-backup-encrypted-descriptor-tooltip
+=> "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs."
+=> "Зашифрованный файл дескриптора (.bed), который можно хранить где угодно. Для расшифровки нужно одно из ваших подписывающих устройств или xpub.";;
+
+settings-block-height => "Block Height:" => "Высота блока:"
+
+settings-blockchain-rescan
+=> "Blockchain rescan"
+=> "Повторное сканирование блокчейна";;
+
+settings-change-node-or-connect
+=> "I want to change node type or use Liana Connect"
+=> "Я хочу сменить тип узла или использовать Liana Connect";;
+
+settings-connect-own-node
+=> "I want to connect to my own node"
+=> "Я хочу подключиться к своему узлу";;
+
+settings-cookie-file-path => "Cookie file path" => "Путь к cookie-файлу"
+
+settings-correct-alias
+=> "Please enter correct alias"
+=> "Введите корректный псевдоним";;
+
+settings-currency => "Currency:" => "Валюта:"
+
+settings-date-before-prune
+=> "Provided date earlier than the node prune height"
+=> "Указанная дата раньше высоты обрезки данных узла";;
+
+settings-date-future
+=> "Provided date is in the future"
+=> "Указанная дата в будущем";;
+
+settings-date-invalid
+=> "Provided date is invalid"
+=> "Указанная дата недействительна";;
+
+settings-day => "Day:" => "День:"
+
+settings-email-invalid => "Email is invalid" => "Некорректный email"
+
+settings-exchange-rate-source
+=> "Exchange rate source:"
+=> "Источник обменного курса:";;
+
+settings-export-descriptor
+=> "Descriptor only - plain-text"
+=> "Только дескриптор - обычный текст";;
+
+settings-export-descriptor-description
+=> "Plain-text (not encrypted) descriptor file only, to use with other wallets."
+=> "Только файл дескриптора в виде обычного текста (без шифрования), для использования с другими кошельками.";;
+
+settings-export-encrypted-descriptor
+=> "Encrypted descriptor"
+=> "Зашифрованный дескриптор";;
+
+settings-export-encrypted-descriptor-description
+=> ".bed file, can be decrypted with one of your signing devices or xpubs."
+=> "Файл .bed, расшифровывается одним из ваших подписывающих устройств или xpub.";;
+
+settings-export-labels => "BIP 329 labels" => "Метки BIP 329"
+
+settings-export-labels-description
+=> "BIP 329 label export, compatible with other wallets."
+=> "Экспорт меток BIP 329, совместимый с другими кошельками.";;
+
+settings-export-transactions => "Transactions table" => "Таблица транзакций"
+
+settings-export-transactions-description
+=> ".CSV file of past transactions, for accounting purposes."
+=> "Файл .CSV с прошлыми транзакциями, для целей учёта.";;
+
+settings-export-wallet => "Export wallet" => "Экспорт кошелька"
+
+settings-export-wallet-description
+=> "File (not encrypted) with wallet info useful to sync labels and data on other devices."
+=> "Файл (без шифрования) с информацией о кошельке, полезен для синхронизации меток и данных на других устройствах.";;
+
+settings-fiat-price => "Fiat price:" => "Цена в фиате:"
+
+settings-fiat-price-tooltip
+=> "Fiat price data is provided by third-party services. Availability and accuracy are not guaranteed."
+=> "Данные о цене в фиате предоставляются сторонними сервисами. Их доступность и точность не гарантируются.";;
+
+settings-fingerprint-aliases => "Fingerprint aliases:" => "Псевдонимы отпечатков:"
+
+settings-grant-wallet-access
+=> "Grant access to wallet to another user"
+=> "Предоставить доступ к кошельку другому пользователю";;
+
+settings-import-export-description
+=> "A collection of the export and import functions present in Liana."
+=> "Набор функций экспорта и импорта, доступных в Liana.";;
+
+settings-import-wallet => "Import wallet" => "Импорт кошелька"
+
+settings-import-wallet-description
+=> "Upload a backup file to update wallet info."
+=> "Загрузите файл резервной копии, чтобы обновить информацию о кошельке.";;
+
+settings-invitation-sent => "Invitation was sent" => "Приглашение отправлено"
+
+settings-language => "Language" => "Язык"
+
+settings-language-description
+=> "Choose the language used by the application."
+=> "Выберите язык интерфейса приложения.";;
+
+settings-month => "Month:" => "Месяц:"
+
+settings-network => "Network:" => "Сеть:"
+
+settings-not-running => "Not running" => "Не запущен"
+
+settings-other-formats => "Other formats" => "Другие форматы"
+
+settings-rescan-success
+=> "Successfully rescanned the blockchain"
+=> "Повторное сканирование блокчейна выполнено";;
+
+settings-rescanning
+=> "Rescanning...{$progress}%"
+=> "Повторное сканирование...{$progress}%";;
+
+settings-running => "Running" => "Запущен"
+
+settings-section-about => "About" => "О программе"
+
+settings-section-backend => "Backend" => "Бэкенд"
+
+settings-section-general => "General" => "Общие"
+
+settings-section-import-export => "Import/Export" => "Импорт/Экспорт"
+
+settings-section-node => "Node" => "Узел"
+
+settings-select-device => "Select device:" => "Выберите устройство:"
+
+settings-socket-address => "Socket address:" => "Адрес сокета:"
+
+settings-updated => "Updated" => "Обновлено"
+
+settings-user-email => "User email" => "Email пользователя"
+
+settings-valid-address
+=> "Please enter a valid address"
+=> "Введите корректный адрес";;
+
+settings-valid-filesystem-path
+=> "Please enter a valid filesystem path"
+=> "Введите корректный путь в файловой системе";;
+
+settings-valid-password
+=> "Please enter a valid password"
+=> "Введите корректный пароль";;
+
+settings-valid-user
+=> "Please enter a valid user"
+=> "Введите корректное имя пользователя";;
+
+settings-version => "Version" => "Версия"
+
+settings-wallet-alias => "Wallet alias:" => "Псевдоним кошелька:"
+
+settings-wallet-descriptor => "Wallet descriptor:" => "Дескриптор кошелька:"
+
+settings-year => "Year:" => "Год:"
+
+spend-amount-btc => "Amount (BTC)" => "Сумма (BTC)"
+
+spend-amount-truncated
+=> "Amount has been truncated to 8 decimal places"
+=> "Сумма усечена до 8 знаков после запятой";;
+
+spend-batch-label => "Batch label" => "Метка пакета"
+
+spend-btc-placeholder => "0.001 (in BTC)" => "0.001 (в BTC)"
+
+spend-coins-selection => "Coins selection" => "Выбор монет"
+
+spend-could-not-convert-btc
+=> "Could not convert to BTC"
+=> "Не удалось преобразовать в BTC";;
+
+spend-description => "Description" => "Описание"
+
+spend-duplicate-addresses
+=> "Two payment addresses are the same"
+=> "Два адреса платежей совпадают";;
+
+spend-dust-add-funds
+=> "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s)."
+=> "Минимальная сумма: 0.00 000 500 BTC. Пополните кошелёк, чтобы потратить эти монеты.";;
+
+spend-dust-select-more-coins
+=> "Minimum amount is 0.00 000 500 BTC. Select more coins to continue."
+=> "Минимальная сумма: 0.00 000 500 BTC. Выберите больше монет, чтобы продолжить.";;
+
+spend-fee => "Fee:" => "Комиссия:"
+
+spend-fee-manual => "Manual" => "Вручную"
+
+spend-fee-rate => "Fee ({$feerate} sats/vb):" => "Комиссия ({$feerate} sats/vb):"
+
+spend-fee-smart-select => "Smart Select" => "Умный выбор"
+
+spend-fee-smart-select-tooltip
+=> "Pick a preset feerate instead of entering one manually."
+=> "Выберите готовую ставку комиссии вместо ввода вручную.";;
+
+spend-feerate => "Feerate:" => "Ставка комиссии:"
+
+spend-feerate-example => "e.g. 5 (in sats/vb)" => "напр. 5 (в sats/vb)"
+
+spend-feerate-max-warning
+=> "Feerate must be an integer less than or equal to {$max_feerate} sats/vbyte"
+=> "Ставка комиссии должна быть целым числом, не превышающим {$max_feerate} sats/vbyte";;
+
+spend-feerate-missing-invalid
+=> "The feerate is missing or invalid"
+=> "Ставка комиссии отсутствует или недействительна";;
+
+spend-fiat-placeholder
+=> "Enter amount in {$currency}"
+=> "Введите сумму в {$currency}";;
+
+spend-invalid-address
+=> "Invalid address (maybe it is for another network?)"
+=> "Недействительный адрес (возможно, он для другой сети?)";;
+
+spend-invalid-amount
+=> "Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)"
+=> "Недействительная сумма. (Учтите: суммы меньше 0.000005 BTC недопустимы.)";;
+
+spend-left-to-select => "left to select" => "осталось выбрать"
+
+spend-max => "MAX" => "МАКС"
+
+spend-max-tooltip
+=> "Total amount remaining after paying fee and any other recipients"
+=> "Общая сумма, остающаяся после уплаты комиссии и выплат другим получателям";;
+
+spend-payment-description-invalid
+=> "Payment description is missing or invalid"
+=> "Описание платежа отсутствует или недействительно";;
+
+spend-payment-label => "Payment label" => "Метка платежа"
+
+spend-recipient-address-invalid
+=> "A recipient address is missing or invalid"
+=> "Адрес получателя отсутствует или недействителен";;
+
+spend-recipient-amount-invalid
+=> "A recipient amount is missing or invalid"
+=> "Сумма получателя отсутствует или недействительна";;
+
+spend-select-coins-to-cover-amount
+=> "Select coins to cover the amount"
+=> "Выберите монеты, чтобы покрыть сумму";;
+
+spend-select-one-coin
+=> "Select at least one coin."
+=> "Выберите хотя бы одну монету.";;
+
+spend-select-or-add-funds
+=> "Select or add more funds."
+=> "Выберите или добавьте больше средств.";;
+
+spend-warning-recovery-own-address
+=> "Recovery address belongs to the same wallet. If you can no longer spend with the primary path, use an address from a different wallet instead."
+=> "Адрес восстановления принадлежит этому же кошельку. Если вы больше не можете тратить по основному пути, используйте вместо него адрес другого кошелька.";;
+
+tab-installer => "Installer" => "Установщик"
+
+tab-launcher => "Launcher" => "Лаунчер"
+
+tab-pending => "Pending" => "Ожидание"
+
+time-days-ago
+=> "{ $count ->\n    [one] 1 day ago\n   *[other] {$count} days ago\n}"
+=> "{ $count ->\n    [one] {$count} день назад\n    [few] {$count} дня назад\n    [many] {$count} дней назад\n   *[other] {$count} дня назад\n}";;
+
+time-hours-ago
+=> "{ $count ->\n    [one] 1 hour ago\n   *[other] {$count} hours ago\n}"
+=> "{ $count ->\n    [one] {$count} час назад\n    [few] {$count} часа назад\n    [many] {$count} часов назад\n   *[other] {$count} часа назад\n}";;
+
+time-just-now => "just now" => "только что"
+
+time-minutes-ago
+=> "{ $count ->\n    [one] 1 minute ago\n   *[other] {$count} minutes ago\n}"
+=> "{ $count ->\n    [one] {$count} минуту назад\n    [few] {$count} минуты назад\n    [many] {$count} минут назад\n   *[other] {$count} минуты назад\n}";;
+
+time-months-ago
+=> "{ $count ->\n    [one] 1 month ago\n   *[other] {$count} months ago\n}"
+=> "{ $count ->\n    [one] {$count} месяц назад\n    [few] {$count} месяца назад\n    [many] {$count} месяцев назад\n   *[other] {$count} месяца назад\n}";;
+
+time-seconds-ago
+=> "{ $count ->\n    [one] 1 second ago\n   *[other] {$count} seconds ago\n}"
+=> "{ $count ->\n    [one] {$count} секунду назад\n    [few] {$count} секунды назад\n    [many] {$count} секунд назад\n   *[other] {$count} секунды назад\n}";;
+
+time-weeks-ago
+=> "{ $count ->\n    [one] 1 week ago\n   *[other] {$count} weeks ago\n}"
+=> "{ $count ->\n    [one] {$count} неделю назад\n    [few] {$count} недели назад\n    [many] {$count} недель назад\n   *[other] {$count} недели назад\n}";;
+
+transactions-cancel-tooltip
+=> "Best effort attempt at double spending an unconfirmed outgoing transaction"
+=> "Попытка двойной траты неподтверждённой исходящей транзакции по мере возможности";;
+
+transactions-date => "Date:" => "Дата:"
+
+transactions-incoming => "Incoming transaction" => "Входящая транзакция"
+
+transactions-miner-fee => "Miner fee:{ \" \" }" => "Комиссия майнеру:{ \" \" }"
+
+transactions-outgoing => "Outgoing transaction" => "Исходящая транзакция"
+
+transactions-rbf-bump-help
+=> "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction."
+=> "Заменить транзакцию другой, с более высокой ставкой комиссии, чтобы ускорить подтверждение. В заменяющей транзакции могут быть использованы новые входы.";;
+
+transactions-rbf-cancel-help
+=> "Replace the transaction with one paying a higher feerate that sends the coins back to your wallet. There is no guarantee the original transaction won't get mined first. New inputs may be used for the replacement transaction."
+=> "Заменить транзакцию другой, с более высокой ставкой комиссии, которая возвращает монеты в ваш кошелёк. Нет гарантии, что исходная транзакция не попадёт в блок первой. В заменяющей транзакции могут быть использованы новые входы.";;
+
+transactions-rbf-created
+=> "Replacement PSBT created successfully and ready to be signed"
+=> "Заменяющий PSBT успешно создан и готов к подписанию";;
+
+transactions-rbf-descendants-one
+=> "The following transaction is spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on it:"
+=> "Следующая транзакция тратит один или несколько выходов заменяемой транзакции и будет отброшена при трансляции замены, вместе со всеми зависящими от неё транзакциями:";;
+
+transactions-rbf-descendants-some
+=> "The following transactions are spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on them:"
+=> "Следующие транзакции тратят один или несколько выходов заменяемой транзакции и будут отброшены при трансляции замены, вместе со всеми зависящими от них транзакциями:";;
+
+transactions-rbf-feerate-warning
+=> "Feerate must be greater than previous value and less than or equal to 1000 sats/vbyte"
+=> "Ставка комиссии должна быть больше предыдущего значения и не превышать 1000 sats/vbyte";;
+
+transactions-rbf-invalidates-one
+=> "WARNING: Replacing this transaction will invalidate a later payment."
+=> "ПРЕДУПРЕЖДЕНИЕ: Замена этой транзакции сделает недействительным один более поздний платёж.";;
+
+transactions-rbf-invalidates-some
+=> "WARNING: Replacing this transaction will invalidate some later payments."
+=> "ПРЕДУПРЕЖДЕНИЕ: Замена этой транзакции сделает недействительными некоторые более поздние платежи.";;
+
+transactions-replacement => "Transaction replacement" => "Замена транзакции"
+
+transactions-transaction => "Transaction" => "Транзакция"
+
+transactions-txid => "Tx ID" => "Tx ID"
+
+warning-hardware-wallet-error
+=> "Hardware wallet error"
+=> "Ошибка аппаратного кошелька";;
