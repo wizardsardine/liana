@@ -99,6 +99,45 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 /// fresh idempotency key — which is how one payment becomes two.
 const SEND_SOFT_DEADLINE: Duration = Duration::from_secs(120);
 
+/// How long to wait for the [`Method::Init`] handshake.
+///
+/// `init` is not an ordinary query. It drives `SdkBuilder::build()`, and that
+/// bootstraps the cross-chain providers the bridge opts into (see
+/// `cross_chain_config` in `coincube-spark-bridge`'s `mainnet_config`). Boltz
+/// is built *at connect*, over HTTPS, with a 60s timeout of its own, so a
+/// provider that is unreachable rather than merely down — `api.boltz.exchange`
+/// black-holed by a network, DNS resolving but TCP never completing — burns
+/// that full 60s before the SDK logs the failure and carries on without it. A
+/// connect that would have completed in ~62s was being abandoned at 30s.
+///
+/// The failure that produced reads as if the bridge were broken and leaves no
+/// evidence: the client gives up, drops, and `kill_on_drop` reaps the child
+/// well before the SDK's own error line lands at t+60s, so the log carries the
+/// gui's "Spark bridge unavailable" and not one word from the bridge.
+///
+/// 120s is twice the single stall the SDK can impose here (only Boltz blocks
+/// `build()` — Orchestra resolves its config lazily on first use), which leaves
+/// room for the sqlite migration and initial sync on top of it.
+const INIT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How long to wait for `method` before giving up, given what a missing answer
+/// would mean for it.
+///
+/// [`RequestKind`] says what silence *means*; this says how long to tolerate
+/// it, which is not the same question — [`Method::Init`] is a query by that
+/// definition (nothing moved) yet legitimately takes minutes. Split out from
+/// [`SparkClient::request_with`] so the pairing is testable without a live
+/// subprocess.
+fn deadline_for(method: &Method, kind: RequestKind) -> Duration {
+    match kind {
+        RequestKind::StateChanging => SEND_SOFT_DEADLINE,
+        RequestKind::Query => match method {
+            Method::Init(_) => INIT_TIMEOUT,
+            _ => QUERY_TIMEOUT,
+        },
+    }
+}
+
 /// What the reader does with a response frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResponseRoute {
@@ -811,6 +850,7 @@ impl SparkClient {
         let (tx, rx) = oneshot::channel::<Response>();
         self.inner.pending.lock().await.insert(id, tx);
 
+        let deadline = deadline_for(&method, kind);
         let request = Request { id, method };
         if self.inner.request_tx.send(request).is_err() {
             // Writer task exited before this was handed over. Nothing was
@@ -820,11 +860,6 @@ impl SparkClient {
                 "Spark bridge writer task exited".to_string(),
             ));
         }
-
-        let deadline = match kind {
-            RequestKind::Query => QUERY_TIMEOUT,
-            RequestKind::StateChanging => SEND_SOFT_DEADLINE,
-        };
 
         let response = match tokio::time::timeout(deadline, rx).await {
             Ok(Ok(resp)) => resp,
@@ -849,7 +884,7 @@ impl SparkClient {
                 return Err(match kind {
                     RequestKind::Query => SparkClientError::BridgeUnavailable(format!(
                         "Spark bridge did not respond within {}s (id={})",
-                        QUERY_TIMEOUT.as_secs(),
+                        deadline.as_secs(),
                         id
                     )),
                     RequestKind::StateChanging => {
@@ -861,7 +896,7 @@ impl SparkClient {
                             message: format!(
                                 "The Spark bridge did not answer within {}s of being \
                                  given this payment.",
-                                SEND_SOFT_DEADLINE.as_secs()
+                                deadline.as_secs()
                             ),
                         }
                     }
@@ -1365,6 +1400,63 @@ mod unknown_outcome_tests {
             "a send must not be abandoned on the query timeout"
         );
         assert_ne!(RequestKind::Query, RequestKind::StateChanging);
+    }
+
+    /// `init` drives the whole SDK build, including a Boltz bootstrap that
+    /// spends 60s of its own before giving up when the host is unreachable.
+    /// Holding it to the ordinary query deadline abandoned a connect that was
+    /// still going to succeed, and reported a working bridge as unavailable.
+    #[test]
+    fn init_does_not_inherit_the_query_timeout() {
+        let init = Method::Init(InitParams {
+            api_key: "key".to_string(),
+            network: coincube_spark_protocol::Network::Mainnet,
+            mnemonic: "mnemonic".to_string(),
+            mnemonic_passphrase: None,
+            storage_dir: "/tmp/spark".to_string(),
+        });
+
+        assert_eq!(deadline_for(&init, RequestKind::Query), INIT_TIMEOUT);
+        assert!(
+            INIT_TIMEOUT > QUERY_TIMEOUT,
+            "init must outlast the query deadline: one unreachable cross-chain \
+             provider alone costs 60s at connect"
+        );
+        // The single stall the SDK can impose at connect is Boltz's 60s, and
+        // the rest of the build has to fit alongside it.
+        assert!(
+            INIT_TIMEOUT >= Duration::from_secs(120),
+            "init must leave room for the SDK build on top of a 60s provider stall"
+        );
+    }
+
+    /// Only `init` gets the long deadline — an ordinary read that stops
+    /// answering should still fail fast rather than hang the caller.
+    #[test]
+    fn ordinary_queries_keep_the_short_deadline() {
+        let get_info = Method::GetInfo(GetInfoParams {
+            ensure_synced: Some(true),
+        });
+        assert_eq!(deadline_for(&get_info, RequestKind::Query), QUERY_TIMEOUT);
+        assert_eq!(
+            deadline_for(&Method::Shutdown, RequestKind::Query),
+            QUERY_TIMEOUT
+        );
+    }
+
+    /// The deadline is chosen per method, but what silence *means* is still
+    /// decided by the kind: a send keeps its own soft deadline whatever
+    /// method carries it.
+    #[test]
+    fn a_send_keeps_the_send_deadline() {
+        let send = Method::SendPayment(SendPaymentParams {
+            prepare_handle: "handle".to_string(),
+            idempotency_key: None,
+        });
+        assert_eq!(
+            deadline_for(&send, RequestKind::StateChanging),
+            SEND_SOFT_DEADLINE
+        );
     }
 
     /// An unknown outcome must not read as a failure anywhere it is rendered
