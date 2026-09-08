@@ -365,7 +365,6 @@ impl State for VaultReceivePanel {
                 // state so an incoming unconfirmed tx shows up
                 // promptly instead of waiting for the smart-poll
                 // safety-net rescan.
-                let _ = daemon.request_sync().await;
                 let sync_daemon = daemon.clone();
                 tokio::spawn(async move {
                     let _ = sync_daemon.request_sync().await;
