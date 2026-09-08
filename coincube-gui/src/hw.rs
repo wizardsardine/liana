@@ -797,6 +797,10 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                         if active_vault_id != Some(paired.vault_fingerprint) {
                             continue;
                         }
+                        if let Err(error) = paired.exact_signer(&lan_descriptor) {
+                            debug!("{}: {}", paired.name, error);
+                            continue;
+                        }
                         let fp8 = crate::phone_signer::identity::pin_hex8(&paired.cert_pin);
                         let id = format!("phone-{}", fp8);
                         // Resolve a target address: prefer the
@@ -884,11 +888,10 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                         match res {
                             Ok(t) => {
                                 state.phone_cooldowns.remove(&fp8);
-                                let fingerprint = paired
-                                    .wallet_fingerprints
-                                    .first()
-                                    .copied()
-                                    .unwrap_or_default();
+                                let Ok(binding) = paired.exact_signer(&lan_descriptor) else {
+                                    continue;
+                                };
+                                let fingerprint = binding.fingerprint;
                                 let signer = Arc::new(crate::phone_signer::PhoneSigner::new(
                                     t,
                                     fingerprint,
@@ -1306,6 +1309,7 @@ mod tests {
 
     fn phone_with_fallback(pin: [u8; 32], fallback: Option<&str>) -> PairedPhone {
         PairedPhone {
+            signer_binding: None,
             cert_pin: pin,
             name: "Test".into(),
             paired_at_unix: 0,

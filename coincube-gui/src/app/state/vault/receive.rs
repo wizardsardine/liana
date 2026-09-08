@@ -89,7 +89,11 @@ impl VaultReceivePanel {
             labels_edited: LabelsEdited::default(),
             modal: Modal::None,
             warning: None,
-            processing: false,
+            // Starts true: the panel always fires a `reload` fetch the
+            // moment it's shown, so the first render should display the
+            // loading state rather than briefly flashing "No addresses yet".
+            // Mirrors `VaultTransactionsPanel::new`.
+            processing: true,
             generating: false,
         }
     }
@@ -243,6 +247,13 @@ impl State for VaultReceivePanel {
                         // the poller for a per-SPK rescan on the
                         // next tick instead of waiting up to 10
                         // min for the smart-poll cadence.
+                        //
+                        // Detached rather than awaited: `request_sync`
+                        // is a second blocking RPC, and awaiting it here
+                        // would hold `Message::ReceiveAddress` — and so
+                        // the button's spinner — for its whole round
+                        // trip. `Task::perform` futures run on iced's
+                        // tokio executor, so a runtime is in context.
                         let sync_daemon = daemon.clone();
                         tokio::spawn(async move {
                             let _ = sync_daemon.request_sync().await;
@@ -351,8 +362,9 @@ impl State for VaultReceivePanel {
         let daemon = daemon.expect("Vault panels require daemon");
         let wallet = wallet.expect("Vault panels require wallet");
         let data_dir = self.data_dir.clone();
+        // `Self::new` already starts in the loading state, so the fetch
+        // below is covered from the first frame after navigation.
         *self = Self::new(data_dir, wallet);
-        self.processing = true;
         Task::perform(
             async move {
                 let res = daemon
@@ -365,6 +377,14 @@ impl State for VaultReceivePanel {
                 // state so an incoming unconfirmed tx shows up
                 // promptly instead of waiting for the smart-poll
                 // safety-net rescan.
+                //
+                // Detached rather than awaited: `request_sync` is a
+                // second blocking RPC, and awaiting it here would hold
+                // `Message::RevealedAddresses` — and so the loading
+                // placeholder — for its whole round trip even though the
+                // addresses are already in hand. `Task::perform` futures
+                // run on iced's tokio executor, so a runtime is in
+                // context.
                 let sync_daemon = daemon.clone();
                 tokio::spawn(async move {
                     let _ = sync_daemon.request_sync().await;
@@ -530,13 +550,22 @@ mod tests {
         // The mock daemon is a strict ordered queue (see
         // `utils::mock::Daemon`). Each entry consumes the next
         // outgoing RPC. The Receive panel's `reload` and
-        // `NextReceiveAddress` paths both fire a fire-and-forget
-        // `requestsync` after their primary RPC, so the queue has
-        // to interleave them in real call order:
+        // `NextReceiveAddress` paths both kick an eager
+        // `requestsync` after their primary RPC, so the queue
+        // interleaves them:
         //   1. listrevealedaddresses    (reload's primary)
         //   2. requestsync              (reload's eager-sync kick)
         //   3. getnewaddress            (NextReceiveAddress primary)
         //   4. requestsync              (NextReceiveAddress kick)
+        // Each kick is detached onto the runtime rather than
+        // awaited, so its position relative to the *next* primary
+        // RPC is up to the scheduler, not the panel — this ordering
+        // is what the current scheduler produces, not a guarantee
+        // the panel makes. The mock also never asserts the queue
+        // drains, so a run where a kick lands after the test ends
+        // still passes. If this ever goes flaky, drop the
+        // `requestsync` entries and stop asserting on the kicks
+        // rather than trying to force an order.
         // The daemon answers `requestsync` with the empty JSON
         // object `{}`; the client deserialises into a discarded
         // `serde_json::Value`.

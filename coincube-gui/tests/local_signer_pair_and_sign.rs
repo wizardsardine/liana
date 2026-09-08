@@ -15,11 +15,13 @@
 //!      asserts the handshake fails — proving the trust path is
 //!      doing the work.
 
+#[path = "common/lan_binding.rs"]
+mod lan_binding;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{
-    bip32::Fingerprint, psbt::Psbt, transaction::Version as TxVersion, Transaction,
+    psbt::Psbt, transaction::Version as TxVersion, Transaction,
 };
 use prost::Message as _;
 use rcgen::{CertificateParams, KeyPair, PKCS_ED25519};
@@ -47,6 +49,8 @@ use coincube_gui::phone_signer::{
 };
 use coincube_gui::services::connect::crypto::{seal_to_device, DeviceTransportKey};
 use coincube_gui::services::connect::grpc::connect_v1 as cv1;
+
+const DESC: &str = "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn";
 
 /// A real ECIES transport keypair, minted in a throwaway directory.
 ///
@@ -162,6 +166,7 @@ async fn fake_phone_pair_then_sign(
         let env = LocalEnvelope {
             payload: Some(local_v1::local_envelope::Payload::PairingComplete(
                 local_v1::PairingComplete {
+                    signer_binding: Some(lan_binding::proto(DESC)),
                     phone_cert_fp: phone_cert_fp_hex.clone(),
                     device_name: "TestPhone".into(),
                     app_version: "test-1.0".into(),
@@ -279,7 +284,7 @@ async fn fake_phone_pair_then_sign(
                     session_id,
                     // Empty under ECIES_V1.
                     signed_psbt: Vec::new(),
-                    signed_key_ids: Vec::new(),
+                    signed_key_ids: vec!["10".into()],
                     signature_envelope: Some(cv1::PayloadEnvelope {
                         device_id: String::new(),
                         ephemeral_pubkey: sealed.ephemeral_pubkey,
@@ -314,8 +319,10 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
         .expect("bind");
     let addr = listener.local_addr().expect("local_addr");
 
-    let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
-    let g = generate_offer(wallet_fp, &identity, "keychain-test".into());
+    let wallet_fp = lan_binding::vault(DESC);
+    let mut g = generate_offer(wallet_fp, &identity, "keychain-test".into());
+    g.offer.signer_xpub = lan_binding::binding(DESC).xpub;
+    g.offer.descriptor_sha256 = hex::encode(lan_binding::binding(DESC).descriptor_sha256);
     let encoded = encode_offer(&g.offer).expect("encode offer");
     let decoded = decode_offer(&encoded).expect("decode offer");
 
@@ -353,7 +360,7 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
         decoded,
         phone_discovered,
         wallet_fp,
-        vec![wallet_fp],
+        vec![lan_binding::binding(DESC).fingerprint],
     )
     .await
     .expect("pairing ok");
@@ -371,6 +378,7 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
         "pairing must capture the phone's compressed transport pubkey",
     );
     let paired_clone = PairedPhone {
+        signer_binding: paired.signer_binding.clone(),
         cert_pin: paired.cert_pin,
         name: paired.name.clone(),
         paired_at_unix: paired.paired_at_unix,
@@ -380,7 +388,7 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
         fallback_addr: paired.fallback_addr.clone(),
     };
     // A real descriptor, so the fake phone's fingerprint check is meaningful.
-    const DESC: &str = "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn";
+
     // No id passed: `PhoneSigner::new` derives it from DESC. The fake phone
     // recomputes the same digest over the descriptor it decrypts and asserts it
     // matches `session.descriptor_id`, so that check now covers the derivation
@@ -451,7 +459,7 @@ async fn handshake_fails_when_phone_pins_a_different_cert() {
         addr,
         instance_name: "keychain-test".into(),
     };
-    let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
+    let wallet_fp = lan_binding::vault(DESC);
     let mut g = generate_offer(wallet_fp, &identity, "keychain-test".into());
     // Shorten the offer TTL: `run_pairing` now retries failed dials
     // until the offer expires (so a user has time to scan the QR
@@ -470,7 +478,7 @@ async fn handshake_fails_when_phone_pins_a_different_cert() {
         g.offer,
         phone_discovered,
         wallet_fp,
-        vec![wallet_fp],
+        vec![lan_binding::binding(DESC).fingerprint],
     )
     .await;
 

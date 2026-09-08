@@ -59,6 +59,12 @@ pub const PAIRING_OFFER_TTL_SECONDS: u64 = 120;
 /// `plans/PLAN-local-signer-lan-cert-in-qr-desktop.md` §1.1.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairingOffer {
+    /// Explicitly selected spendable vault xpub, never an ownership claim.
+    #[serde(default, rename = "key")]
+    pub signer_xpub: String,
+    /// Full hash over the canonical descriptor held by this desktop.
+    #[serde(default, rename = "dh")]
+    pub descriptor_sha256: String,
     /// Protocol version. Pin to [`PAIRING_PROTOCOL_VERSION`] for v1.
     #[serde(rename = "v")]
     pub version: u32,
@@ -147,6 +153,8 @@ pub fn generate_offer(
 
     GeneratedOffer {
         offer: PairingOffer {
+            signer_xpub: String::new(),
+            descriptor_sha256: String::new(),
             version: PAIRING_PROTOCOL_VERSION,
             cert_der_b64: identity.cert_der_b64(),
             cert_fp: identity.cert_fp(),

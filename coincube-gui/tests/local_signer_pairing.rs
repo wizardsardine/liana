@@ -83,6 +83,8 @@ fn fresh_offer(wallet_fp: Fingerprint, cert_fp: String, ttl_secs: u64) -> Pairin
         .unwrap_or(0)
         + ttl_secs;
     PairingOffer {
+        signer_xpub: "selected-test-xpub".into(),
+        descriptor_sha256: format!("{}{}", wallet_fp, "00".repeat(28)),
         version: PAIRING_PROTOCOL_VERSION,
         // These tests don't exercise the cert-trust path (a separate
         // pair-then-sign integration test does), so any well-formed
@@ -146,6 +148,35 @@ async fn fake_phone_server_with_transport_key(
     pairing_proof: String,
     transport_pubkey: Vec<u8>,
 ) {
+    fake_phone_server_with_identity(
+        listener,
+        phone_cert,
+        phone_key,
+        device_name,
+        phone_cert_fp_hex,
+        pairing_proof,
+        transport_pubkey,
+        local_v1::SignerBinding {
+            key_id: "10".into(),
+            xpub: "selected-test-xpub".into(),
+            fingerprint: "01020304".into(),
+            descriptor_sha256: [&[1u8, 2, 3, 4][..], &[0u8; 28][..]].concat(),
+        },
+    )
+    .await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn fake_phone_server_with_identity(
+    listener: TcpListener,
+    phone_cert: CertificateDer<'static>,
+    phone_key: PrivateKeyDer<'static>,
+    device_name: String,
+    phone_cert_fp_hex: String,
+    pairing_proof: String,
+    transport_pubkey: Vec<u8>,
+    binding: local_v1::SignerBinding,
+) {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let cfg = ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
@@ -165,6 +196,7 @@ async fn fake_phone_server_with_transport_key(
     let envelope = LocalEnvelope {
         payload: Some(local_v1::local_envelope::Payload::PairingComplete(
             local_v1::PairingComplete {
+                signer_binding: Some(binding),
                 phone_cert_fp: phone_cert_fp_hex,
                 device_name,
                 app_version: "test-1.0".into(),
@@ -545,13 +577,20 @@ async fn run_pairing_returns_signer_fps_not_vault_id() {
     let identity = fresh_desktop_identity();
     let offer = fresh_offer(vault_id, identity.cert_fp(), 30);
     let proof = proof_for(&offer, &phone_cert_fp_hex);
-    let phone_handle = tokio::spawn(fake_phone_server(
+    let phone_handle = tokio::spawn(fake_phone_server_with_identity(
         listener,
         phone_cert,
         phone_key,
         "Test Pixel".into(),
         phone_cert_fp_hex.clone(),
         proof,
+        valid_transport_pubkey(),
+        local_v1::SignerBinding {
+            key_id: "11".into(),
+            xpub: offer.signer_xpub.clone(),
+            fingerprint: signer_fps[1].to_string(),
+            descriptor_sha256: hex::decode(&offer.descriptor_sha256).unwrap(),
+        },
     ));
 
     let phone = DiscoveredPhone {
@@ -566,8 +605,8 @@ async fn run_pairing_returns_signer_fps_not_vault_id() {
             .expect("run_pairing ok");
 
     assert_eq!(
-        paired.wallet_fingerprints, signer_fps,
-        "returned fps must be the real signer fps, not the vault id",
+        paired.wallet_fingerprints, vec![signer_fps[1]],
+        "only the exact selected phone key is advertised, not all descriptor fingerprints or the vault id",
     );
     assert!(
         !paired.wallet_fingerprints.contains(&vault_id),
@@ -610,6 +649,12 @@ async fn fake_phone_close_then_serve(
     let envelope = LocalEnvelope {
         payload: Some(local_v1::local_envelope::Payload::PairingComplete(
             local_v1::PairingComplete {
+                signer_binding: Some(local_v1::SignerBinding {
+                    key_id: "10".into(),
+                    xpub: "selected-test-xpub".into(),
+                    fingerprint: "01020304".into(),
+                    descriptor_sha256: [&[1u8, 2, 3, 4][..], &[0u8; 28][..]].concat(),
+                }),
                 phone_cert_fp: phone_cert_fp_hex,
                 device_name,
                 app_version: "test-1.0".into(),

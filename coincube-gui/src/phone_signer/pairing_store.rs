@@ -21,6 +21,9 @@ use crate::dir::CoincubeDirectory;
 /// without doing any I/O.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairedPhone {
+    /// Absent on legacy pairings, which must be paired again.
+    #[serde(default)]
+    pub signer_binding: Option<SignerBinding>,
     /// Phone's TLS cert pin: `SHA-256(self-signed cert DER)`, 32
     /// raw bytes. Captured from the live TLS handshake via
     /// [`crate::phone_signer::transport::PairedTransport::peer_cert_fingerprint`]
@@ -47,22 +50,9 @@ pub struct PairedPhone {
     /// require pulling in the chrono `serde` feature.
     pub paired_at_unix: u64,
 
-    /// BIP-32 master fingerprints from the wallet's descriptor that
-    /// this phone is allowed to sign for. Today this is the full
-    /// `descriptor_keys()` set captured at pairing time (sorted for
-    /// deterministic order); the proto doesn't yet carry a
-    /// phone-reported signer fingerprint, so we don't know which
-    /// specific descriptor key the phone owns. The hw refresh tick
-    /// uses `.first()` for `HardwareWallet::Supported.fingerprint`
-    /// — that fp must appear in the **current** descriptor's
-    /// `descriptor_keys()`, otherwise the phone is downgraded to
-    /// `Unsupported(NotPartOfWallet)`.
-    ///
-    /// **Not the vault id.** The offer's `wallet_fingerprint` is
-    /// the vault id (`Wallet::id_fingerprint`), stored separately in
-    /// [`Self::vault_fingerprint`]; it is by construction NOT one of
-    /// the descriptor keys, so persisting it *here* would get every
-    /// paired phone immediately filtered out at the refresh tick.
+    /// Compatibility/display metadata containing only the independently
+    /// phone-reported selected key fingerprint. Exact signing authority lives
+    /// in signer_binding; never infer ownership from this list.
     pub wallet_fingerprints: Vec<Fingerprint>,
 
     /// Vault id (`Wallet::id_fingerprint`) this phone was paired
@@ -109,6 +99,48 @@ pub struct PairedPhone {
     /// "Connect by IP" field for networks where mDNS is blocked.
     /// `host:port` form; `None` means rely on mDNS.
     pub fallback_addr: Option<String>,
+}
+
+/// QR-selected key independently resolved by the authenticated phone.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignerBinding {
+    pub key_id: String,
+    pub xpub: String,
+    pub fingerprint: Fingerprint,
+    pub descriptor_sha256: Vec<u8>,
+}
+
+impl PairedPhone {
+    /// Full descriptor commitment and exact parsed key membership are authority;
+    /// a master fingerprint or the four-byte vault display ID alone is not.
+    pub fn exact_signer(&self, descriptor: &str) -> Result<&SignerBinding, String> {
+        use coincube_core::{descriptors::CoincubeDescriptor, miniscript::DescriptorPublicKey};
+        use sha2::{Digest, Sha256};
+        use std::str::FromStr;
+        let error = "Pair this Keychain again and select its exact vault key.";
+        let binding = self.signer_binding.as_ref().ok_or(error)?;
+        let parsed = CoincubeDescriptor::from_str(descriptor).map_err(|_| error)?;
+        let member = parsed.spendable_keys().iter().any(|key| match key {
+            DescriptorPublicKey::XPub(k) => {
+                k.xkey.to_string() == binding.xpub
+                    && k.origin.as_ref().map(|o| o.0) == Some(binding.fingerprint)
+            }
+            _ => false,
+        });
+        if binding
+            .key_id
+            .parse::<u64>()
+            .ok()
+            .filter(|id| *id > 0)
+            .is_none()
+            || binding.descriptor_sha256 != Sha256::digest(descriptor.as_bytes()).to_vec()
+            || self.vault_fingerprint.to_string() != hex::encode(&binding.descriptor_sha256[..4])
+            || !member
+        {
+            return Err(error.into());
+        }
+        Ok(binding)
+    }
 }
 
 /// Top-level on-disk layout. Wrapped in a struct so we can grow the
@@ -229,6 +261,7 @@ mod tests {
 
     fn sample_phone(seed: u8) -> PairedPhone {
         PairedPhone {
+            signer_binding: None,
             cert_pin: [seed; 32],
             name: format!("Phone {}", seed),
             paired_at_unix: 1_700_000_000 + seed as u64,
@@ -314,6 +347,7 @@ mod tests {
     fn upsert_preserving_user_fields_keeps_rename_and_fallback() {
         let dir = fresh_dir();
         let prior = PairedPhone {
+            signer_binding: None,
             cert_pin: [42u8; 32],
             name: "My Phone".into(),
             paired_at_unix: 1_700_000_000,
@@ -331,6 +365,7 @@ mod tests {
         .expect("seed store");
 
         let fresh = PairedPhone {
+            signer_binding: None,
             cert_pin: [42u8; 32],
             name: "Pixel 8".into(),
             paired_at_unix: 1_700_999_999,

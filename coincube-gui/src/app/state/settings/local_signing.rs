@@ -62,6 +62,9 @@ pub struct RowDraft {
 }
 
 pub struct LocalSigningState {
+    pub vault_keys: Vec<(String, String)>,
+    pub selected_key: Option<String>,
+    pub descriptor_sha256: String,
     pub phones: PairingStoreFile,
     pub flow: PairingFlow,
     /// Vault id (`Wallet::id_fingerprint`) of the loaded wallet,
@@ -70,15 +73,8 @@ pub struct LocalSigningState {
     /// vault X" and the listener can reject an offer that was
     /// generated for a different vault.
     pub wallet_fingerprint: Option<Fingerprint>,
-    /// Sorted `descriptor_keys()` of the loaded wallet (the real
-    /// BIP-32 signer fingerprints). Persisted into
-    /// `PairedPhone.wallet_fingerprints` so the steady-state hw
-    /// refresh tick has a real signer fp to put on
-    /// `HardwareWallet::Supported`. Separate from
-    /// `wallet_fingerprint` (the vault id) because the vault id is
-    /// intentionally NOT one of the descriptor keys — using it as
-    /// the persisted signer fp would get the phone immediately
-    /// downgraded to `Unsupported(NotPartOfWallet)`.
+    /// Locally derived fingerprint set used only for pairing consistency.
+    /// The selected xpub and phone-reported backend ID determine identity.
     pub wallet_signer_fingerprints: Vec<Fingerprint>,
     /// Per-row drafts keyed by the phone's 8-hex cert pin
     /// fingerprint. Seeded from the persisted row on load and
@@ -117,6 +113,9 @@ pub struct LocalSigningState {
 impl Default for LocalSigningState {
     fn default() -> Self {
         Self {
+            vault_keys: Vec::new(),
+            selected_key: None,
+            descriptor_sha256: String::new(),
             phones: PairingStoreFile::default(),
             flow: PairingFlow::Idle,
             wallet_fingerprint: None,
@@ -169,6 +168,27 @@ impl LocalSigningState {
     /// two fields pointing at the previous vault, and the next
     /// pairing offer would target the wrong vault id.
     pub(crate) fn apply_wallet(&mut self, wallet: &Wallet) {
+        use coincube_core::miniscript::DescriptorPublicKey;
+        use sha2::{Digest, Sha256};
+        let hash = hex::encode(Sha256::digest(
+            wallet.main_descriptor.to_string().as_bytes(),
+        ));
+        if hash != self.descriptor_sha256 {
+            self.selected_key = None;
+        }
+        self.descriptor_sha256 = hash;
+        self.vault_keys = wallet
+            .main_descriptor
+            .spendable_keys()
+            .into_iter()
+            .filter_map(|key| {
+                let label = key.to_string();
+                match key {
+                    DescriptorPublicKey::XPub(k) => Some((k.xkey.to_string(), label)),
+                    _ => None,
+                }
+            })
+            .collect();
         // Identify the **vault as a whole**, not one of its signers
         // — `id_fingerprint` is a stable 4-byte digest of the
         // descriptor, unique per vault and distinct from any signer
@@ -435,6 +455,14 @@ impl State for LocalSigningState {
             _ => return Task::none(),
         };
         match msg {
+            LocalSigningMessage::SelectKey(key) => {
+                if matches!(self.flow, PairingFlow::Idle)
+                    && self.vault_keys.iter().any(|(xpub, _)| *xpub == key)
+                {
+                    self.selected_key = Some(key);
+                }
+                Task::none()
+            }
             LocalSigningMessage::StartPairing => {
                 // We need a wallet fingerprint before we can build
                 // an offer. Bail with a typed error if there's no
@@ -453,6 +481,16 @@ impl State for LocalSigningState {
                 Task::none()
             }
             LocalSigningMessage::PickPhone(fp8) => {
+                let Some(selected_key) = self
+                    .selected_key
+                    .clone()
+                    .filter(|key| self.vault_keys.iter().any(|(xpub, _)| xpub == key))
+                else {
+                    self.flow = PairingFlow::Error(PairingError::InternalError(
+                        "Select the exact vault key held by this phone before pairing.".into(),
+                    ));
+                    return Task::none();
+                };
                 let Some(fingerprint) = self.wallet_fingerprint else {
                     self.flow = PairingFlow::Error(PairingError::InternalError(
                         "No wallet loaded — pairing needs a wallet fingerprint.".into(),
@@ -485,11 +523,13 @@ impl State for LocalSigningState {
                             return Task::none();
                         }
                     };
-                let GeneratedOffer { offer } = crate::phone_signer::pairing::generate_offer(
+                let GeneratedOffer { mut offer } = crate::phone_signer::pairing::generate_offer(
                     fingerprint,
                     &identity,
                     phone.instance_name.clone(),
                 );
+                offer.signer_xpub = selected_key;
+                offer.descriptor_sha256 = self.descriptor_sha256.clone();
                 // Build the QR up front and fail closed if it can't be
                 // rendered. Entering `Waiting` with `qr: None` would
                 // show the user a "scan this QR" prompt with no code
@@ -681,6 +721,7 @@ mod tests {
 
     fn paired(seed: u8, name: &str, fallback: Option<&str>) -> PairedPhone {
         PairedPhone {
+            signer_binding: None,
             cert_pin: [seed; 32],
             name: name.into(),
             paired_at_unix: 1_700_000_000,
@@ -980,6 +1021,8 @@ mod tests {
                 instance_name: "x".into(),
             },
             offer: crate::phone_signer::pairing::PairingOffer {
+                signer_xpub: String::new(),
+                descriptor_sha256: String::new(),
                 version: 1,
                 cert_der_b64: String::new(),
                 cert_fp: String::new(),
@@ -1025,6 +1068,8 @@ mod tests {
                 instance_name: "x".into(),
             },
             offer: crate::phone_signer::pairing::PairingOffer {
+                signer_xpub: String::new(),
+                descriptor_sha256: String::new(),
                 version: 1,
                 cert_der_b64: String::new(),
                 cert_fp: String::new(),
@@ -1108,6 +1153,8 @@ mod tests {
                 instance_name: "x".into(),
             },
             offer: crate::phone_signer::pairing::PairingOffer {
+                signer_xpub: String::new(),
+                descriptor_sha256: String::new(),
                 version: 1,
                 cert_der_b64: String::new(),
                 cert_fp: String::new(),
@@ -1144,6 +1191,8 @@ mod tests {
                 instance_name: "x".into(),
             },
             offer: crate::phone_signer::pairing::PairingOffer {
+                signer_xpub: String::new(),
+                descriptor_sha256: String::new(),
                 version: 1,
                 cert_der_b64: String::new(),
                 cert_fp: String::new(),
@@ -1210,6 +1259,8 @@ mod tests {
                 instance_name: "x".into(),
             },
             offer: crate::phone_signer::pairing::PairingOffer {
+                signer_xpub: String::new(),
+                descriptor_sha256: String::new(),
                 version: 1,
                 cert_der_b64: String::new(),
                 cert_fp: String::new(),
@@ -1240,6 +1291,8 @@ mod tests {
                 instance_name: "x".into(),
             },
             offer: crate::phone_signer::pairing::PairingOffer {
+                signer_xpub: String::new(),
+                descriptor_sha256: String::new(),
                 version: 2,
                 cert_der_b64: String::new(),
                 cert_fp: String::new(),

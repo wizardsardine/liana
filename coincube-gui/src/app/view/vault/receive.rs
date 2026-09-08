@@ -141,7 +141,7 @@ pub fn receive<'a>(
         )
         .push((prev_addresses.is_empty() && addresses.is_empty()).then(|| {
             if processing {
-                loading_placeholder(icon::receive_icon().size(80), "Loading addresses...")
+                loading_placeholder(icon::receive_icon().size(80), "Loading addresses")
             } else {
                 placeholder(
                     icon::receive_icon().size(80),

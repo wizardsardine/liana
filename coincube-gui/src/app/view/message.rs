@@ -500,6 +500,8 @@ pub enum RecoveryAlertsMessage {
 
 #[derive(Debug, Clone)]
 pub enum LocalSigningMessage {
+    /// Explicit vault key choice; no default based on descriptor ordering.
+    SelectKey(String),
     /// "Pair phone" button → settings state browses mDNS and shows
     /// the phone picker. The user then picks one with `PickPhone`.
     StartPairing,

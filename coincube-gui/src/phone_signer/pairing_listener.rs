@@ -65,13 +65,9 @@ pub(crate) const REDIAL_BACKOFF: Duration = Duration::from_millis(750);
 /// generated for a different vault" case (e.g. user scanned an old
 /// offer after switching wallets).
 ///
-/// `signer_fingerprints` is the local wallet's `descriptor_keys()` —
-/// the real BIP-32 master fingerprints that appear in the descriptor.
-/// We surface this list on `PairedPhone.wallet_fingerprints` so the
-/// steady-state hw refresh tick has a real signer fp to put on
-/// `HardwareWallet::Supported`; otherwise the phone would be
-/// downgraded to `Unsupported(NotPartOfWallet)` because the vault id
-/// is by construction NOT one of the descriptor keys.
+/// `signer_fingerprints` is the local wallet's descriptor fingerprint set,
+/// used only as an additional consistency check. The phone must report the
+/// exact QR-selected xpub and backend key ID before a pairing can complete.
 pub async fn run_pairing(
     identity: DesktopIdentity,
     offer: PairingOffer,
@@ -286,8 +282,7 @@ async fn try_pair_once(
     // (`Wallet::id_fingerprint`) — a 4-byte digest of the descriptor.
     // It must equal the locally-loaded wallet's vault id; otherwise
     // the user scanned a QR meant for a different vault. (When the
-    // proto grows a phone-reported signer fingerprint we'll also
-    // validate that against `signer_fingerprints`.)
+    // exact identity below is additionally checked against the selected key.)
     let claimed_fp = offer.wallet_fingerprint;
     if claimed_fp != expected_vault_id {
         return Err(PairingError::WalletFingerprintMismatch {
@@ -316,6 +311,47 @@ async fn try_pair_once(
         return Err(PairingError::TransportKeyMissing);
     }
 
+    // The v2 proof authenticates this TLS peer. It must report the one key
+    // selected in the scanned QR; only the phone's local record supplies ID.
+    let reported = complete.signer_binding.as_ref().ok_or_else(|| {
+        PairingError::InternalError(
+            "Pair again with an updated Keychain and select its exact vault key.".into(),
+        )
+    })?;
+    if offer.signer_xpub.is_empty()
+        || reported.xpub != offer.signer_xpub
+        || reported.descriptor_sha256.len() != 32
+        || hex::encode(&reported.descriptor_sha256) != offer.descriptor_sha256
+        || !offer
+            .descriptor_sha256
+            .starts_with(&expected_vault_id.to_string())
+        || reported
+            .key_id
+            .parse::<u64>()
+            .ok()
+            .filter(|id| *id > 0)
+            .is_none()
+    {
+        return Err(PairingError::InternalError(
+            "Exact pairing identity mismatch; pair again.".into(),
+        ));
+    }
+    let fingerprint: Fingerprint = reported
+        .fingerprint
+        .parse()
+        .map_err(|_| PairingError::InternalError("Invalid signer fingerprint".into()))?;
+    if !signer_fingerprints.contains(&fingerprint) {
+        return Err(PairingError::InternalError(
+            "Selected key is not in this vault; pair again.".into(),
+        ));
+    }
+    let signer_binding = Some(crate::phone_signer::pairing_store::SignerBinding {
+        key_id: reported.key_id.clone(),
+        xpub: reported.xpub.clone(),
+        fingerprint,
+        descriptor_sha256: reported.descriptor_sha256.clone(),
+    });
+
     // Best-effort ack so the phone can render "pairing complete".
     let ack = LocalEnvelope {
         payload: Some(local_v1::local_envelope::Payload::Pong(
@@ -334,15 +370,12 @@ async fn try_pair_once(
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let paired = PairedPhone {
+        signer_binding,
         cert_pin: phone_pin,
         name,
         paired_at_unix: now,
-        // The descriptor's real signer fingerprints. The hw refresh
-        // tick reads `.first()` of this list for the
-        // `HardwareWallet::Supported.fingerprint` and the
-        // descriptor-keys filter at the end of the tick keeps the
-        // phone listed as Supported.
-        wallet_fingerprints: signer_fingerprints.to_vec(),
+        // Advertise only the selected, phone-reported signer.
+        wallet_fingerprints: vec![fingerprint],
         // The vault id we validated the offer against, so the hw
         // refresh loop can scope this phone to the vault it was
         // actually paired with (not just any vault that shares a
