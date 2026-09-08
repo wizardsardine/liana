@@ -140,11 +140,6 @@ pub fn receive<'a>(
                 }),
         )
         .push((prev_addresses.is_empty() && addresses.is_empty()).then(|| {
-            // placeholder(
-            //     icon::receive_icon().size(80),
-            //     "No addresses yet",
-            //     "Generate a new address to receive bitcoin. Always generate a new address for each deposit.",
-            // )
             if processing {
                 loading_placeholder(icon::receive_icon().size(80), "Loading addresses...")
             } else {
