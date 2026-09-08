@@ -3061,9 +3061,18 @@ mod tests {
         let upload = server.mock(|when, then| {
             when.method(MockMethod::PUT)
                 .path("/api/v1/connect/cubes/42/recovery-kit/envelope")
-                .json_body_partial(
-                    r#"{"envelopes":[{"artifactKind":"seed","keyholderKeyId":7}]}"#,
-                );
+                .json_body_partial(r#"{"envelopes":[{"artifactKind":"seed","keyholderKeyId":7}]}"#)
+                // `json_body_partial` matches an array element-wise from index 0,
+                // so on its own it would still pass if a second envelope were
+                // appended after the seed. Pin the length too: a seed-only seal
+                // uploads exactly one envelope, never a descriptor alongside it.
+                .matches(|req| {
+                    req.body
+                        .as_deref()
+                        .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
+                        .and_then(|v| v["envelopes"].as_array().map(Vec::len))
+                        == Some(1)
+                });
             then.status(200)
                 .json_body(json!({ "success": true, "data": {} }));
         });
