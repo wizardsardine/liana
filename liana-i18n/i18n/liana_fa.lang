@@ -1,0 +1,2480 @@
+# Translator-friendly catalog
+# Language: فارسی
+# Format: id => "English" => "Translation"
+# Use \n for line breaks
+
+btn-accept => "Accept" => "قبول"
+
+btn-add-key => "Add a key" => "افزودن کلید"
+
+btn-add-payment => "Add payment" => "افزودن پرداخت"
+
+btn-add-recovery-option => "Add recovery option" => "افزودن گزینه بازیابی"
+
+btn-add-recovery-path => "Add a recovery path" => "افزودن مسیر بازیابی"
+
+btn-add-safety-net => "Add Safety Net" => "افزودن تور ایمنی"
+
+btn-add-wallet => "Add wallet" => "افزودن کیف پول"
+
+btn-apply => "Apply" => "اعمال"
+
+btn-approve => "Approve" => "تصویب"
+
+btn-back => "Back" => "بازگشت"
+
+btn-back-up-descriptor => "Back Up Descriptor" => "پشتیبان‌گیری از descriptor"
+
+btn-backup-encrypted-descriptor
+=> "Back up encrypted descriptor"
+=> "پشتیبان‌گیری از descriptor رمزگذاری‌شده";;
+
+btn-broadcast => "Broadcast" => "پخش"
+
+btn-bump-fee => "Bump fee" => "افزایش کارمزد"
+
+btn-cancel => "Cancel" => "انصراف"
+
+btn-cancel-transaction => "Cancel transaction" => "لغو تراکنش"
+
+btn-change-email => "Change Email" => "تغییر ایمیل"
+
+btn-check-connection => "Check connection" => "بررسی اتصال"
+
+btn-clear => "Clear" => "پاک کردن"
+
+btn-clear-all => "Clear All" => "پاک کردن همه"
+
+btn-close-tab => "Close" => "بستن"
+
+btn-confirm => "Confirm" => "تأیید"
+
+btn-connect-another-email => "Connect with another email" => "اتصال با ایمیل دیگر"
+
+btn-customize => "Customize" => "سفارشی‌سازی"
+
+btn-delete => "Delete" => "حذف"
+
+btn-delete-wallet => "Delete wallet" => "حذف کیف پول"
+
+btn-dismiss => "Dismiss" => "بستن"
+
+btn-edit => "Edit" => "ویرایش"
+
+btn-edit-keys => "Edit keys" => "ویرایش کلیدها"
+
+btn-edit-label => "Edit label" => "ویرایش برچسب"
+
+btn-email-wizardsardine => "Email WS" => "ایمیل به WS"
+
+btn-export => "Export" => "خروجی"
+
+btn-fee-level-high => "High" => "زیاد"
+
+btn-fee-level-low => "Low" => "کم"
+
+btn-fee-level-medium => "Medium" => "متوسط"
+
+btn-generate => "Generate" => "تولید"
+
+btn-generate-address => "Generate address" => "تولید آدرس"
+
+btn-go-back => "Go back" => "بازگشت"
+
+btn-go-back-to-psbts => "Go back to PSBTs" => "بازگشت به PSBTها"
+
+btn-go-to-replacement => "Go to replacement" => "رفتن به تراکنش جایگزین"
+
+btn-go-to-rescan => "Go to rescan" => "رفتن به اسکن مجدد"
+
+btn-ignore => "Ignore" => "نادیده گرفتن"
+
+btn-import => "Import" => "وارد کردن"
+
+btn-keep-my-changes => "Keep my changes" => "حفظ تغییرات من"
+
+btn-login => "Login" => "ورود"
+
+btn-manage-keys => "Manage Keys" => "مدیریت کلیدها"
+
+btn-mark-keys-ready => "Mark keys as ready" => "علامت‌گذاری کلیدها به‌عنوان آماده"
+
+btn-more-backend-node-info
+=> "More information about backend and node options"
+=> "اطلاعات بیشتر درباره گزینه‌های بک‌اند و گره";;
+
+btn-new => "New" => "جدید"
+
+btn-next => "Next" => "بعدی"
+
+btn-no => "No" => "خیر"
+
+btn-ok => "OK" => "باشه"
+
+btn-overwrite => "Overwrite" => "بازنویسی"
+
+btn-previous => "Previous" => "قبلی"
+
+btn-previous-arrow => "< Previous" => "< قبلی"
+
+btn-processing => "Processing..." => "در حال پردازش..."
+
+btn-register-on-device => "Register on device" => "ثبت روی دستگاه"
+
+btn-reload => "Reload" => "بارگذاری مجدد"
+
+btn-replace => "Replace" => "جایگزینی"
+
+btn-resend-token => "Resend token" => "ارسال مجدد توکن"
+
+btn-reset-timelock => "Reset timelock" => "بازنشانی قفل زمانی"
+
+btn-retry => "Retry" => "تلاش مجدد"
+
+btn-save => "Save" => "ذخیره"
+
+btn-see-transaction-details => "See transaction details" => "مشاهده جزئیات تراکنش"
+
+btn-select => "Select" => "انتخاب"
+
+btn-send-for-approval => "Send for approval" => "ارسال برای تصویب"
+
+btn-send-invitation => "Send invitation" => "ارسال دعوت‌نامه"
+
+btn-send-token => "Send token" => "ارسال توکن"
+
+btn-set => "Set" => "تنظیم"
+
+btn-set-keys => "Set keys" => "تنظیم کلیدها"
+
+btn-share-xpubs => "Share Xpubs" => "اشتراک‌گذاری xpubها"
+
+btn-show-qr => "Show QR Code" => "نمایش کد QR"
+
+btn-sign => "Sign" => "امضا"
+
+btn-skip => "Skip" => "رد کردن"
+
+btn-skip-registration => "Skip registration" => "رد کردن ثبت"
+
+btn-split-tab => "Split" => "تقسیم"
+
+btn-start-rescan => "Start rescan" => "شروع اسکن مجدد"
+
+btn-starting-rescan => "Starting rescan..." => "در حال شروع اسکن مجدد..."
+
+btn-template-help
+=> "Something’s wrong with this template?"
+=> "مشکلی در این قالب هست؟";;
+
+btn-unlock-all => "Unlock all" => "باز کردن قفل همه"
+
+btn-update => "Update" => "به‌روزرسانی"
+
+btn-updating => "Updating" => "در حال به‌روزرسانی"
+
+btn-verify-on-device => "Verify on hardware device" => "تأیید روی دستگاه سخت‌افزاری"
+
+btn-yes => "Yes" => "بله"
+
+business-access-error => "Access Error" => "خطای دسترسی"
+
+business-account-connection-failed
+=> "Failed to connect with account {$email}. The session may have expired."
+=> "اتصال با حساب {$email} ناموفق بود. ممکن است نشست منقضی شده باشد.";;
+
+business-account-number => "Account #{$index}" => "حساب #{$index}"
+
+business-add-key-label => "Add a key" => "افزودن کلید"
+
+business-add-two-keys-to-continue
+=> "Add at least 2 keys to continue"
+=> "برای ادامه حداقل 2 کلید اضافه کنید";;
+
+business-admin-name => "Admin{$name}" => "مدیر{$name}"
+
+business-after-days
+=> "{ $count ->\n    [one] After 1 day\n   *[other] After {$count} days\n}"
+=> "{ $count ->\n    [one] پس از 1 روز\n   *[other] پس از {$count} روز\n}";;
+
+business-after-hours
+=> "{ $count ->\n    [one] After 1 hour\n   *[other] After {$count} hours\n}"
+=> "{ $count ->\n    [one] پس از 1 ساعت\n   *[other] پس از {$count} ساعت\n}";;
+
+business-after-months
+=> "{ $count ->\n    [one] After 1 month\n   *[other] After {$count} months\n}"
+=> "{ $count ->\n    [one] پس از 1 ماه\n   *[other] پس از {$count} ماه\n}";;
+
+business-all-files => "All files" => "همه فایل‌ها"
+
+business-all-keys-set-waiting
+=> "All keys are set. Once the other participants finish this step, the wallet will be ready."
+=> "همه کلیدها تنظیم شده‌اند. پس از اینکه سایر شرکت‌کنندگان این مرحله را به پایان برسانند، کیف پول آماده خواهد شد.";;
+
+business-assigned-keys-set-waiting
+=> "Your assigned keys are set. Waiting for the other participants to finish this step."
+=> "کلیدهای اختصاص‌یافته به شما تنظیم شدند. در انتظار اتمام این مرحله توسط سایر شرکت‌کنندگان.";;
+
+business-auth-code-request-failed
+=> "Failed to request authentication code from server."
+=> "درخواست کد احراز هویت از سرور ناموفق بود.";;
+
+business-authenticated => "Authenticated" => "احراز هویت شد"
+
+business-backend-error => "Backend error" => "خطای بک‌اند"
+
+business-cannot-approve-template
+=> "Can't approve this template?"
+=> "نمی‌توانید این قالب را تصویب کنید؟";;
+
+business-clipboard-empty => "Clipboard is empty" => "کلیپ‌بورد خالی است"
+
+business-code-six-digits
+=> "Code must contain only 6 digits."
+=> "کد باید فقط شامل 6 رقم باشد.";;
+
+business-common-you => "You" => "شما"
+
+business-confirm-coldcard-success
+=> "Please confirm on your Coldcard that the wallet registration completed successfully."
+=> "لطفاً روی Coldcard خود تأیید کنید که ثبت کیف پول با موفقیت انجام شد.";;
+
+business-confirm-device
+=> "Please confirm on your device..."
+=> "لطفاً روی دستگاه خود تأیید کنید...";;
+
+business-confirm-registration => "Confirm Registration" => "تأیید ثبت"
+
+business-connect-device-register
+=> "Connect the associated device to register"
+=> "برای ثبت، دستگاه مرتبط را متصل کنید";;
+
+business-connection-error => "Connection Error" => "خطای اتصال"
+
+business-contact-create-account
+=> "Contact Wizardsardine to create an account."
+=> "برای ایجاد حساب با Wizardsardine تماس بگیرید.";;
+
+business-create-new-path => "Create New Path" => "ایجاد مسیر جدید"
+
+business-current-xpub => "Current xpub" => "xpub فعلی"
+
+business-detected-devices => "Detected devices" => "دستگاه‌های شناسایی‌شده"
+
+business-device-disconnected => "Device disconnected" => "دستگاه قطع شد"
+
+business-device-locked-unlock
+=> "Device is locked. Please unlock it first."
+=> "دستگاه قفل است. لطفاً ابتدا قفل آن را باز کنید.";;
+
+business-device-not-supported
+=> "Device is not supported"
+=> "دستگاه پشتیبانی نمی‌شود";;
+
+business-device-unsupported-locked
+=> "Device locked or unsupported"
+=> "دستگاه قفل است یا پشتیبانی نمی‌شود";;
+
+business-did-registration-succeed
+=> "Did the registration succeed on your Coldcard?"
+=> "آیا ثبت روی Coldcard شما موفق بود؟";;
+
+business-duplicate-timelock => "Duplicate timelock" => "قفل زمانی تکراری"
+
+business-edit-key => "Edit Key" => "ویرایش کلید"
+
+business-edit-primary-path => "Edit Primary Path" => "ویرایش مسیر اصلی"
+
+business-edit-recovery-path => "Edit Recovery Path" => "ویرایش مسیر بازیابی"
+
+business-edited => "Edited" => "ویرایش‌شده"
+
+business-edited-by-on
+=> "Edited by {$editor} on {$date}"
+=> "ویرایش‌شده توسط {$editor} در {$date}";;
+
+business-edited-by-user => "Edited by {$editor}" => "ویرایش‌شده توسط {$editor}"
+
+business-edited-on => "Edited on {$date}" => "ویرایش‌شده در {$date}"
+
+business-edited-relative
+=> "Edited{$editor} {$time}"
+=> "ویرایش‌شده{$editor} {$time}";;
+
+business-email-app-open-failed
+=> "Couldn't open your email app"
+=> "برنامه ایمیل شما باز نشد";;
+
+business-email-app-open-failed-message
+=> "Open your email client and contact Wizardsardine to request template edits."
+=> "برنامه ایمیل خود را باز کنید و برای درخواست ویرایش قالب با Wizardsardine تماس بگیرید.";;
+
+business-external-keys => "External keys" => "کلیدهای خارجی"
+
+business-external-signer-help
+=> "The third party who will set up and sign with this key. They'll be invited by email."
+=> "شخص ثالثی که این کلید را تنظیم می‌کند و با آن امضا می‌کند. از طریق ایمیل دعوت خواهد شد.";;
+
+business-fetched-from-device
+=> "Fetched from {$kind} #{$fingerprint}"
+=> "دریافت‌شده از {$kind} #{$fingerprint}";;
+
+business-fetching-device => "Fetching from device..." => "در حال دریافت از دستگاه..."
+
+business-file-dialog-result-failed
+=> "Failed to receive result from file dialog thread"
+=> "دریافت نتیجه از نخ پنجره انتخاب فایل ناموفق بود";;
+
+business-file-read-failed
+=> "Failed to read file: {$error}"
+=> "خواندن فایل ناموفق بود: {$error}";;
+
+business-filter-organizations => "Filter organizations..." => "فیلتر سازمان‌ها..."
+
+business-filter-wallets => "Filter wallets..." => "فیلتر کیف پول‌ها..."
+
+business-from-your-organization => "From your organization" => "از سازمان شما"
+
+business-hardware-wallet-not-found
+=> "Hardware wallet not found"
+=> "کیف پول سخت‌افزاری یافت نشد";;
+
+business-import-xpub-file
+=> "Import extended public key file"
+=> "وارد کردن فایل کلید عمومی توسعه‌یافته";;
+
+business-internal-signer-help
+=> "The organization member who will set up and sign with this key. They'll be invited by email."
+=> "عضوی از سازمان شما که این کلید را تنظیم می‌کند و با آن امضا می‌کند. از طریق ایمیل دعوت خواهد شد.";;
+
+business-invalid-threshold => "Invalid threshold value" => "مقدار آستانه نامعتبر است"
+
+business-key-alias => "Key Alias" => "نام مستعار کلید"
+
+business-key-alias-placeholder
+=> "e.g. Alice, Treasury, Lawyer..."
+=> "مثلاً آلیس، خزانه، وکیل...";;
+
+business-key-count
+=> "{ $count ->\n    [one] (1 key)\n   *[other] ({$count} keys)\n}"
+=> "{ $count ->\n    [one] (1 کلید)\n   *[other] ({$count} کلید)\n}";;
+
+business-key-definition-help
+=> "Define the key's name and who holds it. You'll set it up later, by connecting a device or adding its public key."
+=> "نام کلید و دارنده آن را مشخص کنید. بعداً با اتصال یک دستگاه یا افزودن کلید عمومی آن، آن را تنظیم خواهید کرد.";;
+
+business-key-deleted => "Key Deleted" => "کلید حذف شد"
+
+business-key-deleted-message
+=> "The key you were editing was deleted by another user."
+=> "کلیدی که در حال ویرایش آن بودید توسط کاربر دیگری حذف شد.";;
+
+business-key-modified => "Key Modified" => "کلید تغییر کرد"
+
+business-key-modified-message
+=> "This key was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "این کلید توسط کاربر دیگری تغییر کرد. می‌خواهید نسخه سرور را بارگذاری کنید یا تغییرات خود را حفظ کنید؟";;
+
+business-key-number => "Key {$id}" => "کلید {$id}"
+
+business-key-path-account-help
+=> "The account number in this key's derivation path. Pick a different account to derive an independent key from the same device."
+=> "شماره حساب در مسیر اشتقاق این کلید. برای اشتقاق یک کلید مستقل از همان دستگاه، حساب دیگری انتخاب کنید.";;
+
+business-key-removed => "Key Removed" => "کلید برداشته شد"
+
+business-key-removed-from-path
+=> "\"{$alias}\" was deleted by another user and has been removed from your path selection."
+=> "\"{$alias}\" توسط کاربر دیگری حذف شد و از انتخاب مسیر شما برداشته شد.";;
+
+business-key-type => "Key Type" => "نوع کلید"
+
+business-key-type-help
+=> "Internal: Held by a member of your organization.\nExternal: Held by a trusted third party.\nCosigner: Professional co-signing service.\nSafetyNet: Professional recovery service."
+=> "داخلی: در اختیار عضوی از سازمان شما.\nخارجی: در اختیار یک شخص ثالث مورد اعتماد.\nهم‌امضاکننده: سرویس حرفه‌ای هم‌امضا.\nتور ایمنی: سرویس حرفه‌ای بازیابی.";;
+
+business-keys-awaiting-manager
+=> "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet."
+=> "در انتظار مدیر کیف پول. او هنوز کلیدها و امضاکنندگان را آماده اعلام نکرده است.";;
+
+business-keys-in-path => "Keys in Path:" => "کلیدهای مسیر:"
+
+business-keys-manager-instruction
+=> "List the keys that will be part of this wallet and assign a signer to each. The spending policy will be crafted from these keys."
+=> "کلیدهایی را که بخشی از این کیف پول خواهند بود فهرست کنید و به هر کدام یک امضاکننده اختصاص دهید. سیاست خرج‌کردن از همین کلیدها ساخته می‌شود.";;
+
+business-keys-ready-by-manager
+=> "Marked as ready by the Wallet Manager. They've finished adding keys & signers."
+=> "توسط مدیر کیف پول آماده اعلام شد. افزودن کلیدها و امضاکنندگان به پایان رسیده است.";;
+
+business-keys-ready-policy-editable
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys. You can still edit keys if anything needs to change."
+=> "کلیدها و امضاکنندگان آماده اعلام شدند. سیاست خرج‌کردن از همین کلیدها ساخته می‌شود. اگر چیزی نیاز به تغییر دارد، هنوز می‌توانید کلیدها را ویرایش کنید.";;
+
+business-keys-ready-policy-pending
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys."
+=> "کلیدها و امضاکنندگان آماده اعلام شدند. سیاست خرج‌کردن از همین کلیدها ساخته می‌شود.";;
+
+business-keys-required-to-spend
+=> "{ $count ->\n    [one] {$threshold} of 1 key required to spend\n   *[other] {$threshold} of {$count} keys required to spend\n}"
+=> "{ $count ->\n    [one] برای خرج کردن {$threshold} از 1 کلید لازم است\n   *[other] برای خرج کردن {$threshold} از {$count} کلید لازم است\n}";;
+
+business-keys-shared-policy-tab
+=> "These keys are shared with the Spending policy tab"
+=> "این کلیدها با زبانه سیاست خرج‌کردن به اشتراک گذاشته می‌شوند";;
+
+business-keys-shared-with-policy
+=> "These keys are shared with the Spending policy tab, where you arrange them into spending paths."
+=> "این کلیدها با زبانه سیاست خرج‌کردن به اشتراک گذاشته می‌شوند، جایی که آن‌ها را در مسیرهای خرج‌کردن مرتب می‌کنید.";;
+
+business-keys-signers => "Keys & Signers" => "کلیدها و امضاکنندگان"
+
+business-loading-wallet => "Loading wallet..." => "در حال بارگذاری کیف پول..."
+
+business-login-email-help
+=> "Enter the email associated with your account"
+=> "ایمیل مرتبط با حساب خود را وارد کنید";;
+
+business-login-failed => "Login failed." => "ورود ناموفق بود."
+
+business-lost-connection-restart
+=> "Lost connection to the server. Please restart the application."
+=> "اتصال به سرور قطع شد. لطفاً برنامه را دوباره اجرا کنید.";;
+
+business-manager-set-keys-help
+=> "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf."
+=> "برای تکمیل تنظیم یک کلید، آن را انتخاب کنید. کلیدها را می‌توان به‌صورت جداگانه توسط هر مدیر کلید، یا از طرف او توسط مدیر کیف پول تنظیم کرد.";;
+
+business-max-unit => "Max {$max} {$unit}" => "حداکثر {$max} {$unit}"
+
+business-max-unit-label => "Max: {$max} {$unit}" => "حداکثر: {$max} {$unit}"
+
+business-new-email-address => "New email address" => "آدرس ایمیل جدید"
+
+business-no-descriptor-available
+=> "No descriptor available"
+=> "هیچ descriptor در دسترس نیست";;
+
+business-no-devices-to-register
+=> "You have no devices to register."
+=> "دستگاهی برای ثبت ندارید.";;
+
+business-no-hardware-wallets
+=> "No hardware device detected. Connect a device and unlock it."
+=> "هیچ دستگاه سخت‌افزاری شناسایی نشد. یک دستگاه متصل کنید و قفل آن را باز کنید.";;
+
+business-no-keys-assigned
+=> "No keys assigned to you."
+=> "هیچ کلیدی به شما اختصاص داده نشده است.";;
+
+business-no-keys-available
+=> "No keys available. Add keys first."
+=> "هیچ کلیدی در دسترس نیست. ابتدا کلید اضافه کنید.";;
+
+business-no-members-match => "No members match" => "هیچ عضوی مطابقت ندارد"
+
+business-no-orgs-search
+=> "No organizations found matching your search."
+=> "هیچ سازمانی مطابق با جستجوی شما یافت نشد.";;
+
+business-no-timelock => "No timelock" => "بدون قفل زمانی"
+
+business-no-user-id-available
+=> "No user ID available"
+=> "شناسه کاربری در دسترس نیست";;
+
+business-no-wallet-selected => "No wallet selected" => "هیچ کیف پولی انتخاب نشده است"
+
+business-no-wallets-search
+=> "No wallets found matching your search."
+=> "هیچ کیف پولی مطابق با جستجوی شما یافت نشد.";;
+
+business-not-part-wallet
+=> "Not part of this wallet (#{$fingerprint})"
+=> "بخشی از این کیف پول نیست (#{$fingerprint})";;
+
+business-organization => "Organization" => "سازمان"
+
+business-organizations => "Organizations" => "سازمان‌ها"
+
+business-other-participants-keys
+=> "Other participants' keys"
+=> "کلیدهای سایر شرکت‌کنندگان";;
+
+business-participant-set-keys-help
+=> "Select a key assigned to you to complete its setup. You can connect a hardware device or add an extended public key manually."
+=> "برای تکمیل تنظیم، کلیدی را که به شما اختصاص یافته انتخاب کنید. می‌توانید یک دستگاه سخت‌افزاری متصل کنید یا یک کلید عمومی توسعه‌یافته را دستی اضافه کنید.";;
+
+business-path-deleted => "Path Deleted" => "مسیر حذف شد"
+
+business-path-deleted-message
+=> "The path you were editing was deleted by another user."
+=> "مسیری که در حال ویرایش آن بودید توسط کاربر دیگری حذف شد.";;
+
+business-path-modified => "Path Modified" => "مسیر تغییر کرد"
+
+business-primary-path => "Primary path" => "مسیر اصلی"
+
+business-primary-path-modified-message
+=> "The primary path was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "مسیر اصلی توسط کاربر دیگری تغییر کرد. می‌خواهید نسخه سرور را بارگذاری کنید یا تغییرات خود را حفظ کنید؟";;
+
+business-professional-service => "Professional service" => "سرویس حرفه‌ای"
+
+business-provider-name => "Provider · {$provider}" => "ارائه‌دهنده · {$provider}"
+
+business-recovery-path => "Recovery path" => "مسیر بازیابی"
+
+business-recovery-path-modified-message
+=> "This recovery path was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "این مسیر بازیابی توسط کاربر دیگری تغییر کرد. می‌خواهید نسخه سرور را بارگذاری کنید یا تغییرات خود را حفظ کنید؟";;
+
+business-recovery-path-number
+=> "Recovery path {$number}"
+=> "مسیر بازیابی {$number}";;
+
+business-register-devices => "Register Devices" => "ثبت دستگاه‌ها"
+
+business-register-wallet-devices-help
+=> "Register the wallet descriptor on each device, or skip if unavailable."
+=> "descriptor کیف پول را روی هر دستگاه ثبت کنید، یا اگر در دسترس نیست از این مرحله رد شوید.";;
+
+business-registered-on-device => "Registered on device" => "روی دستگاه ثبت شد"
+
+business-registering-wallet => "Registering Wallet" => "در حال ثبت کیف پول"
+
+business-registration-failed => "Registration Failed" => "ثبت ناموفق بود"
+
+business-request-template-edits-help
+=> "To request edits, reach out to Wizardsardine directly: they can make the changes and send it back for approval."
+=> "برای درخواست ویرایش، مستقیماً با Wizardsardine تماس بگیرید: آن‌ها می‌توانند تغییرات را اعمال کنند و قالب را برای تصویب بازگردانند.";;
+
+business-role-manager => "Manager" => "مدیر"
+
+business-role-participant => "Participant" => "شرکت‌کننده"
+
+business-search-members-or-email
+=> "Search organization members or enter email"
+=> "جستجوی اعضای سازمان یا وارد کردن ایمیل";;
+
+business-select-account-placeholder => "Select account" => "انتخاب حساب"
+
+business-select-key-source
+=> "Select key source · {$alias}"
+=> "انتخاب منبع کلید · {$alias}";;
+
+business-select-xpub-file => "Select xpub file" => "انتخاب فایل xpub"
+
+business-service-token => "Service token" => "توکن سرویس"
+
+business-service-token-help
+=> "Paste the token from the provider. Their firm name is fetched automatically."
+=> "توکن ارائه‌دهنده را جای‌گذاری کنید. نام شرکت آن‌ها به‌صورت خودکار دریافت می‌شود.";;
+
+business-service-token-placeholder
+=> "e.g. 42-absent-cake-eagle"
+=> "مثلاً 42-absent-cake-eagle";;
+
+business-service-unavailable
+=> "The service is temporarily unavailable. Your wallet data and funds are not affected."
+=> "این سرویس موقتاً در دسترس نیست. داده‌ها و وجوه کیف پول شما تحت تأثیر قرار نگرفته‌اند.";;
+
+business-set-keys => "Set Keys" => "تنظیم کلیدها"
+
+business-signer-email => "Signer email" => "ایمیل امضاکننده"
+
+business-spending-policy => "Spending policy" => "سیاست خرج‌کردن"
+
+business-template-locked-approve
+=> "Template is locked and pending approval. You must approve it to continue."
+=> "قالب قفل است و در انتظار تصویب. برای ادامه باید آن را تصویب کنید.";;
+
+business-template-locked-unlock
+=> "Template is locked and pending approval. Unlock to make further changes."
+=> "قالب قفل است و در انتظار تصویب. برای اعمال تغییرات بیشتر، قفل را باز کنید.";;
+
+business-template-read-only
+=> "Read-only. Only a WS Admin can edit this template."
+=> "فقط‌خواندنی. تنها مدیر WS می‌تواند این قالب را ویرایش کند.";;
+
+business-text-files => "Text files" => "فایل‌های متنی"
+
+business-threshold-range => "Threshold (1-{$count}):" => "آستانه (1-{$count}):"
+
+business-timelock => "Timelock:" => "قفل زمانی:"
+
+business-timelock-unit-days => "days" => "روز"
+
+business-timelock-unit-hours => "hours" => "ساعت"
+
+business-timelock-unit-months => "months" => "ماه"
+
+business-timelock-zero => "Timelock cannot be zero" => "قفل زمانی نمی‌تواند صفر باشد"
+
+business-token-duplicate => "Duplicate token." => "توکن تکراری."
+
+business-token-invalid => "Invalid token." => "توکن نامعتبر."
+
+business-try-again-support
+=> "Please try again shortly. If the issue persists, contact support."
+=> "لطفاً کمی بعد دوباره تلاش کنید. اگر مشکل ادامه داشت، با پشتیبانی تماس بگیرید.";;
+
+business-unable-load-wallet
+=> "Unable to load wallet"
+=> "بارگذاری کیف پول ممکن نیست";;
+
+business-unsupported-method
+=> "Unsupported method: {$method}"
+=> "روش پشتیبانی‌نشده: {$method}";;
+
+business-use-email => "Use {$email}" => "استفاده از {$email}"
+
+business-user-session-not-found
+=> "User session not found. Please log in again or contact Wizardsardine."
+=> "نشست کاربر یافت نشد. لطفاً دوباره وارد شوید یا با Wizardsardine تماس بگیرید.";;
+
+business-wallet-access-denied
+=> "You do not have access to this wallet. Contact Wizardsardine."
+=> "شما به این کیف پول دسترسی ندارید. با Wizardsardine تماس بگیرید.";;
+
+business-wallet-count-label
+=> "{ $count ->\n    [one] 1 wallet\n   *[other] {$count} wallets\n}"
+=> "{ $count ->\n    [one] 1 کیف پول\n   *[other] {$count} کیف پول\n}";;
+
+business-wallets => "Wallets" => "کیف پول‌ها"
+
+business-wrong-network-device
+=> "Wrong network in device settings"
+=> "شبکه نادرست در تنظیمات دستگاه";;
+
+business-xpub-empty
+=> "Extended public key cannot be empty."
+=> "کلید عمومی توسعه‌یافته نمی‌تواند خالی باشد.";;
+
+business-xpub-invalid-format
+=> "Invalid extended public key format: {$error}"
+=> "قالب کلید عمومی توسعه‌یافته نامعتبر است: {$error}";;
+
+business-xpub-invalid-network
+=> "Extended public key is not valid for {$network}."
+=> "کلید عمومی توسعه‌یافته برای {$network} معتبر نیست.";;
+
+business-xpub-replace-existing-help
+=> "This key already has an xpub. You can replace it by fetching from a device, importing from file, or pasting."
+=> "این کلید از قبل یک xpub دارد. می‌توانید آن را با دریافت از دستگاه، وارد کردن از فایل، یا جای‌گذاری جایگزین کنید.";;
+
+business-your-keys => "Your keys" => "کلیدهای شما"
+
+coins-address-label => "Address label:" => "برچسب آدرس:"
+
+coins-block-height => "Block height:" => "ارتفاع بلاک:"
+
+coins-deposit-transaction-label
+=> "Deposit transaction label:"
+=> "برچسب تراکنش واریز:";;
+
+coins-first-recovery-in-blocks
+=> "First recovery path will be available in {$blocks} blocks"
+=> "اولین مسیر بازیابی تا {$blocks} بلاک دیگر در دسترس خواهد بود";;
+
+coins-not-in-block => "Not in a block" => "در هیچ بلاکی نیست"
+
+coins-outpoint => "Outpoint:" => "Outpoint:"
+
+coins-recovery-available
+=> "One or more recovery paths are available"
+=> "یک یا چند مسیر بازیابی در دسترس است";;
+
+coins-refresh-coin => "Refresh coin" => "تازه‌سازی کوین"
+
+coins-spend-block-height => "Spend block height:" => "ارتفاع بلاک خرج:"
+
+coins-spend-txid => "Spend txid:" => "شناسه تراکنش خرج:"
+
+combobox-already-signer => "already a signer" => "از قبل امضاکننده است"
+
+common-address => "Address" => "آدرس"
+
+common-address-label => "Address:" => "آدرس:"
+
+common-and => "and" => "و"
+
+common-approx-feerate-value => "(~{$rate} sats/vbyte)" => "(~{$rate} sats/vbyte)"
+
+common-blocks => "blocks" => "بلاک"
+
+common-connecting-ellipsis => "Connecting..." => "در حال اتصال..."
+
+common-connection-failed => "Connection failed" => "اتصال ناموفق بود"
+
+common-copy => "Copy" => "کپی"
+
+common-descriptor => "Descriptor" => "Descriptor"
+
+common-descriptor-label => "Descriptor:" => "Descriptor:"
+
+common-email => "Email" => "ایمیل"
+
+common-error => "Error" => "خطا"
+
+common-error-with-detail => "{$message} ({$error})" => "{$message} ({$error})"
+
+common-feerate => "Feerate" => "نرخ کارمزد"
+
+common-feerate-value => "({$rate} sats/vbyte)" => "({$rate} sats/vbyte)"
+
+common-fetching => "Fetching ..." => "در حال دریافت ..."
+
+common-from => "From" => "از"
+
+common-learn-more => "Learn more" => "اطلاعات بیشتر"
+
+common-loading => "Loading..." => "در حال بارگذاری..."
+
+common-login => "Login" => "ورود"
+
+common-no-label => "No label" => "بدون برچسب"
+
+common-no-label-parenthesized => "(No label)" => "(بدون برچسب)"
+
+common-not-available => "N/A" => "نامشخص"
+
+common-other-options => "Other options" => "گزینه‌های دیگر"
+
+common-paste => "Paste" => "جای‌گذاری"
+
+common-processing => "Processing..." => "در حال پردازش..."
+
+common-ready => "Ready" => "آماده"
+
+common-recovery => "Recovery" => "بازیابی"
+
+common-register => "Register" => "ثبت"
+
+common-see-more => "See more" => "مشاهده بیشتر"
+
+common-select-account
+=> "Select an account to continue"
+=> "برای ادامه یک حساب انتخاب کنید";;
+
+common-self-transfer => "Self-transfer" => "انتقال به خود"
+
+common-something-wrong => "Something wrong happened" => "مشکلی پیش آمد"
+
+common-token => "Token" => "توکن"
+
+common-wallet => "Wallet" => "کیف پول"
+
+connect-account-missing-from-cache
+=> "Account must be in cache"
+=> "حساب باید در حافظه نهان باشد";;
+
+connect-cache-update-failed
+=> "Failed to update cache: {$error}"
+=> "به‌روزرسانی حافظه نهان ناموفق بود: {$error}";;
+
+connect-remote-servers-unresponsive
+=> "Remote servers are unresponsive"
+=> "سرورهای راه دور پاسخ نمی‌دهند";;
+
+decrypt-airgap-help
+=> "Using an air-gapped device? Export the xpub from your device, then use the upload or paste option. If you don’t know the correct derivation path, try with the following:"
+=> "از یک دستگاه ایزوله (air-gapped) استفاده می‌کنید؟ xpub را از دستگاه خود خروجی بگیرید، سپس از گزینه بارگذاری یا جای‌گذاری استفاده کنید. اگر مسیر اشتقاق درست را نمی‌دانید، این موارد را امتحان کنید:";;
+
+decrypt-backup-file => "Decrypt backup file" => "رمزگشایی فایل پشتیبان"
+
+decrypt-device-description
+=> "Plug in and unlock a hardware device belonging to this setup to automatically decrypt the backup"
+=> "یک دستگاه سخت‌افزاری متعلق به این پیکربندی را متصل کنید و قفل آن را باز کنید تا پشتیبان به‌صورت خودکار رمزگشایی شود";;
+
+decrypt-device-failed
+=> "Failed to decrypt file with this device"
+=> "رمزگشایی فایل با این دستگاه ناموفق بود";;
+
+decrypt-enter-mnemonic-unsafe
+=> "UNSAFE: Enter mnemonic of one of the keys"
+=> "ناایمن: عبارت بذر یکی از کلیدها را وارد کنید";;
+
+decrypt-enter-mnemonic-warning
+=> "This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds."
+=> "این گزینه امن نیست. می‌دانم که وارد کردن عبارت بذر روی رایانه ممکن است به سرقت وجوه من منجر شود.";;
+
+decrypt-invalid-descriptor
+=> "The file has been decrypted but the descriptor is not a valid Liana descriptor."
+=> "فایل رمزگشایی شد اما descriptor یک descriptor معتبر Liana نیست.";;
+
+decrypt-invalid-encoding
+=> "The file cannot be decoded properly, it seems not to be an encrypted backup."
+=> "فایل به‌درستی کدگشایی نمی‌شود، به نظر نمی‌رسد یک پشتیبان رمزگذاری‌شده باشد.";;
+
+decrypt-invalid-mnemonic => "Invalid mnemonic" => "عبارت بذر نامعتبر"
+
+decrypt-invalid-type
+=> "The file has been decrypted but the content type is not supported."
+=> "فایل رمزگشایی شد اما نوع محتوا پشتیبانی نمی‌شود.";;
+
+decrypt-invalid-xpub => "Invalid xpub" => "xpub نامعتبر"
+
+decrypt-mnemonic-cannot-decrypt
+=> "Mnemonic is valid but cannot decrypt the file"
+=> "عبارت بذر معتبر است اما نمی‌تواند فایل را رمزگشایی کند";;
+
+decrypt-mnemonic-source => "Mnemonic" => "عبارت بذر"
+
+decrypt-pairing-code => "Pairing code: {$code}" => "کد جفت‌سازی: {$code}"
+
+decrypt-paste-xpub
+=> "Paste an extended public key"
+=> "یک کلید عمومی توسعه‌یافته جای‌گذاری کنید";;
+
+decrypt-provide-xpub
+=> "Provide one of the xpubs used in this wallet."
+=> "یکی از xpubهای استفاده‌شده در این کیف پول را ارائه دهید.";;
+
+decrypt-try-device
+=> "Try to decrypt with this device..."
+=> "تلاش برای رمزگشایی با این دستگاه...";;
+
+decrypt-unlock-device
+=> "Please unlock or open app on the device"
+=> "لطفاً قفل دستگاه را باز کنید یا برنامه را روی آن باز کنید";;
+
+decrypt-xpub-cannot-decrypt
+=> "Xpub is valid but cannot decrypt this file"
+=> "xpub معتبر است اما نمی‌تواند این فایل را رمزگشایی کند";;
+
+device-already-used => "Already used" => "قبلاً استفاده شده"
+
+device-check-device => "Please check your device" => "لطفاً دستگاه خود را بررسی کنید"
+
+device-enter-cosigner-token
+=> "Enter a Cosigner token"
+=> "یک توکن هم‌امضاکننده وارد کنید";;
+
+device-enter-safety-net-token
+=> "Enter a Safety Net token"
+=> "یک توکن تور ایمنی وارد کنید";;
+
+device-generate-hot-key
+=> "Generate hot key stored on this computer"
+=> "تولید کلید داغ ذخیره‌شده روی این رایانه";;
+
+device-hot-key-test-only
+=> "We recommend using this option only for test purposes"
+=> "توصیه می‌کنیم از این گزینه فقط برای اهداف آزمایشی استفاده کنید";;
+
+device-install-firmware-version-or-later
+=> "Install firmware version {$version} \nor later"
+=> "میان‌افزار نسخه {$version} \nیا بالاتر را نصب کنید";;
+
+device-locked => "Locked" => "قفل"
+
+device-locked-check-code
+=> "Locked, check code: {$code}"
+=> "قفل است، کد بررسی: {$code}";;
+
+device-open-app
+=> "Please open the app on device"
+=> "لطفاً برنامه را روی دستگاه باز کنید";;
+
+device-processing-check-device
+=> "Processing, please check your device"
+=> "در حال پردازش، لطفاً دستگاه خود را بررسی کنید";;
+
+device-registered => "Registered" => "ثبت شد"
+
+device-signed => "Signed" => "امضا شد"
+
+device-unlock => "Please unlock the device" => "لطفاً قفل دستگاه را باز کنید"
+
+device-unrelated-wallet
+=> "This signing device is not related to this Liana wallet."
+=> "این دستگاه امضا به این کیف پول Liana مربوط نیست.";;
+
+device-version-unsupported
+=> "Device version not supported, upgrade to version > {$version}"
+=> "نسخه دستگاه پشتیبانی نمی‌شود، به نسخه بالاتر از {$version} ارتقا دهید";;
+
+duration-days
+=> "{ $count ->\n    [one] 1 day\n   *[other] {$count} days\n}"
+=> "{ $count ->\n    [one] 1 روز\n   *[other] {$count} روز\n}";;
+
+duration-days-approx => "~{$count} days" => "~{$count} روز"
+
+duration-days-compact => "{$count}d" => "{$count} روز"
+
+duration-days-compact-approx => "~{$count}d" => "~{$count} روز"
+
+duration-hours
+=> "{ $count ->\n    [one] 1 hour\n   *[other] {$count} hours\n}"
+=> "{ $count ->\n    [one] 1 ساعت\n   *[other] {$count} ساعت\n}";;
+
+duration-hours-compact => "{$count}h" => "{$count} ساعت"
+
+duration-minutes
+=> "{ $count ->\n    [one] 1 minute\n   *[other] {$count} minutes\n}"
+=> "{ $count ->\n    [one] 1 دقیقه\n   *[other] {$count} دقیقه\n}";;
+
+duration-minutes-compact => "{$count}m" => "{$count} دقیقه"
+
+duration-months
+=> "{ $count ->\n    [one] 1 month\n   *[other] {$count} months\n}"
+=> "{ $count ->\n    [one] 1 ماه\n   *[other] {$count} ماه\n}";;
+
+duration-months-compact => "{$count}m" => "{$count} ماه"
+
+duration-years
+=> "{ $count ->\n    [one] 1 year\n   *[other] {$count} years\n}"
+=> "{ $count ->\n    [one] 1 سال\n   *[other] {$count} سال\n}";;
+
+duration-years-compact => "{$count}y" => "{$count} سال"
+
+error-unknown => "Unknown error occurred" => "خطای ناشناخته رخ داد"
+
+export-aliases-conflict
+=> "Aliases conflict, what do you want to do?"
+=> "نام‌های مستعار تعارض دارند، می‌خواهید چه کار کنید؟";;
+
+export-canceled => "Export canceled" => "خروجی لغو شد"
+
+export-labels-conflict
+=> "Labels conflict, what do you want to do?"
+=> "برچسب‌ها تعارض دارند، می‌خواهید چه کار کنید؟";;
+
+export-progress => "Progress: {$progress}%" => "پیشرفت: {$progress}%"
+
+export-select-path
+=> "Select the path you want to export in the popup window..."
+=> "مسیری را که می‌خواهید از آن خروجی بگیرید در پنجره بازشو انتخاب کنید...";;
+
+export-starting => "Starting export..." => "در حال شروع خروجی..."
+
+export-success => "Export successful!" => "خروجی با موفقیت انجام شد!"
+
+export-timeout => "Export failed: timeout" => "خروجی ناموفق بود: زمان به پایان رسید"
+
+export-title-export-backup => "Export Backup" => "خروجی گرفتن از پشتیبان"
+
+export-title-export-descriptor => "Export Descriptor" => "خروجی گرفتن از descriptor"
+
+export-title-export-encrypted-descriptor
+=> "Export Encrypted Descriptor"
+=> "خروجی گرفتن از descriptor رمزگذاری‌شده";;
+
+export-title-export-labels => "Export Labels" => "خروجی گرفتن از برچسب‌ها"
+
+export-title-export-psbt => "Export PSBT" => "خروجی گرفتن از PSBT"
+
+export-title-export-xpub => "Export Xpub" => "خروجی گرفتن از xpub"
+
+export-title-import-descriptor => "Import Descriptor" => "وارد کردن descriptor"
+
+export-title-import-psbt => "Import PSBT" => "وارد کردن PSBT"
+
+export-title-import-wallet-backup
+=> "Import existing wallet from backup"
+=> "وارد کردن کیف پول موجود از پشتیبان";;
+
+export-title-import-xpub => "Import Xpub" => "وارد کردن xpub"
+
+export-title-restore-backup => "Restore Backup" => "بازگردانی پشتیبان"
+
+export-title-transactions => "Export Transactions" => "خروجی گرفتن از تراکنش‌ها"
+
+fiat-amount-non-negative => "Amount must be non-negative" => "مقدار نباید منفی باشد"
+
+fiat-currency-mismatch
+=> "Currency mismatch: expected {$expected}, got {$actual}"
+=> "عدم تطابق ارز: {$expected} انتظار می‌رفت، {$actual} دریافت شد";;
+
+fiat-exchange-rate
+=> "Exchange rate: 1 BTC ~ {$amount} {$currency}"
+=> "نرخ تبدیل: 1 BTC ~ {$amount} {$currency}";;
+
+fiat-invalid-currency => "Invalid currency" => "ارز نامعتبر"
+
+fiat-last-requested => "Last requested: {$time}" => "آخرین درخواست: {$time}"
+
+fiat-last-updated-source
+=> "Last updated at source: {$time}"
+=> "آخرین به‌روزرسانی در منبع: {$time}";;
+
+fiat-price-positive
+=> "Price per BTC must be positive"
+=> "قیمت هر BTC باید مثبت باشد";;
+
+fiat-source => "Source: {$source}" => "منبع: {$source}"
+
+fiat-source-timestamp
+=> "Default price at the time the transaction has been confirmed"
+=> "قیمت پیش‌فرض در زمانی که تراکنش تأیید شده است";;
+
+fiat-source-user
+=> "Price you have filled yourself"
+=> "قیمتی که خودتان وارد کرده‌اید";;
+
+fiat-source-wizardsardine
+=> "Price automatically processed by WS when you crafted the transaction"
+=> "قیمتی که هنگام ساخت تراکنش به‌صورت خودکار توسط WS پردازش شده است";;
+
+home-balance => "Balance" => "موجودی"
+
+home-checking-transactions
+=> "Checking for new transactions"
+=> "در حال بررسی تراکنش‌های جدید";;
+
+home-payment-history => "Payment History" => "تاریخچه پرداخت‌ها"
+
+home-recovery-left
+=> "≈ {$units} left before first recovery path becomes available."
+=> "≈ {$units} تا در دسترس شدن اولین مسیر بازیابی باقی مانده است.";;
+
+home-recovery-warning
+=> "Recovery path is or will soon be available for {$count} coin(s)."
+=> "مسیر بازیابی برای {$count} کوین در دسترس است یا به‌زودی خواهد بود.";;
+
+home-rescan-warning-backup
+=> "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions."
+=> "از آنجا که این کیف پول از یک پشتیبان بازگردانی شده است، ممکن است برای دیدن تراکنش‌های گذشته نیاز باشد بلاک‌چین را مجدداً اسکن کنید.";;
+
+home-rescan-warning-descriptor
+=> "As this wallet was imported from a descriptor, you may need to rescan the blockchain to see past transactions."
+=> "از آنجا که این کیف پول از یک descriptor وارد شده است، ممکن است برای دیدن تراکنش‌های گذشته نیاز باشد بلاک‌چین را مجدداً اسکن کنید.";;
+
+home-syncing => "Syncing" => "در حال همگام‌سازی"
+
+home-syncing-blockchain
+=> "Syncing blockchain ({$progress}%)"
+=> "در حال همگام‌سازی بلاک‌چین ({$progress}%)";;
+
+hw-descriptor-not-registered
+=> "The wallet descriptor is not registered on the device.\n You can register it in the settings."
+=> "descriptor کیف پول روی دستگاه ثبت نشده است.\n می‌توانید آن را در تنظیمات ثبت کنید.";;
+
+hw-display-address-unavailable
+=> "Liana cannot request the device to display the address. \n Verify it with the QR code in the options below."
+=> "Liana نمی‌تواند از دستگاه بخواهد آدرس را نمایش دهد. \n آن را با کد QR در گزینه‌های زیر تأیید کنید.";;
+
+hw-no-taproot-miniscript
+=> "Device firmware version does not support taproot miniscript"
+=> "نسخه میان‌افزار دستگاه از miniscript در Taproot پشتیبانی نمی‌کند";;
+
+hw-not-in-spending-path
+=> "This signing device is not part of this spending path."
+=> "این دستگاه امضا بخشی از این مسیر خرج‌کردن نیست.";;
+
+import-success => "Import successful" => "وارد کردن با موفقیت انجام شد"
+
+installer-able-to-move-any-time
+=> "Able to move the funds at any time."
+=> "قادر به جابه‌جایی وجوه در هر زمان.";;
+
+installer-accept-invitation-for
+=> "Accept invitation for wallet:"
+=> "پذیرش دعوت‌نامه برای کیف پول:";;
+
+installer-accepted-wallet-not-found
+=> "Wallet of accepted invitation not found"
+=> "کیف پول مربوط به دعوت‌نامه پذیرفته‌شده یافت نشد";;
+
+installer-add-key => "Add key" => "افزودن کلید"
+
+installer-add-safety-net-key => "Add Safety Net key" => "افزودن کلید تور ایمنی"
+
+installer-advanced-settings => "Advanced settings" => "تنظیمات پیشرفته"
+
+installer-already-have-node => "I already have a node" => "من از قبل یک گره دارم"
+
+installer-already-used-sources => "Already used sources" => "منابع قبلاً استفاده‌شده"
+
+installer-auth-token-emailed-to
+=> "An authentication token has been emailed to"
+=> "یک توکن احراز هویت ایمیل شد به";;
+
+installer-auto-install-node
+=> "I want Liana to automatically install a Bitcoin node on my device"
+=> "می‌خواهم Liana به‌صورت خودکار یک گره Bitcoin روی دستگاه من نصب کند";;
+
+installer-available-after-inactivity
+=> "Available after inactivity of ~"
+=> "در دسترس پس از عدم فعالیت به مدت ~";;
+
+installer-available-port-failed
+=> "Could not get available port: {$error}."
+=> "دریافت پورت آزاد ممکن نشد: {$error}.";;
+
+installer-available-ports-failed
+=> "Could not get available ports: {$error1}; {$error2}."
+=> "دریافت پورت‌های آزاد ممکن نشد: {$error1}؛ {$error2}.";;
+
+installer-backed-up-descriptor-checkbox
+=> "I have backed up my descriptor"
+=> "از descriptor خود پشتیبان گرفته‌ام";;
+
+installer-backed-up-mnemonic-checkbox
+=> "I have backed up my mnemonic"
+=> "از عبارت بذر خود پشتیبان گرفته‌ام";;
+
+installer-backed-up-mnemonic-show-xpub
+=> "I have backed up the mnemonic, show the extended public key"
+=> "از عبارت بذر پشتیبان گرفته‌ام، کلید عمومی توسعه‌یافته را نمایش بده";;
+
+installer-backup-descriptor-help
+=> "In Bitcoin, to spend from a wallet that isn't a standard single-key setup, you need both your private keys (usually stored as seed words) to sign transactions, and your wallet descriptor to locate your coins - like a map of your addresses.\nWithout the descriptor, your wallet may not find your coins - even if you still have the keys.\nWhen you click \"Back Up Descriptor\", Liana creates an encrypted file that can only be decrypted using one of your wallet's public keys.\nLiana handles this automatically during the restore of a wallet process by asking you to connect a device or enter a key.\nThis file is safer and more private than copying the descriptor manually."
+=> "در Bitcoin، برای خرج کردن از کیف پولی که یک پیکربندی استاندارد تک‌کلیدی نیست، هم به کلیدهای خصوصی خود (که معمولاً به شکل کلمات بذر ذخیره می‌شوند) برای امضای تراکنش‌ها نیاز دارید و هم به descriptor کیف پول خود برای یافتن کوین‌هایتان - مانند نقشه‌ای از آدرس‌های شما.\nبدون descriptor، ممکن است کیف پول شما کوین‌هایتان را پیدا نکند - حتی اگر همچنان کلیدها را داشته باشید.\nوقتی روی \"پشتیبان‌گیری از descriptor\" کلیک می‌کنید، Liana یک فایل رمزگذاری‌شده می‌سازد که فقط با یکی از کلیدهای عمومی کیف پول شما قابل رمزگشایی است.\nLiana در فرایند بازگردانی کیف پول این کار را به‌صورت خودکار انجام می‌دهد و از شما می‌خواهد یک دستگاه متصل کنید یا یک کلید وارد کنید.\nاین فایل امن‌تر و از نظر حریم خصوصی بهتر از کپی کردن دستی descriptor است.";;
+
+installer-backup-descriptor-message
+=> "This backup is required to recover your funds.\nClick \"Back Up Descriptor\" to download an encrypted file of your wallet configuration and store it in safe, accessible places.\nYou can also copy the plain-text descriptor string, but it's less private.\nWARNING: This file does not include your seed phrase(s). Back those up separately."
+=> "این پشتیبان برای بازیابی وجوه شما لازم است.\nروی \"پشتیبان‌گیری از descriptor\" کلیک کنید تا یک فایل رمزگذاری‌شده از پیکربندی کیف پول خود را دانلود کنید و آن را در مکان‌های امن و در دسترس نگه دارید.\nهمچنین می‌توانید رشته متنی descriptor را کپی کنید، اما از نظر حریم خصوصی ضعیف‌تر است.\nهشدار: این فایل شامل عبارت(های) بذر شما نیست. از آن‌ها جداگانه پشتیبان بگیرید.";;
+
+installer-backup-descriptor-missing
+=> "Backup imported but descriptor missing!"
+=> "پشتیبان وارد شد اما descriptor وجود ندارد!";;
+
+installer-backup-descriptor-title
+=> "Back Up your wallet configuration (Descriptor)"
+=> "از پیکربندی کیف پول خود (Descriptor) پشتیبان بگیرید";;
+
+installer-backup-imported
+=> "Backup successfully imported!"
+=> "پشتیبان با موفقیت وارد شد!";;
+
+installer-backup-mnemonic-title
+=> "Back Up your mnemonic"
+=> "از عبارت بذر خود پشتیبان بگیرید";;
+
+installer-backup-mnemonic-warning
+=> "Beware to back up the mnemonic as it will NOT be stored on the computer."
+=> "حتماً از عبارت بذر پشتیبان بگیرید، زیرا روی رایانه ذخیره نخواهد شد.";;
+
+installer-backup-network-mismatch
+=> "The backup network does not match the selected network."
+=> "شبکه پشتیبان با شبکه انتخاب‌شده مطابقت ندارد.";;
+
+installer-bitcoin-node-management
+=> "Bitcoin node management"
+=> "مدیریت گره Bitcoin";;
+
+installer-bitcoind-already-installed
+=> "Liana-managed bitcoind already installed"
+=> "bitcoind تحت مدیریت Liana از قبل نصب شده است";;
+
+installer-bitcoind-canonicalize-datadir-error
+=> "Failed to canonicalize datadir: {$error}"
+=> "تبدیل datadir به مسیر متعارف ناموفق بود: {$error}";;
+
+installer-bitcoind-command-error
+=> "Command to start bitcoind returned an error: {$error}"
+=> "فرمان اجرای bitcoind با خطا مواجه شد: {$error}";;
+
+installer-bitcoind-connection-error
+=> "bitcoind connection check failed: {$error}"
+=> "بررسی اتصال bitcoind ناموفق بود: {$error}";;
+
+installer-bitcoind-executable-not-found
+=> "bitcoind executable not found."
+=> "فایل اجرایی bitcoind یافت نشد.";;
+
+installer-bitcoind-lock-error
+=> "lock file error: {$error}"
+=> "خطای فایل قفل: {$error}";;
+
+installer-bitcoind-process-exited
+=> "bitcoind process exited with status '{$status}'."
+=> "فرایند bitcoind با وضعیت '{$status}' خاتمه یافت.";;
+
+installer-build-your-own => "Build your own" => "خودتان بسازید"
+
+installer-build-your-own-description
+=> "Create a custom setup that fits all your needs."
+=> "یک پیکربندی سفارشی متناسب با همه نیازهای خود بسازید.";;
+
+installer-canonicalize-cookie-failed
+=> "Failed to canonicalize cookie path: {$error}"
+=> "تبدیل مسیر فایل cookie به مسیر متعارف ناموفق بود: {$error}";;
+
+installer-canonicalize-datadir-failed
+=> "Failed to canonicalize datadir path: {$error}"
+=> "تبدیل مسیر datadir به مسیر متعارف ناموفق بود: {$error}";;
+
+installer-change-alias-later
+=> "You will be able to change it later in Settings > Wallet"
+=> "بعداً می‌توانید آن را در تنظیمات > کیف پول تغییر دهید";;
+
+installer-checking-connection => "Checking connection..." => "در حال بررسی اتصال..."
+
+installer-choose-backend => "Choose backend" => "انتخاب بک‌اند"
+
+installer-choose-wallet-type => "Choose wallet type" => "انتخاب نوع کیف پول"
+
+installer-connected-to => "Connected to" => "متصل به"
+
+installer-connection-checked => "Connection checked" => "اتصال بررسی شد"
+
+installer-cookie-path => "Cookie path" => "مسیر فایل cookie"
+
+installer-cosigner-token-disallowed
+=> "Cosigner tokens are not allowed for this path"
+=> "توکن‌های هم‌امضاکننده برای این مسیر مجاز نیستند";;
+
+installer-create-datadir-path-failed
+=> "Failed to create datadir path: {$error}"
+=> "ایجاد مسیر datadir ناموفق بود: {$error}";;
+
+installer-create-random-key
+=> "Or create a new random key:"
+=> "یا یک کلید تصادفی جدید بسازید:";;
+
+installer-custom-template-description-1
+=> "For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them."
+=> "برای این پیکربندی باید سیاست‌های خرج‌کردن اصلی و بازیابی خود را تعریف کنید. به دلایل امنیتی، پیشنهاد می‌کنیم برای هر کلید متعلق به آن‌ها از یک کیف پول سخت‌افزاری جداگانه استفاده کنید.";;
+
+installer-custom-template-description-2
+=> "The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies."
+=> "کلیدهای متعلق به سیاست اصلی شما همیشه می‌توانند خرج کنند. کلیدهای متعلق به سیاست‌های بازیابی فقط پس از مدت مشخصی عدم فعالیت کیف پول می‌توانند خرج کنند، که امکان بازیابی امن و سیاست‌های خرج‌کردن پیشرفته را فراهم می‌کند.";;
+
+installer-descriptor-generating
+=> "Generating and validating your wallet descriptor. This can take a few seconds."
+=> "در حال تولید و اعتبارسنجی descriptor کیف پول شما. این کار ممکن است چند ثانیه طول بکشد.";;
+
+installer-descriptor-invalid
+=> "Either descriptor is invalid or incompatible with network"
+=> "یا descriptor نامعتبر است یا با شبکه سازگار نیست";;
+
+installer-descriptor-missing => "Descriptor missing" => "descriptor وجود ندارد"
+
+installer-descriptor-read-failed
+=> "Failed to read the descriptor"
+=> "خواندن descriptor ناموفق بود";;
+
+installer-descriptor-template => "Descriptor template" => "قالب descriptor"
+
+installer-descriptor-type => "Descriptor type" => "نوع descriptor"
+
+installer-descriptor-wrong-network
+=> "The descriptor is for another network"
+=> "این descriptor برای شبکه دیگری است";;
+
+installer-detected-hardware => "Detected hardware" => "سخت‌افزار شناسایی‌شده"
+
+installer-device-method-unsupported
+=> "Device not supported, method: {$method}"
+=> "دستگاه پشتیبانی نمی‌شود، روش: {$method}";;
+
+installer-device-no-taproot
+=> "This device does not support Taproot"
+=> "این دستگاه از Taproot پشتیبانی نمی‌کند";;
+
+installer-device-wrong-network
+=> "The device is configured on the wrong network"
+=> "دستگاه روی شبکه نادرست پیکربندی شده است";;
+
+installer-distinct-ports-unavailable
+=> "Could not get distinct ports. Please try again."
+=> "دریافت پورت‌های مجزا ممکن نشد. لطفاً دوباره تلاش کنید.";;
+
+installer-download-complete => "Download complete" => "دانلود کامل شد"
+
+installer-download-failed
+=> "Download failed: '{$error}'."
+=> "دانلود ناموفق بود: '{$error}'.";;
+
+installer-downloading-bitcoin-core-progress
+=> "Downloading Bitcoin Core {$version}... {$progress}%"
+=> "در حال دانلود Bitcoin Core {$version}... {$progress}%";;
+
+installer-duplicate-token => "Duplicate token" => "توکن تکراری"
+
+installer-electrum-address-notes
+=> "Note: include \"ssl://\" as a prefix for SSL connections."
+=> "توجه: برای اتصال‌های SSL، پیشوند \"ssl://\" را اضافه کنید.";;
+
+installer-email-invalid => "Email is not valid" => "ایمیل معتبر نیست"
+
+installer-enter-correct-address
+=> "Please enter correct address"
+=> "لطفاً آدرس درست را وارد کنید";;
+
+installer-enter-correct-electrum-address
+=> "Please enter correct address (including port), optionally prefixed with tcp:// or ssl://"
+=> "لطفاً آدرس درست (شامل پورت) را وارد کنید، در صورت تمایل با پیشوند tcp:// یا ssl://";;
+
+installer-enter-correct-password
+=> "Please enter correct password"
+=> "لطفاً گذرواژه درست را وارد کنید";;
+
+installer-enter-correct-path
+=> "Please enter correct path"
+=> "لطفاً مسیر درست را وارد کنید";;
+
+installer-enter-correct-user
+=> "Please enter correct user"
+=> "لطفاً نام کاربری درست را وارد کنید";;
+
+installer-existing-node-description
+=> "Select this option if you already have a Bitcoin node running locally or remotely. Liana will connect to it."
+=> "اگر از قبل یک گره Bitcoin به‌صورت محلی یا از راه دور در حال اجرا دارید، این گزینه را انتخاب کنید. Liana به آن متصل خواهد شد.";;
+
+installer-expanding-multisig => "Expanding multisig" => "چندامضایی گسترش‌یابنده"
+
+installer-expanding-multisig-description
+=> "Two keys required to spend, with an extra key as a backup."
+=> "برای خرج کردن دو کلید لازم است، به همراه یک کلید اضافی به‌عنوان پشتیبان.";;
+
+installer-expanding-multisig-wallet
+=> "Expanding multisig wallet"
+=> "کیف پول چندامضایی گسترش‌یابنده";;
+
+installer-export-backup-failed
+=> "Failed to export backup"
+=> "خروجی گرفتن از پشتیبان ناموفق بود";;
+
+installer-finalize-installation => "Finalize installation" => "نهایی‌سازی نصب"
+
+installer-generate-mnemonic => "Generate a new mnemonic" => "تولید یک عبارت بذر جدید"
+
+installer-give-wallet-alias
+=> "Give your wallet an alias"
+=> "برای کیف پول خود یک نام مستعار انتخاب کنید";;
+
+installer-hot-signer => "Hot Signer" => "امضاکننده داغ"
+
+installer-import-backup => "Import a backup" => "وارد کردن یک پشتیبان"
+
+installer-import-descriptor => "Import a descriptor" => "وارد کردن یک descriptor"
+
+installer-import-mnemonic => "Import mnemonic" => "وارد کردن عبارت بذر"
+
+installer-import-mnemonic-title => "Import Mnemonic" => "وارد کردن عبارت بذر"
+
+installer-import-wallet-rescan-help
+=> "If you are using a Bitcoin Core node, you will need to perform a rescan of the blockchain after creating the wallet in order to see your coins and past transactions. This can be done in Settings > Node."
+=> "اگر از یک گره Bitcoin Core استفاده می‌کنید، برای دیدن کوین‌ها و تراکنش‌های گذشته خود باید پس از ساخت کیف پول، بلاک‌چین را مجدداً اسکن کنید. این کار در تنظیمات > گره انجام می‌شود.";;
+
+installer-import-wallet-title => "Import the wallet" => "وارد کردن کیف پول"
+
+installer-import-xpub-device
+=> "Import an extended public key by selecting a signing device:"
+=> "با انتخاب یک دستگاه امضا، یک کلید عمومی توسعه‌یافته وارد کنید:";;
+
+installer-imported-key-already-used
+=> "Imported key already used"
+=> "کلید واردشده قبلاً استفاده شده است";;
+
+installer-inheritance-description-1
+=> "For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key."
+=> "برای این پیکربندی به 2 کلید نیاز دارید: کلید اصلی شما (برای خودتان) و کلید ارث (برای وارث شما). به دلایل امنیتی، پیشنهاد می‌کنیم برای هر کلید از یک کیف پول سخت‌افزاری جداگانه استفاده کنید.";;
+
+installer-inheritance-description-2
+=> "You will always be able to spend using your Primary Key. After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds."
+=> "شما همیشه می‌توانید با کلید اصلی خود خرج کنید. پس از مدتی عدم فعالیت (و نه پیش از آن)، کلید ارث شما قادر خواهد بود وجوه شما را بازیابی کند.";;
+
+installer-inheritance-key => "Inheritance key" => "کلید ارث"
+
+installer-installation-complete => "Installation complete" => "نصب کامل شد"
+
+installer-installation-failed
+=> "Installation failed: '{$error}'."
+=> "نصب ناموفق بود: '{$error}'.";;
+
+installer-installed => "Installed" => "نصب شد"
+
+installer-installing => "Installing..." => "در حال نصب..."
+
+installer-installing-bitcoind => "Installing bitcoind..." => "در حال نصب bitcoind..."
+
+installer-introduction => "Introduction" => "معرفی"
+
+installer-invalid-descriptor => "Invalid descriptor" => "descriptor نامعتبر"
+
+installer-invalid-token => "Invalid token!" => "توکن نامعتبر!"
+
+installer-invitation-invalid
+=> "Invitation token is invalid or expired"
+=> "توکن دعوت‌نامه نامعتبر یا منقضی شده است";;
+
+installer-invitation-token => "Invitation token" => "توکن دعوت‌نامه"
+
+installer-invitation-token-help
+=> "Type the invitation token you received by email"
+=> "توکن دعوت‌نامه‌ای را که با ایمیل دریافت کرده‌اید وارد کنید";;
+
+installer-key-alias-already-used
+=> "This alias is already used for another key"
+=> "این نام مستعار قبلاً برای کلید دیگری استفاده شده است";;
+
+installer-key-alias-placeholder
+=> "E.g. My Hardware Wallet"
+=> "مثلاً کیف پول سخت‌افزاری من";;
+
+installer-key-already-in-wallet
+=> "Fetched key has already been added to the wallet."
+=> "کلید دریافت‌شده قبلاً به کیف پول اضافه شده است.";;
+
+installer-key-already-used => "Key already used" => "کلید قبلاً استفاده شده است"
+
+installer-key-already-used-in-path
+=> "Key already used in this path"
+=> "کلید قبلاً در این مسیر استفاده شده است";;
+
+installer-key-fetch-wrong-network
+=> "Failed to fetch key. Switch network on device and retry"
+=> "دریافت کلید ناموفق بود. شبکه را روی دستگاه تغییر دهید و دوباره تلاش کنید";;
+
+installer-key-index => "Key @{$index}:" => "کلید @{$index}:"
+
+installer-key-name-alias => "Key name (alias):" => "نام کلید (نام مستعار):"
+
+installer-key-name-help
+=> "Give this key a friendly name. It will help you identify it later:"
+=> "به این کلید یک نام آشنا بدهید. این کار به شما کمک می‌کند بعداً آن را تشخیص دهید:";;
+
+installer-key-path-account => "Key path account:" => "حساب مسیر کلید:"
+
+installer-key-wrong-network
+=> "Fetched key does not have the correct network"
+=> "کلید دریافت‌شده شبکه درست را ندارد";;
+
+installer-keys-inactivity
+=> "Keys can move the funds after inactivity of:"
+=> "کلیدها پس از این مدت عدم فعالیت می‌توانند وجوه را جابه‌جا کنند:";;
+
+installer-load-previous-wallet
+=> "Load a previously used wallet"
+=> "بارگذاری کیف پولی که قبلاً استفاده شده است";;
+
+installer-load-shared-wallet => "Load a shared wallet" => "بارگذاری یک کیف پول مشترک"
+
+installer-local-wallet-description
+=> "Use your already existing Bitcoin node or automatically install one. The Liana wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet."
+=> "از گره Bitcoin موجود خود استفاده کنید یا به‌صورت خودکار یکی نصب کنید. کیف پول Liana به هیچ سرور خارجی متصل نخواهد شد.\n\nاین خصوصی‌ترین گزینه است، اما داده‌ها فقط به‌صورت محلی روی این رایانه ذخیره می‌شوند. باید خودتان پشتیبان‌گیری کنید و descriptor را با افراد دیگری که می‌خواهید به کیف پول دسترسی داشته باشند به اشتراک بگذارید.";;
+
+installer-managed-node-description
+=> "Liana will install a pruned node on your computer. You won't need to do anything except have some disk space available (~30GB required on mainnet) and wait for the initial synchronization with the network (it can take some days depending on your internet connection speed)."
+=> "Liana یک گره هرس‌شده روی رایانه شما نصب می‌کند. لازم نیست کاری انجام دهید جز اینکه مقداری فضای دیسک آزاد داشته باشید (روی mainnet حدود 30 گیگابایت لازم است) و منتظر همگام‌سازی اولیه با شبکه بمانید (بسته به سرعت اتصال اینترنت شما ممکن است چند روز طول بکشد).";;
+
+installer-mnemonic-backup-help
+=> "A hot key generated on this computer was used for creating this wallet. It needs to be backed up. \n Keep it in a safe place. Never share it with anyone."
+=> "برای ساخت این کیف پول از یک کلید داغ تولیدشده روی این رایانه استفاده شده است. باید از آن پشتیبان گرفته شود. \n آن را در جای امنی نگه دارید. هرگز آن را با کسی به اشتراک نگذارید.";;
+
+installer-mnemonic-recovery-help
+=> "If you were using a hot key (a key stored on the computer) in your wallet, you will need to recover it from mnemonics to be able to sign transactions again. Otherwise you can directly go the next step."
+=> "اگر در کیف پول خود از یک کلید داغ (کلیدی که روی رایانه ذخیره می‌شود) استفاده می‌کردید، برای اینکه دوباره بتوانید تراکنش‌ها را امضا کنید باید آن را از روی عبارت بذر بازیابی کنید. در غیر این صورت می‌توانید مستقیماً به مرحله بعد بروید.";;
+
+installer-multisig-description-1
+=> "For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key."
+=> "برای این پیکربندی به 3 کلید نیاز دارید: دو کلید اصلی و یک کلید بازیابی. به دلایل امنیتی، پیشنهاد می‌کنیم برای هر کلید از یک کیف پول سخت‌افزاری جداگانه استفاده کنید.";;
+
+installer-multisig-description-2
+=> "The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):"
+=> "کلیدهای اصلی یک چندامضایی 2 از 2 را می‌سازند که همیشه می‌تواند خرج کند. اگر یکی از کلیدهای شما در دسترس نباشد، پس از مدتی عدم فعالیت می‌توانید وجوه خود را با استفاده از کلید بازیابی به همراه یکی از کلیدهای اصلی خود بازیابی کنید (چندامضایی 2 از 3):";;
+
+installer-no-current-wallets
+=> "You have no current wallets"
+=> "هیچ کیف پول فعلی ندارید";;
+
+installer-node-setup-title
+=> "Set up connection to the Bitcoin node"
+=> "تنظیم اتصال به گره Bitcoin";;
+
+installer-node-type => "Node type:" => "نوع گره:"
+
+installer-password => "Password" => "گذرواژه"
+
+installer-paste-descriptor => "Paste a descriptor" => "جای‌گذاری یک descriptor"
+
+installer-paste-descriptor-description
+=> "Creates a new wallet from the pasted descriptor"
+=> "یک کیف پول جدید از descriptor جای‌گذاری‌شده می‌سازد";;
+
+installer-path-duplicate-sequence
+=> "No two recovery options may become available at the very same date."
+=> "هیچ دو گزینه بازیابی نمی‌توانند دقیقاً در یک تاریخ در دسترس شوند.";;
+
+installer-path-key-source-disallowed
+=> "Path contains a key that is disallowed for this kind of path."
+=> "این مسیر شامل کلیدی است که برای این نوع مسیر مجاز نیست.";;
+
+installer-path-only-cosigner-keys
+=> "A path cannot contain only cosigner keys."
+=> "یک مسیر نمی‌تواند فقط شامل کلیدهای هم‌امضاکننده باشد.";;
+
+installer-port-attempts-exhausted => "Exhausted attempts" => "تلاش‌ها به پایان رسید"
+
+installer-primary-key => "Primary key" => "کلید اصلی"
+
+installer-primary-key-number => "Primary key #{$number}" => "کلید اصلی #{$number}"
+
+installer-primary-spending-option
+=> "Primary spending option:"
+=> "گزینه خرج‌کردن اصلی:";;
+
+installer-read-cookie-file-failed
+=> "Failed to read cookie file: {$error}"
+=> "خواندن فایل cookie ناموفق بود: {$error}";;
+
+installer-recovery-key => "Recovery key" => "کلید بازیابی"
+
+installer-recovery-option
+=> "Recovery option #{$number}:"
+=> "گزینه بازیابی #{$number}:";;
+
+installer-register-descriptor-failed
+=> "Failed to register descriptor"
+=> "ثبت descriptor ناموفق بود";;
+
+installer-register-descriptor-help
+=> "To be used with the wallet, a signing device needs the descriptor. If the descriptor contains one or more keys imported from an external signing device, the descriptor must be registered on it. Registration confirms that the device is able to handle the policy. Registration on a device is not a substitute for backing up the descriptor."
+=> "برای استفاده با این کیف پول، یک دستگاه امضا به descriptor نیاز دارد. اگر descriptor شامل یک یا چند کلید واردشده از یک دستگاه امضای خارجی باشد، باید روی آن دستگاه ثبت شود. ثبت تأیید می‌کند که دستگاه می‌تواند این سیاست را مدیریت کند. ثبت روی یک دستگاه جایگزین پشتیبان‌گیری از descriptor نیست.";;
+
+installer-register-descriptor-optional
+=> "This step is only necessary if you are using a signing device."
+=> "این مرحله فقط در صورتی لازم است که از یک دستگاه امضا استفاده می‌کنید.";;
+
+installer-register-descriptor-title => "Register descriptor" => "ثبت descriptor"
+
+installer-registered-descriptor-checkbox
+=> "I have registered the descriptor on my device(s)"
+=> "descriptor را روی دستگاه(های) خود ثبت کرده‌ام";;
+
+installer-remote-backend-description
+=> "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead."
+=> "از سرویس ما استفاده کنید تا فوراً آماده انجام تراکنش باشید. Wizardsardine زیرساخت را اجرا می‌کند و امکان اتصال و همگام‌سازی چند رایانه یا چند شرکت‌کننده را فراهم می‌کند.\n\nاین گزینه ساده‌تر و امن‌تری برای کسانی است که می‌خواهند Wizardsardine یک پشتیبان از descriptor آن‌ها را نگه دارد. کنترل کلیدهای شما همچنان در دست خودتان است و Wizardsardine هیچ کنترلی بر وجوه شما ندارد، اما می‌تواند اطلاعات کیف پول شما را که به یک آدرس ایمیل مرتبط است ببیند. کاربرانی که به حریم خصوصی اهمیت می‌دهند بهتر است به‌جای آن زیرساخت خود را اجرا کنند.";;
+
+installer-remote-bitcoin-node-warning
+=> "Connection to a remote Bitcoin node is not supported. Insert an IP address bound to the same machine running Liana (ignore this warning if that's already the case)"
+=> "اتصال به یک گره Bitcoin راه دور پشتیبانی نمی‌شود. یک آدرس IP متعلق به همان دستگاهی که Liana روی آن اجرا می‌شود وارد کنید (اگر همین‌طور است، این هشدار را نادیده بگیرید)";;
+
+installer-rpc-auth => "RPC authentication:" => "احراز هویت RPC:"
+
+installer-rpc-user-password => "User and password" => "نام کاربری و گذرواژه"
+
+installer-safety-net => "Safety Net:" => "تور ایمنی:"
+
+installer-safety-net-description
+=> "This adds a final recovery option containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens."
+=> "این کار یک گزینه بازیابی نهایی شامل کلیدهایی از کارگزاران حرفه‌ای کلید اضافه می‌کند.\n\nاگر یک یا چند توکن تور ایمنی دریافت کرده‌اید از این گزینه استفاده کنید.";;
+
+installer-safety-net-key => "Safety Net key" => "کلید تور ایمنی"
+
+installer-safety-net-token-disallowed
+=> "SafetyNet tokens are not allowed for this path"
+=> "توکن‌های تور ایمنی برای این مسیر مجاز نیستند";;
+
+installer-seed-key-not-in-descriptor
+=> "The descriptor does not use a key derived from this seed"
+=> "این descriptor از کلیدی که از این بذر مشتق شده باشد استفاده نمی‌کند";;
+
+installer-select-device-register
+=> "Select hardware wallet to register descriptor on:"
+=> "کیف پول سخت‌افزاری را برای ثبت descriptor روی آن انتخاب کنید:";;
+
+installer-select-device-register-if-needed
+=> "If necessary, please select the signing device to register descriptor on:"
+=> "در صورت لزوم، دستگاه امضا را برای ثبت descriptor روی آن انتخاب کنید:";;
+
+installer-select-key-source => "Select key source" => "انتخاب منبع کلید"
+
+installer-sequence-value-warning
+=> "Value must be greater than 0 and lower than 65535"
+=> "مقدار باید بزرگ‌تر از 0 و کوچک‌تر از 65535 باشد";;
+
+installer-serialize-daemon-config-failed
+=> "Failed to serialize daemon config: {$error}"
+=> "سریال‌سازی پیکربندی دیمن ناموفق بود: {$error}";;
+
+installer-serialize-gui-config-failed
+=> "Failed to serialize GUI config: {$error}"
+=> "سریال‌سازی پیکربندی GUI ناموفق بود: {$error}";;
+
+installer-share-xpubs-title
+=> "Share your public keys (Xpubs)"
+=> "کلیدهای عمومی خود (xpubها) را به اشتراک بگذارید";;
+
+installer-shared-wallet-help
+=> "If you received an invitation to join a shared wallet"
+=> "اگر دعوت‌نامه‌ای برای پیوستن به یک کیف پول مشترک دریافت کرده‌اید";;
+
+installer-simple-inheritance => "Simple inheritance" => "ارث ساده"
+
+installer-simple-inheritance-description
+=> "Two keys required, one for yourself to spend and another for your heir."
+=> "دو کلید لازم است، یکی برای خودتان جهت خرج کردن و دیگری برای وارث شما.";;
+
+installer-simple-inheritance-wallet
+=> "Simple inheritance wallet"
+=> "کیف پول ارث ساده";;
+
+installer-start-bitcoin-node => "Start Bitcoin full node" => "اجرای گره کامل Bitcoin"
+
+installer-start-daemon-failed
+=> "Failed to start Liana daemon: {$error}"
+=> "اجرای دیمن Liana ناموفق بود: {$error}";;
+
+installer-started => "Started" => "شروع شد"
+
+installer-starting => "Starting..." => "در حال شروع..."
+
+installer-stop-daemon-failed
+=> "Failed to stop Liana daemon: {$error}"
+=> "توقف دیمن Liana ناموفق بود: {$error}";;
+
+installer-store-mnemonic-failed
+=> "Failed to store mnemonic: {$error}"
+=> "ذخیره عبارت بذر ناموفق بود: {$error}";;
+
+installer-switch-account-help
+=> "Switch account if you already use the same hardware in other configurations"
+=> "اگر از همین سخت‌افزار در پیکربندی‌های دیگر استفاده می‌کنید، حساب را تغییر دهید";;
+
+installer-taproot-supported-version
+=> "Taproot is only supported by Liana version 5.0 and above"
+=> "Taproot فقط در Liana نسخه 5.0 و بالاتر پشتیبانی می‌شود";;
+
+installer-template-custom-primary => "Primary keys" => "کلیدهای اصلی"
+
+installer-template-custom-recovery => "Recovery keys" => "کلیدهای بازیابی"
+
+installer-template-event-receipt => "Receipt of funds" => "دریافت وجوه"
+
+installer-template-event-timelock
+=> "After some time* of wallet inactivity"
+=> "پس از مدتی* عدم فعالیت کیف پول";;
+
+installer-template-footnote
+=> "*The time range (timelock) for the activation of keys can be configured in the next step."
+=> "*بازه زمانی (قفل زمانی) برای فعال شدن کلیدها در مرحله بعد قابل تنظیم است.";;
+
+installer-template-multisig-primary => "2-of-2 multisig" => "چندامضایی 2 از 2"
+
+installer-template-multisig-recovery => "2-of-3 multisig" => "چندامضایی 2 از 3"
+
+installer-template-policy-primary
+=> "Primary spending policy"
+=> "سیاست خرج‌کردن اصلی";;
+
+installer-template-policy-recovery
+=> "Recovery spending policy"
+=> "سیاست خرج‌کردن بازیابی";;
+
+installer-template-state-locked => "Can't spend" => "نمی‌تواند خرج کند"
+
+installer-template-state-spend => "Can spend" => "می‌تواند خرج کند"
+
+installer-the-descriptor => "The descriptor" => "Descriptor"
+
+installer-the-descriptor-label => "The descriptor:" => "Descriptor:"
+
+installer-threshold => "Threshold:" => "آستانه:"
+
+installer-threshold-keys
+=> "{ $total ->\n    [one] {$threshold} out of 1 key\n   *[other] {$threshold} out of {$total} keys\n}"
+=> "{ $total ->\n    [one] {$threshold} از 1 کلید\n   *[other] {$threshold} از {$total} کلید\n}";;
+
+installer-token-type-disallowed
+=> "Token type not allowed in this path"
+=> "نوع توکن در این مسیر مجاز نیست";;
+
+installer-use-liana-connect => "Use Liana Connect" => "استفاده از Liana Connect"
+
+installer-use-own-node => "Use your own node" => "استفاده از گره خودتان"
+
+installer-user => "User" => "نام کاربری"
+
+installer-wallet-alias => "Wallet alias" => "نام مستعار کیف پول"
+
+installer-wallet-alias-too-long
+=> "Wallet alias is too long."
+=> "نام مستعار کیف پول خیلی طولانی است.";;
+
+installer-xpub-invalid => "Invalid Xpub" => "xpub نامعتبر"
+
+installer-xpub-origin-missing => "Origin missing" => "مبدأ وجود ندارد"
+
+installer-xpub-wrong-derivation-path
+=> "Wrong derivation path"
+=> "مسیر اشتقاق نادرست";;
+
+installer-xpub-wrong-network => "Wrong network" => "شبکه نادرست"
+
+label-edit => "Edit label" => "ویرایش برچسب"
+
+label-external-output => "(External Output)" => "(خروجی خارجی)"
+
+label-invalid-length
+=> "Invalid label length, must be 80 bytes or less"
+=> "طول برچسب نامعتبر است، باید 80 بایت یا کمتر باشد";;
+
+label-label => "Label" => "برچسب"
+
+launcher-add-existing-wallet
+=> "Add an existing Liana wallet"
+=> "افزودن یک کیف پول Liana موجود";;
+
+launcher-config-descriptor-origin-error
+=> "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin. Liana v0.2 and later only support public keys with origins. Please migrate your funds using Liana v0.1."
+=> "مشکلی در پیکربندی این شبکه وجود دارد. به احتمال زیاد از یک descriptor شامل یک یا چند کلید عمومی بدون مبدأ استفاده می‌کنید. Liana نسخه 0.2 و بالاتر فقط از کلیدهای عمومی دارای مبدأ پشتیبانی می‌کند. لطفاً وجوه خود را با استفاده از Liana v0.1 منتقل کنید.";;
+
+launcher-create-new-wallet
+=> "Create a new Liana wallet"
+=> "ساخت یک کیف پول Liana جدید";;
+
+launcher-default-wallet-name
+=> "My Liana {$network} wallet"
+=> "کیف پول Liana {$network} من";;
+
+launcher-delete-all-data-confirmation
+=> "Are you sure you want to delete the configuration and all associated data for the wallet {$wallet}?"
+=> "آیا مطمئنید می‌خواهید پیکربندی و همه داده‌های مرتبط با کیف پول {$wallet} را حذف کنید؟";;
+
+launcher-delete-connect-all-members
+=> "Also permanently delete this wallet from Liana Connect (for all members)."
+=> "همچنین این کیف پول را برای همیشه از Liana Connect حذف کن (برای همه اعضا).";;
+
+launcher-delete-connect-disassociate
+=> "Also disassociate {$email} from this Liana Connect wallet."
+=> "همچنین {$email} را از این کیف پول Liana Connect جدا کن.";;
+
+launcher-delete-local-config-confirmation
+=> "Are you sure you want to delete locally the configuration for the wallet {$wallet}?"
+=> "آیا مطمئنید می‌خواهید پیکربندی کیف پول {$wallet} را به‌صورت محلی حذف کنید؟";;
+
+launcher-delete-node-not-affected
+=> "(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)"
+=> "(اگر از یک گره Bitcoin تحت مدیریت Liana استفاده می‌کنید، این کار روی آن تأثیری نخواهد داشت.)";;
+
+launcher-delete-node-not-affected-this-network
+=> "(The Liana-managed Bitcoin node for this network will not be affected by this action.)"
+=> "(این کار روی گره Bitcoin تحت مدیریت Liana برای این شبکه تأثیری نخواهد داشت.)";;
+
+launcher-delete-title
+=> "Delete configuration for Liana-{$checksum}"
+=> "حذف پیکربندی برای Liana-{$checksum}";;
+
+launcher-delete-title-alias
+=> "Delete configuration for {$alias} (Liana-{$checksum})"
+=> "حذف پیکربندی برای {$alias} (Liana-{$checksum})";;
+
+launcher-delete-warning-irreversible
+=> "WARNING: This cannot be undone."
+=> "هشدار: این کار قابل بازگشت نیست.";;
+
+launcher-read-daemon-config-failed
+=> "Failed to read daemon configuration file in the directory: {$path}"
+=> "خواندن فایل پیکربندی دیمن در این پوشه ناموفق بود: {$path}";;
+
+launcher-read-gui-config-failed
+=> "Failed to read GUI configuration file in the directory: {$path}"
+=> "خواندن فایل پیکربندی GUI در این پوشه ناموفق بود: {$path}";;
+
+launcher-unexpected-error => "Unexpected {$error}" => "خطای غیرمنتظره {$error}"
+
+launcher-wallet-deleted
+=> "Wallet successfully deleted"
+=> "کیف پول با موفقیت حذف شد";;
+
+launcher-wallet-id-not-found
+=> "Wallet {$wallet_id} not found"
+=> "کیف پول {$wallet_id} یافت نشد";;
+
+launcher-wallet-not-found => "Wallet not found" => "کیف پول یافت نشد"
+
+launcher-welcome => "Welcome" => "خوش آمدید"
+
+launcher-welcome-back => "Welcome back" => "دوباره خوش آمدید"
+
+lianalite-auth-sent
+=> "An authentication was sent to your email:"
+=> "یک درخواست احراز هویت به ایمیل شما ارسال شد:";;
+
+lianalite-token-expired
+=> "Token is expired or is invalid"
+=> "توکن منقضی شده یا نامعتبر است";;
+
+lianalite-token-has-expired-or-invalid
+=> "Token has expired or is invalid"
+=> "توکن منقضی شده است یا نامعتبر است";;
+
+lianalite-token-invalid => "Token is not valid" => "توکن معتبر نیست"
+
+lianalite-wallet-deleted
+=> "This wallet was deleted by its creator for all participants and cannot be opened. To access it again, restore it using a backup file or the wallet descriptor."
+=> "این کیف پول توسط سازنده‌اش برای همه شرکت‌کنندگان حذف شده است و قابل باز کردن نیست. برای دسترسی دوباره به آن، با یک فایل پشتیبان یا descriptor کیف پول آن را بازگردانی کنید.";;
+
+loader-connecting-daemon => "Connecting to daemon..." => "در حال اتصال به دیمن..."
+
+loader-failed => "Liana failed to start" => "اجرای Liana ناموفق بود"
+
+loader-failed-bitcoind
+=> "Liana failed to start, please check if bitcoind is running"
+=> "اجرای Liana ناموفق بود، لطفاً بررسی کنید که bitcoind در حال اجرا باشد";;
+
+loader-internal-daemon-error
+=> "Error while starting the internal daemon"
+=> "خطا هنگام اجرای دیمن داخلی";;
+
+loader-progress => "Progress {$progress}%" => "پیشرفت {$progress}%"
+
+loader-starting-daemon => "Starting daemon..." => "در حال اجرای دیمن..."
+
+loader-sync-progress-1
+=> "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster."
+=> "Bitcoin Core در حال همگام‌سازی بلاک‌چین است. یک همگام‌سازی کامل معمولاً چند روز طول می‌کشد و منابع زیادی مصرف می‌کند. پس از پایان همگام‌سازی اولیه، دفعات بعدی بسیار سریع‌تر خواهند بود.";;
+
+loader-sync-progress-2
+=> "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance."
+=> "Bitcoin Core در حال همگام‌سازی بلاک‌چین است. بسته به آخرین باری که این کار انجام شده، اتصال اینترنت و کارایی رایانه شما، مدتی طول خواهد کشید.";;
+
+loader-sync-progress-3
+=> "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance."
+=> "Bitcoin Core در حال همگام‌سازی بلاک‌چین است. بسته به آخرین باری که این کار انجام شده، اتصال اینترنت و کارایی رایانه شما، ممکن است چند دقیقه طول بکشد.";;
+
+menu-coins-utxos => "Coins/UTXOs" => "کوین‌ها/UTXOها"
+
+menu-dashboard => "Dashboard" => "داشبورد"
+
+menu-drafts-approvals => "Drafts & Approvals" => "پیش‌نویس‌ها و تصویب‌ها"
+
+menu-receive => "Receive" => "دریافت"
+
+menu-send => "Send" => "ارسال"
+
+menu-settings => "Settings" => "تنظیمات"
+
+menu-transactions => "Transactions" => "تراکنش‌ها"
+
+network-coins-have => ", COINS HAVE{ \" \" }" => "است، کوین‌ها{ \" \" }"
+
+network-no-value => "NO VALUE" => "ارزشی ندارند"
+
+network-this-is-a => "THIS IS A{ \" \" }" => "این یک{ \" \" }"
+
+network-wallet => "{$network} WALLET" => "کیف پول {$network}"
+
+payment-address-label => "address label: {$label}" => "برچسب آدرس: {$label}"
+
+payment-incoming => "Incoming payment" => "پرداخت ورودی"
+
+payment-outgoing => "Outgoing payment" => "پرداخت خروجی"
+
+payment-title => "Payment" => "پرداخت"
+
+pill-active => "Active" => "فعال"
+
+pill-always-available => "Always available" => "همیشه در دسترس"
+
+pill-available => "Available" => "در دسترس"
+
+pill-available-compact => "Avail." => "موجود"
+
+pill-batch => "Batch" => "دسته‌ای"
+
+pill-batch-tooltip
+=> "This transaction contains multiple payments"
+=> "این تراکنش شامل چند پرداخت است";;
+
+pill-confirmed => "Confirmed" => "تأییدشده"
+
+pill-confirmed-tooltip
+=> "This transaction has been included in a block"
+=> "این تراکنش در یک بلاک قرار گرفته است";;
+
+pill-deprecated => "Deprecated" => "منسوخ"
+
+pill-deprecated-tooltip
+=> "This transaction cannot be included in the blockchain anymore."
+=> "این تراکنش دیگر نمی‌تواند در بلاک‌چین قرار بگیرد.";;
+
+pill-draft => "Draft" => "پیش‌نویس"
+
+pill-first-recovery-in
+=> "First recovery option available in {$units}"
+=> "اولین گزینه بازیابی تا {$units} دیگر در دسترس است";;
+
+pill-first-recovery-today
+=> "First recovery option available today"
+=> "اولین گزینه بازیابی امروز در دسترس است";;
+
+pill-key-cosigner => "Cosigner" => "هم‌امضاکننده"
+
+pill-key-cosigner-tooltip
+=> "Professional third party co-signing key"
+=> "کلید هم‌امضای شخص ثالث حرفه‌ای";;
+
+pill-key-external => "External" => "خارجی"
+
+pill-key-external-tooltip
+=> "Key held by third parties"
+=> "کلید در اختیار اشخاص ثالث";;
+
+pill-key-internal => "Internal" => "داخلی"
+
+pill-key-internal-tooltip
+=> "Key held by your organization"
+=> "کلید در اختیار سازمان شما";;
+
+pill-key-safety-net => "Safety Net" => "تور ایمنی"
+
+pill-key-safety-net-tooltip
+=> "Professional third party recovery key"
+=> "کلید بازیابی شخص ثالث حرفه‌ای";;
+
+pill-not-in-policy => "Not in policy yet" => "هنوز در سیاست نیست"
+
+pill-recovery-available-tooltip
+=> "Recovery option(s) already available"
+=> "گزینه(های) بازیابی هم‌اکنون در دسترس است";;
+
+pill-recovery-tooltip
+=> "This transaction is using a recovery path"
+=> "این تراکنش از یک مسیر بازیابی استفاده می‌کند";;
+
+pill-rescan-progress => "Rescan... {$progress}%" => "اسکن مجدد... {$progress}%"
+
+pill-signed => "To broadcast" => "برای پخش"
+
+pill-signed-tooltip
+=> "This transaction is signed & ready to broadcast"
+=> "این تراکنش امضا شده و آماده پخش است";;
+
+pill-spent => "Spent" => "خرج‌شده"
+
+pill-spent-tooltip
+=> "The transaction was included in the blockchain."
+=> "این تراکنش در بلاک‌چین قرار گرفت.";;
+
+pill-to-approve => "To approve" => "برای تصویب"
+
+pill-today => "Today" => "امروز"
+
+pill-unconfirmed => "Unconfirmed" => "تأییدنشده"
+
+pill-unconfirmed-tooltip
+=> "Do not treat this as a payment until it is confirmed"
+=> "تا زمانی که تأیید نشده است، آن را پرداخت تلقی نکنید";;
+
+pill-unsigned => "Unsigned" => "امضانشده"
+
+pill-unsigned-tooltip
+=> "This transaction is missing signature(s)"
+=> "امضای این تراکنش ناقص است";;
+
+pill-used-in-spending-paths
+=> "{ $count ->\n    [one] Used in 1 spending path\n   *[other] Used in {$count} spending paths\n}"
+=> "{ $count ->\n    [one] در 1 مسیر خرج‌کردن استفاده شده\n   *[other] در {$count} مسیر خرج‌کردن استفاده شده\n}";;
+
+pill-ws-admin => "WS Admin" => "مدیر WS"
+
+pill-xpub-not-set => "Not Set" => "تنظیم‌نشده"
+
+pill-xpub-set => "✓ Set" => "✓ تنظیم‌شده"
+
+policy-block-duration
+=> "{$blocks} blocks (~{$duration})"
+=> "{$blocks} بلاک (~{$duration})";;
+
+policy-by => "by" => "توسط"
+
+policy-inactive-for
+=> "can spend coins inactive for"
+=> "می‌تواند کوین‌های غیرفعال را خرج کند پس از";;
+
+policy-out-of-by => "out of {$count} by" => "از {$count} توسط"
+
+policy-primary-path
+=> "can always spend this wallet's funds (Primary path)"
+=> "می‌تواند همیشه وجوه این کیف پول را خرج کند (مسیر اصلی)";;
+
+policy-recovery-path => "(Recovery path #{$number})" => "(مسیر بازیابی #{$number})"
+
+policy-safety-net-path => "(Safety Net path)" => "(مسیر تور ایمنی)"
+
+policy-signatures
+=> "{ $count ->\n    [one] 1 signature\n   *[other] {$count} signatures\n}"
+=> "{ $count ->\n    [one] 1 امضا\n   *[other] {$count} امضا\n}";;
+
+policy-wallet-policy => "The wallet policy:" => "سیاست کیف پول:"
+
+psbt-already-signed-by => ", already signed by" => "، از قبل امضا شده توسط"
+
+psbt-broadcast-conflicts-one
+=> "The following transaction is spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on it:"
+=> "تراکنش زیر یک یا چند ورودی از تراکنشی را که قرار است پخش شود خرج می‌کند و همراه با هر تراکنش دیگری که به آن وابسته است حذف خواهد شد:";;
+
+psbt-broadcast-conflicts-some
+=> "The following transactions are spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on them:"
+=> "تراکنش‌های زیر یک یا چند ورودی از تراکنشی را که قرار است پخش شود خرج می‌کنند و همراه با هر تراکنش دیگری که به آن‌ها وابسته است حذف خواهند شد:";;
+
+psbt-broadcast-invalidates-one
+=> "WARNING: Broadcasting this transaction will invalidate a pending payment."
+=> "هشدار: پخش این تراکنش یک پرداخت در انتظار را باطل خواهد کرد.";;
+
+psbt-broadcast-invalidates-some
+=> "WARNING: Broadcasting this transaction will invalidate some pending payments."
+=> "هشدار: پخش این تراکنش برخی پرداخت‌های در انتظار را باطل خواهد کرد.";;
+
+psbt-broadcast-transaction => "Broadcast the transaction" => "پخش تراکنش"
+
+psbt-change => "Change" => "باقی‌مانده"
+
+psbt-coins-spent
+=> "{ $count ->\n    [one] 1 coin spent\n   *[other] {$count} coins spent\n}"
+=> "{ $count ->\n    [one] 1 کوین خرج شد\n   *[other] {$count} کوین خرج شد\n}";;
+
+psbt-delete-success
+=> "Successfully deleted this transaction."
+=> "این تراکنش با موفقیت حذف شد.";;
+
+psbt-delete-this => "Delete this PSBT" => "حذف این PSBT"
+
+psbt-device-sign-failed => "Device failed to sign" => "دستگاه نتوانست امضا کند"
+
+psbt-finalizing-requires
+=> "Finalizing this transaction requires:"
+=> "نهایی کردن این تراکنش نیازمند این است:";;
+
+psbt-missing-inputs
+=> "Missing information about transaction inputs"
+=> "اطلاعات مربوط به ورودی‌های تراکنش وجود ندارد";;
+
+psbt-more-signatures
+=> "{ $count ->\n    [0] no more signatures\n    [one] 1 more signature from\n   *[other] {$count} more signatures from\n}"
+=> "{ $count ->\n    [0] امضای دیگری لازم نیست\n    [one] 1 امضای دیگر از\n   *[other] {$count} امضای دیگر از\n}";;
+
+psbt-no-payment => "0 payment" => "0 پرداخت"
+
+psbt-not-ready => "Not ready" => "آماده نیست"
+
+psbt-payments
+=> "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
+=> "{ $count ->\n    [one] 1 پرداخت\n   *[other] {$count} پرداخت\n}";;
+
+psbt-save-transaction => "Save this transaction" => "ذخیره این تراکنش"
+
+psbt-select-signing-device
+=> "Select signing device to sign with:"
+=> "دستگاه امضا را برای امضا کردن انتخاب کنید:";;
+
+psbt-sign-save-before-export
+=> "Sign or save the transaction first to enable export"
+=> "برای فعال شدن خروجی، ابتدا تراکنش را امضا یا ذخیره کنید";;
+
+psbt-signed-by => "signed by" => "امضا شده توسط"
+
+psbt-spend-updated => "Spend transaction is updated" => "تراکنش خرج به‌روزرسانی شد"
+
+psbt-status => "Status" => "وضعیت"
+
+psbt-transaction-broadcast => "Transaction is broadcast" => "تراکنش پخش شد"
+
+psbt-transaction-saved => "Transaction is saved" => "تراکنش ذخیره شد"
+
+psbts-base64-warning
+=> "Please enter a base64 encoded PSBT"
+=> "لطفاً یک PSBT با کدگذاری base64 وارد کنید";;
+
+psbts-imported => "PSBT is imported" => "PSBT وارد شد"
+
+psbts-insert-psbt => "Insert PSBT:" => "PSBT را وارد کنید:"
+
+receive-address-label-placeholder
+=> "Enter an address label"
+=> "یک برچسب آدرس وارد کنید";;
+
+receive-derivation-index => "Derivation index:" => "شاخص اشتقاق:"
+
+receive-generate-new-address-help
+=> "Always generate a new address for each deposit."
+=> "همیشه برای هر واریز یک آدرس جدید بسازید.";;
+
+receive-generating-address => "Generating address ..." => "در حال تولید آدرس ..."
+
+receive-generating-address-title => "Generating address" => "در حال تولید آدرس"
+
+receive-previous-addresses
+=> "Previously generated addresses still awaiting deposit"
+=> "آدرس‌های قبلاً تولیدشده که هنوز در انتظار واریز هستند";;
+
+receive-select-device
+=> "Select device to verify address on:"
+=> "دستگاهی را برای تأیید آدرس روی آن انتخاب کنید:";;
+
+receive-specter-diy-tooltip
+=> "For Specter DIY devices"
+=> "برای دستگاه‌های Specter DIY";;
+
+receive-verify-address => "Verify address" => "تأیید آدرس"
+
+recovery-coins-total
+=> "{ $count ->\n    [one] can recover 1 coin totalling\n   *[other] can recover {$count} coins totalling\n}"
+=> "{ $count ->\n    [one] می‌تواند 1 کوین را بازیابی کند، در مجموع\n   *[other] می‌تواند {$count} کوین را بازیابی کند، در مجموع\n}";;
+
+recovery-info
+=> "Recover your funds by sending them to another wallet if you have lost access to your primary spending path."
+=> "اگر دسترسی به مسیر خرج‌کردن اصلی خود را از دست داده‌اید، وجوه خود را با ارسال آن‌ها به کیف پول دیگری بازیابی کنید.";;
+
+recovery-none-available
+=> "No recovery path is currently available."
+=> "در حال حاضر هیچ مسیر بازیابی در دسترس نیست.";;
+
+recovery-paths-available
+=> "{ $count ->\n    [one] 1 recovery path is available:\n   *[other] {$count} recovery paths are available:\n}"
+=> "{ $count ->\n    [one] 1 مسیر بازیابی در دسترس است:\n   *[other] {$count} مسیر بازیابی در دسترس است:\n}";;
+
+recovery-signatures-from
+=> "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}"
+=> "{ $count ->\n    [one] 1 امضا از\n   *[other] {$count} امضا از\n}";;
+
+settings-alias => "Alias" => "نام مستعار"
+
+settings-alias-too-long
+=> "Please enter alias that is not too long"
+=> "لطفاً نام مستعاری وارد کنید که خیلی طولانی نباشد";;
+
+settings-backup-encrypted-descriptor-tooltip
+=> "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs."
+=> "یک فایل descriptor رمزگذاری‌شده (.bed) که می‌توانید هر جایی نگه دارید. برای رمزگشایی آن به یکی از دستگاه‌های امضا یا xpubهای خود نیاز دارید.";;
+
+settings-block-height => "Block Height:" => "ارتفاع بلاک:"
+
+settings-blockchain-rescan => "Blockchain rescan" => "اسکن مجدد بلاک‌چین"
+
+settings-change-node-or-connect
+=> "I want to change node type or use Liana Connect"
+=> "می‌خواهم نوع گره را تغییر دهم یا از Liana Connect استفاده کنم";;
+
+settings-connect-own-node
+=> "I want to connect to my own node"
+=> "می‌خواهم به گره خودم متصل شوم";;
+
+settings-cookie-file-path => "Cookie file path" => "مسیر فایل cookie"
+
+settings-correct-alias
+=> "Please enter correct alias"
+=> "لطفاً نام مستعار درست را وارد کنید";;
+
+settings-currency => "Currency:" => "ارز:"
+
+settings-date-before-prune
+=> "Provided date earlier than the node prune height"
+=> "تاریخ واردشده زودتر از ارتفاع هرس گره است";;
+
+settings-date-future
+=> "Provided date is in the future"
+=> "تاریخ واردشده در آینده است";;
+
+settings-date-invalid => "Provided date is invalid" => "تاریخ واردشده نامعتبر است"
+
+settings-day => "Day:" => "روز:"
+
+settings-email-invalid => "Email is invalid" => "ایمیل نامعتبر است"
+
+settings-exchange-rate-source => "Exchange rate source:" => "منبع نرخ تبدیل:"
+
+settings-export-descriptor
+=> "Descriptor only - plain-text"
+=> "فقط descriptor - متن ساده";;
+
+settings-export-descriptor-description
+=> "Plain-text (not encrypted) descriptor file only, to use with other wallets."
+=> "فقط فایل descriptor به‌صورت متن ساده (رمزگذاری‌نشده)، برای استفاده با کیف پول‌های دیگر.";;
+
+settings-export-encrypted-descriptor
+=> "Encrypted descriptor"
+=> "descriptor رمزگذاری‌شده";;
+
+settings-export-encrypted-descriptor-description
+=> ".bed file, can be decrypted with one of your signing devices or xpubs."
+=> "فایل .bed، که با یکی از دستگاه‌های امضا یا xpubهای شما قابل رمزگشایی است.";;
+
+settings-export-labels => "BIP 329 labels" => "برچسب‌های BIP 329"
+
+settings-export-labels-description
+=> "BIP 329 label export, compatible with other wallets."
+=> "خروجی برچسب‌های BIP 329، سازگار با کیف پول‌های دیگر.";;
+
+settings-export-transactions => "Transactions table" => "جدول تراکنش‌ها"
+
+settings-export-transactions-description
+=> ".CSV file of past transactions, for accounting purposes."
+=> "فایل .CSV از تراکنش‌های گذشته، برای مقاصد حسابداری.";;
+
+settings-export-wallet => "Export wallet" => "خروجی گرفتن از کیف پول"
+
+settings-export-wallet-description
+=> "File (not encrypted) with wallet info useful to sync labels and data on other devices."
+=> "فایل (رمزگذاری‌نشده) حاوی اطلاعات کیف پول، مفید برای همگام‌سازی برچسب‌ها و داده‌ها روی دستگاه‌های دیگر.";;
+
+settings-fiat-price => "Fiat price:" => "قیمت فیات:"
+
+settings-fiat-price-tooltip
+=> "Fiat price data is provided by third-party services. Availability and accuracy are not guaranteed."
+=> "داده‌های قیمت فیات توسط سرویس‌های شخص ثالث ارائه می‌شود. در دسترس بودن و دقت آن‌ها تضمین نمی‌شود.";;
+
+settings-fingerprint-aliases => "Fingerprint aliases:" => "نام‌های مستعار اثر انگشت:"
+
+settings-grant-wallet-access
+=> "Grant access to wallet to another user"
+=> "اعطای دسترسی به کیف پول به کاربری دیگر";;
+
+settings-import-export-description
+=> "A collection of the export and import functions present in Liana."
+=> "مجموعه‌ای از قابلیت‌های خروجی گرفتن و وارد کردن موجود در Liana.";;
+
+settings-import-wallet => "Import wallet" => "وارد کردن کیف پول"
+
+settings-import-wallet-description
+=> "Upload a backup file to update wallet info."
+=> "یک فایل پشتیبان بارگذاری کنید تا اطلاعات کیف پول به‌روزرسانی شود.";;
+
+settings-invitation-sent => "Invitation was sent" => "دعوت‌نامه ارسال شد"
+
+settings-language => "Language" => "زبان"
+
+settings-language-description
+=> "Choose the language used by the application."
+=> "زبان مورد استفاده برنامه را انتخاب کنید.";;
+
+settings-month => "Month:" => "ماه:"
+
+settings-network => "Network:" => "شبکه:"
+
+settings-not-running => "Not running" => "در حال اجرا نیست"
+
+settings-other-formats => "Other formats" => "قالب‌های دیگر"
+
+settings-rescan-success
+=> "Successfully rescanned the blockchain"
+=> "بلاک‌چین با موفقیت مجدداً اسکن شد";;
+
+settings-rescanning
+=> "Rescanning...{$progress}%"
+=> "در حال اسکن مجدد...{$progress}%";;
+
+settings-running => "Running" => "در حال اجرا"
+
+settings-section-about => "About" => "درباره"
+
+settings-section-backend => "Backend" => "بک‌اند"
+
+settings-section-general => "General" => "عمومی"
+
+settings-section-import-export => "Import/Export" => "وارد کردن/خروجی گرفتن"
+
+settings-section-node => "Node" => "گره"
+
+settings-select-device => "Select device:" => "انتخاب دستگاه:"
+
+settings-socket-address => "Socket address:" => "آدرس سوکت:"
+
+settings-updated => "Updated" => "به‌روزرسانی شد"
+
+settings-user-email => "User email" => "ایمیل کاربر"
+
+settings-valid-address
+=> "Please enter a valid address"
+=> "لطفاً یک آدرس معتبر وارد کنید";;
+
+settings-valid-filesystem-path
+=> "Please enter a valid filesystem path"
+=> "لطفاً یک مسیر معتبر در سیستم فایل وارد کنید";;
+
+settings-valid-password
+=> "Please enter a valid password"
+=> "لطفاً یک گذرواژه معتبر وارد کنید";;
+
+settings-valid-user
+=> "Please enter a valid user"
+=> "لطفاً یک نام کاربری معتبر وارد کنید";;
+
+settings-version => "Version" => "نسخه"
+
+settings-wallet-alias => "Wallet alias:" => "نام مستعار کیف پول:"
+
+settings-wallet-descriptor => "Wallet descriptor:" => "descriptor کیف پول:"
+
+settings-year => "Year:" => "سال:"
+
+spend-amount-btc => "Amount (BTC)" => "مقدار (BTC)"
+
+spend-amount-truncated
+=> "Amount has been truncated to 8 decimal places"
+=> "مقدار به 8 رقم اعشار کوتاه شد";;
+
+spend-batch-label => "Batch label" => "برچسب دسته"
+
+spend-btc-placeholder => "0.001 (in BTC)" => "0.001 (به BTC)"
+
+spend-coins-selection => "Coins selection" => "انتخاب کوین‌ها"
+
+spend-could-not-convert-btc => "Could not convert to BTC" => "تبدیل به BTC ممکن نشد"
+
+spend-description => "Description" => "توضیحات"
+
+spend-duplicate-addresses
+=> "Two payment addresses are the same"
+=> "دو آدرس پرداخت یکسان هستند";;
+
+spend-dust-add-funds
+=> "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s)."
+=> "حداقل مقدار 0.00 000 500 BTC است. برای خرج کردن کوین(ها) به کیف پول خود وجه اضافه کنید.";;
+
+spend-dust-select-more-coins
+=> "Minimum amount is 0.00 000 500 BTC. Select more coins to continue."
+=> "حداقل مقدار 0.00 000 500 BTC است. برای ادامه کوین‌های بیشتری انتخاب کنید.";;
+
+spend-fee => "Fee:" => "کارمزد:"
+
+spend-fee-manual => "Manual" => "دستی"
+
+spend-fee-rate => "Fee ({$feerate} sats/vb):" => "کارمزد ({$feerate} sats/vb):"
+
+spend-fee-smart-select => "Smart Select" => "انتخاب هوشمند"
+
+spend-fee-smart-select-tooltip
+=> "Pick a preset feerate instead of entering one manually."
+=> "به‌جای وارد کردن دستی، یک نرخ کارمزد از پیش‌تعیین‌شده انتخاب کنید.";;
+
+spend-feerate => "Feerate:" => "نرخ کارمزد:"
+
+spend-feerate-example => "e.g. 5 (in sats/vb)" => "مثلاً 5 (به sats/vb)"
+
+spend-feerate-max-warning
+=> "Feerate must be an integer less than or equal to {$max_feerate} sats/vbyte"
+=> "نرخ کارمزد باید عددی صحیح و کوچک‌تر یا مساوی {$max_feerate} sats/vbyte باشد";;
+
+spend-feerate-missing-invalid
+=> "The feerate is missing or invalid"
+=> "نرخ کارمزد وارد نشده یا نامعتبر است";;
+
+spend-fiat-placeholder
+=> "Enter amount in {$currency}"
+=> "مقدار را به {$currency} وارد کنید";;
+
+spend-invalid-address
+=> "Invalid address (maybe it is for another network?)"
+=> "آدرس نامعتبر (شاید برای شبکه دیگری است؟)";;
+
+spend-invalid-amount
+=> "Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)"
+=> "مقدار نامعتبر. (توجه: مقادیر کمتر از 0.000005 BTC نامعتبر هستند.)";;
+
+spend-left-to-select => "left to select" => "باقی‌مانده برای انتخاب"
+
+spend-max => "MAX" => "حداکثر"
+
+spend-max-tooltip
+=> "Total amount remaining after paying fee and any other recipients"
+=> "مقدار کل باقی‌مانده پس از پرداخت کارمزد و سایر گیرندگان";;
+
+spend-payment-description-invalid
+=> "Payment description is missing or invalid"
+=> "توضیحات پرداخت وارد نشده یا نامعتبر است";;
+
+spend-payment-label => "Payment label" => "برچسب پرداخت"
+
+spend-recipient-address-invalid
+=> "A recipient address is missing or invalid"
+=> "آدرس یکی از گیرندگان وارد نشده یا نامعتبر است";;
+
+spend-recipient-amount-invalid
+=> "A recipient amount is missing or invalid"
+=> "مقدار یکی از گیرندگان وارد نشده یا نامعتبر است";;
+
+spend-select-coins-to-cover-amount
+=> "Select coins to cover the amount"
+=> "کوین‌هایی انتخاب کنید که این مقدار را پوشش دهند";;
+
+spend-select-one-coin => "Select at least one coin." => "حداقل یک کوین انتخاب کنید."
+
+spend-select-or-add-funds
+=> "Select or add more funds."
+=> "وجه بیشتری انتخاب یا اضافه کنید.";;
+
+spend-warning-recovery-own-address
+=> "Recovery address belongs to the same wallet. If you can no longer spend with the primary path, use an address from a different wallet instead."
+=> "آدرس بازیابی متعلق به همین کیف پول است. اگر دیگر نمی‌توانید با مسیر اصلی خرج کنید، به‌جای آن از آدرسی در کیف پول دیگری استفاده کنید.";;
+
+tab-installer => "Installer" => "نصب‌کننده"
+
+tab-launcher => "Launcher" => "راه‌انداز"
+
+tab-pending => "Pending" => "در انتظار"
+
+time-days-ago
+=> "{ $count ->\n    [one] 1 day ago\n   *[other] {$count} days ago\n}"
+=> "{ $count ->\n    [one] 1 روز پیش\n   *[other] {$count} روز پیش\n}";;
+
+time-hours-ago
+=> "{ $count ->\n    [one] 1 hour ago\n   *[other] {$count} hours ago\n}"
+=> "{ $count ->\n    [one] 1 ساعت پیش\n   *[other] {$count} ساعت پیش\n}";;
+
+time-just-now => "just now" => "همین الان"
+
+time-minutes-ago
+=> "{ $count ->\n    [one] 1 minute ago\n   *[other] {$count} minutes ago\n}"
+=> "{ $count ->\n    [one] 1 دقیقه پیش\n   *[other] {$count} دقیقه پیش\n}";;
+
+time-months-ago
+=> "{ $count ->\n    [one] 1 month ago\n   *[other] {$count} months ago\n}"
+=> "{ $count ->\n    [one] 1 ماه پیش\n   *[other] {$count} ماه پیش\n}";;
+
+time-seconds-ago
+=> "{ $count ->\n    [one] 1 second ago\n   *[other] {$count} seconds ago\n}"
+=> "{ $count ->\n    [one] 1 ثانیه پیش\n   *[other] {$count} ثانیه پیش\n}";;
+
+time-weeks-ago
+=> "{ $count ->\n    [one] 1 week ago\n   *[other] {$count} weeks ago\n}"
+=> "{ $count ->\n    [one] 1 هفته پیش\n   *[other] {$count} هفته پیش\n}";;
+
+transactions-cancel-tooltip
+=> "Best effort attempt at double spending an unconfirmed outgoing transaction"
+=> "تلاش حداکثری برای خرج مضاعف یک تراکنش خروجی تأییدنشده";;
+
+transactions-date => "Date:" => "تاریخ:"
+
+transactions-incoming => "Incoming transaction" => "تراکنش ورودی"
+
+transactions-miner-fee => "Miner fee:{ \" \" }" => "کارمزد ماینر:{ \" \" }"
+
+transactions-outgoing => "Outgoing transaction" => "تراکنش خروجی"
+
+transactions-rbf-bump-help
+=> "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction."
+=> "تراکنش را با تراکنشی جایگزین کنید که نرخ کارمزد بالاتری می‌پردازد تا تأیید سریع‌تر را تشویق کند. ممکن است برای تراکنش جایگزین از ورودی‌های جدید استفاده شود.";;
+
+transactions-rbf-cancel-help
+=> "Replace the transaction with one paying a higher feerate that sends the coins back to your wallet. There is no guarantee the original transaction won't get mined first. New inputs may be used for the replacement transaction."
+=> "تراکنش را با تراکنشی جایگزین کنید که نرخ کارمزد بالاتری می‌پردازد و کوین‌ها را به کیف پول شما بازمی‌گرداند. هیچ تضمینی نیست که تراکنش اصلی زودتر استخراج نشود. ممکن است برای تراکنش جایگزین از ورودی‌های جدید استفاده شود.";;
+
+transactions-rbf-created
+=> "Replacement PSBT created successfully and ready to be signed"
+=> "PSBT جایگزین با موفقیت ساخته شد و آماده امضا است";;
+
+transactions-rbf-descendants-one
+=> "The following transaction is spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on it:"
+=> "تراکنش زیر یک یا چند خروجی از تراکنشی را که قرار است جایگزین شود خرج می‌کند و هنگام پخش تراکنش جایگزین، همراه با هر تراکنش دیگری که به آن وابسته است حذف خواهد شد:";;
+
+transactions-rbf-descendants-some
+=> "The following transactions are spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on them:"
+=> "تراکنش‌های زیر یک یا چند خروجی از تراکنشی را که قرار است جایگزین شود خرج می‌کنند و هنگام پخش تراکنش جایگزین، همراه با هر تراکنش دیگری که به آن‌ها وابسته است حذف خواهند شد:";;
+
+transactions-rbf-feerate-warning
+=> "Feerate must be greater than previous value and less than or equal to 1000 sats/vbyte"
+=> "نرخ کارمزد باید بزرگ‌تر از مقدار قبلی و کوچک‌تر یا مساوی 1000 sats/vbyte باشد";;
+
+transactions-rbf-invalidates-one
+=> "WARNING: Replacing this transaction will invalidate a later payment."
+=> "هشدار: جایگزینی این تراکنش یک پرداخت بعدی را باطل خواهد کرد.";;
+
+transactions-rbf-invalidates-some
+=> "WARNING: Replacing this transaction will invalidate some later payments."
+=> "هشدار: جایگزینی این تراکنش برخی پرداخت‌های بعدی را باطل خواهد کرد.";;
+
+transactions-replacement => "Transaction replacement" => "جایگزینی تراکنش"
+
+transactions-transaction => "Transaction" => "تراکنش"
+
+transactions-txid => "Tx ID" => "شناسه تراکنش"
+
+warning-hardware-wallet-error => "Hardware wallet error" => "خطای کیف پول سخت‌افزاری"

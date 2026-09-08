@@ -185,6 +185,7 @@ mod tests {
             SupportedLocale::from_str("zh-CN"),
             Ok(SupportedLocale::ZhHans)
         );
+        assert_eq!(SupportedLocale::from_str("fa-IR"), Ok(SupportedLocale::Fa));
     }
 
     #[test]
