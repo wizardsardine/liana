@@ -179,7 +179,8 @@ mod tests {
         );
         assert_eq!(SupportedLocale::from_str("en--US"), Err(()));
         assert_eq!(SupportedLocale::from_str("english"), Err(()));
-        assert_eq!(SupportedLocale::from_str("de-DE"), Err(()));
+        assert_eq!(SupportedLocale::from_str("de-DE"), Ok(SupportedLocale::De));
+        assert_eq!(SupportedLocale::from_str("sv-SE"), Err(()));
     }
 
     #[test]
