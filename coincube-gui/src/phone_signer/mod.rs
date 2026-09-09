@@ -307,6 +307,11 @@ impl HWI for PhoneSigner {
         };
 
         let envelope = present_session_envelope(session);
+        // Deterministic preflight on the exact encoded frame, before the
+        // session is registered or a byte leaves: an unsupported request fails
+        // here with actionable copy instead of as a half-started signing flow.
+        // Only sizes are reported, never payload material.
+        transport::preflight_envelope(&envelope)?;
         let rx = self.correlator.register(session_id.clone()).await;
         {
             let mut t = self.writer.lock().await;
