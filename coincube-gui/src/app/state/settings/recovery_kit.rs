@@ -36,6 +36,7 @@ use crate::services::coincube::{
     CoincubeClient, CoincubeError, RecoveryKit as ApiRecoveryKit, RecoveryKitStatus,
     RECOVERY_KIT_SCHEME_AES_256_GCM,
 };
+use crate::services::connect::crypto::CubeEncryptionKey;
 use crate::services::inheritance::{
     find_owner_self_recipient, seal_and_upload_owner_self, OwnerSelfError,
 };
@@ -1353,9 +1354,25 @@ fn start_phone_seal(
     let descriptor_blob = wallet
         .as_ref()
         .map(|w| descriptor_blob_from_wallet(w, &cube_uuid, &network));
+    // Connect blinding (PR D3 / API A3): the recipients list now serves the
+    // phone key's xpub as an envelope sealed to this Cube's encryption key, so
+    // the seal needs that key to read the recipient before sealing to it.
+    let cube_enc_key = cache.cube_encryption_key.clone();
+    let cube_network = cache.network;
     rk.flow = RecoveryKitState::PhoneSealing { mode };
     Task::perform(
-        async move { seal_phone(client, cube_id, descriptor_blob, mnemonic, cube_meta).await },
+        async move {
+            seal_phone(
+                client,
+                cube_id,
+                cube_enc_key.as_deref(),
+                cube_network,
+                descriptor_blob,
+                mnemonic,
+                cube_meta,
+            )
+            .await
+        },
         |res| {
             Message::View(view::Message::Settings(view::SettingsMessage::RecoveryKit(
                 RecoveryKitMessage::PhoneSealResult(res),
@@ -1378,6 +1395,12 @@ fn start_phone_seal(
 /// Vault-only phone key — which `build_owner_self_envelope_set` reports as
 /// `OwnerSelfError::NothingToSeal` with copy that names the way out.
 ///
+/// `cube_enc_key` is this Cube's seed-derived encryption key
+/// (`Cache::cube_encryption_key`): under Connect blinding the recipient's xpub
+/// arrives as an envelope only this key can open. `None` (no on-disk seed)
+/// fails closed inside `build_owner_self_envelope_set` with copy that names
+/// the way out. `network` is the Cube's, checked against the resolved xpub.
+///
 /// On success returns the SHA-256 fingerprint of the descriptor blob that was
 /// sealed — the same helper the password path uses — so the handler can persist
 /// the keychain drift slot (per-method drift, PR 3). `None` when no descriptor
@@ -1386,6 +1409,8 @@ fn start_phone_seal(
 async fn seal_phone(
     client: CoincubeClient,
     cube_id: u64,
+    cube_enc_key: Option<&CubeEncryptionKey>,
+    network: Network,
     descriptor_blob: Option<DescriptorBlob>,
     mnemonic: Option<Zeroizing<Vec<String>>>,
     cube_meta: SeedBlobCube,
@@ -1427,6 +1452,8 @@ async fn seal_phone(
     seal_and_upload_owner_self(
         &client,
         cube_id,
+        cube_enc_key,
+        network,
         &recipient,
         descriptor_json.as_deref().map(Vec::as_slice),
         seed_json,
@@ -3081,6 +3108,8 @@ mod tests {
             CoincubeClient::for_test(server.base_url()),
             42,
             None,
+            Network::Bitcoin,
+            None,
             Some(Zeroizing::new(vec!["abandon".to_string(); 12])),
             phone_seal_cube_meta(),
         )
@@ -3127,6 +3156,8 @@ mod tests {
         let error = seal_phone(
             CoincubeClient::for_test(server.base_url()),
             42,
+            None,
+            Network::Bitcoin,
             None,
             Some(Zeroizing::new(vec!["abandon".to_string(); 12])),
             phone_seal_cube_meta(),

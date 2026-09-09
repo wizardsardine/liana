@@ -3142,11 +3142,25 @@ impl OwnerRecoveryTier {
 /// the owner needs to seal envelopes (PR 2). The owner derives the dedicated
 /// encryption child **xpub-only** from this (SPEC §2, child 7000); no private
 /// material is ever on the owner side.
+///
+/// Under Connect blinding (`PLAN-connect-blinding` A3) the API serves the
+/// recipient's xpub as an [`XpubEnvelope`](crate::services::connect::crypto::XpubEnvelope)
+/// sealed to this Cube's encryption key and leaves `xpub` **empty**. Resolve
+/// it through [`resolve_key_xpub`](crate::services::connect::crypto::resolve_key_xpub)
+/// — never read `xpub` directly — so both the blinded and the legacy plaintext
+/// shape yield the same validated key.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecoveryRecipientKey {
     pub id: u64,
+    /// Legacy plaintext xpub. Empty once the server serves envelopes only
+    /// (`XPUB_ENVELOPE_ONLY`); prefer [`Self::xpub_envelope`] whenever present.
+    #[serde(default)]
     pub xpub: String,
+    /// The xpub sealed to this Cube's encryption key (blinded shape). Absent on
+    /// an older server or a key still on the plaintext path.
+    #[serde(default)]
+    pub xpub_envelope: Option<crate::services::connect::crypto::XpubEnvelope>,
     pub derivation_path: String,
 }
 
