@@ -333,6 +333,17 @@ pub fn close() {
     *lock_session() = None;
 }
 
+/// Serialises every test that touches the process-global session — this
+/// module's and any other that stores or reads a signer through it — so they
+/// never interleave on the one slot.
+#[cfg(test)]
+pub(crate) fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static M: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    M.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,10 +351,7 @@ mod tests {
     // These share one process-global, so they run under a mutex of their own
     // rather than being allowed to interleave.
     fn guard() -> std::sync::MutexGuard<'static, ()> {
-        static M: OnceLock<Mutex<()>> = OnceLock::new();
-        M.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        test_guard()
     }
 
     #[test]

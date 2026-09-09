@@ -2585,15 +2585,12 @@ impl Tab {
                 // will surface their own errors on demand.
                 let breez = match breez_client {
                     Ok(breez) => breez,
-                    Err(app::breez_liquid::BreezError::NetworkNotSupported(_)) => {
-                        Arc::new(app::breez_liquid::BreezClient::disconnected(network))
-                    }
                     Err(e) => {
                         tracing::warn!(
                             "BreezClient unavailable after PIN, continuing in disconnected mode: {}",
                             e
                         );
-                        Arc::new(app::breez_liquid::BreezClient::disconnected(network))
+                        disconnected_breez_client_after_unlock(&cube, network)
                     }
                 };
                 if let Some(wallet_settings) = wallet_settings {
@@ -3221,6 +3218,43 @@ pub fn create_app_with_remote_backend(
         cube_settings,
         connect_auth,
     ))
+}
+
+/// The client the unlock handler falls back to when the Liquid load fails.
+///
+/// Every feature that hangs off the master seed — the Connect encryption key
+/// ([`app::App::new`] derives it from the client's signer), Spark, P2P — only
+/// needs the *signer*, not a connected SDK. A load that resolved the seed and
+/// then failed to reach Liquid must therefore not degrade to a signer-less
+/// client: that would leave `Cache::cube_encryption_key` unset and every
+/// blinded Connect key (the phone recovery key included) failing as `Locked`
+/// with advice to "restore from seed" on a Cube that has its seed on disk.
+///
+/// The unlock parked its decrypted signer in the session (both the PIN and the
+/// passkey paths do), so it is recovered from there. A signer-less client is
+/// only produced when the session holds none — a seed-less Cube, or a session
+/// closed since the unlock — which is exactly the case it was meant for.
+fn disconnected_breez_client_after_unlock(
+    cube: &app::settings::CubeSettings,
+    network: bitcoin::Network,
+) -> Arc<app::breez_liquid::BreezClient> {
+    let signer = cube
+        .master_signer_fingerprint
+        .and_then(|fp| crate::app::session::unlocked_signer(&cube.id, fp));
+    match signer {
+        Some(signer) => Arc::new(app::breez_liquid::BreezClient::disconnected_with_signer(
+            network,
+            Arc::new(std::sync::Mutex::new(signer)),
+        )),
+        None => {
+            tracing::warn!(
+                "No unlocked master signer for Cube {} in the session; Liquid fallback client \
+                 carries no signer",
+                cube.id
+            );
+            Arc::new(app::breez_liquid::BreezClient::disconnected(network))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -4100,6 +4134,59 @@ mod find_or_create_cube_tests {
             "existing fingerprint is preserved, not clobbered"
         );
         assert_eq!(cube.vault_wallet_id, None);
+    }
+}
+
+#[cfg(test)]
+mod breez_fallback_tests {
+    use super::disconnected_breez_client_after_unlock;
+    use crate::app::session;
+    use crate::app::settings::CubeSettings;
+    use coincube_core::miniscript::bitcoin::{secp256k1::Secp256k1, Network};
+    use coincube_core::signer::MasterSigner;
+
+    /// A Liquid load that failed *after* the unlock decrypted the seed must not
+    /// cost the Cube its signer: `App::new` derives the Connect encryption key
+    /// from the fallback client, and without it every blinded key (the phone
+    /// recovery key included) reports `Locked` on a Cube whose seed is right
+    /// there on disk.
+    #[test]
+    fn fallback_client_keeps_the_signer_the_unlock_parked() {
+        let _g = session::test_guard();
+        session::close();
+        let signer = MasterSigner::generate(Network::Bitcoin).unwrap();
+        let fingerprint = signer.fingerprint(&Secp256k1::signing_only());
+        let cube = CubeSettings::new("Fallback".to_string(), Network::Bitcoin)
+            .with_master_signer(fingerprint);
+        session::store_unlocked_signer(&cube.id, fingerprint, signer);
+
+        let client = disconnected_breez_client_after_unlock(&cube, Network::Bitcoin);
+
+        assert!(
+            !client.is_connected(),
+            "fallback client never carries an SDK"
+        );
+        assert!(
+            client.liquid_signer().is_some(),
+            "fallback client must carry the session's signer"
+        );
+        session::close();
+    }
+
+    /// A seed-less Cube (or a session closed since the unlock) has nothing to
+    /// preserve, and the fallback stays the signer-less client it always was.
+    #[test]
+    fn fallback_client_is_signerless_without_a_parked_signer() {
+        let _g = session::test_guard();
+        session::close();
+        let cube = CubeSettings::new("NoSeed".to_string(), Network::Bitcoin).with_master_signer(
+            coincube_core::miniscript::bitcoin::bip32::Fingerprint::from([9, 9, 9, 9]),
+        );
+
+        let client = disconnected_breez_client_after_unlock(&cube, Network::Bitcoin);
+
+        assert!(!client.is_connected());
+        assert!(client.liquid_signer().is_none());
     }
 }
 
