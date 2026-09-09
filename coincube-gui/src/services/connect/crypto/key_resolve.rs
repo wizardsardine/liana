@@ -47,7 +47,7 @@ use std::str::FromStr;
 use zeroize::Zeroizing;
 
 use super::cube_enc_key::{CubeEncryptionKey, XpubEnvelope};
-use crate::services::coincube::{CubeKeyRaw, VaultMemberKeySummary};
+use crate::services::coincube::{CubeKeyRaw, RecoveryRecipientKey, VaultMemberKeySummary};
 use crate::services::inheritance::EciesError;
 
 /// Why a Connect-served key couldn't be turned into a usable xpub.
@@ -199,6 +199,25 @@ impl ConnectKeyRow for CubeKeyRaw {
 }
 
 impl ConnectKeyRow for VaultMemberKeySummary {
+    fn envelope(&self) -> Option<&XpubEnvelope> {
+        self.xpub_envelope.as_ref()
+    }
+    fn plaintext_xpub(&self) -> &str {
+        &self.xpub
+    }
+    fn declared_derivation_path(&self) -> &str {
+        &self.derivation_path
+    }
+    fn key_id(&self) -> u64 {
+        self.id
+    }
+}
+
+/// The owner's `owner-self` phone recovery key, as served on the
+/// recovery-kit recipients list. Same two shapes as every other Connect key
+/// row: the envelope is sealed to this Cube's own encryption key (the owner is
+/// the only reader), so it resolves exactly like a Vault keyholder's.
+impl ConnectKeyRow for RecoveryRecipientKey {
     fn envelope(&self) -> Option<&XpubEnvelope> {
         self.xpub_envelope.as_ref()
     }

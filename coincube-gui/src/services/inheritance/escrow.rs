@@ -125,7 +125,12 @@ impl From<EciesError> for EscrowError {
 /// sealing is `account_derivation + /7000`; if the account path itself parses,
 /// appending a valid non-hardened index keeps it valid. Returns `Ok(())` on
 /// success and `Err(())` on a malformed path.
-fn validate_account_derivation(path: &str) -> Result<(), ()> {
+///
+/// `pub(super)` so the owner-self path can run the same fail-fast check
+/// *before* resolving the recipient's xpub (an empty path parses as depth 0
+/// under `DerivationPath::from_str`, which the resolve step would otherwise
+/// report as a depth mismatch rather than a malformed row).
+pub(super) fn validate_account_derivation(path: &str) -> Result<(), ()> {
     let trimmed = path.trim();
     let normalized = trimmed
         .strip_prefix("m/")
