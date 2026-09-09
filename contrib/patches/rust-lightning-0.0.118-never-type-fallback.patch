@@ -1,0 +1,72 @@
+From 3c756ab2a81ad8859e2f14a43ba1a7854ba8e704 Mon Sep 17 00:00:00 2001
+From: Your Majesty <robert@tirith.tech>
+Date: Wed, 9 Sep 2026 15:03:35 -0600
+Subject: [PATCH 1/2] chan_utils: pin the legacy deserialization marker to
+ Option<()>
+
+`CommitmentTransaction::read` never reads the type-14 TLV marker, so its
+`None` initialiser relied on never-type fallback resolving to `()`. Newer
+rustc resolves it to `!` instead (rust-lang/rust#148922) and the read
+fails with "the trait bound `!: Readable` is not satisfied".
+
+Give the marker the explicit `Option<()>` type that the writer side and
+`HolderCommitmentTransaction::read` already use. This is the 0.0.118
+equivalent of upstream's `(option, explicit_type: ())` in the 0.1 line.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ lightning/src/ln/chan_utils.rs | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/lightning/src/ln/chan_utils.rs b/lightning/src/ln/chan_utils.rs
+index 1c06802..8dbd9cf 100644
+--- a/lightning/src/ln/chan_utils.rs
++++ b/lightning/src/ln/chan_utils.rs
+@@ -1382,6 +1382,13 @@ impl Readable for CommitmentTransaction {
+ 			(14, _legacy_deserialization_prevention_marker, option),
+ 			(15, channel_type_features, option),
+ 		});
++		// The marker is never read, so its `None` initialiser fell back to
++		// `Option<!>` under never-type fallback, which rustc now rejects
++		// (rust-lang/rust#148922). Pin it to `Option<()>`, the type the
++		// `Writeable` side and the `HolderCommitmentTransaction` reader use.
++		// Upstream fixed this in 0.1 with `(option, explicit_type: ())`.
++		let _legacy_deserialization_prevention_marker: Option<()> =
++			_legacy_deserialization_prevention_marker;
+ 
+ 		let mut additional_features = ChannelTypeFeatures::empty();
+ 		additional_features.set_anchors_nonzero_fee_htlc_tx_required();
+-- 
+2.50.1 (Apple Git-155)
+
+
+From 06401561c3aa9732eb02f757a89cce73b0489a21 Mon Sep 17 00:00:00 2001
+From: Your Majesty <robert@tirith.tech>
+Date: Wed, 9 Sep 2026 15:09:26 -0600
+Subject: [PATCH 2/2] lightning: drop the cfg(taproot) musig2 git dependency
+
+The crates.io release of 0.0.118 does not carry this dependency (cargo
+strips it at publish time; `cfg(taproot)` is never set). A consumer that
+patches the crate to this repository would otherwise have to resolve and
+lock a third-party git source it never builds. Match the published
+manifest so the patch is a pure source-level fix.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ lightning/Cargo.toml | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/lightning/Cargo.toml b/lightning/Cargo.toml
+index 11ac296..9cd8d46 100644
+--- a/lightning/Cargo.toml
++++ b/lightning/Cargo.toml
+@@ -60,6 +60,3 @@ features = ["bitcoinconsensus", "secp-recovery"]
+ 
+ [target.'cfg(ldk_bench)'.dependencies]
+ criterion = { version = "0.4", optional = true, default-features = false }
+-
+-[target.'cfg(taproot)'.dependencies]
+-musig2 = { git = "https://github.com/arik-so/rust-musig2", rev = "27797d7" }
+-- 
+2.50.1 (Apple Git-155)
+
