@@ -226,10 +226,8 @@ async fn try_pair_once(
         .peer_cert_fingerprint()
         .ok_or_else(|| PairingError::NetworkError("phone presented no cert".into()))?;
 
-    // Split into reader/writer so we can read PairingComplete and
-    // (best-effort) send a Pong ack without one half blocking the
-    // other. The connection drops when both halves go out of scope
-    // at function end.
+    // Keep independent framing halves for identity and the required durable
+    // PairingStep exchange. Both halves close when this attempt ends.
     let (mut reader, mut writer) = transport.split();
     // Bound the read by the offer's remaining lifetime. A phone
     // that completes TLS but stalls before sending PairingComplete
@@ -459,7 +457,6 @@ async fn try_pair_once(
         PairingTransaction::prepare(dir, transaction_id.clone(), paired)
             .map_err(|e| PairingError::InternalError(format!("stage pairing: {}", e)))
     })?;
-    let mut decided = false;
     let result = async {
         use local_v1::pairing_step::Phase;
         send_step(&mut writer, &transaction_id, Phase::Accept, run).await?;
@@ -473,31 +470,25 @@ async fn try_pair_once(
         recv_step(&mut reader, &transaction_id, Phase::Committed, run).await?;
         // Both candidates are durable, but neither peer has been authorized
         // to expose the new binding. Cancel can still win this final lock.
-        let paired = run.decide(|| {
+        run.decide(|| {
             transaction
-                .finish()
+                .decide()
                 .map_err(|e| PairingError::InternalError(format!("complete pairing: {}", e)))
         })?;
-        decided = true;
         send_step(&mut writer, &transaction_id, Phase::Finish, run).await?;
         recv_step(&mut reader, &transaction_id, Phase::Finished, run).await?;
         run.check()?;
-        transaction.retain();
-        Ok(paired)
+        transaction.finish().map_err(|e| {
+            PairingError::InternalError(format!("record acknowledged completion: {}", e))
+        })
     }
     .await;
     if let Err(error) = &result {
-        // Known refusal/storage error aborts; post-decision loss is uncertain.
-        // Pending rows are hidden by the journal and recovered by re-pairing.
-        if !decided || !matches!(error, PairingError::NetworkError(_)) {
-            transaction.rollback().map_err(|e| {
-                PairingError::InternalError(format!("pairing rollback pending: {}", e))
-            })?;
-        } else {
-            transaction.suspend().map_err(|e| {
-                PairingError::InternalError(format!("pairing suspension failed: {}", e))
-            })?;
-        }
+        // Cleanup consults the durable state. A decided transaction stays
+        // hidden without another write, for EVERY error category or task drop.
+        transaction
+            .rollback()
+            .map_err(|e| PairingError::InternalError(format!("pairing cleanup pending: {}", e)))?;
         let _ = writer
             .send(&LocalEnvelope {
                 payload: Some(local_v1::local_envelope::Payload::Error(

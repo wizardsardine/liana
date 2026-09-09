@@ -11,11 +11,43 @@ struct Entry {
     id: String,
     previous: Option<PairedPhone>,
     candidate: PairedPhone,
-    finished: bool,
+    #[serde(default)]
+    state: State,
+    // Older journals exposed `finished` before the final acknowledgement.
+    // Treat those records as uncertain, requiring explicit re-pair.
+    #[serde(default, rename = "finished", skip_serializing)]
+    legacy_finished: bool,
+}
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum State {
+    #[default]
+    Provisional,
+    Decided,
+    Completed,
+}
+impl Entry {
+    fn state(&self) -> State {
+        if self.legacy_finished {
+            State::Decided
+        } else {
+            self.state
+        }
+    }
 }
 fn journal(dir: &CoincubeDirectory) -> io::Result<BTreeMap<String, Entry>> {
     match std::fs::read(dir.path().join("pairing-transactions.json")) {
-        Ok(b) => serde_json::from_slice(&b).map_err(io::Error::other),
+        Ok(b) => {
+            let mut entries: BTreeMap<String, Entry> =
+                serde_json::from_slice(&b).map_err(io::Error::other)?;
+            // Normalize before any whole-journal rewrite so another entry's
+            // mutation cannot downgrade a legacy irreversible decision.
+            for entry in entries.values_mut() {
+                entry.state = entry.state();
+                entry.legacy_finished = false;
+            }
+            Ok(entries)
+        }
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(BTreeMap::new()),
         Err(e) => Err(e),
     }
@@ -36,7 +68,10 @@ pub(super) fn visible(
     dir: &CoincubeDirectory,
     mut file: PairingStoreFile,
 ) -> io::Result<PairingStoreFile> {
-    for entry in journal(dir)?.values().filter(|e| !e.finished) {
+    for entry in journal(dir)?
+        .values()
+        .filter(|e| e.state() != State::Completed)
+    {
         replace(&mut file, &entry.candidate.cert_pin, entry.previous.clone());
     }
     Ok(file)
@@ -48,7 +83,6 @@ pub struct PairingTransaction {
     dir: CoincubeDirectory,
     key: String,
     id: String,
-    retained: std::sync::atomic::AtomicBool,
 }
 impl PairingTransaction {
     pub fn prepare(
@@ -78,7 +112,8 @@ impl PairingTransaction {
                 id: id.clone(),
                 previous,
                 candidate,
-                finished: false,
+                state: State::Provisional,
+                legacy_finished: false,
             },
         );
         save(dir, &entries)?;
@@ -86,7 +121,6 @@ impl PairingTransaction {
             dir: dir.clone(),
             key,
             id,
-            retained: std::sync::atomic::AtomicBool::new(false),
         })
     }
     pub fn write_candidate(&self) -> io::Result<()> {
@@ -96,6 +130,9 @@ impl PairingTransaction {
             .get(&self.key)
             .filter(|e| e.id == self.id)
             .ok_or_else(stale)?;
+        if entry.state() != State::Provisional {
+            return Err(stale());
+        }
         let mut raw = pairing_store::load_raw(&self.dir)?;
         replace(
             &mut raw,
@@ -104,33 +141,33 @@ impl PairingTransaction {
         );
         pairing_store::save(&self.dir, &raw)
     }
+    /// Called under PairingRun's cancellation lock, after COMMITTED.
+    /// The durable decision remains hidden even if this task is dropped.
+    pub fn decide(&self) -> io::Result<()> {
+        self.transition(State::Provisional, State::Decided)
+            .map(|_| ())
+    }
+    /// Only the validated FINISHED response authorizes public visibility.
     pub fn finish(&self) -> io::Result<PairedPhone> {
+        self.transition(State::Decided, State::Completed)
+    }
+    fn transition(&self, from: State, to: State) -> io::Result<PairedPhone> {
         let _guard = WRITER.lock().unwrap();
         let mut entries = journal(&self.dir)?;
         let entry = entries
             .get_mut(&self.key)
             .filter(|e| e.id == self.id)
             .ok_or_else(stale)?;
-        entry.finished = true;
+        if entry.state() != from {
+            return Err(io::Error::other(
+                "Invalid pairing transaction transition; pair again",
+            ));
+        }
+        entry.state = to;
+        entry.legacy_finished = false;
         let candidate = entry.candidate.clone();
         save(&self.dir, &entries)?;
         Ok(candidate)
-    }
-    /// Unknown final acknowledgement: retain only a hidden pending candidate.
-    pub fn suspend(&self) -> io::Result<()> {
-        let _guard = WRITER.lock().unwrap();
-        let mut entries = journal(&self.dir)?;
-        if let Some(entry) = entries.get_mut(&self.key).filter(|e| e.id == self.id) {
-            entry.finished = false;
-            save(&self.dir, &entries)?;
-        }
-        self.retained
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        Ok(())
-    }
-    pub fn retain(&self) {
-        self.retained
-            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
     pub fn rollback(&self) -> io::Result<()> {
         let _guard = WRITER.lock().unwrap();
@@ -138,6 +175,11 @@ impl PairingTransaction {
         let Some(entry) = entries.get(&self.key).filter(|e| e.id == self.id) else {
             return Ok(());
         };
+        // Durable ownership/state, not an in-memory retain flag, determines
+        // rollback legality after task abort or an uncertain storage return.
+        if entry.state() != State::Provisional {
+            return Ok(());
+        }
         let mut raw = pairing_store::load_raw(&self.dir)?;
         replace(&mut raw, &entry.candidate.cert_pin, entry.previous.clone());
         pairing_store::save(&self.dir, &raw)?;
@@ -148,10 +190,8 @@ impl PairingTransaction {
 
 impl Drop for PairingTransaction {
     fn drop(&mut self) {
-        if !self.retained.load(std::sync::atomic::Ordering::SeqCst) {
-            if let Err(error) = self.rollback() {
-                tracing::error!(%error, "Pairing rollback pending; pair again");
-            }
+        if let Err(error) = self.rollback() {
+            tracing::error!(%error, "Pairing cleanup pending; pair again");
         }
     }
 }
@@ -162,7 +202,7 @@ pub(super) fn revoke(dir: &CoincubeDirectory, pin: &[u8; 32]) -> io::Result<()> 
     let mut entries = journal(dir)?;
     if let Some(entry) = entries.remove(&hex::encode(pin)) {
         let mut raw = pairing_store::load_raw(dir)?;
-        if !entry.finished {
+        if entry.state() != State::Completed {
             replace(&mut raw, pin, entry.previous);
         }
         pairing_store::save(dir, &raw)?;

@@ -483,6 +483,167 @@ mod tests {
     }
 
     #[test]
+    fn irreversible_decision_stays_hidden_and_survives_drop() {
+        use super::super::{pairing_run::PairingRun, pairing_transaction::PairingTransaction};
+        let dir = fresh_dir();
+        let prior = sample_phone(1);
+        upsert(&dir, prior.clone()).unwrap();
+        let mut candidate = prior.clone();
+        candidate.paired_at_unix += 100;
+        let transaction = PairingTransaction::prepare(&dir, "decision".into(), candidate).unwrap();
+        transaction.write_candidate().unwrap();
+        let run = PairingRun::default();
+        run.decide(|| {
+            transaction
+                .decide()
+                .map_err(|e| super::super::errors::PairingError::InternalError(e.to_string()))
+        })
+        .unwrap();
+        assert_eq!(
+            load(&dir).unwrap().phones[0].paired_at_unix,
+            prior.paired_at_unix,
+            "decision must remain hidden until FINISHED"
+        );
+        run.cancel();
+        run.check().unwrap();
+        drop(transaction);
+        assert!(
+            std::fs::read_to_string(dir.path().join("pairing-transactions.json"))
+                .unwrap()
+                .contains("decision")
+        );
+        assert_eq!(
+            load(&dir).unwrap().phones[0].paired_at_unix,
+            prior.paired_at_unix
+        );
+    }
+
+    #[test]
+    fn decided_storage_failure_and_reload_never_expose_or_rollback() {
+        use super::super::pairing_transaction::PairingTransaction;
+        let dir = fresh_dir();
+        let transaction =
+            PairingTransaction::prepare(&dir, "hidden".into(), sample_phone(1)).unwrap();
+        transaction.write_candidate().unwrap();
+        transaction.decide().unwrap();
+        let decided = std::fs::read(dir.path().join("pairing-transactions.json")).unwrap();
+        std::fs::create_dir(dir.path().join("pairing-transactions.json.tmp")).unwrap();
+        assert!(transaction.finish().is_err());
+        transaction.rollback().unwrap();
+        drop(transaction);
+        let reloaded = CoincubeDirectory::new(dir.path().to_path_buf());
+        assert!(load(&reloaded).unwrap().phones.is_empty());
+        assert_eq!(
+            std::fs::read(dir.path().join("pairing-transactions.json")).unwrap(),
+            decided
+        );
+        assert_eq!(load_raw(&dir).unwrap().phones.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn task_abort_before_and_after_decision_respects_durable_state() {
+        use super::super::pairing_transaction::PairingTransaction;
+        for decided in [false, true] {
+            let dir = fresh_dir();
+            let task_dir = dir.clone();
+            let (ready, reached) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(async move {
+                let transaction =
+                    PairingTransaction::prepare(&task_dir, "abort".into(), sample_phone(1))
+                        .unwrap();
+                transaction.write_candidate().unwrap();
+                if decided {
+                    transaction.decide().unwrap();
+                }
+                ready.send(()).unwrap();
+                std::future::pending::<()>().await;
+                drop(transaction);
+            });
+            reached.await.unwrap();
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+            assert!(load(&dir).unwrap().phones.is_empty());
+            assert_eq!(load_raw(&dir).unwrap().phones.len(), usize::from(decided));
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join("pairing-transactions.json"))
+                    .unwrap()
+                    .contains("abort"),
+                decided
+            );
+        }
+    }
+
+    #[test]
+    fn only_finished_acknowledgement_exposes_new_binding() {
+        use super::super::{pairing_run::PairingRun, pairing_transaction::PairingTransaction};
+        let dir = fresh_dir();
+        let transaction =
+            PairingTransaction::prepare(&dir, "complete".into(), sample_phone(1)).unwrap();
+        transaction.write_candidate().unwrap();
+        assert!(transaction.finish().is_err());
+        let run = PairingRun::default();
+        run.decide(|| {
+            transaction
+                .decide()
+                .map_err(|e| super::super::errors::PairingError::InternalError(e.to_string()))
+        })
+        .unwrap();
+        run.cancel();
+        run.check().unwrap();
+        assert!(load(&dir).unwrap().phones.is_empty());
+        transaction.finish().unwrap();
+        transaction.rollback().unwrap();
+        drop(transaction);
+        assert_eq!(load(&dir).unwrap().phones.len(), 1);
+    }
+
+    #[test]
+    fn cancellation_before_decision_restores_exact_prior() {
+        use super::super::{pairing_run::PairingRun, pairing_transaction::PairingTransaction};
+        let dir = fresh_dir();
+        let prior = sample_phone(1);
+        upsert(&dir, prior.clone()).unwrap();
+        let transaction =
+            PairingTransaction::prepare(&dir, "cancel".into(), sample_phone(1)).unwrap();
+        transaction.write_candidate().unwrap();
+        let run = PairingRun::default();
+        run.cancel();
+        assert!(run
+            .decide(|| transaction
+                .decide()
+                .map_err(|e| super::super::errors::PairingError::InternalError(e.to_string())))
+            .is_err());
+        drop(transaction);
+        assert_eq!(
+            serde_json::to_value(&load(&dir).unwrap().phones[0]).unwrap(),
+            serde_json::to_value(prior).unwrap()
+        );
+    }
+
+    #[test]
+    fn legacy_finished_journal_stays_irreversible_when_another_record_changes() {
+        use super::super::pairing_transaction::PairingTransaction;
+        let dir = fresh_dir();
+        let transaction =
+            PairingTransaction::prepare(&dir, "legacy".into(), sample_phone(1)).unwrap();
+        transaction.write_candidate().unwrap();
+        let path = dir.path().join("pairing-transactions.json");
+        let mut entries: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let entry = entries[hex::encode([1; 32])].as_object_mut().unwrap();
+        entry.remove("state");
+        entry.insert("finished".into(), true.into());
+        std::fs::write(&path, serde_json::to_vec(&entries).unwrap()).unwrap();
+        assert!(load(&dir).unwrap().phones.is_empty());
+        let other = PairingTransaction::prepare(&dir, "other".into(), sample_phone(2)).unwrap();
+        drop(other);
+        drop(transaction);
+        assert!(std::fs::read_to_string(path).unwrap().contains("legacy"));
+        assert!(load(&dir).unwrap().phones.is_empty());
+        assert_eq!(load_raw(&dir).unwrap().phones.len(), 1);
+    }
+
+    #[test]
     fn load_on_missing_file_returns_empty() {
         let dir = fresh_dir();
         let file = load(&dir).expect("load");

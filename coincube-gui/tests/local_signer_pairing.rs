@@ -1116,7 +1116,7 @@ fn durable_pairing_test_dir() -> coincube_gui::dir::CoincubeDirectory {
 async fn cancellation_at_tls_identity_acceptance_and_pre_persistence_leaves_no_row() {
     use coincube_gui::phone_signer::{pairing_run::PairingRun, pairing_store};
     use tokio::io::AsyncReadExt;
-    for stop in 0..5 {
+    for stop in 0..6 {
         let dir = durable_pairing_test_dir();
         let identity = fresh_desktop_identity();
         let fp = Fingerprint::from([1, 2, 3, 4]);
@@ -1146,6 +1146,7 @@ async fn cancellation_at_tls_identity_acceptance_and_pre_persistence_leaves_no_r
         let addr = listener.local_addr().unwrap();
         let run = PairingRun::default();
         let peer_run = run.clone();
+        let peer_dir = dir.clone();
         let server = tokio::spawn(async move {
             let cfg = ServerConfig::builder_with_provider(Arc::new(
                 rustls::crypto::ring::default_provider(),
@@ -1177,7 +1178,7 @@ async fn cancellation_at_tls_identity_acceptance_and_pre_persistence_leaves_no_r
                 panic!("no acceptance")
             };
             assert_eq!(step.phase, local_v1::pairing_step::Phase::Accept as i32);
-            if stop == 4 {
+            if stop >= 4 {
                 use local_v1::{local_envelope::Payload, pairing_step::Phase};
                 // The peer has not acknowledged its durable write. A late
                 // COMMITTED response must not override Cancel.
@@ -1185,7 +1186,7 @@ async fn cancellation_at_tls_identity_acceptance_and_pre_persistence_leaves_no_r
                     (Phase::Prepared, Phase::Commit),
                     (Phase::Committed, Phase::Finish),
                 ] {
-                    if reply == Phase::Committed {
+                    if reply == Phase::Committed && stop == 4 {
                         peer_run.cancel();
                     }
                     let bytes = LocalEnvelope {
@@ -1213,6 +1214,11 @@ async fn cancellation_at_tls_identity_acceptance_and_pre_persistence_leaves_no_r
                         return;
                     };
                     assert_eq!(received.phase, expected as i32);
+                    if expected == Phase::Finish {
+                        assert!(pairing_store::load(&peer_dir).unwrap().phones.is_empty());
+                        peer_run.cancel(); // Too late: durable hidden decision wins.
+                        peer_run.check().unwrap();
+                    }
                 }
                 let bytes = LocalEnvelope {
                     payload: Some(Payload::PairingStep(local_v1::PairingStep {
@@ -1258,12 +1264,20 @@ async fn cancellation_at_tls_identity_acceptance_and_pre_persistence_leaves_no_r
         )
         .await;
         server.await.unwrap();
-        assert!(result.is_err(), "checkpoint {} accepted", stop);
-        assert!(
-            pairing_store::load(&dir).unwrap().phones.is_empty(),
-            "checkpoint {} persisted",
-            stop
-        );
+        if stop == 5 {
+            assert!(
+                result.is_ok(),
+                "postdecision cancellation reversed completion"
+            );
+            assert_eq!(pairing_store::load(&dir).unwrap().phones.len(), 1);
+        } else {
+            assert!(result.is_err(), "checkpoint {} accepted", stop);
+            assert!(
+                pairing_store::load(&dir).unwrap().phones.is_empty(),
+                "checkpoint {} persisted",
+                stop
+            );
+        }
     }
 }
 
@@ -1346,6 +1360,18 @@ async fn eof_timeout_and_unexpected_frames_at_each_desktop_boundary_leave_no_tru
             .await;
             assert!(result.is_err(), "{} {}", boundary, fault);
             peer.await.unwrap();
+            let journal =
+                std::fs::read_to_string(dir.path().join("pairing-transactions.json")).unwrap();
+            if boundary == 2 {
+                assert!(
+                    journal.contains("decided"),
+                    "postdecision {} must retain hidden recovery",
+                    fault
+                );
+                assert!(!journal.contains("completed"));
+            } else {
+                assert_eq!(journal, "{}");
+            }
             assert!(
                 coincube_gui::phone_signer::pairing_store::load(&dir)
                     .unwrap()
