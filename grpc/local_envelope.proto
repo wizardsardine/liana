@@ -1,123 +1,138 @@
 syntax = "proto3";
 
+// Local-signer LAN transport between a paired COINCUBE desktop and the
+// keychain phone app. Carried over a length-prefixed TLS 1.3 connection
+// where both ends present self-signed certificates pinned via the pairing
+// QR (and persisted in the pairing store thereafter).
+//
+// The phone and desktop implementations share this wire definition; keep
+// this file byte-identical between the repos and use the
+// `sync-local-envelope-proto` Makefile target to propagate changes.
 package coincube.local.v1;
 
-// Wire format for the LAN signer transport between the desktop
-// (coincube-gui) and the Keychain phone app. Mirrors the gRPC types
-// from connect.proto so the same Phone <-> Vault flow can run over a
-// local TLS/Noise socket without the Connect API.
+option go_package = "coincube/grpc/gen/localenvelopev1;localenvelopev1";
 
-import "connect.proto";
+import "connect.proto";  // reuse SigningSession, SessionStatus, etc.
 
 message LocalEnvelope {
   oneof payload {
-    PairingComplete     pairing_complete = 1;
-    connect.v1.Ping     ping             = 2;
-    connect.v1.Pong     pong             = 3;
-    PresentSession      present_session  = 4;
-    CancelSession       cancel_session   = 5;
-    SessionStatusUpdate status_update    = 6;
-    PartialSignature    partial          = 7;
-    ErrorEnvelope       error            = 8;
+    // Peer ↔ peer setup
+    PairingComplete pairing_complete = 1;  // phone → desktop, post-handshake
+    // Ping/Pong are shared with the Connect transport — same int64
+    // ts_unix_ms shape, so there's no value in defining local copies.
+    connect.v1.Ping ping             = 2;
+    connect.v1.Pong pong             = 3;
+
+    // Signing request (desktop → phone)
+    PresentSession  present_session  = 4;  // contains SigningSession
+    CancelSession   cancel_session   = 5;
+
+    // Phone responses
+    SessionStatusUpdate status_update = 6;  // delivered / viewed / approved / rejected
+    PartialSignature    partial       = 7;  // signed PSBT bytes
+    ErrorEnvelope       error         = 8;
+    PairingStep pairing_step = 9; // explicit durable-pairing state transitions
   }
 }
 
-// Sent by the phone as the first frame after the pairing TLS
-// handshake completes. Carries the phone's reported cert fingerprint
-// (informational — the pin is taken from the live TLS cert) and, as
-// of pairing protocol v2, the proof-of-QR-scan that lets the desktop
-// authenticate the phone it just dialed.
+// Sent by the phone immediately after the pairing TLS handshake succeeds.
+// Carries the SHA-256 of the phone's self-signed certificate DER so the
+// desktop can pin it for steady-state mutual auth, plus identifying metadata
+// that surfaces in the desktop's signer-list UI.
 message PairingComplete {
-  // SHA-256 of the phone's self-signed cert DER, lowercase hex
-  // (64 chars). MUST match the bytes pinned from the TLS handshake.
-  string phone_cert_fp         = 1;
-  string device_name           = 2;
-  string app_version           = 3;
-  repeated string capabilities = 4;
-  // Proof that the sender actually scanned THIS QR, bound to both
-  // cert pins so it can't be relayed/substituted. REQUIRED as of
-  // pairing protocol v2 — the desktop rejects pairing if it's
-  // missing or wrong.
+  // SHA-256 of the phone's self-signed certificate DER, hex-encoded
+  // (64 lowercase hex chars).
+  string phone_cert_fp           = 1;
+  string device_name             = 2;
+  string app_version             = 3;
+  repeated string capabilities   = 4;  // ["sign_psbt", "biometric_auth"]
+  // Channel-bound proof that the peer scanned THIS QR — closes the
+  // unpinned-dial MITM.
   //
-  //   pairing_proof = lowercase_hex(
-  //       HMAC-SHA256(
-  //           key = psk_bytes,            // base64url-no-pad-decoded from QR `psk`
-  //           msg = "coincube-pair-v2"    // 16 ASCII bytes, no NUL
-  //               || desktop_cert_fp      // 64 lowercase-hex ASCII (QR `certFp`)
-  //               || phone_cert_fp        // 64 lowercase-hex ASCII (this phone's cert SHA-256)
-  //       )
+  //   pairing_proof = HMAC-SHA256(
+  //     key = psk_bytes,                         (from the QR's `psk` field)
+  //     msg = "coincube-pair-v2" ||
+  //           desktop_cert_fp_hex_ascii ||       (lowercase, 64 chars)
+  //           phone_cert_fp_hex_ascii            (lowercase, 64 chars)
   //   )
   //
-  // The three msg segments are concatenated as raw bytes in exactly
-  // this order, no separators. `desktop_cert_fp` is the value the
-  // phone read from the QR; `phone_cert_fp` is the SHA-256 of the
-  // phone's own self-signed cert DER (same value as field 1). The
-  // desktop recomputes this using the cert fp it captured from the
-  // live TLS handshake (not field 1) and constant-time compares.
-  string pairing_proof         = 5;
-  // The phone's ECIES transport public key (33-byte compressed
-  // secp256k1), same construction and key separation as the Connect
-  // rail's per-device transport key.
-  //
-  // REQUIRED as of descriptor blinding. LAN sessions are ECIES_V1 like
-  // every other rail: the desktop seals the PSBT and the full descriptor
-  // to this key, one envelope each, and the phone verifies its own xpub
-  // membership in what it decrypts. There is deliberately no
-  // descriptor_id-only path for LAN — a LAN peer is exactly the
-  // untrusted party such a fallback would empower.
-  //
-  // Captured once, at pairing, and persisted on the desktop's
-  // `PairedPhone`. That is sound because a phone that reinstalls mints a
-  // fresh TLS identity too, which fails the cert pin and forces a
-  // re-pair; the transport key never outlives the pin that carries it.
-  // A phone that omits this (or sends a malformed point) cannot be sent
-  // a sealed session and is refused at pairing rather than silently
-  // downgraded.
-  bytes transport_pubkey       = 6;
+  // Emitted as lowercase hex (64 chars). Empty for v1 PairingOffer peers
+  // (no psk in the QR → no proof to compute). The desktop must verify
+  // before pinning the cert.
+  string pairing_proof           = 5;
+  // The phone's ECIES transport public key (33-byte compressed secp256k1).
+  // Required for descriptor-blinded LAN signing: the desktop seals both the
+  // PSBT and canonical descriptor to it. A missing/malformed key forces a
+  // re-pair; it must never select a descriptor_id-only fallback.
+  bytes transport_pubkey         = 6;
+  // Exact local key selected by the scanned QR. Authenticated by the same
+  // TLS channel and v2 QR proof; never inferred from a master fingerprint.
+  // Missing identity requires re-pairing. Only the selected vault key is shared.
+  SignerBinding signer_binding   = 7;
+  uint32 completion_protocol = 8; // must be 1; older peers must update/re-pair
 }
 
-// Desktop -> phone: a PSBT to sign, wrapped in the same SigningSession
-// type the Connect-mediated path uses.
 message PresentSession {
   connect.v1.SigningSession session = 1;
 }
 
-// Desktop -> phone: abort an in-flight session.
 message CancelSession {
   string session_id = 1;
   string reason     = 2;
 }
 
-// Phone -> desktop: status transitions for the in-flight session.
 message SessionStatusUpdate {
   string session_id = 1;
   connect.v1.SessionStatus status = 2;
 }
 
-// Phone -> desktop: signed PSBT and which key_ids were signed for.
 message PartialSignature {
-  string session_id = 1;
-  // signed_psbt carries the real partially-signed PSBT only on a
-  // PLAINTEXT session. It is EMPTY on an ECIES_V1 session, which is
-  // every session this desktop now creates over LAN.
-  bytes  signed_psbt = 2;
+  string session_id              = 1;
+  // Legacy plaintext field. Empty for every ECIES_V1 session.
+  bytes  signed_psbt             = 2;
   repeated string signed_key_ids = 3;
-  // signature_envelope is the ECIES_V1 counterpart: the signed PSBT
-  // sealed back to the desktop's transport key, which the desktop
-  // published as `SigningSession.creator_transport_pubkey` on the
-  // PresentSession it sent. Same AAD as the outbound direction, so a
-  // signature lifted from another session fails to open rather than
-  // being merged into this one.
+  // The ECIES_V1 signed PSBT, sealed to
+  // SigningSession.creator_transport_pubkey with request_id-bound AAD.
   connect.v1.PayloadEnvelope signature_envelope = 4;
 }
 
-// Either side -> peer: out-of-band error. Code is machine-readable;
-// message is human-readable. `session_id` is optional: set only when
-// the error pertains to a specific in-flight signing session, in
-// which case the desktop's correlator routes the error to that
-// session's waiter instead of broadcasting.
 message ErrorEnvelope {
+  // Machine-readable code. Defined values:
+  //   "replay_refused"   — session_id already signed by this device
+  //   "unknown_session"  — desktop sent an id this device doesn't have
+  //   "unauthorized"     — peer cert not in the pairing store
+  //   "internal"         — unexpected local failure
   string code       = 1;
   string message    = 2;
   string session_id = 3;
+}
+
+// One explicitly selected vault key, independently resolved on the phone.
+message SignerBinding {
+  string key_id = 1;             // Local record's backend key ID.
+  string xpub = 2;               // Exact extended public key, no origin/suffix.
+  string fingerprint = 3;        // Display/routing metadata, not authority.
+  bytes descriptor_sha256 = 4;   // All 32 bytes over canonical descriptor UTF-8.
+}
+
+// One TLS peer and one transaction ID own the whole exchange. No signing
+// authority arises from a pending transaction. Liveness Ping/Pong is unrelated.
+// ACCEPT -> PREPARED -> COMMIT -> COMMITTED -> FINISH -> FINISHED.
+// ACCEPT follows durable coordinator staging; PREPARED follows phone staging.
+// COMMIT/COMMITTED confirm both candidate writes, still hidden and cancellable.
+// FINISH follows the durable coordinator completion decision, serialized with
+// cancellation. FINISHED acknowledges phone completion. Errors before FINISH
+// abort. Loss after FINISH is uncertain; require explicit recovery/re-pair.
+message PairingStep {
+  string transaction_id = 1;
+  enum Phase {
+    UNKNOWN = 0;
+    ACCEPT = 1;
+    PREPARED = 2;
+    COMMIT = 3;
+    COMMITTED = 4;
+    FINISH = 5;
+    FINISHED = 6;
+  }
+  Phase phase = 2;
 }

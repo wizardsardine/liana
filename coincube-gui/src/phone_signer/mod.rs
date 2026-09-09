@@ -14,8 +14,11 @@ pub mod identity;
 pub mod mdns;
 pub mod pairing;
 pub mod pairing_listener;
+pub mod pairing_run;
 pub mod pairing_store;
+pub mod pairing_transaction;
 pub mod protocol;
+mod signatures;
 pub mod tls;
 pub mod transport;
 
@@ -202,6 +205,10 @@ impl HWI for PhoneSigner {
     async fn sign_tx(&self, psbt: &mut Psbt) -> Result<(), HwiError> {
         use crate::services::connect::grpc::connect_v1 as cv1;
 
+        let binding = self
+            .paired_phone
+            .exact_signer(&self.descriptor)
+            .map_err(HwiError::Device)?;
         let session_id = uuid::Uuid::new_v4().to_string();
         let request_id = uuid::Uuid::new_v4().to_string();
         let psbt_bytes = psbt.serialize();
@@ -279,8 +286,8 @@ impl HWI for PhoneSigner {
             policy_summary: None,
             targets: vec![cv1::SignerTarget {
                 device_id: String::new(),
-                key_fingerprint: self.fingerprint.to_string(),
-                key_id: String::new(),
+                key_fingerprint: binding.fingerprint.to_string(),
+                key_id: binding.key_id.clone(),
                 // Echoed back so the phone can confirm the session was sealed
                 // to the key it reported at pairing.
                 transport_pubkey: self.paired_phone.transport_pubkey.clone(),
@@ -340,6 +347,12 @@ impl HWI for PhoneSigner {
         // too old to have decrypted the descriptor it was sent, or is trying to
         // walk the session back to plaintext — refuse either way rather than
         // merging signatures we can't attribute to the request we sealed.
+        if !partial.signed_psbt.is_empty() || partial.signed_key_ids != vec![binding.key_id.clone()]
+        {
+            return Err(HwiError::Device(
+                "Signature signer identity mismatch.".into(),
+            ));
+        }
         let Some(env) = partial.signature_envelope.as_ref() else {
             return Err(HwiError::Device(
                 "This Keychain returned an unencrypted signature for an encrypted \
@@ -362,7 +375,13 @@ impl HWI for PhoneSigner {
         let signed: Psbt = Psbt::deserialize(&signed_bytes)
             .map_err(|e| HwiError::Device(format!("decode signed psbt: {}", e)))?;
 
-        merge_signatures(psbt, &signed);
+        if signed.unsigned_tx != psbt.unsigned_tx || signed.inputs.len() != psbt.inputs.len() {
+            return Err(HwiError::Device(
+                "Signed transaction differs from the request.".into(),
+            ));
+        }
+        signatures::merge_verified(psbt, &signed, &self.descriptor, binding)
+            .map_err(HwiError::Device)?;
         Ok(())
     }
 }
@@ -382,26 +401,6 @@ fn map_phone_error(msg: String) -> HwiError {
         ))
     } else {
         HwiError::Device(msg)
-    }
-}
-
-/// Merge `partial_sigs`, `tap_key_sig`, and `tap_script_sigs` from
-/// `signed` into `target`. Mirrors the post-`sign_tx` merge logic in
-/// `app::state::vault::psbt::sign_psbt`, so the phone signer behaves
-/// like a hardware wallet that signs one path at a time.
-fn merge_signatures(target: &mut Psbt, signed: &Psbt) {
-    for (i, target_in) in target.inputs.iter_mut().enumerate() {
-        if let Some(signed_in) = signed.inputs.get(i) {
-            for (pk, sig) in &signed_in.partial_sigs {
-                target_in.partial_sigs.insert(*pk, *sig);
-            }
-            if let Some(tap_key_sig) = signed_in.tap_key_sig {
-                target_in.tap_key_sig = Some(tap_key_sig);
-            }
-            for (k, v) in &signed_in.tap_script_sigs {
-                target_in.tap_script_sigs.insert(*k, *v);
-            }
-        }
     }
 }
 
@@ -434,3 +433,7 @@ mod tests {
         assert_eq!(msg, "USER_DECLINED: tap reject");
     }
 }
+
+#[cfg(test)]
+#[path = "signature_tests.rs"]
+mod signature_tests;

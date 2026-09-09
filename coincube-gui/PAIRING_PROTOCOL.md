@@ -1,0 +1,21 @@
+Pairing completion protocol 1 (within QR v2)
+
+The QR PSK, TLS identity, exact selected xpub/origin and descriptor commitment checks precede staging. PairingComplete.completion_protocol must equal 1. Pong is exclusively liveness. Old peers must update both applications and create a fresh offer.
+
+Desktop has three durable journal states:
+
+- `provisional`: candidate hidden, exact prior row visible, cancellable and automatically reversible.
+- `decided`: candidate hidden, exact prior row visible, irreversible by automatic cleanup or cancellation.
+- `completed`: candidate visible, entered only after the matching FINISHED acknowledgement and a durable completion write.
+
+Desktop stages candidate/prior under a fresh local UUID, sends ACCEPT and waits for PREPARED. Phone stages candidate/prior under a separate local 256-bit nonce. Desktop writes its hidden candidate and sends COMMIT; phone writes its hidden candidate and replies COMMITTED. Both writes are acknowledged, but cancellation can still win. Desktop then writes `decided` inside PairingRun's cancellation lock. That write is the cancellation linearization point. FINISH is sent only after it succeeds. Desktop exposes nothing new while waiting for FINISHED. After FINISHED, it durably writes `completed` and reports success.
+
+Every desktop automatic rollback, including Drop after task abort, reads current durable journal ownership and state. Only the matching provisional transaction may roll back. Every postdecision error (EOF, timeout, unexpected frame, storage failure), future drop or restart leaves the decided record hidden. No second write is needed to hide it. Failure to record completion leaves the decided journal in place. Explicit re-pair is recovery; user unpair/rename supersedes journal authority. Older `finished` journals cannot prove final acknowledgement and are conservatively treated as decided/hidden, requiring re-pair.
+
+Phone accepts FINISH as the coordinator's durable decision. After the local finish write succeeds, socket/acknowledgement failure or cancellation cannot automatically roll it back. PairingStore also refuses rollback of a finished transaction, including delayed cleanup after a storage implementation has completed its write. Explicit unpair still revokes it. A failed acknowledgement is reported as uncertain completion requiring re-pair. The phone cannot know whether its final acknowledgement reached desktop.
+
+Every phone attempt has one local cancellation owner independent of peer certificate and wire transaction ID. Waiting UI cancellation/disposal, stop, dispose and pause/detach revoke and drain unfinished handlers and their storage operations. Teardown closes pending sockets before awaiting cleanup; old attempts cannot register connections after teardown. Resume does not resume an unfinished pairing. Pause/detach preserve the intended sticky listener port, while full stop resets it. Temporary TLS trust derives only from live pending records. Serialized listener updates remove it on all exits; stale owners cannot remove a replacement's trust. Successful pairing trust comes from the durable store.
+
+All post-staging protocol failures are terminal and require a fresh user-approved offer, never automatic redial with a consumed offer. Every journal mutation checks local ownership. Peer-supplied transaction IDs sequence messages but confer no journal authority. Public store reads mask hidden candidates with the exact prior row. Existing completed prior bindings remain usable until explicit user revocation.
+
+This is not universally atomic distributed commit. FINISH or FINISHED may be lost. The phone may retain a completed row while desktop retains a hidden decided row. Desktop may crash after its local completion write but before returning success; that write follows a received FINISHED. Recovery is explicit re-pair when transport/storage are available. Persistent storage errors may prevent provisional rollback; unreadable journals fail closed, and unfinished journals mask candidates. The model relies on atomic file replacement and durable storage acknowledgements; physical corruption or loss of a journal is outside it. Host Flutter tests inject platform storage/authentication and do not prove physical iOS/Android durability under power loss.

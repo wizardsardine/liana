@@ -1,0 +1,42 @@
+{
+  "version": "1.0",
+  "generatedAt": "2026-09-09T05:33:30Z",
+  "baseRef": "57b807a0ba6c7d21e7191bbbf6242afb78dc6498",
+  "headRef": "dafa47e44f378de72e4a8ceccd920e0e1494ec05",
+  "files": [
+    {"filePath":".github/workflows/main.yml","status":"modified","additions":24,"deletions":0},
+    {"filePath":"coincube-gui/PAIRING_PROTOCOL.md","status":"added","additions":11,"deletions":0},
+    {"filePath":"coincube-gui/examples/lan_keychain_native.rs","status":"modified","additions":26,"deletions":3},
+    {"filePath":"coincube-gui/src/app/state/settings/local_signing.rs","status":"modified","additions":93,"deletions":49},
+    {"filePath":"coincube-gui/src/phone_signer/mod.rs","status":"modified","additions":2,"deletions":0},
+    {"filePath":"coincube-gui/src/phone_signer/pairing_listener.rs","status":"modified","additions":153,"deletions":36},
+    {"filePath":"coincube-gui/src/phone_signer/pairing_run.rs","status":"added","additions":114,"deletions":0},
+    {"filePath":"coincube-gui/src/phone_signer/pairing_store.rs","status":"modified","additions":102,"deletions":6},
+    {"filePath":"coincube-gui/src/phone_signer/pairing_transaction.rs","status":"added","additions":172,"deletions":0},
+    {"filePath":"coincube-gui/src/phone_signer/signatures.rs","status":"modified","additions":1,"deletions":1},
+    {"filePath":"coincube-gui/tests/common/pairing_completion.rs","status":"added","additions":73,"deletions":0},
+    {"filePath":"coincube-gui/tests/local_signer_pair_and_sign.rs","status":"modified","additions":15,"deletions":8},
+    {"filePath":"coincube-gui/tests/local_signer_pairing.rs","status":"modified","additions":314,"deletions":24},
+    {"filePath":"grpc/local_envelope.proto","status":"modified","additions":24,"deletions":0}
+  ],
+  "impactedNodes": [
+    {"nodeId":"file:coincube-gui/src/app/state/settings/local_signing.rs","impact":"direct","reason":"Settings state now owns a cancellable pairing authority and revokes it on run replacement, wallet changes, and navigation."},
+    {"nodeId":"function:coincube-gui/src/app/state/settings/local_signing.rs:update","impact":"direct","reason":"Passes the pairing authority and data directory into the durable handshake."},
+    {"nodeId":"file:coincube-gui/src/phone_signer/pairing_listener.rs","impact":"direct","reason":"Runs the explicit ACCEPT/PREPARED/COMMIT/COMMITTED/FINISH/FINISHED exchange and coordinates journal transitions."},
+    {"nodeId":"function:coincube-gui/src/phone_signer/pairing_listener.rs:try_pair_once","impact":"direct","reason":"Stages, writes, exposes, rolls back, or suspends the authenticated pairing candidate."},
+    {"nodeId":"file:coincube-gui/src/phone_signer/pairing_store.rs","impact":"direct","reason":"Serializes public reads with transaction writes and uses synced temporary-file replacement."},
+    {"nodeId":"file:coincube-gui/src/phone_signer/pairing_run.rs","impact":"direct","reason":"Serializes cancellation with the desktop durable decision."},
+    {"nodeId":"file:coincube-gui/src/phone_signer/pairing_transaction.rs","impact":"direct","reason":"Adds the provisional pairing journal and prior-row recovery logic."},
+    {"nodeId":"schema:grpc/local_envelope.proto","impact":"direct","reason":"Adds completion protocol negotiation and explicit pairing phase messages."},
+    {"nodeId":"file:coincube-gui/src/hw.rs","impact":"indirect","reason":"Public pairing-store visibility determines which phones can be surfaced as signing devices."},
+    {"nodeId":"file:coincube-gui/src/phone_signer/transport.rs","impact":"indirect","reason":"Carries the ordered completion exchange and is the failure boundary for post-decision ambiguity."},
+    {"nodeId":"file:coincube-gui/src/phone_signer/mod.rs","impact":"indirect","reason":"Consumes only pairings visible through the completed public store before constructing signing sessions."}
+  ],
+  "impactedEdges": [
+    {"source":"function:coincube-gui/src/app/state/settings/local_signing.rs:update","target":"file:coincube-gui/src/phone_signer/pairing_listener.rs","type":"calls","impact":"The UI-owned run token now authorizes every pre-decision handshake and persistence step."},
+    {"source":"file:coincube-gui/src/phone_signer/pairing_listener.rs","target":"file:coincube-gui/src/phone_signer/pairing_transaction.rs","type":"imports","impact":"Wire-phase progress drives the local durable journal state."},
+    {"source":"file:coincube-gui/src/phone_signer/pairing_transaction.rs","target":"file:coincube-gui/src/phone_signer/pairing_store.rs","type":"calls","impact":"Journal state masks provisional raw rows from all public pairing-store consumers."},
+    {"source":"function:coincube-gui/src/phone_signer/mod.rs:sign_tx","target":"file:coincube-gui/src/phone_signer/pairing_store.rs","type":"reads","impact":"Only publicly visible completed rows may become LAN signing capabilities."}
+  ],
+  "summary": "The new Tenshu commit adds cancellation ownership and a journaled six-phase pairing completion exchange. The main risk surface is the transition after COMMITTED: the current implementation marks the desktop row visible before FINISHED and can roll back an already-recorded decision on drop or non-network failure. Keychain's peer-side lifecycle must also cancel and await pending handlers and derive temporary trust from exact live attempts. The signature-verification boundary itself is unchanged by this commit."
+}

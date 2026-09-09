@@ -89,7 +89,11 @@ impl VaultReceivePanel {
             labels_edited: LabelsEdited::default(),
             modal: Modal::None,
             warning: None,
-            processing: false,
+            // Starts true: the panel always fires a `reload` fetch the
+            // moment it's shown, so the first render should display the
+            // loading state rather than briefly flashing "No addresses yet".
+            // Mirrors `VaultTransactionsPanel::new`.
+            processing: true,
             generating: false,
         }
     }
@@ -243,7 +247,17 @@ impl State for VaultReceivePanel {
                         // the poller for a per-SPK rescan on the
                         // next tick instead of waiting up to 10
                         // min for the smart-poll cadence.
-                        let _ = daemon.request_sync().await;
+                        //
+                        // Detached rather than awaited: `request_sync`
+                        // is a second blocking RPC, and awaiting it here
+                        // would hold `Message::ReceiveAddress` — and so
+                        // the button's spinner — for its whole round
+                        // trip. `Task::perform` futures run on iced's
+                        // tokio executor, so a runtime is in context.
+                        let sync_daemon = daemon.clone();
+                        tokio::spawn(async move {
+                            let _ = sync_daemon.request_sync().await;
+                        });
                         res
                     },
                     Message::ReceiveAddress,
@@ -348,6 +362,8 @@ impl State for VaultReceivePanel {
         let daemon = daemon.expect("Vault panels require daemon");
         let wallet = wallet.expect("Vault panels require wallet");
         let data_dir = self.data_dir.clone();
+        // `Self::new` already starts in the loading state, so the fetch
+        // below is covered from the first frame after navigation.
         *self = Self::new(data_dir, wallet);
         Task::perform(
             async move {
@@ -361,7 +377,18 @@ impl State for VaultReceivePanel {
                 // state so an incoming unconfirmed tx shows up
                 // promptly instead of waiting for the smart-poll
                 // safety-net rescan.
-                let _ = daemon.request_sync().await;
+                //
+                // Detached rather than awaited: `request_sync` is a
+                // second blocking RPC, and awaiting it here would hold
+                // `Message::RevealedAddresses` — and so the loading
+                // placeholder — for its whole round trip even though the
+                // addresses are already in hand. `Task::perform` futures
+                // run on iced's tokio executor, so a runtime is in
+                // context.
+                let sync_daemon = daemon.clone();
+                tokio::spawn(async move {
+                    let _ = sync_daemon.request_sync().await;
+                });
                 res
             },
             |res| Message::RevealedAddresses(res, None),
@@ -520,18 +547,27 @@ mod tests {
             Address::from_str("tb1qkldgvljmjpxrjq2ev5qxe8dvhn0dph9q85pwtfkjeanmwdue2akqj4twxj")
                 .unwrap()
                 .assume_checked();
-        // The mock daemon is a strict ordered queue (see
-        // `utils::mock::Daemon`). Each entry consumes the next
-        // outgoing RPC. The Receive panel's `reload` and
-        // `NextReceiveAddress` paths both fire a fire-and-forget
-        // `requestsync` after their primary RPC, so the queue has
-        // to interleave them in real call order:
+        // The mock daemon's `requests` queue is strictly positional (see
+        // `utils::mock::Daemon`): each entry consumes the next outgoing
+        // RPC. Only the two calls the panel awaits inline go in it, in the
+        // order the panel makes them:
         //   1. listrevealedaddresses    (reload's primary)
-        //   2. requestsync              (reload's eager-sync kick)
-        //   3. getnewaddress            (NextReceiveAddress primary)
-        //   4. requestsync              (NextReceiveAddress kick)
-        // The daemon answers `requestsync` with the empty JSON
-        // object `{}`; the client deserialises into a discarded
+        //   2. getnewaddress            (NextReceiveAddress primary)
+        //
+        // Both paths also kick an eager `requestsync`, but each is
+        // detached with `tokio::spawn` and never awaited, so it lands
+        // whenever the scheduler gets to it — possibly after the next
+        // ordered call, possibly after this test ends. Ordering it in the
+        // queue would make the test depend on runtime scheduling, so it
+        // gets a standing response matched by method name instead and
+        // can't shift the queue. That does mean the kicks themselves
+        // aren't asserted: a fire-and-forget side effect has no
+        // race-free moment to assert on from here. `reload`'s and
+        // `NextReceiveAddress`'s call to it is covered by reading the
+        // source, not by this test.
+        //
+        // The daemon answers `requestsync` with the empty JSON object
+        // `{}`; the client deserialises into a discarded
         // `serde_json::Value`.
         let daemon = Daemon::new(vec![
             (
@@ -544,21 +580,14 @@ mod tests {
                 })),
             ),
             (
-                Some(json!({"method": "requestsync", "params": Option::<Request>::None})),
-                Ok(json!({})),
-            ),
-            (
                 Some(json!({"method": "getnewaddress", "params": Option::<Request>::None})),
                 Ok(json!(GetAddressResult::new(
                     addr.clone(),
                     ChildNumber::from_normal_idx(0).unwrap()
                 ))),
             ),
-            (
-                Some(json!({"method": "requestsync", "params": Option::<Request>::None})),
-                Ok(json!({})),
-            ),
-        ]);
+        ])
+        .with_standing_response("requestsync", json!({}));
         let wallet = Arc::new(Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap()));
         let sandbox: Sandbox<VaultReceivePanel> = Sandbox::new(VaultReceivePanel::new(
             CoincubeDirectory::new(PathBuf::new()),

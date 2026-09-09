@@ -194,3 +194,27 @@ jobs:
             echo -n "" | gnome-keyring-daemon --daemonize --unlock --components=secrets >/dev/null
             cargo test --color always -- --nocapture
           '
+
+  # Explicit package/filter: default workspace members must not determine this
+  # security boundary's coverage. No OS credentials or repository secrets.
+  lan_signature_verifier:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+      - run: brew install protobuf
+      - name: Exact returned ECDSA and Schnorr signatures
+        env:
+          PROTOC: /opt/homebrew/bin/protoc
+          BREEZ_API_KEY: DUMMY_BREEZ_API_KEY
+        run: |
+          cargo test --locked -p coincube-gui --lib phone_signer::signature_tests -- --list > verifier-tests.txt
+          grep -q 'extra_valid_second_key_signature_is_rejected: test' verifier-tests.txt
+          grep -q 'owner_and_recovery_signatures_are_verified_for_tr_and_wsh: test' verifier-tests.txt
+          grep -q 'wrong_path_invalid_signature_and_empty_delta_are_refused: test' verifier-tests.txt
+          grep -q 'preexisting_signatures_cannot_be_removed_or_replaced: test' verifier-tests.txt
+          cargo test --locked -p coincube-gui --lib phone_signer::signature_tests -- --nocapture

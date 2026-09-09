@@ -11,6 +11,8 @@
 //! Side benefit: this exercises the desktop's TLS pinning path on a
 //! self-signed phone cert that the test mints inline, end-to-end.
 
+#[path = "common/lan_binding.rs"]
+mod lan_binding;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 
@@ -95,8 +97,14 @@ fn empty_psbt() -> Psbt {
 enum FakeResponse {
     /// Echo the PSBT bytes back inside a `PartialSignature`.
     EchoPartial,
+    WrongRequest,
+    WrongKey,
+    Plaintext,
     /// Send back an `ErrorEnvelope` with the given code/message.
-    Error { code: String, message: String },
+    Error {
+        code: String,
+        message: String,
+    },
     /// Drop the connection right after reading the request without
     /// sending anything back. Exercises the reader-side
     /// `Disconnected` path.
@@ -172,16 +180,30 @@ async fn fake_phone(
     };
 
     let reply = match response {
-        FakeResponse::EchoPartial => {
-            let sealed = seal_to_device(&creator_pub, &request_id, &psbt_bytes)
-                .expect("seal the signature back to the desktop");
+        FakeResponse::EchoPartial
+        | FakeResponse::WrongRequest
+        | FakeResponse::WrongKey
+        | FakeResponse::Plaintext => {
+            let wrong_request = matches!(response, FakeResponse::WrongRequest);
+            let wrong_key = matches!(response, FakeResponse::WrongKey);
+            let plaintext = matches!(response, FakeResponse::Plaintext);
+            let sealed = seal_to_device(
+                &creator_pub,
+                if wrong_request {
+                    "another-request"
+                } else {
+                    &request_id
+                },
+                &psbt_bytes,
+            )
+            .expect("seal the signature back to the desktop");
             Some(LocalEnvelope {
                 payload: Some(local_v1::local_envelope::Payload::Partial(
                     local_v1::PartialSignature {
                         session_id,
                         // Empty under ECIES_V1.
-                        signed_psbt: Vec::new(),
-                        signed_key_ids: Vec::new(),
+                        signed_psbt: if plaintext { psbt_bytes } else { Vec::new() },
+                        signed_key_ids: vec![if wrong_key { "999" } else { "10" }.into()],
                         signature_envelope: Some(cv1::PayloadEnvelope {
                             device_id: String::new(),
                             ephemeral_pubkey: sealed.ephemeral_pubkey,
@@ -243,7 +265,7 @@ fn verifier_pinning(
 // across `recv().await` would actually deadlock instead of being
 // papered over by single-threaded cooperative scheduling.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn sign_tx_round_trips_through_fake_phone() {
+async fn sign_tx_rejects_unsigned_echo_through_fake_phone() {
     // 1. Mint desktop and phone identities.
     let (desk_cert, desk_key) = mint_ed25519_cert("Coincube Desktop (test)");
     let (phone_cert, phone_key) = mint_ed25519_cert("Coincube Phone (test)");
@@ -282,11 +304,12 @@ async fn sign_tx_round_trips_through_fake_phone() {
         .await
         .expect("dial fake phone");
     let paired = PairedPhone {
+        signer_binding: Some(lan_binding::binding(TEST_DESCRIPTOR)),
         cert_pin: phone_pin,
         name: "Test phone".into(),
         paired_at_unix: 0,
         wallet_fingerprints: vec![Fingerprint::default()],
-        vault_fingerprint: Fingerprint::default(),
+        vault_fingerprint: lan_binding::vault(TEST_DESCRIPTOR),
         transport_pubkey: phone_pubkey,
         fallback_addr: None,
     };
@@ -302,7 +325,7 @@ async fn sign_tx_round_trips_through_fake_phone() {
     let original = psbt.serialize();
     async_hwi::HWI::sign_tx(&signer, &mut psbt)
         .await
-        .expect("sign_tx ok");
+        .expect_err("echo without a selected-key signature must be rejected");
     // Round-trip: the fake phone echoed back unchanged, so the
     // PSBT serialises to the same bytes.
     let returned = psbt.serialize();
@@ -359,11 +382,12 @@ async fn signer_against_response(
         .await
         .expect("dial fake phone");
     let paired = PairedPhone {
+        signer_binding: Some(lan_binding::binding(TEST_DESCRIPTOR)),
         cert_pin: phone_pin,
         name: "Test phone".into(),
         paired_at_unix: 0,
         wallet_fingerprints: vec![Fingerprint::default()],
-        vault_fingerprint: Fingerprint::default(),
+        vault_fingerprint: lan_binding::vault(TEST_DESCRIPTOR),
         transport_pubkey: phone_pubkey,
         fallback_addr: None,
     };
@@ -476,4 +500,50 @@ async fn is_alive_flips_false_after_phone_disconnect() {
         !signer.is_alive(),
         "PhoneSigner::is_alive() should flip to false once the reader task exits",
     );
+}
+
+#[tokio::test]
+async fn response_identity_aad_and_plaintext_downgrades_are_refused() {
+    for response in [
+        FakeResponse::WrongRequest,
+        FakeResponse::WrongKey,
+        FakeResponse::Plaintext,
+    ] {
+        let (signer, handle) = signer_against_response(response).await;
+        let mut psbt = empty_psbt();
+        let before = psbt.serialize();
+        assert!(async_hwi::HWI::sign_tx(&signer, &mut psbt).await.is_err());
+        assert_eq!(psbt.serialize(), before);
+        handle.await.unwrap();
+    }
+}
+
+#[test]
+fn stale_or_wrong_exact_pairing_identity_is_not_a_capability() {
+    let mut phone = PairedPhone {
+        signer_binding: Some(lan_binding::binding(TEST_DESCRIPTOR)),
+        cert_pin: [1; 32],
+        name: "fixture".into(),
+        paired_at_unix: 0,
+        wallet_fingerprints: Vec::new(),
+        vault_fingerprint: lan_binding::vault(TEST_DESCRIPTOR),
+        transport_pubkey: Vec::new(),
+        fallback_addr: None,
+    };
+    assert!(phone.exact_signer(TEST_DESCRIPTOR).is_ok());
+    let valid = phone.signer_binding.clone();
+    phone.signer_binding = None;
+    assert!(phone
+        .exact_signer(TEST_DESCRIPTOR)
+        .unwrap_err()
+        .contains("again"));
+    phone.signer_binding = valid.clone();
+    phone.signer_binding.as_mut().unwrap().xpub = "another-key".into();
+    assert!(phone.exact_signer(TEST_DESCRIPTOR).is_err());
+    phone.signer_binding = valid.clone();
+    phone.signer_binding.as_mut().unwrap().descriptor_sha256[0] ^= 1;
+    assert!(phone.exact_signer(TEST_DESCRIPTOR).is_err());
+    phone.signer_binding = valid;
+    phone.vault_fingerprint = Fingerprint::default();
+    assert!(phone.exact_signer(TEST_DESCRIPTOR).is_err());
 }

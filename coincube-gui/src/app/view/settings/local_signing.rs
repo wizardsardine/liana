@@ -78,10 +78,27 @@ fn pairing_card<'a>(state: &'a LocalSigningState) -> Element<'a, Message> {
 
 fn idle_body<'a>(state: &'a LocalSigningState) -> Element<'a, Message> {
     let mut pair_btn = button::secondary(None, "Pair phone");
-    if state.wallet_fingerprint.is_some() {
+    if state.wallet_fingerprint.is_some() && state.selected_key.is_some() {
         pair_btn = pair_btn.on_press(Message::Settings(SettingsMessage::LocalSigning(
             LocalSigningMessage::StartPairing,
         )));
+    }
+    let mut keys = Column::new()
+        .spacing(8)
+        .push(text("Select the exact vault key held by this phone:"));
+    for (xpub, label) in &state.vault_keys {
+        let selected = state.selected_key.as_ref() == Some(xpub);
+        keys = keys.push(
+            iced::widget::Button::new(text(format!(
+                "{}{}",
+                if selected { "Selected: " } else { "" },
+                label
+            )))
+            .style(theme::button::secondary)
+            .on_press(Message::Settings(SettingsMessage::LocalSigning(
+                LocalSigningMessage::SelectKey(xpub.clone()),
+            ))),
+        );
     }
     Column::new()
         .padding(10)
@@ -91,6 +108,7 @@ fn idle_body<'a>(state: &'a LocalSigningState) -> Element<'a, Message> {
              sign PSBTs directly, without going through the Connect \
              API. The phone must be on the same Wi-Fi.",
         ))
+        .push(keys)
         .push(pair_btn)
         .into()
 }
@@ -299,7 +317,21 @@ fn paired_phones_card<'a>(state: &'a LocalSigningState) -> Element<'a, Message> 
             let fp8_for_name = fp8.clone();
             let fp8_for_fb = fp8.clone();
             let fp8_for_save = fp8.clone();
+            // Must be the same predicate signing and the hw refresh loop
+            // apply. Matching only `descriptor_sha256` here would report
+            // "Exact vault key paired" for a phone whose binding fails on
+            // key id, vault id, or key membership — a healthy row the user
+            // then can't sign with.
+            let identity_status = if p
+                .exact_signer_against(&state.descriptor_sha256, &state.vault_key_fingerprints)
+                .is_ok()
+            {
+                "Exact vault key paired"
+            } else {
+                "Pair again and select the exact vault key held by this phone."
+            };
             let row = Column::new()
+                .push(text(identity_status))
                 .padding([6, 0])
                 .spacing(6)
                 .push(

@@ -15,19 +15,16 @@
 //!      has time to scan.
 //!   4. Validate the wallet fingerprint claim against the local
 //!      wallet's keys.
-//!   5. Return the would-be `PairedPhone` row; the caller decides
-//!      whether to persist (see
-//!      [`crate::app::state::settings::local_signing::LocalSigningState::apply_pairing_completed`]).
-//!      Persisting here would leak a paired row if the user
-//!      cancelled the wizard while this future was still in flight —
-//!      `Task::perform` futures aren't cancellable from the caller,
-//!      so we gate persistence at the synchronous message-apply
-//!      point instead.
+//!   5. Stage the exact binding and exchange explicit durable completion
+//!      messages. Cancellation is serialized with the durable commit decision.
+//!      Only a completed exchange returns a persisted row to the UI.
 //!   6. Drop the connection — the next 2s discovery tick redials via
 //!      the steady-state path.
 //!
 //! See `plans/PLAN-local-signer-lan-interop-fixes-desktop.md` §1.4.
 
+use super::{pairing_run::PairingRun, pairing_transaction::PairingTransaction};
+use crate::dir::CoincubeDirectory;
 use std::time::Duration;
 
 use prost::Message as _;
@@ -50,10 +47,7 @@ use crate::phone_signer::transport::PairedTransport;
 pub(crate) const REDIAL_BACKOFF: Duration = Duration::from_millis(750);
 
 /// Dial the phone selected during the picker step, read its
-/// `PairingComplete`, validate. Returns the would-be
-/// [`PairedPhone`] on success; the caller persists it (gated by the
-/// run-id + Waiting-state check in
-/// [`crate::app::state::settings::local_signing::LocalSigningState::apply_pairing_completed`]).
+/// `PairingComplete`, validate, and durably complete both sides before success.
 ///
 /// The caller is responsible for confirming `offer.expires_at_unix`
 /// hasn't passed before invoking this; we double-check below but
@@ -65,19 +59,34 @@ pub(crate) const REDIAL_BACKOFF: Duration = Duration::from_millis(750);
 /// generated for a different vault" case (e.g. user scanned an old
 /// offer after switching wallets).
 ///
-/// `signer_fingerprints` is the local wallet's `descriptor_keys()` —
-/// the real BIP-32 master fingerprints that appear in the descriptor.
-/// We surface this list on `PairedPhone.wallet_fingerprints` so the
-/// steady-state hw refresh tick has a real signer fp to put on
-/// `HardwareWallet::Supported`; otherwise the phone would be
-/// downgraded to `Unsupported(NotPartOfWallet)` because the vault id
-/// is by construction NOT one of the descriptor keys.
+/// `signer_fingerprints` is the local wallet's descriptor fingerprint set,
+/// used only as an additional consistency check. The phone must report the
+/// exact QR-selected xpub and backend key ID before a pairing can complete.
+///
+/// `expected_signer_fp` is the origin fingerprint the *local descriptor*
+/// records for `offer.signer_xpub`. Membership in `signer_fingerprints`
+/// only proves the reported fingerprint names some key in the vault, not
+/// that it names the selected one, so the phone's claim is required to
+/// equal this. The caller resolves it because an origin fingerprint
+/// belongs to a master key several levels above the account xpub and so
+/// cannot be derived from `offer.signer_xpub` here.
+// TODO(scope): 8 args because `expected_vault_id`, `signer_fingerprints` and
+// `expected_signer_fp` are passed loose. They're one concept — the identity a
+// phone must prove it holds — and bundling them into a `VaultTarget` would drop
+// this to 6 and kill a live footgun: at call sites they read
+// `wallet_fp, vec![wallet_fp], wallet_fp`, three same-typed args that transpose
+// silently. Deferred rather than done here because it touches 18 call sites
+// across files with in-flight edits.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_pairing(
     identity: DesktopIdentity,
     offer: PairingOffer,
     phone: mdns::DiscoveredPhone,
     expected_vault_id: Fingerprint,
     signer_fingerprints: Vec<Fingerprint>,
+    expected_signer_fp: Fingerprint,
+    dir: &CoincubeDirectory,
+    run: &PairingRun,
 ) -> Result<PairedPhone, PairingError> {
     if crate::phone_signer::pairing::is_expired(&offer) {
         return Err(PairingError::OfferExpired);
@@ -102,6 +111,7 @@ pub async fn run_pairing(
     // only remedy is a fresh offer (which the `OfferExpired`
     // branch's copy spells out).
     loop {
+        run.check()?;
         if crate::phone_signer::pairing::is_expired(&offer) {
             return Err(PairingError::OfferExpired);
         }
@@ -115,14 +125,18 @@ pub async fn run_pairing(
         // forever. Also covers a phone that picks up a new DHCP
         // lease mid-pairing.
         let current = current_target_for(&phone);
-        match try_pair_once(
-            &identity,
-            &offer,
-            &current,
-            expected_vault_id,
-            &signer_fingerprints,
-        )
-        .await
+        match run
+            .wait(try_pair_once(
+                &identity,
+                &offer,
+                &current,
+                expected_vault_id,
+                &signer_fingerprints,
+                expected_signer_fp,
+                dir,
+                run,
+            ))
+            .await
         {
             Ok(paired) => return Ok(paired),
             Err(e) if is_dial_retriable(&e) => {
@@ -131,7 +145,11 @@ pub async fn run_pairing(
                     "pairing dial failed (will redial): {}",
                     e,
                 );
-                tokio::time::sleep(REDIAL_BACKOFF).await;
+                run.wait(async {
+                    tokio::time::sleep(REDIAL_BACKOFF).await;
+                    Ok(())
+                })
+                .await?;
             }
             Err(e) => return Err(e),
         }
@@ -187,26 +205,29 @@ fn is_dial_retriable(err: &PairingError) -> bool {
 /// One dial-and-read attempt. Pulled out of [`run_pairing`] so the
 /// retry loop can re-invoke it cheaply on a transient failure
 /// without dragging the whole loop state along.
+#[allow(clippy::too_many_arguments)] // see `run_pairing`
 async fn try_pair_once(
     identity: &DesktopIdentity,
     offer: &PairingOffer,
     phone: &mdns::DiscoveredPhone,
     expected_vault_id: Fingerprint,
     signer_fingerprints: &[Fingerprint],
+    expected_signer_fp: Fingerprint,
+    dir: &CoincubeDirectory,
+    run: &PairingRun,
 ) -> Result<PairedPhone, PairingError> {
     // Dial unpinned so we accept whatever cert the phone presents;
     // we'll capture and pin its SHA-256 right after the handshake.
     let transport = PairedTransport::connect_unpinned(phone.addr, identity)
         .await
         .map_err(|e| PairingError::NetworkError(format!("dial phone: {}", e)))?;
+    run.check()?;
     let phone_pin = transport
         .peer_cert_fingerprint()
         .ok_or_else(|| PairingError::NetworkError("phone presented no cert".into()))?;
 
-    // Split into reader/writer so we can read PairingComplete and
-    // (best-effort) send a Pong ack without one half blocking the
-    // other. The connection drops when both halves go out of scope
-    // at function end.
+    // Keep independent framing halves for identity and the required durable
+    // PairingStep exchange. Both halves close when this attempt ends.
     let (mut reader, mut writer) = transport.split();
     // Bound the read by the offer's remaining lifetime. A phone
     // that completes TLS but stalls before sending PairingComplete
@@ -227,6 +248,7 @@ async fn try_pair_once(
         }
         Err(_) => return Err(PairingError::OfferExpired),
     };
+    run.check()?;
     let complete = match envelope.payload {
         Some(local_v1::local_envelope::Payload::PairingComplete(c)) => c,
         _ => {
@@ -235,6 +257,13 @@ async fn try_pair_once(
             ));
         }
     };
+
+    if complete.completion_protocol != 1 {
+        return Err(PairingError::InternalError(
+            "Update both apps and pair again: durable pairing protocol required.".into(),
+        ));
+    }
+    run.check()?;
 
     // Enforce the proto's "MUST match" contract: the phone-reported
     // cert fp has to agree with the bytes we pinned from the live
@@ -286,8 +315,7 @@ async fn try_pair_once(
     // (`Wallet::id_fingerprint`) — a 4-byte digest of the descriptor.
     // It must equal the locally-loaded wallet's vault id; otherwise
     // the user scanned a QR meant for a different vault. (When the
-    // proto grows a phone-reported signer fingerprint we'll also
-    // validate that against `signer_fingerprints`.)
+    // exact identity below is additionally checked against the selected key.)
     let claimed_fp = offer.wallet_fingerprint;
     if claimed_fp != expected_vault_id {
         return Err(PairingError::WalletFingerprintMismatch {
@@ -316,13 +344,86 @@ async fn try_pair_once(
         return Err(PairingError::TransportKeyMissing);
     }
 
-    // Best-effort ack so the phone can render "pairing complete".
-    let ack = LocalEnvelope {
-        payload: Some(local_v1::local_envelope::Payload::Pong(
-            crate::services::connect::grpc::connect_v1::Pong { ts_unix_ms: 0 },
-        )),
-    };
-    let _ = writer.send(&ack).await;
+    // Checked before anything the phone sent, and reported separately: these
+    // are faults in the offer *this desktop generated*, not in the response.
+    // Folding them into the identity-mismatch error below sends the user to
+    // re-select a key on their phone when the QR on their screen is the thing
+    // that's wrong — a legacy offer built before the exact-key fields existed,
+    // or one aimed at a different vault. Only regenerating fixes those.
+    if offer.signer_xpub.is_empty()
+        || !offer
+            .descriptor_sha256
+            .starts_with(&expected_vault_id.to_string())
+    {
+        tracing::warn!(
+            target: "phone_signer::pairing",
+            has_signer_xpub = !offer.signer_xpub.is_empty(),
+            "pairing offer carries no usable exact-key identity — refusing to pair",
+        );
+        return Err(PairingError::InternalError(
+            "This pairing QR predates exact-key pairing, or was generated for a \
+             different vault. Start pairing again to get a fresh one."
+                .into(),
+        ));
+    }
+
+    // The v2 proof authenticates this TLS peer. It must report the one key
+    // selected in the scanned QR; only the phone's local record supplies ID.
+    let reported = complete.signer_binding.as_ref().ok_or_else(|| {
+        PairingError::InternalError(
+            "Pair again with an updated Keychain and select its exact vault key.".into(),
+        )
+    })?;
+    if reported.xpub != offer.signer_xpub
+        || reported.descriptor_sha256.len() != 32
+        || hex::encode(&reported.descriptor_sha256) != offer.descriptor_sha256
+        || reported
+            .key_id
+            .parse::<u64>()
+            .ok()
+            .filter(|id| *id > 0)
+            .is_none()
+    {
+        return Err(PairingError::InternalError(
+            "Exact pairing identity mismatch; pair again.".into(),
+        ));
+    }
+    let fingerprint: Fingerprint = reported
+        .fingerprint
+        .parse()
+        .map_err(|_| PairingError::InternalError("Invalid signer fingerprint".into()))?;
+    if !signer_fingerprints.contains(&fingerprint) {
+        return Err(PairingError::InternalError(
+            "Selected key is not in this vault; pair again.".into(),
+        ));
+    }
+    // Membership only proves the reported fingerprint names *some* key in
+    // this vault — not the one the QR selected. Without this, a phone could
+    // report the selected xpub alongside a different vault signer's
+    // fingerprint and pass every check above, and we'd persist a
+    // `SignerBinding` whose two halves identify different keys plus a
+    // `wallet_fingerprints` entry advertising the phone for a key it can't
+    // sign for. Bind them: the caller resolved this fingerprint from the
+    // local descriptor entry for `offer.signer_xpub` (checked equal to
+    // `reported.xpub` above), so requiring equality here ties the reported
+    // xpub and fingerprint to the same key.
+    if fingerprint != expected_signer_fp {
+        tracing::warn!(
+            target: "phone_signer::pairing",
+            reported = %fingerprint,
+            expected = %expected_signer_fp,
+            "phone reported a fingerprint that isn't the selected key's — refusing to pair",
+        );
+        return Err(PairingError::InternalError(
+            "Reported key fingerprint doesn't match the selected key; pair again.".into(),
+        ));
+    }
+    let signer_binding = Some(crate::phone_signer::pairing_store::SignerBinding {
+        key_id: reported.key_id.clone(),
+        xpub: reported.xpub.clone(),
+        fingerprint,
+        descriptor_sha256: reported.descriptor_sha256.clone(),
+    });
 
     let name = if complete.device_name.is_empty() {
         "Keychain phone".to_string()
@@ -334,15 +435,12 @@ async fn try_pair_once(
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let paired = PairedPhone {
+        signer_binding,
         cert_pin: phone_pin,
         name,
         paired_at_unix: now,
-        // The descriptor's real signer fingerprints. The hw refresh
-        // tick reads `.first()` of this list for the
-        // `HardwareWallet::Supported.fingerprint` and the
-        // descriptor-keys filter at the end of the tick keeps the
-        // phone listed as Supported.
-        wallet_fingerprints: signer_fingerprints.to_vec(),
+        // Advertise only the selected, phone-reported signer.
+        wallet_fingerprints: vec![fingerprint],
         // The vault id we validated the offer against, so the hw
         // refresh loop can scope this phone to the vault it was
         // actually paired with (not just any vault that shares a
@@ -353,10 +451,60 @@ async fn try_pair_once(
         fallback_addr: None,
     };
 
-    // Both halves of `transport` drop here; the next discovery tick
-    // redials via the steady-state pinned path.
-    let _ = (reader, writer);
-    Ok(paired)
+    run.check()?;
+    let transaction_id = uuid::Uuid::new_v4().to_string();
+    let transaction = run.authorized(|| {
+        PairingTransaction::prepare(dir, transaction_id.clone(), paired)
+            .map_err(|e| PairingError::InternalError(format!("stage pairing: {}", e)))
+    })?;
+    let result = async {
+        use local_v1::pairing_step::Phase;
+        send_step(&mut writer, &transaction_id, Phase::Accept, run).await?;
+        recv_step(&mut reader, &transaction_id, Phase::Prepared, run).await?;
+        run.authorized(|| {
+            transaction
+                .write_candidate()
+                .map_err(|e| PairingError::InternalError(format!("persist pairing: {}", e)))
+        })?;
+        send_step(&mut writer, &transaction_id, Phase::Commit, run).await?;
+        recv_step(&mut reader, &transaction_id, Phase::Committed, run).await?;
+        // Both candidates are durable, but neither peer has been authorized
+        // to expose the new binding. Cancel can still win this final lock.
+        run.decide(|| {
+            transaction
+                .decide()
+                .map_err(|e| PairingError::InternalError(format!("complete pairing: {}", e)))
+        })?;
+        send_step(&mut writer, &transaction_id, Phase::Finish, run).await?;
+        recv_step(&mut reader, &transaction_id, Phase::Finished, run).await?;
+        run.check()?;
+        transaction.finish().map_err(|e| {
+            PairingError::InternalError(format!("record acknowledged completion: {}", e))
+        })
+    }
+    .await;
+    if let Err(error) = &result {
+        // Cleanup consults the durable state. A decided transaction stays
+        // hidden without another write, for EVERY error category or task drop.
+        transaction
+            .rollback()
+            .map_err(|e| PairingError::InternalError(format!("pairing cleanup pending: {}", e)))?;
+        let _ = writer
+            .send(&LocalEnvelope {
+                payload: Some(local_v1::local_envelope::Payload::Error(
+                    local_v1::ErrorEnvelope {
+                        code: "pair_again".into(),
+                        message: format!("Pairing incomplete: {}. Pair again.", error),
+                        session_id: String::new(),
+                    },
+                )),
+            })
+            .await;
+    }
+    // Once staged, a failed handshake requires a fresh explicit offer.
+    result.map_err(|error| {
+        PairingError::InternalError(format!("Pairing incomplete: {}. Pair again.", error))
+    })
 }
 
 // `prost::Message` is used implicitly via the generated proto types'
@@ -365,6 +513,52 @@ async fn try_pair_once(
 #[allow(dead_code)]
 fn _force_prost_import(env: &LocalEnvelope) -> usize {
     env.encoded_len()
+}
+
+async fn send_step(
+    writer: &mut super::transport::PairedWriter,
+    id: &str,
+    phase: local_v1::pairing_step::Phase,
+    run: &PairingRun,
+) -> Result<(), PairingError> {
+    run.check()?;
+    let envelope = LocalEnvelope {
+        payload: Some(local_v1::local_envelope::Payload::PairingStep(
+            local_v1::PairingStep {
+                transaction_id: id.into(),
+                phase: phase as i32,
+            },
+        )),
+    };
+    run.wait(async {
+        tokio::time::timeout(Duration::from_secs(10), writer.send(&envelope))
+            .await
+            .map_err(|_| PairingError::NetworkError("pairing send timeout; pair again".into()))?
+            .map_err(|e| PairingError::NetworkError(e.to_string()))
+    })
+    .await
+}
+
+async fn recv_step(
+    reader: &mut super::transport::PairedReader,
+    id: &str,
+    phase: local_v1::pairing_step::Phase,
+    run: &PairingRun,
+) -> Result<(), PairingError> {
+    let env = run
+        .wait(async {
+            tokio::time::timeout(Duration::from_secs(10), reader.recv())
+                .await
+                .map_err(|_| {
+                    PairingError::NetworkError("pairing reply timeout; pair again".into())
+                })?
+                .map_err(|e| PairingError::NetworkError(e.to_string()))
+        })
+        .await?;
+    match env.payload {
+        Some(local_v1::local_envelope::Payload::PairingStep(step)) if step.transaction_id==id && step.phase==phase as i32=>Ok(()),
+        _=>Err(PairingError::InternalError("Peer refused durable pairing or sent an unexpected frame. Update both apps and pair again.".into()))
+    }
 }
 
 #[cfg(test)]
