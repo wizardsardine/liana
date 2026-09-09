@@ -17,6 +17,9 @@
 
 #[path = "common/lan_binding.rs"]
 mod lan_binding;
+#[path = "common/pairing_completion.rs"]
+mod pairing_completion;
+
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 
@@ -168,6 +171,7 @@ async fn fake_phone_pair_then_sign(
         let env = LocalEnvelope {
             payload: Some(local_v1::local_envelope::Payload::PairingComplete(
                 local_v1::PairingComplete {
+                    completion_protocol: 1,
                     signer_binding: Some(lan_binding::proto(DESC)),
                     phone_cert_fp: phone_cert_fp_hex.clone(),
                     device_name: "TestPhone".into(),
@@ -184,14 +188,7 @@ async fn fake_phone_pair_then_sign(
         tls.write_all(&buf).await?;
         tls.flush().await?;
 
-        // Best-effort drain of the desktop's Pong ack.
-        let mut len_buf = [0u8; 4];
-        let _ = tls.read_exact(&mut len_buf).await;
-        let len = u32::from_be_bytes(len_buf) as usize;
-        if len > 0 && len < 16 * 1024 {
-            let mut body = vec![0u8; len];
-            let _ = tls.read_exact(&mut body).await;
-        }
+        pairing_completion::complete(&mut tls).await?;
     }
 
     // ── Accept #2: steady-state signing.
@@ -370,6 +367,8 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
         wallet_fp,
         vec![lan_binding::binding(DESC).fingerprint],
         lan_binding::binding(DESC).fingerprint,
+        &durable_pairing_test_dir(),
+        &Default::default(),
     )
     .await
     .expect("pairing ok");
@@ -497,6 +496,8 @@ async fn handshake_fails_when_phone_pins_a_different_cert() {
         wallet_fp,
         vec![lan_binding::binding(DESC).fingerprint],
         lan_binding::binding(DESC).fingerprint,
+        &durable_pairing_test_dir(),
+        &Default::default(),
     )
     .await;
 
@@ -513,4 +514,10 @@ async fn handshake_fails_when_phone_pins_a_different_cert() {
         phone_outcome.is_err(),
         "fake phone should have surfaced a TLS handshake error",
     );
+}
+
+fn durable_pairing_test_dir() -> coincube_gui::dir::CoincubeDirectory {
+    let p = std::env::temp_dir().join(format!("pairing-protocol-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&p).unwrap();
+    coincube_gui::dir::CoincubeDirectory::new(p)
 }

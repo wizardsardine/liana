@@ -140,7 +140,7 @@ pub(super) fn merge_verified(
                 continue;
             }
             if !owned.contains(pk)
-                || expected.bip32_derivation.get(&pk.inner).is_none()
+                || !expected.bip32_derivation.contains_key(&pk.inner)
                 || expected.bip32_derivation.get(&pk.inner)
                     != before.bip32_derivation.get(&pk.inner)
                 || sig.sighash_type != EcdsaSighashType::All

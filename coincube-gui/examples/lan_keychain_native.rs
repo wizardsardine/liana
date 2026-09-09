@@ -51,7 +51,11 @@ async fn main() {
         .unwrap()
         .parse()
         .unwrap();
-    let paired = pairing_listener::run_pairing(
+    let desktop_dir = CoincubeDirectory::new(dir.clone());
+    if args[1] == "pair-desktop-storage-failure" {
+        std::fs::create_dir(dir.join("pairing-transactions.json.tmp")).unwrap();
+    }
+    let result = pairing_listener::run_pairing(
         identity::DesktopIdentity {
             cert_der: identity.cert_der.clone(),
             key_der: identity.clone_key(),
@@ -65,9 +69,28 @@ async fn main() {
         vault,
         vec![fingerprint],
         fingerprint,
+        &CoincubeDirectory::new(dir.clone()),
+        &Default::default(),
     )
-    .await
-    .unwrap();
+    .await;
+    if args[1].starts_with("pair-") {
+        assert!(result.is_err(), "injected failure was accepted");
+        assert!(
+            coincube_gui::phone_signer::pairing_store::load(&desktop_dir)
+                .unwrap()
+                .phones
+                .is_empty()
+        );
+        println!("PAIRING_FAILED_STORES_UNTRUSTED");
+        return;
+    }
+    let paired = result.unwrap();
+    let stored = coincube_gui::phone_signer::pairing_store::load(&desktop_dir).unwrap();
+    assert_eq!(stored.phones.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&stored.phones[0]).unwrap(),
+        serde_json::to_value(&paired).unwrap()
+    );
     let binding = paired.exact_signer(descriptor).unwrap();
     assert_eq!(binding.key_id, format!("{}", 10 + index));
     assert_eq!(

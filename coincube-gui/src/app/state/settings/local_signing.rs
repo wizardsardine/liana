@@ -97,6 +97,7 @@ pub struct LocalSigningState {
     /// ignored. Bumped on `PickPhone` (start a new run) and
     /// `CancelPairing` (invalidate any in-flight run).
     pub pairing_id: u64,
+    pub pairing_run: crate::phone_signer::pairing_run::PairingRun,
     /// Cert pins the user has explicitly removed during this app
     /// session. The spawned `Task::perform` for a pairing handshake
     /// captures a clone of this `Arc` and checks it before persisting
@@ -132,6 +133,7 @@ impl Default for LocalSigningState {
             wallet_signer_fingerprints: Vec::new(),
             row_drafts: HashMap::new(),
             pairing_id: 0,
+            pairing_run: Default::default(),
             tombstones: Arc::new(Mutex::new(HashSet::new())),
             initialised: false,
         }
@@ -166,6 +168,8 @@ impl LocalSigningState {
     /// the returned id onto the spawned listener task so its
     /// completion can be distinguished from any prior in-flight run.
     pub(crate) fn start_pairing_run(&mut self) -> u64 {
+        self.pairing_run.cancel();
+        self.pairing_run = Default::default();
         self.pairing_id = self.pairing_id.wrapping_add(1);
         self.pairing_id
     }
@@ -245,12 +249,8 @@ impl LocalSigningState {
     ///   vault-independent), but reset too so the wizard is a clean
     ///   slate after the switch rather than a half-started flow.
     ///
-    /// Bumping the run id gates any in-flight task's eventual
-    /// completion out of the UI (only meaningful for `Waiting`, but
-    /// harmless otherwise). The task itself isn't cancellable, so a
-    /// phone that *already* scanned the old QR stays paired to the old
-    /// vault — the consistent outcome, since that's the offer it
-    /// cryptographically consumed.
+    /// Revoke the asynchronous run as well as its UI completion. A durable
+    /// decision that already won the cancellation lock completes its protocol.
     ///
     /// Returns `true` if the wizard was reset.
     pub(crate) fn apply_wallet_update(&mut self, wallet: &Wallet) -> bool {
@@ -378,7 +378,12 @@ impl LocalSigningState {
                 } else {
                     Some(f.to_string())
                 };
-                Some(crate::phone_signer::pairing_store::save(dir, &self.phones))
+                Some(crate::phone_signer::pairing_store::update_user_fields(
+                    dir,
+                    &p.cert_pin,
+                    p.name.clone(),
+                    p.fallback_addr.clone(),
+                ))
             } else {
                 None
             }
@@ -436,6 +441,7 @@ impl LocalSigningState {
             // just deleted — the existing `pairing_id` mechanism
             // only gates the UI; it doesn't reach the spawned task's
             // persistence step.
+            self.pairing_run.cancel();
             if let Ok(mut g) = self.tombstones.lock() {
                 g.insert(pk);
             }
@@ -600,54 +606,20 @@ impl State for LocalSigningState {
                 };
                 let dir = cache.datadir_path.clone();
                 let run_id = self.start_pairing_run();
-                let tombstones = self.tombstones.clone();
+                let run = self.pairing_run.clone();
                 Task::perform(
                     async move {
-                        // Persist here, inside the spawned task, rather
-                        // than in the `PairingCompleted` UI handler. The
-                        // panel's `LocalSigningState` is recreated on any
-                        // settings navigation, so a completion delivered
-                        // after the user left the panel would otherwise be
-                        // dropped on the floor and never written — leaving
-                        // the phone paired but the desktop unaware. Once
-                        // `run_pairing` returns `Ok` the phone is
-                        // committed, so we always record it — UNLESS the
-                        // user explicitly removed this cert_pin while the
-                        // handshake was in flight (see `apply_remove_phone`
-                        // for the tombstone write). In that case, skip
-                        // the upsert and surface a clear error rather
-                        // than silently re-adding the row the user just
-                        // deleted.
-                        match crate::phone_signer::pairing_listener::run_pairing(
+                        crate::phone_signer::pairing_listener::run_pairing(
                             identity,
                             offer,
                             phone,
                             expected_vault_id,
                             signer_fps,
                             expected_signer_fp,
+                            &dir,
+                            &run,
                         )
                         .await
-                        {
-                            Ok(p) => {
-                                let was_removed = tombstones
-                                    .lock()
-                                    .map(|g| g.contains(&p.cert_pin))
-                                    .unwrap_or(false);
-                                if was_removed {
-                                    return Err(PairingError::InternalError(
-                                        "phone was removed by the user before \
-                                         the pairing handshake completed; \
-                                         skipping persist"
-                                            .to_string(),
-                                    ));
-                                }
-                                crate::phone_signer::pairing_store::upsert_preserving_user_fields(
-                                    &dir, p,
-                                )
-                                .map_err(|e| PairingError::InternalError(format!("persist: {}", e)))
-                            }
-                            Err(e) => Err(e),
-                        }
                     },
                     move |res| {
                         Message::View(view::Message::Settings(
@@ -721,9 +693,11 @@ impl State for LocalSigningState {
         wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         if let Some(w) = wallet.as_ref() {
-            self.apply_wallet(w);
+            self.apply_wallet_update(w);
             tracing::debug!("local-signer reload with wallet {}", w.name);
         } else {
+            self.start_pairing_run();
+            self.flow = PairingFlow::Idle;
             self.wallet_fingerprint = None;
             self.wallet_signer_fingerprints = Vec::new();
             self.vault_key_fingerprints = Vec::new();
@@ -737,6 +711,12 @@ impl State for LocalSigningState {
 impl From<LocalSigningState> for Box<dyn State> {
     fn from(s: LocalSigningState) -> Box<dyn State> {
         Box::new(s)
+    }
+}
+
+impl Drop for LocalSigningState {
+    fn drop(&mut self) {
+        self.pairing_run.cancel();
     }
 }
 
@@ -1051,6 +1031,68 @@ mod tests {
         paired(42, "Test", None)
     }
 
+    #[tokio::test]
+    async fn cancelled_run_must_not_write_a_late_pairing() {
+        let dir = fresh_dir();
+        let mut state = LocalSigningState::default();
+        state.start_pairing_run();
+        let run = state.pairing_run.clone();
+        let task_dir = dir.clone();
+        let (release, wait) = tokio::sync::oneshot::channel();
+        // Reproduce the spawned task's current authorization/persistence path.
+        let task = tokio::spawn(async move {
+            wait.await.unwrap();
+            let p = dummy_paired();
+            let _ = run.decide(|| {
+                pairing_store::upsert_preserving_user_fields(&task_dir, p)
+                    .map_err(|e| PairingError::InternalError(e.to_string()))
+            });
+        });
+        state.start_pairing_run(); // CancelPairing's current revocation action.
+        state.flow = PairingFlow::Idle;
+        release.send(()).unwrap();
+        task.await.unwrap();
+        assert!(
+            pairing_store::load(&dir).unwrap().phones.is_empty(),
+            "a cancelled task persisted a trusted row"
+        );
+    }
+
+    #[test]
+    fn saving_user_fields_revokes_a_provisional_pairing_writer() {
+        use crate::phone_signer::pairing_transaction::PairingTransaction;
+        let dir = fresh_dir();
+        let phone = dummy_paired();
+        let pin = phone.cert_pin;
+        seed_store(&dir, vec![phone.clone()]);
+        let transaction = PairingTransaction::prepare(&dir, "pending".into(), phone).unwrap();
+        let mut state = LocalSigningState::default();
+        state.refresh_phones_from(&dir);
+        let fp8 = crate::phone_signer::identity::pin_hex8(&pin);
+        state.apply_draft_name(fp8.clone(), "User edit during pairing".into());
+        state.apply_save_row(&dir, &fp8);
+        assert!(
+            transaction.finish().is_err(),
+            "stale writer retained authority after user edit"
+        );
+        transaction.rollback().unwrap();
+        assert_eq!(
+            pairing_store::load(&dir).unwrap().phones[0].name,
+            "User edit during pairing"
+        );
+    }
+
+    #[test]
+    fn navigation_drop_revokes_pending_persistence() {
+        let mut state = LocalSigningState::default();
+        state.start_pairing_run();
+        let authority = state.pairing_run.clone();
+        drop(state);
+        assert!(authority
+            .decide::<()>(|| panic!("navigation allowed late persistence"))
+            .is_err());
+    }
+
     #[test]
     fn pairing_completed_with_stale_id_is_ignored() {
         let dir = fresh_dir();
@@ -1089,9 +1131,7 @@ mod tests {
         assert!(matches!(state.flow, PairingFlow::Idle));
         // The handler itself performs no disk write (persistence is the
         // spawned task's job), so this unit test never persists. The
-        // task — which is uncancellable — does persist a completed
-        // pairing even after a cancel, since the phone is committed
-        // once the handshake returns `Ok`.
+        // task separately observes revocation before its durable decision.
         let on_disk = pairing_store::load(&dir).expect("load store");
         assert!(on_disk.phones.is_empty());
     }
@@ -1366,7 +1406,11 @@ mod tests {
         let run_id = state.start_pairing_run();
         state.flow = waiting_flow();
 
+        let authority = state.pairing_run.clone();
         let invalidated = state.apply_wallet_update(&wallet_b);
+        assert!(authority
+            .decide::<()>(|| panic!("wallet switch must revoke persistence"))
+            .is_err());
 
         assert!(
             invalidated,

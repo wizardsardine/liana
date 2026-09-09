@@ -31,6 +31,7 @@ message LocalEnvelope {
     SessionStatusUpdate status_update = 6;  // delivered / viewed / approved / rejected
     PartialSignature    partial       = 7;  // signed PSBT bytes
     ErrorEnvelope       error         = 8;
+    PairingStep pairing_step = 9; // explicit durable-pairing state transitions
   }
 }
 
@@ -68,6 +69,7 @@ message PairingComplete {
   // TLS channel and v2 QR proof; never inferred from a master fingerprint.
   // Missing identity requires re-pairing. Only the selected vault key is shared.
   SignerBinding signer_binding   = 7;
+  uint32 completion_protocol = 8; // must be 1; older peers must update/re-pair
 }
 
 message PresentSession {
@@ -111,4 +113,26 @@ message SignerBinding {
   string xpub = 2;               // Exact extended public key, no origin/suffix.
   string fingerprint = 3;        // Display/routing metadata, not authority.
   bytes descriptor_sha256 = 4;   // All 32 bytes over canonical descriptor UTF-8.
+}
+
+// One TLS peer and one transaction ID own the whole exchange. No signing
+// authority arises from a pending transaction. Liveness Ping/Pong is unrelated.
+// ACCEPT -> PREPARED -> COMMIT -> COMMITTED -> FINISH -> FINISHED.
+// ACCEPT follows durable coordinator staging; PREPARED follows phone staging.
+// COMMIT/COMMITTED confirm both candidate writes, still hidden and cancellable.
+// FINISH follows the durable coordinator completion decision, serialized with
+// cancellation. FINISHED acknowledges phone completion. Errors before FINISH
+// abort. Loss after FINISH is uncertain; require explicit recovery/re-pair.
+message PairingStep {
+  string transaction_id = 1;
+  enum Phase {
+    UNKNOWN = 0;
+    ACCEPT = 1;
+    PREPARED = 2;
+    COMMIT = 3;
+    COMMITTED = 4;
+    FINISH = 5;
+    FINISHED = 6;
+  }
+  Phase phase = 2;
 }

@@ -15,19 +15,16 @@
 //!      has time to scan.
 //!   4. Validate the wallet fingerprint claim against the local
 //!      wallet's keys.
-//!   5. Return the would-be `PairedPhone` row; the caller decides
-//!      whether to persist (see
-//!      [`crate::app::state::settings::local_signing::LocalSigningState::apply_pairing_completed`]).
-//!      Persisting here would leak a paired row if the user
-//!      cancelled the wizard while this future was still in flight —
-//!      `Task::perform` futures aren't cancellable from the caller,
-//!      so we gate persistence at the synchronous message-apply
-//!      point instead.
+//!   5. Stage the exact binding and exchange explicit durable completion
+//!      messages. Cancellation is serialized with the durable commit decision.
+//!      Only a completed exchange returns a persisted row to the UI.
 //!   6. Drop the connection — the next 2s discovery tick redials via
 //!      the steady-state path.
 //!
 //! See `plans/PLAN-local-signer-lan-interop-fixes-desktop.md` §1.4.
 
+use super::{pairing_run::PairingRun, pairing_transaction::PairingTransaction};
+use crate::dir::CoincubeDirectory;
 use std::time::Duration;
 
 use prost::Message as _;
@@ -50,10 +47,7 @@ use crate::phone_signer::transport::PairedTransport;
 pub(crate) const REDIAL_BACKOFF: Duration = Duration::from_millis(750);
 
 /// Dial the phone selected during the picker step, read its
-/// `PairingComplete`, validate. Returns the would-be
-/// [`PairedPhone`] on success; the caller persists it (gated by the
-/// run-id + Waiting-state check in
-/// [`crate::app::state::settings::local_signing::LocalSigningState::apply_pairing_completed`]).
+/// `PairingComplete`, validate, and durably complete both sides before success.
 ///
 /// The caller is responsible for confirming `offer.expires_at_unix`
 /// hasn't passed before invoking this; we double-check below but
@@ -76,6 +70,14 @@ pub(crate) const REDIAL_BACKOFF: Duration = Duration::from_millis(750);
 /// equal this. The caller resolves it because an origin fingerprint
 /// belongs to a master key several levels above the account xpub and so
 /// cannot be derived from `offer.signer_xpub` here.
+// TODO(scope): 8 args because `expected_vault_id`, `signer_fingerprints` and
+// `expected_signer_fp` are passed loose. They're one concept — the identity a
+// phone must prove it holds — and bundling them into a `VaultTarget` would drop
+// this to 6 and kill a live footgun: at call sites they read
+// `wallet_fp, vec![wallet_fp], wallet_fp`, three same-typed args that transpose
+// silently. Deferred rather than done here because it touches 18 call sites
+// across files with in-flight edits.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_pairing(
     identity: DesktopIdentity,
     offer: PairingOffer,
@@ -83,6 +85,8 @@ pub async fn run_pairing(
     expected_vault_id: Fingerprint,
     signer_fingerprints: Vec<Fingerprint>,
     expected_signer_fp: Fingerprint,
+    dir: &CoincubeDirectory,
+    run: &PairingRun,
 ) -> Result<PairedPhone, PairingError> {
     if crate::phone_signer::pairing::is_expired(&offer) {
         return Err(PairingError::OfferExpired);
@@ -107,6 +111,7 @@ pub async fn run_pairing(
     // only remedy is a fresh offer (which the `OfferExpired`
     // branch's copy spells out).
     loop {
+        run.check()?;
         if crate::phone_signer::pairing::is_expired(&offer) {
             return Err(PairingError::OfferExpired);
         }
@@ -120,15 +125,18 @@ pub async fn run_pairing(
         // forever. Also covers a phone that picks up a new DHCP
         // lease mid-pairing.
         let current = current_target_for(&phone);
-        match try_pair_once(
-            &identity,
-            &offer,
-            &current,
-            expected_vault_id,
-            &signer_fingerprints,
-            expected_signer_fp,
-        )
-        .await
+        match run
+            .wait(try_pair_once(
+                &identity,
+                &offer,
+                &current,
+                expected_vault_id,
+                &signer_fingerprints,
+                expected_signer_fp,
+                dir,
+                run,
+            ))
+            .await
         {
             Ok(paired) => return Ok(paired),
             Err(e) if is_dial_retriable(&e) => {
@@ -137,7 +145,11 @@ pub async fn run_pairing(
                     "pairing dial failed (will redial): {}",
                     e,
                 );
-                tokio::time::sleep(REDIAL_BACKOFF).await;
+                run.wait(async {
+                    tokio::time::sleep(REDIAL_BACKOFF).await;
+                    Ok(())
+                })
+                .await?;
             }
             Err(e) => return Err(e),
         }
@@ -193,6 +205,7 @@ fn is_dial_retriable(err: &PairingError) -> bool {
 /// One dial-and-read attempt. Pulled out of [`run_pairing`] so the
 /// retry loop can re-invoke it cheaply on a transient failure
 /// without dragging the whole loop state along.
+#[allow(clippy::too_many_arguments)] // see `run_pairing`
 async fn try_pair_once(
     identity: &DesktopIdentity,
     offer: &PairingOffer,
@@ -200,12 +213,15 @@ async fn try_pair_once(
     expected_vault_id: Fingerprint,
     signer_fingerprints: &[Fingerprint],
     expected_signer_fp: Fingerprint,
+    dir: &CoincubeDirectory,
+    run: &PairingRun,
 ) -> Result<PairedPhone, PairingError> {
     // Dial unpinned so we accept whatever cert the phone presents;
     // we'll capture and pin its SHA-256 right after the handshake.
     let transport = PairedTransport::connect_unpinned(phone.addr, identity)
         .await
         .map_err(|e| PairingError::NetworkError(format!("dial phone: {}", e)))?;
+    run.check()?;
     let phone_pin = transport
         .peer_cert_fingerprint()
         .ok_or_else(|| PairingError::NetworkError("phone presented no cert".into()))?;
@@ -234,6 +250,7 @@ async fn try_pair_once(
         }
         Err(_) => return Err(PairingError::OfferExpired),
     };
+    run.check()?;
     let complete = match envelope.payload {
         Some(local_v1::local_envelope::Payload::PairingComplete(c)) => c,
         _ => {
@@ -242,6 +259,13 @@ async fn try_pair_once(
             ));
         }
     };
+
+    if complete.completion_protocol != 1 {
+        return Err(PairingError::InternalError(
+            "Update both apps and pair again: durable pairing protocol required.".into(),
+        ));
+    }
+    run.check()?;
 
     // Enforce the proto's "MUST match" contract: the phone-reported
     // cert fp has to agree with the bytes we pinned from the live
@@ -403,16 +427,6 @@ async fn try_pair_once(
         descriptor_sha256: reported.descriptor_sha256.clone(),
     });
 
-    // Required acknowledgement: the phone persists only after exact admission.
-    let ack = LocalEnvelope {
-        payload: Some(local_v1::local_envelope::Payload::Pong(
-            crate::services::connect::grpc::connect_v1::Pong { ts_unix_ms: 0 },
-        )),
-    };
-    writer.send(&ack).await.map_err(|e| {
-        PairingError::InternalError(format!("Pairing acknowledgement failed: {}", e))
-    })?;
-
     let name = if complete.device_name.is_empty() {
         "Keychain phone".to_string()
     } else {
@@ -439,10 +453,67 @@ async fn try_pair_once(
         fallback_addr: None,
     };
 
-    // Both halves of `transport` drop here; the next discovery tick
-    // redials via the steady-state pinned path.
-    let _ = (reader, writer);
-    Ok(paired)
+    run.check()?;
+    let transaction_id = uuid::Uuid::new_v4().to_string();
+    let transaction = run.authorized(|| {
+        PairingTransaction::prepare(dir, transaction_id.clone(), paired)
+            .map_err(|e| PairingError::InternalError(format!("stage pairing: {}", e)))
+    })?;
+    let mut decided = false;
+    let result = async {
+        use local_v1::pairing_step::Phase;
+        send_step(&mut writer, &transaction_id, Phase::Accept, run).await?;
+        recv_step(&mut reader, &transaction_id, Phase::Prepared, run).await?;
+        run.authorized(|| {
+            transaction
+                .write_candidate()
+                .map_err(|e| PairingError::InternalError(format!("persist pairing: {}", e)))
+        })?;
+        send_step(&mut writer, &transaction_id, Phase::Commit, run).await?;
+        recv_step(&mut reader, &transaction_id, Phase::Committed, run).await?;
+        // Both candidates are durable, but neither peer has been authorized
+        // to expose the new binding. Cancel can still win this final lock.
+        let paired = run.decide(|| {
+            transaction
+                .finish()
+                .map_err(|e| PairingError::InternalError(format!("complete pairing: {}", e)))
+        })?;
+        decided = true;
+        send_step(&mut writer, &transaction_id, Phase::Finish, run).await?;
+        recv_step(&mut reader, &transaction_id, Phase::Finished, run).await?;
+        run.check()?;
+        transaction.retain();
+        Ok(paired)
+    }
+    .await;
+    if let Err(error) = &result {
+        // Known refusal/storage error aborts; post-decision loss is uncertain.
+        // Pending rows are hidden by the journal and recovered by re-pairing.
+        if !decided || !matches!(error, PairingError::NetworkError(_)) {
+            transaction.rollback().map_err(|e| {
+                PairingError::InternalError(format!("pairing rollback pending: {}", e))
+            })?;
+        } else {
+            transaction.suspend().map_err(|e| {
+                PairingError::InternalError(format!("pairing suspension failed: {}", e))
+            })?;
+        }
+        let _ = writer
+            .send(&LocalEnvelope {
+                payload: Some(local_v1::local_envelope::Payload::Error(
+                    local_v1::ErrorEnvelope {
+                        code: "pair_again".into(),
+                        message: format!("Pairing incomplete: {}. Pair again.", error),
+                        session_id: String::new(),
+                    },
+                )),
+            })
+            .await;
+    }
+    // Once staged, a failed handshake requires a fresh explicit offer.
+    result.map_err(|error| {
+        PairingError::InternalError(format!("Pairing incomplete: {}. Pair again.", error))
+    })
 }
 
 // `prost::Message` is used implicitly via the generated proto types'
@@ -451,6 +522,52 @@ async fn try_pair_once(
 #[allow(dead_code)]
 fn _force_prost_import(env: &LocalEnvelope) -> usize {
     env.encoded_len()
+}
+
+async fn send_step(
+    writer: &mut super::transport::PairedWriter,
+    id: &str,
+    phase: local_v1::pairing_step::Phase,
+    run: &PairingRun,
+) -> Result<(), PairingError> {
+    run.check()?;
+    let envelope = LocalEnvelope {
+        payload: Some(local_v1::local_envelope::Payload::PairingStep(
+            local_v1::PairingStep {
+                transaction_id: id.into(),
+                phase: phase as i32,
+            },
+        )),
+    };
+    run.wait(async {
+        tokio::time::timeout(Duration::from_secs(10), writer.send(&envelope))
+            .await
+            .map_err(|_| PairingError::NetworkError("pairing send timeout; pair again".into()))?
+            .map_err(|e| PairingError::NetworkError(e.to_string()))
+    })
+    .await
+}
+
+async fn recv_step(
+    reader: &mut super::transport::PairedReader,
+    id: &str,
+    phase: local_v1::pairing_step::Phase,
+    run: &PairingRun,
+) -> Result<(), PairingError> {
+    let env = run
+        .wait(async {
+            tokio::time::timeout(Duration::from_secs(10), reader.recv())
+                .await
+                .map_err(|_| {
+                    PairingError::NetworkError("pairing reply timeout; pair again".into())
+                })?
+                .map_err(|e| PairingError::NetworkError(e.to_string()))
+        })
+        .await?;
+    match env.payload {
+        Some(local_v1::local_envelope::Payload::PairingStep(step)) if step.transaction_id==id && step.phase==phase as i32=>Ok(()),
+        _=>Err(PairingError::InternalError("Peer refused durable pairing or sent an unexpected frame. Update both apps and pair again.".into()))
+    }
 }
 
 #[cfg(test)]

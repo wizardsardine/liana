@@ -5,10 +5,8 @@
 //! loopback, hands the desktop a `DiscoveredPhone` pointing at it,
 //! and drives `run_pairing` to completion.
 //!
-//! `run_pairing` no longer writes to disk; persistence is the
-//! caller's job (see
-//! `LocalSigningState::apply_pairing_completed`). These tests assert
-//! on the returned `PairedPhone` only.
+//! `run_pairing` owns durable completion. Fake peers cover TLS/frame failures;
+//! the cross-language native driver verifies both real application stores.
 //!
 //! Three scenarios:
 //!   1. Happy path — desktop dials, fake phone sends
@@ -21,6 +19,9 @@
 //!      doesn't contain `offer.wallet_fingerprint`; returns
 //!      `WalletFingerprintMismatch`.
 
+#[path = "common/pairing_completion.rs"]
+mod pairing_completion;
+
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -31,7 +32,7 @@ use rcgen::{CertificateParams, KeyPair, PKCS_ED25519};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::server::WebPkiClientVerifier;
 use rustls::ServerConfig;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
@@ -198,9 +199,11 @@ async fn fake_phone_server_with_identity(
     let (tcp, _peer) = listener.accept().await.expect("accept");
     let mut tls = acceptor.accept(tcp).await.expect("tls handshake");
 
+    let fault_name = device_name.clone();
     let envelope = LocalEnvelope {
         payload: Some(local_v1::local_envelope::Payload::PairingComplete(
             local_v1::PairingComplete {
+                completion_protocol: 1,
                 signer_binding: Some(binding),
                 phone_cert_fp: phone_cert_fp_hex,
                 device_name,
@@ -219,13 +222,13 @@ async fn fake_phone_server_with_identity(
     tls.write_all(&buf).await.expect("write body");
     tls.flush().await.expect("flush");
 
-    // Best-effort read of the desktop's Pong ack. Tolerate EOF.
-    let mut len_buf = [0u8; 4];
-    let _ = tls.read_exact(&mut len_buf).await;
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 0 && len < 16 * 1024 {
-        let mut body = vec![0u8; len];
-        let _ = tls.read_exact(&mut body).await;
+    if let Some(fault) = fault_name.strip_prefix("fault:") {
+        let (phase, kind) = fault.split_once(':').unwrap();
+        let _ =
+            pairing_completion::complete_with_fault(&mut tls, Some((phase.parse().unwrap(), kind)))
+                .await;
+    } else {
+        let _ = pairing_completion::complete(&mut tls).await;
     }
 }
 
@@ -271,6 +274,8 @@ async fn run_pairing_happy_path_returns_paired_phone() {
         wallet_fp,
         vec![wallet_fp],
         wallet_fp,
+        &durable_pairing_test_dir(),
+        &Default::default(),
     )
     .await
     .expect("run_pairing ok");
@@ -303,6 +308,8 @@ async fn run_pairing_returns_offer_expired_when_ttl_in_past() {
         Fingerprint::default(),
         vec![Fingerprint::default()],
         Fingerprint::default(),
+        &durable_pairing_test_dir(),
+        &Default::default(),
     )
     .await;
     assert!(
@@ -354,8 +361,17 @@ async fn run_pairing_returns_wallet_fingerprint_mismatch() {
     // expected_vault_id = `actual`; offer.wallet_fingerprint = `wanted`.
     // The listener compares them as scalars and surfaces the typed
     // mismatch.
-    let result =
-        pairing_listener::run_pairing(identity, offer, phone, actual, vec![actual], actual).await;
+    let result = pairing_listener::run_pairing(
+        identity,
+        offer,
+        phone,
+        actual,
+        vec![actual],
+        actual,
+        &durable_pairing_test_dir(),
+        &Default::default(),
+    )
+    .await;
     match result {
         Err(PairingError::WalletFingerprintMismatch { expected, claimed }) => {
             assert_eq!(expected, vec![actual]);
@@ -410,6 +426,8 @@ async fn run_pairing_rejects_phone_reporting_mismatched_cert_fp() {
         wallet_fp,
         vec![wallet_fp],
         wallet_fp,
+        &durable_pairing_test_dir(),
+        &Default::default(),
     )
     .await;
 
@@ -476,6 +494,8 @@ async fn run_pairing_rejects_invalid_pairing_proof() {
         wallet_fp,
         vec![wallet_fp],
         wallet_fp,
+        &durable_pairing_test_dir(),
+        &Default::default(),
     )
     .await;
 
@@ -559,6 +579,8 @@ async fn run_pairing_returns_offer_expired_when_phone_stalls_after_tls() {
             wallet_fp,
             vec![wallet_fp],
             wallet_fp,
+            &durable_pairing_test_dir(),
+            &Default::default(),
         ),
     )
     .await
@@ -641,6 +663,8 @@ async fn run_pairing_returns_signer_fps_not_vault_id() {
         vault_id,
         signer_fps.clone(),
         signer_fps[1],
+        &durable_pairing_test_dir(),
+        &Default::default(),
     )
     .await
     .expect("run_pairing ok");
@@ -705,6 +729,8 @@ async fn run_pairing_reports_a_legacy_offer_rather_than_blaming_the_phone() {
         wallet_fp,
         vec![wallet_fp],
         wallet_fp,
+        &durable_pairing_test_dir(),
+        &Default::default(),
     )
     .await;
 
@@ -785,8 +811,17 @@ async fn run_pairing_rejects_fingerprint_of_a_different_vault_key() {
         instance_name: "keychain-test".into(),
     };
 
-    let result =
-        pairing_listener::run_pairing(identity, offer, phone, vault_id, signer_fps, selected).await;
+    let result = pairing_listener::run_pairing(
+        identity,
+        offer,
+        phone,
+        vault_id,
+        signer_fps,
+        selected,
+        &durable_pairing_test_dir(),
+        &Default::default(),
+    )
+    .await;
 
     match result {
         Err(PairingError::InternalError(msg)) => assert!(
@@ -836,6 +871,7 @@ async fn fake_phone_close_then_serve(
     let envelope = LocalEnvelope {
         payload: Some(local_v1::local_envelope::Payload::PairingComplete(
             local_v1::PairingComplete {
+                completion_protocol: 1,
                 signer_binding: Some(local_v1::SignerBinding {
                     key_id: "10".into(),
                     xpub: "selected-test-xpub".into(),
@@ -859,14 +895,7 @@ async fn fake_phone_close_then_serve(
     tls.write_all(&buf).await.expect("write body");
     tls.flush().await.expect("flush");
 
-    // Best-effort drain of the desktop's Pong ack. Tolerate EOF.
-    let mut len_buf = [0u8; 4];
-    let _ = tls.read_exact(&mut len_buf).await;
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 0 && len < 16 * 1024 {
-        let mut body = vec![0u8; len];
-        let _ = tls.read_exact(&mut body).await;
-    }
+    let _ = pairing_completion::complete(&mut tls).await;
 }
 
 /// Regression: when the retry loop has accumulated `NetworkError`s
@@ -906,6 +935,8 @@ async fn run_pairing_returns_offer_expired_when_retries_exhaust_ttl() {
             wallet_fp,
             vec![wallet_fp],
             wallet_fp,
+            &durable_pairing_test_dir(),
+            &Default::default(),
         ),
     )
     .await
@@ -969,6 +1000,8 @@ async fn run_pairing_redials_after_phone_closes_early() {
             wallet_fp,
             vec![wallet_fp],
             wallet_fp,
+            &durable_pairing_test_dir(),
+            &Default::default(),
         ),
     )
     .await
@@ -1056,6 +1089,8 @@ async fn run_pairing_refuses_a_phone_with_no_transport_key() {
             wallet_fp,
             vec![wallet_fp],
             wallet_fp,
+            &durable_pairing_test_dir(),
+            &Default::default(),
         )
         .await;
 
@@ -1066,5 +1101,260 @@ async fn run_pairing_refuses_a_phone_with_no_transport_key() {
             res.map(|p| p.name),
         );
         let _ = handle.await;
+    }
+}
+
+fn durable_pairing_test_dir() -> coincube_gui::dir::CoincubeDirectory {
+    let p = std::env::temp_dir().join(format!("pairing-protocol-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&p).unwrap();
+    coincube_gui::dir::CoincubeDirectory::new(p)
+}
+
+/// Real TLS checkpoints, not just a stale UI completion assertion. The peer
+/// stops at an observed frame boundary and revokes the actual run authority.
+#[tokio::test]
+async fn cancellation_at_tls_identity_acceptance_and_pre_persistence_leaves_no_row() {
+    use coincube_gui::phone_signer::{pairing_run::PairingRun, pairing_store};
+    use tokio::io::AsyncReadExt;
+    for stop in 0..5 {
+        let dir = durable_pairing_test_dir();
+        let identity = fresh_desktop_identity();
+        let fp = Fingerprint::from([1, 2, 3, 4]);
+        let offer = fresh_offer(fp, hex::encode(tls::fingerprint_of(&identity.cert_der)), 30);
+        let (cert, key) = mint_ed25519_cert("cancel test");
+        let phone_fp = hex::encode(tls::fingerprint_of(&cert));
+        let complete = LocalEnvelope {
+            payload: Some(local_v1::local_envelope::Payload::PairingComplete(
+                local_v1::PairingComplete {
+                    completion_protocol: 1,
+                    phone_cert_fp: phone_fp.clone(),
+                    device_name: "phone".into(),
+                    app_version: "test".into(),
+                    capabilities: vec![],
+                    pairing_proof: proof_for(&offer, &phone_fp),
+                    transport_pubkey: valid_transport_pubkey(),
+                    signer_binding: Some(local_v1::SignerBinding {
+                        key_id: "10".into(),
+                        xpub: offer.signer_xpub.clone(),
+                        fingerprint: fp.to_string(),
+                        descriptor_sha256: hex::decode(&offer.descriptor_sha256).unwrap(),
+                    }),
+                },
+            )),
+        };
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let run = PairingRun::default();
+        let peer_run = run.clone();
+        let server = tokio::spawn(async move {
+            let cfg = ServerConfig::builder_with_provider(Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert], key)
+            .unwrap();
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut stream = TlsAcceptor::from(Arc::new(cfg)).accept(tcp).await.unwrap();
+            if stop == 0 {
+                peer_run.cancel();
+                return;
+            }
+            let bytes = complete.encode_to_vec();
+            stream.write_u32(bytes.len() as u32).await.unwrap();
+            stream.write_all(&bytes).await.unwrap();
+            stream.flush().await.unwrap();
+            if stop == 1 {
+                peer_run.cancel();
+                return;
+            }
+            let len = stream.read_u32().await.unwrap();
+            let mut bytes = vec![0; len as usize];
+            stream.read_exact(&mut bytes).await.unwrap();
+            let env = LocalEnvelope::decode(&*bytes).unwrap();
+            let Some(local_v1::local_envelope::Payload::PairingStep(step)) = env.payload else {
+                panic!("no acceptance")
+            };
+            assert_eq!(step.phase, local_v1::pairing_step::Phase::Accept as i32);
+            if stop == 4 {
+                use local_v1::{local_envelope::Payload, pairing_step::Phase};
+                // The peer has not acknowledged its durable write. A late
+                // COMMITTED response must not override Cancel.
+                for (reply, expected) in [
+                    (Phase::Prepared, Phase::Commit),
+                    (Phase::Committed, Phase::Finish),
+                ] {
+                    if reply == Phase::Committed {
+                        peer_run.cancel();
+                    }
+                    let bytes = LocalEnvelope {
+                        payload: Some(Payload::PairingStep(local_v1::PairingStep {
+                            transaction_id: step.transaction_id.clone(),
+                            phase: reply as i32,
+                        })),
+                    }
+                    .encode_to_vec();
+                    if stream.write_u32(bytes.len() as u32).await.is_err() {
+                        return;
+                    }
+                    if stream.write_all(&bytes).await.is_err() {
+                        return;
+                    }
+                    let Ok(len) = stream.read_u32().await else {
+                        return;
+                    };
+                    let mut bytes = vec![0; len as usize];
+                    if stream.read_exact(&mut bytes).await.is_err() {
+                        return;
+                    }
+                    let env = LocalEnvelope::decode(&*bytes).unwrap();
+                    let Some(Payload::PairingStep(received)) = env.payload else {
+                        return;
+                    };
+                    assert_eq!(received.phase, expected as i32);
+                }
+                let bytes = LocalEnvelope {
+                    payload: Some(Payload::PairingStep(local_v1::PairingStep {
+                        transaction_id: step.transaction_id,
+                        phase: Phase::Finished as i32,
+                    })),
+                }
+                .encode_to_vec();
+                let _ = stream.write_u32(bytes.len() as u32).await;
+                let _ = stream.write_all(&bytes).await;
+                return;
+            }
+            // Both remaining checkpoints are before PREPARED permits the
+            // desktop's durable decision; cancellation wins that race.
+            peer_run.cancel();
+            if stop == 3 {
+                let bytes = LocalEnvelope {
+                    payload: Some(local_v1::local_envelope::Payload::PairingStep(
+                        local_v1::PairingStep {
+                            transaction_id: step.transaction_id,
+                            phase: local_v1::pairing_step::Phase::Prepared as i32,
+                        },
+                    )),
+                }
+                .encode_to_vec();
+                let _ = stream.write_u32(bytes.len() as u32).await;
+                let _ = stream.write_all(&bytes).await;
+            }
+        });
+        let result = pairing_listener::run_pairing(
+            identity,
+            offer,
+            DiscoveredPhone {
+                cert_fp8: "test".into(),
+                addr,
+                instance_name: "test".into(),
+            },
+            fp,
+            vec![fp],
+            fp,
+            &dir,
+            &run,
+        )
+        .await;
+        server.await.unwrap();
+        assert!(result.is_err(), "checkpoint {} accepted", stop);
+        assert!(
+            pairing_store::load(&dir).unwrap().phones.is_empty(),
+            "checkpoint {} persisted",
+            stop
+        );
+    }
+}
+
+#[tokio::test]
+async fn cancellation_stops_redial_and_late_persistence() {
+    use coincube_gui::phone_signer::{pairing_run::PairingRun, pairing_store};
+    let dir = durable_pairing_test_dir();
+    let identity = fresh_desktop_identity();
+    let fp = Fingerprint::from([1, 2, 3, 4]);
+    let offer = fresh_offer(fp, hex::encode(tls::fingerprint_of(&identity.cert_der)), 30);
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let run = PairingRun::default();
+    let peer_run = run.clone();
+    let peer = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        drop(tcp);
+        peer_run.cancel();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+    });
+    assert!(pairing_listener::run_pairing(
+        identity,
+        offer,
+        DiscoveredPhone {
+            cert_fp8: "test".into(),
+            addr,
+            instance_name: "test".into()
+        },
+        fp,
+        vec![fp],
+        fp,
+        &dir,
+        &run
+    )
+    .await
+    .is_err());
+    peer.await.unwrap();
+    assert!(pairing_store::load(&dir).unwrap().phones.is_empty());
+}
+
+#[tokio::test]
+async fn eof_timeout_and_unexpected_frames_at_each_desktop_boundary_leave_no_trusted_row() {
+    for boundary in 0..3 {
+        for fault in ["eof", "unexpected", "timeout"] {
+            let dir = durable_pairing_test_dir();
+            let identity = fresh_desktop_identity();
+            let fp = Fingerprint::from([1, 2, 3, 4]);
+            let offer = fresh_offer(fp, hex::encode(tls::fingerprint_of(&identity.cert_der)), 60);
+            let (cert, key) = mint_ed25519_cert("fault test");
+            let pin = hex::encode(tls::fingerprint_of(&cert));
+            let proof = proof_for(&offer, &pin);
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let peer = tokio::spawn(fake_phone_server(
+                listener,
+                cert,
+                key,
+                format!("fault:{}:{}", boundary, fault),
+                pin,
+                proof,
+            ));
+            let result = pairing_listener::run_pairing(
+                identity,
+                offer,
+                DiscoveredPhone {
+                    cert_fp8: "test".into(),
+                    addr,
+                    instance_name: "test".into(),
+                },
+                fp,
+                vec![fp],
+                fp,
+                &dir,
+                &Default::default(),
+            )
+            .await;
+            assert!(result.is_err(), "{} {}", boundary, fault);
+            peer.await.unwrap();
+            assert!(
+                coincube_gui::phone_signer::pairing_store::load(&dir)
+                    .unwrap()
+                    .phones
+                    .is_empty(),
+                "{} {}",
+                boundary,
+                fault
+            );
+        }
     }
 }

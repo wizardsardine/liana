@@ -192,6 +192,13 @@ fn store_path(dir: &CoincubeDirectory) -> PathBuf {
 /// Load the paired-phones list. Returns an empty list if the file
 /// doesn't exist yet (i.e. nothing has ever been paired).
 pub fn load(dir: &CoincubeDirectory) -> std::io::Result<PairingStoreFile> {
+    let _guard = super::pairing_transaction::WRITER.lock().unwrap();
+    load_visible(dir)
+}
+pub(super) fn load_visible(dir: &CoincubeDirectory) -> std::io::Result<PairingStoreFile> {
+    super::pairing_transaction::visible(dir, load_raw(dir)?)
+}
+pub(super) fn load_raw(dir: &CoincubeDirectory) -> std::io::Result<PairingStoreFile> {
     match std::fs::read(store_path(dir)) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
@@ -202,16 +209,29 @@ pub fn load(dir: &CoincubeDirectory) -> std::io::Result<PairingStoreFile> {
 
 /// Atomically replace the paired-phones list on disk.
 pub fn save(dir: &CoincubeDirectory, file: &PairingStoreFile) -> std::io::Result<()> {
-    let path = store_path(dir);
+    write_durable(
+        &store_path(dir),
+        &serde_json::to_vec_pretty(file).map_err(std::io::Error::other)?,
+    )
+}
+
+pub(super) fn write_durable(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
     let tmp = path.with_extension("json.tmp");
-    let bytes = serde_json::to_vec_pretty(file).map_err(std::io::Error::other)?;
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(tmp, path)
+    let mut file = std::fs::File::create(&tmp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    std::fs::rename(tmp, path)?;
+    #[cfg(unix)]
+    std::fs::File::open(path.parent().unwrap())?.sync_all()?;
+    Ok(())
 }
 
 /// Append (or replace by cert pin) a paired-phone record and persist.
 pub fn upsert(dir: &CoincubeDirectory, phone: PairedPhone) -> std::io::Result<PairingStoreFile> {
-    let mut file = load(dir)?;
+    let _guard = super::pairing_transaction::WRITER.lock().unwrap();
+    super::pairing_transaction::revoke(dir, &phone.cert_pin)?;
+    let mut file = load_visible(dir)?;
     if let Some(existing) = file
         .phones
         .iter_mut()
@@ -263,9 +283,32 @@ pub fn upsert_preserving_user_fields(
     Ok(merged)
 }
 
+/// User edits revoke a provisional writer and update only user-owned fields
+/// on the latest durable binding, never a stale UI copy of the whole store.
+pub fn update_user_fields(
+    dir: &CoincubeDirectory,
+    pin: &[u8; 32],
+    name: String,
+    fallback: Option<String>,
+) -> std::io::Result<()> {
+    let _guard = super::pairing_transaction::WRITER.lock().unwrap();
+    super::pairing_transaction::revoke(dir, pin)?;
+    let mut file = load_visible(dir)?;
+    let row = file
+        .phones
+        .iter_mut()
+        .find(|p| &p.cert_pin == pin)
+        .ok_or_else(|| std::io::Error::other("Paired phone was removed"))?;
+    row.name = name;
+    row.fallback_addr = fallback;
+    save(dir, &file)
+}
+
 /// Remove a paired phone by cert pin. No-op if not present.
 pub fn remove(dir: &CoincubeDirectory, cert_pin: &[u8; 32]) -> std::io::Result<PairingStoreFile> {
-    let mut file = load(dir)?;
+    let _guard = super::pairing_transaction::WRITER.lock().unwrap();
+    super::pairing_transaction::revoke(dir, cert_pin)?;
+    let mut file = load_visible(dir)?;
     file.phones.retain(|p| &p.cert_pin != cert_pin);
     save(dir, &file)?;
     Ok(file)
@@ -384,6 +427,59 @@ mod tests {
                 None
             },
         }
+    }
+
+    #[test]
+    fn pending_rollback_preserves_exact_prior_and_stale_cleanup_cannot_delete_new_run() {
+        use super::super::pairing_transaction::PairingTransaction;
+        let dir = fresh_dir();
+        let mut prior = sample_phone(1);
+        prior.name = "User name".into();
+        prior.fallback_addr = Some("192.0.2.1:1234".into());
+        upsert(&dir, prior.clone()).unwrap();
+        let old = PairingTransaction::prepare(&dir, "old".into(), sample_phone(1)).unwrap();
+        old.write_candidate().unwrap();
+        assert_eq!(
+            serde_json::to_value(&load(&dir).unwrap().phones[0]).unwrap(),
+            serde_json::to_value(&prior).unwrap()
+        );
+        let new = PairingTransaction::prepare(&dir, "new".into(), sample_phone(1)).unwrap();
+        old.rollback().unwrap();
+        assert!(old.write_candidate().is_err());
+        new.write_candidate().unwrap();
+        new.rollback().unwrap();
+        assert_eq!(
+            serde_json::to_value(&load(&dir).unwrap().phones[0]).unwrap(),
+            serde_json::to_value(&prior).unwrap()
+        );
+    }
+    #[test]
+    fn unpair_and_rename_revoke_pending_writers() {
+        use super::super::pairing_transaction::PairingTransaction;
+        let dir = fresh_dir();
+        upsert(&dir, sample_phone(1)).unwrap();
+        let pending = PairingTransaction::prepare(&dir, "pending".into(), sample_phone(1)).unwrap();
+        pending.write_candidate().unwrap();
+        remove(&dir, &[1; 32]).unwrap();
+        assert!(pending.write_candidate().is_err());
+        pending.rollback().unwrap();
+        assert!(load(&dir).unwrap().phones.is_empty());
+        upsert(&dir, sample_phone(1)).unwrap();
+        let pending = PairingTransaction::prepare(&dir, "next".into(), sample_phone(1)).unwrap();
+        let mut renamed = sample_phone(1);
+        renamed.name = "New user name".into();
+        upsert(&dir, renamed).unwrap();
+        assert!(pending.finish().is_err());
+        pending.rollback().unwrap();
+        assert_eq!(load(&dir).unwrap().phones[0].name, "New user name");
+    }
+    #[test]
+    fn storage_failure_leaves_no_trusted_candidate() {
+        use super::super::pairing_transaction::PairingTransaction;
+        let dir = fresh_dir();
+        std::fs::create_dir(dir.path().join("pairing-transactions.json.tmp")).unwrap();
+        assert!(PairingTransaction::prepare(&dir, "failed".into(), sample_phone(1)).is_err());
+        assert!(load(&dir).unwrap().phones.is_empty());
     }
 
     #[test]
