@@ -1,3 +1,4 @@
+pub mod airgap;
 mod coins;
 pub mod export;
 mod label;

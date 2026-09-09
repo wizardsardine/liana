@@ -3,7 +3,9 @@ pub mod editor;
 use async_hwi::utils::extract_keys_and_template;
 use iced::{
     alignment,
-    widget::{checkbox, column, progress_bar, radio, row, tooltip, Button, Space, TextInput},
+    widget::{
+        checkbox, column, progress_bar, qr_code, radio, row, tooltip, Button, Space, TextInput,
+    },
     Alignment, Length,
 };
 
@@ -44,6 +46,7 @@ use liana_ui::{
 
 use crate::node::electrum::validate_domain_checkbox;
 use crate::{
+    airgap::{AirgappedSignerConfig, QrDensity},
     app::settings,
     help,
     hw::HardwareWallet,
@@ -570,6 +573,15 @@ pub fn register_descriptor<'a>(
     email: Option<&'a str>,
     descriptor: &'a LianaDescriptor,
     hws: &'a [HardwareWallet],
+    airgapped_signers: &'a [AirgappedSignerConfig],
+    passport_qr: Option<(
+        Fingerprint,
+        &'a qr_code::Data,
+        usize,
+        usize,
+        bool,
+        QrDensity,
+    )>,
     registered: &HashSet<bitcoin::bip32::Fingerprint>,
     error: Option<&Error>,
     processing: bool,
@@ -578,6 +590,10 @@ pub fn register_descriptor<'a>(
     created_desc: bool,
 ) -> Element<'a, Message> {
     let descriptor_str = descriptor.to_string();
+    let policy_checksum = descriptor_str
+        .rsplit_once('#')
+        .map(|(_, checksum)| checksum.to_owned())
+        .unwrap_or_default();
     let displayed_descriptor =
         if let Ok((template, keys)) = extract_keys_and_template::<String>(&descriptor_str) {
             policy_view(template, keys)
@@ -591,15 +607,15 @@ pub fn register_descriptor<'a>(
     let error_card = error.map(|e| card::error("Failed to register descriptor", e.to_string()));
 
     let devices_title = Container::new(if created_desc {
-        new::b5_bold("Select hardware wallet to register descriptor on:")
+        new::b5_bold("Select signing device to register descriptor on:")
     } else {
         new::b5_bold("If necessary, please select the signing device to register descriptor on:")
     })
     .width(Length::Fill);
-    let devices: Element<'a, Message> = if hws.is_empty() {
+    let devices: Element<'a, Message> = if hws.is_empty() && airgapped_signers.is_empty() {
         modal::modal_no_devices_placeholder()
     } else {
-        Column::with_children(hws.iter().enumerate().map(|(i, hw)| {
+        let mut devices = Column::with_children(hws.iter().enumerate().map(|(i, hw)| {
             let entry = crate::view::hw::device_list_entry(
                 hw,
                 crate::view::hw::HwRowMode::Registration {
@@ -615,9 +631,23 @@ pub fn register_descriptor<'a>(
                 move || Message::Select(i),
             );
             Container::new(entry).width(EntryWidth::Standard).into()
-        }))
-        .spacing(10)
-        .into()
+        }));
+        for signer in airgapped_signers {
+            let fingerprint = signer.fingerprint;
+            let complete = registered.contains(&fingerprint);
+            let alias = signer.alias.as_deref().unwrap_or("Air-gapped signer");
+            let label = if complete {
+                format!("{alias} ({fingerprint}) — registration completed")
+            } else {
+                format!("Register on {alias} ({fingerprint})")
+            };
+            devices = devices.push(
+                button::secondary(None, label)
+                    .width(EntryWidth::Standard)
+                    .on_press_maybe((!complete).then_some(Message::RegisterPassport(fingerprint))),
+            );
+        }
+        devices.spacing(10).into()
     };
     let signing_devices = column![devices_title, devices]
         .align_x(Alignment::Center)
@@ -635,13 +665,73 @@ pub fn register_descriptor<'a>(
     let next_button = row![Space::fill_width(), btn_next(next)];
 
     let help = new::caption(prompt::REGISTER_DESCRIPTOR_HELP);
+    let qr_card = passport_qr.map(|(fingerprint, qr, frame, total, paused, density)| {
+        let animation_controls = (total > 1).then(|| {
+            row![
+                if paused {
+                    button::secondary(None, "Resume").on_press(Message::ResumePassportQr)
+                } else {
+                    button::secondary(None, "Pause").on_press(Message::PausePassportQr)
+                },
+                button::secondary(None, "Restart").on_press(Message::RestartPassportQr),
+            ]
+            .spacing(10)
+        });
+        let content = column![
+            new::b5_bold(format!("Scan with signer {fingerprint}")),
+            Container::new(qr_code::QRCode::<theme::Theme>::new(qr).cell_size(7.0))
+                .center_x(Length::Fill),
+            new::caption(if total > 1 {
+                format!("Animated QR frame {} of {total}", frame + 1)
+            } else {
+                "Registration QR code".to_owned()
+            }),
+        ]
+        .push_maybe(animation_controls)
+        .push(new::caption(format!("QR density: {}", density.label())))
+        .push(
+            row![
+                button::secondary(None, "Less dense")
+                    .on_press_maybe(density.less_dense().map(|_| Message::LessDensePassportQr)),
+                button::secondary(None, "More dense")
+                    .on_press_maybe(density.more_dense().map(|_| Message::MoreDensePassportQr)),
+            ]
+            .spacing(10),
+        )
+        .push(
+            row![
+                button::secondary(None, "Cancel").on_press(Message::CancelPassportRegistration),
+                button::secondary(None, "Export to microSD")
+                    .on_press(Message::ExportPassportRegistration),
+                button::primary(None, "Confirmed on signer")
+                    .on_press(Message::PassportRegistrationExported(fingerprint))
+            ]
+            .spacing(10),
+        )
+        .spacing(12)
+        .align_x(Alignment::Center);
+        card::simple(content)
+    });
 
     let content = column![
         warning,
+        card::simple(
+            column![
+                new::b5_bold("Policy checksum:"),
+                row![
+                    new::b5_bold(policy_checksum.clone()),
+                    button::btn_copy(Some(Message::Clipboard(policy_checksum)))
+                ]
+                .spacing(10),
+                new::caption("Compare this exact checksum with your signer; matching wallet names are not sufficient."),
+            ]
+            .spacing(10)
+        ),
         displayed_descriptor,
         help,
         error_card,
         signing_devices,
+        qr_card,
         registered_checkbox,
         next_button,
         Space::with_height(5),
@@ -687,6 +777,10 @@ pub fn backup_descriptor<'a>(
     let error_card = error.map(|e| card::error("Failed to export backup", e.to_string()));
 
     let descriptor_str = descriptor.to_string();
+    let policy_checksum = descriptor_str
+        .rsplit_once('#')
+        .map(|(_, checksum)| checksum.to_owned())
+        .unwrap_or_default();
 
     let backup_button = btn_backup_descriptor(Some(Message::BackupDescriptor), !done);
     let copy_button = column![
@@ -702,6 +796,13 @@ pub fn backup_descriptor<'a>(
     let descriptor_card = card::simple(
         column![
             text::new::b5_bold("The descriptor:"),
+            row![
+                text::new::b5_bold("Policy checksum:"),
+                text::new::b5_bold(policy_checksum.clone()),
+                button::btn_copy(Some(Message::Clipboard(policy_checksum)))
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
             descriptor_header,
             descriptor_actions,
         ]

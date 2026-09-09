@@ -11,12 +11,20 @@ use liana_ui::{component::form, widget::modal, widget::*};
 use crate::daemon::model::LabelsLoader;
 use crate::dir::LianaDirectory;
 use crate::{
+    airgap::{
+        AddressVerificationRequest, AirgappedRequest, AirgappedResponse, AirgappedSignerConfig,
+        PolicyRegistration,
+    },
     app::{
         cache::Cache,
         error::Error,
         menu::Menu,
         message::Message,
-        state::{label::LabelsEdited, State},
+        state::{
+            airgap::{AirgapModal, AirgapOutcome},
+            label::LabelsEdited,
+            State,
+        },
         view,
         wallet::Wallet,
     },
@@ -472,6 +480,11 @@ pub struct VerifyAddressModal {
     hws: HardwareWallets,
     address: Address,
     derivation_index: ChildNumber,
+    wallet: Arc<Wallet>,
+    airgapped_signers: Vec<AirgappedSignerConfig>,
+    network: Network,
+    verified_airgapped_signers: HashSet<Fingerprint>,
+    airgap_exchange: Option<AirgappedAddressExchange>,
     /// Whether the "Other options" (specter DIY QR code) section is open.
     qr_section_open: bool,
 }
@@ -484,12 +497,18 @@ impl VerifyAddressModal {
         address: Address,
         derivation_index: ChildNumber,
     ) -> Self {
+        let airgapped_signers = wallet.airgapped_signer_candidates(network);
         Self {
             warning: None,
             chosen_hws: HashSet::new(),
-            hws: HardwareWallets::new(data_dir, network).with_wallet(wallet),
+            hws: HardwareWallets::new(data_dir, network).with_wallet(wallet.clone()),
+            wallet: wallet.clone(),
+            airgapped_signers,
+            network,
             address,
             derivation_index,
+            verified_airgapped_signers: HashSet::new(),
+            airgap_exchange: None,
             qr_section_open: false,
         }
     }
@@ -497,10 +516,18 @@ impl VerifyAddressModal {
 
 impl VerifyAddressModal {
     fn view(&self) -> Element<'_, view::Message> {
+        if let Some(exchange) = &self.airgap_exchange {
+            return exchange.exchange.view();
+        }
         view::receive::verify_address_modal(
             self.warning.as_ref(),
             &self.hws.list,
             &self.chosen_hws,
+            view::receive::AirgappedVerification {
+                signers: &self.airgapped_signers,
+                verified: &self.verified_airgapped_signers,
+                descriptor_checksum: &self.wallet.descriptor_checksum,
+            },
             &self.address,
             self.derivation_index,
             self.qr_section_open,
@@ -508,7 +535,11 @@ impl VerifyAddressModal {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        if let Some(exchange) = &self.airgap_exchange {
+            exchange.exchange.subscription()
+        } else {
+            self.hws.refresh().map(Message::HardwareWallets)
+        }
     }
 
     fn update(
@@ -518,6 +549,54 @@ impl VerifyAddressModal {
         message: Message,
     ) -> Task<Message> {
         match message {
+            Message::View(view::Message::VerifyAirgappedSigner(fingerprint)) => {
+                match AirgappedAddressExchange::new(
+                    self.wallet.clone(),
+                    self.network,
+                    fingerprint,
+                    self.address.clone(),
+                    self.derivation_index,
+                ) {
+                    Ok(exchange) => {
+                        self.warning = None;
+                        self.airgap_exchange = Some(exchange);
+                    }
+                    Err(error) => self.warning = Some(Error::Unexpected(error)),
+                }
+                Task::none()
+            }
+            Message::View(view::Message::Airgap(action)) => {
+                let Some(exchange) = &mut self.airgap_exchange else {
+                    return Task::none();
+                };
+                let command = exchange.exchange.update(action);
+                let Some(outcome) = exchange.exchange.take_outcome() else {
+                    return command;
+                };
+                match outcome {
+                    AirgapOutcome::Response(AirgappedResponse::VerifiedAddress(response)) => {
+                        match response.validate_for(
+                            &exchange.request,
+                            &exchange.address,
+                            &exchange.fingerprint.to_string(),
+                        ) {
+                            Ok(()) => {
+                                self.verified_airgapped_signers.insert(exchange.fingerprint);
+                                self.warning = None;
+                            }
+                            Err(error) => self.warning = Some(Error::Unexpected(error.to_string())),
+                        }
+                    }
+                    AirgapOutcome::Cancelled => {}
+                    _ => {
+                        self.warning = Some(Error::Unexpected(
+                            "Signer returned the wrong address response".to_owned(),
+                        ));
+                    }
+                }
+                self.airgap_exchange = None;
+                Task::none()
+            }
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),
                 Err(e) => {
@@ -552,6 +631,52 @@ impl VerifyAddressModal {
             }
             _ => Task::none(),
         }
+    }
+}
+
+struct AirgappedAddressExchange {
+    exchange: AirgapModal,
+    request: AddressVerificationRequest,
+    address: String,
+    fingerprint: Fingerprint,
+}
+
+impl AirgappedAddressExchange {
+    fn new(
+        wallet: Arc<Wallet>,
+        network: Network,
+        fingerprint: Fingerprint,
+        address: Address,
+        index: ChildNumber,
+    ) -> Result<Self, String> {
+        let signer = wallet
+            .airgapped_signer_candidates(network)
+            .into_iter()
+            .find(|signer| signer.fingerprint == fingerprint)
+            .ok_or_else(|| "Air-gapped signer is not configured for this wallet".to_owned())?;
+        if !signer.registration.is_current(&wallet.descriptor_checksum) {
+            return Err("Register this wallet policy on the signer first".to_owned());
+        }
+        let registration = PolicyRegistration::from_descriptor(
+            wallet.name.clone(),
+            network,
+            &wallet.main_descriptor,
+        )
+        .map_err(|error| error.to_string())?;
+        let index: u32 = index.into();
+        let request = AddressVerificationRequest::new(&registration, 0, index)
+            .map_err(|error| error.to_string())?;
+        let filename = format!("liana-address-{index}.json");
+        Ok(Self {
+            exchange: AirgapModal::new(
+                "Verify receive address with air-gapped signer",
+                AirgappedRequest::VerifyAddress(request.clone()),
+                filename,
+            ),
+            request,
+            address: address.to_string(),
+            fingerprint,
+        })
     }
 }
 
@@ -770,6 +895,28 @@ mod tests {
     use std::{path::PathBuf, str::FromStr};
 
     const DESC: &str = "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp";
+
+    #[test]
+    fn legacy_qr_signers_are_available_for_address_verification() {
+        let wallet = Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap()));
+        let secp = secp256k1::Secp256k1::verification_only();
+        let index = ChildNumber::from_normal_idx(0).unwrap();
+        let address = wallet
+            .main_descriptor
+            .receive_descriptor()
+            .derive(index, &secp)
+            .address(Network::Testnet4);
+
+        let modal = VerifyAddressModal::new(
+            LianaDirectory::new(PathBuf::new()),
+            wallet,
+            Network::Testnet4,
+            address,
+            index,
+        );
+
+        assert_eq!(modal.airgapped_signers.len(), 2);
+    }
 
     #[tokio::test]
     async fn test_receive_panel() {

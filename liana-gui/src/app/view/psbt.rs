@@ -32,6 +32,7 @@ use liana_ui::{
 };
 
 use crate::{
+    airgap::AirgappedSignerConfig,
     app::{
         cache::Cache,
         error::Error,
@@ -906,6 +907,8 @@ pub fn sign_action<'a>(
     signer_alias: Option<&'a String>,
     signed: &HashSet<Fingerprint>,
     signing: &HashSet<Fingerprint>,
+    airgapped_signers: &'a [AirgappedSignerConfig],
+    descriptor_checksum: &str,
     recovery_timelock: Option<u16>,
 ) -> Element<'a, Message> {
     let title = "Select signing device to sign with:".to_string();
@@ -948,6 +951,27 @@ pub fn sign_action<'a>(
         }
     }) {
         signers.push(hot_signer);
+    }
+
+    for signer in airgapped_signers {
+        let fingerprint = signer.fingerprint;
+        let can_sign = descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);
+        let registered = signer.registration.is_current(descriptor_checksum);
+        let alias = signer.alias.as_deref().unwrap_or("Air-gapped signer");
+        let label = if !registered {
+            format!("{alias} ({fingerprint}) — register policy first")
+        } else {
+            format!("{alias} ({fingerprint})")
+        };
+        let action = (registered && can_sign && !signed.contains(&fingerprint)).then_some(
+            Message::Spend(SpendTxMessage::SignWithAirgappedSigner(fingerprint)),
+        );
+        signers.push(
+            button::secondary(None, label)
+                .width(Length::Fill)
+                .on_press_maybe(action)
+                .into(),
+        );
     }
 
     let modal_content = Column::from_vec(signers)

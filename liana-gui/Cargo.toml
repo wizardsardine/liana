@@ -33,7 +33,7 @@ iced_runtime = { workspace = true }
 # Used to verify RFC-compliance of an email
 email_address = { workspace = true }
 
-tokio = { workspace = true, features = ["signal"] }
+tokio = { workspace = true, features = ["signal", "sync", "time"] }
 async-fd-lock = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -55,6 +55,12 @@ chrono = { workspace = true }
 libc = { workspace = true }
 base64 = { workspace = true }
 bitcoin_hashes = { workspace = true }
+foundation-ur = { workspace = true }
+minicbor = { workspace = true }
+nokhwa = { workspace = true }
+quircs = { workspace = true }
+rxing = { workspace = true }
+zeroize = { workspace = true }
 reqwest = { workspace = true, default-features = false, features = ["json", "rustls-tls", "stream"] }
 rust-ini = { workspace = true }
 rfd = { workspace = true }
@@ -67,6 +73,11 @@ encrypted_backup = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 zip = { workspace = true, default-features = false, features = ["bzip2", "deflate"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+flume = { workspace = true }
+nokhwa-bindings-macos = { workspace = true }
+objc = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 tar = { workspace = true, default-features = false }
@@ -82,3 +93,4 @@ winresource = { workspace = true }
 
 [dev-dependencies]
 tokio = {workspace = true, features = ["rt", "macros"]}
+qrcode = { workspace = true }

@@ -645,6 +645,7 @@ pub fn create_app_with_remote_backend(
         .into_iter()
         .map(|pk| (pk.fingerprint, pk.into()))
         .collect();
+    let airgapped_signers = wallet_settings.airgapped_signers.clone();
 
     Ok(app::App::new(
         Cache {
@@ -674,6 +675,7 @@ pub fn create_app_with_remote_backend(
                 .with_key_aliases(aliases)
                 .with_provider_keys(provider_keys)
                 .with_hardware_wallets(hws)
+                .with_airgapped_signers(airgapped_signers)
                 .with_remote_backend_auth(
                     wallet_settings
                         .remote_backend_auth

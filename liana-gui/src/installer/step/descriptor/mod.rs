@@ -2,10 +2,11 @@ pub mod editor;
 
 use std::{
     collections::{HashMap, HashSet},
+    fs,
     str::FromStr,
 };
 
-use iced::{Subscription, Task};
+use iced::{widget::qr_code, Subscription, Task};
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{bip32::Fingerprint, Network},
@@ -16,9 +17,13 @@ use liana_ui::{component::form, widget::Element};
 use async_hwi::DeviceKind;
 
 use crate::{
+    airgap::{
+        encode_ur, AirgappedRequest, AirgappedSignerConfig, AnimatedQr, PolicyRegistration,
+        QrDensity, UrPayload,
+    },
     app::{settings::KeySetting, state::export::ExportModal, wallet::wallet_name},
     backup::Backup,
-    export::{ImportExportMessage, ImportExportType, Progress},
+    export::{get_path, ImportExportMessage, ImportExportType, Progress},
     hw::{HardwareWallet, HardwareWallets},
     installer::{
         decrypt::{Decrypt, DecryptModal},
@@ -225,6 +230,7 @@ impl Step for ImportDescriptor {
 
     fn revert(&self, ctx: &mut Context) {
         ctx.keys = HashMap::new();
+        ctx.airgapped_signers.clear();
         ctx.backup = None;
         ctx.descriptor = None;
         ctx.wallet_alias = String::new();
@@ -270,6 +276,61 @@ pub struct RegisterDescriptor {
     /// whether a signing device is used, to explicit this step is not required if the user isn't
     /// using a signing device.
     created_desc: bool,
+    network: Network,
+    airgapped_signers: Vec<AirgappedSignerConfig>,
+    passport_qr: Option<PassportRegistrationQr>,
+}
+
+struct PassportRegistrationQr {
+    fingerprint: Fingerprint,
+    payload: UrPayload,
+    density: QrDensity,
+    animation: AnimatedQr,
+    qr_data: qr_code::Data,
+}
+
+impl PassportRegistrationQr {
+    fn new(fingerprint: Fingerprint, payload: UrPayload) -> Result<Self, String> {
+        let density = QrDensity::default();
+        let (animation, qr_data) = Self::encode(&payload, density)?;
+        Ok(Self {
+            fingerprint,
+            payload,
+            density,
+            animation,
+            qr_data,
+        })
+    }
+
+    fn encode(
+        payload: &UrPayload,
+        density: QrDensity,
+    ) -> Result<(AnimatedQr, qr_code::Data), String> {
+        let animation = encode_ur(payload, density.fragment_length())
+            .and_then(|encoded| AnimatedQr::new(encoded, 5))
+            .map_err(|error| error.to_string())?;
+        let frame = animation
+            .frame()
+            .ok_or_else(|| "QR animation has no frames".to_owned())?;
+        let qr_data = qr_code::Data::new(frame).map_err(|error| error.to_string())?;
+        Ok((animation, qr_data))
+    }
+
+    fn set_density(&mut self, density: QrDensity) -> Result<(), String> {
+        let (animation, qr_data) = Self::encode(&self.payload, density)?;
+        self.density = density;
+        self.animation = animation;
+        self.qr_data = qr_data;
+        Ok(())
+    }
+
+    fn refresh(&mut self) {
+        if let Some(frame) = self.animation.frame() {
+            if let Ok(data) = qr_code::Data::new(frame) {
+                self.qr_data = data;
+            }
+        }
+    }
 }
 
 impl RegisterDescriptor {
@@ -283,6 +344,9 @@ impl RegisterDescriptor {
             registered: Default::default(),
             error: Default::default(),
             done: Default::default(),
+            network: Network::Bitcoin,
+            airgapped_signers: Vec::new(),
+            passport_qr: None,
         }
     }
 
@@ -303,6 +367,10 @@ impl Step for RegisterDescriptor {
             self.done = false;
         }
         self.descriptor.clone_from(&ctx.descriptor);
+        self.network = ctx.network;
+        self.airgapped_signers = ctx.airgapped_signers.values().cloned().collect();
+        self.airgapped_signers
+            .sort_by_key(|signer| signer.fingerprint);
         let mut map = HashMap::new();
         for key in ctx.keys.values().filter(|k| !k.name.is_empty()) {
             map.insert(key.master_fingerprint, key.name.clone());
@@ -356,6 +424,115 @@ impl Step for RegisterDescriptor {
                     }
                 }
             }
+            Message::RegisterPassport(fingerprint) => {
+                let Some(descriptor) = self.descriptor.as_ref() else {
+                    return Task::none();
+                };
+                let registration = PolicyRegistration::from_descriptor(
+                    wallet_name(descriptor),
+                    self.network,
+                    descriptor,
+                );
+                match registration
+                    .and_then(|registration| {
+                        AirgappedRequest::RegisterPolicy(registration).encode()
+                    })
+                    .map_err(|error| error.to_string())
+                    .and_then(|payload| PassportRegistrationQr::new(fingerprint, payload))
+                {
+                    Ok(qr) => {
+                        self.passport_qr = Some(qr);
+                        self.error = None;
+                    }
+                    Err(error) => self.error = Some(Error::Unexpected(error)),
+                }
+            }
+            Message::PassportQrTick => {
+                if let Some(qr) = &mut self.passport_qr {
+                    qr.refresh();
+                }
+            }
+            Message::PausePassportQr => {
+                if let Some(qr) = &mut self.passport_qr {
+                    qr.animation.pause();
+                }
+            }
+            Message::ResumePassportQr => {
+                if let Some(qr) = &mut self.passport_qr {
+                    qr.animation.resume();
+                }
+            }
+            Message::RestartPassportQr => {
+                if let Some(qr) = &mut self.passport_qr {
+                    qr.animation.restart();
+                    qr.refresh();
+                }
+            }
+            Message::LessDensePassportQr => {
+                if let Some(qr) = &mut self.passport_qr {
+                    if let Some(density) = qr.density.less_dense() {
+                        if let Err(error) = qr.set_density(density) {
+                            self.error = Some(Error::Unexpected(error));
+                        }
+                    }
+                }
+            }
+            Message::MoreDensePassportQr => {
+                if let Some(qr) = &mut self.passport_qr {
+                    if let Some(density) = qr.density.more_dense() {
+                        if let Err(error) = qr.set_density(density) {
+                            self.error = Some(Error::Unexpected(error));
+                        }
+                    }
+                }
+            }
+            Message::ExportPassportRegistration => {
+                let Some(descriptor) = self.descriptor.as_ref() else {
+                    return Task::none();
+                };
+                let bytes = match PolicyRegistration::from_descriptor(
+                    wallet_name(descriptor),
+                    self.network,
+                    descriptor,
+                )
+                .and_then(|registration| {
+                    AirgappedRequest::RegisterPolicy(registration)
+                        .encode()
+                        .map(|payload| payload.data)
+                }) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        self.error = Some(Error::Unexpected(error.to_string()));
+                        return Task::none();
+                    }
+                };
+                return Task::perform(
+                    async move {
+                        let Some(path) = get_path("liana-policy.json".to_owned(), true).await
+                        else {
+                            return Ok(None);
+                        };
+                        fs::write(&path, bytes)
+                            .map(|_| Some(path))
+                            .map_err(|error| error.to_string())
+                    },
+                    Message::PassportRegistrationFileExported,
+                );
+            }
+            Message::PassportRegistrationFileExported(result) => match result {
+                Ok(Some(_)) => {
+                    self.error = None;
+                }
+                Ok(None) => {}
+                Err(error) => self.error = Some(Error::Unexpected(error)),
+            },
+            Message::PassportRegistrationExported(fingerprint) => {
+                if self.passport_qr.as_ref().map(|qr| qr.fingerprint) == Some(fingerprint) {
+                    self.registered.insert(fingerprint);
+                    self.passport_qr = None;
+                }
+            }
+            Message::CancelPassportRegistration => self.passport_qr = None,
             Message::Reload => {
                 return self.load();
             }
@@ -373,10 +550,30 @@ impl Step for RegisterDescriptor {
         for (fingerprint, kind, token) in &self.hmacs {
             ctx.hws.push((*kind, *fingerprint, *token));
         }
+        if let Some(descriptor) = self.descriptor.as_ref() {
+            let checksum = descriptor
+                .to_string()
+                .rsplit_once('#')
+                .map(|(_, checksum)| checksum.to_owned())
+                .unwrap_or_default();
+            for signer in ctx.airgapped_signers.values_mut() {
+                if self.registered.contains(&signer.fingerprint) {
+                    signer.registration = crate::airgap::RegistrationState::Exported {
+                        descriptor_checksum: checksum.clone(),
+                    };
+                }
+            }
+        }
         true
     }
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
-        hws.refresh().map(Message::HardwareWallets)
+        let hws = hws.refresh().map(Message::HardwareWallets);
+        let qr = if self.passport_qr.is_some() {
+            iced::time::every(std::time::Duration::from_millis(50)).map(|_| Message::PassportQrTick)
+        } else {
+            Subscription::none()
+        };
+        Subscription::batch(vec![hws, qr])
     }
     fn load(&self) -> Task<Message> {
         Task::none()
@@ -396,6 +593,18 @@ impl Step for RegisterDescriptor {
             email,
             desc,
             &hws.list,
+            &self.airgapped_signers,
+            self.passport_qr.as_ref().map(|qr| {
+                let state = qr.animation.state();
+                (
+                    qr.fingerprint,
+                    &qr.qr_data,
+                    state.frame,
+                    state.total_frames,
+                    state.paused,
+                    qr.density,
+                )
+            }),
             &self.registered,
             self.error.as_ref(),
             self.processing,

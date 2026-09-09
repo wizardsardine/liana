@@ -22,6 +22,7 @@ use liana_ui::{
 };
 
 use crate::{
+    airgap::AirgappedSignerConfig,
     app::{
         error::Error,
         view::{hw, warning::warn},
@@ -31,10 +32,17 @@ use crate::{
 
 use crate::app::view::message::{AddressQrSource, LabelMessage, Message, NewAddressMessage};
 
+pub struct AirgappedVerification<'a> {
+    pub signers: &'a [AirgappedSignerConfig],
+    pub verified: &'a HashSet<Fingerprint>,
+    pub descriptor_checksum: &'a str,
+}
+
 pub fn verify_address_modal<'a>(
     warning: Option<&Error>,
     hws: &'a [HardwareWallet],
     chosen_hws: &HashSet<Fingerprint>,
+    airgapped: AirgappedVerification<'a>,
     address: &Address,
     derivation_index: ChildNumber,
     qr_section_open: bool,
@@ -58,6 +66,28 @@ pub fn verify_address_modal<'a>(
                 },
             ));
         }
+    }
+    for signer in airgapped.signers {
+        let fingerprint = signer.fingerprint;
+        let registered = signer
+            .registration
+            .is_current(airgapped.descriptor_checksum);
+        let verified = airgapped.verified.contains(&fingerprint);
+        let alias = signer.alias.as_deref().unwrap_or("Air-gapped signer");
+        let label = if verified {
+            format!("{alias} ({fingerprint}) — verified")
+        } else if registered {
+            format!("Verify on {alias} ({fingerprint})")
+        } else {
+            format!("{alias} ({fingerprint}) — register policy first")
+        };
+        let action =
+            (registered && !verified).then_some(Message::VerifyAirgappedSigner(fingerprint));
+        devices = devices.push(
+            liana_ui::component::button::secondary(None, label)
+                .width(Length::Fill)
+                .on_press_maybe(action),
+        );
     }
     devices = devices.push(optional_section(
         qr_section_open,

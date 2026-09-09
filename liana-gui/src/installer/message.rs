@@ -8,7 +8,7 @@ use liana::{
         DescriptorPublicKey,
     },
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use super::{
     context,
@@ -59,6 +59,17 @@ pub enum Message {
     HardwareWallets(HardwareWalletMessage),
     HardwareWalletUpdate,
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
+    RegisterPassport(Fingerprint),
+    PassportQrTick,
+    PausePassportQr,
+    ResumePassportQr,
+    RestartPassportQr,
+    LessDensePassportQr,
+    MoreDensePassportQr,
+    ExportPassportRegistration,
+    PassportRegistrationFileExported(Result<Option<PathBuf>, String>),
+    PassportRegistrationExported(Fingerprint),
+    CancelPassportRegistration,
     MnemonicWord(usize, String),
     ImportMnemonic(bool),
     RedeemNextKey,
