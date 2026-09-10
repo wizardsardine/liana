@@ -562,7 +562,7 @@ fn plan_tier_color(tier: &PlanTier) -> iced::Color {
 /// `/connect/features` carries no description field (the plan wire shape is
 /// `name` + `price` + `features[]` + `entitlements`), so this copy lives here.
 /// Keep it aligned with the entitlement matrix in
-/// `coincube-api/documentation/PRICING_AND_TIERS.md`: Pro adds cube/key
+/// `documentation/PRICING_AND_TIERS.md` (coincube-api repo): Pro adds cube/key
 /// capacity, Duress and Connect-enforced policies; Estate adds inheritance
 /// escrow, duress alerts and collaborative keyholder invitations.
 fn plan_tagline(tier: &PlanTier) -> &'static str {
@@ -1064,7 +1064,9 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
             };
         let is_upgrade = tier_rank(&card.tier) > tier_rank(current_tier);
         let is_estate = card.tier == PlanTier::Estate;
+        let is_free = card.tier == PlanTier::Free;
         let badge_color = plan_tier_color(&card.tier);
+        let tagline = plan_tagline(&card.tier);
 
         // Header: tier name, plus a "Best value" pill on Estate.
         let mut header = Row::new()
@@ -1093,16 +1095,24 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
             );
         }
 
-        // Price: large amount with the cycle suffix on the baseline.
-        let amount = format!("${}", card.price_amount.unwrap_or(0));
-        let price_row = Row::new()
-            .push(text::h1(amount).style(theme::text::primary))
-            .push(iced::widget::Space::new().width(Length::Fixed(4.0)))
-            .push(
-                container(text::p1_regular(price_suffix).color(color::GREY_3))
-                    .padding(iced::Padding::default().bottom(8)),
-            )
-            .align_y(Alignment::End);
+        // Price: large amount with the cycle suffix on the baseline. The
+        // unpriced Free tier reads "Free" — the API emits `null`, not `$0`,
+        // and there is no cycle to suffix.
+        let mut price_row = Row::new().align_y(Alignment::End);
+        match card.price_amount {
+            Some(amount) => {
+                price_row = price_row
+                    .push(text::h1(format!("${amount}")).style(theme::text::primary))
+                    .push(iced::widget::Space::new().width(Length::Fixed(4.0)))
+                    .push(
+                        container(text::p1_regular(price_suffix).color(color::GREY_3))
+                            .padding(iced::Padding::default().bottom(8)),
+                    );
+            }
+            None => {
+                price_row = price_row.push(text::h1("Free").style(theme::text::primary));
+            }
+        }
 
         let cta = if is_current {
             button::secondary(None, "Current plan").width(Length::Fill)
@@ -1131,7 +1141,7 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
             .push(price_row)
             .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
             .push(
-                text::p2_regular(plan_tagline(&card.tier))
+                text::p2_regular(tagline)
                     .color(color::GREY_2)
                     .width(Length::Fill),
             )
@@ -1154,7 +1164,7 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         }
 
         // Expiry line on the user's current paid plan card.
-        if is_current && card.tier != PlanTier::Free {
+        if is_current && !is_free {
             if let Some(renewal) = state.plan.as_ref().and_then(|p| p.renewal_at.as_deref()) {
                 let date_short = if renewal.len() >= 10 {
                     &renewal[..10]
