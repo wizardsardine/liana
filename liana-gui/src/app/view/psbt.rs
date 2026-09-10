@@ -25,7 +25,7 @@ use liana_ui::{
         list::DeviceStatus,
         modal::{self, modal_view, ModalWidth},
         pill, scrollable,
-        text::{self, *},
+        text::{self, new, *},
     },
     icon, theme,
     widget::*,
@@ -833,28 +833,19 @@ fn change_view(output: &TxOut, network: Network) -> Element<'_, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .unwrap()
         .to_string();
-    Column::new()
+
+    let value = row![Space::fill_width(), amount(&output.value)];
+
+    let label = new::b5_bold(t!("common-address-label")).style(theme::text::secondary);
+    let copy = button::btn_copy(Some(Message::Clipboard(addr.clone())));
+    let address = row![label, address_view(addr), copy]
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .spacing(5);
+
+    column![value, address]
         .width(Length::Fill)
         .spacing(5)
-        .push(
-            Row::new()
-                .push(Space::with_width(Length::Fill))
-                .push(amount(&output.value)),
-        )
-        .push(
-            Row::new()
-                .align_y(Alignment::Center)
-                .width(Length::Fill)
-                .push(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill)
-                        .spacing(5)
-                        .push(p1_bold(t!("common-address-label")).style(theme::text::secondary))
-                        .push(address_view(addr.clone()))
-                        .push(button::btn_copy(Some(Message::Clipboard(addr)))),
-                ),
-        )
         .into()
 }
 
