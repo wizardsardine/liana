@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{
-    widget::{column, row, tooltip, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
 
@@ -15,13 +15,13 @@ use liana::{
 
 use liana_ui::{
     component::{
-        button::{self, btn_broadcast, btn_delete, btn_export, btn_import, btn_save, btn_sign},
+        button::{self, btn_broadcast, btn_delete, btn_save, btn_sign},
         card, form,
         list::DeviceStatus,
         modal::{self, modal_view, ModalWidth},
         panels::psbts,
         pill,
-        text::{self, new, *},
+        text::{self, *},
     },
     icon, theme,
     widget::*,
@@ -293,55 +293,26 @@ pub fn spend_overview_view<'a>(
     saved: bool,
 ) -> Element<'a, Message> {
     let enabled = saved && !currently_signing;
-    let export_msg = enabled.then_some(Message::ExportPsbt);
-    let export_button = btn_export(export_msg);
-
-    let import_msg = enabled.then_some(Message::ImportPsbt);
-    let import_button = btn_import(import_msg);
-
-    let export_button = if saved {
-        Container::new(export_button)
-    } else {
-        Container::new(tooltip::Tooltip::new(
-            export_button,
-            Container::new(new::caption(t!("psbt-sign-save-before-export")))
-                .style(theme::card::simple)
-                .padding(10),
-            tooltip::Position::Top,
-        ))
-    };
-    let buttons = row![export_button, import_button].spacing(5);
-    let header = row![text("PSBT").bold().width(Length::Fill), buttons].align_y(Alignment::Center);
-
     let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
-    let txid = row![
-        new::b5_bold(t!("transactions-txid")).width(Length::Fill),
-        p2_regular(txid.clone()).style(theme::text::secondary),
-        button::btn_copy(Some(Message::Clipboard(txid)))
-    ]
-    .align_y(Alignment::Center);
-
-    let psbt = column![header, txid].padding(15).spacing(10);
-    let card = Container::new(column![
-        psbt,
-        signatures(tx, desc_info, key_aliases),
-        Space::with_height(5)
-    ])
-    .style(theme::card::simple);
 
     let action = (tx.status == SpendStatus::Broadcastable).then(|| {
-        let button = if tx.path_ready().is_none() {
+        if tx.path_ready().is_none() {
             btn_sign(Some(Message::Spend(SpendTxMessage::Sign)))
         } else {
             btn_broadcast(Some(Message::Spend(SpendTxMessage::Broadcast)))
-        };
-
-        row![Space::fill_width(), button]
-            .align_y(Alignment::Center)
-            .spacing(20)
+        }
+        .into()
     });
 
-    column![card, action].spacing(20).into()
+    psbts::spend_overview(
+        saved,
+        enabled.then_some(Message::ExportPsbt),
+        enabled.then_some(Message::ImportPsbt),
+        txid.clone(),
+        Message::Clipboard(txid),
+        signatures(tx, desc_info, key_aliases),
+        action,
+    )
 }
 
 pub fn signatures<'a>(
