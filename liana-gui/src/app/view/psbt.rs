@@ -673,73 +673,52 @@ fn input_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
     let outpoint = outpoint.to_string();
-    Column::new()
-        .width(Length::Fill)
-        .push(
-            Row::new()
-                .spacing(5)
+
+    let label_widget = if let Some(label) = labels_editing.get(&outpoint) {
+        label::label_editing(vec![outpoint.clone()], label, text::P1_SIZE)
+    } else {
+        label::label_editable(vec![outpoint.clone()], labels.get(&outpoint), text::P1_SIZE)
+    };
+    let header = row![
+        Container::new(label_widget).width(Length::Fill),
+        coin.map(|c| amount(&c.amount))
+    ]
+    .spacing(5)
+    .align_y(Alignment::Center);
+
+    let outpoint_title = new::b5_bold(t!("coins-outpoint")).style(theme::text::secondary);
+    let outpoint_row = row![
+        outpoint_title,
+        p2_regular(outpoint.clone()).style(theme::text::secondary),
+        button::btn_copy(Some(Message::Clipboard(outpoint)))
+    ]
+    .align_y(Alignment::Center)
+    .spacing(5);
+
+    let address = coin.map(|c| {
+        let addr = c.address.to_string();
+        let title = new::b5_bold(t!("common-address-label")).style(theme::text::secondary);
+        let copy = button::btn_copy(Some(Message::Clipboard(addr.clone())));
+        row![title, address_view(addr), copy]
+            .align_y(Alignment::Center)
+            .width(Length::Fill)
+            .spacing(5)
+    });
+
+    let address_label = coin.and_then(|c| {
+        labels.get(&c.address.to_string()).map(|label| {
+            let title = new::b5_bold(t!("coins-address-label")).style(theme::text::secondary);
+            row![title, p2_regular(label).style(theme::text::secondary)]
                 .align_y(Alignment::Center)
-                .push(
-                    Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                        label::label_editing(vec![outpoint.clone()], label, text::P1_SIZE)
-                    } else {
-                        label::label_editable(
-                            vec![outpoint.clone()],
-                            labels.get(&outpoint),
-                            text::P1_SIZE,
-                        )
-                    })
-                    .width(Length::Fill),
-                )
-                .push_maybe(coin.map(|c| amount(&c.amount))),
-        )
-        .push(
-            Column::new()
-                .push(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(5)
-                        .push(p1_bold(t!("coins-outpoint")).style(theme::text::secondary))
-                        .push(p2_regular(outpoint.clone()).style(theme::text::secondary))
-                        .push(button::btn_copy(Some(Message::Clipboard(outpoint.clone())))),
-                )
-                .push_maybe(coin.map(|c| {
-                    let addr = c.address.to_string();
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill)
-                        .push(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .width(Length::Fill)
-                                .spacing(5)
-                                .push(
-                                    p1_bold(t!("common-address-label"))
-                                        .style(theme::text::secondary),
-                                )
-                                .push(address_view(addr.clone()))
-                                .push(button::btn_copy(Some(Message::Clipboard(addr)))),
-                        )
-                }))
-                .push_maybe(coin.and_then(|c| {
-                    labels.get(&c.address.to_string()).map(|label| {
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .width(Length::Fill)
-                            .push(
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .width(Length::Fill)
-                                    .spacing(5)
-                                    .push(
-                                        p1_bold(t!("coins-address-label"))
-                                            .style(theme::text::secondary),
-                                    )
-                                    .push(p2_regular(label).style(theme::text::secondary)),
-                            )
-                    })
-                })),
-        )
+                .width(Length::Fill)
+                .spacing(5)
+        })
+    });
+
+    let details = column![outpoint_row, address, address_label];
+
+    column![header, details]
+        .width(Length::Fill)
         .spacing(5)
         .into()
 }
