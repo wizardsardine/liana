@@ -155,64 +155,61 @@ pub fn broadcast_action<'a>(
     saved: bool,
 ) -> Element<'a, Message> {
     if saved {
-        card::simple(text(t!("psbt-transaction-broadcast")))
-            .width(Length::Fixed(400.0))
+        return card::simple(text(t!("psbt-transaction-broadcast")))
+            .width(400)
             .align_x(iced::alignment::Horizontal::Center)
-            .into()
-    } else {
-        card::simple(
-            Column::new()
-                .spacing(10)
-                .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(Container::new(h4_bold(t!("psbt-broadcast-transaction"))).width(Length::Fill))
-                .push_maybe(if conflicting_txids.is_empty() {
-                    None
-                } else {
-                    Some(
-                        conflicting_txids.iter().fold(
-                            Column::new()
-                                .spacing(5)
-                                .push(Row::new().spacing(10).push(icon::warning_icon()).push(text(
-                                    if conflicting_txids.len() > 1 {
-                                        t!("psbt-broadcast-invalidates-some")
-                                    } else {
-                                        t!("psbt-broadcast-invalidates-one")
-                                    },
-                                )))
-                                .push(Row::new().padding([0, 30]).push(text(
-                                    if conflicting_txids.len() > 1 {
-                                        t!("psbt-broadcast-conflicts-some")
-                                    } else {
-                                        t!("psbt-broadcast-conflicts-one")
-                                    },
-                                ))),
-                            |col, txid| {
-                                col.push(
-                                    Row::new()
-                                        .padding([0, 30])
-                                        .spacing(5)
-                                        .align_y(Alignment::Center)
-                                        .push(text(txid.to_string()))
-                                        .push(button::btn_copy(Some(Message::Clipboard(
-                                            txid.to_string(),
-                                        )))),
-                                )
-                            },
-                        ),
-                    )
-                })
-                .push(row![
-                    Space::fill_width(),
-                    btn_broadcast(Some(Message::Spend(SpendTxMessage::Confirm)))
-                ]),
-        )
-        .width(Length::Fixed(if conflicting_txids.is_empty() {
-            400.0
-        } else {
-            800.0
-        }))
-        .into()
+            .into();
     }
+
+    let conflicts = (!conflicting_txids.is_empty()).then(|| {
+        let (invalidates, conflicts) = if conflicting_txids.len() > 1 {
+            (
+                t!("psbt-broadcast-invalidates-some"),
+                t!("psbt-broadcast-conflicts-some"),
+            )
+        } else {
+            (
+                t!("psbt-broadcast-invalidates-one"),
+                t!("psbt-broadcast-conflicts-one"),
+            )
+        };
+
+        let warning = row![icon::warning_icon(), text(invalidates)].spacing(10);
+        let explanation = row![text(conflicts)].padding([0, 30]);
+
+        conflicting_txids
+            .iter()
+            .fold(column![warning, explanation].spacing(5), |col, txid| {
+                let copy = button::btn_copy(Some(Message::Clipboard(txid.to_string())));
+                col.push(
+                    row![text(txid.to_string()), copy]
+                        .padding([0, 30])
+                        .spacing(5)
+                        .align_y(Alignment::Center),
+                )
+            })
+    });
+
+    let confirm = row![
+        Space::fill_width(),
+        btn_broadcast(Some(Message::Spend(SpendTxMessage::Confirm)))
+    ];
+
+    let content = column![
+        warning.map(|w| warn(Some(w))),
+        Container::new(h4_bold(t!("psbt-broadcast-transaction"))).width(Length::Fill),
+        conflicts,
+        confirm
+    ]
+    .spacing(10);
+
+    let width = if conflicting_txids.is_empty() {
+        400
+    } else {
+        800
+    };
+
+    card::simple(content).width(width).into()
 }
 
 pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, Message> {
