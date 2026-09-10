@@ -125,28 +125,23 @@ pub fn psbt_view<'a>(
 pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Message> {
     if saved {
         card::simple(text(t!("psbt-transaction-saved")))
-            .width(Length::Fixed(400.0))
+            .width(400)
             .align_x(iced::alignment::Horizontal::Center)
             .into()
     } else {
-        card::simple(
-            Column::new()
-                .spacing(10)
-                .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(text(t!("psbt-save-transaction")))
-                .push(
-                    Row::new()
-                        .spacing(10)
-                        .push(Space::with_width(Length::Fill))
-                        .push(button::secondary(None, t!("btn-ignore")).on_press(Message::Close))
-                        .push(
-                            button::primary(None, t!("btn-save"))
-                                .on_press(Message::Spend(SpendTxMessage::Confirm)),
-                        ),
-                ),
-        )
-        .width(Length::Fixed(400.0))
-        .into()
+        let ignore = button::secondary(None, t!("btn-ignore")).on_press(Message::Close);
+        let save =
+            button::primary(None, t!("btn-save")).on_press(Message::Spend(SpendTxMessage::Confirm));
+        let buttons = row![Space::fill_width(), ignore, save].spacing(10);
+
+        let content = column![
+            warning.map(|w| warn(Some(w))),
+            text(t!("psbt-save-transaction")),
+            buttons
+        ]
+        .spacing(10);
+
+        card::simple(content).width(400).into()
     }
 }
 
