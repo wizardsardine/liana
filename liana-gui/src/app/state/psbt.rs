@@ -659,10 +659,10 @@ async fn sign_psbt(
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     mut psbt: Psbt,
 ) -> Result<Psbt, Error> {
-    // The BitBox02 is only going to produce a signature for a single key in the Script. In order
-    // to make sure it doesn't sign for a public key from another spending path we remove the BIP32
+    // Some devices are only going to produce a signature for a single key in the Script. In order
+    // to make sure they don't sign for a public key from another spending path we remove the BIP32
     // derivation for the other paths.
-    if matches!(hw.device_kind(), async_hwi::DeviceKind::BitBox02) {
+    if hw.device_kind().requires_psbt_pruning() {
         // We need to make sure we don't prune the BIP32 derivations from the original PSBT (which
         // would end up being updated in the daemon's database and erase the previously unpruned
         // one). To this end we create a new, pruned, psbt we use for signing and then merge its
