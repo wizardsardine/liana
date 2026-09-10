@@ -168,6 +168,44 @@ pub fn change_row<'a, M: Clone + 'static>(
         .into()
 }
 
+/// Row of a coin being spent: its label and amount, then where it comes from.
+#[allow(clippy::too_many_arguments)]
+pub fn input_row<'a, M: Clone + 'static>(
+    label: Element<'a, M>,
+    value: Option<Amount>,
+    outpoint: String,
+    copy_outpoint: M,
+    address: Option<String>,
+    address_label: Option<&'a str>,
+    copy_address: Option<M>,
+) -> Element<'a, M> {
+    let header = row![
+        Container::new(label).width(Length::Fill),
+        value.map(|value| amount(&value))
+    ]
+    .spacing(5)
+    .align_y(Alignment::Center);
+
+    let title = new::b5_bold(t!("coins-outpoint")).style(theme::text::secondary);
+    let outpoint = row![
+        title,
+        legacy::p2_regular(outpoint).style(theme::text::secondary),
+        button::btn_copy(Some(copy_outpoint))
+    ]
+    .align_y(Alignment::Center)
+    .spacing(5);
+
+    let address = address
+        .zip(copy_address)
+        .map(|(address, copy)| address_row(address, copy));
+    let details = column![outpoint, address, address_label.map(address_label_row)];
+
+    column![header, details]
+        .width(Length::Fill)
+        .spacing(5)
+        .into()
+}
+
 /// Row of a payment: its label and amount, then where it goes.
 pub fn payment_row<'a, M: Clone + 'static>(
     label: Element<'a, M>,

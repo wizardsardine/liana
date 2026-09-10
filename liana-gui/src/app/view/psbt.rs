@@ -16,7 +16,6 @@ use liana::{
 
 use liana_ui::{
     component::{
-        address::address as address_view,
         amount::*,
         button::{self, btn_broadcast, btn_delete, btn_export, btn_import, btn_save, btn_sign},
         card,
@@ -26,7 +25,7 @@ use liana_ui::{
         modal::{self, modal_view, ModalWidth},
         panels::psbts,
         pill, scrollable,
-        text::{self, new, *},
+        text::{self, *},
     },
     icon, theme,
     widget::*,
@@ -679,48 +678,21 @@ fn input_view<'a>(
     } else {
         label::label_editable(vec![outpoint.clone()], labels.get(&outpoint), text::P1_SIZE)
     };
-    let header = row![
-        Container::new(label_widget).width(Length::Fill),
-        coin.map(|c| amount(&c.amount))
-    ]
-    .spacing(5)
-    .align_y(Alignment::Center);
 
-    let outpoint_title = new::b5_bold(t!("coins-outpoint")).style(theme::text::secondary);
-    let outpoint_row = row![
-        outpoint_title,
-        p2_regular(outpoint.clone()).style(theme::text::secondary),
-        button::btn_copy(Some(Message::Clipboard(outpoint)))
-    ]
-    .align_y(Alignment::Center)
-    .spacing(5);
+    let address = coin.map(|c| c.address.to_string());
+    let address_label = coin
+        .and_then(|c| labels.get(&c.address.to_string()))
+        .map(String::as_str);
 
-    let address = coin.map(|c| {
-        let addr = c.address.to_string();
-        let title = new::b5_bold(t!("common-address-label")).style(theme::text::secondary);
-        let copy = button::btn_copy(Some(Message::Clipboard(addr.clone())));
-        row![title, address_view(addr), copy]
-            .align_y(Alignment::Center)
-            .width(Length::Fill)
-            .spacing(5)
-    });
-
-    let address_label = coin.and_then(|c| {
-        labels.get(&c.address.to_string()).map(|label| {
-            let title = new::b5_bold(t!("coins-address-label")).style(theme::text::secondary);
-            row![title, p2_regular(label).style(theme::text::secondary)]
-                .align_y(Alignment::Center)
-                .width(Length::Fill)
-                .spacing(5)
-        })
-    });
-
-    let details = column![outpoint_row, address, address_label];
-
-    column![header, details]
-        .width(Length::Fill)
-        .spacing(5)
-        .into()
+    psbts::input_row(
+        label_widget,
+        coin.map(|c| c.amount),
+        outpoint.clone(),
+        Message::Clipboard(outpoint),
+        address.clone(),
+        address_label,
+        address.map(Message::Clipboard),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
