@@ -85,25 +85,18 @@ pub fn capitalize_first(s: &str) -> String {
     }
 }
 
+/// Shorten a string to at most `len` characters, the last three being an ellipsis when there is
+/// room for one.
 pub fn truncate(str: &str, len: usize) -> String {
-    let str = str.to_string();
-    if str.len() <= len {
-        return str;
+    if str.chars().count() <= len {
+        return str.to_string();
     }
     if len < 3 {
-        let mut str = str;
-        while str.len() > len {
-            str.pop();
-        }
-        return str;
+        return str.chars().take(len).collect();
     }
-    let budget = len - 3;
-    let mut str = str;
-    while str.len() > budget {
-        str.pop();
-    }
-    str.push_str("...");
-    str
+    let mut truncated: String = str.chars().take(len - 3).collect();
+    truncated.push_str("...");
+    truncated
 }
 
 const SHORT_MARKER: &str = "[...]";
@@ -154,4 +147,19 @@ fn shorten_middle(str: &str, len: usize) -> String {
     }
 
     format!("{}{SHORT_MARKER}{}", &str[..head_end], &str[tail_start..])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate() {
+        assert_eq!(truncate("a label", 7), "a label");
+        assert_eq!(truncate("a longer label", 7), "a lo...");
+        assert_eq!(truncate("a label", 2), "a ");
+        // Accented characters are one character each, not two bytes.
+        assert_eq!(truncate("éééé", 4), "éééé");
+        assert_eq!(truncate("ééééé", 4), "é...");
+    }
 }
