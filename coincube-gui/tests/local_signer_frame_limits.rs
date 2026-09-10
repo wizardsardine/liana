@@ -346,8 +346,8 @@ async fn authenticated_request_above_the_old_cap_crosses_lan_framing() {
 /// material in the message. The phone sees the connection close without a frame.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn oversized_request_fails_preflight_with_actionable_copy() {
-    // 100 inputs funded by 1,000-output transactions: ~4.4 MB of PSBT.
-    let mut psbt = large_psbt::authenticated_taproot_psbt(100, 1000);
+    // 5 inputs each funded by a 20,000-output transaction: ~4.3 MB of PSBT.
+    let mut psbt = large_psbt::authenticated_taproot_psbt(5, 20_000);
     assert!(psbt.serialize().len() > MAX_FRAME_BYTES);
     let (signer, phone) = signer_against_echo_phone().await;
     let err = async_hwi::HWI::sign_tx(&signer, &mut psbt)
@@ -362,6 +362,34 @@ async fn oversized_request_fails_preflight_with_actionable_copy() {
         "no payload material: {}",
         text
     );
+    drop(signer);
+    assert_eq!(
+        phone.await.expect("phone"),
+        None,
+        "no frame reached the phone"
+    );
+}
+
+/// A witness-only PSBT (imported or created before fee-source authentication)
+/// is refused before the session is sealed or a byte leaves: the phone would
+/// otherwise review and commit to requester-supplied amounts. The copy names
+/// the input and the fix; the phone sees the connection close without a frame.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn witness_only_request_is_refused_before_leaving_the_desktop() {
+    let mut psbt = large_psbt::authenticated_taproot_psbt(2, 2);
+    for input in &mut psbt.inputs {
+        assert!(input.witness_utxo.is_some());
+        input.non_witness_utxo = None;
+    }
+    let before = psbt.clone();
+    let (signer, phone) = signer_against_echo_phone().await;
+    let err = async_hwi::HWI::sign_tx(&signer, &mut psbt)
+        .await
+        .expect_err("witness-only inputs must be refused");
+    let text = format!("{}", err);
+    assert!(text.contains("Input 0"), "{}", text);
+    assert!(text.contains("Recreate the spend"), "{}", text);
+    assert_eq!(psbt, before, "a refused request leaves the PSBT unchanged");
     drop(signer);
     assert_eq!(
         phone.await.expect("phone"),

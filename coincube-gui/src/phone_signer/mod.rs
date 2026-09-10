@@ -209,6 +209,12 @@ impl HWI for PhoneSigner {
             .paired_phone
             .exact_signer(&self.descriptor)
             .map_err(HwiError::Device)?;
+        // Fee-source authentication (P2-A) before anything is sealed or sent:
+        // every input must carry the complete previous transaction its outpoint
+        // commits to. A witness-only (imported or legacy) PSBT would let
+        // requester-supplied amounts drive the phone's review and sighash, so it
+        // is refused here with actionable copy rather than forwarded.
+        signatures::authenticated_prevouts(psbt).map_err(HwiError::Device)?;
         let session_id = uuid::Uuid::new_v4().to_string();
         let request_id = uuid::Uuid::new_v4().to_string();
         let psbt_bytes = psbt.serialize();

@@ -58,6 +58,9 @@ pub enum CommandError {
         /* target feerate */ u64,
     ),
     UnknownSpend(bitcoin::Txid),
+    /// A stored spend input has no previous transaction and the wallet holds
+    /// none for its outpoint, so its amount cannot be authenticated (P2-A).
+    SpendMissingPreviousTransaction(bitcoin::OutPoint),
     // FIXME: when upgrading Miniscript put the actual error there
     SpendFinalization(String),
     TxBroadcast(String),
@@ -106,6 +109,12 @@ impl fmt::Display for CommandError {
                 }
             }
             Self::UnknownSpend(txid) => write!(f, "Unknown spend transaction '{}'.", txid),
+            Self::SpendMissingPreviousTransaction(op) => write!(
+                f,
+                "Spend input {} has no previous transaction and the wallet does not hold one, \
+                so its amount cannot be authenticated. Delete this spend and recreate it.",
+                op
+            ),
             Self::SpendFinalization(e) => {
                 write!(f, "Failed to finalize the spend transaction PSBT: '{}'.", e)
             }
@@ -197,6 +206,31 @@ impl<'a> TxGetter for DbTxGetter<'a> {
         }
         self.cache.get(txid).cloned().flatten()
     }
+}
+
+/// Fill in every missing `non_witness_utxo` of a stored spend PSBT from the
+/// wallet's own copy of the previous transaction, so a PSBT that predates
+/// fee-source authentication (P2-A) or was imported without its previous
+/// transactions can still be re-verified before broadcast. This adds no trust:
+/// [`spend::reverify_spend_before_broadcast`] authenticates whatever is set here
+/// through the txid committed by the outpoint. An input whose previous
+/// transaction the wallet does not hold cannot be authenticated at all and the
+/// spend must be recreated.
+fn backfill_previous_transactions(
+    psbt: &mut Psbt,
+    tx_getter: &mut impl TxGetter,
+) -> Result<(), CommandError> {
+    for (psbt_in, txin) in psbt.inputs.iter_mut().zip(psbt.unsigned_tx.input.iter()) {
+        if psbt_in.non_witness_utxo.is_none() {
+            psbt_in.non_witness_utxo = tx_getter.get_tx(&txin.previous_output.txid);
+        }
+        if psbt_in.non_witness_utxo.is_none() {
+            return Err(CommandError::SpendMissingPreviousTransaction(
+                txin.previous_output,
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn coin_to_candidate(
@@ -967,6 +1001,11 @@ impl DaemonControl {
         let mut spend_psbt = db_conn
             .spend_tx(txid)
             .ok_or(CommandError::UnknownSpend(*txid))?;
+
+        // A stored PSBT may predate fee-source authentication (P2-A) or have been
+        // imported through `update_spend` without its previous transactions.
+        // Backfill them from the wallet before re-verifying.
+        backfill_previous_transactions(&mut spend_psbt, &mut DbTxGetter::new(&self.db))?;
 
         // CC-DESK-003: belt-and-suspenders re-verification of the spend's
         // outputs, absolute fee and feerate immediately before broadcast. The
@@ -2162,7 +2201,7 @@ mod tests {
             ],
         );
         let dummy_op = bitcoin::OutPoint::new(dummy_tx.compute_txid(), 0);
-        db_conn.new_txs(&[dummy_tx.clone()]);
+        db_conn.new_txs(std::slice::from_ref(&dummy_tx));
 
         // Arguments sanity checking
         let dummy_addr =
@@ -2677,6 +2716,77 @@ mod tests {
         assert_eq!(
             control.create_spend(&destinations, &[imma_op], 1_001, None),
             Err(CommandError::ImmatureCoinbase(imma_op))
+        );
+
+        ms.shutdown();
+    }
+
+    #[test]
+    fn backfill_previous_transactions_before_broadcast() {
+        let ms = DummyCoincube::new(DummyBitcoind::new(), DummyDatabase::new());
+        let control = &ms.control();
+        let mut db_conn = control.db().lock().unwrap().connection();
+        let dummy_tx = funding_tx(control, &[(0, 100_000, 13, false)]);
+        let dummy_op = bitcoin::OutPoint::new(dummy_tx.compute_txid(), 0);
+        db_conn.new_txs(std::slice::from_ref(&dummy_tx));
+        db_conn.new_unspent_coins(&[Coin {
+            outpoint: dummy_op,
+            is_immature: false,
+            block_info: None,
+            amount: bitcoin::Amount::from_sat(100_000),
+            derivation_index: bip32::ChildNumber::from(13),
+            is_change: false,
+            spend_txid: None,
+            spend_block: None,
+            is_from_self: false,
+        }]);
+        let dummy_addr =
+            bitcoin::Address::from_str("bc1qnsexk3gnuyayu92fc3tczvc7k62u22a22ua2kv").unwrap();
+        let destinations: HashMap<bitcoin::Address<address::NetworkUnchecked>, u64> =
+            [(dummy_addr, 50_000)].iter().cloned().collect();
+        let psbt = if let CreateSpendResult::Success { psbt, .. } = control
+            .create_spend(&destinations, &[dummy_op], 1, None)
+            .unwrap()
+        {
+            psbt
+        } else {
+            panic!("expect successful spend creation")
+        };
+
+        // A stored PSBT that lost its previous transaction (legacy draft or an
+        // import) is backfilled from the wallet and then passes re-verification.
+        let mut stripped = psbt.clone();
+        stripped.inputs[0].non_witness_utxo = None;
+        assert!(
+            spend::reverify_spend_before_broadcast(&control.config.main_descriptor, &stripped)
+                .is_err()
+        );
+        backfill_previous_transactions(&mut stripped, &mut DbTxGetter::new(&control.db())).unwrap();
+        assert_eq!(
+            stripped.inputs[0].non_witness_utxo.as_ref(),
+            Some(&dummy_tx)
+        );
+        assert_eq!(stripped, psbt);
+        spend::reverify_spend_before_broadcast(&control.config.main_descriptor, &stripped).unwrap();
+
+        // An input already carrying a previous transaction is left untouched, even
+        // one the wallet would not have handed out.
+        let mut foreign = psbt.clone();
+        let mut other = dummy_tx.clone();
+        other.lock_time = bitcoin::absolute::LockTime::from_consensus(1);
+        foreign.inputs[0].non_witness_utxo = Some(other.clone());
+        backfill_previous_transactions(&mut foreign, &mut DbTxGetter::new(&control.db())).unwrap();
+        assert_eq!(foreign.inputs[0].non_witness_utxo.as_ref(), Some(&other));
+
+        // An input whose previous transaction the wallet does not hold is refused
+        // with a recovery hint rather than reaching re-verification.
+        let mut unknown = psbt;
+        let unknown_op = bitcoin::OutPoint::new(other.compute_txid(), 0);
+        unknown.unsigned_tx.input[0].previous_output = unknown_op;
+        unknown.inputs[0].non_witness_utxo = None;
+        assert_eq!(
+            backfill_previous_transactions(&mut unknown, &mut DbTxGetter::new(&control.db())),
+            Err(CommandError::SpendMissingPreviousTransaction(unknown_op))
         );
 
         ms.shutdown();

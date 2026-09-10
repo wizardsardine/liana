@@ -212,6 +212,17 @@ impl Correlator {
     }
 }
 
+impl Drop for Correlator {
+    /// Dropping a `JoinHandle` only detaches the task, so without this the
+    /// reader would keep its half of the TLS stream open indefinitely and the
+    /// phone would never see the connection close after the `PhoneSigner`
+    /// went away. Aborting releases the read half; together with the writer
+    /// dropped by the signer, that closes the socket.
+    fn drop(&mut self) {
+        self.reader.abort();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

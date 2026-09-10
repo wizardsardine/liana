@@ -408,16 +408,30 @@ mod tests {
             crate::testutils::DummyBitcoind::new(),
             crate::testutils::DummyDatabase::new(),
         );
-        let socket_path: path::PathBuf = [
+        // Derive the socket path exactly as the daemon does. The server no
+        // longer binds inside the datadir: `coincubed_rpc_socket_path` hashes
+        // the datadir into a short `$TMPDIR/cc<hash>.sock` name so it fits
+        // sun_path. Hard-coding `<datadir>/coincubed_rpc` here meant waiting
+        // on a file that is never created — and the unbounded loop below then
+        // hung CI until the 6-hour job timeout.
+        let data_directory: path::PathBuf = [
             ms.tmp_dir.as_path(),
             path::Path::new("d"),
             path::Path::new("bitcoin"),
-            path::Path::new("coincubed_rpc"),
         ]
         .iter()
         .collect();
+        let socket_path =
+            crate::datadir::DataDirectory::new(data_directory).coincubed_rpc_socket_path();
 
+        // Bound the wait so a regression fails the test instead of hanging it.
+        let deadline = time::Instant::now() + time::Duration::from_secs(30);
         while !socket_path.exists() {
+            assert!(
+                time::Instant::now() < deadline,
+                "RPC socket never appeared at {}",
+                socket_path.display()
+            );
             thread::sleep(time::Duration::from_millis(100));
         }
 
@@ -433,5 +447,8 @@ mod tests {
         );
 
         ms.shutdown();
+        // The socket lives in the system temp dir, not under `tmp_dir`, so
+        // `shutdown()`'s `remove_dir_all` does not reach it.
+        let _ = fs::remove_file(&socket_path);
     }
 }
