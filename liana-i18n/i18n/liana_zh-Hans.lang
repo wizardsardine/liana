@@ -1,0 +1,2284 @@
+# Translator-friendly catalog
+# Language: 简体中文
+# Format: id => "English" => "Translation"
+# Use \n for line breaks
+
+btn-accept => "Accept" => "接受"
+
+btn-add-key => "Add a key" => "添加密钥"
+
+btn-add-payment => "Add payment" => "添加付款"
+
+btn-add-recovery-option => "Add recovery option" => "添加恢复选项"
+
+btn-add-recovery-path => "Add a recovery path" => "添加恢复路径"
+
+btn-add-safety-net => "Add Safety Net" => "添加安全网"
+
+btn-add-wallet => "Add wallet" => "添加钱包"
+
+btn-apply => "Apply" => "应用"
+
+btn-approve => "Approve" => "批准"
+
+btn-back => "Back" => "返回"
+
+btn-back-up-descriptor => "Back Up Descriptor" => "备份 descriptor"
+
+btn-backup-encrypted-descriptor
+=> "Back up encrypted descriptor"
+=> "备份加密的 descriptor";;
+
+btn-broadcast => "Broadcast" => "广播"
+
+btn-bump-fee => "Bump fee" => "提高手续费"
+
+btn-cancel => "Cancel" => "取消"
+
+btn-cancel-transaction => "Cancel transaction" => "取消交易"
+
+btn-change-email => "Change Email" => "更改邮箱"
+
+btn-check-connection => "Check connection" => "检查连接"
+
+btn-clear => "Clear" => "清除"
+
+btn-clear-all => "Clear All" => "全部清除"
+
+btn-close-tab => "Close" => "关闭"
+
+btn-confirm => "Confirm" => "确认"
+
+btn-connect-another-email => "Connect with another email" => "使用其他邮箱连接"
+
+btn-customize => "Customize" => "自定义"
+
+btn-delete => "Delete" => "删除"
+
+btn-delete-wallet => "Delete wallet" => "删除钱包"
+
+btn-dismiss => "Dismiss" => "关闭"
+
+btn-edit => "Edit" => "编辑"
+
+btn-edit-keys => "Edit keys" => "编辑密钥"
+
+btn-edit-label => "Edit label" => "编辑标签"
+
+btn-email-wizardsardine => "Email WS" => "给 WS 发邮件"
+
+btn-export => "Export" => "导出"
+
+btn-fee-level-high => "High" => "高"
+
+btn-fee-level-low => "Low" => "低"
+
+btn-fee-level-medium => "Medium" => "中"
+
+btn-generate => "Generate" => "生成"
+
+btn-generate-address => "Generate address" => "生成地址"
+
+btn-go-back => "Go back" => "返回"
+
+btn-go-back-to-psbts => "Go back to PSBTs" => "返回 PSBT 列表"
+
+btn-go-to-replacement => "Go to replacement" => "前往替换交易"
+
+btn-go-to-rescan => "Go to rescan" => "前往重新扫描"
+
+btn-ignore => "Ignore" => "忽略"
+
+btn-import => "Import" => "导入"
+
+btn-keep-my-changes => "Keep my changes" => "保留我的更改"
+
+btn-login => "Login" => "登录"
+
+btn-manage-keys => "Manage Keys" => "管理密钥"
+
+btn-mark-keys-ready => "Mark keys as ready" => "将密钥标记为就绪"
+
+btn-more-backend-node-info
+=> "More information about backend and node options"
+=> "关于后端与节点选项的更多信息";;
+
+btn-new => "New" => "新建"
+
+btn-next => "Next" => "下一步"
+
+btn-no => "No" => "否"
+
+btn-ok => "OK" => "确定"
+
+btn-overwrite => "Overwrite" => "覆盖"
+
+btn-previous => "Previous" => "上一步"
+
+btn-previous-arrow => "< Previous" => "< 上一步"
+
+btn-processing => "Processing..." => "处理中..."
+
+btn-register-on-device => "Register on device" => "在设备上注册"
+
+btn-reload => "Reload" => "重新加载"
+
+btn-replace => "Replace" => "替换"
+
+btn-resend-token => "Resend token" => "重新发送令牌"
+
+btn-reset-timelock => "Reset timelock" => "重置时间锁"
+
+btn-retry => "Retry" => "重试"
+
+btn-save => "Save" => "保存"
+
+btn-see-transaction-details => "See transaction details" => "查看交易详情"
+
+btn-select => "Select" => "选择"
+
+btn-send-for-approval => "Send for approval" => "提交审批"
+
+btn-send-invitation => "Send invitation" => "发送邀请"
+
+btn-send-token => "Send token" => "发送令牌"
+
+btn-set => "Set" => "设置"
+
+btn-set-keys => "Set keys" => "设置密钥"
+
+btn-share-xpubs => "Share Xpubs" => "分享 Xpub"
+
+btn-show-qr => "Show QR Code" => "显示二维码"
+
+btn-sign => "Sign" => "签名"
+
+btn-skip => "Skip" => "跳过"
+
+btn-skip-registration => "Skip registration" => "跳过注册"
+
+btn-split-tab => "Split" => "分屏"
+
+btn-start-rescan => "Start rescan" => "开始重新扫描"
+
+btn-starting-rescan => "Starting rescan..." => "正在开始重新扫描..."
+
+btn-template-help => "Something’s wrong with this template?" => "这个模板有问题？"
+
+btn-unlock-all => "Unlock all" => "全部解锁"
+
+btn-update => "Update" => "更新"
+
+btn-updating => "Updating" => "更新中"
+
+btn-verify-on-device => "Verify on hardware device" => "在硬件设备上验证"
+
+btn-yes => "Yes" => "是"
+
+business-access-error => "Access Error" => "访问错误"
+
+business-account-connection-failed
+=> "Failed to connect with account {$email}. The session may have expired."
+=> "使用账户 {$email} 连接失败。会话可能已过期。";;
+
+business-account-number => "Account #{$index}" => "账户 #{$index}"
+
+business-add-key-label => "Add a key" => "添加密钥"
+
+business-add-two-keys-to-continue
+=> "Add at least 2 keys to continue"
+=> "至少添加 2 个密钥才能继续";;
+
+business-admin-name => "Admin{$name}" => "管理员{$name}"
+
+business-after-days
+=> "{ $count ->\n    [one] After 1 day\n   *[other] After {$count} days\n}"
+=> "{ $count ->\n   *[other] {$count} 天后\n}";;
+
+business-after-hours
+=> "{ $count ->\n    [one] After 1 hour\n   *[other] After {$count} hours\n}"
+=> "{ $count ->\n   *[other] {$count} 小时后\n}";;
+
+business-after-months
+=> "{ $count ->\n    [one] After 1 month\n   *[other] After {$count} months\n}"
+=> "{ $count ->\n   *[other] {$count} 个月后\n}";;
+
+business-all-files => "All files" => "所有文件"
+
+business-all-keys-set-waiting
+=> "All keys are set. Once the other participants finish this step, the wallet will be ready."
+=> "所有密钥均已设置。待其他参与者完成此步骤后，钱包即可就绪。";;
+
+business-assigned-keys-set-waiting
+=> "Your assigned keys are set. Waiting for the other participants to finish this step."
+=> "分配给你的密钥已设置完成。等待其他参与者完成此步骤。";;
+
+business-auth-code-request-failed
+=> "Failed to request authentication code from server."
+=> "向服务器请求认证码失败。";;
+
+business-authenticated => "Authenticated" => "已认证"
+
+business-backend-error => "Backend error" => "后端错误"
+
+business-cannot-approve-template => "Can't approve this template?" => "无法批准此模板？"
+
+business-clipboard-empty => "Clipboard is empty" => "剪贴板为空"
+
+business-code-six-digits => "Code must contain only 6 digits." => "验证码只能包含 6 位数字。"
+
+business-common-you => "You" => "你"
+
+business-confirm-coldcard-success
+=> "Please confirm on your Coldcard that the wallet registration completed successfully."
+=> "请在你的 Coldcard 上确认钱包注册已成功完成。";;
+
+business-confirm-device => "Please confirm on your device..." => "请在你的设备上确认..."
+
+business-confirm-registration => "Confirm Registration" => "确认注册"
+
+business-connect-device-register
+=> "Connect the associated device to register"
+=> "连接对应的设备以进行注册";;
+
+business-connection-error => "Connection Error" => "连接错误"
+
+business-contact-create-account
+=> "Contact Wizardsardine to create an account."
+=> "联系 Wizardsardine 创建账户。";;
+
+business-create-new-path => "Create New Path" => "新建路径"
+
+business-current-xpub => "Current xpub" => "当前 xpub"
+
+business-detected-devices => "Detected devices" => "检测到的设备"
+
+business-device-disconnected => "Device disconnected" => "设备已断开连接"
+
+business-device-locked-unlock
+=> "Device is locked. Please unlock it first."
+=> "设备已锁定。请先解锁。";;
+
+business-device-not-supported => "Device is not supported" => "不支持该设备"
+
+business-device-unsupported-locked => "Device locked or unsupported" => "设备已锁定或不受支持"
+
+business-did-registration-succeed
+=> "Did the registration succeed on your Coldcard?"
+=> "你的 Coldcard 上注册成功了吗？";;
+
+business-duplicate-timelock => "Duplicate timelock" => "时间锁重复"
+
+business-edit-key => "Edit Key" => "编辑密钥"
+
+business-edit-primary-path => "Edit Primary Path" => "编辑主路径"
+
+business-edit-recovery-path => "Edit Recovery Path" => "编辑恢复路径"
+
+business-edited => "Edited" => "已编辑"
+
+business-edited-by-on
+=> "Edited by {$editor} on {$date}"
+=> "由 {$editor} 于 {$date} 编辑";;
+
+business-edited-by-user => "Edited by {$editor}" => "由 {$editor} 编辑"
+
+business-edited-on => "Edited on {$date}" => "于 {$date} 编辑"
+
+business-edited-relative => "Edited{$editor} {$time}" => "已编辑{$editor} {$time}"
+
+business-email-app-open-failed => "Couldn't open your email app" => "无法打开你的邮件应用"
+
+business-email-app-open-failed-message
+=> "Open your email client and contact Wizardsardine to request template edits."
+=> "请打开邮件客户端并联系 Wizardsardine 请求修改模板。";;
+
+business-external-keys => "External keys" => "外部密钥"
+
+business-external-signer-help
+=> "The third party who will set up and sign with this key. They'll be invited by email."
+=> "将设置并使用此密钥签名的第三方。他们会通过邮件收到邀请。";;
+
+business-fetched-from-device
+=> "Fetched from {$kind} #{$fingerprint}"
+=> "从 {$kind} #{$fingerprint} 获取";;
+
+business-fetching-device => "Fetching from device..." => "正在从设备获取..."
+
+business-file-dialog-result-failed
+=> "Failed to receive result from file dialog thread"
+=> "未能从文件对话框线程接收结果";;
+
+business-file-read-failed => "Failed to read file: {$error}" => "读取文件失败：{$error}"
+
+business-filter-organizations => "Filter organizations..." => "筛选组织..."
+
+business-filter-wallets => "Filter wallets..." => "筛选钱包..."
+
+business-from-your-organization => "From your organization" => "来自你的组织"
+
+business-hardware-wallet-not-found => "Hardware wallet not found" => "未找到硬件钱包"
+
+business-import-xpub-file => "Import extended public key file" => "导入扩展公钥文件"
+
+business-internal-signer-help
+=> "The organization member who will set up and sign with this key. They'll be invited by email."
+=> "将设置并使用此密钥签名的组织成员。他们会通过邮件收到邀请。";;
+
+business-invalid-threshold => "Invalid threshold value" => "阈值无效"
+
+business-key-alias => "Key Alias" => "密钥别名"
+
+business-key-alias-placeholder
+=> "e.g. Alice, Treasury, Lawyer..."
+=> "例如：Alice、财务、律师...";;
+
+business-key-count
+=> "{ $count ->\n    [one] (1 key)\n   *[other] ({$count} keys)\n}"
+=> "{ $count ->\n   *[other] （{$count} 个密钥）\n}";;
+
+business-key-definition-help
+=> "Define the key's name and who holds it. You'll set it up later, by connecting a device or adding its public key."
+=> "定义密钥的名称及其持有人。稍后你可以通过连接设备或添加公钥来完成设置。";;
+
+business-key-deleted => "Key Deleted" => "密钥已删除"
+
+business-key-deleted-message
+=> "The key you were editing was deleted by another user."
+=> "你正在编辑的密钥已被其他用户删除。";;
+
+business-key-modified => "Key Modified" => "密钥已修改"
+
+business-key-modified-message
+=> "This key was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "此密钥已被其他用户修改。你要重新加载服务器版本，还是保留你的更改？";;
+
+business-key-number => "Key {$id}" => "密钥 {$id}"
+
+business-key-path-account-help
+=> "The account number in this key's derivation path. Pick a different account to derive an independent key from the same device."
+=> "此密钥派生路径中的账户编号。选择不同的账户，可从同一设备派生出一个独立的密钥。";;
+
+business-key-removed => "Key Removed" => "密钥已移除"
+
+business-key-removed-from-path
+=> "\"{$alias}\" was deleted by another user and has been removed from your path selection."
+=> "\"{$alias}\" 已被其他用户删除，并已从你选择的路径中移除。";;
+
+business-key-type => "Key Type" => "密钥类型"
+
+business-key-type-help
+=> "Internal: Held by a member of your organization.\nExternal: Held by a trusted third party.\nCosigner: Professional co-signing service.\nSafetyNet: Professional recovery service."
+=> "内部：由你所在组织的成员持有。\n外部：由受信任的第三方持有。\n联署方：专业联合签名服务。\n安全网：专业恢复服务。";;
+
+business-keys-awaiting-manager
+=> "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet."
+=> "等待钱包管理者。他们尚未将密钥和签名者标记为就绪。";;
+
+business-keys-in-path => "Keys in Path:" => "路径中的密钥："
+
+business-keys-manager-instruction
+=> "List the keys that will be part of this wallet and assign a signer to each. The spending policy will be crafted from these keys."
+=> "列出将纳入此钱包的密钥，并为每个密钥指定一名签名者。花费策略将基于这些密钥来制定。";;
+
+business-keys-ready-by-manager
+=> "Marked as ready by the Wallet Manager. They've finished adding keys & signers."
+=> "已由钱包管理者标记为就绪。他们已完成密钥和签名者的添加。";;
+
+business-keys-ready-policy-editable
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys. You can still edit keys if anything needs to change."
+=> "密钥和签名者已标记为就绪。花费策略将基于这些密钥来制定。如需调整，你仍然可以编辑密钥。";;
+
+business-keys-ready-policy-pending
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys."
+=> "密钥和签名者已标记为就绪。花费策略将基于这些密钥来制定。";;
+
+business-keys-required-to-spend
+=> "{ $count ->\n    [one] {$threshold} of 1 key required to spend\n   *[other] {$threshold} of {$count} keys required to spend\n}"
+=> "{ $count ->\n   *[other] 花费需要 {$count} 个密钥中的 {$threshold} 个\n}";;
+
+business-keys-shared-policy-tab
+=> "These keys are shared with the Spending policy tab"
+=> "这些密钥与「花费策略」标签页共享";;
+
+business-keys-shared-with-policy
+=> "These keys are shared with the Spending policy tab, where you arrange them into spending paths."
+=> "这些密钥与「花费策略」标签页共享，你可在该处将它们编排为花费路径。";;
+
+business-keys-signers => "Keys & Signers" => "密钥与签名者"
+
+business-loading-wallet => "Loading wallet..." => "正在加载钱包..."
+
+business-login-email-help
+=> "Enter the email associated with your account"
+=> "输入与你账户关联的邮箱";;
+
+business-login-failed => "Login failed." => "登录失败。"
+
+business-lost-connection-restart
+=> "Lost connection to the server. Please restart the application."
+=> "与服务器的连接已断开。请重新启动应用。";;
+
+business-manager-set-keys-help
+=> "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf."
+=> "选择一个密钥以完成其设置。密钥可由各密钥管理者分别设置，也可由钱包管理者代为设置。";;
+
+business-max-unit => "Max {$max} {$unit}" => "最多 {$max} {$unit}"
+
+business-max-unit-label => "Max: {$max} {$unit}" => "最多：{$max} {$unit}"
+
+business-new-email-address => "New email address" => "新邮箱地址"
+
+business-no-descriptor-available => "No descriptor available" => "没有可用的 descriptor"
+
+business-no-devices-to-register => "You have no devices to register." => "你没有可注册的设备。"
+
+business-no-hardware-wallets
+=> "No hardware device detected. Connect a device and unlock it."
+=> "未检测到硬件设备。请连接设备并解锁。";;
+
+business-no-keys-assigned => "No keys assigned to you." => "没有分配给你的密钥。"
+
+business-no-keys-available
+=> "No keys available. Add keys first."
+=> "没有可用的密钥。请先添加密钥。";;
+
+business-no-members-match => "No members match" => "没有匹配的成员"
+
+business-no-orgs-search
+=> "No organizations found matching your search."
+=> "未找到与搜索匹配的组织。";;
+
+business-no-timelock => "No timelock" => "无时间锁"
+
+business-no-user-id-available => "No user ID available" => "没有可用的用户 ID"
+
+business-no-wallet-selected => "No wallet selected" => "未选择钱包"
+
+business-no-wallets-search
+=> "No wallets found matching your search."
+=> "未找到与搜索匹配的钱包。";;
+
+business-not-part-wallet
+=> "Not part of this wallet (#{$fingerprint})"
+=> "不属于此钱包（#{$fingerprint}）";;
+
+business-organization => "Organization" => "组织"
+
+business-organizations => "Organizations" => "组织"
+
+business-other-participants-keys => "Other participants' keys" => "其他参与者的密钥"
+
+business-participant-set-keys-help
+=> "Select a key assigned to you to complete its setup. You can connect a hardware device or add an extended public key manually."
+=> "选择一个分配给你的密钥以完成其设置。你可以连接硬件设备，或手动添加扩展公钥。";;
+
+business-path-deleted => "Path Deleted" => "路径已删除"
+
+business-path-deleted-message
+=> "The path you were editing was deleted by another user."
+=> "你正在编辑的路径已被其他用户删除。";;
+
+business-path-modified => "Path Modified" => "路径已修改"
+
+business-primary-path => "Primary path" => "主路径"
+
+business-primary-path-modified-message
+=> "The primary path was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "主路径已被其他用户修改。你要重新加载服务器版本，还是保留你的更改？";;
+
+business-professional-service => "Professional service" => "专业服务"
+
+business-provider-name => "Provider · {$provider}" => "服务商 · {$provider}"
+
+business-recovery-path => "Recovery path" => "恢复路径"
+
+business-recovery-path-modified-message
+=> "This recovery path was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "此恢复路径已被其他用户修改。你要重新加载服务器版本，还是保留你的更改？";;
+
+business-recovery-path-number => "Recovery path {$number}" => "恢复路径 {$number}"
+
+business-register-devices => "Register Devices" => "注册设备"
+
+business-register-wallet-devices-help
+=> "Register the wallet descriptor on each device, or skip if unavailable."
+=> "在每台设备上注册钱包 descriptor；如果设备不可用则跳过。";;
+
+business-registered-on-device => "Registered on device" => "已在设备上注册"
+
+business-registering-wallet => "Registering Wallet" => "正在注册钱包"
+
+business-registration-failed => "Registration Failed" => "注册失败"
+
+business-request-template-edits-help
+=> "To request edits, reach out to Wizardsardine directly: they can make the changes and send it back for approval."
+=> "如需修改，请直接联系 Wizardsardine：他们可以完成修改并发回供你批准。";;
+
+business-role-manager => "Manager" => "管理者"
+
+business-role-participant => "Participant" => "参与者"
+
+business-search-members-or-email
+=> "Search organization members or enter email"
+=> "搜索组织成员或输入邮箱";;
+
+business-select-account-placeholder => "Select account" => "选择账户"
+
+business-select-key-source => "Select key source · {$alias}" => "选择密钥来源 · {$alias}"
+
+business-select-xpub-file => "Select xpub file" => "选择 xpub 文件"
+
+business-service-token => "Service token" => "服务令牌"
+
+business-service-token-help
+=> "Paste the token from the provider. Their firm name is fetched automatically."
+=> "粘贴服务商提供的令牌。其公司名称会自动获取。";;
+
+business-service-token-placeholder
+=> "e.g. 42-absent-cake-eagle"
+=> "例如：42-absent-cake-eagle";;
+
+business-service-unavailable
+=> "The service is temporarily unavailable. Your wallet data and funds are not affected."
+=> "服务暂时不可用。你的钱包数据和资金不受影响。";;
+
+business-set-keys => "Set Keys" => "设置密钥"
+
+business-signer-email => "Signer email" => "签名者邮箱"
+
+business-spending-policy => "Spending policy" => "花费策略"
+
+business-template-locked-approve
+=> "Template is locked and pending approval. You must approve it to continue."
+=> "模板已锁定，等待批准。你必须批准它才能继续。";;
+
+business-template-locked-unlock
+=> "Template is locked and pending approval. Unlock to make further changes."
+=> "模板已锁定，等待批准。解锁后才能继续修改。";;
+
+business-template-read-only
+=> "Read-only. Only a WS Admin can edit this template."
+=> "只读。只有 WS 管理员可以编辑此模板。";;
+
+business-text-files => "Text files" => "文本文件"
+
+business-threshold-range => "Threshold (1-{$count}):" => "阈值（1-{$count}）："
+
+business-timelock => "Timelock:" => "时间锁："
+
+business-timelock-unit-days => "days" => "天"
+
+business-timelock-unit-hours => "hours" => "小时"
+
+business-timelock-unit-months => "months" => "个月"
+
+business-timelock-zero => "Timelock cannot be zero" => "时间锁不能为零"
+
+business-token-duplicate => "Duplicate token." => "令牌重复。"
+
+business-token-invalid => "Invalid token." => "令牌无效。"
+
+business-try-again-support
+=> "Please try again shortly. If the issue persists, contact support."
+=> "请稍后重试。如果问题持续存在，请联系客服。";;
+
+business-unable-load-wallet => "Unable to load wallet" => "无法加载钱包"
+
+business-unsupported-method => "Unsupported method: {$method}" => "不支持的方式：{$method}"
+
+business-use-email => "Use {$email}" => "使用 {$email}"
+
+business-user-session-not-found
+=> "User session not found. Please log in again or contact Wizardsardine."
+=> "未找到用户会话。请重新登录或联系 Wizardsardine。";;
+
+business-wallet-access-denied
+=> "You do not have access to this wallet. Contact Wizardsardine."
+=> "你没有此钱包的访问权限。请联系 Wizardsardine。";;
+
+business-wallet-count-label
+=> "{ $count ->\n    [one] 1 wallet\n   *[other] {$count} wallets\n}"
+=> "{ $count ->\n   *[other] {$count} 个钱包\n}";;
+
+business-wallets => "Wallets" => "钱包"
+
+business-wrong-network-device => "Wrong network in device settings" => "设备设置中的网络有误"
+
+business-xpub-empty => "Extended public key cannot be empty." => "扩展公钥不能为空。"
+
+business-xpub-invalid-format
+=> "Invalid extended public key format: {$error}"
+=> "扩展公钥格式无效：{$error}";;
+
+business-xpub-invalid-network
+=> "Extended public key is not valid for {$network}."
+=> "该扩展公钥对 {$network} 无效。";;
+
+business-xpub-replace-existing-help
+=> "This key already has an xpub. You can replace it by fetching from a device, importing from file, or pasting."
+=> "此密钥已有 xpub。你可以通过从设备获取、从文件导入或粘贴来替换它。";;
+
+business-your-keys => "Your keys" => "你的密钥"
+
+coins-address-label => "Address label:" => "地址标签："
+
+coins-block-height => "Block height:" => "区块高度："
+
+coins-deposit-transaction-label => "Deposit transaction label:" => "存入交易标签："
+
+coins-first-recovery-in-blocks
+=> "First recovery path will be available in {$blocks} blocks"
+=> "第一条恢复路径将在 {$blocks} 个区块后可用";;
+
+coins-not-in-block => "Not in a block" => "尚未进入区块"
+
+coins-outpoint => "Outpoint:" => "Outpoint："
+
+coins-recovery-available
+=> "One or more recovery paths are available"
+=> "有一条或多条恢复路径已可用";;
+
+coins-refresh-coin => "Refresh coin" => "刷新币"
+
+coins-spend-block-height => "Spend block height:" => "花费区块高度："
+
+coins-spend-txid => "Spend txid:" => "花费交易 ID："
+
+combobox-already-signer => "already a signer" => "已是签名者"
+
+common-address => "Address" => "地址"
+
+common-address-label => "Address:" => "地址："
+
+common-and => "and" => "和"
+
+common-approx-feerate-value => "(~{$rate} sats/vbyte)" => "（约 {$rate} sats/vbyte）"
+
+common-blocks => "blocks" => "个区块"
+
+common-connecting-ellipsis => "Connecting..." => "正在连接..."
+
+common-connection-failed => "Connection failed" => "连接失败"
+
+common-copy => "Copy" => "复制"
+
+common-descriptor => "Descriptor" => "Descriptor"
+
+common-descriptor-label => "Descriptor:" => "Descriptor："
+
+common-email => "Email" => "邮箱"
+
+common-error => "Error" => "错误"
+
+common-error-with-detail => "{$message} ({$error})" => "{$message}（{$error}）"
+
+common-feerate => "Feerate" => "费率"
+
+common-feerate-value => "({$rate} sats/vbyte)" => "（{$rate} sats/vbyte）"
+
+common-fetching => "Fetching ..." => "正在获取 ..."
+
+common-from => "From" => "来自"
+
+common-learn-more => "Learn more" => "了解更多"
+
+common-loading => "Loading..." => "加载中..."
+
+common-login => "Login" => "登录"
+
+common-no-label => "No label" => "无标签"
+
+common-no-label-parenthesized => "(No label)" => "（无标签）"
+
+common-not-available => "N/A" => "不适用"
+
+common-other-options => "Other options" => "其他选项"
+
+common-paste => "Paste" => "粘贴"
+
+common-processing => "Processing..." => "处理中..."
+
+common-ready => "Ready" => "就绪"
+
+common-recovery => "Recovery" => "恢复"
+
+common-register => "Register" => "注册"
+
+common-see-more => "See more" => "查看更多"
+
+common-select-account => "Select an account to continue" => "选择一个账户以继续"
+
+common-self-transfer => "Self-transfer" => "自转账"
+
+common-something-wrong => "Something wrong happened" => "出现了问题"
+
+common-token => "Token" => "令牌"
+
+common-wallet => "Wallet" => "钱包"
+
+connect-account-missing-from-cache => "Account must be in cache" => "账户必须存在于缓存中"
+
+connect-cache-update-failed
+=> "Failed to update cache: {$error}"
+=> "更新缓存失败：{$error}";;
+
+connect-remote-servers-unresponsive
+=> "Remote servers are unresponsive"
+=> "远程服务器无响应";;
+
+decrypt-airgap-help
+=> "Using an air-gapped device? Export the xpub from your device, then use the upload or paste option. If you don’t know the correct derivation path, try with the following:"
+=> "使用气隙设备？请从设备导出 xpub，然后使用上传或粘贴选项。如果你不知道正确的派生路径，可以尝试以下路径：";;
+
+decrypt-backup-file => "Decrypt backup file" => "解密备份文件"
+
+decrypt-device-description
+=> "Plug in and unlock a hardware device belonging to this setup to automatically decrypt the backup"
+=> "插入并解锁属于此配置的硬件设备，以自动解密备份";;
+
+decrypt-device-failed => "Failed to decrypt file with this device" => "使用此设备解密文件失败"
+
+decrypt-enter-mnemonic-unsafe
+=> "UNSAFE: Enter mnemonic of one of the keys"
+=> "不安全：输入其中一个密钥的助记词";;
+
+decrypt-enter-mnemonic-warning
+=> "This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds."
+=> "此选项并不安全。我明白在计算机上输入助记词可能导致我的资金被盗。";;
+
+decrypt-invalid-descriptor
+=> "The file has been decrypted but the descriptor is not a valid Liana descriptor."
+=> "文件已解密，但其中的 descriptor 不是有效的 Liana descriptor。";;
+
+decrypt-invalid-encoding
+=> "The file cannot be decoded properly, it seems not to be an encrypted backup."
+=> "无法正确解码该文件，它似乎不是加密备份。";;
+
+decrypt-invalid-mnemonic => "Invalid mnemonic" => "助记词无效"
+
+decrypt-invalid-type
+=> "The file has been decrypted but the content type is not supported."
+=> "文件已解密，但内容类型不受支持。";;
+
+decrypt-invalid-xpub => "Invalid xpub" => "xpub 无效"
+
+decrypt-mnemonic-cannot-decrypt
+=> "Mnemonic is valid but cannot decrypt the file"
+=> "助记词有效，但无法解密该文件";;
+
+decrypt-mnemonic-source => "Mnemonic" => "助记词"
+
+decrypt-pairing-code => "Pairing code: {$code}" => "配对码：{$code}"
+
+decrypt-paste-xpub => "Paste an extended public key" => "粘贴一个扩展公钥"
+
+decrypt-provide-xpub
+=> "Provide one of the xpubs used in this wallet."
+=> "请提供此钱包所使用的其中一个 xpub。";;
+
+decrypt-try-device => "Try to decrypt with this device..." => "尝试用此设备解密..."
+
+decrypt-unlock-device
+=> "Please unlock or open app on the device"
+=> "请解锁设备或在设备上打开应用";;
+
+decrypt-xpub-cannot-decrypt
+=> "Xpub is valid but cannot decrypt this file"
+=> "xpub 有效，但无法解密此文件";;
+
+device-already-used => "Already used" => "已使用"
+
+device-check-device => "Please check your device" => "请检查你的设备"
+
+device-enter-cosigner-token => "Enter a Cosigner token" => "输入联署方令牌"
+
+device-enter-safety-net-token => "Enter a Safety Net token" => "输入安全网令牌"
+
+device-generate-hot-key
+=> "Generate hot key stored on this computer"
+=> "生成存储在本计算机上的热密钥";;
+
+device-hot-key-test-only
+=> "We recommend using this option only for test purposes"
+=> "我们建议仅将此选项用于测试目的";;
+
+device-install-firmware-version-or-later
+=> "Install firmware version {$version} \nor later"
+=> "请安装固件版本 {$version} \n或更高版本";;
+
+device-locked => "Locked" => "已锁定"
+
+device-locked-check-code => "Locked, check code: {$code}" => "已锁定，核对码：{$code}"
+
+device-open-app => "Please open the app on device" => "请在设备上打开应用"
+
+device-processing-check-device
+=> "Processing, please check your device"
+=> "处理中，请检查你的设备";;
+
+device-registered => "Registered" => "已注册"
+
+device-signed => "Signed" => "已签名"
+
+device-unlock => "Please unlock the device" => "请解锁设备"
+
+device-unrelated-wallet
+=> "This signing device is not related to this Liana wallet."
+=> "此签名设备与该 Liana 钱包无关。";;
+
+device-version-unsupported
+=> "Device version not supported, upgrade to version > {$version}"
+=> "不支持该设备版本，请升级到高于 {$version} 的版本";;
+
+duration-days
+=> "{ $count ->\n    [one] 1 day\n   *[other] {$count} days\n}"
+=> "{ $count ->\n   *[other] {$count} 天\n}";;
+
+duration-days-approx => "~{$count} days" => "约 {$count} 天"
+
+duration-days-compact => "{$count}d" => "{$count}天"
+
+duration-days-compact-approx => "~{$count}d" => "约{$count}天"
+
+duration-hours
+=> "{ $count ->\n    [one] 1 hour\n   *[other] {$count} hours\n}"
+=> "{ $count ->\n   *[other] {$count} 小时\n}";;
+
+duration-hours-compact => "{$count}h" => "{$count}时"
+
+duration-minutes
+=> "{ $count ->\n    [one] 1 minute\n   *[other] {$count} minutes\n}"
+=> "{ $count ->\n   *[other] {$count} 分钟\n}";;
+
+duration-minutes-compact => "{$count}m" => "{$count}分"
+
+duration-months
+=> "{ $count ->\n    [one] 1 month\n   *[other] {$count} months\n}"
+=> "{ $count ->\n   *[other] {$count} 个月\n}";;
+
+duration-months-compact => "{$count}m" => "{$count}月"
+
+duration-years
+=> "{ $count ->\n    [one] 1 year\n   *[other] {$count} years\n}"
+=> "{ $count ->\n   *[other] {$count} 年\n}";;
+
+duration-years-compact => "{$count}y" => "{$count}年"
+
+error-unknown => "Unknown error occurred" => "发生未知错误"
+
+export-aliases-conflict
+=> "Aliases conflict, what do you want to do?"
+=> "别名冲突，你想如何处理？";;
+
+export-canceled => "Export canceled" => "导出已取消"
+
+export-labels-conflict
+=> "Labels conflict, what do you want to do?"
+=> "标签冲突，你想如何处理？";;
+
+export-progress => "Progress: {$progress}%" => "进度：{$progress}%"
+
+export-select-path
+=> "Select the path you want to export in the popup window..."
+=> "请在弹出窗口中选择你要导出的路径...";;
+
+export-starting => "Starting export..." => "正在开始导出..."
+
+export-success => "Export successful!" => "导出成功！"
+
+export-timeout => "Export failed: timeout" => "导出失败：超时"
+
+export-title-export-backup => "Export Backup" => "导出备份"
+
+export-title-export-descriptor => "Export Descriptor" => "导出 Descriptor"
+
+export-title-export-encrypted-descriptor
+=> "Export Encrypted Descriptor"
+=> "导出加密的 Descriptor";;
+
+export-title-export-labels => "Export Labels" => "导出标签"
+
+export-title-export-psbt => "Export PSBT" => "导出 PSBT"
+
+export-title-export-xpub => "Export Xpub" => "导出 Xpub"
+
+export-title-import-descriptor => "Import Descriptor" => "导入 Descriptor"
+
+export-title-import-psbt => "Import PSBT" => "导入 PSBT"
+
+export-title-import-wallet-backup
+=> "Import existing wallet from backup"
+=> "从备份导入已有钱包";;
+
+export-title-import-xpub => "Import Xpub" => "导入 Xpub"
+
+export-title-restore-backup => "Restore Backup" => "恢复备份"
+
+export-title-transactions => "Export Transactions" => "导出交易"
+
+fiat-amount-non-negative => "Amount must be non-negative" => "金额不能为负数"
+
+fiat-currency-mismatch
+=> "Currency mismatch: expected {$expected}, got {$actual}"
+=> "货币不匹配：预期 {$expected}，实际为 {$actual}";;
+
+fiat-exchange-rate
+=> "Exchange rate: 1 BTC ~ {$amount} {$currency}"
+=> "汇率：1 BTC ~ {$amount} {$currency}";;
+
+fiat-invalid-currency => "Invalid currency" => "货币无效"
+
+fiat-last-requested => "Last requested: {$time}" => "上次请求：{$time}"
+
+fiat-last-updated-source => "Last updated at source: {$time}" => "数据源上次更新：{$time}"
+
+fiat-price-positive => "Price per BTC must be positive" => "每 BTC 的价格必须为正数"
+
+fiat-source => "Source: {$source}" => "来源：{$source}"
+
+fiat-source-timestamp
+=> "Default price at the time the transaction has been confirmed"
+=> "交易确认时的默认价格";;
+
+fiat-source-user => "Price you have filled yourself" => "你自己填写的价格"
+
+fiat-source-wizardsardine
+=> "Price automatically processed by WS when you crafted the transaction"
+=> "你创建交易时由 WS 自动处理的价格";;
+
+home-balance => "Balance" => "余额"
+
+home-checking-transactions => "Checking for new transactions" => "正在检查新交易"
+
+home-payment-history => "Payment History" => "付款历史"
+
+home-recovery-left
+=> "≈ {$units} left before first recovery path becomes available."
+=> "≈ 还剩 {$units}，第一条恢复路径即可用。";;
+
+home-recovery-warning
+=> "Recovery path is or will soon be available for {$count} coin(s)."
+=> "有 {$count} 个币的恢复路径已可用或即将可用。";;
+
+home-rescan-warning-backup
+=> "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions."
+=> "由于此钱包是从备份恢复的，你可能需要重新扫描区块链才能看到过去的交易。";;
+
+home-rescan-warning-descriptor
+=> "As this wallet was imported from a descriptor, you may need to rescan the blockchain to see past transactions."
+=> "由于此钱包是从 descriptor 导入的，你可能需要重新扫描区块链才能看到过去的交易。";;
+
+home-syncing => "Syncing" => "同步中"
+
+home-syncing-blockchain
+=> "Syncing blockchain ({$progress}%)"
+=> "正在同步区块链（{$progress}%）";;
+
+hw-descriptor-not-registered
+=> "The wallet descriptor is not registered on the device.\n You can register it in the settings."
+=> "钱包 descriptor 尚未在该设备上注册。\n 你可以在设置中注册它。";;
+
+hw-display-address-unavailable
+=> "Liana cannot request the device to display the address. \n Verify it with the QR code in the options below."
+=> "Liana 无法请求该设备显示地址。 \n 请用下方选项中的二维码进行验证。";;
+
+hw-no-taproot-miniscript
+=> "Device firmware version does not support taproot miniscript"
+=> "设备固件版本不支持 taproot miniscript";;
+
+hw-not-in-spending-path
+=> "This signing device is not part of this spending path."
+=> "此签名设备不属于该花费路径。";;
+
+import-success => "Import successful" => "导入成功"
+
+installer-able-to-move-any-time
+=> "Able to move the funds at any time."
+=> "可随时转移资金。";;
+
+installer-accept-invitation-for => "Accept invitation for wallet:" => "接受以下钱包的邀请："
+
+installer-accepted-wallet-not-found
+=> "Wallet of accepted invitation not found"
+=> "未找到已接受邀请所对应的钱包";;
+
+installer-add-key => "Add key" => "添加密钥"
+
+installer-add-safety-net-key => "Add Safety Net key" => "添加安全网密钥"
+
+installer-advanced-settings => "Advanced settings" => "高级设置"
+
+installer-already-have-node => "I already have a node" => "我已经有一个节点"
+
+installer-already-used-sources => "Already used sources" => "已使用的来源"
+
+installer-auth-token-emailed-to
+=> "An authentication token has been emailed to"
+=> "认证令牌已发送至以下邮箱";;
+
+installer-auto-install-node
+=> "I want Liana to automatically install a Bitcoin node on my device"
+=> "我希望 Liana 在我的设备上自动安装一个 Bitcoin 节点";;
+
+installer-available-after-inactivity
+=> "Available after inactivity of ~"
+=> "未活动约以下时间后可用：";;
+
+installer-available-port-failed
+=> "Could not get available port: {$error}."
+=> "无法获取可用端口：{$error}。";;
+
+installer-available-ports-failed
+=> "Could not get available ports: {$error1}; {$error2}."
+=> "无法获取可用端口：{$error1}；{$error2}。";;
+
+installer-backed-up-descriptor-checkbox
+=> "I have backed up my descriptor"
+=> "我已备份我的 descriptor";;
+
+installer-backed-up-mnemonic-checkbox
+=> "I have backed up my mnemonic"
+=> "我已备份我的助记词";;
+
+installer-backed-up-mnemonic-show-xpub
+=> "I have backed up the mnemonic, show the extended public key"
+=> "我已备份助记词，显示扩展公钥";;
+
+installer-backup-descriptor-help
+=> "In Bitcoin, to spend from a wallet that isn't a standard single-key setup, you need both your private keys (usually stored as seed words) to sign transactions, and your wallet descriptor to locate your coins - like a map of your addresses.\nWithout the descriptor, your wallet may not find your coins - even if you still have the keys.\nWhen you click \"Back Up Descriptor\", Liana creates an encrypted file that can only be decrypted using one of your wallet's public keys.\nLiana handles this automatically during the restore of a wallet process by asking you to connect a device or enter a key.\nThis file is safer and more private than copying the descriptor manually."
+=> "在 Bitcoin 中，要从非标准单密钥钱包中花费资金，你既需要私钥（通常以助记词形式保存）来为交易签名，也需要钱包 descriptor 来定位你的币，它就像是你所有地址的地图。\n没有 descriptor，即使你仍然持有密钥，钱包也可能找不到你的币。\n当你点击\"备份 descriptor\"时，Liana 会创建一个加密文件，只能用你钱包中的某个公钥来解密。\nLiana 会在恢复钱包的过程中自动处理这一步：它会要求你连接设备或输入一个密钥。\n该文件比手动复制 descriptor 更安全、也更私密。";;
+
+installer-backup-descriptor-message
+=> "This backup is required to recover your funds.\nClick \"Back Up Descriptor\" to download an encrypted file of your wallet configuration and store it in safe, accessible places.\nYou can also copy the plain-text descriptor string, but it's less private.\nWARNING: This file does not include your seed phrase(s). Back those up separately."
+=> "此备份是恢复你资金所必需的。\n点击\"备份 descriptor\"以下载钱包配置的加密文件，并将其保存在安全且可随时取用的地方。\n你也可以复制明文 descriptor 字符串，但私密性较低。\n警告：此文件不包含你的助记词，请另行备份助记词。";;
+
+installer-backup-descriptor-missing
+=> "Backup imported but descriptor missing!"
+=> "备份已导入，但缺少 descriptor！";;
+
+installer-backup-descriptor-title
+=> "Back Up your wallet configuration (Descriptor)"
+=> "备份你的钱包配置（Descriptor）";;
+
+installer-backup-imported => "Backup successfully imported!" => "备份导入成功！"
+
+installer-backup-mnemonic-title => "Back Up your mnemonic" => "备份你的助记词"
+
+installer-backup-mnemonic-warning
+=> "Beware to back up the mnemonic as it will NOT be stored on the computer."
+=> "请务必备份助记词，它不会被存储在这台计算机上。";;
+
+installer-backup-network-mismatch
+=> "The backup network does not match the selected network."
+=> "备份所属的网络与所选网络不匹配。";;
+
+installer-bitcoin-node-management => "Bitcoin node management" => "Bitcoin 节点管理"
+
+installer-bitcoind-already-installed
+=> "Liana-managed bitcoind already installed"
+=> "由 Liana 管理的 bitcoind 已安装";;
+
+installer-bitcoind-canonicalize-datadir-error
+=> "Failed to canonicalize datadir: {$error}"
+=> "规范化数据目录失败：{$error}";;
+
+installer-bitcoind-command-error
+=> "Command to start bitcoind returned an error: {$error}"
+=> "启动 bitcoind 的命令返回了错误：{$error}";;
+
+installer-bitcoind-connection-error
+=> "bitcoind connection check failed: {$error}"
+=> "bitcoind 连接检查失败：{$error}";;
+
+installer-bitcoind-executable-not-found
+=> "bitcoind executable not found."
+=> "未找到 bitcoind 可执行文件。";;
+
+installer-bitcoind-lock-error => "lock file error: {$error}" => "锁文件错误：{$error}"
+
+installer-bitcoind-process-exited
+=> "bitcoind process exited with status '{$status}'."
+=> "bitcoind 进程已退出，状态为“{$status}”。";;
+
+installer-build-your-own => "Build your own" => "自行搭建"
+
+installer-build-your-own-description
+=> "Create a custom setup that fits all your needs."
+=> "创建满足你全部需求的自定义配置。";;
+
+installer-canonicalize-cookie-failed
+=> "Failed to canonicalize cookie path: {$error}"
+=> "规范化 cookie 路径失败：{$error}";;
+
+installer-canonicalize-datadir-failed
+=> "Failed to canonicalize datadir path: {$error}"
+=> "规范化数据目录路径失败：{$error}";;
+
+installer-change-alias-later
+=> "You will be able to change it later in Settings > Wallet"
+=> "之后你可以在「设置 > 钱包」中修改它";;
+
+installer-checking-connection => "Checking connection..." => "正在检查连接..."
+
+installer-choose-backend => "Choose backend" => "选择后端"
+
+installer-choose-wallet-type => "Choose wallet type" => "选择钱包类型"
+
+installer-connected-to => "Connected to" => "已连接到"
+
+installer-connection-checked => "Connection checked" => "连接已检查"
+
+installer-cookie-path => "Cookie path" => "Cookie 路径"
+
+installer-cosigner-token-disallowed
+=> "Cosigner tokens are not allowed for this path"
+=> "此路径不允许使用联署方令牌";;
+
+installer-create-datadir-path-failed
+=> "Failed to create datadir path: {$error}"
+=> "创建数据目录路径失败：{$error}";;
+
+installer-create-random-key => "Or create a new random key:" => "或创建一个新的随机密钥："
+
+installer-custom-template-description-1
+=> "For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them."
+=> "此配置需要你定义主花费策略和恢复花费策略。出于安全考虑，我们建议为其中每个密钥使用独立的硬件钱包。";;
+
+installer-custom-template-description-2
+=> "The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies."
+=> "属于主策略的密钥始终可以花费。属于恢复策略的密钥只有在钱包未活动达到设定时间之后才能花费，从而实现安全恢复和更高级的花费策略。";;
+
+installer-descriptor-generating
+=> "Generating and validating your wallet descriptor. This can take a few seconds."
+=> "正在生成并验证你的钱包 descriptor。这可能需要几秒钟。";;
+
+installer-descriptor-invalid
+=> "Either descriptor is invalid or incompatible with network"
+=> "descriptor 无效，或与该网络不兼容";;
+
+installer-descriptor-missing => "Descriptor missing" => "缺少 descriptor"
+
+installer-descriptor-read-failed
+=> "Failed to read the descriptor"
+=> "读取 descriptor 失败";;
+
+installer-descriptor-template => "Descriptor template" => "Descriptor 模板"
+
+installer-descriptor-type => "Descriptor type" => "Descriptor 类型"
+
+installer-descriptor-wrong-network
+=> "The descriptor is for another network"
+=> "该 descriptor 属于其他网络";;
+
+installer-detected-hardware => "Detected hardware" => "检测到的硬件"
+
+installer-device-method-unsupported
+=> "Device not supported, method: {$method}"
+=> "不支持该设备，方式：{$method}";;
+
+installer-device-no-taproot
+=> "This device does not support Taproot"
+=> "此设备不支持 Taproot";;
+
+installer-device-wrong-network
+=> "The device is configured on the wrong network"
+=> "设备配置的网络有误";;
+
+installer-distinct-ports-unavailable
+=> "Could not get distinct ports. Please try again."
+=> "无法获取到不同的端口。请重试。";;
+
+installer-download-complete => "Download complete" => "下载完成"
+
+installer-download-failed => "Download failed: '{$error}'." => "下载失败：“{$error}”。"
+
+installer-downloading-bitcoin-core-progress
+=> "Downloading Bitcoin Core {$version}... {$progress}%"
+=> "正在下载 Bitcoin Core {$version}... {$progress}%";;
+
+installer-duplicate-token => "Duplicate token" => "令牌重复"
+
+installer-electrum-address-notes
+=> "Note: include \"ssl://\" as a prefix for SSL connections."
+=> "注意：SSL 连接请加上 \"ssl://\" 前缀。";;
+
+installer-email-invalid => "Email is not valid" => "邮箱无效"
+
+installer-enter-correct-address => "Please enter correct address" => "请输入正确的地址"
+
+installer-enter-correct-electrum-address
+=> "Please enter correct address (including port), optionally prefixed with tcp:// or ssl://"
+=> "请输入正确的地址（包含端口），可选择以 tcp:// 或 ssl:// 作为前缀";;
+
+installer-enter-correct-password => "Please enter correct password" => "请输入正确的密码"
+
+installer-enter-correct-path => "Please enter correct path" => "请输入正确的路径"
+
+installer-enter-correct-user => "Please enter correct user" => "请输入正确的用户名"
+
+installer-existing-node-description
+=> "Select this option if you already have a Bitcoin node running locally or remotely. Liana will connect to it."
+=> "如果你已在本地或远程运行 Bitcoin 节点，请选择此选项。Liana 将连接到该节点。";;
+
+installer-expanding-multisig => "Expanding multisig" => "可扩展多重签名"
+
+installer-expanding-multisig-description
+=> "Two keys required to spend, with an extra key as a backup."
+=> "花费需要两个密钥，并额外配置一个密钥作为备份。";;
+
+installer-expanding-multisig-wallet => "Expanding multisig wallet" => "可扩展多重签名钱包"
+
+installer-export-backup-failed => "Failed to export backup" => "导出备份失败"
+
+installer-finalize-installation => "Finalize installation" => "完成安装"
+
+installer-generate-mnemonic => "Generate a new mnemonic" => "生成新的助记词"
+
+installer-give-wallet-alias => "Give your wallet an alias" => "为你的钱包取一个别名"
+
+installer-hot-signer => "Hot Signer" => "热签名器"
+
+installer-import-backup => "Import a backup" => "导入备份"
+
+installer-import-descriptor => "Import a descriptor" => "导入 descriptor"
+
+installer-import-mnemonic => "Import mnemonic" => "导入助记词"
+
+installer-import-mnemonic-title => "Import Mnemonic" => "导入助记词"
+
+installer-import-wallet-rescan-help
+=> "If you are using a Bitcoin Core node, you will need to perform a rescan of the blockchain after creating the wallet in order to see your coins and past transactions. This can be done in Settings > Node."
+=> "如果你使用 Bitcoin Core 节点，在创建钱包后需要重新扫描区块链，才能看到你的币和过去的交易。这可以在「设置 > 节点」中完成。";;
+
+installer-import-wallet-title => "Import the wallet" => "导入钱包"
+
+installer-import-xpub-device
+=> "Import an extended public key by selecting a signing device:"
+=> "通过选择签名设备来导入扩展公钥：";;
+
+installer-imported-key-already-used => "Imported key already used" => "导入的密钥已被使用"
+
+installer-inheritance-description-1
+=> "For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key."
+=> "此配置需要 2 个密钥：你的主密钥（给你自己）和继承密钥（给你的继承人）。出于安全考虑，我们建议为每个密钥使用独立的硬件钱包。";;
+
+installer-inheritance-description-2
+=> "You will always be able to spend using your Primary Key. After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds."
+=> "你随时都可以用主密钥花费。在经过一段未活动时间之后（在此之前不行），你的继承密钥将能够恢复你的资金。";;
+
+installer-inheritance-key => "Inheritance key" => "继承密钥"
+
+installer-installation-complete => "Installation complete" => "安装完成"
+
+installer-installation-failed
+=> "Installation failed: '{$error}'."
+=> "安装失败：“{$error}”。";;
+
+installer-installed => "Installed" => "已安装"
+
+installer-installing => "Installing..." => "正在安装..."
+
+installer-installing-bitcoind => "Installing bitcoind..." => "正在安装 bitcoind..."
+
+installer-introduction => "Introduction" => "简介"
+
+installer-invalid-descriptor => "Invalid descriptor" => "descriptor 无效"
+
+installer-invalid-token => "Invalid token!" => "令牌无效！"
+
+installer-invitation-invalid
+=> "Invitation token is invalid or expired"
+=> "邀请令牌无效或已过期";;
+
+installer-invitation-token => "Invitation token" => "邀请令牌"
+
+installer-invitation-token-help
+=> "Type the invitation token you received by email"
+=> "输入你通过邮件收到的邀请令牌";;
+
+installer-key-alias-already-used
+=> "This alias is already used for another key"
+=> "该别名已被另一个密钥使用";;
+
+installer-key-alias-placeholder => "E.g. My Hardware Wallet" => "例如：我的硬件钱包"
+
+installer-key-already-in-wallet
+=> "Fetched key has already been added to the wallet."
+=> "获取到的密钥已添加到该钱包中。";;
+
+installer-key-already-used => "Key already used" => "密钥已被使用"
+
+installer-key-already-used-in-path
+=> "Key already used in this path"
+=> "该密钥已在此路径中使用";;
+
+installer-key-fetch-wrong-network
+=> "Failed to fetch key. Switch network on device and retry"
+=> "获取密钥失败。请在设备上切换网络后重试";;
+
+installer-key-index => "Key @{$index}:" => "密钥 @{$index}："
+
+installer-key-name-alias => "Key name (alias):" => "密钥名称（别名）："
+
+installer-key-name-help
+=> "Give this key a friendly name. It will help you identify it later:"
+=> "为该密钥取一个易记的名称，它有助于你日后识别：";;
+
+installer-key-path-account => "Key path account:" => "密钥路径账户："
+
+installer-key-wrong-network
+=> "Fetched key does not have the correct network"
+=> "获取到的密钥网络不正确";;
+
+installer-keys-inactivity
+=> "Keys can move the funds after inactivity of:"
+=> "密钥可在未活动以下时间后转移资金：";;
+
+installer-load-previous-wallet => "Load a previously used wallet" => "加载曾经使用过的钱包"
+
+installer-load-shared-wallet => "Load a shared wallet" => "加载共享钱包"
+
+installer-local-wallet-description
+=> "Use your already existing Bitcoin node or automatically install one. The Liana wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet."
+=> "使用你已有的 Bitcoin 节点，或自动安装一个。Liana 钱包不会连接任何外部服务器。\n\n这是私密性最高的选项，但数据仅存储在这台计算机上。你必须自行进行备份，并把 descriptor 分享给你希望其能够访问该钱包的其他人。";;
+
+installer-managed-node-description
+=> "Liana will install a pruned node on your computer. You won't need to do anything except have some disk space available (~30GB required on mainnet) and wait for the initial synchronization with the network (it can take some days depending on your internet connection speed)."
+=> "Liana 会在你的计算机上安装一个修剪节点。你无需做任何事，只需有一些可用磁盘空间（主网约需 30GB），并等待与网络的初次同步（视你的网络速度，可能需要几天时间）。";;
+
+installer-mnemonic-backup-help
+=> "A hot key generated on this computer was used for creating this wallet. It needs to be backed up. \n Keep it in a safe place. Never share it with anyone."
+=> "创建此钱包时使用了在这台计算机上生成的热密钥，需要对其进行备份。 \n 请保存在安全的地方，切勿分享给任何人。";;
+
+installer-mnemonic-recovery-help
+=> "If you were using a hot key (a key stored on the computer) in your wallet, you will need to recover it from mnemonics to be able to sign transactions again. Otherwise you can directly go the next step."
+=> "如果你的钱包中使用了热密钥（存储在计算机上的密钥），你需要用助记词把它恢复出来，才能再次为交易签名。否则你可以直接进入下一步。";;
+
+installer-multisig-description-1
+=> "For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key."
+=> "此配置需要 3 个密钥：两个主密钥和一个恢复密钥。出于安全考虑，我们建议为每个密钥使用独立的硬件钱包。";;
+
+installer-multisig-description-2
+=> "The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):"
+=> "两个主密钥组成一个 2-of-2 多重签名，始终可以花费。如果其中一个密钥变得不可用，在经过一段未活动时间之后，你可以用恢复密钥配合其中一个主密钥来恢复资金（2-of-3 多重签名）：";;
+
+installer-no-current-wallets => "You have no current wallets" => "你当前没有钱包"
+
+installer-node-setup-title
+=> "Set up connection to the Bitcoin node"
+=> "设置与 Bitcoin 节点的连接";;
+
+installer-node-type => "Node type:" => "节点类型："
+
+installer-password => "Password" => "密码"
+
+installer-paste-descriptor => "Paste a descriptor" => "粘贴 descriptor"
+
+installer-paste-descriptor-description
+=> "Creates a new wallet from the pasted descriptor"
+=> "用粘贴的 descriptor 创建一个新钱包";;
+
+installer-path-duplicate-sequence
+=> "No two recovery options may become available at the very same date."
+=> "任何两个恢复选项都不能在完全相同的时间变为可用。";;
+
+installer-path-key-source-disallowed
+=> "Path contains a key that is disallowed for this kind of path."
+=> "该路径包含此类路径不允许使用的密钥。";;
+
+installer-path-only-cosigner-keys
+=> "A path cannot contain only cosigner keys."
+=> "路径不能只包含联署方密钥。";;
+
+installer-port-attempts-exhausted => "Exhausted attempts" => "尝试次数已用尽"
+
+installer-primary-key => "Primary key" => "主密钥"
+
+installer-primary-key-number => "Primary key #{$number}" => "主密钥 #{$number}"
+
+installer-primary-spending-option => "Primary spending option:" => "主花费选项："
+
+installer-read-cookie-file-failed
+=> "Failed to read cookie file: {$error}"
+=> "读取 cookie 文件失败：{$error}";;
+
+installer-recovery-key => "Recovery key" => "恢复密钥"
+
+installer-recovery-option => "Recovery option #{$number}:" => "恢复选项 #{$number}："
+
+installer-register-descriptor-failed
+=> "Failed to register descriptor"
+=> "注册 descriptor 失败";;
+
+installer-register-descriptor-help
+=> "To be used with the wallet, a signing device needs the descriptor. If the descriptor contains one or more keys imported from an external signing device, the descriptor must be registered on it. Registration confirms that the device is able to handle the policy. Registration on a device is not a substitute for backing up the descriptor."
+=> "签名设备需要 descriptor 才能与该钱包配合使用。如果 descriptor 中包含一个或多个从外部签名设备导入的密钥，就必须在该设备上注册此 descriptor。注册可确认该设备能够处理这一策略。在设备上注册不能代替备份 descriptor。";;
+
+installer-register-descriptor-optional
+=> "This step is only necessary if you are using a signing device."
+=> "仅当你使用签名设备时才需要此步骤。";;
+
+installer-register-descriptor-title => "Register descriptor" => "注册 descriptor"
+
+installer-registered-descriptor-checkbox
+=> "I have registered the descriptor on my device(s)"
+=> "我已在我的设备上注册 descriptor";;
+
+installer-remote-backend-description
+=> "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead."
+=> "使用我们的服务，即可立即开始交易。Wizardsardine 负责运行相关基础设施，允许多台计算机或多位参与者连接并同步。\n\n对于希望由 Wizardsardine 保管其 descriptor 备份的人来说，这是更简单、也更稳妥的选择。你仍然掌控自己的密钥，Wizardsardine 无法控制你的资金，但可以看到与某个邮箱地址关联的钱包信息。注重隐私的用户应改为自行运行基础设施。";;
+
+installer-remote-bitcoin-node-warning
+=> "Connection to a remote Bitcoin node is not supported. Insert an IP address bound to the same machine running Liana (ignore this warning if that's already the case)"
+=> "不支持连接远程 Bitcoin 节点。请填写绑定在运行 Liana 的同一台机器上的 IP 地址（如果本来就是这样，请忽略此警告）";;
+
+installer-rpc-auth => "RPC authentication:" => "RPC 认证方式："
+
+installer-rpc-user-password => "User and password" => "用户名和密码"
+
+installer-safety-net => "Safety Net:" => "安全网："
+
+installer-safety-net-description
+=> "This adds a final recovery option containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens."
+=> "这会添加一个最终恢复选项，其中包含来自专业密钥代理机构的密钥。\n\n如果你已获得一个或多个安全网令牌，请使用此选项。";;
+
+installer-safety-net-key => "Safety Net key" => "安全网密钥"
+
+installer-safety-net-token-disallowed
+=> "SafetyNet tokens are not allowed for this path"
+=> "此路径不允许使用安全网令牌";;
+
+installer-seed-key-not-in-descriptor
+=> "The descriptor does not use a key derived from this seed"
+=> "该 descriptor 未使用由此助记词派生的密钥";;
+
+installer-select-device-register
+=> "Select hardware wallet to register descriptor on:"
+=> "选择用于注册 descriptor 的硬件钱包：";;
+
+installer-select-device-register-if-needed
+=> "If necessary, please select the signing device to register descriptor on:"
+=> "如有必要，请选择用于注册 descriptor 的签名设备：";;
+
+installer-select-key-source => "Select key source" => "选择密钥来源"
+
+installer-sequence-value-warning
+=> "Value must be greater than 0 and lower than 65535"
+=> "数值必须大于 0 且小于 65535";;
+
+installer-serialize-daemon-config-failed
+=> "Failed to serialize daemon config: {$error}"
+=> "序列化守护进程配置失败：{$error}";;
+
+installer-serialize-gui-config-failed
+=> "Failed to serialize GUI config: {$error}"
+=> "序列化 GUI 配置失败：{$error}";;
+
+installer-share-xpubs-title => "Share your public keys (Xpubs)" => "分享你的公钥（Xpub）"
+
+installer-shared-wallet-help
+=> "If you received an invitation to join a shared wallet"
+=> "如果你收到了加入共享钱包的邀请";;
+
+installer-simple-inheritance => "Simple inheritance" => "简单继承"
+
+installer-simple-inheritance-description
+=> "Two keys required, one for yourself to spend and another for your heir."
+=> "需要两个密钥，一个供你自己花费，另一个给你的继承人。";;
+
+installer-simple-inheritance-wallet => "Simple inheritance wallet" => "简单继承钱包"
+
+installer-start-bitcoin-node => "Start Bitcoin full node" => "启动 Bitcoin 全节点"
+
+installer-start-daemon-failed
+=> "Failed to start Liana daemon: {$error}"
+=> "启动 Liana 守护进程失败：{$error}";;
+
+installer-started => "Started" => "已启动"
+
+installer-starting => "Starting..." => "正在启动..."
+
+installer-stop-daemon-failed
+=> "Failed to stop Liana daemon: {$error}"
+=> "停止 Liana 守护进程失败：{$error}";;
+
+installer-store-mnemonic-failed
+=> "Failed to store mnemonic: {$error}"
+=> "保存助记词失败：{$error}";;
+
+installer-switch-account-help
+=> "Switch account if you already use the same hardware in other configurations"
+=> "如果你已在其他配置中使用同一硬件，请切换账户";;
+
+installer-taproot-supported-version
+=> "Taproot is only supported by Liana version 5.0 and above"
+=> "仅 Liana 5.0 及以上版本支持 Taproot";;
+
+installer-template-custom-primary => "Primary keys" => "主密钥"
+
+installer-template-custom-recovery => "Recovery keys" => "恢复密钥"
+
+installer-template-event-receipt => "Receipt of funds" => "收到资金"
+
+installer-template-event-timelock
+=> "After some time* of wallet inactivity"
+=> "钱包未活动一段时间*之后";;
+
+installer-template-footnote
+=> "*The time range (timelock) for the activation of keys can be configured in the next step."
+=> "*密钥生效的时间范围（时间锁）可在下一步中配置。";;
+
+installer-template-multisig-primary => "2-of-2 multisig" => "2-of-2 多重签名"
+
+installer-template-multisig-recovery => "2-of-3 multisig" => "2-of-3 多重签名"
+
+installer-template-policy-primary => "Primary spending policy" => "主花费策略"
+
+installer-template-policy-recovery => "Recovery spending policy" => "恢复花费策略"
+
+installer-template-state-locked => "Can't spend" => "无法花费"
+
+installer-template-state-spend => "Can spend" => "可以花费"
+
+installer-the-descriptor => "The descriptor" => "Descriptor"
+
+installer-the-descriptor-label => "The descriptor:" => "Descriptor："
+
+installer-threshold => "Threshold:" => "阈值："
+
+installer-threshold-keys
+=> "{ $total ->\n    [one] {$threshold} out of 1 key\n   *[other] {$threshold} out of {$total} keys\n}"
+=> "{ $total ->\n   *[other] {$total} 个密钥中的 {$threshold} 个\n}";;
+
+installer-token-type-disallowed
+=> "Token type not allowed in this path"
+=> "此路径不允许该类型的令牌";;
+
+installer-use-liana-connect => "Use Liana Connect" => "使用 Liana Connect"
+
+installer-use-own-node => "Use your own node" => "使用你自己的节点"
+
+installer-user => "User" => "用户名"
+
+installer-wallet-alias => "Wallet alias" => "钱包别名"
+
+installer-wallet-alias-too-long => "Wallet alias is too long." => "钱包别名过长。"
+
+installer-xpub-invalid => "Invalid Xpub" => "Xpub 无效"
+
+installer-xpub-origin-missing => "Origin missing" => "缺少 origin"
+
+installer-xpub-wrong-derivation-path => "Wrong derivation path" => "派生路径错误"
+
+installer-xpub-wrong-network => "Wrong network" => "网络错误"
+
+label-edit => "Edit label" => "编辑标签"
+
+label-external-output => "(External Output)" => "（外部输出）"
+
+label-invalid-length
+=> "Invalid label length, must be 80 bytes or less"
+=> "标签长度无效，必须不超过 80 字节";;
+
+label-label => "Label" => "标签"
+
+launcher-add-existing-wallet => "Add an existing Liana wallet" => "添加一个已有的 Liana 钱包"
+
+launcher-config-descriptor-origin-error
+=> "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin. Liana v0.2 and later only support public keys with origins. Please migrate your funds using Liana v0.1."
+=> "此网络的配置存在问题。你很可能使用了包含一个或多个无 origin 公钥的 descriptor。Liana v0.2 及之后的版本仅支持带 origin 的公钥。请使用 Liana v0.1 迁移你的资金。";;
+
+launcher-create-new-wallet => "Create a new Liana wallet" => "创建一个新的 Liana 钱包"
+
+launcher-default-wallet-name
+=> "My Liana {$network} wallet"
+=> "我的 Liana {$network} 钱包";;
+
+launcher-delete-all-data-confirmation
+=> "Are you sure you want to delete the configuration and all associated data for the wallet {$wallet}?"
+=> "确定要删除钱包 {$wallet} 的配置及其所有关联数据吗？";;
+
+launcher-delete-connect-all-members
+=> "Also permanently delete this wallet from Liana Connect (for all members)."
+=> "同时从 Liana Connect 永久删除此钱包（对所有成员生效）。";;
+
+launcher-delete-connect-disassociate
+=> "Also disassociate {$email} from this Liana Connect wallet."
+=> "同时解除 {$email} 与此 Liana Connect 钱包的关联。";;
+
+launcher-delete-local-config-confirmation
+=> "Are you sure you want to delete locally the configuration for the wallet {$wallet}?"
+=> "确定要在本地删除钱包 {$wallet} 的配置吗？";;
+
+launcher-delete-node-not-affected
+=> "(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)"
+=> "（如果你使用由 Liana 管理的 Bitcoin 节点，此操作不会影响它。）";;
+
+launcher-delete-node-not-affected-this-network
+=> "(The Liana-managed Bitcoin node for this network will not be affected by this action.)"
+=> "（此操作不会影响该网络上由 Liana 管理的 Bitcoin 节点。）";;
+
+launcher-delete-title
+=> "Delete configuration for Liana-{$checksum}"
+=> "删除 Liana-{$checksum} 的配置";;
+
+launcher-delete-title-alias
+=> "Delete configuration for {$alias} (Liana-{$checksum})"
+=> "删除 {$alias}（Liana-{$checksum}）的配置";;
+
+launcher-delete-warning-irreversible
+=> "WARNING: This cannot be undone."
+=> "警告：此操作无法撤销。";;
+
+launcher-read-daemon-config-failed
+=> "Failed to read daemon configuration file in the directory: {$path}"
+=> "读取该目录中的守护进程配置文件失败：{$path}";;
+
+launcher-read-gui-config-failed
+=> "Failed to read GUI configuration file in the directory: {$path}"
+=> "读取该目录中的 GUI 配置文件失败：{$path}";;
+
+launcher-unexpected-error => "Unexpected {$error}" => "意外错误 {$error}"
+
+launcher-wallet-deleted => "Wallet successfully deleted" => "钱包已成功删除"
+
+launcher-wallet-id-not-found
+=> "Wallet {$wallet_id} not found"
+=> "未找到钱包 {$wallet_id}";;
+
+launcher-wallet-not-found => "Wallet not found" => "未找到钱包"
+
+launcher-welcome => "Welcome" => "欢迎"
+
+launcher-welcome-back => "Welcome back" => "欢迎回来"
+
+lianalite-auth-sent => "An authentication was sent to your email:" => "认证信息已发送至你的邮箱："
+
+lianalite-token-expired => "Token is expired or is invalid" => "令牌已过期或无效"
+
+lianalite-token-has-expired-or-invalid
+=> "Token has expired or is invalid"
+=> "令牌已过期或无效";;
+
+lianalite-token-invalid => "Token is not valid" => "令牌无效"
+
+lianalite-wallet-deleted
+=> "This wallet was deleted by its creator for all participants and cannot be opened. To access it again, restore it using a backup file or the wallet descriptor."
+=> "此钱包已被创建者对所有参与者删除，无法再打开。若要重新访问它，请使用备份文件或钱包 descriptor 进行恢复。";;
+
+loader-connecting-daemon => "Connecting to daemon..." => "正在连接守护进程..."
+
+loader-failed => "Liana failed to start" => "Liana 启动失败"
+
+loader-failed-bitcoind
+=> "Liana failed to start, please check if bitcoind is running"
+=> "Liana 启动失败，请检查 bitcoind 是否正在运行";;
+
+loader-internal-daemon-error
+=> "Error while starting the internal daemon"
+=> "启动内部守护进程时出错";;
+
+loader-progress => "Progress {$progress}%" => "进度 {$progress}%"
+
+loader-starting-daemon => "Starting daemon..." => "正在启动守护进程..."
+
+loader-sync-progress-1
+=> "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster."
+=> "Bitcoin Core 正在同步区块链。完整同步通常需要几天时间，并且会占用较多资源。初次同步完成后，后续同步会快得多。";;
+
+loader-sync-progress-2
+=> "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance."
+=> "Bitcoin Core 正在同步区块链。这需要一段时间，取决于上次同步的时间、你的网络连接和计算机性能。";;
+
+loader-sync-progress-3
+=> "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance."
+=> "Bitcoin Core 正在同步区块链。这可能需要几分钟，取决于上次同步的时间、你的网络连接和计算机性能。";;
+
+menu-coins-utxos => "Coins/UTXOs" => "币/UTXO"
+
+menu-dashboard => "Dashboard" => "仪表盘"
+
+menu-drafts-approvals => "Drafts & Approvals" => "草稿与审批"
+
+menu-receive => "Receive" => "接收"
+
+menu-send => "Send" => "发送"
+
+menu-settings => "Settings" => "设置"
+
+menu-transactions => "Transactions" => "交易"
+
+network-coins-have => ", COINS HAVE{ \" \" }" => "，其中的币{ \" \" }"
+
+network-no-value => "NO VALUE" => "没有价值"
+
+network-this-is-a => "THIS IS A{ \" \" }" => "这是一个{ \" \" }"
+
+network-wallet => "{$network} WALLET" => "{$network} 钱包"
+
+payment-address-label => "address label: {$label}" => "地址标签：{$label}"
+
+payment-incoming => "Incoming payment" => "转入付款"
+
+payment-outgoing => "Outgoing payment" => "转出付款"
+
+payment-title => "Payment" => "付款"
+
+pill-active => "Active" => "生效中"
+
+pill-always-available => "Always available" => "始终可用"
+
+pill-available => "Available" => "可用"
+
+pill-available-compact => "Avail." => "可用"
+
+pill-batch => "Batch" => "批量"
+
+pill-batch-tooltip => "This transaction contains multiple payments" => "此交易包含多笔付款"
+
+pill-confirmed => "Confirmed" => "已确认"
+
+pill-confirmed-tooltip
+=> "This transaction has been included in a block"
+=> "此交易已被打包进区块";;
+
+pill-deprecated => "Deprecated" => "已作废"
+
+pill-deprecated-tooltip
+=> "This transaction cannot be included in the blockchain anymore."
+=> "此交易已无法再被写入区块链。";;
+
+pill-draft => "Draft" => "草稿"
+
+pill-first-recovery-in
+=> "First recovery option available in {$units}"
+=> "第一个恢复选项将在 {$units} 后可用";;
+
+pill-first-recovery-today => "First recovery option available today" => "第一个恢复选项今天可用"
+
+pill-key-cosigner => "Cosigner" => "联署方"
+
+pill-key-cosigner-tooltip
+=> "Professional third party co-signing key"
+=> "专业第三方联合签名密钥";;
+
+pill-key-external => "External" => "外部"
+
+pill-key-external-tooltip => "Key held by third parties" => "由第三方持有的密钥"
+
+pill-key-internal => "Internal" => "内部"
+
+pill-key-internal-tooltip => "Key held by your organization" => "由你所在组织持有的密钥"
+
+pill-key-safety-net => "Safety Net" => "安全网"
+
+pill-key-safety-net-tooltip => "Professional third party recovery key" => "专业第三方恢复密钥"
+
+pill-not-in-policy => "Not in policy yet" => "尚未纳入策略"
+
+pill-recovery-available-tooltip
+=> "Recovery option(s) already available"
+=> "已有恢复选项可用";;
+
+pill-recovery-tooltip => "This transaction is using a recovery path" => "此交易正在使用恢复路径"
+
+pill-rescan-progress => "Rescan... {$progress}%" => "重新扫描... {$progress}%"
+
+pill-signed => "To broadcast" => "待广播"
+
+pill-signed-tooltip
+=> "This transaction is signed & ready to broadcast"
+=> "此交易已签名，可以广播";;
+
+pill-spent => "Spent" => "已花费"
+
+pill-spent-tooltip
+=> "The transaction was included in the blockchain."
+=> "该交易已被写入区块链。";;
+
+pill-to-approve => "To approve" => "待批准"
+
+pill-today => "Today" => "今天"
+
+pill-unconfirmed => "Unconfirmed" => "未确认"
+
+pill-unconfirmed-tooltip
+=> "Do not treat this as a payment until it is confirmed"
+=> "在确认之前，请勿将其视为一笔付款";;
+
+pill-unsigned => "Unsigned" => "未签名"
+
+pill-unsigned-tooltip => "This transaction is missing signature(s)" => "此交易缺少签名"
+
+pill-used-in-spending-paths
+=> "{ $count ->\n    [one] Used in 1 spending path\n   *[other] Used in {$count} spending paths\n}"
+=> "{ $count ->\n   *[other] 用于 {$count} 条花费路径\n}";;
+
+pill-ws-admin => "WS Admin" => "WS 管理员"
+
+pill-xpub-not-set => "Not Set" => "未设置"
+
+pill-xpub-set => "✓ Set" => "✓ 已设置"
+
+policy-block-duration
+=> "{$blocks} blocks (~{$duration})"
+=> "{$blocks} 个区块（约 {$duration}）";;
+
+policy-by => "by" => "由"
+
+policy-inactive-for => "can spend coins inactive for" => "可以花费未活动达到以下时间的币"
+
+policy-out-of-by => "out of {$count} by" => "（共 {$count} 个）由"
+
+policy-primary-path
+=> "can always spend this wallet's funds (Primary path)"
+=> "始终可以花费此钱包的资金（主路径）";;
+
+policy-recovery-path => "(Recovery path #{$number})" => "（恢复路径 #{$number}）"
+
+policy-safety-net-path => "(Safety Net path)" => "（安全网路径）"
+
+policy-signatures
+=> "{ $count ->\n    [one] 1 signature\n   *[other] {$count} signatures\n}"
+=> "{ $count ->\n   *[other] {$count} 个签名\n}";;
+
+policy-wallet-policy => "The wallet policy:" => "钱包策略："
+
+psbt-already-signed-by => ", already signed by" => "，已由以下签名"
+
+psbt-broadcast-conflicts-one
+=> "The following transaction is spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on it:"
+=> "以下交易花费了待广播交易中的一个或多个输入，它将被丢弃，依赖它的其他交易也会被一并丢弃：";;
+
+psbt-broadcast-conflicts-some
+=> "The following transactions are spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on them:"
+=> "以下交易花费了待广播交易中的一个或多个输入，它们将被丢弃，依赖它们的其他交易也会被一并丢弃：";;
+
+psbt-broadcast-invalidates-one
+=> "WARNING: Broadcasting this transaction will invalidate a pending payment."
+=> "警告：广播此交易将使一笔待处理的付款失效。";;
+
+psbt-broadcast-invalidates-some
+=> "WARNING: Broadcasting this transaction will invalidate some pending payments."
+=> "警告：广播此交易将使一些待处理的付款失效。";;
+
+psbt-broadcast-transaction => "Broadcast the transaction" => "广播该交易"
+
+psbt-change => "Change" => "找零"
+
+psbt-coins-spent
+=> "{ $count ->\n    [one] 1 coin spent\n   *[other] {$count} coins spent\n}"
+=> "{ $count ->\n   *[other] 花费了 {$count} 个币\n}";;
+
+psbt-delete-success => "Successfully deleted this transaction." => "已成功删除此交易。"
+
+psbt-delete-this => "Delete this PSBT" => "删除此 PSBT"
+
+psbt-device-sign-failed => "Device failed to sign" => "设备签名失败"
+
+psbt-finalizing-requires => "Finalizing this transaction requires:" => "完成此交易还需要："
+
+psbt-missing-inputs => "Missing information about transaction inputs" => "缺少交易输入的信息"
+
+psbt-more-signatures
+=> "{ $count ->\n    [0] no more signatures\n    [one] 1 more signature from\n   *[other] {$count} more signatures from\n}"
+=> "{ $count ->\n    [0] 无需更多签名\n   *[other] 还需 {$count} 个签名，来自\n}";;
+
+psbt-no-payment => "0 payment" => "0 笔付款"
+
+psbt-not-ready => "Not ready" => "未就绪"
+
+psbt-payments
+=> "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
+=> "{ $count ->\n   *[other] {$count} 笔付款\n}";;
+
+psbt-save-transaction => "Save this transaction" => "保存此交易"
+
+psbt-select-signing-device => "Select signing device to sign with:" => "选择用于签名的签名设备："
+
+psbt-sign-save-before-export
+=> "Sign or save the transaction first to enable export"
+=> "请先签名或保存该交易，才能启用导出";;
+
+psbt-signed-by => "signed by" => "已由以下签名"
+
+psbt-spend-updated => "Spend transaction is updated" => "花费交易已更新"
+
+psbt-status => "Status" => "状态"
+
+psbt-transaction-broadcast => "Transaction is broadcast" => "交易已广播"
+
+psbt-transaction-saved => "Transaction is saved" => "交易已保存"
+
+psbts-base64-warning => "Please enter a base64 encoded PSBT" => "请输入 base64 编码的 PSBT"
+
+psbts-imported => "PSBT is imported" => "PSBT 已导入"
+
+psbts-insert-psbt => "Insert PSBT:" => "插入 PSBT："
+
+receive-address-label-placeholder => "Enter an address label" => "输入一个地址标签"
+
+receive-derivation-index => "Derivation index:" => "派生索引："
+
+receive-generate-new-address-help
+=> "Always generate a new address for each deposit."
+=> "每次存入都请生成一个新地址。";;
+
+receive-generating-address => "Generating address ..." => "正在生成地址 ..."
+
+receive-generating-address-title => "Generating address" => "正在生成地址"
+
+receive-previous-addresses
+=> "Previously generated addresses still awaiting deposit"
+=> "之前生成、仍在等待存入的地址";;
+
+receive-select-device => "Select device to verify address on:" => "选择用于验证地址的设备："
+
+receive-specter-diy-tooltip => "For Specter DIY devices" => "适用于 Specter DIY 设备"
+
+receive-verify-address => "Verify address" => "验证地址"
+
+recovery-coins-total
+=> "{ $count ->\n    [one] can recover 1 coin totalling\n   *[other] can recover {$count} coins totalling\n}"
+=> "{ $count ->\n   *[other] 可恢复 {$count} 个币，总额为\n}";;
+
+recovery-info
+=> "Recover your funds by sending them to another wallet if you have lost access to your primary spending path."
+=> "如果你已无法使用主花费路径，可将资金发送到另一个钱包来恢复它们。";;
+
+recovery-none-available
+=> "No recovery path is currently available."
+=> "当前没有可用的恢复路径。";;
+
+recovery-paths-available
+=> "{ $count ->\n    [one] 1 recovery path is available:\n   *[other] {$count} recovery paths are available:\n}"
+=> "{ $count ->\n   *[other] 有 {$count} 条恢复路径可用：\n}";;
+
+recovery-signatures-from
+=> "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}"
+=> "{ $count ->\n   *[other] {$count} 个签名，来自\n}";;
+
+settings-alias => "Alias" => "别名"
+
+settings-alias-too-long => "Please enter alias that is not too long" => "请输入不过长的别名"
+
+settings-backup-encrypted-descriptor-tooltip
+=> "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs."
+=> "一个可以存放在任何地方的加密 descriptor 文件（.bed）。要解密它，你需要你的其中一台签名设备或 xpub。";;
+
+settings-block-height => "Block Height:" => "区块高度："
+
+settings-blockchain-rescan => "Blockchain rescan" => "区块链重新扫描"
+
+settings-change-node-or-connect
+=> "I want to change node type or use Liana Connect"
+=> "我想更换节点类型或使用 Liana Connect";;
+
+settings-connect-own-node => "I want to connect to my own node" => "我想连接到我自己的节点"
+
+settings-cookie-file-path => "Cookie file path" => "Cookie 文件路径"
+
+settings-correct-alias => "Please enter correct alias" => "请输入正确的别名"
+
+settings-currency => "Currency:" => "货币："
+
+settings-date-before-prune
+=> "Provided date earlier than the node prune height"
+=> "提供的日期早于节点的修剪高度";;
+
+settings-date-future => "Provided date is in the future" => "提供的日期在未来"
+
+settings-date-invalid => "Provided date is invalid" => "提供的日期无效"
+
+settings-day => "Day:" => "日："
+
+settings-email-invalid => "Email is invalid" => "邮箱无效"
+
+settings-exchange-rate-source => "Exchange rate source:" => "汇率来源："
+
+settings-export-descriptor => "Descriptor only - plain-text" => "仅 descriptor - 明文"
+
+settings-export-descriptor-description
+=> "Plain-text (not encrypted) descriptor file only, to use with other wallets."
+=> "仅导出明文（未加密）的 descriptor 文件，可用于其他钱包。";;
+
+settings-export-encrypted-descriptor => "Encrypted descriptor" => "加密的 descriptor"
+
+settings-export-encrypted-descriptor-description
+=> ".bed file, can be decrypted with one of your signing devices or xpubs."
+=> ".bed 文件，可用你的其中一台签名设备或 xpub 解密。";;
+
+settings-export-labels => "BIP 329 labels" => "BIP 329 标签"
+
+settings-export-labels-description
+=> "BIP 329 label export, compatible with other wallets."
+=> "BIP 329 标签导出，兼容其他钱包。";;
+
+settings-export-transactions => "Transactions table" => "交易表"
+
+settings-export-transactions-description
+=> ".CSV file of past transactions, for accounting purposes."
+=> "过往交易的 .CSV 文件，用于记账。";;
+
+settings-export-wallet => "Export wallet" => "导出钱包"
+
+settings-export-wallet-description
+=> "File (not encrypted) with wallet info useful to sync labels and data on other devices."
+=> "包含钱包信息的文件（未加密），便于在其他设备上同步标签和数据。";;
+
+settings-fiat-price => "Fiat price:" => "法币价格："
+
+settings-fiat-price-tooltip
+=> "Fiat price data is provided by third-party services. Availability and accuracy are not guaranteed."
+=> "法币价格数据由第三方服务提供，其可用性和准确性不作保证。";;
+
+settings-fingerprint-aliases => "Fingerprint aliases:" => "指纹别名："
+
+settings-grant-wallet-access
+=> "Grant access to wallet to another user"
+=> "授予其他用户访问此钱包的权限";;
+
+settings-import-export-description
+=> "A collection of the export and import functions present in Liana."
+=> "Liana 中各项导出与导入功能的集合。";;
+
+settings-import-wallet => "Import wallet" => "导入钱包"
+
+settings-import-wallet-description
+=> "Upload a backup file to update wallet info."
+=> "上传备份文件以更新钱包信息。";;
+
+settings-invitation-sent => "Invitation was sent" => "邀请已发送"
+
+settings-language => "Language" => "语言"
+
+settings-language-description
+=> "Choose the language used by the application."
+=> "选择应用使用的语言。";;
+
+settings-month => "Month:" => "月："
+
+settings-network => "Network:" => "网络："
+
+settings-not-running => "Not running" => "未运行"
+
+settings-other-formats => "Other formats" => "其他格式"
+
+settings-rescan-success => "Successfully rescanned the blockchain" => "已成功重新扫描区块链"
+
+settings-rescanning => "Rescanning...{$progress}%" => "正在重新扫描...{$progress}%"
+
+settings-running => "Running" => "运行中"
+
+settings-section-about => "About" => "关于"
+
+settings-section-backend => "Backend" => "后端"
+
+settings-section-general => "General" => "通用"
+
+settings-section-import-export => "Import/Export" => "导入/导出"
+
+settings-section-node => "Node" => "节点"
+
+settings-select-device => "Select device:" => "选择设备："
+
+settings-socket-address => "Socket address:" => "套接字地址："
+
+settings-updated => "Updated" => "已更新"
+
+settings-user-email => "User email" => "用户邮箱"
+
+settings-valid-address => "Please enter a valid address" => "请输入有效的地址"
+
+settings-valid-filesystem-path
+=> "Please enter a valid filesystem path"
+=> "请输入有效的文件系统路径";;
+
+settings-valid-password => "Please enter a valid password" => "请输入有效的密码"
+
+settings-valid-user => "Please enter a valid user" => "请输入有效的用户名"
+
+settings-version => "Version" => "版本"
+
+settings-wallet-alias => "Wallet alias:" => "钱包别名："
+
+settings-wallet-descriptor => "Wallet descriptor:" => "钱包 descriptor："
+
+settings-year => "Year:" => "年："
+
+spend-amount-btc => "Amount (BTC)" => "金额（BTC）"
+
+spend-amount-truncated
+=> "Amount has been truncated to 8 decimal places"
+=> "金额已被截断为小数点后 8 位";;
+
+spend-batch-label => "Batch label" => "批量标签"
+
+spend-btc-placeholder => "0.001 (in BTC)" => "0.001（单位为 BTC）"
+
+spend-coins-selection => "Coins selection" => "选择币"
+
+spend-could-not-convert-btc => "Could not convert to BTC" => "无法转换为 BTC"
+
+spend-description => "Description" => "描述"
+
+spend-duplicate-addresses => "Two payment addresses are the same" => "两个收款地址相同"
+
+spend-dust-add-funds
+=> "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s)."
+=> "最小金额为 0.00 000 500 BTC。请向你的钱包充值以花费这些币。";;
+
+spend-dust-select-more-coins
+=> "Minimum amount is 0.00 000 500 BTC. Select more coins to continue."
+=> "最小金额为 0.00 000 500 BTC。请选择更多的币以继续。";;
+
+spend-fee => "Fee:" => "手续费："
+
+spend-fee-manual => "Manual" => "手动"
+
+spend-fee-rate => "Fee ({$feerate} sats/vb):" => "手续费（{$feerate} sats/vb）："
+
+spend-fee-smart-select => "Smart Select" => "智能选择"
+
+spend-fee-smart-select-tooltip
+=> "Pick a preset feerate instead of entering one manually."
+=> "选择一个预设费率，而不必手动输入。";;
+
+spend-feerate => "Feerate:" => "费率："
+
+spend-feerate-example => "e.g. 5 (in sats/vb)" => "例如：5（单位为 sats/vb）"
+
+spend-feerate-max-warning
+=> "Feerate must be an integer less than or equal to {$max_feerate} sats/vbyte"
+=> "费率必须是小于或等于 {$max_feerate} sats/vbyte 的整数";;
+
+spend-feerate-missing-invalid => "The feerate is missing or invalid" => "费率缺失或无效"
+
+spend-fiat-placeholder => "Enter amount in {$currency}" => "输入以 {$currency} 计的金额"
+
+spend-invalid-address
+=> "Invalid address (maybe it is for another network?)"
+=> "地址无效（可能属于其他网络？）";;
+
+spend-invalid-amount
+=> "Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)"
+=> "金额无效。（注意：低于 0.000005 BTC 的金额无效。）";;
+
+spend-left-to-select => "left to select" => "还需选择"
+
+spend-max => "MAX" => "最大"
+
+spend-max-tooltip
+=> "Total amount remaining after paying fee and any other recipients"
+=> "支付手续费及其他收款人之后剩余的全部金额";;
+
+spend-payment-description-invalid
+=> "Payment description is missing or invalid"
+=> "付款描述缺失或无效";;
+
+spend-payment-label => "Payment label" => "付款标签"
+
+spend-recipient-address-invalid
+=> "A recipient address is missing or invalid"
+=> "某个收款地址缺失或无效";;
+
+spend-recipient-amount-invalid
+=> "A recipient amount is missing or invalid"
+=> "某个收款金额缺失或无效";;
+
+spend-select-coins-to-cover-amount
+=> "Select coins to cover the amount"
+=> "选择足以覆盖该金额的币";;
+
+spend-select-one-coin => "Select at least one coin." => "请至少选择一个币。"
+
+spend-select-or-add-funds => "Select or add more funds." => "请选择或添加更多资金。"
+
+spend-warning-recovery-own-address
+=> "Recovery address belongs to the same wallet. If you can no longer spend with the primary path, use an address from a different wallet instead."
+=> "该恢复地址属于同一个钱包。如果你已无法用主路径花费，请改用另一个钱包的地址。";;
+
+tab-installer => "Installer" => "安装向导"
+
+tab-launcher => "Launcher" => "启动器"
+
+tab-pending => "Pending" => "待处理"
+
+time-days-ago
+=> "{ $count ->\n    [one] 1 day ago\n   *[other] {$count} days ago\n}"
+=> "{ $count ->\n   *[other] {$count} 天前\n}";;
+
+time-hours-ago
+=> "{ $count ->\n    [one] 1 hour ago\n   *[other] {$count} hours ago\n}"
+=> "{ $count ->\n   *[other] {$count} 小时前\n}";;
+
+time-just-now => "just now" => "刚刚"
+
+time-minutes-ago
+=> "{ $count ->\n    [one] 1 minute ago\n   *[other] {$count} minutes ago\n}"
+=> "{ $count ->\n   *[other] {$count} 分钟前\n}";;
+
+time-months-ago
+=> "{ $count ->\n    [one] 1 month ago\n   *[other] {$count} months ago\n}"
+=> "{ $count ->\n   *[other] {$count} 个月前\n}";;
+
+time-seconds-ago
+=> "{ $count ->\n    [one] 1 second ago\n   *[other] {$count} seconds ago\n}"
+=> "{ $count ->\n   *[other] {$count} 秒前\n}";;
+
+time-weeks-ago
+=> "{ $count ->\n    [one] 1 week ago\n   *[other] {$count} weeks ago\n}"
+=> "{ $count ->\n   *[other] {$count} 周前\n}";;
+
+transactions-cancel-tooltip
+=> "Best effort attempt at double spending an unconfirmed outgoing transaction"
+=> "尽最大努力尝试对一笔未确认的转出交易进行双花";;
+
+transactions-date => "Date:" => "日期："
+
+transactions-incoming => "Incoming transaction" => "转入交易"
+
+transactions-miner-fee => "Miner fee:{ \" \" }" => "矿工费：{ \" \" }"
+
+transactions-outgoing => "Outgoing transaction" => "转出交易"
+
+transactions-rbf-bump-help
+=> "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction."
+=> "用一笔支付更高费率的交易替换原交易，以促使其更快被确认。替换交易可能会使用新的输入。";;
+
+transactions-rbf-cancel-help
+=> "Replace the transaction with one paying a higher feerate that sends the coins back to your wallet. There is no guarantee the original transaction won't get mined first. New inputs may be used for the replacement transaction."
+=> "用一笔支付更高费率、并把币退回你自己钱包的交易替换原交易。无法保证原交易不会先被打包。替换交易可能会使用新的输入。";;
+
+transactions-rbf-created
+=> "Replacement PSBT created successfully and ready to be signed"
+=> "替换 PSBT 已成功创建，可以进行签名";;
+
+transactions-rbf-descendants-one
+=> "The following transaction is spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on it:"
+=> "以下交易花费了待替换交易的一个或多个输出，替换交易广播后它将被丢弃，依赖它的其他交易也会被一并丢弃：";;
+
+transactions-rbf-descendants-some
+=> "The following transactions are spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on them:"
+=> "以下交易花费了待替换交易的一个或多个输出，替换交易广播后它们将被丢弃，依赖它们的其他交易也会被一并丢弃：";;
+
+transactions-rbf-feerate-warning
+=> "Feerate must be greater than previous value and less than or equal to 1000 sats/vbyte"
+=> "费率必须大于原来的值，且小于或等于 1000 sats/vbyte";;
+
+transactions-rbf-invalidates-one
+=> "WARNING: Replacing this transaction will invalidate a later payment."
+=> "警告：替换此交易将使一笔后续付款失效。";;
+
+transactions-rbf-invalidates-some
+=> "WARNING: Replacing this transaction will invalidate some later payments."
+=> "警告：替换此交易将使一些后续付款失效。";;
+
+transactions-replacement => "Transaction replacement" => "交易替换"
+
+transactions-transaction => "Transaction" => "交易"
+
+transactions-txid => "Tx ID" => "交易 ID"
+
+warning-hardware-wallet-error => "Hardware wallet error" => "硬件钱包错误"

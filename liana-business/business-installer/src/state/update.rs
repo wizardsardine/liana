@@ -176,6 +176,9 @@ impl State {
             // Logout
             Msg::Disconnect => return self.on_logout(),
 
+            // Handled by BusinessInstaller before routing into State.
+            Msg::LanguageEdited(_) => {}
+
             // No-op: just triggers a view refresh
             Msg::Update => {}
         }

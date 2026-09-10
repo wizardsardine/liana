@@ -52,6 +52,16 @@ pub const MANROPE_MEDIUM_BYTES: &[u8] = include_bytes!("../static/fonts/Manrope-
 pub const MANROPE_SEMIBOLD_BYTES: &[u8] = include_bytes!("../static/fonts/Manrope-SemiBold.ttf");
 pub const MANROPE_BOLD_BYTES: &[u8] = include_bytes!("../static/fonts/Manrope-Bold.ttf");
 
+/// Han characters, which neither IBM Plex Sans nor Manrope covers. Picked up by
+/// the text shaper's fallback, so no role names it.
+pub const NOTO_SC_REGULAR_BYTES: &[u8] = include_bytes!("../static/fonts/NotoSansSC-Regular.otf");
+pub const NOTO_SC_BOLD_BYTES: &[u8] = include_bytes!("../static/fonts/NotoSansSC-Bold.otf");
+
+/// Arabic script, likewise reached through fallback.
+pub const NOTO_ARABIC_REGULAR_BYTES: &[u8] =
+    include_bytes!("../static/fonts/NotoSansArabic-Regular.ttf");
+pub const NOTO_ARABIC_BOLD_BYTES: &[u8] = include_bytes!("../static/fonts/NotoSansArabic-Bold.ttf");
+
 pub const ICONEX_ICONS_BYTES: &[u8] = include_bytes!("../static/icons/iconex/iconex-icons.ttf");
 pub const BOOTSTRAP_ICONS_BYTE: &[u8] = include_bytes!("../static/icons/bootstrap-icons.ttf");
 pub const LIANA_ICONS_BYTES: &[u8] = include_bytes!("../static/icons/liana-icons/liana-icons.ttf");
@@ -65,6 +75,10 @@ pub fn load() -> Vec<Cow<'static, [u8]>> {
         MANROPE_MEDIUM_BYTES.into(),
         MANROPE_SEMIBOLD_BYTES.into(),
         MANROPE_BOLD_BYTES.into(),
+        NOTO_SC_REGULAR_BYTES.into(),
+        NOTO_SC_BOLD_BYTES.into(),
+        NOTO_ARABIC_REGULAR_BYTES.into(),
+        NOTO_ARABIC_BOLD_BYTES.into(),
         ICONEX_ICONS_BYTES.into(),
         BOOTSTRAP_ICONS_BYTE.into(),
         LIANA_ICONS_BYTES.into(),

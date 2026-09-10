@@ -5,7 +5,7 @@ use iced::{
 use std::fmt::Display;
 
 use bitcoin::Network;
-use liana_i18n::t;
+use liana_i18n::{self as i18n, t, SupportedLocale};
 
 use crate::{
     component, icon, image,
@@ -43,6 +43,8 @@ pub struct LayoutConfig<'a, M> {
     pub email: Option<String>,
     pub is_ws_admin: bool,
     pub nav_bar: NavBar<'a, M>,
+    /// Shows a language picker in the nav bar when the app lets the user switch.
+    pub on_language_selected: Option<fn(SupportedLocale) -> M>,
     pub content_width: f32,
 }
 
@@ -254,22 +256,38 @@ fn step_nav<'a, M: Clone + 'a>(
     header: impl Into<Element<'a, M>>,
     msg: Option<M>,
     progress: (usize, usize),
+    on_language_selected: Option<fn(SupportedLocale) -> M>,
 ) -> Element<'a, M> {
     let progress = if progress.1 > 0 {
         step_dots(progress)
     } else {
         row![].into()
     };
-
     row![
         previous_slot(msg),
         Container::new(header).width(Length::Fill),
         progress,
+        language_picker(on_language_selected).map(|picker| row![Space::with_width(20), picker]),
         Space::with_width(20),
     ]
     .align_y(Alignment::Center)
     .height(HEADER_HEIGHT)
     .into()
+}
+
+/// The language the app runs in, when it lets the user change it.
+fn language_picker<'a, M: Clone + 'a>(
+    on_selected: Option<fn(SupportedLocale) -> M>,
+) -> Option<Element<'a, M>> {
+    on_selected.map(|on_selected| {
+        pick_list::pick_list(
+            &SupportedLocale::ALL[..],
+            Some(i18n::current_locale()),
+            on_selected,
+        )
+        .padding(10)
+        .into()
+    })
 }
 
 fn previous_slot<'a, M: Clone + 'a>(msg: Option<M>) -> Container<'a, M> {
@@ -288,6 +306,7 @@ fn launcher_nav<'a, M: Clone + 'a>(
     networks: &'a [Network],
     selected_network: Network,
     on_network_selected: fn(Network) -> M,
+    on_language_selected: Option<fn(SupportedLocale) -> M>,
 ) -> Element<'a, M> {
     let network_picker =
         pick_list::pick_list(networks, Some(selected_network), on_network_selected).padding(10);
@@ -296,6 +315,7 @@ fn launcher_nav<'a, M: Clone + 'a>(
         previous_slot(previous_message),
         Space::fill_width(),
         btn_share_xpubs(share_xpubs_message),
+        language_picker(on_language_selected),
         network_picker,
         Space::with_width(20),
     ]
@@ -305,18 +325,31 @@ fn launcher_nav<'a, M: Clone + 'a>(
     .into()
 }
 
-fn nav_bar<'a, M: Clone + 'a>(nav_bar: NavBar<'a, M>) -> Element<'a, M> {
+fn nav_bar<'a, M: Clone + 'a>(
+    nav_bar: NavBar<'a, M>,
+    on_language_selected: Option<fn(SupportedLocale) -> M>,
+) -> Element<'a, M> {
     match nav_bar {
         NavBar::Steps {
             progress,
             breadcrumb,
             previous_message,
-        } => step_nav(breadcrumb_header(&breadcrumb), previous_message, progress),
+        } => step_nav(
+            breadcrumb_header(&breadcrumb),
+            previous_message,
+            progress,
+            on_language_selected,
+        ),
         NavBar::StepTitle {
             progress,
             title,
             previous_message,
-        } => step_nav(text::new::h3_semi(title), previous_message, progress),
+        } => step_nav(
+            text::new::h3_semi(title),
+            previous_message,
+            progress,
+            on_language_selected,
+        ),
         NavBar::Launcher {
             previous_message,
             share_xpubs_message,
@@ -329,6 +362,7 @@ fn nav_bar<'a, M: Clone + 'a>(nav_bar: NavBar<'a, M>) -> Element<'a, M> {
             networks,
             selected_network,
             on_network_selected,
+            on_language_selected,
         ),
     }
 }
@@ -343,7 +377,12 @@ pub fn layout_inner<'a, M: 'static + Clone + 'a>(
         config.is_ws_admin,
         config.email,
     );
-    let top = column![identity_bar, thin_separator(), nav_bar(config.nav_bar),].width(Length::Fill);
+    let top = column![
+        identity_bar,
+        thin_separator(),
+        nav_bar(config.nav_bar, config.on_language_selected),
+    ]
+    .width(Length::Fill);
 
     let body: Element<'a, M> = match content {
         LayoutContent::Scrollable(inner) => {
