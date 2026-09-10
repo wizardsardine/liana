@@ -476,14 +476,6 @@ pub fn signatures<'a>(
         .into()
 }
 
-// Display a fingerprint first by its alias if there is any, or in hex otherwise.
-fn container_from_fg(
-    fg: Fingerprint,
-    aliases: &HashMap<Fingerprint, String>,
-) -> Container<'_, Message> {
-    pill::fingerprint(fg.to_string(), aliases.get(&fg).map(String::as_str))
-}
-
 pub fn path_view<'a>(
     path: &'a PathInfo,
     sigs: &'a PathSpendInfo,
@@ -504,13 +496,19 @@ pub fn path_view<'a>(
     let row_unsigned = non_signed_fgs.into_iter().fold(None, |row, fg| {
         Some(
             row.unwrap_or_else(|| Row::new().spacing(5))
-                .push(container_from_fg(fg, key_aliases)),
+                .push(pill::fingerprint(
+                    fg.to_string(),
+                    key_aliases.get(&fg).map(String::as_str),
+                )),
         )
     });
     let row_signed = signed_fgs
         .into_iter()
         .fold(Row::new().spacing(5), |row, fg| {
-            row.push(container_from_fg(*fg, key_aliases))
+            row.push(pill::fingerprint(
+                fg.to_string(),
+                key_aliases.get(fg).map(String::as_str),
+            ))
         });
 
     scrollable::horizontal_thin(
