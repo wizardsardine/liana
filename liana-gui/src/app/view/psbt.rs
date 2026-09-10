@@ -538,11 +538,6 @@ pub fn path_view<'a>(
     .into()
 }
 
-/// Header of a collapsible psbt section, with the chevron telling its state.
-fn collapse_header<'a>(title: String, chevron: liana_ui::widget::Text<'a>) -> Row<'a, Message> {
-    row![h4_bold(title).width(Length::Fill), chevron].align_y(Alignment::Center)
-}
-
 pub fn inputs_view<'a>(
     coins: &'a HashMap<OutPoint, Coin>,
     tx: &'a Transaction,
@@ -591,30 +586,21 @@ pub fn outputs_view<'a>(
             .iter()
             .enumerate()
             .filter(|(i, _)| is_payment(i))
-            .fold(
-                Column::new().padding(20),
-                |col: Column<'a, Message>, (i, output)| {
-                    col.spacing(10).push(payment_view(
-                        i,
-                        tx.compute_txid(),
-                        output,
-                        network,
-                        labels,
-                        labels_editing,
-                        is_single_payment,
-                        !is_external || change_indexes.contains(&i),
-                    ))
-                },
-            );
+            .map(|(i, output)| {
+                payment_view(
+                    i,
+                    tx.compute_txid(),
+                    output,
+                    network,
+                    labels,
+                    labels_editing,
+                    is_single_payment,
+                    !is_external || change_indexes.contains(&i),
+                )
+            })
+            .collect();
 
-        let collapse = Collapse::new(
-            collapse_header(title.clone(), icon::collapse_icon()),
-            collapse_header(title, icon::collapsed_icon()),
-            rows,
-        )
-        .padding(20);
-
-        Container::new(collapse)
+        psbts::collapsible_section(title, rows)
     } else {
         Container::new(
             h4_bold(t!("psbt-no-payment"))
@@ -622,31 +608,20 @@ pub fn outputs_view<'a>(
         )
         .padding(20)
         .width(Length::Fill)
-    }
-    .style(theme::card::button_simple);
+        .style(theme::card::button_simple)
+        .into()
+    };
 
     let change = (!is_external && !change_indexes.is_empty()).then(|| {
-        let title = t!("psbt-change");
         let rows = tx
             .output
             .iter()
             .enumerate()
             .filter(|(i, _)| change_indexes.contains(i))
-            .fold(
-                Column::new().padding(20),
-                |col: Column<'a, Message>, (_, output)| {
-                    col.spacing(10).push(change_view(output, network))
-                },
-            );
+            .map(|(_, output)| change_view(output, network))
+            .collect();
 
-        let collapse = Collapse::new(
-            collapse_header(title.clone(), icon::collapse_icon()),
-            collapse_header(title, icon::collapsed_icon()),
-            rows,
-        )
-        .padding(20);
-
-        Container::new(collapse).style(theme::card::button_simple)
+        psbts::collapsible_section(t!("psbt-change"), rows)
     });
 
     column![payments, change].spacing(20).into()
