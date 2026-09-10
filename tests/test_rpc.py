@@ -765,21 +765,18 @@ def test_create_spend(coincubed, bitcoind):
     # `createspend` will use the next index for change and update the DB value accordingly:
     assert coincubed.rpc.getinfo()["change_index"] == 1
 
-    # The transaction must contain the spent transaction for each input for P2WSH. But not for Taproot.
+    # The transaction must contain the spent transaction for each input, Taproot
+    # included: the previous transaction is what authenticates the spent amount
+    # for fee review on signers (see `create_spend` in coincube-core).
     # We don't make assumptions about the ordering of PSBT inputs.
-    if USE_TAPROOT:
-        assert all(
-            PSBT_IN_NON_WITNESS_UTXO not in psbt_in.map for psbt_in in spend_psbt.i
-        )
-    else:
-        assert sorted(
-            [psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in spend_psbt.i]
-        ) == sorted(
-            [
-                bytes.fromhex(bitcoind.rpc.gettransaction(op[:64])["hex"])
-                for op in outpoints
-            ]
-        )
+    assert sorted(
+        [psbt_in.map[PSBT_IN_NON_WITNESS_UTXO] for psbt_in in spend_psbt.i]
+    ) == sorted(
+        [
+            bytes.fromhex(bitcoind.rpc.gettransaction(op[:64])["hex"])
+            for op in outpoints
+        ]
+    )
 
     # We can sign it and broadcast it.
     sign_and_broadcast(coincubed, bitcoind, PSBT.from_base64(res["psbt"]))
