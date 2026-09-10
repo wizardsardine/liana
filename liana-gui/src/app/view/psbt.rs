@@ -214,38 +214,31 @@ pub fn broadcast_action<'a>(
 
 pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, Message> {
     if deleted {
-        card::simple(
-            Column::new()
-                .spacing(20)
-                .align_x(Alignment::Center)
-                .push(text(t!("psbt-delete-success")))
-                .push(button::secondary(None, t!("btn-go-back-to-psbts")).on_press(Message::Close)),
-        )
-        .align_x(iced::alignment::Horizontal::Center)
-        .width(Length::Fixed(400.0))
-        .into()
-    } else {
-        card::simple(
-            Column::new()
-                .spacing(10)
-                .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(text(t!("psbt-delete-this")))
-                .push(
-                    Row::new()
-                        .push(Column::new().width(Length::Fill))
-                        .push(
-                            button::transparent(None, t!("btn-cancel"))
-                                .on_press(Message::Spend(SpendTxMessage::Cancel)),
-                        )
-                        .push(
-                            button::alert(None, t!("btn-delete"))
-                                .on_press(Message::Spend(SpendTxMessage::Confirm)),
-                        ),
-                ),
-        )
-        .width(Length::Fixed(400.0))
-        .into()
+        let go_back = button::secondary(None, t!("btn-go-back-to-psbts")).on_press(Message::Close);
+        let content = column![text(t!("psbt-delete-success")), go_back]
+            .spacing(20)
+            .align_x(Alignment::Center);
+
+        return card::simple(content)
+            .align_x(iced::alignment::Horizontal::Center)
+            .width(400)
+            .into();
     }
+
+    let cancel = button::transparent(None, t!("btn-cancel"))
+        .on_press(Message::Spend(SpendTxMessage::Cancel));
+    let delete =
+        button::alert(None, t!("btn-delete")).on_press(Message::Spend(SpendTxMessage::Confirm));
+    let buttons = row![Space::fill_width(), cancel, delete];
+
+    let content = column![
+        warning.map(|w| warn(Some(w))),
+        text(t!("psbt-delete-this")),
+        buttons
+    ]
+    .spacing(10);
+
+    card::simple(content).width(400).into()
 }
 
 pub fn spend_header<'a>(
