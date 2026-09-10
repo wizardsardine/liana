@@ -1,9 +1,14 @@
-use bitcoin::Amount;
+use std::collections::HashMap;
+
+use bitcoin::{bip32::Fingerprint, Amount};
 use iced::{
     widget::{column, row, text::Style, Space},
     Alignment, Length,
 };
-use liana::spend::SpendStatus;
+use liana::{
+    descriptors::{PathInfo, PathSpendInfo},
+    spend::SpendStatus,
+};
 use liana_i18n::t;
 
 use crate::{
@@ -16,7 +21,7 @@ use crate::{
             home::payment::{FiatPrice, FiatSource, PaymentKind},
             LIST_ENTRY_PADDING,
         },
-        pill,
+        pill, scrollable,
         text::{legacy, new, truncate},
     },
     icon,
@@ -255,4 +260,58 @@ pub fn payment_row<'a, M: Clone + 'static>(
         .width(Length::Fill)
         .spacing(5)
         .into()
+}
+
+/// What a spending path still requires to be satisfied, and who signed for it already.
+pub fn path_row<'a, M: 'static>(
+    path: &'a PathInfo,
+    sigs: &'a PathSpendInfo,
+    key_aliases: &'a HashMap<Fingerprint, String>,
+) -> Element<'a, M> {
+    // We get a sorted list of all the fingerprints (which correspond to a signer) from this
+    // spending path, and from it get an iterator on those of these fingerprints for which a
+    // signature was provided in the PSBT, and those for which there isn't any.
+    let mut all_fgs: Vec<Fingerprint> = path.thresh_origins().1.into_keys().collect();
+    all_fgs.sort();
+    let signed_fgs = sigs.signed_pubkeys.keys();
+    let non_signed_fgs = all_fgs
+        .into_iter()
+        .filter(|fg| !sigs.signed_pubkeys.contains_key(fg));
+    let missing_signatures = sigs.threshold.saturating_sub(sigs.sigs_count);
+
+    // From these iterators, create the appropriate rows to be displayed.
+    let row_unsigned = non_signed_fgs.into_iter().fold(None, |row, fg| {
+        Some(
+            row.unwrap_or_else(|| Row::new().spacing(5))
+                .push(pill::fingerprint(
+                    fg.to_string(),
+                    key_aliases.get(&fg).map(String::as_str),
+                )),
+        )
+    });
+    let row_signed = signed_fgs
+        .into_iter()
+        .fold(Row::new().spacing(5), |row, fg| {
+            row.push(pill::fingerprint(
+                fg.to_string(),
+                key_aliases.get(fg).map(String::as_str),
+            ))
+        });
+
+    let status = if missing_signatures == 0 {
+        icon::circle_check_icon().style(theme::text::success)
+    } else {
+        icon::circle_cross_icon().style(theme::text::secondary)
+    };
+    let status = row![status, Space::with_width(20)];
+
+    let missing = new::caption(t!("psbt-more-signatures", count = missing_signatures))
+        .style(theme::text::secondary);
+    let already_signed = (!sigs.signed_pubkeys.is_empty())
+        .then_some(new::caption(t!("psbt-already-signed-by")).style(theme::text::secondary));
+
+    let content =
+        row![status, missing, row_unsigned, already_signed, row_signed].align_y(Alignment::Center);
+
+    scrollable::horizontal_thin(content).into()
 }
