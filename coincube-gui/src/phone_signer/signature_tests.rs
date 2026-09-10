@@ -55,13 +55,10 @@ fn fixture(tap: bool) -> (String, Psbt, [Xpriv; 2]) {
     tx.input[0].previous_output = bitcoin::OutPoint::new(previous.compute_txid(), 0);
     tx.input[0].sequence = bitcoin::Sequence(52560);
     let mut psbt = Psbt::from_unsigned_tx(tx).unwrap();
-    if !tap {
-        psbt.inputs[0].non_witness_utxo = Some(previous);
-    }
-    psbt.inputs[0].witness_utxo = Some(TxOut {
-        value: Amount::from_sat(200000),
-        script_pubkey: derived.script_pubkey(),
-    });
+    // P2-A: every input, Taproot included, carries its complete previous
+    // transaction; the witness_utxo is a copy of the authenticated output.
+    psbt.inputs[0].witness_utxo = Some(previous.output[0].clone());
+    psbt.inputs[0].non_witness_utxo = Some(previous);
     derived.update_psbt_in(&mut psbt.inputs[0]);
     (descriptor.to_string(), psbt, roots)
 }
@@ -315,4 +312,43 @@ fn selected_key_without_descriptor_origin_is_refused() {
         &binding(&descriptor, &roots[0])
     )
     .is_err());
+}
+
+#[test]
+fn witness_only_inputs_are_refused_before_and_after_signing() {
+    for tap in [true, false] {
+        let (descriptor, original, roots) = fixture(tap);
+        // The request as created is authenticated.
+        let prevouts = signatures::authenticated_prevouts(&original).unwrap();
+        assert_eq!(prevouts[0].value, Amount::from_sat(200000));
+
+        // Stripped of its previous transaction, the same PSBT is refused at the
+        // gate with copy the user can act on, even though witness_utxo is set.
+        let mut stripped = original.clone();
+        stripped.inputs[0].non_witness_utxo = None;
+        assert!(stripped.inputs[0].witness_utxo.is_some());
+        let err = signatures::authenticated_prevouts(&stripped).unwrap_err();
+        assert!(err.contains("Input 0"), "{}", err);
+        assert!(err.contains("Recreate the spend"), "{}", err);
+
+        // ...and a valid signature over the stripped request is never merged: there
+        // is no witness_utxo fallback in verification either.
+        let mut signed = stripped.clone();
+        signed.sign(&roots[0], &Secp256k1::new()).unwrap();
+        let mut target = stripped.clone();
+        assert!(signatures::merge_verified(
+            &mut target,
+            &signed,
+            &descriptor,
+            &binding(&descriptor, &roots[0])
+        )
+        .is_err());
+        assert_eq!(target, stripped);
+
+        // A witness_utxo that disagrees with the authenticated output is refused
+        // rather than silently overridden.
+        let mut lying = original.clone();
+        lying.inputs[0].witness_utxo.as_mut().unwrap().value = Amount::from_sat(1_000_000);
+        assert!(signatures::authenticated_prevouts(&lying).is_err());
+    }
 }

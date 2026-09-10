@@ -51,6 +51,70 @@ pub enum InsaneFeeInfo {
     TooHighFeerate(u64),
 }
 
+/// Why an input's previous output could not be authenticated against the
+/// outpoint committed by the unsigned transaction (P2-A fee-source hardening).
+///
+/// Every variant is a hard failure: a spend is never created, and a stored
+/// spend is never broadcast, with an input whose amount is not proven by a
+/// complete previous transaction whose txid the spending transaction commits to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputAuthError {
+    /// No complete `non_witness_utxo` (previous transaction) is available.
+    MissingPreviousTransaction,
+    /// The previous transaction's txid is not the one the outpoint commits to.
+    TxidMismatch {
+        expected: bitcoin::Txid,
+        actual: bitcoin::Txid,
+    },
+    /// The outpoint's vout does not exist in the previous transaction.
+    InvalidVout { vout: u32, output_count: usize },
+    /// The previous output's value is not a valid Bitcoin amount.
+    InvalidAmount(bitcoin::Amount),
+    /// The previous output pays a different amount than the wallet claims.
+    AmountMismatch {
+        expected: bitcoin::Amount,
+        actual: bitcoin::Amount,
+    },
+    /// The previous output pays a different script than the descriptor derives.
+    ScriptMismatch,
+    /// A `witness_utxo` is present but differs from the authenticated output.
+    WitnessUtxoConflict,
+}
+
+impl fmt::Display for InputAuthError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::MissingPreviousTransaction => write!(f, "missing previous transaction"),
+            Self::TxidMismatch { expected, actual } => write!(
+                f,
+                "previous transaction txid mismatch: expected {}, got {}",
+                expected, actual
+            ),
+            Self::InvalidVout { vout, output_count } => write!(
+                f,
+                "invalid vout {} (previous transaction has {} outputs)",
+                vout, output_count
+            ),
+            Self::InvalidAmount(amount) => {
+                write!(f, "invalid previous output amount {}", amount)
+            }
+            Self::AmountMismatch { expected, actual } => write!(
+                f,
+                "amount mismatch: expected {}, previous output pays {}",
+                expected, actual
+            ),
+            Self::ScriptMismatch => write!(
+                f,
+                "script mismatch: previous output script does not match the derived descriptor script"
+            ),
+            Self::WitnessUtxoConflict => write!(
+                f,
+                "witness_utxo conflicts with the authenticated previous output"
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpendCreationError {
     InvalidFeerate(/* sats/vb */ u64),
@@ -58,7 +122,10 @@ pub enum SpendCreationError {
     InvalidOutputValue(bitcoin::Amount),
     InsaneFees(InsaneFeeInfo),
     SanityCheckFailure(Psbt),
-    FetchingTransaction(bitcoin::OutPoint),
+    /// An input's previous output could not be authenticated. Carries the
+    /// outpoint and the precise reason so callers and users can tell a missing
+    /// previous transaction from a txid, vout, amount or script mismatch.
+    InputAuthentication(bitcoin::OutPoint, InputAuthError),
     CoinSelection(InsufficientFunds),
 }
 
@@ -80,8 +147,8 @@ impl fmt::Display for SpendCreationError {
                     InsaneFeeInfo::TooHighFeerate(r) => format!("has a feerate of {} sats/vb", r),
                 },
             ),
-            Self::FetchingTransaction(op) => {
-                write!(f, "Could not fetch transaction for coin {}", op)
+            Self::InputAuthentication(op, reason) => {
+                write!(f, "Unauthenticated input {}: {}.", op, reason)
             }
             Self::CoinSelection(e) => write!(f, "Coin selection error: '{}'", e),
             Self::SanityCheckFailure(psbt) => write!(
@@ -105,6 +172,59 @@ fn check_output_value(value: bitcoin::Amount) -> Result<(), SpendCreationError> 
     }
 }
 
+/// Authenticate the output spent by `outpoint` using a complete previous
+/// transaction, and return that output.
+///
+/// The previous transaction authenticates its outputs through its txid, which
+/// the spending transaction commits to in the outpoint. A `witness_utxo` alone
+/// is requester-supplied metadata and is never accepted as the fee source; when
+/// present it must equal the authenticated output exactly.
+pub fn authenticate_previous_output(
+    outpoint: &bitcoin::OutPoint,
+    previous_tx: Option<&bitcoin::Transaction>,
+    witness_utxo: Option<&bitcoin::TxOut>,
+) -> Result<bitcoin::TxOut, InputAuthError> {
+    let previous_tx = previous_tx.ok_or(InputAuthError::MissingPreviousTransaction)?;
+    let actual = previous_tx.compute_txid();
+    if actual != outpoint.txid {
+        return Err(InputAuthError::TxidMismatch {
+            expected: outpoint.txid,
+            actual,
+        });
+    }
+    let output =
+        previous_tx
+            .output
+            .get(outpoint.vout as usize)
+            .ok_or(InputAuthError::InvalidVout {
+                vout: outpoint.vout,
+                output_count: previous_tx.output.len(),
+            })?;
+    if output.value > bitcoin::Amount::MAX_MONEY {
+        return Err(InputAuthError::InvalidAmount(output.value));
+    }
+    if let Some(witness_utxo) = witness_utxo {
+        if witness_utxo != output {
+            return Err(InputAuthError::WitnessUtxoConflict);
+        }
+    }
+    Ok(output.clone())
+}
+
+/// Authenticate a PSBT input's previous output against the outpoint committed
+/// by the unsigned transaction, returning the authenticated output.
+fn authenticate_psbt_input(
+    txin: &bitcoin::TxIn,
+    psbt_in: &PsbtIn,
+) -> Result<bitcoin::TxOut, SpendCreationError> {
+    authenticate_previous_output(
+        &txin.previous_output,
+        psbt_in.non_witness_utxo.as_ref(),
+        psbt_in.witness_utxo.as_ref(),
+    )
+    .map_err(|e| SpendCreationError::InputAuthentication(txin.previous_output, e))
+}
+
 // Apply some sanity checks on a created transaction's PSBT.
 // TODO: add more sanity checks from revault_tx
 fn sanity_check_psbt(
@@ -122,19 +242,19 @@ fn sanity_check_psbt(
         return Err(SpendCreationError::SanityCheckFailure(psbt.clone()));
     }
 
-    // Compute the transaction input value, checking all PSBT inputs have the derivation
-    // index set for signing devices to recognize them as ours.
-    let mut value_in = 0;
-    for psbtin in psbt.inputs.iter() {
+    // Compute the transaction input value from authenticated previous outputs only,
+    // checking all PSBT inputs have the derivation index set for signing devices to
+    // recognize them as ours. Derivation fields prove nothing about amounts: the
+    // fee source is the previous transaction committed to by each outpoint.
+    let mut value_in: u64 = 0;
+    for (psbtin, txin) in psbt.inputs.iter().zip(tx.input.iter()) {
         if psbtin.bip32_derivation.is_empty() && psbtin.tap_key_origins.is_empty() {
             return Err(SpendCreationError::SanityCheckFailure(psbt.clone()));
         }
-        value_in += psbtin
-            .witness_utxo
-            .as_ref()
-            .ok_or_else(|| SpendCreationError::SanityCheckFailure(psbt.clone()))?
-            .value
-            .to_sat();
+        let authenticated = authenticate_psbt_input(txin, psbtin)?;
+        value_in = value_in
+            .checked_add(authenticated.value.to_sat())
+            .ok_or_else(|| SpendCreationError::SanityCheckFailure(psbt.clone()))?;
     }
 
     // Compute the output value and check the absolute fee isn't insane.
@@ -176,6 +296,11 @@ fn sanity_check_psbt(
 /// creation; this repeats the output/fee/feerate checks so that if the PSBT's
 /// state were somehow mutated between creation and broadcast, the anomaly is
 /// caught before the transaction reaches the network.
+///
+/// This includes fee-source authentication (P2-A): every input must still carry
+/// its complete previous transaction, matching the outpoint's txid and vout, and
+/// any `witness_utxo` must still equal the authenticated output. A PSBT whose
+/// previous transactions were stripped or substituted after creation is refused.
 ///
 /// A spend may use either the primary or the recovery spending path, which have
 /// different maximum witness sizes and therefore different feerates. The feerate
@@ -633,7 +758,8 @@ pub struct CreateSpendRes {
 ///   candidate coins.
 /// * `secp`: necessary to derive data from the descriptor.
 /// * `tx_getter`: an interface to get the wallet transaction for the prevouts of the transaction.
-///   Wouldn't be necessary if we only spent Taproot coins.
+///   Required for every input, Taproot included: the previous transaction is what
+///   authenticates the spent amount for fee review on signers.
 /// * `destinations`: a list of addresses and amounts, one per recipient i.e. per output in the
 ///   transaction created. If empty all the `candidate_coins` get spent and a single change output
 ///   is created to the provided `change_addr`. Can be used to sweep all, or some, coins from the
@@ -818,13 +944,35 @@ pub fn create_spend(
         let mut psbt_in = PsbtIn::default();
         let coin_desc = derived_desc(secp, main_descriptor, cand);
         coin_desc.update_psbt_in(&mut psbt_in);
-        psbt_in.witness_utxo = Some(bitcoin::TxOut {
-            value: cand.amount,
-            script_pubkey: coin_desc.script_pubkey(),
-        });
-        if !main_descriptor.is_taproot() {
-            psbt_in.non_witness_utxo = tx_getter.get_tx(&cand.outpoint.txid);
+
+        // Fee-source authentication (P2-A). Every supported input, Taproot included,
+        // carries the complete previous transaction so a signer can authenticate the
+        // spent amount through the txid committed by the outpoint. The previous
+        // transaction must exist, be the committed one, contain the claimed output,
+        // and that output must pay exactly the wallet's amount to the descriptor
+        // derived script. A `witness_utxo` is also set for modern signers and is a
+        // copy of the authenticated output, never an independent claim.
+        let previous_tx = tx_getter.get_tx(&cand.outpoint.txid);
+        let authenticated =
+            authenticate_previous_output(&cand.outpoint, previous_tx.as_ref(), None)
+                .map_err(|e| SpendCreationError::InputAuthentication(cand.outpoint, e))?;
+        if authenticated.value != cand.amount {
+            return Err(SpendCreationError::InputAuthentication(
+                cand.outpoint,
+                InputAuthError::AmountMismatch {
+                    expected: cand.amount,
+                    actual: authenticated.value,
+                },
+            ));
         }
+        if authenticated.script_pubkey != coin_desc.script_pubkey() {
+            return Err(SpendCreationError::InputAuthentication(
+                cand.outpoint,
+                InputAuthError::ScriptMismatch,
+            ));
+        }
+        psbt_in.witness_utxo = Some(authenticated);
+        psbt_in.non_witness_utxo = previous_tx;
         psbt_ins.push(psbt_in);
     }
 
@@ -964,5 +1112,493 @@ mod tests {
             ),
             LockTime::from_height(1).unwrap() // subtract 90
         );
+    }
+
+    /// Fee-source authentication (P2-A). Every input amount a signer will use to
+    /// compute the fee must be committed to by the unsigned transaction's
+    /// outpoint through a complete `non_witness_utxo`. These tests use real,
+    /// serialized funding transactions whose txids are computed from their
+    /// bytes, never txids invented independently of the transaction.
+    mod prevout_authentication {
+        use super::super::*;
+        use miniscript::bitcoin::{
+            consensus, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
+            Witness,
+        };
+        use std::{collections::HashMap, str::FromStr};
+
+        const WSH_DESC: &str = "wsh(or_d(multi(1,[573fb35b/48'/1'/0'/2']tpubDFKp9T7WAYDcENSjoifkrpq1gMDF47KGJcJrpxzX23Qor8wuGbrEVs9utNq1MDS8E2WXJSBk1qoPQLpwyokW7DiUNPwFuxQkL7owNkLAb9W/<0;1>/*,[573fb35c/48'/1'/1'/2']tpubDFGezyzuHJPhdP3jHGW7v7Hwes4Hihqv5W2yyCmRY9VZJCRchETvxrMC8uECeJZdxQ14V4iD4DecoArkUSDwj8ogYE9WEv4MNZr12thNHCs/<0;1>/*),and_v(v:multi(2,[573fb35b/48'/1'/2'/2']tpubDDwxQauiaU964vPzt5Vd7jnDHEUtp2Vc34PaWpEXg5TQ3bRccxnc1MKKh88Hi7xiMeZo9Tm6fBcq4UGXqnDtGUniJLjqAD8SjQ8Eci3aSR7/<0;1>/*,[573fb35c/48'/1'/3'/2']tpubDE37XAVB5CQ1x85md3BQ5uHCoMwT5fgT8X13zzCUQ3x5o2jskYxKjj7Qcxt1Jpj4QB8tqspn2dooPCekRuQDYrDHov7J1ueUNu2wcvgRDxr/<0;1>/*),older(1000))))#fccaqlhh";
+        const TR_DESC: &str = "tr(tpubD6NzVbkrYhZ4YdBUPkUhDYj6Sd1QK8vgiCf5RwHnAnSNK5ozemAZzPTYZbgQq4diod7oxFJJYGa8FNRHzRo7URkixzQTuudh38xRRdSc4Hu/<0;1>/*,{and_v(v:multi_a(1,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*,[da2ee873/48'/1'/0'/2']tpubDEbXY6RbN9mxAvQW797WxReGGkrdyRfdYcehVVaQQcQ3kyfhxSMcnU9qGpUVRHXXALvBtc99jcuxx5tkzcLaJbAukSNpP9h2ti4XFRosv1g/<2;3>/*),older(2)),multi_a(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[da2ee873/48'/1'/0'/2']tpubDEbXY6RbN9mxAvQW797WxReGGkrdyRfdYcehVVaQQcQ3kyfhxSMcnU9qGpUVRHXXALvBtc99jcuxx5tkzcLaJbAukSNpP9h2ti4XFRosv1g/<0;1>/*)})";
+
+        /// Transport limits the authenticated PSBT must fit in. The LAN value
+        /// mirrors the shared cap in `coincube-gui/src/phone_signer/transport.rs`
+        /// (`MAX_FRAME_BYTES`) and Keychain's `maxFrameBytes`; the complete
+        /// encoded production envelope is measured against it in
+        /// `coincube-gui/tests/local_signer_frame_limits.rs`.
+        const LAN_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+        const GRPC_DEFAULT_MAX_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
+
+        struct MapGetter(HashMap<bitcoin::Txid, Transaction>);
+
+        impl MapGetter {
+            fn with(txs: &[&Transaction]) -> Self {
+                Self(
+                    txs.iter()
+                        .map(|tx| (tx.compute_txid(), (*tx).clone()))
+                        .collect(),
+                )
+            }
+        }
+
+        impl TxGetter for MapGetter {
+            fn get_tx(&mut self, txid: &bitcoin::Txid) -> Option<Transaction> {
+                self.0.get(txid).cloned()
+            }
+        }
+
+        fn secp() -> secp256k1::Secp256k1<secp256k1::VerifyOnly> {
+            secp256k1::Secp256k1::verification_only()
+        }
+
+        fn desc(s: &str) -> descriptors::CoincubeDescriptor {
+            descriptors::CoincubeDescriptor::from_str(s).unwrap()
+        }
+
+        fn script_at(
+            desc: &descriptors::CoincubeDescriptor,
+            index: u32,
+            is_change: bool,
+        ) -> ScriptBuf {
+            let d = if is_change {
+                desc.change_descriptor()
+            } else {
+                desc.receive_descriptor()
+            };
+            d.derive(bip32::ChildNumber::from(index), &secp())
+                .script_pubkey()
+        }
+
+        /// A real funding transaction: built, consensus-serialized, parsed back
+        /// from its own bytes, and identified by the txid of those bytes.
+        fn funding_tx(outputs: Vec<TxOut>, salt: u32) -> Transaction {
+            let tx = Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: LockTime::ZERO,
+                input: vec![TxIn {
+                    previous_output: OutPoint::null(),
+                    script_sig: ScriptBuf::from_bytes(salt.to_le_bytes().to_vec()),
+                    sequence: Sequence::MAX,
+                    witness: Witness::default(),
+                }],
+                output: outputs,
+            };
+            let bytes = consensus::encode::serialize(&tx);
+            let parsed: Transaction = consensus::encode::deserialize(&bytes).unwrap();
+            assert_eq!(parsed, tx);
+            assert_eq!(parsed.compute_txid(), tx.compute_txid());
+            parsed
+        }
+
+        fn fund(
+            desc: &descriptors::CoincubeDescriptor,
+            amount: u64,
+            index: u32,
+            salt: u32,
+        ) -> Transaction {
+            funding_tx(
+                vec![TxOut {
+                    value: Amount::from_sat(amount),
+                    script_pubkey: script_at(desc, index, false),
+                }],
+                salt,
+            )
+        }
+
+        fn candidate(prev: &Transaction, vout: u32, amount: u64, index: u32) -> CandidateCoin {
+            CandidateCoin {
+                outpoint: OutPoint::new(prev.compute_txid(), vout),
+                amount: Amount::from_sat(amount),
+                deriv_index: bip32::ChildNumber::from(index),
+                is_change: false,
+                must_select: true,
+                sequence: None,
+                ancestor_info: None,
+            }
+        }
+
+        fn spend(
+            desc: &descriptors::CoincubeDescriptor,
+            getter: &mut MapGetter,
+            cands: &[CandidateCoin],
+        ) -> Result<CreateSpendRes, SpendCreationError> {
+            let total: u64 = cands.iter().map(|c| c.amount.to_sat()).sum();
+            let destination = SpendOutputAddress {
+                addr: bitcoin::Address::from_script(&script_at(desc, 7, false), Network::Regtest)
+                    .unwrap(),
+                info: None,
+            };
+            let change = SpendOutputAddress {
+                addr: bitcoin::Address::from_script(&script_at(desc, 0, true), Network::Regtest)
+                    .unwrap(),
+                info: Some(AddrInfo {
+                    index: bip32::ChildNumber::from(0),
+                    is_change: true,
+                }),
+            };
+            create_spend(
+                desc,
+                &secp(),
+                getter,
+                &[(destination, Amount::from_sat(total / 2))],
+                cands,
+                SpendTxFees::Regular(1),
+                change,
+                LockTime::ZERO,
+            )
+        }
+
+        fn failure(res: Result<CreateSpendRes, SpendCreationError>) -> SpendCreationError {
+            match res {
+                Ok(_) => panic!("expected spend creation to fail"),
+                Err(e) => e,
+            }
+        }
+
+        fn assert_authenticated_single_input(desc_str: &str) {
+            let desc = desc(desc_str);
+            let prev = fund(&desc, 100_000, 3, 1);
+            let cand = candidate(&prev, 0, 100_000, 3);
+            let mut getter = MapGetter::with(&[&prev]);
+            let res = spend(&desc, &mut getter, &[cand]).unwrap();
+            let psbt = &res.psbt;
+            assert_eq!(psbt.inputs.len(), 1);
+            let input = &psbt.inputs[0];
+            // Both fields are present and agree with the outpoint committed by the
+            // unsigned transaction.
+            assert_eq!(input.non_witness_utxo.as_ref(), Some(&prev));
+            assert_eq!(input.witness_utxo.as_ref(), Some(&prev.output[0]));
+            let txin = &psbt.unsigned_tx.input[0];
+            assert_eq!(txin.previous_output, OutPoint::new(prev.compute_txid(), 0));
+            assert_eq!(
+                input.non_witness_utxo.as_ref().unwrap().compute_txid(),
+                txin.previous_output.txid
+            );
+            // The authenticated script is the descriptor-derived script.
+            assert_eq!(
+                input.witness_utxo.as_ref().unwrap().script_pubkey,
+                script_at(&desc, 3, false)
+            );
+            // Survives a round trip through PSBT bytes and the broadcast-time check.
+            let parsed = Psbt::deserialize(&psbt.serialize()).unwrap();
+            assert_eq!(parsed.inputs[0].non_witness_utxo.as_ref(), Some(&prev));
+            reverify_spend_before_broadcast(&desc, &parsed).unwrap();
+        }
+
+        #[test]
+        fn wsh_inputs_include_authenticated_previous_transactions() {
+            assert!(!desc(WSH_DESC).is_taproot());
+            assert_authenticated_single_input(WSH_DESC);
+        }
+
+        #[test]
+        fn taproot_inputs_include_authenticated_previous_transactions() {
+            assert!(desc(TR_DESC).is_taproot());
+            assert_authenticated_single_input(TR_DESC);
+        }
+
+        #[test]
+        fn multiple_inputs_are_all_authenticated() {
+            for desc_str in [WSH_DESC, TR_DESC] {
+                let desc = desc(desc_str);
+                // Two coins in one funding transaction and one in another.
+                let prev_a = funding_tx(
+                    vec![
+                        TxOut {
+                            value: Amount::from_sat(70_000),
+                            script_pubkey: script_at(&desc, 1, false),
+                        },
+                        TxOut {
+                            value: Amount::from_sat(30_000),
+                            script_pubkey: script_at(&desc, 2, false),
+                        },
+                    ],
+                    11,
+                );
+                let prev_b = fund(&desc, 50_000, 4, 12);
+                let cands = [
+                    candidate(&prev_a, 0, 70_000, 1),
+                    candidate(&prev_a, 1, 30_000, 2),
+                    candidate(&prev_b, 0, 50_000, 4),
+                ];
+                let mut getter = MapGetter::with(&[&prev_a, &prev_b]);
+                let res = spend(&desc, &mut getter, &cands).unwrap();
+                assert_eq!(res.psbt.inputs.len(), 3);
+                for (psbt_in, txin) in res.psbt.inputs.iter().zip(&res.psbt.unsigned_tx.input) {
+                    let prev = psbt_in.non_witness_utxo.as_ref().expect("every input");
+                    assert_eq!(prev.compute_txid(), txin.previous_output.txid);
+                    assert_eq!(
+                        psbt_in.witness_utxo.as_ref(),
+                        Some(&prev.output[txin.previous_output.vout as usize])
+                    );
+                }
+                reverify_spend_before_broadcast(&desc, &res.psbt).unwrap();
+
+                // Dropping only the second funding transaction fails the whole spend.
+                let mut getter = MapGetter::with(&[&prev_a]);
+                let err = failure(spend(&desc, &mut getter, &cands));
+                assert!(
+                    err.to_string().contains("missing previous transaction"),
+                    "{}",
+                    err
+                );
+                assert!(
+                    err.to_string().contains(&prev_b.compute_txid().to_string()),
+                    "{}",
+                    err
+                );
+            }
+        }
+
+        #[test]
+        fn missing_previous_transaction_fails() {
+            for desc_str in [WSH_DESC, TR_DESC] {
+                let desc = desc(desc_str);
+                let prev = fund(&desc, 100_000, 3, 1);
+                let mut getter = MapGetter::with(&[]);
+                let err = failure(spend(
+                    &desc,
+                    &mut getter,
+                    &[candidate(&prev, 0, 100_000, 3)],
+                ));
+                assert!(
+                    err.to_string().contains("missing previous transaction"),
+                    "{}",
+                    err
+                );
+            }
+        }
+
+        #[test]
+        fn wrong_previous_txid_fails() {
+            for desc_str in [WSH_DESC, TR_DESC] {
+                let desc = desc(desc_str);
+                let prev = fund(&desc, 100_000, 3, 1);
+                // A different real transaction, keyed under the claimed txid.
+                let other = fund(&desc, 100_000, 3, 2);
+                assert_ne!(other.compute_txid(), prev.compute_txid());
+                let mut getter = MapGetter(HashMap::from([(prev.compute_txid(), other)]));
+                let err = failure(spend(
+                    &desc,
+                    &mut getter,
+                    &[candidate(&prev, 0, 100_000, 3)],
+                ));
+                assert!(err.to_string().contains("txid mismatch"), "{}", err);
+            }
+        }
+
+        #[test]
+        fn out_of_range_vout_fails() {
+            for desc_str in [WSH_DESC, TR_DESC] {
+                let desc = desc(desc_str);
+                let prev = fund(&desc, 100_000, 3, 1);
+                let mut getter = MapGetter::with(&[&prev]);
+                let err = failure(spend(
+                    &desc,
+                    &mut getter,
+                    &[candidate(&prev, 1, 100_000, 3)],
+                ));
+                assert!(err.to_string().contains("invalid vout"), "{}", err);
+            }
+        }
+
+        #[test]
+        fn mismatched_amount_fails() {
+            for desc_str in [WSH_DESC, TR_DESC] {
+                let desc = desc(desc_str);
+                let prev = fund(&desc, 100_000, 3, 1);
+                let mut getter = MapGetter::with(&[&prev]);
+                let err = failure(spend(
+                    &desc,
+                    &mut getter,
+                    &[candidate(&prev, 0, 100_001, 3)],
+                ));
+                assert!(err.to_string().contains("amount mismatch"), "{}", err);
+            }
+        }
+
+        #[test]
+        fn mismatched_script_fails() {
+            for desc_str in [WSH_DESC, TR_DESC] {
+                let desc = desc(desc_str);
+                let prev = fund(&desc, 100_000, 3, 1);
+                let mut getter = MapGetter::with(&[&prev]);
+                // Claimed derivation index 4 does not derive the script actually paid.
+                let err = failure(spend(
+                    &desc,
+                    &mut getter,
+                    &[candidate(&prev, 0, 100_000, 4)],
+                ));
+                assert!(err.to_string().contains("script mismatch"), "{}", err);
+            }
+        }
+
+        #[test]
+        fn witness_and_non_witness_conflict_fails() {
+            for desc_str in [WSH_DESC, TR_DESC] {
+                let desc = desc(desc_str);
+                let prev = fund(&desc, 100_000, 3, 1);
+                let mut getter = MapGetter::with(&[&prev]);
+                let good = spend(&desc, &mut getter, &[candidate(&prev, 0, 100_000, 3)])
+                    .unwrap()
+                    .psbt;
+                reverify_spend_before_broadcast(&desc, &good).unwrap();
+
+                let mut amount = good.clone();
+                amount.inputs[0].witness_utxo.as_mut().unwrap().value = Amount::from_sat(1_000_000);
+                let err = reverify_spend_before_broadcast(&desc, &amount).unwrap_err();
+                assert!(
+                    err.to_string().contains("witness_utxo conflicts"),
+                    "{}",
+                    err
+                );
+
+                let mut script = good.clone();
+                script.inputs[0]
+                    .witness_utxo
+                    .as_mut()
+                    .unwrap()
+                    .script_pubkey = script_at(&desc, 4, false);
+                let err = reverify_spend_before_broadcast(&desc, &script).unwrap_err();
+                assert!(
+                    err.to_string().contains("witness_utxo conflicts"),
+                    "{}",
+                    err
+                );
+            }
+        }
+
+        #[test]
+        fn broadcast_time_stripping_or_mutation_fails() {
+            for desc_str in [WSH_DESC, TR_DESC] {
+                let desc = desc(desc_str);
+                let prev = fund(&desc, 100_000, 3, 1);
+                let mut getter = MapGetter::with(&[&prev]);
+                let good = spend(&desc, &mut getter, &[candidate(&prev, 0, 100_000, 3)])
+                    .unwrap()
+                    .psbt;
+                reverify_spend_before_broadcast(&desc, &good).unwrap();
+
+                // Stripped previous transaction: witness_utxo alone is not accepted.
+                let mut stripped = good.clone();
+                stripped.inputs[0].non_witness_utxo = None;
+                assert!(stripped.inputs[0].witness_utxo.is_some());
+                let err = reverify_spend_before_broadcast(&desc, &stripped).unwrap_err();
+                assert!(
+                    err.to_string().contains("missing previous transaction"),
+                    "{}",
+                    err
+                );
+
+                // Substituted previous transaction whose txid is not the committed one.
+                let mut substituted = good.clone();
+                substituted.inputs[0].non_witness_utxo = Some(fund(&desc, 100_000, 3, 2));
+                let err = reverify_spend_before_broadcast(&desc, &substituted).unwrap_err();
+                assert!(err.to_string().contains("txid mismatch"), "{}", err);
+
+                // Mutated previous output amount changes the txid, so it is caught too.
+                let mut inflated = good.clone();
+                inflated.inputs[0].non_witness_utxo.as_mut().unwrap().output[0].value =
+                    Amount::from_sat(1_000_000);
+                inflated.inputs[0].witness_utxo.as_mut().unwrap().value =
+                    Amount::from_sat(1_000_000);
+                let err = reverify_spend_before_broadcast(&desc, &inflated).unwrap_err();
+                assert!(err.to_string().contains("txid mismatch"), "{}", err);
+
+                // Outpoint pointing past the previous transaction's outputs.
+                let mut vout = good.clone();
+                vout.unsigned_tx.input[0].previous_output.vout = 9;
+                let err = reverify_spend_before_broadcast(&desc, &vout).unwrap_err();
+                assert!(err.to_string().contains("invalid vout"), "{}", err);
+            }
+        }
+
+        /// Every supported authenticated spend in this matrix must fit the LAN
+        /// frame cap and the gRPC default once wrapped as a production message.
+        /// The encrypted envelope adds a bounded overhead (AES-GCM tag, ephemeral
+        /// key, nonce, session metadata: about 1.1 KB for the Taproot fixture,
+        /// measured in the GUI frame-limit suite), so the raw PSBT plus that
+        /// margin is asserted here; the GUI suite asserts the exact envelope.
+        /// Run with `--nocapture` to see the table.
+        #[test]
+        fn authenticated_psbt_sizes_against_transport_limits() {
+            const ENVELOPE_OVERHEAD_BYTES: usize = 2 * 1024;
+            let desc = desc(TR_DESC);
+            println!("inputs prev_outputs authenticated_bytes witness_only_bytes");
+            for (inputs, prev_outputs) in [
+                (1, 2),
+                (2, 2),
+                (10, 2),
+                (50, 2),
+                (200, 2),
+                (50, 100),
+                (25, 1000),
+            ] {
+                let mut prevs = Vec::new();
+                let mut cands = Vec::new();
+                for i in 0..inputs {
+                    let mut outputs = vec![TxOut {
+                        value: Amount::from_sat(100_000),
+                        script_pubkey: script_at(&desc, i, false),
+                    }];
+                    for _ in 1..prev_outputs {
+                        // Other recipients of a batch payout: P2TR-shaped outputs.
+                        outputs.push(TxOut {
+                            value: Amount::from_sat(546),
+                            script_pubkey: ScriptBuf::from_bytes(
+                                [vec![0x51, 0x20], vec![0xab; 32]].concat(),
+                            ),
+                        });
+                    }
+                    let prev = funding_tx(outputs, 1_000 + i);
+                    cands.push(candidate(&prev, 0, 100_000, i));
+                    prevs.push(prev);
+                }
+                let mut getter = MapGetter(
+                    prevs
+                        .iter()
+                        .map(|t| (t.compute_txid(), t.clone()))
+                        .collect(),
+                );
+                let psbt = spend(&desc, &mut getter, &cands).unwrap().psbt;
+                let authenticated = psbt.serialize().len();
+                let mut witness_only = psbt.clone();
+                for input in witness_only.inputs.iter_mut() {
+                    input.non_witness_utxo = None;
+                }
+                let witness_only = witness_only.serialize().len();
+                println!("{inputs:>6} {prev_outputs:>12} {authenticated:>19} {witness_only:>17}");
+                let enveloped = authenticated + ENVELOPE_OVERHEAD_BYTES;
+                assert!(
+                    enveloped <= LAN_MAX_FRAME_BYTES,
+                    "{} inputs x {} outputs: {} bytes exceeds the LAN frame cap {}",
+                    inputs,
+                    prev_outputs,
+                    enveloped,
+                    LAN_MAX_FRAME_BYTES
+                );
+                assert!(
+                    enveloped <= GRPC_DEFAULT_MAX_MESSAGE_BYTES,
+                    "{} inputs x {} outputs: {} bytes exceeds the gRPC default {}",
+                    inputs,
+                    prev_outputs,
+                    enveloped,
+                    GRPC_DEFAULT_MAX_MESSAGE_BYTES
+                );
+                if (inputs, prev_outputs) == (25, 1000) {
+                    // The request the previous 1 MiB LAN cap refused.
+                    assert!(authenticated > 1024 * 1024, "{}", authenticated);
+                }
+            }
+        }
     }
 }

@@ -18,6 +18,42 @@ use coincube_core::{
 };
 use std::{collections::BTreeSet, str::FromStr};
 
+/// Authenticate every input's spent output through its complete previous
+/// transaction (P2-A) and return those outputs in input order.
+///
+/// This is the fee-source rule the daemon enforces at spend creation and
+/// broadcast, applied on the LAN rail: the amount a phone reviews and commits
+/// to in its sighash must come from a transaction whose txid the outpoint
+/// commits to, never from a `witness_utxo` the requester could have written.
+/// The error names the first offending input so the user can act on it.
+pub(super) fn authenticated_prevouts(
+    psbt: &Psbt,
+) -> Result<Vec<coincube_core::miniscript::bitcoin::TxOut>, String> {
+    if psbt.inputs.len() != psbt.unsigned_tx.input.len() {
+        return Err("The transaction's PSBT inputs do not match its inputs.".to_owned());
+    }
+    psbt.inputs
+        .iter()
+        .zip(&psbt.unsigned_tx.input)
+        .enumerate()
+        .map(|(i, (input, txin))| {
+            coincube_core::spend::authenticate_previous_output(
+                &txin.previous_output,
+                input.non_witness_utxo.as_ref(),
+                input.witness_utxo.as_ref(),
+            )
+            .map_err(|e| {
+                format!(
+                    "Input {} of this transaction cannot be verified ({}), so its amount \
+                     cannot be shown to the Keychain for review. Recreate the spend in \
+                     COINCUBE and try again.",
+                    i, e
+                )
+            })
+        })
+        .collect()
+}
+
 pub(super) fn merge_verified(
     original: &mut Psbt,
     returned: &Psbt,
@@ -33,35 +69,10 @@ pub(super) fn merge_verified(
     }
     let descriptor = CoincubeDescriptor::from_str(descriptor).map_err(|_| reject())?;
     let secp = Secp256k1::verification_only();
-    // Only request UTXOs enter the sighash; response UTXO/derivation edits are ignored.
-    let prevouts = original
-        .inputs
-        .iter()
-        .zip(&original.unsigned_tx.input)
-        .map(|(input, txin)| {
-            let previous = if let Some(tx) = &input.non_witness_utxo {
-                if tx.compute_txid() != txin.previous_output.txid {
-                    return Err(reject());
-                }
-                Some(
-                    tx.output
-                        .get(txin.previous_output.vout as usize)
-                        .ok_or_else(reject)?
-                        .clone(),
-                )
-            } else {
-                None
-            };
-            if let (Some(a), Some(b)) = (&previous, &input.witness_utxo) {
-                if a != b {
-                    return Err(reject());
-                }
-            }
-            previous
-                .or_else(|| input.witness_utxo.clone())
-                .ok_or_else(reject)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    // Only request UTXOs enter the sighash; response UTXO/derivation edits are
+    // ignored. Each prevout comes from the input's complete previous transaction
+    // (P2-A): a `witness_utxo` alone is requester-supplied and never accepted.
+    let prevouts = authenticated_prevouts(original).map_err(|_| reject())?;
     let mut cache = SighashCache::new(&original.unsigned_tx);
     let mut additions = 0;
     for (i, (before, after)) in original.inputs.iter().zip(&returned.inputs).enumerate() {

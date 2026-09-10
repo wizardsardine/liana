@@ -96,6 +96,11 @@ jobs:
           - { os: ubuntu-latest, toolchain: stable }
           - { os: ubuntu-latest, toolchain: nightly }
     runs-on: ${{ matrix.os }}
+    # A green leg finishes in well under an hour; the default cap is 6 hours.
+    # A single hung test (`server_sanity_check` waited forever on a socket path
+    # the daemon no longer creates) burned 6 runner-hours per push for weeks and
+    # left ubuntu with no reported result at all. Fail fast instead.
+    timeout-minutes: 120
     # The canaries are informational: a newer toolchain breaking is upstream's
     # doing, not the PR's, and blocking merges on it just teaches people to
     # ignore a red tick. Their failures are still visible in the run.

@@ -118,6 +118,19 @@ async fn main() {
     .unwrap();
     assert!(psbt.inputs[0].tap_key_sig.is_none());
     assert!(psbt.inputs[0].tap_script_sigs.is_empty());
+    // The request carries the complete previous transaction for every input, so
+    // the phone authenticates the fee source before review (P2-A).
+    for (input, txin) in psbt.inputs.iter().zip(&psbt.unsigned_tx.input) {
+        let previous = input
+            .non_witness_utxo
+            .as_ref()
+            .expect("authenticated input");
+        assert_eq!(previous.compute_txid(), txin.previous_output.txid);
+        assert_eq!(
+            input.witness_utxo.as_ref(),
+            previous.output.get(txin.previous_output.vout as usize)
+        );
+    }
     async_hwi::HWI::sign_tx(&signer, &mut psbt).await.unwrap();
     if index == 0 && kind == "taproot" {
         assert!(psbt.inputs[0].tap_key_sig.is_some());

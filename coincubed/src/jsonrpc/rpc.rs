@@ -157,6 +157,7 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::SpendCreation(..)
             | commands::CommandError::InsufficientFunds(..)
             | commands::CommandError::UnknownSpend(..)
+            | commands::CommandError::SpendMissingPreviousTransaction(..)
             | commands::CommandError::SpendFinalization(..)
             | commands::CommandError::InsaneRescanTimestamp(..)
             | commands::CommandError::AlreadyRescanning

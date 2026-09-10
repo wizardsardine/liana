@@ -58,6 +58,9 @@ pub enum CommandError {
         /* target feerate */ u64,
     ),
     UnknownSpend(bitcoin::Txid),
+    /// A stored spend input has no previous transaction and the wallet holds
+    /// none for its outpoint, so its amount cannot be authenticated (P2-A).
+    SpendMissingPreviousTransaction(bitcoin::OutPoint),
     // FIXME: when upgrading Miniscript put the actual error there
     SpendFinalization(String),
     TxBroadcast(String),
@@ -106,6 +109,12 @@ impl fmt::Display for CommandError {
                 }
             }
             Self::UnknownSpend(txid) => write!(f, "Unknown spend transaction '{}'.", txid),
+            Self::SpendMissingPreviousTransaction(op) => write!(
+                f,
+                "Spend input {} has no previous transaction and the wallet does not hold one, \
+                so its amount cannot be authenticated. Delete this spend and recreate it.",
+                op
+            ),
             Self::SpendFinalization(e) => {
                 write!(f, "Failed to finalize the spend transaction PSBT: '{}'.", e)
             }
@@ -197,6 +206,31 @@ impl<'a> TxGetter for DbTxGetter<'a> {
         }
         self.cache.get(txid).cloned().flatten()
     }
+}
+
+/// Fill in every missing `non_witness_utxo` of a stored spend PSBT from the
+/// wallet's own copy of the previous transaction, so a PSBT that predates
+/// fee-source authentication (P2-A) or was imported without its previous
+/// transactions can still be re-verified before broadcast. This adds no trust:
+/// [`spend::reverify_spend_before_broadcast`] authenticates whatever is set here
+/// through the txid committed by the outpoint. An input whose previous
+/// transaction the wallet does not hold cannot be authenticated at all and the
+/// spend must be recreated.
+fn backfill_previous_transactions(
+    psbt: &mut Psbt,
+    tx_getter: &mut impl TxGetter,
+) -> Result<(), CommandError> {
+    for (psbt_in, txin) in psbt.inputs.iter_mut().zip(psbt.unsigned_tx.input.iter()) {
+        if psbt_in.non_witness_utxo.is_none() {
+            psbt_in.non_witness_utxo = tx_getter.get_tx(&txin.previous_output.txid);
+        }
+        if psbt_in.non_witness_utxo.is_none() {
+            return Err(CommandError::SpendMissingPreviousTransaction(
+                txin.previous_output,
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn coin_to_candidate(
@@ -967,6 +1001,11 @@ impl DaemonControl {
         let mut spend_psbt = db_conn
             .spend_tx(txid)
             .ok_or(CommandError::UnknownSpend(*txid))?;
+
+        // A stored PSBT may predate fee-source authentication (P2-A) or have been
+        // imported through `update_spend` without its previous transactions.
+        // Backfill them from the wallet before re-verifying.
+        backfill_previous_transactions(&mut spend_psbt, &mut DbTxGetter::new(&self.db))?;
 
         // CC-DESK-003: belt-and-suspenders re-verification of the spend's
         // outputs, absolute fee and feerate immediately before broadcast. The
@@ -2095,20 +2134,74 @@ mod tests {
         ms.shutdown();
     }
 
+    /// A real funding transaction paying the given coins at the given vouts, so
+    /// spend creation can authenticate each selected input against it (P2-A).
+    /// Unused vouts are filled with unrelated outputs.
+    fn funding_tx(
+        control: &DaemonControl,
+        coins: &[(
+            /* vout */ u32,
+            /* amount */ u64,
+            /* deriv index */ u32,
+            /* is_change */ bool,
+        )],
+    ) -> bitcoin::Transaction {
+        let max_vout = coins.iter().map(|c| c.0).max().unwrap_or(0);
+        let mut output = (0..=max_vout)
+            .map(|_| bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(546),
+                script_pubkey: bitcoin::ScriptBuf::from_bytes(
+                    [vec![0x51, 0x20], vec![0xab; 32]].concat(),
+                ),
+            })
+            .collect::<Vec<_>>();
+        for (vout, amount, index, is_change) in coins {
+            let desc = if *is_change {
+                control.config.main_descriptor.change_descriptor()
+            } else {
+                control.config.main_descriptor.receive_descriptor()
+            };
+            output[*vout as usize] = bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(*amount),
+                script_pubkey: desc
+                    .derive(bip32::ChildNumber::from(*index), &control.secp)
+                    .script_pubkey(),
+            };
+        }
+        bitcoin::Transaction {
+            version: TxVersion::TWO,
+            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
+            input: vec![bitcoin::TxIn {
+                previous_output: bitcoin::OutPoint::null(),
+                script_sig: bitcoin::ScriptBuf::from_bytes(vec![0x51]),
+                sequence: bitcoin::Sequence::MAX,
+                witness: bitcoin::Witness::default(),
+            }],
+            output,
+        }
+    }
+
     #[test]
     fn create_spend() {
         const COIN_VALUE: u64 = 100_000;
-        let dummy_tx = bitcoin::Transaction {
-            version: TxVersion::TWO,
-            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
-            input: vec![],
-            output: vec![],
-        };
-        let dummy_op = bitcoin::OutPoint::new(dummy_tx.compute_txid(), 0);
         let ms = DummyCoincube::new(DummyBitcoind::new(), DummyDatabase::new());
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
-        db_conn.new_txs(&[dummy_tx]);
+        // Every coin this test spends is paid by this one real funding transaction:
+        // vout 0 (100_000 sats, index 13), vout 10 (400_000, index 42), vout 100
+        // (80_000, index 42), vout 110 (20_000, index 43), vout 120 (dust+500, index 56).
+        let dummy_tx = funding_tx(
+            control,
+            &[
+                (0, COIN_VALUE, 13, false),
+                (10, 400_000, 42, false),
+                (100, 80_000, 42, false),
+                (110, 20_000, 43, false),
+                (120, DUST + 500, 56, false),
+            ],
+        );
+        let dummy_op = bitcoin::OutPoint::new(dummy_tx.compute_txid(), 0);
+        db_conn.new_txs(std::slice::from_ref(&dummy_tx));
 
         // Arguments sanity checking
         let dummy_addr =
@@ -2164,7 +2257,13 @@ mod tests {
         } else {
             panic!("expect successful spend creation")
         };
-        assert!(psbt.inputs[0].non_witness_utxo.is_some());
+        // The input carries the complete, authenticated previous transaction and a
+        // witness_utxo equal to its spent output.
+        assert_eq!(psbt.inputs[0].non_witness_utxo.as_ref(), Some(&dummy_tx));
+        assert_eq!(
+            psbt.inputs[0].witness_utxo.as_ref(),
+            Some(&dummy_tx.output[0])
+        );
         let tx = psbt.unsigned_tx;
         assert_eq!(tx.input.len(), 1);
         assert_eq!(tx.input[0].previous_output, dummy_op);
@@ -2623,29 +2722,88 @@ mod tests {
     }
 
     #[test]
-    fn update_spend() {
-        let dummy_op_a = bitcoin::OutPoint::from_str(
-            "3753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:0",
-        )
-        .unwrap();
-        let dummy_op_b = bitcoin::OutPoint::from_str(
-            "4753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:1",
-        )
-        .unwrap();
-        let mut dummy_bitcoind = DummyBitcoind::new();
-        let dummy_tx = bitcoin::Transaction {
-            version: TxVersion::TWO,
-            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
-            input: vec![],
-            output: vec![],
-        };
-        dummy_bitcoind
-            .txs
-            .insert(dummy_op_a.txid, (dummy_tx.clone(), None));
-        dummy_bitcoind.txs.insert(dummy_op_b.txid, (dummy_tx, None));
-        let ms = DummyCoincube::new(dummy_bitcoind, DummyDatabase::new());
+    fn backfill_previous_transactions_before_broadcast() {
+        let ms = DummyCoincube::new(DummyBitcoind::new(), DummyDatabase::new());
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
+        let dummy_tx = funding_tx(control, &[(0, 100_000, 13, false)]);
+        let dummy_op = bitcoin::OutPoint::new(dummy_tx.compute_txid(), 0);
+        db_conn.new_txs(std::slice::from_ref(&dummy_tx));
+        db_conn.new_unspent_coins(&[Coin {
+            outpoint: dummy_op,
+            is_immature: false,
+            block_info: None,
+            amount: bitcoin::Amount::from_sat(100_000),
+            derivation_index: bip32::ChildNumber::from(13),
+            is_change: false,
+            spend_txid: None,
+            spend_block: None,
+            is_from_self: false,
+        }]);
+        let dummy_addr =
+            bitcoin::Address::from_str("bc1qnsexk3gnuyayu92fc3tczvc7k62u22a22ua2kv").unwrap();
+        let destinations: HashMap<bitcoin::Address<address::NetworkUnchecked>, u64> =
+            [(dummy_addr, 50_000)].iter().cloned().collect();
+        let psbt = if let CreateSpendResult::Success { psbt, .. } = control
+            .create_spend(&destinations, &[dummy_op], 1, None)
+            .unwrap()
+        {
+            psbt
+        } else {
+            panic!("expect successful spend creation")
+        };
+
+        // A stored PSBT that lost its previous transaction (legacy draft or an
+        // import) is backfilled from the wallet and then passes re-verification.
+        let mut stripped = psbt.clone();
+        stripped.inputs[0].non_witness_utxo = None;
+        assert!(
+            spend::reverify_spend_before_broadcast(&control.config.main_descriptor, &stripped)
+                .is_err()
+        );
+        backfill_previous_transactions(&mut stripped, &mut DbTxGetter::new(&control.db())).unwrap();
+        assert_eq!(
+            stripped.inputs[0].non_witness_utxo.as_ref(),
+            Some(&dummy_tx)
+        );
+        assert_eq!(stripped, psbt);
+        spend::reverify_spend_before_broadcast(&control.config.main_descriptor, &stripped).unwrap();
+
+        // An input already carrying a previous transaction is left untouched, even
+        // one the wallet would not have handed out.
+        let mut foreign = psbt.clone();
+        let mut other = dummy_tx.clone();
+        other.lock_time = bitcoin::absolute::LockTime::from_consensus(1);
+        foreign.inputs[0].non_witness_utxo = Some(other.clone());
+        backfill_previous_transactions(&mut foreign, &mut DbTxGetter::new(&control.db())).unwrap();
+        assert_eq!(foreign.inputs[0].non_witness_utxo.as_ref(), Some(&other));
+
+        // An input whose previous transaction the wallet does not hold is refused
+        // with a recovery hint rather than reaching re-verification.
+        let mut unknown = psbt;
+        let unknown_op = bitcoin::OutPoint::new(other.compute_txid(), 0);
+        unknown.unsigned_tx.input[0].previous_output = unknown_op;
+        unknown.inputs[0].non_witness_utxo = None;
+        assert_eq!(
+            backfill_previous_transactions(&mut unknown, &mut DbTxGetter::new(&control.db())),
+            Err(CommandError::SpendMissingPreviousTransaction(unknown_op))
+        );
+
+        ms.shutdown();
+    }
+
+    #[test]
+    fn update_spend() {
+        let ms = DummyCoincube::new(DummyBitcoind::new(), DummyDatabase::new());
+        let control = &ms.control();
+        let mut db_conn = control.db().lock().unwrap().connection();
+        // Two real funding transactions: coin a is vout 0 of the first, coin b is
+        // vout 1 of the second, so spend creation can authenticate both inputs.
+        let dummy_tx_a = funding_tx(control, &[(0, 100_000, 13, false)]);
+        let dummy_tx_b = funding_tx(control, &[(1, 115_680, 34, false)]);
+        let dummy_op_a = bitcoin::OutPoint::new(dummy_tx_a.compute_txid(), 0);
+        let dummy_op_b = bitcoin::OutPoint::new(dummy_tx_b.compute_txid(), 1);
+        db_conn.new_txs(&[dummy_tx_a, dummy_tx_b]);
 
         // Add two (unconfirmed) coins in DB
         db_conn.new_unspent_coins(&[
@@ -3222,17 +3380,21 @@ mod tests {
 
     #[test]
     fn create_recovery() {
-        let dummy_tx = bitcoin::Transaction {
-            version: TxVersion::TWO,
-            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
-            input: vec![],
-            output: vec![],
-        };
-        let dummy_txid = dummy_tx.compute_txid();
-        let dummy_op = bitcoin::OutPoint::new(dummy_txid, 0);
         let ms = DummyCoincube::new_timelock(DummyBitcoind::new(), DummyDatabase::new(), 10);
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
+        // Real funding transaction: vout 0 (100_000 sats, index 13), vout 1 (10_000,
+        // index 1378) and vout 2 (dust + 126, index 13) for the too-small case.
+        let dummy_tx = funding_tx(
+            control,
+            &[
+                (0, 100_000, 13, false),
+                (1, 10_000, 1378, false),
+                (2, DUST + 126, 13, false),
+            ],
+        );
+        let dummy_txid = dummy_tx.compute_txid();
+        let dummy_op = bitcoin::OutPoint::new(dummy_txid, 0);
         db_conn.new_txs(&[dummy_tx]);
 
         // Arguments sanity checking
@@ -3351,10 +3513,14 @@ mod tests {
             Err(CommandError::AlreadySpent(dummy_op)),
         );
 
-        // Now remove the coin and re-add, but this time with an amount that is too small to create an output.
+        // Now remove the coin and add another one, this time with an amount that is too small
+        // to create an output. It is paid by vout 2 of the same funding transaction, so its
+        // previous output still authenticates the amount.
         // This will give a coin selection error due to insufficient funds.
         db_conn.remove_coins(&[dummy_op]);
+        let dummy_op = bitcoin::OutPoint::new(dummy_txid, 2);
         let mut dummy_coin = dummy_coin;
+        dummy_coin.outpoint = dummy_op;
         dummy_coin.amount = Amount::from_sat(DUST + 126);
         db_conn.new_unspent_coins(&[dummy_coin]);
         db_conn.confirm_coins(&[(dummy_op, 91, 100_000)]);
