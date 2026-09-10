@@ -24,7 +24,7 @@ use liana_ui::{
         modal::{self, modal_view, ModalWidth},
         panels::psbts,
         pill, scrollable,
-        text::{self, *},
+        text::{self, new, *},
     },
     icon, theme,
     widget::*,
@@ -395,84 +395,77 @@ pub fn spend_overview_view<'a>(
         .into()
 }
 
+/// Header of the signatures section when the psbt cannot be broadcast yet.
+fn not_ready_header<'a>(chevron: liana_ui::widget::Text<'a>) -> Row<'a, Message> {
+    let status = row![
+        icon::circle_cross_icon().style(theme::text::error),
+        text(t!("psbt-not-ready")).style(theme::text::error)
+    ]
+    .spacing(5)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+
+    row![new::b5_bold(t!("psbt-status")), status, chevron]
+        .align_y(Alignment::Center)
+        .spacing(20)
+}
+
 pub fn signatures<'a>(
     tx: &'a SpendTx,
     desc_info: &'a LianaPolicy,
     keys_aliases: &'a HashMap<Fingerprint, String>,
 ) -> Element<'a, Message> {
-    Column::new()
-        .push(if let Some(sigs) = tx.path_ready() {
-            Container::new(scrollable::horizontal_thin(
-                Row::new()
-                    .spacing(5)
-                    .align_y(Alignment::Center)
-                    .spacing(10)
-                    .push(p1_bold(t!("psbt-status")))
-                    .push(icon::circle_check_icon().style(theme::text::success))
-                    .push(text(t!("common-ready")).bold().style(theme::text::success))
-                    .push(text(t!("psbt-signed-by")))
-                    .push(
-                        sigs.signed_pubkeys
-                            .keys()
-                            .fold(Row::new().spacing(5), |row, value| {
-                                row.push(pill::fingerprint(
-                                    value.to_string(),
-                                    keys_aliases.get(value).map(String::as_str),
-                                ))
-                            }),
-                    ),
-            ))
+    if let Some(sigs) = tx.path_ready() {
+        let signers = sigs
+            .signed_pubkeys
+            .keys()
+            .fold(Row::new().spacing(5), |row, fg| {
+                row.push(pill::fingerprint(
+                    fg.to_string(),
+                    keys_aliases.get(fg).map(String::as_str),
+                ))
+            });
+
+        let ready = row![
+            new::b5_bold(t!("psbt-status")),
+            icon::circle_check_icon().style(theme::text::success),
+            text(t!("common-ready")).bold().style(theme::text::success),
+            text(t!("psbt-signed-by")),
+            signers
+        ]
+        .align_y(Alignment::Center)
+        .spacing(10);
+
+        return Container::new(scrollable::horizontal_thin(ready))
             .padding(15)
-        } else {
-            Container::new(
-                Collapse::new(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(20)
-                        .push(p1_bold(t!("psbt-status")))
-                        .push(
-                            Row::new()
-                                .spacing(5)
-                                .align_y(Alignment::Center)
-                                .push(icon::circle_cross_icon().style(theme::text::error))
-                                .push(text(t!("psbt-not-ready")).style(theme::text::error))
-                                .width(Length::Fill),
-                        )
-                        .push(icon::collapse_icon()),
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(20)
-                        .push(p1_bold(t!("psbt-status")))
-                        .push(
-                            Row::new()
-                                .spacing(5)
-                                .align_y(Alignment::Center)
-                                .push(icon::circle_cross_icon().style(theme::text::error))
-                                .push(text(t!("psbt-not-ready")).style(theme::text::error))
-                                .width(Length::Fill),
-                        )
-                        .push(icon::collapsed_icon()),
-                    Column::new()
-                        .padding(15)
-                        .spacing(10)
-                        .push(text(t!("psbt-finalizing-requires")))
-                        .push_maybe(if tx.sigs.recovery_paths().is_empty() {
-                            Some(psbts::path_row(
-                                desc_info.primary_path(),
-                                tx.sigs.primary_path(),
-                                keys_aliases,
-                            ))
-                        } else {
-                            tx.sigs.recovery_paths().iter().last().map(|(seq, path)| {
-                                let keys = &desc_info.recovery_paths()[seq];
-                                psbts::path_row(keys, path, keys_aliases)
-                            })
-                        }),
-                )
-                .padding(15),
-            )
+            .into();
+    }
+
+    let requirement = if tx.sigs.recovery_paths().is_empty() {
+        Some(psbts::path_row(
+            desc_info.primary_path(),
+            tx.sigs.primary_path(),
+            keys_aliases,
+        ))
+    } else {
+        tx.sigs.recovery_paths().iter().last().map(|(seq, path)| {
+            let keys = &desc_info.recovery_paths()[seq];
+            psbts::path_row(keys, path, keys_aliases)
         })
-        .into()
+    };
+
+    let content = column![text(t!("psbt-finalizing-requires")), requirement]
+        .padding(15)
+        .spacing(10);
+
+    let collapse = Collapse::new(
+        not_ready_header(icon::collapse_icon()),
+        not_ready_header(icon::collapsed_icon()),
+        content,
+    )
+    .padding(15);
+
+    Container::new(collapse).into()
 }
 
 pub fn inputs_view<'a>(
