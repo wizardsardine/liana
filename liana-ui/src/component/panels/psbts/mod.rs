@@ -14,7 +14,7 @@ use liana_i18n::t;
 use crate::{
     component::{
         address::address as address_view,
-        amount::{amount, amount_with_fiat_tooltip, AmountSize},
+        amount::{amount, amount_with_fiat_tooltip, amount_with_font, AmountSize},
         button, card,
         collapse::Collapse,
         panels::{
@@ -377,4 +377,39 @@ pub fn signatures_missing<'a, M: Clone + 'static>(
     .padding(15);
 
     Container::new(collapse).into()
+}
+
+/// Header of a psbt: its label, then what it sends out and what it costs.
+pub fn spend_header<'a, M: 'static>(
+    label: Element<'a, M>,
+    is_send_to_self: bool,
+    spent: Amount,
+    fee: Option<Amount>,
+    feerate: Option<u64>,
+) -> Element<'a, M> {
+    let spent = if is_send_to_self {
+        Container::new(legacy::h1(t!("common-self-transfer")))
+    } else {
+        Container::new(amount_with_font(&spent, legacy::H1_SPEC))
+    };
+
+    let missing_inputs = fee
+        .is_none()
+        .then_some(legacy::text(t!("psbt-missing-inputs")));
+    let fee = fee.map(|fee| amount_with_font(&fee, legacy::H3_SPEC));
+    let feerate = feerate.map(|rate| {
+        legacy::text(t!("common-approx-feerate-value", rate = rate))
+            .size(legacy::H4_SIZE)
+            .style(theme::text::secondary)
+    });
+    let fees = row![
+        legacy::h3(t!("transactions-miner-fee")).style(theme::text::secondary),
+        missing_inputs,
+        fee,
+        legacy::text(" ").size(legacy::H3_SIZE),
+        feerate
+    ]
+    .align_y(Alignment::Center);
+
+    column![label, column![spent, fees]].spacing(20).into()
 }

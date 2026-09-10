@@ -15,7 +15,6 @@ use liana::{
 
 use liana_ui::{
     component::{
-        amount::*,
         button::{self, btn_broadcast, btn_delete, btn_export, btn_import, btn_save, btn_sign},
         card, form,
         list::DeviceStatus,
@@ -277,32 +276,13 @@ pub fn spend_header<'a>(
         label::label_editable(vec![txid.clone()], tx.labels.get(&txid), H3_SIZE)
     };
 
-    let spent = if tx.is_send_to_self() {
-        Container::new(h1(t!("common-self-transfer")))
-    } else {
-        Container::new(amount_with_font(&tx.spend_amount, H1_SPEC))
-    };
-
-    let missing_inputs = tx
-        .fee_amount
-        .is_none()
-        .then_some(text(t!("psbt-missing-inputs")));
-    let fee = tx.fee_amount.map(|fee| amount_with_font(&fee, H3_SPEC));
-    let feerate = tx.min_feerate_vb().map(|rate| {
-        text(t!("common-approx-feerate-value", rate = rate))
-            .size(H4_SIZE)
-            .style(theme::text::secondary)
-    });
-    let fees = row![
-        h3(t!("transactions-miner-fee")).style(theme::text::secondary),
-        missing_inputs,
-        fee,
-        text(" ").size(H3_SIZE),
-        feerate
-    ]
-    .align_y(Alignment::Center);
-
-    column![label, column![spent, fees]].spacing(20).into()
+    psbts::spend_header(
+        label,
+        tx.is_send_to_self(),
+        tx.spend_amount,
+        tx.fee_amount,
+        tx.min_feerate_vb(),
+    )
 }
 
 pub fn spend_overview_view<'a>(
