@@ -13,11 +13,18 @@ use liana_ui::{
     widget::*,
 };
 
-use crate::{app::menu::Menu, daemon::model::SpendTx};
+use crate::{
+    app::menu::Menu,
+    daemon::model::{SpendStatus, SpendTx},
+};
 
 use super::message::*;
 
-pub fn psbts_view(spend_txs: &[SpendTx], available_width: f32) -> Element<'_, Message> {
+pub fn psbts_view(
+    spend_txs: &[SpendTx],
+    hide_confirmed: bool,
+    available_width: f32,
+) -> Element<'_, Message> {
     let title = Container::new(new::d2(Menu::PSBTs.title())).width(Length::Fill);
     let import = btn_import(Some(Message::ImportPsbt));
     let new_tx = btn_new(Some(Message::Menu(Menu::CreateSpendTx)));
@@ -25,14 +32,19 @@ pub fn psbts_view(spend_txs: &[SpendTx], available_width: f32) -> Element<'_, Me
         .align_y(Alignment::Center)
         .spacing(HSpacing::M);
 
+    let has_confirmed = spend_txs.iter().any(|tx| tx.status == SpendStatus::Spent);
+    let filter = has_confirmed
+        .then(|| psbts::hide_confirmed_row(hide_confirmed, Message::ToggleHideConfirmedPsbts));
+
     let list = spend_txs
         .iter()
         .enumerate()
+        .filter(|(_, tx)| !(hide_confirmed && tx.status == SpendStatus::Spent))
         .fold(Column::new().spacing(VSpacing::M), |col, (i, tx)| {
             col.push(psbt_list_entry(i, tx, available_width))
         });
 
-    column![header, list].spacing(VSpacing::XL).into()
+    column![header, filter, list].spacing(VSpacing::XL).into()
 }
 
 fn psbt_list_entry(i: usize, tx: &SpendTx, available_width: f32) -> Element<'_, Message> {

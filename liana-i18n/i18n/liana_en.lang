@@ -1544,6 +1544,8 @@ psbt-transaction-broadcast => "Transaction is broadcast"
 
 psbt-transaction-saved => "Transaction is saved"
 
+psbts-hide-confirmed => "Hide confirmed transactions"
+
 psbts-signatures-collected => "signature(s) collected"
 
 receive-address-label-placeholder => "Enter an address label"

@@ -29,6 +29,7 @@ pub enum Message {
     NextReceiveAddress,
     NewAddress(NewAddressMessage),
     ToggleShowPreviousAddresses,
+    ToggleHideConfirmedPsbts,
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     Spend(SpendTxMessage),

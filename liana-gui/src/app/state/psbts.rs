@@ -17,6 +17,7 @@ pub struct PsbtsPanel {
     spend_txs: Vec<SpendTx>,
     warning: Option<Error>,
     modal: Option<ExportModal>,
+    hide_confirmed: bool,
 }
 
 impl PsbtsPanel {
@@ -27,6 +28,7 @@ impl PsbtsPanel {
             warning: None,
             selected_tx: None,
             modal: None,
+            hide_confirmed: false,
         }
     }
 
@@ -47,7 +49,11 @@ impl State for PsbtsPanel {
                 &Menu::PSBTs,
                 cache,
                 self.warning.as_ref(),
-                view::psbts::psbts_view(&self.spend_txs, cache.pane_size.get().width),
+                view::psbts::psbts_view(
+                    &self.spend_txs,
+                    self.hide_confirmed,
+                    cache.pane_size.get().width,
+                ),
             );
             if let Some(modal) = &self.modal {
                 modal.view(list_view)
@@ -116,6 +122,9 @@ impl State for PsbtsPanel {
                 } else if let Some(modal) = self.modal.as_mut() {
                     return modal.update(m.clone());
                 }
+            }
+            Message::View(view::Message::ToggleHideConfirmedPsbts) => {
+                self.hide_confirmed = !self.hide_confirmed;
             }
             Message::View(view::Message::Select(i)) => {
                 if let Some(tx) = self.spend_txs.get(i) {
