@@ -11,6 +11,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_connect::ws_business::{self, KeyIdentity, KeyType, UserRole};
+use liana_i18n::t;
 use liana_ui::{
     component::{
         badge, button,
@@ -96,7 +97,7 @@ fn short_identity(key: &ws_business::Key) -> String {
     }
 }
 
-fn section_heading<'a>(label: &'a str, top_padding: f32) -> Element<'a, Msg> {
+fn section_heading(label: String, top_padding: f32) -> Element<'static, Msg> {
     Container::new(text::new::h3_semi(label).style(theme::text::primary))
         .width(button::STANDARD_ENTRY_WIDTH)
         .padding(iced::Padding {
@@ -123,14 +124,14 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         .selected_org
         .and_then(|org_id| state.backend.get_org(org_id))
         .map(|org| org.name.clone())
-        .unwrap_or_else(|| "Organization".to_string());
+        .unwrap_or_else(|| t!("business-organization"));
     let wallet_name = state
         .app
         .selected_wallet
         .and_then(|id| state.backend.get_wallet(id))
         .map(|w| w.alias.clone())
-        .unwrap_or_else(|| "Wallet".to_string());
-    let breadcrumb = vec![org_name, wallet_name, "Set Keys".to_string()];
+        .unwrap_or_else(|| t!("common-wallet"));
+    let breadcrumb = vec![org_name, wallet_name, t!("business-set-keys")];
 
     let current_user_email_lower = current_user_email.to_lowercase();
     let mut owned_keys = Vec::new();
@@ -163,20 +164,24 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
 
     let instruction = if is_wallet_manager {
         if all_keys_set {
-            "All keys are set. Once the other participants finish this step, the wallet will be ready."
+            t!("business-all-keys-set-waiting")
         } else {
-            "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf."
+            t!("business-manager-set-keys-help")
         }
     } else if owned_keys_set {
-        "Your assigned keys are set. Waiting for the other participants to finish this step."
+        t!("business-assigned-keys-set-waiting")
     } else {
-        "Select a key assigned to you to complete its setup. You can connect a hardware device or add an extended public key manually."
+        t!("business-participant-set-keys-help")
     };
 
-    let header_content = screen_intro("Set Keys", Some(intro_description(instruction)), false);
+    let header_content = screen_intro(
+        t!("business-set-keys"),
+        Some(intro_description(instruction)),
+        false,
+    );
 
     let owned_entries = if owned_keys.is_empty() {
-        column![text::new::caption("No keys assigned to you.").style(theme::text::secondary)]
+        column![text::new::caption(t!("business-no-keys-assigned")).style(theme::text::secondary)]
             .spacing(VSpacing::M)
             .width(button::STANDARD_ENTRY_WIDTH)
     } else {
@@ -189,7 +194,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     };
 
     let mut list_content = column![
-        section_heading("Your keys", 4.0),
+        section_heading(t!("business-your-keys"), 4.0),
         owned_entries,
         Space::with_height(VSpacing::XL)
     ]
@@ -205,7 +210,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
             })
             .width(button::STANDARD_ENTRY_WIDTH);
         list_content = list_content
-            .push(section_heading("Other participants' keys", 0.0))
+            .push(section_heading(t!("business-other-participants-keys"), 0.0))
             .push(entries)
             .push(Space::with_height(VSpacing::XL));
     }
@@ -218,7 +223,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
             })
             .width(button::STANDARD_ENTRY_WIDTH);
         list_content = list_content
-            .push(section_heading("External keys", 0.0))
+            .push(section_heading(t!("business-external-keys"), 0.0))
             .push(entries)
             .push(Space::with_height(VSpacing::XL));
     }

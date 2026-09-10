@@ -3,6 +3,7 @@ use crate::{
     views::{intro_prompt, layout_with_scrollable_list, screen_intro, INSTALLER_STEPS},
 };
 use iced::widget::column;
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{btn_connect_another_email, EntryWidth},
@@ -19,10 +20,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
 
     let header_content = screen_intro(
         "Liana Business",
-        Some(intro_prompt(
-            "Select an account to continue",
-            None::<String>,
-        )),
+        Some(intro_prompt(t!("common-select-account"), None::<String>)),
         false,
     );
 
@@ -49,7 +47,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
         state.network,
         None,
         false,
-        &["Login".to_string()],
+        &[t!("common-login")],
         Some(header_content),
         list_content,
         Some(new_email.into()),

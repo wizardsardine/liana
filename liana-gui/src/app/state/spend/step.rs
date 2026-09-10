@@ -19,10 +19,13 @@ use liana::{
     },
     spend::{SpendCreationError, DUST_OUTPUT_SATS, MAX_FEERATE},
 };
-use lianad::commands::ListCoinsEntry;
+use lianad::commands::{CreateRecoveryWarning, ListCoinsEntry};
 
 use liana_ui::{
-    component::{form, panels::spend::FeeLevel},
+    component::{
+        form,
+        panels::spend::{DustWarning, FeeLevel},
+    },
     widget::Element,
 };
 
@@ -47,7 +50,7 @@ pub struct TransactionDraft {
     network: Network,
     inputs: Vec<Coin>,
     recipients: Vec<Recipient>,
-    generated: Option<(Psbt, Vec<String>)>,
+    generated: Option<(Psbt, Vec<CreateRecoveryWarning>)>,
     batch_label: Option<String>,
     labels: HashMap<String, String>,
     /// The timelock of the recovery path to use for spending.
@@ -172,7 +175,7 @@ pub struct DefineSpend {
     feerate: form::Value<String>,
     fee_mode: FeeMode,
     fee_amount: Option<Amount>,
-    generated: Option<(Psbt, Vec<String>)>,
+    generated: Option<(Psbt, Vec<CreateRecoveryWarning>)>,
     warning: Option<Error>,
     /// Whether this is the first step of the spend creation.
     /// Required in order to know whether the user can navigate to a previous step.
@@ -541,15 +544,11 @@ fn handle_max_under_dust(
         *amount_left_to_select = None;
         // In this case an output has MAX selected, but the available amount
         // is lower than the dust limit.
-        if all_selected {
-            recipient.dust_warning = Some(
-                            "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s)."
-                                .to_string());
+        recipient.dust_warning = Some(if all_selected {
+            DustWarning::AddFunds
         } else {
-            recipient.dust_warning = Some(
-                "Minimum amount is 0.00 000 500 BTC. Select more coins to continue.".to_string(),
-            );
-        }
+            DustWarning::SelectMoreCoins
+        });
         let amount = String::new();
         recipient.update(
             network,
@@ -738,9 +737,6 @@ impl Step for DefineSpend {
                                         )
                                         .await
                                         .map_err(|e| e.into())
-                                        .map(|(psbt, warnings)| {
-                                            (psbt, warnings.iter().map(|w| w.to_string()).collect())
-                                        })
                                 },
                                 Message::Psbt,
                             );
@@ -759,7 +755,15 @@ impl Step for DefineSpend {
                                         .map_err(|e| e.into())
                                         .and_then(|res| match res {
                                             CreateSpendResult::Success { psbt, warnings } => {
-                                                Ok((psbt, warnings))
+                                                // The daemon returns these already worded, so
+                                                // they pass through untranslated.
+                                                Ok((
+                                                    psbt,
+                                                    warnings
+                                                        .into_iter()
+                                                        .map(CreateRecoveryWarning::String)
+                                                        .collect(),
+                                                ))
                                             }
                                             CreateSpendResult::InsufficientFunds { missing } => {
                                                 Err(SpendCreationError::CoinSelection(
@@ -941,7 +945,7 @@ pub struct Recipient {
     pub fiat_amount: Option<form::Value<String>>,
     pub fiat_converter: Option<view::FiatAmountConverter>,
     pub is_recovery: bool,
-    pub dust_warning: Option<String>,
+    pub dust_warning: Option<DustWarning>,
 }
 
 impl Recipient {
@@ -1048,7 +1052,7 @@ impl Recipient {
                         self.fiat_amount = Some(form::Value {
                             value: fiat_amt_str,
                             valid: false,
-                            warning: Some("Could not convert to BTC"),
+                            warning: Some(crate::t!("spend-could-not-convert-btc")),
                         });
                     }
                 }
@@ -1071,7 +1075,7 @@ impl Recipient {
                         Amount::from_str_in(truncated, Denomination::Bitcoin).is_ok()
                     })
                     .inspect(|_| {
-                        self.amount.warning = Some("Amount has been truncated to 8 decimal places");
+                        self.amount.warning = Some(crate::t!("spend-amount-truncated"));
                     })
                     .unwrap_or(amount);
 
@@ -1126,7 +1130,7 @@ impl Recipient {
             is_max_selected,
             self.is_recovery,
             can_delete,
-            &self.dust_warning,
+            self.dust_warning,
             self.estimated_max,
         )
     }
@@ -1134,7 +1138,7 @@ impl Recipient {
 
 pub struct SaveSpend {
     wallet: Arc<Wallet>,
-    spend: Option<(psbt::PsbtState, Vec<String>)>,
+    spend: Option<(psbt::PsbtState, Vec<CreateRecoveryWarning>)>,
     curve: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 }
 

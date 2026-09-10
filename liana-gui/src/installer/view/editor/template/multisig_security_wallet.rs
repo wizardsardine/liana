@@ -14,31 +14,37 @@ use crate::installer::{
             defined_key, path,
             template::{
                 caption_block, key_legend, row_next, BOTTOM_PADDING, DESCRIPTION_BOTTOM_PADDING,
-                FOOTER_SPACING, HARDWARE_WALLET_ADVICE, INTRODUCTION_TITLE, KEY_LEGEND_SPACING,
-                PRIMARY_KEY, RECOVERY_KEY, SET_KEYS_TITLE, UNSUPPORTED_TAPROOT_WARNING,
+                FOOTER_SPACING, KEY_LEGEND_SPACING,
             },
             undefined_key, uneditable_defined_key,
         },
         layout,
     },
 };
+use crate::t;
 
 pub fn multisig_security_template_description(
     progress: (usize, usize),
     network: Network,
 ) -> Element<'static, Message> {
-    let title = new::b1_bold("Expanding multisig wallet");
+    let title = new::b1_bold(t!("installer-expanding-multisig-wallet"));
 
-    let intro = caption_block(format!("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. {HARDWARE_WALLET_ADVICE}."));
+    let intro = caption_block(t!("installer-multisig-description-1"));
 
     let keys = row![
-        key_legend(theme::text::success, format!("{PRIMARY_KEY} #1")),
-        key_legend(theme::text::success, format!("{PRIMARY_KEY} #2")),
-        key_legend(theme::text::warning, RECOVERY_KEY),
+        key_legend(
+            theme::text::success,
+            t!("installer-primary-key-number", number = 1)
+        ),
+        key_legend(
+            theme::text::success,
+            t!("installer-primary-key-number", number = 2)
+        ),
+        key_legend(theme::text::warning, t!("installer-recovery-key")),
     ]
     .spacing(KEY_LEGEND_SPACING);
 
-    let explanation = caption_block("The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):");
+    let explanation = caption_block(t!("installer-multisig-description-2"));
 
     let diagram = image::multisig_security_template_description().width(Length::Fill);
 
@@ -58,7 +64,7 @@ pub fn multisig_security_template_description(
         progress,
         network,
         None,
-        INTRODUCTION_TITLE,
+        t!("installer-introduction"),
         content,
         Some(Message::Previous),
     )
@@ -90,9 +96,9 @@ pub fn multisig_security_template<'a>(
                     defined_key(
                         &key.name,
                         color::GREEN,
-                        format!("{PRIMARY_KEY} #{}", i + 1),
+                        t!("installer-primary-key-number", number = i + 1),
                         if use_taproot && !key.source.is_compatible_taproot() {
-                            Some(UNSUPPORTED_TAPROOT_WARNING)
+                            Some(t!("installer-device-no-taproot"))
                         } else {
                             None
                         },
@@ -101,7 +107,7 @@ pub fn multisig_security_template<'a>(
                 } else {
                     undefined_key(
                         color::GREEN,
-                        format!("{PRIMARY_KEY} #{}", i + 1),
+                        t!("installer-primary-key-number", number = i + 1),
                         !primary_path.keys[0..i].iter().any(|k| k.is_none()),
                         true,
                     )
@@ -138,9 +144,9 @@ pub fn multisig_security_template<'a>(
                         uneditable_defined_key(
                             &key.name,
                             color::GREEN,
-                            format!("{PRIMARY_KEY} #{}", j + 1),
+                            t!("installer-primary-key-number", number = j + 1),
                             if use_taproot && !key.source.is_compatible_taproot() {
-                                Some(UNSUPPORTED_TAPROOT_WARNING)
+                                Some(t!("installer-device-no-taproot"))
                             } else {
                                 None
                             },
@@ -149,9 +155,9 @@ pub fn multisig_security_template<'a>(
                         defined_key(
                             &key.name,
                             color::ORANGE,
-                            RECOVERY_KEY,
+                            t!("installer-recovery-key"),
                             if use_taproot && !key.source.is_compatible_taproot() {
-                                Some(UNSUPPORTED_TAPROOT_WARNING)
+                                Some(t!("installer-device-no-taproot"))
                             } else {
                                 None
                             },
@@ -162,9 +168,9 @@ pub fn multisig_security_template<'a>(
                     undefined_key(
                         if j < 2 { color::GREEN } else { color::ORANGE },
                         if j < 2 {
-                            format!("{PRIMARY_KEY} #{}", j + 1)
+                            t!("installer-primary-key-number", number = j + 1)
                         } else {
-                            RECOVERY_KEY.to_string()
+                            t!("installer-recovery-key")
                         },
                         !(primary_path.keys.iter().any(|k| k.is_none())
                             || recovery_path.keys[0..j].iter().any(|k| k.is_none())),
@@ -207,7 +213,7 @@ pub fn multisig_security_template<'a>(
         progress,
         network,
         None,
-        SET_KEYS_TITLE,
+        t!("btn-set-keys"),
         content,
         Some(Message::Previous),
     )

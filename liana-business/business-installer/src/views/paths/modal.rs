@@ -9,6 +9,7 @@ use iced::{
     widget::{checkbox, column, row, Space},
     Alignment,
 };
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{btn_cancel, btn_save},
@@ -21,6 +22,7 @@ use liana_ui::{
     theme,
     widget::*,
 };
+use std::fmt;
 
 fn compact_label<'a>(label: impl Into<String>) -> Element<'a, Msg> {
     text::new::b5_medium(label.into())
@@ -45,11 +47,11 @@ pub fn edit_path_modal_view<'a>(
 
     // Header
     let title = if modal_state.is_primary {
-        "Edit Primary Path"
+        t!("business-edit-primary-path")
     } else if modal_state.path_index.is_some() {
-        "Edit Recovery Path"
+        t!("business-edit-recovery-path")
     } else {
-        "Create New Path"
+        t!("business-create-new-path")
     };
 
     // Get last edit info for the path being edited
@@ -75,19 +77,17 @@ pub fn edit_path_modal_view<'a>(
     };
 
     // Key selection section
-    let keys_label = compact_label("Keys in Path:");
+    let keys_label = compact_label(t!("business-keys-in-path"));
 
     let keys_column = if state.app.keys().is_empty() {
-        column![
-            text::new::caption("No keys available. Add keys first.").style(theme::text::secondary)
-        ]
-        .spacing(VSpacing::S)
+        column![text::new::caption(t!("business-no-keys-available")).style(theme::text::secondary)]
+            .spacing(VSpacing::S)
     } else {
         let mut col = column![].spacing(VSpacing::S);
         for (key_id, key) in state.app.keys().iter() {
             let is_selected = modal_state.selected_key_ids.contains(key_id);
             let mut name = if key.alias.is_empty() {
-                format!("Key {key_id}")
+                t!("business-key-number", id = key_id)
             } else {
                 key.alias.clone()
             };
@@ -127,17 +127,17 @@ pub fn edit_path_modal_view<'a>(
         (false, None)
     } else if let Ok(n) = modal_state.threshold.parse::<usize>() {
         if n == 0 || n > selected_count {
-            (false, Some("Invalid threshold value"))
+            (false, Some(t!("business-invalid-threshold")))
         } else {
             (true, None)
         }
     } else {
-        (false, Some("Invalid threshold value"))
+        (false, Some(t!("business-invalid-threshold")))
     };
 
     // Threshold row (only shown when 2+ keys are selected)
     let threshold_row: Option<Element<'_, Msg>> = threshold_enabled.then_some({
-        let threshold_label_text = format!("Threshold (1-{selected_count}):");
+        let threshold_label_text = t!("business-threshold-range", count = selected_count);
         let threshold_label = compact_label(threshold_label_text);
         let threshold_value = form::Value {
             value: modal_state.threshold.clone(),
@@ -179,14 +179,14 @@ pub fn edit_path_modal_view<'a>(
         let (valid, warning) = if is_empty {
             (false, None)
         } else if current_blocks == 0 {
-            (false, Some("Timelock cannot be zero".to_string()))
+            (false, Some(t!("business-timelock-zero")))
         } else if parsed_value.is_some_and(|v| v > modal_state.timelock_unit.max_value()) {
             (
                 false,
-                Some(format!(
-                    "Max {} {}",
-                    modal_state.timelock_unit.max_value(),
-                    modal_state.timelock_unit
+                Some(t!(
+                    "business-max-unit",
+                    max = modal_state.timelock_unit.max_value(),
+                    unit = timelock_unit_label(modal_state.timelock_unit)
                 )),
             )
         } else {
@@ -202,7 +202,7 @@ pub fn edit_path_modal_view<'a>(
                             && secondary.timelock.blocks == current_blocks
                     });
             if duplicate {
-                (false, Some("Duplicate timelock".to_string()))
+                (false, Some(t!("business-duplicate-timelock")))
             } else {
                 (true, None)
             }
@@ -213,18 +213,21 @@ pub fn edit_path_modal_view<'a>(
             warning: None,
             valid: valid || is_empty,
         };
+        let timelock_options = timelock_unit_options();
+        let selected_timelock_unit = TimelockUnitOption {
+            label: timelock_unit_label(modal_state.timelock_unit),
+            unit: modal_state.timelock_unit,
+        };
 
         let input = row![
-            Container::new(compact_label("Timelock:")).width(LABEL_WIDTH),
+            Container::new(compact_label(t!("business-timelock"))).width(LABEL_WIDTH),
             Container::new(
                 form::Form::new("0", &timelock_value, Msg::TemplateUpdateTimelock).compact(),
             )
             .width(INPUT_WIDTH),
-            pick_list::pick_list(
-                TimelockUnit::ALL.as_slice(),
-                Some(modal_state.timelock_unit),
-                Msg::TemplateUpdateTimelockUnit,
-            )
+            pick_list::pick_list(timelock_options, Some(selected_timelock_unit), |option| {
+                Msg::TemplateUpdateTimelockUnit(option.unit)
+            },)
             .width(100.0)
         ]
         .spacing(HSpacing::M)
@@ -233,10 +236,10 @@ pub fn edit_path_modal_view<'a>(
         let label = warning
             .map(|w| text::new::small_caption(w).style(theme::text::warning))
             .or_else(|| {
-                let hint = format!(
-                    "Max: {} {}",
-                    modal_state.timelock_unit.max_value(),
-                    modal_state.timelock_unit
+                let hint = t!(
+                    "business-max-unit-label",
+                    max = modal_state.timelock_unit.max_value(),
+                    unit = timelock_unit_label(modal_state.timelock_unit)
                 );
                 Some(text::new::small_caption(hint).style(theme::text::secondary))
             });
@@ -280,4 +283,32 @@ pub fn edit_path_modal_view<'a>(
         ModalWidth::M,
         body,
     )
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct TimelockUnitOption {
+    unit: TimelockUnit,
+    label: String,
+}
+
+impl fmt::Display for TimelockUnitOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
+fn timelock_unit_options() -> [TimelockUnitOption; 4] {
+    TimelockUnit::ALL.map(|unit| TimelockUnitOption {
+        label: timelock_unit_label(unit),
+        unit,
+    })
+}
+
+fn timelock_unit_label(unit: TimelockUnit) -> String {
+    match unit {
+        TimelockUnit::Blocks => t!("common-blocks"),
+        TimelockUnit::Hours => t!("business-timelock-unit-hours"),
+        TimelockUnit::Days => t!("business-timelock-unit-days"),
+        TimelockUnit::Months => t!("business-timelock-unit-months"),
+    }
 }

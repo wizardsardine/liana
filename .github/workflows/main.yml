@@ -22,8 +22,22 @@ jobs:
           sudo apt-get install --allow-downgrades libudev-dev pkg-config libvulkan-dev &&
           cargo clippy --all-features --all-targets -- -D warnings
 
+  lint-i18n:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.88.0
+          override: true
+          profile: minimal
+      - name: Check locale catalogs are synced from English
+        run: cargo run -p liana-i18n-toolbox -- sync --verify
+      - name: Validate i18n ids used in Rust sources
+        run: cargo run -p liana-i18n-toolbox -- check-ids
+
   unit_tests:
-    needs: linter
+    needs: [linter, lint-i18n]
     strategy:
       matrix:
         toolchain:

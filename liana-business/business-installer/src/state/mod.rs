@@ -181,11 +181,12 @@ impl State {
         let content: Element<'_, Message> = if let Some(error) = &self.connection_error {
             use iced::widget::Column;
             use iced::Length;
+            use liana_i18n::t;
             use liana_ui::component::notification;
 
             Column::new()
                 .push(
-                    notification::warning("Connection failed".to_string(), error.clone())
+                    notification::warning(t!("common-connection-failed"), error.clone())
                         .width(Length::Fill),
                 )
                 .push(view_content)

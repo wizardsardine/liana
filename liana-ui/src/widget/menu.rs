@@ -15,6 +15,7 @@ use iced_core::touch;
 use iced_core::widget::Tree;
 use iced_core::{Element, Shell, Widget};
 use iced_core::{Length, Padding, Pixels, Point, Rectangle, Size, Vector};
+use liana_i18n::t;
 
 #[derive(Clone)]
 pub enum Command {
@@ -25,8 +26,8 @@ pub enum Command {
 impl Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Command::Copy => write!(f, "Copy"),
-            Command::Paste => write!(f, "Paste"),
+            Command::Copy => write!(f, "{}", t!("common-copy")),
+            Command::Paste => write!(f, "{}", t!("common-paste")),
         }
     }
 }

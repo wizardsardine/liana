@@ -39,11 +39,8 @@ use crate::{
         bitcoind::{internal_bitcoind_debug_log_path, Bitcoind, StartInternalBitcoindError},
         NodeType,
     },
+    t,
 };
-
-const SYNCING_PROGRESS_1: &str = "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster.";
-const SYNCING_PROGRESS_2: &str = "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance.";
-const SYNCING_PROGRESS_3: &str = "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance.";
 
 type Lianad = client::Lianad<client::jsonrpc::JsonRPCClient>;
 type StartedResult = Result<
@@ -472,14 +469,14 @@ pub fn view(step: &Step) -> Element<'_, ViewMessage> {
             Column::new()
                 .width(Length::Fill)
                 .push(ProgressBar::new(0.0..=1.0, 0.0).length(Length::Fill))
-                .push(text("Starting daemon...")),
+                .push(text(t!("loader-starting-daemon"))),
         ),
         Step::Connecting => cover(
             None,
             Column::new()
                 .width(Length::Fill)
                 .push(ProgressBar::new(0.0..=1.0, 0.0).length(Length::Fill))
-                .push(text("Connecting to daemon...")),
+                .push(text(t!("loader-connecting-daemon"))),
         ),
         Step::Syncing {
             progress,
@@ -490,19 +487,22 @@ pub fn view(step: &Step) -> Element<'_, ViewMessage> {
             Column::new()
                 .width(Length::Fill)
                 .spacing(5)
-                .push(text(format!("Progress {:.2}%", 100.0 * *progress)))
+                .push(text(t!(
+                    "loader-progress",
+                    progress = format!("{:.2}", 100.0 * *progress)
+                )))
                 .push(ProgressBar::new(0.0..=1.0, *progress as f32).length(Length::Fill))
                 .push(text(if *progress > 0.98 {
-                    SYNCING_PROGRESS_3
+                    t!("loader-sync-progress-3")
                 } else if *progress > 0.9 {
-                    SYNCING_PROGRESS_2
+                    t!("loader-sync-progress-2")
                 } else {
-                    SYNCING_PROGRESS_1
+                    t!("loader-sync-progress-1")
                 }))
                 .push(p2_regular(bitcoind_logs).style(theme::text::secondary)),
         ),
         Step::Error(error) => cover(
-            Some(("Error while starting the internal daemon", error)),
+            Some((t!("loader-internal-daemon-error"), error)),
             Column::new()
                 .spacing(20)
                 .width(Length::Fill)
@@ -513,21 +513,21 @@ pub fn view(step: &Step) -> Element<'_, ViewMessage> {
                         error.as_ref(),
                         Error::Daemon(DaemonError::Start(StartupError::Bitcoind(_)))
                     ) {
-                        text("Liana failed to start, please check if bitcoind is running")
+                        text(t!("loader-failed-bitcoind"))
                     } else {
-                        text("Liana failed to start")
+                        text(t!("loader-failed"))
                     },
                 )
                 .push(
                     Row::new()
                         .spacing(10)
                         .push(
-                            button::secondary(None, "Back")
+                            button::secondary(None, t!("btn-back"))
                                 .width(Length::Fixed(200.0))
                                 .on_press(ViewMessage::SwitchNetwork),
                         )
                         .push(
-                            button::secondary(None, "Retry")
+                            button::secondary(None, t!("btn-retry"))
                                 .width(Length::Fixed(200.0))
                                 .on_press(ViewMessage::Retry),
                         ),
@@ -537,11 +537,11 @@ pub fn view(step: &Step) -> Element<'_, ViewMessage> {
 }
 
 pub fn cover<'a, T: 'a + Clone, C: Into<Element<'a, T>>>(
-    warn: Option<(&'static str, &Error)>,
+    warn: Option<(String, &Error)>,
     content: C,
 ) -> Element<'a, T> {
     Column::new()
-        .push_maybe(warn.map(|w| notification::warning(w.0.to_string(), w.1.to_string())))
+        .push_maybe(warn.map(|w| notification::warning(w.0, w.1.to_string())))
         .push(
             Container::new(content)
                 .center_x(iced::Length::Fill)

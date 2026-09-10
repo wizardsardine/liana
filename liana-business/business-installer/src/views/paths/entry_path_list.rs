@@ -6,6 +6,7 @@ use crate::{
 };
 use iced::{widget::column, Length};
 use liana_connect::ws_business::{self, BLOCKS_PER_DAY, BLOCKS_PER_HOUR, BLOCKS_PER_MONTH};
+use liana_i18n::t;
 use liana_ui::{
     component::{
         list::{self, EntryPathRole},
@@ -19,30 +20,18 @@ fn format_timelock_human(timelock: &ws_business::Timelock) -> String {
     let blocks = timelock.blocks;
 
     if blocks == 0 {
-        return "No timelock".to_string();
+        return t!("business-no-timelock");
     }
 
     if blocks >= BLOCKS_PER_MONTH {
         let months = blocks / BLOCKS_PER_MONTH;
-        if months == 1 {
-            "After 1 month".to_string()
-        } else {
-            format!("After {months} months")
-        }
+        t!("business-after-months", count = months)
     } else if blocks >= BLOCKS_PER_DAY {
         let days = blocks / BLOCKS_PER_DAY;
-        if days == 1 {
-            "After 1 day".to_string()
-        } else {
-            format!("After {days} days")
-        }
+        t!("business-after-days", count = days)
     } else {
         let hours = blocks / BLOCKS_PER_HOUR;
-        if hours <= 1 {
-            "After 1 hour".to_string()
-        } else {
-            format!("After {hours} hours")
-        }
+        t!("business-after-hours", count = hours.max(1))
     }
 }
 
@@ -60,7 +49,11 @@ fn key_pills<'a>(
 fn summary(path: &ws_business::SpendingPath) -> String {
     let key_count = path.key_ids.len();
     let threshold = usize::min(path.threshold_n as usize, key_count);
-    format!("{threshold} of {key_count} keys required to spend")
+    t!(
+        "business-keys-required-to-spend",
+        threshold = threshold,
+        count = key_count
+    )
 }
 
 fn availability_pill(timelock: Option<&ws_business::Timelock>) -> Element<'static, Msg> {
@@ -72,9 +65,9 @@ fn availability_pill(timelock: Option<&ws_business::Timelock>) -> Element<'stati
 
 fn path_title(is_primary: bool, path_index: Option<usize>) -> String {
     match (is_primary, path_index) {
-        (true, _) => "Primary path".to_string(),
-        (false, Some(index)) => format!("Recovery path {}", index + 1),
-        (false, None) => "Recovery path".to_string(),
+        (true, _) => t!("business-primary-path"),
+        (false, Some(index)) => t!("business-recovery-path-number", number = index + 1),
+        (false, None) => t!("business-recovery-path"),
     }
 }
 

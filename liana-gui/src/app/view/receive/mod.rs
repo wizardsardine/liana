@@ -18,7 +18,7 @@ use liana_ui::{
     widget::*,
 };
 
-use crate::app::menu::Menu;
+use crate::{app::menu::Menu, t};
 
 use super::message::Message;
 
@@ -57,7 +57,7 @@ pub fn receive<'a>(
     let generate = button::btn_generate_address(Some(Message::NextReceiveAddress));
     let header = row![title, generate].align_y(Alignment::Center);
 
-    let description = new::b1("Always generate a new address for each deposit.");
+    let description = new::b1(t!("receive-generate-new-address-help"));
 
     let prev_header = (!prev_addresses.is_empty()).then_some(receive::previous_addresses_header(
         show_prev_addresses,

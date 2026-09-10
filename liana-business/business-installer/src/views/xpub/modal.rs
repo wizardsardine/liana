@@ -9,6 +9,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, UnsupportedReason};
+use liana_i18n::t;
 use liana_ui::{
     component::{
         badge::Tile,
@@ -53,16 +54,14 @@ pub fn xpub_modal_view(state: &State) -> Option<Element<'_, Msg>> {
 
 fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> Element<'a, Msg> {
     let xpub_status: Option<Element<'_, Msg>> = modal_state.current_xpub.is_some().then_some(
-        card::info(
-            "This key already has an xpub. You can replace it by fetching from a device, importing from file, or pasting."
-        )
-        .width(Length::Fill)
-        .into(),
+        card::info(t!("business-xpub-replace-existing-help"))
+            .width(Length::Fill)
+            .into(),
     );
 
     let input_display: Option<Element<'_, Msg>> = (!modal_state.xpub_input.is_empty()).then_some({
         column![
-            text::new::b5_bold("Current xpub").style(theme::text::primary),
+            text::new::b5_bold(t!("business-current-xpub")).style(theme::text::primary),
             xpub_box(&modal_state.xpub_input)
         ]
         .spacing(VSpacing::S)
@@ -72,7 +71,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
     let validation_error = validation_error(modal_state);
 
     let detected_devices = row![
-        text::new::b5_bold("Detected devices").style(theme::text::primary),
+        text::new::b5_bold(t!("business-detected-devices")).style(theme::text::primary),
         Space::fill_width()
     ];
 
@@ -90,7 +89,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
 
     let alias = truncate(&modal_state.key_alias, 25);
     modal_view(
-        Some(format!("Select key source · {alias}")),
+        Some(t!("business-select-key-source", alias = alias)),
         None,
         Some(Msg::XpubCancelModal),
         ModalWidth::L,
@@ -101,7 +100,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
 fn details_view<'a>(modal_state: &'a XpubEntryModalState) -> Element<'a, Msg> {
     let source = modal_state.input_source.as_ref().and_then(source_line);
     let fetching_label: Option<Element<'_, Msg>> = modal_state.processing.then_some({
-        text::new::caption("Fetching from device...")
+        text::new::caption(t!("business-fetching-device"))
             .style(theme::text::secondary)
             .width(Length::Fill)
             .into()
@@ -155,9 +154,12 @@ fn account_picker(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
                 warning: None,
                 valid: true,
             };
-            Container::new(form::Form::new_disabled("Select account", &value).padding(5))
-                .width(ACCOUNT_PICKER_WIDTH)
-                .into()
+            Container::new(
+                form::Form::new_disabled(t!("business-select-account-placeholder"), &value)
+                    .padding(5),
+            )
+            .width(ACCOUNT_PICKER_WIDTH)
+            .into()
         } else {
             modal::account_pick_list(
                 fingerprint,
@@ -172,10 +174,8 @@ fn account_picker(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
     };
 
     let label = row![
-        text::new::b5_bold("Key path account").style(theme::text::primary),
-        tooltip::tooltip(
-            "The account number in this key's derivation path. Pick a different account to derive an independent key from the same device."
-        ),
+        text::new::b5_bold(t!("installer-key-path-account")).style(theme::text::primary),
+        tooltip::tooltip(t!("business-key-path-account-help")),
     ]
     .align_y(Alignment::Center)
     .spacing(HSpacing::S);
@@ -211,8 +211,12 @@ fn source_line(input_source: &XpubInputSource) -> Option<Element<'static, Msg>> 
             kind, fingerprint, ..
         } => Some(
             row![
-                text::new::caption(format!("Fetched from {kind} #{fingerprint}"))
-                    .style(theme::text::secondary),
+                text::new::caption(t!(
+                    "business-fetched-from-device",
+                    kind = kind,
+                    fingerprint = fingerprint
+                ))
+                .style(theme::text::secondary),
                 icon::check_icon().size(13).style(theme::text::success)
             ]
             .spacing(HSpacing::S)
@@ -314,31 +318,30 @@ fn device_title(kind: async_hwi::DeviceKind, version: Option<&async_hwi::Version
 
 fn locked_message(kind: async_hwi::DeviceKind, pairing_code: Option<String>) -> String {
     match kind {
-        async_hwi::DeviceKind::Jade => "This device doesn't support taproot miniscript".to_string(),
+        async_hwi::DeviceKind::Jade => t!("hw-no-taproot-miniscript"),
         _ => pairing_code
-            .map(|code| format!("Pairing code: {code}"))
-            .unwrap_or_else(|| "Please unlock the device".to_string()),
+            .map(|code| t!("decrypt-pairing-code", code = code))
+            .unwrap_or_else(|| t!("device-unlock")),
     }
 }
 
 fn unsupported_message(kind: async_hwi::DeviceKind, reason: &UnsupportedReason) -> String {
     match reason {
         UnsupportedReason::NotPartOfWallet(fingerprint) => {
-            format!("Not part of this wallet (#{fingerprint})")
+            t!("business-not-part-wallet", fingerprint = fingerprint)
         }
-        UnsupportedReason::WrongNetwork => "Wrong network in device settings".to_string(),
+        UnsupportedReason::WrongNetwork => t!("business-wrong-network-device"),
         UnsupportedReason::Version {
             minimal_supported_version,
         } => match kind {
-            async_hwi::DeviceKind::Jade => {
-                "This device doesn't support taproot miniscript".to_string()
-            }
-            _ => format!(
-                "Device version not supported, upgrade to version > {minimal_supported_version}"
+            async_hwi::DeviceKind::Jade => t!("hw-no-taproot-miniscript"),
+            _ => t!(
+                "device-version-unsupported",
+                version = minimal_supported_version
             ),
         },
-        UnsupportedReason::Method(method) => format!("Unsupported method: {method}"),
-        UnsupportedReason::AppIsNotOpen => "Please open the app on device".to_string(),
+        UnsupportedReason::Method(method) => t!("business-unsupported-method", method = method),
+        UnsupportedReason::AppIsNotOpen => t!("device-open-app"),
     }
 }
 
@@ -413,7 +416,7 @@ fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         modal::optional_section(
             // optional_section's flag is "is open" (folded -> right chevron, open -> down).
             !collapsed,
-            "Other options".to_string(),
+            t!("common-other-options"),
             || Msg::XpubToggleOptions,
             || Msg::XpubToggleOptions,
         ),
@@ -422,7 +425,7 @@ fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
     let expanded_content = (!collapsed).then_some({
         let file_button = list::entry_action(
             Tile::Import,
-            "Import extended public key file",
+            t!("business-import-xpub-file"),
             None::<String>,
             Some(list::right_chevron()),
             button::EntryWidth::Standard,
@@ -431,7 +434,7 @@ fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
 
         let paste_entry = list::entry_action(
             Tile::Paste,
-            "Paste an extended public key",
+            t!("decrypt-paste-xpub"),
             None::<String>,
             Some(list::right_chevron()),
             button::EntryWidth::Standard,

@@ -21,6 +21,7 @@ use crate::app::view::dashboard;
 use crate::app::view::message::*;
 use crate::app::view::settings::SettingsMessage;
 use crate::services::fiat::{Currency, ALL_PRICE_SOURCES};
+use crate::t;
 
 pub fn general_section<'a>(
     cache: &'a cache::Cache,
@@ -56,9 +57,9 @@ pub fn fiat_price<'a>(
                 Row::new()
                     .spacing(10)
                     .align_y(Alignment::Center)
-                    .push(text("Fiat price:").bold())
+                    .push(text(t!("settings-fiat-price")).bold())
                     .push(tooltip_custom(
-                        "Fiat price data is provided by third-party services. Availability and accuracy are not guaranteed.",
+                        text(t!("settings-fiat-price-tooltip")),
                         icon::warning_icon().color(color::ORANGE),
                         tooltip::Position::Bottom,
                     ))
@@ -74,7 +75,7 @@ pub fn fiat_price<'a>(
                     Row::new()
                         .spacing(20)
                         .align_y(Alignment::Center)
-                        .push(text("Exchange rate source:").bold())
+                        .push(text(t!("settings-exchange-rate-source")).bold())
                         .push(Space::with_width(Length::Fill))
                         .push(
                             pick_list::pick_list(
@@ -91,7 +92,7 @@ pub fn fiat_price<'a>(
                     Row::new()
                         .spacing(20)
                         .align_y(Alignment::Center)
-                        .push(text("Currency:").bold())
+                        .push(text(t!("settings-currency")).bold())
                         .push(Space::with_width(Length::Fill))
                         .push(
                             pick_list::pick_list(
