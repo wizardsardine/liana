@@ -11,6 +11,7 @@ use crate::{
         address::address as address_view,
         amount::{amount, amount_with_fiat_tooltip, AmountSize},
         button, card,
+        collapse::Collapse,
         panels::{
             home::payment::{FiatPrice, FiatSource, PaymentKind},
             LIST_ENTRY_PADDING,
@@ -18,9 +19,10 @@ use crate::{
         pill,
         text::{legacy, new, truncate},
     },
+    icon,
     spacing::HSpacing,
     theme::{self, Theme},
-    widget::{Container, Element, Row, SpaceExt, Toggler},
+    widget::{Column, Container, Element, Row, SpaceExt, Text, Toggler},
 };
 
 const PSBT_HEIGHT: u32 = 90;
@@ -130,6 +132,30 @@ pub fn list_entry<'a, M: Clone + 'static>(
     let content = row![left, spent].spacing(HSpacing::L).height(PSBT_HEIGHT);
 
     card::list_entry_with_padding(content, msg, LIST_ENTRY_PADDING)
+}
+
+/// Header of a collapsible section, with the chevron telling its state.
+fn section_header<'a, M: 'static>(title: String, chevron: Text<'a>) -> Row<'a, M> {
+    row![legacy::h4_bold(title).width(Length::Fill), chevron].align_y(Alignment::Center)
+}
+
+/// Section of the psbt page folding the given rows under a title.
+pub fn collapsible_section<'a, M: Clone + 'static>(
+    title: String,
+    rows: Vec<Element<'a, M>>,
+) -> Element<'a, M> {
+    let rows = Column::with_children(rows).spacing(10).padding(20);
+
+    let collapse = Collapse::new(
+        section_header(title.clone(), icon::collapse_icon()),
+        section_header(title, icon::collapsed_icon()),
+        rows,
+    )
+    .padding(20);
+
+    Container::new(collapse)
+        .style(theme::card::button_simple)
+        .into()
 }
 
 /// The address line of a change, payment or input row.

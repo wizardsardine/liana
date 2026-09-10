@@ -551,28 +551,20 @@ pub fn inputs_view<'a>(
 ) -> Element<'a, Message> {
     let title = t!("psbt-coins-spent", count = tx.input.len());
 
-    let inputs = tx.input.iter().fold(
-        Column::new().spacing(10).padding(20),
-        |col: Column<'a, Message>, input| {
-            col.push(input_view(
+    let inputs = tx
+        .input
+        .iter()
+        .map(|input| {
+            input_view(
                 &input.previous_output,
                 coins.get(&input.previous_output),
                 labels,
                 labels_editing,
-            ))
-        },
-    );
+            )
+        })
+        .collect();
 
-    let collapse = Collapse::new(
-        collapse_header(title.clone(), icon::collapse_icon()),
-        collapse_header(title, icon::collapsed_icon()),
-        inputs,
-    )
-    .padding(20);
-
-    Container::new(collapse)
-        .style(theme::card::button_simple)
-        .into()
+    psbts::collapsible_section(title, inputs)
 }
 
 pub fn outputs_view<'a>(
