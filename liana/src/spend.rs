@@ -24,6 +24,16 @@ use miniscript::bitcoin::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Lifecycle of a spend transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpendStatus {
+    Pending,
+    Broadcast,
+    Spent,
+    Deprecated,
+}
+
 /// We would never create a transaction with an output worth less than this.
 /// That's 0.5$ at 100_000$ per BTC.
 pub const DUST_OUTPUT_SATS: u64 = 500;

@@ -9,6 +9,7 @@ pub use liana::{
         psbt::Psbt,
         secp256k1, Address, Amount, Network, OutPoint, Transaction, Txid,
     },
+    spend::SpendStatus,
 };
 use liana_ui::component::panels::home::payment::PaymentKind;
 pub use lianad::commands::{
@@ -50,14 +51,6 @@ pub struct SpendTx {
     pub sigs: PartialSpendInfo,
     pub updated_at: Option<u32>,
     pub kind: TransactionKind,
-}
-
-#[derive(PartialOrd, Ord, Debug, Clone, PartialEq, Eq)]
-pub enum SpendStatus {
-    Pending,
-    Broadcast,
-    Spent,
-    Deprecated,
 }
 
 /// Status of a spend transaction as it can be told from the coins it spends alone.
