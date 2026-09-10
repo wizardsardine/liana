@@ -53,74 +53,51 @@ pub fn psbt_view<'a>(
     currently_signing: bool,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
-    let delete_msg = if currently_signing {
-        None
-    } else {
-        Some(Message::Spend(SpendTxMessage::Delete))
+    let recovery = (!tx.sigs.recovery_paths().is_empty()).then_some(pill::recovery());
+    let status = match tx.status {
+        SpendStatus::Deprecated => Some(pill::deprecated()),
+        SpendStatus::Broadcast => Some(pill::unconfirmed()),
+        SpendStatus::Spent => Some(pill::spent()),
+        _ => None,
     };
-    dashboard(
-        &Menu::PSBTs,
-        cache,
-        warning,
-        Column::new()
-            .spacing(20)
-            .push(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .spacing(10)
-                    .push(Container::new(h3("PSBT")).width(Length::Fill))
-                    .push_maybe(if !tx.sigs.recovery_paths().is_empty() {
-                        Some(pill::recovery())
-                    } else {
-                        None
-                    })
-                    .push_maybe(match tx.status {
-                        SpendStatus::Deprecated => Some(pill::deprecated()),
-                        SpendStatus::Broadcast => Some(pill::unconfirmed()),
-                        SpendStatus::Spent => Some(pill::spent()),
-                        _ => None,
-                    }),
-            )
-            .push(spend_header(tx, labels_editing))
-            .push(spend_overview_view(
-                tx,
-                desc_info,
-                key_aliases,
-                currently_signing,
-                saved,
-            ))
-            .push(
-                Column::new()
-                    .spacing(20)
-                    .push(inputs_view(
-                        &tx.coins,
-                        &tx.psbt.unsigned_tx,
-                        &tx.labels,
-                        labels_editing,
-                    ))
-                    .push(outputs_view(
-                        &tx.psbt.unsigned_tx,
-                        network,
-                        &tx.change_indexes,
-                        &tx.labels,
-                        labels_editing,
-                        tx.is_single_payment().is_some(),
-                        false,
-                    )),
-            )
-            .push(if saved {
-                row![btn_delete(delete_msg)].width(Length::Fill)
-            } else {
-                Row::new()
-                    .push(Space::with_width(Length::Fill))
-                    .push(btn_save(
-                        (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save)),
-                        false,
-                    ))
-                    .width(Length::Fill)
-            })
-            .push(Space::with_height(10)),
-    )
+    let header = row![
+        Container::new(h3("PSBT")).width(Length::Fill),
+        recovery,
+        status
+    ]
+    .align_y(Alignment::Center)
+    .spacing(10);
+
+    let inputs = inputs_view(&tx.coins, &tx.psbt.unsigned_tx, &tx.labels, labels_editing);
+    let outputs = outputs_view(
+        &tx.psbt.unsigned_tx,
+        network,
+        &tx.change_indexes,
+        &tx.labels,
+        labels_editing,
+        tx.is_single_payment().is_some(),
+        false,
+    );
+
+    let action = if saved {
+        let delete_msg = (!currently_signing).then_some(Message::Spend(SpendTxMessage::Delete));
+        row![btn_delete(delete_msg)].width(Length::Fill)
+    } else {
+        let save_msg = (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save));
+        row![Space::fill_width(), btn_save(save_msg, false)].width(Length::Fill)
+    };
+
+    let content = column![
+        header,
+        spend_header(tx, labels_editing),
+        spend_overview_view(tx, desc_info, key_aliases, currently_signing, saved),
+        column![inputs, outputs].spacing(20),
+        action,
+        Space::with_height(10)
+    ]
+    .spacing(20);
+
+    dashboard(&Menu::PSBTs, cache, warning, content)
 }
 
 pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Message> {
