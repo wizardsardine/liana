@@ -1,3 +1,4 @@
+use iced::widget::canvas::LineDash;
 use iced::Color;
 
 use crate::{
@@ -824,6 +825,45 @@ impl Palette {
             spinner: Spinner {
                 track: color::LIGHT_BG_TERTIARY,
                 arc: color::BUSINESS_BLUE,
+            },
+            timeline: Timeline {
+                primary: TimelineTone {
+                    ink: color::BUSINESS_BLUE_DARK,
+                    fill: color::BUSINESS_LIGHT_BLUE,
+                    rim: INPUT_BORDER,
+                },
+                recovery: TimelineTone {
+                    ink: color::AMBER,
+                    fill: AMBER_TINT_LIGHT,
+                    rim: AMBER_BORDER_LIGHT,
+                },
+                inheritance: TimelineTone {
+                    ink: color::LIGHT_BORDER_STRONG,
+                    fill: color::LIGHT_BG_SECONDARY,
+                    rim: color::LIGHT_BORDER,
+                },
+                spendable: TimelineTone {
+                    ink: color::DARK_GREEN,
+                    fill: GREEN_TINT_LIGHT,
+                    rim: GREEN_BORDER_LIGHT,
+                },
+                locked: TimelineTone {
+                    ink: color::DARK_TEXT_TERTIARY,
+                    fill: color::LIGHT_BG_SECONDARY,
+                    rim: color::LIGHT_BORDER,
+                },
+                rail_spend: TimelineRail {
+                    color: color::DARK_GREEN,
+                    dash: None,
+                },
+                rail_locked: TimelineRail {
+                    color: color::LIGHT_BORDER_STRONG,
+                    dash: Some(LineDash {
+                        segments: &[3.0, 6.0],
+                        offset: 0,
+                    }),
+                },
+                badge_ink: color::WHITE,
             },
         }
     }

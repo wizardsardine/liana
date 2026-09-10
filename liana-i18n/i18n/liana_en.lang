@@ -1237,6 +1237,29 @@ installer-switch-account-help
 installer-taproot-supported-version
 => "Taproot is only supported by Liana version 5.0 and above";;
 
+installer-template-custom-primary => "Primary keys"
+
+installer-template-custom-recovery => "Recovery keys"
+
+installer-template-event-receipt => "Receipt of funds"
+
+installer-template-event-timelock => "After some time* of wallet inactivity"
+
+installer-template-footnote
+=> "*The time range (timelock) for the activation of keys can be configured in the next step.";;
+
+installer-template-multisig-primary => "2-of-2 multisig"
+
+installer-template-multisig-recovery => "2-of-3 multisig"
+
+installer-template-policy-primary => "Primary spending policy"
+
+installer-template-policy-recovery => "Recovery spending policy"
+
+installer-template-state-locked => "Can't spend"
+
+installer-template-state-spend => "Can spend"
+
 installer-the-descriptor => "The descriptor"
 
 installer-the-descriptor-label => "The descriptor:"

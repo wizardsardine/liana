@@ -19,6 +19,7 @@ pub mod scrollable;
 pub mod spinner;
 pub mod tab;
 pub mod text;
+pub mod timeline;
 pub mod toast;
 pub mod tooltip;
 

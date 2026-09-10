@@ -1,10 +1,19 @@
 use iced::{
     widget::{column, row, Space},
-    Alignment, Length,
+    Alignment,
 };
 use liana::miniscript::bitcoin::Network;
 
-use liana_ui::{color, component::text::new, image, spacing::VSpacing, theme, widget::*};
+use liana_ui::{
+    color,
+    component::{
+        text::new,
+        timeline::{spending_timeline, Template},
+    },
+    spacing::VSpacing,
+    theme,
+    widget::*,
+};
 
 use crate::installer::{
     descriptor::{Path, PathSequence},
@@ -39,7 +48,7 @@ pub fn inheritance_template_description(
 
     let explanation = caption_block(t!("installer-inheritance-description-2"));
 
-    let diagram = image::inheritance_template_description().width(Length::Fill);
+    let diagram = spending_timeline(Template::Inheritance);
 
     let content = column![
         title,

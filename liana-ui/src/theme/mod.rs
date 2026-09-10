@@ -90,7 +90,7 @@ pub enum ThemeVariant {
     Business,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone)]
 pub struct Theme {
     pub colors: palette::Palette,
     pub button_border_width: f32,

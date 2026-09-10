@@ -1,6 +1,6 @@
 use iced::{
     widget::{column, row, Space},
-    Alignment, Length,
+    Alignment,
 };
 use liana::miniscript::bitcoin::Network;
 
@@ -9,8 +9,8 @@ use liana_ui::{
     component::{
         button::{btn_add_recovery_option, btn_add_safety_net},
         text::new,
+        timeline::{spending_timeline, Template},
     },
-    image,
     spacing::{HSpacing, VSpacing},
     widget::*,
 };
@@ -41,7 +41,7 @@ pub fn custom_template_description(
 
     let explanation = caption_block(t!("installer-custom-template-description-2"));
 
-    let diagram = image::custom_template_description().width(Length::Fill);
+    let diagram = spending_timeline(Template::Custom);
 
     let content = column![
         title,
