@@ -262,50 +262,47 @@ pub fn spend_header<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
     let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
-    Column::new()
-        .spacing(20)
-        .push(if let Some(outpoint) = tx.is_single_payment() {
-            let outpoint = outpoint.to_string();
-            if let Some(label) = labels_editing.get(&outpoint) {
-                label::label_editing(vec![outpoint.clone(), txid.clone()], label, H3_SIZE)
-            } else {
-                label::label_editable(
-                    vec![outpoint.clone(), txid.clone()],
-                    tx.labels.get(&outpoint),
-                    H3_SIZE,
-                )
-            }
-        } else if let Some(label) = labels_editing.get(&txid) {
-            label::label_editing(vec![txid.clone()], label, H3_SIZE)
+
+    let label = if let Some(outpoint) = tx.is_single_payment() {
+        let outpoint = outpoint.to_string();
+        let labelled = vec![outpoint.clone(), txid.clone()];
+        if let Some(label) = labels_editing.get(&outpoint) {
+            label::label_editing(labelled, label, H3_SIZE)
         } else {
-            label::label_editable(vec![txid.clone()], tx.labels.get(&txid), H3_SIZE)
-        })
-        .push(
-            Column::new()
-                .push(if tx.is_send_to_self() {
-                    Container::new(h1(t!("common-self-transfer")))
-                } else {
-                    Container::new(amount_with_font(&tx.spend_amount, H1_SPEC))
-                })
-                .push(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .push(h3(t!("transactions-miner-fee")).style(theme::text::secondary))
-                        .push_maybe(if tx.fee_amount.is_none() {
-                            Some(text(t!("psbt-missing-inputs")))
-                        } else {
-                            None
-                        })
-                        .push_maybe(tx.fee_amount.map(|fee| amount_with_font(&fee, H3_SPEC)))
-                        .push(text(" ").size(H3_SIZE))
-                        .push_maybe(tx.min_feerate_vb().map(|rate| {
-                            text(t!("common-approx-feerate-value", rate = rate))
-                                .size(H4_SIZE)
-                                .style(theme::text::secondary)
-                        })),
-                ),
-        )
-        .into()
+            label::label_editable(labelled, tx.labels.get(&outpoint), H3_SIZE)
+        }
+    } else if let Some(label) = labels_editing.get(&txid) {
+        label::label_editing(vec![txid.clone()], label, H3_SIZE)
+    } else {
+        label::label_editable(vec![txid.clone()], tx.labels.get(&txid), H3_SIZE)
+    };
+
+    let spent = if tx.is_send_to_self() {
+        Container::new(h1(t!("common-self-transfer")))
+    } else {
+        Container::new(amount_with_font(&tx.spend_amount, H1_SPEC))
+    };
+
+    let missing_inputs = tx
+        .fee_amount
+        .is_none()
+        .then_some(text(t!("psbt-missing-inputs")));
+    let fee = tx.fee_amount.map(|fee| amount_with_font(&fee, H3_SPEC));
+    let feerate = tx.min_feerate_vb().map(|rate| {
+        text(t!("common-approx-feerate-value", rate = rate))
+            .size(H4_SIZE)
+            .style(theme::text::secondary)
+    });
+    let fees = row![
+        h3(t!("transactions-miner-fee")).style(theme::text::secondary),
+        missing_inputs,
+        fee,
+        text(" ").size(H3_SIZE),
+        feerate
+    ]
+    .align_y(Alignment::Center);
+
+    column![label, column![spent, fees]].spacing(20).into()
 }
 
 pub fn spend_overview_view<'a>(
