@@ -26,7 +26,7 @@ use liana_ui::{
         modal::{self, modal_view, ModalWidth},
         panels::psbts,
         pill, scrollable,
-        text::{self, *},
+        text::{self, new, *},
     },
     icon, theme,
     widget::*,
@@ -781,52 +781,35 @@ fn payment_view<'a>(
         label::label_non_editable(change_labels, None, text::P1_SIZE)
     };
 
-    Column::new()
+    let header = row![
+        Container::new(label_widget).width(Length::Fill),
+        amount(&output.value)
+    ]
+    .spacing(5)
+    .align_y(Alignment::Center);
+
+    let address = addr.map(|addr| {
+        let title = new::b5_bold(t!("common-address-label")).style(theme::text::secondary);
+        let copy = button::btn_copy(Some(Message::Clipboard(addr.clone())));
+        let address = row![title, address_view(addr.clone()), copy]
+            .align_y(Alignment::Center)
+            .width(Length::Fill)
+            .spacing(5);
+
+        let address_label = labels.get(&addr).map(|label| {
+            let title = new::b5_bold(t!("coins-address-label")).style(theme::text::secondary);
+            row![title, p2_regular(label).style(theme::text::secondary)]
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+                .spacing(5)
+        });
+
+        column![address, address_label]
+    });
+
+    column![header, address]
         .width(Length::Fill)
         .spacing(5)
-        .push(
-            Row::new()
-                .spacing(5)
-                .align_y(Alignment::Center)
-                .push(Container::new(label_widget).width(Length::Fill))
-                .push(amount(&output.value)),
-        )
-        .push_maybe(addr.map(|addr| {
-            Column::new()
-                .push(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill)
-                        .push(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .width(Length::Fill)
-                                .spacing(5)
-                                .push(
-                                    p1_bold(t!("common-address-label"))
-                                        .style(theme::text::secondary),
-                                )
-                                .push(address_view(addr.clone()))
-                                .push(button::btn_copy(Some(Message::Clipboard(addr.clone())))),
-                        ),
-                )
-                .push_maybe(labels.get(&addr).map(|label| {
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill)
-                        .push(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .width(Length::Fill)
-                                .spacing(5)
-                                .push(
-                                    p1_bold(t!("coins-address-label"))
-                                        .style(theme::text::secondary),
-                                )
-                                .push(p2_regular(label).style(theme::text::secondary)),
-                        )
-                }))
-        }))
         .into()
 }
 
