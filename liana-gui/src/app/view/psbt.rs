@@ -516,31 +516,34 @@ pub fn sign_action<'a>(
 ) -> Element<'a, Message> {
     let title = t!("psbt-select-signing-device");
 
-    let mut signers = vec![];
-    if hws.is_empty() {
-        signers.push(modal::modal_no_devices_placeholder());
+    let mut signers: Vec<Element<'a, Message>> = if hws.is_empty() {
+        vec![modal::modal_no_devices_placeholder()]
     } else {
-        hws.iter().enumerate().for_each(|(i, hw)| {
-            let (signed, signing, can_sign) = hw.fingerprint().map_or((false, false, false), |f| {
-                (
-                    signed.contains(&f),
-                    signing.contains(&f),
-                    descriptor.contains_fingerprint_in_path(f, recovery_timelock),
+        hws.iter()
+            .enumerate()
+            .map(|(i, hw)| {
+                let (signed, signing, can_sign) =
+                    hw.fingerprint().map_or((false, false, false), |f| {
+                        (
+                            signed.contains(&f),
+                            signing.contains(&f),
+                            descriptor.contains_fingerprint_in_path(f, recovery_timelock),
+                        )
+                    });
+                device_list_entry(
+                    hw,
+                    HwRowMode::Signing {
+                        signed,
+                        signing,
+                        can_sign,
+                    },
+                    move || Message::SelectHardwareWallet(i),
                 )
-            });
-            signers.push(device_list_entry(
-                hw,
-                HwRowMode::Signing {
-                    signed,
-                    signing,
-                    can_sign,
-                },
-                move || Message::SelectHardwareWallet(i),
-            ))
-        });
-    }
+            })
+            .collect()
+    };
 
-    if let Some(hot_signer) = signer.map(|fingerprint| {
+    signers.extend(signer.map(|fingerprint| {
         let can_sign = descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);
         let select_msg = can_sign.then_some(Message::Spend(SpendTxMessage::SelectHotSigner));
         let fp = Some(format!("#{fingerprint}"));
@@ -552,21 +555,21 @@ pub fn sign_action<'a>(
         } else {
             modal::device_entry(fp, None::<&str>, alias, DeviceStatus::None, select_msg)
         }
-    }) {
-        signers.push(hot_signer);
-    }
+    }));
 
-    let modal_content = Column::from_vec(signers)
+    let signers = Column::from_vec(signers)
         .align_x(Alignment::Center)
         .spacing(10)
         .width(Length::Fill);
 
-    let width = ModalWidth::L;
-    let content = modal_view(Some(title), None, None, width, modal_content);
-
-    let width = width as u32 + 50;
+    let modal_width = ModalWidth::L;
+    let content = modal_view(Some(title), None, None, modal_width, signers);
     let warning = warning.map(|w| warn(Some(w)));
-    column![warning, content].spacing(10).width(width).into()
+
+    column![warning, content]
+        .spacing(10)
+        .width(modal_width as u32 + 50)
+        .into()
 }
 
 pub fn sign_action_toasts<'a>(
