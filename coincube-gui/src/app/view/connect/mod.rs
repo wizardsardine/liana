@@ -557,6 +557,31 @@ fn plan_tier_color(tier: &PlanTier) -> iced::Color {
     }
 }
 
+/// One-line plan summary shown under the price on each plan card.
+///
+/// `/connect/features` carries no description field (the plan wire shape is
+/// `name` + `price` + `features[]` + `entitlements`), so this copy lives here.
+/// Keep it aligned with the entitlement matrix in
+/// `coincube-api/documentation/PRICING_AND_TIERS.md`: Pro adds cube/key
+/// capacity, Duress and Connect-enforced policies; Estate adds inheritance
+/// escrow, duress alerts and collaborative keyholder invitations.
+fn plan_tagline(tier: &PlanTier) -> &'static str {
+    match tier {
+        PlanTier::Free => {
+            "The essentials to create and recover your Cubes, with Esplora access \
+             and a Lightning address."
+        }
+        PlanTier::Pro => {
+            "More Cubes per network, Duress protection, and Connect-enforced \
+             policies for greater control."
+        }
+        PlanTier::Estate => {
+            "Maximum Cube capacity, inheritance escrow, and collaborative \
+             multi-sig keyholder invitations."
+        }
+    }
+}
+
 // ── Renewal reminder / expired prompt banner (D1 / D3) ──────────────────────
 
 /// Pre-expiry renewal reminder (D1) or, for a lapsed plan, an expired
@@ -898,7 +923,9 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         name: String,
         tier: PlanTier,
         features: Vec<String>,
-        price_label: String,
+        /// USD amount for the selected cycle; `None` for the unpriced Free
+        /// tier (the API emits `null`, not `$0`).
+        price_amount: Option<u32>,
     }
 
     let cards: Vec<PlanCardData> = state
@@ -915,13 +942,10 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                         "estate" | "legacy" => PlanTier::Estate,
                         _ => return None,
                     };
-                    let price_label = match &info.price {
-                        Some(p) => match cycle {
-                            BillingCycle::Monthly => format!("${}/mo", p.monthly),
-                            BillingCycle::Annual => format!("${}/yr", p.annual),
-                        },
-                        None => "Free".to_string(),
-                    };
+                    let price_amount = info.price.as_ref().map(|p| match cycle {
+                        BillingCycle::Monthly => p.monthly,
+                        BillingCycle::Annual => p.annual,
+                    });
                     // Render the server's feature bullets verbatim — the
                     // `/connect/features` list is the single source of truth
                     // (including the per-network cube count), so the desktop
@@ -930,7 +954,7 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                         name: tier.to_string(),
                         tier,
                         features: info.features.clone(),
-                        price_label,
+                        price_amount,
                     })
                 })
                 .collect()
@@ -1021,6 +1045,15 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         .push(cycle_toggle)
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
 
+    // Plan cards sit side by side; each fills the row's height so the
+    // three columns stay flush regardless of bullet count.
+    let mut cards_row = Row::new().spacing(12).width(Length::Fill);
+
+    let price_suffix = match cycle {
+        BillingCycle::Monthly => "/month",
+        BillingCycle::Annual => "/year",
+    };
+
     for card in cards {
         // Paid tiers are "current" only when both tier *and* cycle match the
         // user's actual plan. Free tier has no cycle, so tier alone suffices.
@@ -1030,20 +1063,94 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                 None => true,
             };
         let is_upgrade = tier_rank(&card.tier) > tier_rank(current_tier);
+        let is_estate = card.tier == PlanTier::Estate;
         let badge_color = plan_tier_color(&card.tier);
 
-        let mut card_col = Column::new()
+        // Header: tier name, plus a "Best value" pill on Estate.
+        let mut header = Row::new()
+            .push(text::h4_bold(card.name).color(badge_color))
+            .push(iced::widget::Space::new().width(Length::Fill))
+            .align_y(Alignment::Center);
+        if is_estate {
+            header = header.push(
+                container(text::caption("BEST VALUE").color(color::LIGHT_BLUE))
+                    .padding([3, 8])
+                    .style(|_t| container::Style {
+                        background: Some(iced::Background::Color(iced::Color {
+                            a: 0.12,
+                            ..color::LIGHT_BLUE
+                        })),
+                        border: iced::Border {
+                            color: iced::Color {
+                                a: 0.4,
+                                ..color::LIGHT_BLUE
+                            },
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                        ..Default::default()
+                    }),
+            );
+        }
+
+        // Price: large amount with the cycle suffix on the baseline.
+        let amount = format!("${}", card.price_amount.unwrap_or(0));
+        let price_row = Row::new()
+            .push(text::h1(amount).style(theme::text::primary))
+            .push(iced::widget::Space::new().width(Length::Fixed(4.0)))
             .push(
-                Row::new()
-                    .push(text::p1_bold(card.name).color(badge_color))
-                    .push(iced::widget::Space::new().width(Length::Fill))
-                    .push(text::p1_regular(card.price_label).color(color::GREY_3)),
+                container(text::p1_regular(price_suffix).color(color::GREY_3))
+                    .padding(iced::Padding::default().bottom(8)),
             )
-            .push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+            .align_y(Alignment::End);
+
+        let cta = if is_current {
+            button::secondary(None, "Current plan").width(Length::Fill)
+        } else if is_upgrade && purchasing_enabled {
+            let label = match &card.tier {
+                PlanTier::Pro => "Upgrade to Pro",
+                PlanTier::Estate => "Upgrade to Estate",
+                _ => "Upgrade",
+            };
+            button::primary(None, label)
+                .on_press(ConnectAccountMessage::StartCheckout(card.tier))
+                .width(Length::Fill)
+        } else if is_upgrade {
+            // Purchasing closed (promo window) — show the tier without a
+            // checkout CTA (PLAN-estate-promo PR2). Non-pressable, like
+            // the other informational buttons here.
+            button::secondary(None, "Unavailable").width(Length::Fill)
+        } else {
+            // Downgrade or Free — no action
+            button::secondary(None, "—").width(Length::Fill)
+        };
+
+        let mut card_col = Column::new()
+            .push(header)
+            .push(iced::widget::Space::new().height(Length::Fixed(14.0)))
+            .push(price_row)
+            .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+            .push(
+                text::p2_regular(plan_tagline(&card.tier))
+                    .color(color::GREY_2)
+                    .width(Length::Fill),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
+            .push(cta)
+            .push(iced::widget::Space::new().height(Length::Fixed(18.0)));
 
         for feature in card.features {
-            card_col =
-                card_col.push(text::p2_regular(format!("• {}", feature)).color(color::GREY_3));
+            card_col = card_col.push(
+                Row::new()
+                    .push(check_circle_icon().size(14).color(badge_color))
+                    .push(iced::widget::Space::new().width(Length::Fixed(6.0)))
+                    .push(
+                        text::p2_regular(feature)
+                            .color(color::GREY_2)
+                            .width(Length::Fill),
+                    )
+                    .align_y(Alignment::Start),
+            );
         }
 
         // Expiry line on the user's current paid plan card.
@@ -1055,57 +1162,41 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                     renewal
                 };
                 card_col = card_col
-                    .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+                    .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
                     .push(
                         text::p2_regular(format!("Expires on {}", date_short)).color(color::GREY_3),
                     );
             }
         }
 
-        card_col = card_col
-            .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-            .push(if is_current {
-                button::secondary(None, "Current Plan").width(Length::Fill)
-            } else if is_upgrade && purchasing_enabled {
-                let label = match &card.tier {
-                    PlanTier::Pro => "Upgrade to Pro",
-                    PlanTier::Estate => "Upgrade to Estate",
-                    _ => "Upgrade",
-                };
-                button::primary(None, label)
-                    .on_press(ConnectAccountMessage::StartCheckout(card.tier))
-                    .width(Length::Fill)
-            } else if is_upgrade {
-                // Purchasing closed (promo window) — show the tier without a
-                // checkout CTA (PLAN-estate-promo PR2). Non-pressable, like
-                // the other informational buttons here.
-                button::secondary(None, "Unavailable").width(Length::Fill)
-            } else {
-                // Downgrade or Free — no action
-                button::secondary(None, "—").width(Length::Fill)
-            })
-            .padding(16)
-            .spacing(2);
-
-        col = col.push(
-            container(card_col)
+        cards_row = cards_row.push(
+            container(card_col.padding(20).spacing(8))
                 .style(move |t| container::Style {
                     background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                     border: iced::Border {
                         color: if is_current {
                             badge_color
+                        } else if is_estate {
+                            iced::Color {
+                                a: 0.45,
+                                ..color::LIGHT_BLUE
+                            }
                         } else {
                             t.colors.cards.simple.border.unwrap_or(color::GREY_5)
                         },
-                        width: if is_current { 1.0 } else { 0.2 },
+                        width: if is_current || is_estate { 1.0 } else { 0.2 },
                         radius: 16.0.into(),
                     },
                     ..Default::default()
                 })
-                .width(Length::Fill),
+                .width(Length::FillPortion(1))
+                .height(Length::Fill),
         );
-        col = col.push(iced::widget::Space::new().height(Length::Fixed(10.0)));
     }
+
+    col = col
+        .push(cards_row)
+        .push(iced::widget::Space::new().height(Length::Fixed(10.0)));
 
     // Promo / referral code field (server-driven redemption, v2).
     col = col
