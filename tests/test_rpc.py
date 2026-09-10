@@ -861,8 +861,10 @@ def test_list_spend(lianad, bitcoind):
     assert len(list_res) == 2
     first_psbt = next(entry for entry in list_res if entry["psbt"] == res["psbt"])
     assert time_before_update <= first_psbt["updated_at"] <= int(time.time())
+    assert first_psbt["status"] == "broadcastable"
     second_psbt = next(entry for entry in list_res if entry["psbt"] == res_b["psbt"])
     assert time_before_update <= second_psbt["updated_at"] <= int(time.time())
+    assert second_psbt["status"] == "broadcastable"
 
     # If we delete the first one, we'll get only the second one.
     first_psbt = PSBT.from_base64(res["psbt"])
@@ -876,6 +878,59 @@ def test_list_spend(lianad, bitcoind):
     lianad.rpc.delspendtx(second_psbt.tx.txid().hex())
     list_res = lianad.rpc.listspendtxs()["spend_txs"]
     assert len(list_res) == 0
+
+
+def test_list_spend_status(lianad, bitcoind):
+    """The status of a stored spend follows the transaction through its lifecycle."""
+
+    def status(txid):
+        entries = lianad.rpc.listspendtxs(txids=[txid])["spend_txs"]
+        assert len(entries) == 1
+        return entries[0]["status"]
+
+    # Get a single confirmed coin to spend twice.
+    addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 0.01)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 1)
+    outpoints = [c["outpoint"] for c in lianad.rpc.listcoins(["confirmed"])["coins"]]
+
+    # Create both spends of the coin while it is unspent: once one of them is broadcast
+    # the daemon refuses to create another spend of the same coin.
+    first_res = lianad.rpc.createspend(
+        {bitcoind.rpc.getnewaddress(): 500_000}, outpoints, 1
+    )
+    first_psbt = PSBT.from_base64(first_res["psbt"])
+    first_txid = first_psbt.tx.txid().hex()
+    second_res = lianad.rpc.createspend(
+        {bitcoind.rpc.getnewaddress(): 400_000}, outpoints, 5
+    )
+    second_psbt = PSBT.from_base64(second_res["psbt"])
+    second_txid = second_psbt.tx.txid().hex()
+
+    # A stored spend that nothing conflicts with may be broadcast.
+    lianad.rpc.updatespend(first_res["psbt"])
+    assert status(first_txid) == "broadcastable"
+
+    # Once in the mempool it is broadcast.
+    assert sign_and_broadcast_psbt(lianad, first_psbt) == first_txid
+    assert status(first_txid) == "broadcast"
+
+    # The second spend pays a higher feerate, so it may still be broadcast: it can
+    # replace the first one.
+    lianad.rpc.updatespend(second_res["psbt"])
+    assert status(second_txid) == "broadcastable"
+    assert status(first_txid) == "broadcast"
+
+    # Broadcasting it evicts the first one, which pays too little to get back in.
+    assert sign_and_broadcast_psbt(lianad, second_psbt) == second_txid
+    assert status(second_txid) == "broadcast"
+    assert status(first_txid) == "deprecated"
+
+    # Mining the replacement makes it spent, the replaced one stays deprecated.
+    bitcoind.generate_block(1, wait_for_mempool=second_txid)
+    wait_for(lambda: status(second_txid) == "spent")
+    assert status(first_txid) == "deprecated"
 
 
 def test_update_spend(lianad, bitcoind):

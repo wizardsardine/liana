@@ -28,9 +28,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SpendStatus {
-    Pending,
+    /// Neither in the chain nor in the mempool, and nothing prevents it from getting there.
+    Broadcastable,
+    /// In the mempool.
     Broadcast,
+    /// Confirmed in a block.
     Spent,
+    /// It can not be included in the chain anymore: one of its coins is gone or was spent by a
+    /// transaction that confirmed, or it does not pay enough to replace the transaction currently
+    /// spending its coins in the mempool.
     Deprecated,
 }
 

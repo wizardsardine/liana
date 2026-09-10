@@ -53,14 +53,15 @@ pub struct SpendTx {
     pub kind: TransactionKind,
 }
 
-/// Status of a spend transaction as it can be told from the coins it spends alone.
+/// Status of a spend transaction as it can be told from the coins it spends alone, for the
+/// transactions the daemon did not give us a status for.
 pub fn spend_status_from_coins(psbt: &Psbt, coins: &[Coin]) -> SpendStatus {
     let txid = psbt.unsigned_tx.compute_txid();
     // One input coin is missing, the psbt is deprecated for now.
     if coins.len() != psbt.inputs.len() {
         return SpendStatus::Deprecated;
     }
-    let mut status = SpendStatus::Pending;
+    let mut status = SpendStatus::Broadcastable;
     for coin in coins {
         if let Some(info) = &coin.spend_info {
             if info.txid == txid {
@@ -71,9 +72,8 @@ pub fn spend_status_from_coins(psbt: &Psbt, coins: &[Coin]) -> SpendStatus {
                 }
             // The txid will be different if this PSBT is to replace another transaction
             // that is currently spending the coin.
-            // The PSBT status should remain as Pending so that it can be signed and broadcast.
-            // Once the replacement transaction has been confirmed, the PSBT for the
-            // transaction currently spending this coin will be shown as Deprecated.
+            // The PSBT can still be signed and broadcast as long as the transaction
+            // currently spending this coin is not confirmed.
             } else if info.height.is_some() {
                 status = SpendStatus::Deprecated
             }

@@ -311,6 +311,16 @@ If `txids` is specified, only list transactions whose `txid` is in `txids`(empty
 | -------------- | ----------------- | ----------------------------------------------------------------------- |
 | `psbt`         | string            | Base64-encoded PSBT of the Spend transaction.                           |
 | `updated_at`   | int or null       | UNIX timestamp of the last time this PSBT was updated.                  |
+| `status`       | string            | Lifecycle of the transaction, see below.                                |
+
+The `status` is one of:
+
+| Value           | Description                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| `broadcastable` | Neither in the chain nor in the mempool, and nothing prevents it from getting there.               |
+| `broadcast`     | In the mempool.                                                                                    |
+| `spent`         | Confirmed in a block.                                                                              |
+| `deprecated`    | It can not be included in the chain anymore: one of its coins is gone or was spent by a transaction that confirmed, or it does not pay enough to replace the transaction currently spending its coins in the mempool. |
 
 
 ### `delspendtx`

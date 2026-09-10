@@ -376,7 +376,7 @@ pub fn spend_overview_view<'a>(
             )
             .style(theme::card::simple),
         )
-        .push_maybe(if tx.status == SpendStatus::Pending {
+        .push_maybe(if tx.status == SpendStatus::Broadcastable {
             Some(
                 Row::new()
                     .push(Space::with_width(Length::Fill))

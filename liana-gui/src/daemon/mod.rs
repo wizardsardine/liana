@@ -254,12 +254,11 @@ pub trait Daemon: Debug {
                 .cloned()
                 .collect();
 
-            let status = model::spend_status_from_coins(&tx.psbt, &coins);
             spend_txs.push(model::SpendTx::new(
                 tx.updated_at,
                 tx.psbt,
                 coins,
-                status,
+                tx.status,
                 &info.descriptors.main,
                 &curve,
                 info.network,
