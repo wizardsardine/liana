@@ -974,16 +974,3 @@ pub fn sign_action_toasts<'a>(
 
     vec
 }
-
-pub fn update_spend_success_view<'a>() -> Element<'a, Message> {
-    Column::new()
-        .push(
-            card::simple(Container::new(
-                text(t!("psbt-spend-updated")).style(theme::text::secondary),
-            ))
-            .padding(50),
-        )
-        .width(Length::Fixed(400.0))
-        .align_x(Alignment::Center)
-        .into()
-}

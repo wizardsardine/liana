@@ -1536,8 +1536,6 @@ psbt-sign-save-before-export => "Sign or save the transaction first to enable ex
 
 psbt-signed-by => "signed by"
 
-psbt-spend-updated => "Spend transaction is updated"
-
 psbt-status => "Status"
 
 psbt-transaction-broadcast => "Transaction is broadcast"
