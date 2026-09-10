@@ -24,8 +24,9 @@ use liana_ui::{
         form,
         list::DeviceStatus,
         modal::{self, modal_view, ModalWidth},
+        panels::psbts,
         pill, scrollable,
-        text::{self, new, *},
+        text::{self, *},
     },
     icon, theme,
     widget::*,
@@ -834,19 +835,7 @@ fn change_view(output: &TxOut, network: Network) -> Element<'_, Message> {
         .unwrap()
         .to_string();
 
-    let value = row![Space::fill_width(), amount(&output.value)];
-
-    let label = new::b5_bold(t!("common-address-label")).style(theme::text::secondary);
-    let copy = button::btn_copy(Some(Message::Clipboard(addr.clone())));
-    let address = row![label, address_view(addr), copy]
-        .align_y(Alignment::Center)
-        .width(Length::Fill)
-        .spacing(5);
-
-    column![value, address]
-        .width(Length::Fill)
-        .spacing(5)
-        .into()
+    psbts::change_row(output.value, addr.clone(), Message::Clipboard(addr))
 }
 
 #[allow(clippy::too_many_arguments)]
