@@ -19,6 +19,7 @@ use liana_ui::{
         card, form,
         list::DeviceStatus,
         modal::{self, modal_view, ModalWidth},
+        notification,
         panels::psbts,
         pill,
         text::{self, *},
@@ -577,46 +578,34 @@ pub fn sign_action_toasts<'a>(
     hws: &'a [HardwareWallet],
     signing: &HashSet<Fingerprint>,
 ) -> Vec<Element<'a, Message>> {
-    let mut vec: Vec<Element<'a, Message>> = hws
+    let mut toasts: Vec<Element<'a, Message>> = hws
         .iter()
-        .filter_map(|hw| {
-            if let HardwareWallet::Supported {
+        .filter_map(|hw| match hw {
+            HardwareWallet::Supported {
                 kind,
                 fingerprint,
                 version,
                 alias,
                 ..
-            } = &hw
-            {
-                if signing.contains(fingerprint) {
-                    Some(
-                        liana_ui::component::notification::processing_hardware_wallet(
-                            kind,
-                            version.as_ref(),
-                            fingerprint,
-                            alias.as_ref().map(|x| x.as_str()),
-                        )
-                        .max_width(400.0)
-                        .into(),
-                    )
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+            } if signing.contains(fingerprint) => Some(
+                notification::processing_hardware_wallet(
+                    kind,
+                    version.as_ref(),
+                    fingerprint,
+                    alias.as_deref(),
+                )
+                .max_width(400.0)
+                .into(),
+            ),
+            _ => None,
         })
         .collect();
-    if let Some(e) = error {
-        vec.push(
-            liana_ui::component::notification::processing_hardware_wallet_error(
-                t!("psbt-device-sign-failed"),
-                e.to_string(),
-            )
-            .max_width(400.0)
-            .into(),
-        )
-    }
 
-    vec
+    toasts.extend(error.map(|e| {
+        notification::processing_hardware_wallet_error(t!("psbt-device-sign-failed"), e.to_string())
+            .max_width(400.0)
+            .into()
+    }));
+
+    toasts
 }
