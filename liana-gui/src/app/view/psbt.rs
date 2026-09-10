@@ -25,7 +25,7 @@ use liana_ui::{
         modal::{self, modal_view, ModalWidth},
         panels::psbts,
         pill, scrollable,
-        text::{self, *},
+        text::{self, new, *},
     },
     icon, theme,
     widget::*,
@@ -511,31 +511,22 @@ pub fn path_view<'a>(
             ))
         });
 
-    scrollable::horizontal_thin(
-        Row::new()
-            .align_y(Alignment::Center)
-            .push(
-                Row::new()
-                    .push(if missing_signatures == 0 {
-                        icon::circle_check_icon().style(theme::text::success)
-                    } else {
-                        icon::circle_cross_icon().style(theme::text::secondary)
-                    })
-                    .push(Space::with_width(Length::Fixed(20.0))),
-            )
-            .push(
-                p1_regular(t!("psbt-more-signatures", count = missing_signatures))
-                    .style(theme::text::secondary),
-            )
-            .push_maybe(row_unsigned)
-            .push_maybe(
-                (!sigs.signed_pubkeys.is_empty()).then_some(
-                    p1_regular(t!("psbt-already-signed-by")).style(theme::text::secondary),
-                ),
-            )
-            .push(row_signed),
-    )
-    .into()
+    let status = if missing_signatures == 0 {
+        icon::circle_check_icon().style(theme::text::success)
+    } else {
+        icon::circle_cross_icon().style(theme::text::secondary)
+    };
+    let status = row![status, Space::with_width(20)];
+
+    let missing = new::caption(t!("psbt-more-signatures", count = missing_signatures))
+        .style(theme::text::secondary);
+    let already_signed = (!sigs.signed_pubkeys.is_empty())
+        .then_some(new::caption(t!("psbt-already-signed-by")).style(theme::text::secondary));
+
+    let content =
+        row![status, missing, row_unsigned, already_signed, row_signed].align_y(Alignment::Center);
+
+    scrollable::horizontal_thin(content).into()
 }
 
 pub fn inputs_view<'a>(
