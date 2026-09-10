@@ -1223,6 +1223,29 @@ fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTran
     tx
 }
 
+/// The wallet coins this PSBT spends.
+fn psbt_coins(psbt: &api::Psbt) -> Vec<ListCoinsEntry> {
+    psbt.inputs
+        .iter()
+        .filter(|input| input.kind == UTXOKind::Deposit || input.kind == UTXOKind::Change)
+        .filter_map(|input| input.coin.as_ref())
+        .map(|c| ListCoinsEntry {
+            address: c.address.clone(),
+            amount: c.amount,
+            derivation_index: c.derivation_index,
+            outpoint: c.outpoint,
+            block_height: c.block_height,
+            is_immature: c.is_immature,
+            is_change: c.is_change_address,
+            spend_info: c.spend_info.clone().map(|info| LCSpendInfo {
+                txid: info.txid,
+                height: info.height,
+            }),
+            is_from_self: c.is_from_self,
+        })
+        .collect()
+}
+
 fn spend_tx_from_api(
     value: api::Psbt,
     desc: &LianaDescriptor,
@@ -1230,30 +1253,12 @@ fn spend_tx_from_api(
     network: Network,
 ) -> SpendTx {
     let mut labels = HashMap::<String, Option<String>>::new();
-    let mut coins = Vec::new();
+    let coins = psbt_coins(&value);
     for input in &value.inputs {
         labels.insert(
             format!("{}:{}", input.txid, input.vout),
             input.label.clone(),
         );
-        if input.kind == UTXOKind::Deposit || input.kind == UTXOKind::Change {
-            if let Some(c) = &input.coin {
-                coins.push(ListCoinsEntry {
-                    address: c.address.clone(),
-                    amount: c.amount,
-                    derivation_index: c.derivation_index,
-                    outpoint: c.outpoint,
-                    block_height: c.block_height,
-                    is_immature: c.is_immature,
-                    is_change: c.is_change_address,
-                    spend_info: c.spend_info.clone().map(|info| LCSpendInfo {
-                        txid: info.txid,
-                        height: info.height,
-                    }),
-                    is_from_self: c.is_from_self,
-                });
-            }
-        }
     }
     let mut changes_indexes = Vec::new();
     let txid = value.raw.unsigned_tx.compute_txid().to_string();
@@ -1267,10 +1272,12 @@ fn spend_tx_from_api(
         }
     }
     labels.insert(txid, value.label);
+    let status = spend_status_from_coins(&value.raw, &coins);
     let mut tx = SpendTx::new(
         Some(value.updated_at as u32),
         value.raw,
         coins,
+        status,
         desc,
         secp,
         network,

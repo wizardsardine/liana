@@ -60,11 +60,41 @@ pub enum SpendStatus {
     Deprecated,
 }
 
+/// Status of a spend transaction as it can be told from the coins it spends alone.
+pub fn spend_status_from_coins(psbt: &Psbt, coins: &[Coin]) -> SpendStatus {
+    let txid = psbt.unsigned_tx.compute_txid();
+    // One input coin is missing, the psbt is deprecated for now.
+    if coins.len() != psbt.inputs.len() {
+        return SpendStatus::Deprecated;
+    }
+    let mut status = SpendStatus::Pending;
+    for coin in coins {
+        if let Some(info) = &coin.spend_info {
+            if info.txid == txid {
+                if info.height.is_some() {
+                    status = SpendStatus::Spent
+                } else {
+                    status = SpendStatus::Broadcast
+                }
+            // The txid will be different if this PSBT is to replace another transaction
+            // that is currently spending the coin.
+            // The PSBT status should remain as Pending so that it can be signed and broadcast.
+            // Once the replacement transaction has been confirmed, the PSBT for the
+            // transaction currently spending this coin will be shown as Deprecated.
+            } else if info.height.is_some() {
+                status = SpendStatus::Deprecated
+            }
+        }
+    }
+    status
+}
+
 impl SpendTx {
     pub fn new(
         updated_at: Option<u32>,
         psbt: Psbt,
         coins: Vec<Coin>,
+        status: SpendStatus,
         desc: &LianaDescriptor,
         secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
         network: Network,
@@ -93,25 +123,8 @@ impl SpendTx {
             },
         );
 
-        let mut status = SpendStatus::Pending;
         let mut coins_map = HashMap::<OutPoint, Coin>::with_capacity(coins.len());
         for coin in coins {
-            if let Some(info) = coin.spend_info {
-                if info.txid == psbt.unsigned_tx.compute_txid() {
-                    if info.height.is_some() {
-                        status = SpendStatus::Spent
-                    } else {
-                        status = SpendStatus::Broadcast
-                    }
-                // The txid will be different if this PSBT is to replace another transaction
-                // that is currently spending the coin.
-                // The PSBT status should remain as Pending so that it can be signed and broadcast.
-                // Once the replacement transaction has been confirmed, the PSBT for the
-                // transaction currently spending this coin will be shown as Deprecated.
-                } else if info.height.is_some() {
-                    status = SpendStatus::Deprecated
-                }
-            }
             coins_map.insert(coin.outpoint, coin);
         }
 
@@ -140,11 +153,6 @@ impl SpendTx {
                 Some(inputs_amount)
             }
         };
-
-        // One input coin is missing, the psbt is deprecated for now.
-        if coins_map.len() != psbt.inputs.len() {
-            status = SpendStatus::Deprecated
-        }
 
         let sigs = desc
             .partial_spend_info(&psbt)

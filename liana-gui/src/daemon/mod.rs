@@ -242,7 +242,7 @@ pub trait Daemon: Debug {
             .collect();
         let coins = self.list_coins(&[], &outpoints).await?.coins;
         for tx in txs {
-            let coins = coins
+            let coins: Vec<model::Coin> = coins
                 .iter()
                 .filter(|coin| {
                     tx.psbt
@@ -254,10 +254,12 @@ pub trait Daemon: Debug {
                 .cloned()
                 .collect();
 
+            let status = model::spend_status_from_coins(&tx.psbt, &coins);
             spend_txs.push(model::SpendTx::new(
                 tx.updated_at,
                 tx.psbt,
                 coins,
+                status,
                 &info.descriptors.main,
                 &curve,
                 info.network,
