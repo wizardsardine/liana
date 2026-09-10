@@ -760,36 +760,18 @@ fn payment_view<'a>(
         label::label_non_editable(change_labels, None, text::P1_SIZE)
     };
 
-    let header = row![
-        Container::new(label_widget).width(Length::Fill),
-        amount(&output.value)
-    ]
-    .spacing(5)
-    .align_y(Alignment::Center);
+    let address_label = addr
+        .as_ref()
+        .and_then(|addr| labels.get(addr))
+        .map(String::as_str);
 
-    let address = addr.map(|addr| {
-        let title = new::b5_bold(t!("common-address-label")).style(theme::text::secondary);
-        let copy = button::btn_copy(Some(Message::Clipboard(addr.clone())));
-        let address = row![title, address_view(addr.clone()), copy]
-            .align_y(Alignment::Center)
-            .width(Length::Fill)
-            .spacing(5);
-
-        let address_label = labels.get(&addr).map(|label| {
-            let title = new::b5_bold(t!("coins-address-label")).style(theme::text::secondary);
-            row![title, p2_regular(label).style(theme::text::secondary)]
-                .align_y(Alignment::Center)
-                .width(Length::Fill)
-                .spacing(5)
-        });
-
-        column![address, address_label]
-    });
-
-    column![header, address]
-        .width(Length::Fill)
-        .spacing(5)
-        .into()
+    psbts::payment_row(
+        label_widget,
+        output.value,
+        addr.clone(),
+        address_label,
+        addr.map(Message::Clipboard),
+    )
 }
 
 fn change_view(output: &TxOut, network: Network) -> Element<'_, Message> {
