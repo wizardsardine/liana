@@ -538,38 +538,41 @@ pub fn path_view<'a>(
     .into()
 }
 
+/// Header of a collapsible psbt section, with the chevron telling its state.
+fn collapse_header<'a>(title: String, chevron: liana_ui::widget::Text<'a>) -> Row<'a, Message> {
+    row![h4_bold(title).width(Length::Fill), chevron].align_y(Alignment::Center)
+}
+
 pub fn inputs_view<'a>(
     coins: &'a HashMap<OutPoint, Coin>,
     tx: &'a Transaction,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
-    Container::new(
-        Collapse::new(
-            Row::new()
-                .align_y(Alignment::Center)
-                .push(h4_bold(t!("psbt-coins-spent", count = tx.input.len())).width(Length::Fill))
-                .push(icon::collapse_icon()),
-            Row::new()
-                .align_y(Alignment::Center)
-                .push(h4_bold(t!("psbt-coins-spent", count = tx.input.len())).width(Length::Fill))
-                .push(icon::collapsed_icon()),
-            tx.input.iter().fold(
-                Column::new().spacing(10).padding(20),
-                |col: Column<'a, Message>, input| {
-                    col.push(input_view(
-                        &input.previous_output,
-                        coins.get(&input.previous_output),
-                        labels,
-                        labels_editing,
-                    ))
-                },
-            ),
-        )
-        .padding(20),
+    let title = t!("psbt-coins-spent", count = tx.input.len());
+
+    let inputs = tx.input.iter().fold(
+        Column::new().spacing(10).padding(20),
+        |col: Column<'a, Message>, input| {
+            col.push(input_view(
+                &input.previous_output,
+                coins.get(&input.previous_output),
+                labels,
+                labels_editing,
+            ))
+        },
+    );
+
+    let collapse = Collapse::new(
+        collapse_header(title.clone(), icon::collapse_icon()),
+        collapse_header(title, icon::collapsed_icon()),
+        inputs,
     )
-    .style(theme::card::button_simple)
-    .into()
+    .padding(20);
+
+    Container::new(collapse)
+        .style(theme::card::button_simple)
+        .into()
 }
 
 pub fn outputs_view<'a>(
