@@ -267,40 +267,38 @@ pub fn spend_overview_view<'a>(
         .into()
     });
 
+    let (status, details) = match tx.path_ready() {
+        Some(sigs) => (psbts::signatures_ready(sigs, key_aliases), None),
+        None => {
+            let requirement = if tx.sigs.recovery_paths().is_empty() {
+                Some(psbts::path_row(
+                    desc_info.primary_path(),
+                    tx.sigs.primary_path(),
+                    key_aliases,
+                ))
+            } else {
+                tx.sigs.recovery_paths().iter().last().map(|(seq, path)| {
+                    let keys = &desc_info.recovery_paths()[seq];
+                    psbts::path_row(keys, path, key_aliases)
+                })
+            };
+            (
+                psbts::signatures_missing(),
+                Some(psbts::signatures_requirement(requirement)),
+            )
+        }
+    };
+
     psbts::spend_overview(
         saved,
         enabled.then_some(Message::ExportPsbt),
         enabled.then_some(Message::ImportPsbt),
         txid.clone(),
         Message::Clipboard(txid),
-        signatures(tx, desc_info, key_aliases),
+        status,
+        details,
         action,
     )
-}
-
-pub fn signatures<'a>(
-    tx: &'a SpendTx,
-    desc_info: &'a LianaPolicy,
-    keys_aliases: &'a HashMap<Fingerprint, String>,
-) -> Element<'a, Message> {
-    if let Some(sigs) = tx.path_ready() {
-        return psbts::signatures_ready(sigs, keys_aliases);
-    }
-
-    let requirement = if tx.sigs.recovery_paths().is_empty() {
-        Some(psbts::path_row(
-            desc_info.primary_path(),
-            tx.sigs.primary_path(),
-            keys_aliases,
-        ))
-    } else {
-        tx.sigs.recovery_paths().iter().last().map(|(seq, path)| {
-            let keys = &desc_info.recovery_paths()[seq];
-            psbts::path_row(keys, path, keys_aliases)
-        })
-    };
-
-    psbts::signatures_missing(requirement)
 }
 
 pub fn inputs_view<'a>(

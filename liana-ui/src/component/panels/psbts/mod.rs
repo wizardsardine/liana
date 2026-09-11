@@ -16,7 +16,6 @@ use crate::{
         address::address as address_view,
         amount::{amount, amount_with_fiat_tooltip, amount_with_font, AmountSize},
         button, card,
-        collapse::Collapse,
         panels::{
             home::payment::{FiatPrice, FiatSource, PaymentKind},
             LIST_ENTRY_PADDING,
@@ -27,7 +26,7 @@ use crate::{
     icon,
     spacing::HSpacing,
     theme::{self, Theme},
-    widget::{Column, Container, Element, Row, SpaceExt, Text, Toggler},
+    widget::{Column, Container, Element, Row, SpaceExt, Toggler},
 };
 
 const PSBT_HEIGHT: u32 = 90;
@@ -139,11 +138,6 @@ pub fn list_entry<'a, M: Clone + 'static>(
     card::list_entry_with_padding(content, msg, LIST_ENTRY_PADDING)
 }
 
-/// Header of a collapsible section, with the chevron telling its state.
-fn section_header<'a, M: 'static>(title: String, chevron: Text<'a>) -> Row<'a, M> {
-    row![legacy::h4_bold(title).width(Length::Fill), chevron].align_y(Alignment::Center)
-}
-
 /// Section of the psbt page folding the given rows under a title.
 pub fn collapsible_section<'a, M: Clone + 'static>(
     title: String,
@@ -151,15 +145,10 @@ pub fn collapsible_section<'a, M: Clone + 'static>(
 ) -> Element<'a, M> {
     let rows = Column::with_children(rows).spacing(10).padding(20);
 
-    let collapse = Collapse::new(
-        section_header(title.clone(), icon::collapse_icon()),
-        section_header(title, icon::collapsed_icon()),
-        rows,
-    )
-    .padding(20);
+    let header = legacy::h4_bold(title).width(Length::Fill);
 
-    Container::new(collapse)
-        .style(theme::card::button_simple)
+    card::foldable::FoldableCard::new(None, header, Some(rows.into()))
+        .padding(20)
         .into()
 }
 
@@ -316,22 +305,7 @@ pub fn path_row<'a, M: 'static>(
     scrollable::horizontal_thin(content).into()
 }
 
-/// Header of the signatures status when the psbt cannot be broadcast yet.
-fn not_ready_header<'a, M: 'static>(chevron: Text<'a>) -> Row<'a, M> {
-    let status = row![
-        icon::circle_cross_icon().style(theme::text::error),
-        legacy::text(t!("psbt-not-ready")).style(theme::text::error)
-    ]
-    .spacing(5)
-    .align_y(Alignment::Center)
-    .width(Length::Fill);
-
-    row![new::b5_bold(t!("psbt-status")), status, chevron]
-        .align_y(Alignment::Center)
-        .spacing(20)
-}
-
-/// Signature status of a psbt that can be broadcast, with the keys that signed it.
+/// Signature status row of a psbt that can be broadcast, with the keys that signed it.
 pub fn signatures_ready<'a, M: 'static>(
     sigs: &'a PathSpendInfo,
     key_aliases: &'a HashMap<Fingerprint, String>,
@@ -356,27 +330,32 @@ pub fn signatures_ready<'a, M: 'static>(
     .align_y(Alignment::Center)
     .spacing(10);
 
-    Container::new(scrollable::horizontal_thin(ready))
-        .padding(15)
+    scrollable::horizontal_thin(ready).into()
+}
+
+/// Signature status row of a psbt that still misses signatures.
+pub fn signatures_missing<'a, M: 'static>() -> Element<'a, M> {
+    let status = row![
+        icon::circle_cross_icon().style(theme::text::error),
+        legacy::text(t!("psbt-not-ready")).style(theme::text::error)
+    ]
+    .spacing(5)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+    row![new::b5_bold(t!("psbt-status")), status]
+        .align_y(Alignment::Center)
+        .spacing(20)
         .into()
 }
 
-/// Signature status of a psbt that still misses signatures, folding what it requires.
-pub fn signatures_missing<'a, M: Clone + 'static>(
+/// What a psbt still misses signatures for before it can be finalized.
+pub fn signatures_requirement<'a, M: 'static>(
     requirement: Option<Element<'a, M>>,
 ) -> Element<'a, M> {
-    let content = column![legacy::text(t!("psbt-finalizing-requires")), requirement]
+    column![legacy::text(t!("psbt-finalizing-requires")), requirement]
         .padding(15)
-        .spacing(10);
-
-    let collapse = Collapse::new(
-        not_ready_header(icon::collapse_icon()),
-        not_ready_header(icon::collapsed_icon()),
-        content,
-    )
-    .padding(15);
-
-    Container::new(collapse).into()
+        .spacing(10)
+        .into()
 }
 
 /// Header of a psbt: its label, then what it sends out and what it costs.
@@ -422,7 +401,8 @@ pub fn spend_overview<'a, M: Clone + 'static>(
     import: Option<M>,
     txid: String,
     copy_txid: M,
-    signatures: Element<'a, M>,
+    status: Element<'a, M>,
+    details: Option<Element<'a, M>>,
     action: Option<Element<'a, M>>,
 ) -> Element<'a, M> {
     let export_button = if saved {
@@ -447,9 +427,8 @@ pub fn spend_overview<'a, M: Clone + 'static>(
     ]
     .align_y(Alignment::Center);
 
-    let psbt = column![header, txid].padding(15).spacing(10);
-    let card =
-        Container::new(column![psbt, signatures, Space::with_height(5)]).style(theme::card::simple);
+    let psbt = column![header, txid].spacing(10);
+    let card = card::foldable::FoldableCard::new(Some(psbt.into()), status, details).padding(15);
 
     let action = action.map(|action| {
         row![Space::fill_width(), action]
