@@ -29,7 +29,7 @@ const MENU_TEXT_SIZE: u32 = 22;
 const MENU_TEXT_COMPACT_SIZE: u32 = 18;
 const MENU_ICON_SIZE: u32 = ICON_SIZE_L as u32;
 const AUXILIARY_PADDING: [u16; 2] = [14 /* Top/Bottom */, 20 /* Left/Right */];
-const LIST_ENTRY_ACCENT_WIDTH: f32 = 4.0;
+pub(crate) const LIST_ENTRY_ACCENT_WIDTH: f32 = 4.0;
 pub const LIST_ENTRY_PADDING: [u16; 2] = [14 /* Top/Bottom */, 20 /* Left/Right */];
 
 const ICON_BTN_SIZE: f32 = 40.0;

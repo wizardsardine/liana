@@ -1,3 +1,5 @@
+pub mod foldable;
+
 use crate::{
     color,
     component::text::{new, text},

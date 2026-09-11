@@ -2,7 +2,7 @@ use iced::Color;
 
 use crate::{
     color::{self, BUSINESS_BLUE, BUSINESS_BLUE_50, TRANSPARENT},
-    theme::card::CARD_SHADOW,
+    theme::card::{CARD_SHADOW, CARD_SHADOW_HOVER},
 };
 
 use super::*;
@@ -30,12 +30,6 @@ color!(DEVICE_DISABLED, 0xA6A6A6);
 
 const BTN_SHADOW: Shadow = Shadow {
     color: color::BLACK_25,
-    offset: iced::Vector { x: 0.0, y: 4.0 },
-    blur_radius: 4.0,
-};
-
-const CARD_SHADOW_HOVER: Shadow = Shadow {
-    color: color::BLACK_30,
     offset: iced::Vector { x: 0.0, y: 4.0 },
     blur_radius: 4.0,
 };
