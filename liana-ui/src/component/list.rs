@@ -13,7 +13,7 @@ use crate::{
     component::{
         badge::{self, Tile},
         button::{self, EntryWidth, ListEntryAccent},
-        collapse, form,
+        form,
         text::{self, new::caption},
         tooltip,
     },
@@ -244,25 +244,31 @@ pub struct CollapsibleEntry<'a, M> {
 }
 
 pub fn entry_collapsible<'a, M: Clone + 'static>(cfg: CollapsibleEntry<'a, M>) -> Element<'a, M> {
-    let accent = cfg.accent.map(entry_accent);
-    let entry = collapse::Collapse::new(
-        collapsible_entry_header(cfg.tile, cfg.title.clone(), cfg.collapsed_subtitle),
-        collapsible_entry_header(cfg.tile, cfg.title, cfg.expanded_subtitle),
-        Container::new(cfg.content).padding(iced::Padding {
-            left: button::LIST_ENTRY_PADDING[1].into(),
-            right: button::LIST_ENTRY_PADDING[1].into(),
-            bottom: COLLAPSIBLE_ENTRY_CONTENT_BOTTOM_PADDING.into(),
-            ..iced::Padding::ZERO
-        }),
-    )
-    .expanded(cfg.expanded)
-    .on_toggle(move || cfg.on_toggle.clone())
-    .style(move |theme, status| button::list_entry_style(theme, status, accent, true))
-    .style_bounds()
-    .padding(button::LIST_ENTRY_PADDING)
-    .width(Length::Fill);
+    let subtitle = if cfg.expanded {
+        cfg.expanded_subtitle
+    } else {
+        cfg.collapsed_subtitle
+    };
+    let header = collapsible_entry_header(cfg.tile, cfg.title, subtitle);
+    let content = Container::new(cfg.content).padding(iced::Padding {
+        left: button::LIST_ENTRY_PADDING[1].into(),
+        right: button::LIST_ENTRY_PADDING[1].into(),
+        bottom: COLLAPSIBLE_ENTRY_CONTENT_BOTTOM_PADDING.into(),
+        ..iced::Padding::ZERO
+    });
 
-    button::list_entry_card(entry, accent, EntryWidth::Standard)
+    let on_toggle = cfg.on_toggle;
+    let mut entry =
+        crate::component::card::foldable::FoldableCard::new(None, header, Some(content.into()))
+            .expanded(cfg.expanded)
+            .on_toggle(move || on_toggle.clone())
+            .padding(button::LIST_ENTRY_PADDING)
+            .width(Length::Fill);
+    if let Some(accent) = cfg.accent {
+        entry = entry.accent(entry_accent(accent));
+    }
+
+    Container::new(entry).width(EntryWidth::Standard).into()
 }
 
 fn collapsible_entry_header<'a, M: Clone + 'a>(
