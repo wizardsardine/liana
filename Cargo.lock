@@ -3342,6 +3342,7 @@ dependencies = [
  "iced_aw",
  "iced_core",
  "iced_runtime",
+ "liana",
  "liana-i18n",
  "unicode-segmentation",
 ]

@@ -9,6 +9,7 @@ pub use liana::{
         psbt::Psbt,
         secp256k1, Address, Amount, Network, OutPoint, Transaction, Txid,
     },
+    spend::SpendStatus,
 };
 use liana_ui::component::panels::home::payment::PaymentKind;
 pub use lianad::commands::{
@@ -52,12 +53,33 @@ pub struct SpendTx {
     pub kind: TransactionKind,
 }
 
-#[derive(PartialOrd, Ord, Debug, Clone, PartialEq, Eq)]
-pub enum SpendStatus {
-    Pending,
-    Broadcast,
-    Spent,
-    Deprecated,
+/// Status of a spend transaction as it can be told from the coins it spends alone, for the
+/// transactions the daemon did not give us a status for.
+pub fn spend_status_from_coins(psbt: &Psbt, coins: &[Coin]) -> SpendStatus {
+    let txid = psbt.unsigned_tx.compute_txid();
+    // One input coin is missing, the psbt is deprecated for now.
+    if coins.len() != psbt.inputs.len() {
+        return SpendStatus::Deprecated;
+    }
+    let mut status = SpendStatus::Broadcastable;
+    for coin in coins {
+        if let Some(info) = &coin.spend_info {
+            if info.txid == txid {
+                if info.height.is_some() {
+                    status = SpendStatus::Spent
+                } else {
+                    status = SpendStatus::Broadcast
+                }
+            // The txid will be different if this PSBT is to replace another transaction
+            // that is currently spending the coin.
+            // The PSBT can still be signed and broadcast as long as the transaction
+            // currently spending this coin is not confirmed.
+            } else if info.height.is_some() {
+                status = SpendStatus::Deprecated
+            }
+        }
+    }
+    status
 }
 
 impl SpendTx {
@@ -65,6 +87,7 @@ impl SpendTx {
         updated_at: Option<u32>,
         psbt: Psbt,
         coins: Vec<Coin>,
+        status: SpendStatus,
         desc: &LianaDescriptor,
         secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
         network: Network,
@@ -93,25 +116,8 @@ impl SpendTx {
             },
         );
 
-        let mut status = SpendStatus::Pending;
         let mut coins_map = HashMap::<OutPoint, Coin>::with_capacity(coins.len());
         for coin in coins {
-            if let Some(info) = coin.spend_info {
-                if info.txid == psbt.unsigned_tx.compute_txid() {
-                    if info.height.is_some() {
-                        status = SpendStatus::Spent
-                    } else {
-                        status = SpendStatus::Broadcast
-                    }
-                // The txid will be different if this PSBT is to replace another transaction
-                // that is currently spending the coin.
-                // The PSBT status should remain as Pending so that it can be signed and broadcast.
-                // Once the replacement transaction has been confirmed, the PSBT for the
-                // transaction currently spending this coin will be shown as Deprecated.
-                } else if info.height.is_some() {
-                    status = SpendStatus::Deprecated
-                }
-            }
             coins_map.insert(coin.outpoint, coin);
         }
 
@@ -140,11 +146,6 @@ impl SpendTx {
                 Some(inputs_amount)
             }
         };
-
-        // One input coin is missing, the psbt is deprecated for now.
-        if coins_map.len() != psbt.inputs.len() {
-            status = SpendStatus::Deprecated
-        }
 
         let sigs = desc
             .partial_spend_info(&psbt)
@@ -232,6 +233,19 @@ impl SpendTx {
 
     pub fn is_send_to_self(&self) -> bool {
         matches!(self.kind, TransactionKind::SendToSelf)
+    }
+
+    /// Amount the transaction moves: what it sends out, or the total of its outputs for a
+    /// self-transfer, which sends nothing out.
+    pub fn moved_amount(&self) -> Amount {
+        if !self.is_send_to_self() {
+            return self.spend_amount;
+        }
+        let mut moved = Amount::from_sat(0);
+        for output in &self.psbt.unsigned_tx.output {
+            moved += output.value;
+        }
+        moved
     }
 
     pub fn is_single_payment(&self) -> Option<OutPoint> {

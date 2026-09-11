@@ -24,6 +24,22 @@ use miniscript::bitcoin::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Lifecycle of a spend transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpendStatus {
+    /// Neither in the chain nor in the mempool, and nothing prevents it from getting there.
+    Broadcastable,
+    /// In the mempool.
+    Broadcast,
+    /// Confirmed in a block.
+    Spent,
+    /// It can not be included in the chain anymore: one of its coins is gone or was spent by a
+    /// transaction that confirmed, or it does not pay enough to replace the transaction currently
+    /// spending its coins in the mempool.
+    Deprecated,
+}
+
 /// We would never create a transaction with an output worth less than this.
 /// That's 0.5$ at 100_000$ per BTC.
 pub const DUST_OUTPUT_SATS: u64 = 500;

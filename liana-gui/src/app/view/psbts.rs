@@ -1,171 +1,82 @@
-use iced::{widget::Space, Alignment, Length};
+use iced::{
+    widget::{column, row},
+    Alignment, Length,
+};
 
 use liana_ui::{
     component::{
-        amount::*,
-        badge,
-        button::{btn_import, btn_new, btn_processing},
-        card, form, pill,
-        text::*,
+        button::{btn_import, btn_new},
+        panels::psbts::{self, PsbtSigs},
+        text::new,
     },
-    icon, theme,
+    spacing::{HSpacing, VSpacing},
     widget::*,
 };
 
 use crate::{
-    app::{error::Error, menu::Menu},
+    app::menu::Menu,
     daemon::model::{SpendStatus, SpendTx},
-    t,
 };
 
-use super::{message::*, warning::warn};
+use super::message::*;
 
-pub fn import_psbt_view<'a>(
-    imported: &form::Value<String>,
-    error: Option<&Error>,
-    processing: bool,
-) -> Element<'a, Message> {
-    Column::new()
-        .push(warn(error))
-        .push(card::simple(
-            Column::new()
-                .spacing(10)
-                .push(text(t!("psbts-insert-psbt")).bold())
-                .push(
-                    form::Form::new_trimmed("PSBT", imported, move |msg| {
-                        Message::ImportSpend(ImportSpendMessage::PsbtEdited(msg))
-                    })
-                    .warning(t!("psbts-base64-warning"))
-                    .size(P1_SIZE)
-                    .padding(10),
-                )
-                .push(Row::new().push(Space::with_width(Length::Fill)).push(
-                    if imported.valid && !imported.value.is_empty() && !processing {
-                        btn_import(Some(Message::ImportSpend(ImportSpendMessage::Confirm)))
-                    } else if processing {
-                        btn_processing()
-                    } else {
-                        btn_import(None)
-                    },
-                )),
-        ))
-        .max_width(400)
-        .into()
+pub fn psbts_view(
+    spend_txs: &[SpendTx],
+    hide_confirmed: bool,
+    available_width: f32,
+) -> Element<'_, Message> {
+    let title = Container::new(new::d2(Menu::PSBTs.title())).width(Length::Fill);
+    let import = btn_import(Some(Message::ImportPsbt));
+    let new_tx = btn_new(Some(Message::Menu(Menu::CreateSpendTx)));
+    let header = row![title, import, new_tx]
+        .align_y(Alignment::Center)
+        .spacing(HSpacing::M);
+
+    let has_confirmed = spend_txs.iter().any(|tx| tx.status == SpendStatus::Spent);
+    let filter = has_confirmed
+        .then(|| psbts::hide_confirmed_row(hide_confirmed, Message::ToggleHideConfirmedPsbts));
+
+    let list = spend_txs
+        .iter()
+        .enumerate()
+        .filter(|(_, tx)| !(hide_confirmed && tx.status == SpendStatus::Spent))
+        .fold(Column::new().spacing(VSpacing::M), |col, (i, tx)| {
+            col.push(psbt_list_entry(i, tx, available_width))
+        });
+
+    column![header, filter, list].spacing(VSpacing::XL).into()
 }
 
-pub fn import_psbt_success_view<'a>() -> Element<'a, Message> {
-    Column::new()
-        .push(
-            card::simple(Container::new(
-                text(t!("psbts-imported")).style(theme::text::success),
-            ))
-            .padding(50),
-        )
-        .width(Length::Fixed(400.0))
-        .align_x(Alignment::Center)
-        .into()
-}
+fn psbt_list_entry(i: usize, tx: &SpendTx, available_width: f32) -> Element<'_, Message> {
+    let info = if tx.sigs.recovery_paths().is_empty() {
+        tx.sigs.primary_path()
+    } else {
+        tx.sigs
+            .recovery_paths()
+            .last_key_value()
+            .expect("not empty")
+            .1
+    };
+    let sigs = PsbtSigs {
+        count: info.sigs_count,
+        threshold: info.threshold,
+    };
 
-pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
-    Column::new()
-        .push(
-            Row::new()
-                .align_y(Alignment::Center)
-                .spacing(10)
-                .push(Container::new(panel_title(Menu::PSBTs.title())).width(Length::Fill))
-                .push(btn_import(Some(Message::ImportPsbt)))
-                .push(btn_new(Some(Message::Menu(Menu::CreateSpendTx)))),
-        )
-        .push(
-            Column::new().spacing(10).push(
-                spend_txs
-                    .iter()
-                    .enumerate()
-                    .fold(Column::new().spacing(10), |col, (i, tx)| {
-                        col.push(spend_tx_list_view(i, tx))
-                    }),
-            ),
-        )
-        .align_x(Alignment::Center)
-        .spacing(25)
-        .into()
-}
+    let label = tx
+        .labels
+        .get(&tx.psbt.unsigned_tx.compute_txid().to_string())
+        .map(String::as_str);
 
-fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(
-                    Row::new()
-                        .push(if tx.is_send_to_self() {
-                            badge::cycle()
-                        } else {
-                            badge::spend()
-                        })
-                        .push(if !tx.sigs.recovery_paths().is_empty() {
-                            pill::recovery()
-                        } else {
-                            let sigs = tx.sigs.primary_path();
-                            Container::new(
-                                Row::new()
-                                    .spacing(5)
-                                    .align_y(Alignment::Center)
-                                    .push(
-                                        p2_regular(format!(
-                                            "{}/{}",
-                                            if sigs.sigs_count <= sigs.threshold {
-                                                sigs.sigs_count
-                                            } else {
-                                                sigs.threshold
-                                            },
-                                            sigs.threshold
-                                        ))
-                                        .style(theme::text::secondary),
-                                    )
-                                    .push(icon::key_icon().style(theme::text::secondary)),
-                            )
-                        })
-                        .push_maybe(
-                            tx.labels
-                                .get(&tx.psbt.unsigned_tx.compute_txid().to_string())
-                                .map(p1_regular),
-                        )
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill),
-                )
-                .push_maybe(if tx.is_batch() {
-                    Some(pill::batch())
-                } else {
-                    None
-                })
-                .push_maybe(match tx.status {
-                    SpendStatus::Deprecated => Some(pill::deprecated().width(120.0)),
-                    SpendStatus::Broadcast => Some(pill::unconfirmed().width(120.0)),
-                    SpendStatus::Spent => Some(pill::spent().width(120.0)),
-                    _ => None,
-                })
-                .push(
-                    Column::new()
-                        .align_x(Alignment::End)
-                        .push(if !tx.is_send_to_self() {
-                            Container::new(amount(&tx.spend_amount))
-                        } else {
-                            Container::new(p1_regular(t!("common-self-transfer")))
-                        })
-                        .push_maybe(
-                            tx.fee_amount
-                                .map(|fee| amount_with_font(&fee, P2_REGULAR_SPEC)),
-                        )
-                        .width(Length::Fixed(140.0)),
-                )
-                .align_y(Alignment::Center)
-                .spacing(20),
-        )
-        .padding(10)
-        .on_press(Message::Select(i))
-        .style(theme::button::transparent_border),
+    psbts::list_entry(
+        label,
+        tx.is_send_to_self(),
+        tx.is_batch(),
+        !tx.sigs.recovery_paths().is_empty(),
+        tx.status,
+        sigs,
+        tx.moved_amount(),
+        None,
+        available_width,
+        Some(Message::Select(i)),
     )
-    .style(theme::card::button_simple)
-    .into()
 }

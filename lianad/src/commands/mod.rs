@@ -19,7 +19,7 @@ use liana::{
     descriptors,
     spend::{
         self, create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes,
-        SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
+        SpendCreationError, SpendOutputAddress, SpendStatus, SpendTxFees, TxGetter,
     },
 };
 
@@ -856,6 +856,115 @@ impl DaemonControl {
         }
     }
 
+    /// The minimal feerate and absolute fee a transaction must pay to replace the transactions
+    /// spending these outpoints in the mempool, to satisfy RBF rules #3, #4 and #6 (see
+    /// https://github.com/bitcoin/bitcoin/blob/master/doc/policy/mempool-replacements.md).
+    ///
+    /// Returns `None` if no transaction in the mempool is spending any of them.
+    fn replacement_requirements(
+        &self,
+        outpoints: &[bitcoin::OutPoint],
+    ) -> Option<(u64, bitcoin::Amount)> {
+        let entries = self.bitcoin.mempool_spenders(outpoints);
+        if entries.is_empty() {
+            return None;
+        }
+        Some(entries.into_iter().fold(
+            (1, bitcoin::Amount::from_sat(0)),
+            |(min_feerate, descendant_fee), entry| {
+                let entry_feerate = entry
+                    .fees
+                    .base
+                    .checked_div(entry.vsize)
+                    .expect("Can't have a null vsize or tx would be invalid")
+                    .to_sat()
+                    .checked_add(1)
+                    .expect("Can't overflow or tx would be invalid");
+                (
+                    std::cmp::max(min_feerate, entry_feerate),
+                    descendant_fee + entry.fees.descendant,
+                )
+            },
+        ))
+    }
+
+    /// Where this stored spend transaction is at: in a block, in the mempool, or neither, in which
+    /// case whether it may still be broadcast.
+    fn spend_status(&self, db_conn: &mut Box<dyn DatabaseConnection>, psbt: &Psbt) -> SpendStatus {
+        let txid = psbt.unsigned_tx.compute_txid();
+        let outpoints: Vec<bitcoin::OutPoint> = psbt
+            .unsigned_tx
+            .input
+            .iter()
+            .map(|txin| txin.previous_output)
+            .collect();
+        let coins = db_conn.coins_by_outpoints(&outpoints);
+
+        // A coin we don't know about anymore, or one already spent by a transaction that
+        // confirmed, and this transaction can never be included in the chain.
+        if coins.len() != outpoints.len()
+            || coins
+                .values()
+                .any(|coin| coin.spend_block.is_some() && coin.spend_txid != Some(txid))
+        {
+            return SpendStatus::Deprecated;
+        }
+        if coins
+            .values()
+            .any(|coin| coin.spend_txid == Some(txid) && coin.spend_block.is_some())
+        {
+            return SpendStatus::Spent;
+        }
+        if self.bitcoin.mempool_entry(&txid).is_some() {
+            return SpendStatus::Broadcast;
+        }
+
+        // Neither in the chain nor in the mempool. It may be broadcast, unless another transaction
+        // in the mempool is spending one of its coins and this one doesn't pay enough to replace
+        // it.
+        let (min_feerate_vb, descendant_fees) = match self.replacement_requirements(&outpoints) {
+            Some(requirements) => requirements,
+            None => return SpendStatus::Broadcastable,
+        };
+        let inputs_value = coins
+            .values()
+            .fold(bitcoin::Amount::from_sat(0), |acc, coin| acc + coin.amount);
+        let outputs_value = psbt
+            .unsigned_tx
+            .output
+            .iter()
+            .fold(bitcoin::Amount::from_sat(0), |acc, txo| acc + txo.value);
+        let fee = match inputs_value.checked_sub(outputs_value) {
+            Some(fee) => fee,
+            // Spending more than the inputs are worth, no node would ever relay it.
+            None => return SpendStatus::Deprecated,
+        };
+        // Use the primary path if no input is using a relative locktime.
+        let use_primary_path = !psbt
+            .unsigned_tx
+            .input
+            .iter()
+            .any(|txin| txin.sequence.is_relative_lock_time());
+        let max_vbytes = self
+            .config
+            .main_descriptor
+            .unsigned_tx_max_vbytes(&psbt.unsigned_tx, use_primary_path);
+        let feerate_vb = fee
+            .to_sat()
+            .checked_div(max_vbytes)
+            .expect("a descriptor's satisfaction size is never 0");
+        // RBF rule #6 for the feerate, rules #3 and #4 for the absolute fee: it must pay for the
+        // fees of the transactions it evicts and for its own bandwidth at the incremental relay
+        // feerate of 1 sat/vb.
+        if feerate_vb >= min_feerate_vb
+            && fee >= descendant_fees + bitcoin::Amount::from_sat(max_vbytes)
+        {
+            SpendStatus::Broadcastable
+        } else {
+            SpendStatus::Deprecated
+        }
+    }
+
     pub fn list_spend(
         &self,
         txids: Option<Vec<bitcoin::Txid>>,
@@ -870,17 +979,20 @@ impl DaemonControl {
         let spend_psbts = db_conn.list_spend();
 
         let txids_set: Option<HashSet<_>> = txids.as_ref().map(|list| list.iter().collect());
-        let spend_txs = spend_psbts
-            .into_iter()
-            .filter_map(|(psbt, updated_at)| {
-                if let Some(set) = &txids_set {
-                    if !set.contains(&psbt.unsigned_tx.compute_txid()) {
-                        return None;
-                    }
+        let mut spend_txs = Vec::with_capacity(spend_psbts.len());
+        for (psbt, updated_at) in spend_psbts {
+            if let Some(set) = &txids_set {
+                if !set.contains(&psbt.unsigned_tx.compute_txid()) {
+                    continue;
                 }
-                Some(ListSpendEntry { psbt, updated_at })
-            })
-            .collect();
+            }
+            let status = self.spend_status(&mut db_conn, &psbt);
+            spend_txs.push(ListSpendEntry {
+                psbt,
+                updated_at,
+                status,
+            });
+        }
         Ok(ListSpendResult { spend_txs })
     }
 
@@ -997,32 +1109,11 @@ impl DaemonControl {
         }) {
             return Err(CommandError::AlreadySpent(op));
         }
-        // Compute the minimal feerate and fee the replacement transaction must have to satisfy RBF
-        // rules #3, #4 and #6 (see
-        // https://github.com/bitcoin/bitcoin/blob/master/doc/policy/mempool-replacements.md). By
-        // default (ie if the transaction we are replacing was dropped from the mempool) there is
+        // By default (ie if the transaction we are replacing was dropped from the mempool) there is
         // no minimum absolute fee and the minimum feerate is 1, the minimum relay feerate.
         let (min_feerate_vb, descendant_fees) = self
-            .bitcoin
-            .mempool_spenders(&prev_outpoints)
-            .into_iter()
-            .fold(
-                (1, bitcoin::Amount::from_sat(0)),
-                |(min_feerate, descendant_fee), entry| {
-                    let entry_feerate = entry
-                        .fees
-                        .base
-                        .checked_div(entry.vsize)
-                        .expect("Can't have a null vsize or tx would be invalid")
-                        .to_sat()
-                        .checked_add(1)
-                        .expect("Can't overflow or tx would be invalid");
-                    (
-                        std::cmp::max(min_feerate, entry_feerate),
-                        descendant_fee + entry.fees.descendant,
-                    )
-                },
-            );
+            .replacement_requirements(&prev_outpoints)
+            .unwrap_or((1, bitcoin::Amount::from_sat(0)));
         // Check replacement transaction's target feerate, if set, is high enough,
         // and otherwise set it to the min feerate found above.
         let feerate_vb = if is_cancel {
@@ -1510,6 +1601,7 @@ pub struct ListSpendEntry {
     #[serde(serialize_with = "ser_to_string", deserialize_with = "deser_fromstr")]
     pub psbt: Psbt,
     pub updated_at: Option<u32>,
+    pub status: SpendStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

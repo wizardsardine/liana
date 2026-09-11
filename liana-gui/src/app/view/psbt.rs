@@ -1,13 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{
-    widget::{column, row, tooltip, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
 
-use liana::descriptors::LianaDescriptor;
 use liana::{
-    descriptors::{LianaPolicy, PathInfo, PathSpendInfo},
+    descriptors::{LianaDescriptor, LianaPolicy},
     miniscript::bitcoin::{
         bip32::Fingerprint, blockdata::transaction::TxOut, Address, Network, OutPoint, Transaction,
         Txid,
@@ -16,15 +15,13 @@ use liana::{
 
 use liana_ui::{
     component::{
-        address::address as address_view,
-        amount::*,
-        button::{self, btn_broadcast, btn_delete, btn_export, btn_import, btn_save, btn_sign},
-        card,
-        collapse::Collapse,
-        form,
+        button::{self, btn_broadcast, btn_delete, btn_save, btn_sign},
+        card, form,
         list::DeviceStatus,
         modal::{self, modal_view, ModalWidth},
-        pill, scrollable,
+        notification,
+        panels::psbts,
+        pill,
         text::{self, *},
     },
     icon, theme,
@@ -56,101 +53,73 @@ pub fn psbt_view<'a>(
     currently_signing: bool,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
-    let delete_msg = if currently_signing {
-        None
-    } else {
-        Some(Message::Spend(SpendTxMessage::Delete))
+    let recovery = (!tx.sigs.recovery_paths().is_empty()).then_some(pill::recovery());
+    let status = match tx.status {
+        SpendStatus::Deprecated => Some(pill::deprecated()),
+        SpendStatus::Broadcast => Some(pill::unconfirmed()),
+        SpendStatus::Spent => Some(pill::spent()),
+        _ => None,
     };
-    dashboard(
-        &Menu::PSBTs,
-        cache,
-        warning,
-        Column::new()
-            .spacing(20)
-            .push(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .spacing(10)
-                    .push(Container::new(h3("PSBT")).width(Length::Fill))
-                    .push_maybe(if !tx.sigs.recovery_paths().is_empty() {
-                        Some(pill::recovery())
-                    } else {
-                        None
-                    })
-                    .push_maybe(match tx.status {
-                        SpendStatus::Deprecated => Some(pill::deprecated()),
-                        SpendStatus::Broadcast => Some(pill::unconfirmed()),
-                        SpendStatus::Spent => Some(pill::spent()),
-                        _ => None,
-                    }),
-            )
-            .push(spend_header(tx, labels_editing))
-            .push(spend_overview_view(
-                tx,
-                desc_info,
-                key_aliases,
-                currently_signing,
-                saved,
-            ))
-            .push(
-                Column::new()
-                    .spacing(20)
-                    .push(inputs_view(
-                        &tx.coins,
-                        &tx.psbt.unsigned_tx,
-                        &tx.labels,
-                        labels_editing,
-                    ))
-                    .push(outputs_view(
-                        &tx.psbt.unsigned_tx,
-                        network,
-                        &tx.change_indexes,
-                        &tx.labels,
-                        labels_editing,
-                        tx.is_single_payment().is_some(),
-                        false,
-                    )),
-            )
-            .push(if saved {
-                row![btn_delete(delete_msg)].width(Length::Fill)
-            } else {
-                Row::new()
-                    .push(Space::with_width(Length::Fill))
-                    .push(btn_save(
-                        (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save)),
-                        false,
-                    ))
-                    .width(Length::Fill)
-            })
-            .push(Space::with_height(10)),
-    )
+    let header = row![
+        Container::new(h3("PSBT")).width(Length::Fill),
+        recovery,
+        status
+    ]
+    .align_y(Alignment::Center)
+    .spacing(10);
+
+    let inputs = inputs_view(&tx.coins, &tx.psbt.unsigned_tx, &tx.labels, labels_editing);
+    let outputs = outputs_view(
+        &tx.psbt.unsigned_tx,
+        network,
+        &tx.change_indexes,
+        &tx.labels,
+        labels_editing,
+        tx.is_single_payment().is_some(),
+        false,
+    );
+
+    let action = if saved {
+        let delete_msg = (!currently_signing).then_some(Message::Spend(SpendTxMessage::Delete));
+        row![btn_delete(delete_msg)].width(Length::Fill)
+    } else {
+        let save_msg = (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save));
+        row![Space::fill_width(), btn_save(save_msg, false)].width(Length::Fill)
+    };
+
+    let content = column![
+        header,
+        spend_header(tx, labels_editing),
+        spend_overview_view(tx, desc_info, key_aliases, currently_signing, saved),
+        column![inputs, outputs].spacing(20),
+        action,
+        Space::with_height(10)
+    ]
+    .spacing(20);
+
+    dashboard(&Menu::PSBTs, cache, warning, content)
 }
 
 pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Message> {
     if saved {
         card::simple(text(t!("psbt-transaction-saved")))
-            .width(Length::Fixed(400.0))
+            .width(400)
             .align_x(iced::alignment::Horizontal::Center)
             .into()
     } else {
-        card::simple(
-            Column::new()
-                .spacing(10)
-                .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(text(t!("psbt-save-transaction")))
-                .push(
-                    Row::new()
-                        .spacing(10)
-                        .push(Space::with_width(Length::Fill))
-                        .push(button::secondary(None, t!("btn-ignore")).on_press(Message::Close))
-                        .push(
-                            button::primary(None, t!("btn-save"))
-                                .on_press(Message::Spend(SpendTxMessage::Confirm)),
-                        ),
-                ),
-        )
-        .width(Length::Fixed(400.0))
-        .into()
+        let ignore = button::secondary(None, t!("btn-ignore")).on_press(Message::Close);
+        let save =
+            button::primary(None, t!("btn-save")).on_press(Message::Spend(SpendTxMessage::Confirm));
+        let buttons = row![Space::fill_width(), ignore, save].spacing(10);
+
+        let content = column![
+            warning.map(|w| warn(Some(w))),
+            text(t!("psbt-save-transaction")),
+            buttons
+        ]
+        .spacing(10);
+
+        card::simple(content).width(400).into()
     }
 }
 
@@ -164,100 +133,90 @@ pub fn broadcast_action<'a>(
     saved: bool,
 ) -> Element<'a, Message> {
     if saved {
-        card::simple(text(t!("psbt-transaction-broadcast")))
-            .width(Length::Fixed(400.0))
+        return card::simple(text(t!("psbt-transaction-broadcast")))
+            .width(400)
             .align_x(iced::alignment::Horizontal::Center)
-            .into()
-    } else {
-        card::simple(
-            Column::new()
-                .spacing(10)
-                .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(Container::new(h4_bold(t!("psbt-broadcast-transaction"))).width(Length::Fill))
-                .push_maybe(if conflicting_txids.is_empty() {
-                    None
-                } else {
-                    Some(
-                        conflicting_txids.iter().fold(
-                            Column::new()
-                                .spacing(5)
-                                .push(Row::new().spacing(10).push(icon::warning_icon()).push(text(
-                                    if conflicting_txids.len() > 1 {
-                                        t!("psbt-broadcast-invalidates-some")
-                                    } else {
-                                        t!("psbt-broadcast-invalidates-one")
-                                    },
-                                )))
-                                .push(Row::new().padding([0, 30]).push(text(
-                                    if conflicting_txids.len() > 1 {
-                                        t!("psbt-broadcast-conflicts-some")
-                                    } else {
-                                        t!("psbt-broadcast-conflicts-one")
-                                    },
-                                ))),
-                            |col, txid| {
-                                col.push(
-                                    Row::new()
-                                        .padding([0, 30])
-                                        .spacing(5)
-                                        .align_y(Alignment::Center)
-                                        .push(text(txid.to_string()))
-                                        .push(button::btn_copy(Some(Message::Clipboard(
-                                            txid.to_string(),
-                                        )))),
-                                )
-                            },
-                        ),
-                    )
-                })
-                .push(row![
-                    Space::fill_width(),
-                    btn_broadcast(Some(Message::Spend(SpendTxMessage::Confirm)))
-                ]),
-        )
-        .width(Length::Fixed(if conflicting_txids.is_empty() {
-            400.0
-        } else {
-            800.0
-        }))
-        .into()
+            .into();
     }
+
+    let conflicts = (!conflicting_txids.is_empty()).then(|| {
+        let (invalidates, conflicts) = if conflicting_txids.len() > 1 {
+            (
+                t!("psbt-broadcast-invalidates-some"),
+                t!("psbt-broadcast-conflicts-some"),
+            )
+        } else {
+            (
+                t!("psbt-broadcast-invalidates-one"),
+                t!("psbt-broadcast-conflicts-one"),
+            )
+        };
+
+        let warning = row![icon::warning_icon(), text(invalidates)].spacing(10);
+        let explanation = row![text(conflicts)].padding([0, 30]);
+
+        conflicting_txids
+            .iter()
+            .fold(column![warning, explanation].spacing(5), |col, txid| {
+                let copy = button::btn_copy(Some(Message::Clipboard(txid.to_string())));
+                col.push(
+                    row![text(txid.to_string()), copy]
+                        .padding([0, 30])
+                        .spacing(5)
+                        .align_y(Alignment::Center),
+                )
+            })
+    });
+
+    let confirm = row![
+        Space::fill_width(),
+        btn_broadcast(Some(Message::Spend(SpendTxMessage::Confirm)))
+    ];
+
+    let content = column![
+        warning.map(|w| warn(Some(w))),
+        Container::new(h4_bold(t!("psbt-broadcast-transaction"))).width(Length::Fill),
+        conflicts,
+        confirm
+    ]
+    .spacing(10);
+
+    let width = if conflicting_txids.is_empty() {
+        400
+    } else {
+        800
+    };
+
+    card::simple(content).width(width).into()
 }
 
 pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, Message> {
     if deleted {
-        card::simple(
-            Column::new()
-                .spacing(20)
-                .align_x(Alignment::Center)
-                .push(text(t!("psbt-delete-success")))
-                .push(button::secondary(None, t!("btn-go-back-to-psbts")).on_press(Message::Close)),
-        )
-        .align_x(iced::alignment::Horizontal::Center)
-        .width(Length::Fixed(400.0))
-        .into()
-    } else {
-        card::simple(
-            Column::new()
-                .spacing(10)
-                .push_maybe(warning.map(|w| warn(Some(w))))
-                .push(text(t!("psbt-delete-this")))
-                .push(
-                    Row::new()
-                        .push(Column::new().width(Length::Fill))
-                        .push(
-                            button::transparent(None, t!("btn-cancel"))
-                                .on_press(Message::Spend(SpendTxMessage::Cancel)),
-                        )
-                        .push(
-                            button::alert(None, t!("btn-delete"))
-                                .on_press(Message::Spend(SpendTxMessage::Confirm)),
-                        ),
-                ),
-        )
-        .width(Length::Fixed(400.0))
-        .into()
+        let go_back = button::secondary(None, t!("btn-go-back-to-psbts")).on_press(Message::Close);
+        let content = column![text(t!("psbt-delete-success")), go_back]
+            .spacing(20)
+            .align_x(Alignment::Center);
+
+        return card::simple(content)
+            .align_x(iced::alignment::Horizontal::Center)
+            .width(400)
+            .into();
     }
+
+    let cancel = button::transparent(None, t!("btn-cancel"))
+        .on_press(Message::Spend(SpendTxMessage::Cancel));
+    let delete =
+        button::alert(None, t!("btn-delete")).on_press(Message::Spend(SpendTxMessage::Confirm));
+    let buttons = row![Space::fill_width(), cancel, delete];
+
+    let content = column![
+        warning.map(|w| warn(Some(w))),
+        text(t!("psbt-delete-this")),
+        buttons
+    ]
+    .spacing(10);
+
+    card::simple(content).width(400).into()
 }
 
 pub fn spend_header<'a>(
@@ -265,50 +224,28 @@ pub fn spend_header<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
     let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
-    Column::new()
-        .spacing(20)
-        .push(if let Some(outpoint) = tx.is_single_payment() {
-            let outpoint = outpoint.to_string();
-            if let Some(label) = labels_editing.get(&outpoint) {
-                label::label_editing(vec![outpoint.clone(), txid.clone()], label, H3_SIZE)
-            } else {
-                label::label_editable(
-                    vec![outpoint.clone(), txid.clone()],
-                    tx.labels.get(&outpoint),
-                    H3_SIZE,
-                )
-            }
-        } else if let Some(label) = labels_editing.get(&txid) {
-            label::label_editing(vec![txid.clone()], label, H3_SIZE)
+
+    let label = if let Some(outpoint) = tx.is_single_payment() {
+        let outpoint = outpoint.to_string();
+        let labelled = vec![outpoint.clone(), txid.clone()];
+        if let Some(label) = labels_editing.get(&outpoint) {
+            label::label_editing(labelled, label, H3_SIZE)
         } else {
-            label::label_editable(vec![txid.clone()], tx.labels.get(&txid), H3_SIZE)
-        })
-        .push(
-            Column::new()
-                .push(if tx.is_send_to_self() {
-                    Container::new(h1(t!("common-self-transfer")))
-                } else {
-                    Container::new(amount_with_font(&tx.spend_amount, H1_SPEC))
-                })
-                .push(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .push(h3(t!("transactions-miner-fee")).style(theme::text::secondary))
-                        .push_maybe(if tx.fee_amount.is_none() {
-                            Some(text(t!("psbt-missing-inputs")))
-                        } else {
-                            None
-                        })
-                        .push_maybe(tx.fee_amount.map(|fee| amount_with_font(&fee, H3_SPEC)))
-                        .push(text(" ").size(H3_SIZE))
-                        .push_maybe(tx.min_feerate_vb().map(|rate| {
-                            text(t!("common-approx-feerate-value", rate = rate))
-                                .size(H4_SIZE)
-                                .style(theme::text::secondary)
-                        })),
-                ),
-        )
-        .into()
+            label::label_editable(labelled, tx.labels.get(&outpoint), H3_SIZE)
+        }
+    } else if let Some(label) = labels_editing.get(&txid) {
+        label::label_editing(vec![txid.clone()], label, H3_SIZE)
+    } else {
+        label::label_editable(vec![txid.clone()], tx.labels.get(&txid), H3_SIZE)
+    };
+
+    psbts::spend_header(
+        label,
+        tx.is_send_to_self(),
+        tx.spend_amount,
+        tx.fee_amount,
+        tx.min_feerate_vb(),
+    )
 }
 
 pub fn spend_overview_view<'a>(
@@ -319,225 +256,49 @@ pub fn spend_overview_view<'a>(
     saved: bool,
 ) -> Element<'a, Message> {
     let enabled = saved && !currently_signing;
-    let export_msg = enabled.then_some(Message::ExportPsbt);
-    let export_button = btn_export(export_msg);
+    let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
 
-    let import_msg = enabled.then_some(Message::ImportPsbt);
-    let import_button = btn_import(import_msg);
-
-    Column::new()
-        .spacing(20)
-        .push(
-            Container::new(
-                Column::new()
-                    .push(
-                        Column::new()
-                            .padding(15)
-                            .spacing(10)
-                            .push(
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .push(text("PSBT").bold().width(Length::Fill))
-                                    .push(
-                                        Row::new()
-                                            .spacing(5)
-                                            .push(if saved {
-                                                Container::new(export_button)
-                                            } else {
-                                                Container::new(tooltip::Tooltip::new(
-                                                    export_button,
-                                                    Container::new(p1_regular(t!(
-                                                        "psbt-sign-save-before-export"
-                                                    )))
-                                                    .style(theme::card::simple)
-                                                    .padding(10),
-                                                    tooltip::Position::Top,
-                                                ))
-                                            })
-                                            .push(import_button),
-                                    )
-                                    .align_y(Alignment::Center),
-                            )
-                            .push(
-                                Row::new()
-                                    .push(p1_bold(t!("transactions-txid")).width(Length::Fill))
-                                    .push(
-                                        p2_regular(tx.psbt.unsigned_tx.compute_txid().to_string())
-                                            .style(theme::text::secondary),
-                                    )
-                                    .push(button::btn_copy(Some(Message::Clipboard(
-                                        tx.psbt.unsigned_tx.compute_txid().to_string(),
-                                    ))))
-                                    .align_y(Alignment::Center),
-                            ),
-                    )
-                    .push(signatures(tx, desc_info, key_aliases))
-                    .push(Space::with_height(5)),
-            )
-            .style(theme::card::simple),
-        )
-        .push_maybe(if tx.status == SpendStatus::Pending {
-            Some(
-                Row::new()
-                    .push(Space::with_width(Length::Fill))
-                    .push_maybe(if tx.path_ready().is_none() {
-                        Some(btn_sign(Some(Message::Spend(SpendTxMessage::Sign))))
-                    } else {
-                        Some(btn_broadcast(Some(Message::Spend(
-                            SpendTxMessage::Broadcast,
-                        ))))
-                    })
-                    .align_y(Alignment::Center)
-                    .spacing(20),
-            )
+    let action = (tx.status == SpendStatus::Broadcastable).then(|| {
+        if tx.path_ready().is_none() {
+            btn_sign(Some(Message::Spend(SpendTxMessage::Sign)))
         } else {
-            None
-        })
+            btn_broadcast(Some(Message::Spend(SpendTxMessage::Broadcast)))
+        }
         .into()
-}
-
-pub fn signatures<'a>(
-    tx: &'a SpendTx,
-    desc_info: &'a LianaPolicy,
-    keys_aliases: &'a HashMap<Fingerprint, String>,
-) -> Element<'a, Message> {
-    Column::new()
-        .push(if let Some(sigs) = tx.path_ready() {
-            Container::new(scrollable::horizontal_thin(
-                Row::new()
-                    .spacing(5)
-                    .align_y(Alignment::Center)
-                    .spacing(10)
-                    .push(p1_bold(t!("psbt-status")))
-                    .push(icon::circle_check_icon().style(theme::text::success))
-                    .push(text(t!("common-ready")).bold().style(theme::text::success))
-                    .push(text(t!("psbt-signed-by")))
-                    .push(
-                        sigs.signed_pubkeys
-                            .keys()
-                            .fold(Row::new().spacing(5), |row, value| {
-                                row.push(pill::fingerprint(
-                                    value.to_string(),
-                                    keys_aliases.get(value).map(String::as_str),
-                                ))
-                            }),
-                    ),
-            ))
-            .padding(15)
-        } else {
-            Container::new(
-                Collapse::new(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(20)
-                        .push(p1_bold(t!("psbt-status")))
-                        .push(
-                            Row::new()
-                                .spacing(5)
-                                .align_y(Alignment::Center)
-                                .push(icon::circle_cross_icon().style(theme::text::error))
-                                .push(text(t!("psbt-not-ready")).style(theme::text::error))
-                                .width(Length::Fill),
-                        )
-                        .push(icon::collapse_icon()),
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(20)
-                        .push(p1_bold(t!("psbt-status")))
-                        .push(
-                            Row::new()
-                                .spacing(5)
-                                .align_y(Alignment::Center)
-                                .push(icon::circle_cross_icon().style(theme::text::error))
-                                .push(text(t!("psbt-not-ready")).style(theme::text::error))
-                                .width(Length::Fill),
-                        )
-                        .push(icon::collapsed_icon()),
-                    Column::new()
-                        .padding(15)
-                        .spacing(10)
-                        .push(text(t!("psbt-finalizing-requires")))
-                        .push_maybe(if tx.sigs.recovery_paths().is_empty() {
-                            Some(path_view(
-                                desc_info.primary_path(),
-                                tx.sigs.primary_path(),
-                                keys_aliases,
-                            ))
-                        } else {
-                            tx.sigs.recovery_paths().iter().last().map(|(seq, path)| {
-                                let keys = &desc_info.recovery_paths()[seq];
-                                path_view(keys, path, keys_aliases)
-                            })
-                        }),
-                )
-                .padding(15),
-            )
-        })
-        .into()
-}
-
-// Display a fingerprint first by its alias if there is any, or in hex otherwise.
-fn container_from_fg(
-    fg: Fingerprint,
-    aliases: &HashMap<Fingerprint, String>,
-) -> Container<'_, Message> {
-    pill::fingerprint(fg.to_string(), aliases.get(&fg).map(String::as_str))
-}
-
-pub fn path_view<'a>(
-    path: &'a PathInfo,
-    sigs: &'a PathSpendInfo,
-    key_aliases: &'a HashMap<Fingerprint, String>,
-) -> Element<'a, Message> {
-    // We get a sorted list of all the fingerprints (which correspond to a signer) from this
-    // spending path, and from it get an iterator on those of these fingerprints for which a
-    // signature was provided in the PSBT, and those for which there isn't any.
-    let mut all_fgs: Vec<Fingerprint> = path.thresh_origins().1.into_keys().collect();
-    all_fgs.sort();
-    let signed_fgs = sigs.signed_pubkeys.keys();
-    let non_signed_fgs = all_fgs
-        .into_iter()
-        .filter(|fg| !sigs.signed_pubkeys.contains_key(fg));
-    let missing_signatures = sigs.threshold.saturating_sub(sigs.sigs_count);
-
-    // From these iterators, create the appropriate rows to be displayed.
-    let row_unsigned = non_signed_fgs.into_iter().fold(None, |row, fg| {
-        Some(
-            row.unwrap_or_else(|| Row::new().spacing(5))
-                .push(container_from_fg(fg, key_aliases)),
-        )
     });
-    let row_signed = signed_fgs
-        .into_iter()
-        .fold(Row::new().spacing(5), |row, fg| {
-            row.push(container_from_fg(*fg, key_aliases))
-        });
 
-    scrollable::horizontal_thin(
-        Row::new()
-            .align_y(Alignment::Center)
-            .push(
-                Row::new()
-                    .push(if missing_signatures == 0 {
-                        icon::circle_check_icon().style(theme::text::success)
-                    } else {
-                        icon::circle_cross_icon().style(theme::text::secondary)
-                    })
-                    .push(Space::with_width(Length::Fixed(20.0))),
+    let (status, details) = match tx.path_ready() {
+        Some(sigs) => (psbts::signatures_ready(sigs, key_aliases), None),
+        None => {
+            let requirement = if tx.sigs.recovery_paths().is_empty() {
+                Some(psbts::path_row(
+                    desc_info.primary_path(),
+                    tx.sigs.primary_path(),
+                    key_aliases,
+                ))
+            } else {
+                tx.sigs.recovery_paths().iter().last().map(|(seq, path)| {
+                    let keys = &desc_info.recovery_paths()[seq];
+                    psbts::path_row(keys, path, key_aliases)
+                })
+            };
+            (
+                psbts::signatures_missing(),
+                Some(psbts::signatures_requirement(requirement)),
             )
-            .push(
-                p1_regular(t!("psbt-more-signatures", count = missing_signatures))
-                    .style(theme::text::secondary),
-            )
-            .push_maybe(row_unsigned)
-            .push_maybe(
-                (!sigs.signed_pubkeys.is_empty()).then_some(
-                    p1_regular(t!("psbt-already-signed-by")).style(theme::text::secondary),
-                ),
-            )
-            .push(row_signed),
+        }
+    };
+
+    psbts::spend_overview(
+        saved,
+        enabled.then_some(Message::ExportPsbt),
+        enabled.then_some(Message::ImportPsbt),
+        txid.clone(),
+        Message::Clipboard(txid),
+        status,
+        details,
+        action,
     )
-    .into()
 }
 
 pub fn inputs_view<'a>(
@@ -546,32 +307,22 @@ pub fn inputs_view<'a>(
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
-    Container::new(
-        Collapse::new(
-            Row::new()
-                .align_y(Alignment::Center)
-                .push(h4_bold(t!("psbt-coins-spent", count = tx.input.len())).width(Length::Fill))
-                .push(icon::collapse_icon()),
-            Row::new()
-                .align_y(Alignment::Center)
-                .push(h4_bold(t!("psbt-coins-spent", count = tx.input.len())).width(Length::Fill))
-                .push(icon::collapsed_icon()),
-            tx.input.iter().fold(
-                Column::new().spacing(10).padding(20),
-                |col: Column<'a, Message>, input| {
-                    col.push(input_view(
-                        &input.previous_output,
-                        coins.get(&input.previous_output),
-                        labels,
-                        labels_editing,
-                    ))
-                },
-            ),
-        )
-        .padding(20),
-    )
-    .style(theme::card::button_simple)
-    .into()
+    let title = t!("psbt-coins-spent", count = tx.input.len());
+
+    let inputs = tx
+        .input
+        .iter()
+        .map(|input| {
+            input_view(
+                &input.previous_output,
+                coins.get(&input.previous_output),
+                labels,
+                labels_editing,
+            )
+        })
+        .collect();
+
+    psbts::collapsible_section(title, inputs)
 }
 
 pub fn outputs_view<'a>(
@@ -583,88 +334,60 @@ pub fn outputs_view<'a>(
     is_single_payment: bool,
     is_external: bool,
 ) -> Element<'a, Message> {
-    Column::new()
-        .spacing(20)
-        .push({
-            let count = tx
-                .output
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| is_external || !change_indexes.contains(i))
-                .count();
-            if count > 0 {
-                Container::new(
-                    Collapse::new(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .push(h4_bold(t!("psbt-payments", count = count)).width(Length::Fill))
-                            .push(icon::collapse_icon()),
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .push(h4_bold(t!("psbt-payments", count = count)).width(Length::Fill))
-                            .push(icon::collapsed_icon()),
-                        tx.output
-                            .iter()
-                            .enumerate()
-                            .filter(|(i, _)| is_external || !change_indexes.contains(i))
-                            .fold(
-                                Column::new().padding(20),
-                                |col: Column<'a, Message>, (i, output)| {
-                                    col.spacing(10).push(payment_view(
-                                        i,
-                                        tx.compute_txid(),
-                                        output,
-                                        network,
-                                        labels,
-                                        labels_editing,
-                                        is_single_payment,
-                                        !is_external || change_indexes.contains(&i),
-                                    ))
-                                },
-                            ),
-                    )
-                    .padding(20),
+    let is_payment = |i: &usize| is_external || !change_indexes.contains(i);
+    let count = tx
+        .output
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| is_payment(i))
+        .count();
+
+    let payments = if count > 0 {
+        let title = t!("psbt-payments", count = count);
+        let rows = tx
+            .output
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| is_payment(i))
+            .map(|(i, output)| {
+                payment_view(
+                    i,
+                    tx.compute_txid(),
+                    output,
+                    network,
+                    labels,
+                    labels_editing,
+                    is_single_payment,
+                    !is_external || change_indexes.contains(&i),
                 )
-            } else {
-                Container::new(h4_bold(t!("psbt-no-payment")).style(|t| {
-                    theme::text::custom(t.colors.buttons.transparent_border.active.text)
-                }))
-                .padding(20)
-                .width(Length::Fill)
-            }
-            .style(theme::card::button_simple)
-        })
-        .push_maybe(if !is_external && !change_indexes.is_empty() {
-            Some(
-                Container::new(
-                    Collapse::new(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .push(h4_bold(t!("psbt-change")).width(Length::Fill))
-                            .push(icon::collapse_icon()),
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .push(h4_bold(t!("psbt-change")).width(Length::Fill))
-                            .push(icon::collapsed_icon()),
-                        tx.output
-                            .iter()
-                            .enumerate()
-                            .filter(|(i, _)| change_indexes.contains(i))
-                            .fold(
-                                Column::new().padding(20),
-                                |col: Column<'a, Message>, (_, output)| {
-                                    col.spacing(10).push(change_view(output, network))
-                                },
-                            ),
-                    )
-                    .padding(20),
-                )
-                .style(theme::card::button_simple),
-            )
-        } else {
-            None
-        })
+            })
+            .collect();
+
+        psbts::collapsible_section(title, rows)
+    } else {
+        Container::new(
+            h4_bold(t!("psbt-no-payment"))
+                .style(|t| theme::text::custom(t.colors.buttons.transparent_border.active.text)),
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .style(theme::card::button_simple)
         .into()
+    };
+
+    let change = (!is_external && !change_indexes.is_empty()).then(|| {
+        let rows = tx
+            .output
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| change_indexes.contains(i))
+            .map(|(_, output)| change_view(output, network))
+            .collect();
+
+        psbts::collapsible_section(t!("psbt-change"), rows)
+    });
+
+    column![payments, change].spacing(20).into()
 }
 
 fn input_view<'a>(
@@ -674,75 +397,27 @@ fn input_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
     let outpoint = outpoint.to_string();
-    Column::new()
-        .width(Length::Fill)
-        .push(
-            Row::new()
-                .spacing(5)
-                .align_y(Alignment::Center)
-                .push(
-                    Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                        label::label_editing(vec![outpoint.clone()], label, text::P1_SIZE)
-                    } else {
-                        label::label_editable(
-                            vec![outpoint.clone()],
-                            labels.get(&outpoint),
-                            text::P1_SIZE,
-                        )
-                    })
-                    .width(Length::Fill),
-                )
-                .push_maybe(coin.map(|c| amount(&c.amount))),
-        )
-        .push(
-            Column::new()
-                .push(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(5)
-                        .push(p1_bold(t!("coins-outpoint")).style(theme::text::secondary))
-                        .push(p2_regular(outpoint.clone()).style(theme::text::secondary))
-                        .push(button::btn_copy(Some(Message::Clipboard(outpoint.clone())))),
-                )
-                .push_maybe(coin.map(|c| {
-                    let addr = c.address.to_string();
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill)
-                        .push(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .width(Length::Fill)
-                                .spacing(5)
-                                .push(
-                                    p1_bold(t!("common-address-label"))
-                                        .style(theme::text::secondary),
-                                )
-                                .push(address_view(addr.clone()))
-                                .push(button::btn_copy(Some(Message::Clipboard(addr)))),
-                        )
-                }))
-                .push_maybe(coin.and_then(|c| {
-                    labels.get(&c.address.to_string()).map(|label| {
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .width(Length::Fill)
-                            .push(
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .width(Length::Fill)
-                                    .spacing(5)
-                                    .push(
-                                        p1_bold(t!("coins-address-label"))
-                                            .style(theme::text::secondary),
-                                    )
-                                    .push(p2_regular(label).style(theme::text::secondary)),
-                            )
-                    })
-                })),
-        )
-        .spacing(5)
-        .into()
+
+    let label_widget = if let Some(label) = labels_editing.get(&outpoint) {
+        label::label_editing(vec![outpoint.clone()], label, text::P1_SIZE)
+    } else {
+        label::label_editable(vec![outpoint.clone()], labels.get(&outpoint), text::P1_SIZE)
+    };
+
+    let address = coin.map(|c| c.address.to_string());
+    let address_label = coin
+        .and_then(|c| labels.get(&c.address.to_string()))
+        .map(String::as_str);
+
+    psbts::input_row(
+        label_widget,
+        coin.map(|c| c.amount),
+        outpoint.clone(),
+        Message::Clipboard(outpoint),
+        address.clone(),
+        address_label,
+        address.map(Message::Clipboard),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -782,82 +457,26 @@ fn payment_view<'a>(
         label::label_non_editable(change_labels, None, text::P1_SIZE)
     };
 
-    Column::new()
-        .width(Length::Fill)
-        .spacing(5)
-        .push(
-            Row::new()
-                .spacing(5)
-                .align_y(Alignment::Center)
-                .push(Container::new(label_widget).width(Length::Fill))
-                .push(amount(&output.value)),
-        )
-        .push_maybe(addr.map(|addr| {
-            Column::new()
-                .push(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill)
-                        .push(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .width(Length::Fill)
-                                .spacing(5)
-                                .push(
-                                    p1_bold(t!("common-address-label"))
-                                        .style(theme::text::secondary),
-                                )
-                                .push(address_view(addr.clone()))
-                                .push(button::btn_copy(Some(Message::Clipboard(addr.clone())))),
-                        ),
-                )
-                .push_maybe(labels.get(&addr).map(|label| {
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill)
-                        .push(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .width(Length::Fill)
-                                .spacing(5)
-                                .push(
-                                    p1_bold(t!("coins-address-label"))
-                                        .style(theme::text::secondary),
-                                )
-                                .push(p2_regular(label).style(theme::text::secondary)),
-                        )
-                }))
-        }))
-        .into()
+    let address_label = addr
+        .as_ref()
+        .and_then(|addr| labels.get(addr))
+        .map(String::as_str);
+
+    psbts::payment_row(
+        label_widget,
+        output.value,
+        addr.clone(),
+        address_label,
+        addr.map(Message::Clipboard),
+    )
 }
 
 fn change_view(output: &TxOut, network: Network) -> Element<'_, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .unwrap()
         .to_string();
-    Column::new()
-        .width(Length::Fill)
-        .spacing(5)
-        .push(
-            Row::new()
-                .push(Space::with_width(Length::Fill))
-                .push(amount(&output.value)),
-        )
-        .push(
-            Row::new()
-                .align_y(Alignment::Center)
-                .width(Length::Fill)
-                .push(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill)
-                        .spacing(5)
-                        .push(p1_bold(t!("common-address-label")).style(theme::text::secondary))
-                        .push(address_view(addr.clone()))
-                        .push(button::btn_copy(Some(Message::Clipboard(addr)))),
-                ),
-        )
-        .into()
+
+    psbts::change_row(output.value, addr.clone(), Message::Clipboard(addr))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -873,31 +492,34 @@ pub fn sign_action<'a>(
 ) -> Element<'a, Message> {
     let title = t!("psbt-select-signing-device");
 
-    let mut signers = vec![];
-    if hws.is_empty() {
-        signers.push(modal::modal_no_devices_placeholder());
+    let mut signers: Vec<Element<'a, Message>> = if hws.is_empty() {
+        vec![modal::modal_no_devices_placeholder()]
     } else {
-        hws.iter().enumerate().for_each(|(i, hw)| {
-            let (signed, signing, can_sign) = hw.fingerprint().map_or((false, false, false), |f| {
-                (
-                    signed.contains(&f),
-                    signing.contains(&f),
-                    descriptor.contains_fingerprint_in_path(f, recovery_timelock),
+        hws.iter()
+            .enumerate()
+            .map(|(i, hw)| {
+                let (signed, signing, can_sign) =
+                    hw.fingerprint().map_or((false, false, false), |f| {
+                        (
+                            signed.contains(&f),
+                            signing.contains(&f),
+                            descriptor.contains_fingerprint_in_path(f, recovery_timelock),
+                        )
+                    });
+                device_list_entry(
+                    hw,
+                    HwRowMode::Signing {
+                        signed,
+                        signing,
+                        can_sign,
+                    },
+                    move || Message::SelectHardwareWallet(i),
                 )
-            });
-            signers.push(device_list_entry(
-                hw,
-                HwRowMode::Signing {
-                    signed,
-                    signing,
-                    can_sign,
-                },
-                move || Message::SelectHardwareWallet(i),
-            ))
-        });
-    }
+            })
+            .collect()
+    };
 
-    if let Some(hot_signer) = signer.map(|fingerprint| {
+    signers.extend(signer.map(|fingerprint| {
         let can_sign = descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);
         let select_msg = can_sign.then_some(Message::Spend(SpendTxMessage::SelectHotSigner));
         let fp = Some(format!("#{fingerprint}"));
@@ -909,21 +531,21 @@ pub fn sign_action<'a>(
         } else {
             modal::device_entry(fp, None::<&str>, alias, DeviceStatus::None, select_msg)
         }
-    }) {
-        signers.push(hot_signer);
-    }
+    }));
 
-    let modal_content = Column::from_vec(signers)
+    let signers = Column::from_vec(signers)
         .align_x(Alignment::Center)
         .spacing(10)
         .width(Length::Fill);
 
-    let width = ModalWidth::L;
-    let content = modal_view(Some(title), None, None, width, modal_content);
-
-    let width = width as u32 + 50;
+    let modal_width = ModalWidth::L;
+    let content = modal_view(Some(title), None, None, modal_width, signers);
     let warning = warning.map(|w| warn(Some(w)));
-    column![warning, content].spacing(10).width(width).into()
+
+    column![warning, content]
+        .spacing(10)
+        .width(modal_width as u32 + 50)
+        .into()
 }
 
 pub fn sign_action_toasts<'a>(
@@ -931,59 +553,34 @@ pub fn sign_action_toasts<'a>(
     hws: &'a [HardwareWallet],
     signing: &HashSet<Fingerprint>,
 ) -> Vec<Element<'a, Message>> {
-    let mut vec: Vec<Element<'a, Message>> = hws
+    let mut toasts: Vec<Element<'a, Message>> = hws
         .iter()
-        .filter_map(|hw| {
-            if let HardwareWallet::Supported {
+        .filter_map(|hw| match hw {
+            HardwareWallet::Supported {
                 kind,
                 fingerprint,
                 version,
                 alias,
                 ..
-            } = &hw
-            {
-                if signing.contains(fingerprint) {
-                    Some(
-                        liana_ui::component::notification::processing_hardware_wallet(
-                            kind,
-                            version.as_ref(),
-                            fingerprint,
-                            alias.as_ref().map(|x| x.as_str()),
-                        )
-                        .max_width(400.0)
-                        .into(),
-                    )
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+            } if signing.contains(fingerprint) => Some(
+                notification::processing_hardware_wallet(
+                    kind,
+                    version.as_ref(),
+                    fingerprint,
+                    alias.as_deref(),
+                )
+                .max_width(400.0)
+                .into(),
+            ),
+            _ => None,
         })
         .collect();
-    if let Some(e) = error {
-        vec.push(
-            liana_ui::component::notification::processing_hardware_wallet_error(
-                t!("psbt-device-sign-failed"),
-                e.to_string(),
-            )
+
+    toasts.extend(error.map(|e| {
+        notification::processing_hardware_wallet_error(t!("psbt-device-sign-failed"), e.to_string())
             .max_width(400.0)
-            .into(),
-        )
-    }
+            .into()
+    }));
 
-    vec
-}
-
-pub fn update_spend_success_view<'a>() -> Element<'a, Message> {
-    Column::new()
-        .push(
-            card::simple(Container::new(
-                text(t!("psbt-spend-updated")).style(theme::text::secondary),
-            ))
-            .padding(50),
-        )
-        .width(Length::Fixed(400.0))
-        .align_x(Alignment::Center)
-        .into()
+    toasts
 }

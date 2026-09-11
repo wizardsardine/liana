@@ -1559,19 +1559,15 @@ psbt-sign-save-before-export => "Sign or save the transaction first to enable ex
 
 psbt-signed-by => "signed by"
 
-psbt-spend-updated => "Spend transaction is updated"
-
 psbt-status => "Status"
 
 psbt-transaction-broadcast => "Transaction is broadcast"
 
 psbt-transaction-saved => "Transaction is saved"
 
-psbts-base64-warning => "Please enter a base64 encoded PSBT"
+psbts-hide-confirmed => "Hide confirmed transactions"
 
-psbts-imported => "PSBT is imported"
-
-psbts-insert-psbt => "Insert PSBT:"
+psbts-signatures-collected => "signature(s) collected"
 
 receive-address-label-placeholder => "Enter an address label"
 
