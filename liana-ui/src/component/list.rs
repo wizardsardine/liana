@@ -179,9 +179,18 @@ pub fn list_entry_row<'a, M: Clone + 'a>(
     button::list_entry(content, accent, width, msg)
 }
 
+const CHEVRON_SIZE: u32 = 18;
+
 pub fn right_chevron<'a, M: 'a>() -> Element<'a, M> {
     icon::chevron_right()
-        .size(18)
+        .size(CHEVRON_SIZE)
+        .style(theme::text::secondary)
+        .into()
+}
+
+pub fn down_chevron<'a, M: 'a>() -> Element<'a, M> {
+    icon::collapsed_icon()
+        .size(CHEVRON_SIZE)
         .style(theme::text::secondary)
         .into()
 }
@@ -640,18 +649,6 @@ pub fn see_more<'a, M: Clone + 'a>(processing: bool, next: M) -> Element<'a, M> 
     Container::new(button)
         .width(Length::Fill)
         .style(theme::card::simple)
-        .into()
-}
-
-/// History list entry, the clickable card paired with [`see_more`].
-pub fn entry_history<'a, M: Clone + 'a>(content: Row<'a, M>, msg: M) -> Element<'a, M> {
-    let button = Button::new(content)
-        .padding(10)
-        .on_press(msg)
-        .style(theme::button::transparent_border);
-
-    Container::new(button)
-        .style(theme::card::button_simple)
         .into()
 }
 

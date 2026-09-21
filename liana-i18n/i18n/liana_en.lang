@@ -1461,6 +1461,10 @@ pill-key-safety-net-tooltip => "Professional third party recovery key"
 
 pill-not-in-policy => "Not in policy yet"
 
+pill-payjoin => "Payjoin"
+
+pill-payjoin-tooltip => "This transaction also spends coins that are not ours"
+
 pill-recovery-available-tooltip => "Recovery option(s) already available"
 
 pill-recovery-tooltip => "This transaction is using a recovery path"
@@ -1539,7 +1543,7 @@ psbt-broadcast-transaction => "Broadcast the transaction"
 psbt-change => "Change"
 
 psbt-coins-spent
-=> "{ $count ->\n    [one] 1 coin spent\n   *[other] {$count} coins spent\n}";;
+=> "{ $count ->\n    [one] 1 Coin spent\n   *[other] {$count} Coins spent\n}";;
 
 psbt-delete-success => "Successfully deleted this transaction."
 
@@ -1549,14 +1553,12 @@ psbt-device-sign-failed => "Device failed to sign"
 
 psbt-finalizing-requires => "Finalizing this transaction requires:"
 
-psbt-missing-inputs => "Missing information about transaction inputs"
-
 psbt-more-signatures
 => "{ $count ->\n    [0] no more signatures\n    [one] 1 more signature from\n   *[other] {$count} more signatures from\n}";;
 
 psbt-not-ready => "Not ready"
 
-psbt-payments => "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
+psbt-payments => "{ $count ->\n    [one] 1 Payment\n   *[other] {$count} Payments\n}"
 
 psbt-save-transaction => "Save this transaction"
 
@@ -1839,11 +1841,9 @@ transactions-cancel-tooltip
 
 transactions-date => "Date:"
 
-transactions-incoming => "Incoming transaction"
+transactions-date-unconfirmed => "not included in a block yet"
 
-transactions-miner-fee => "Miner fee:{ \" \" }"
-
-transactions-outgoing => "Outgoing transaction"
+transactions-miner-fee => "Miner fee:"
 
 transactions-rbf-bump-help
 => "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction.";;
@@ -1873,6 +1873,6 @@ transactions-replacement => "Transaction replacement"
 
 transactions-transaction => "Transaction"
 
-transactions-txid => "Tx ID"
+transactions-txid => "Tx ID:"
 
 warning-hardware-wallet-error => "Hardware wallet error"

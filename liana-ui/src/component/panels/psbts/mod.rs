@@ -15,7 +15,7 @@ use liana_i18n::t;
 use crate::{
     component::{
         address::address as address_view,
-        amount::{amount, amount_with_fiat_tooltip, amount_with_font, AmountSize},
+        amount::{amount, amount_with_fiat_tooltip, amount_with_font, AmountSize, FiatAmount},
         button, card,
         panels::{
             self,
@@ -30,8 +30,6 @@ use crate::{
     theme::{self, Theme},
     widget::{Column, Container, Element, Row, SpaceExt, Toggler},
 };
-
-const PSBT_HEIGHT: u32 = 90;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PsbtSigs {
@@ -66,7 +64,7 @@ pub fn hide_confirmed_row<'a, M: Clone + 'static>(hidden: bool, toggle: M) -> El
 
 #[allow(clippy::too_many_arguments)]
 pub fn list_entry<'a, M: Clone + 'static>(
-    label: Option<&'a str>,
+    label: Option<String>,
     is_send_to_self: bool,
     is_batch: bool,
     is_recovery: bool,
@@ -103,7 +101,7 @@ pub fn list_entry<'a, M: Clone + 'static>(
     let status_pill = status_pill(status);
 
     let max_lbl_chars = (available_width - 500.0) as usize / 22;
-    let mut label = label.map(|l| truncate(l, max_lbl_chars));
+    let mut label = label.map(|l| truncate(&l, max_lbl_chars));
 
     let kind = if is_send_to_self {
         label = Some(t!("common-self-transfer"));
@@ -133,7 +131,9 @@ pub fn list_entry<'a, M: Clone + 'static>(
         .spacing(HSpacing::S)
         .align_y(Alignment::Center);
 
-    let content = row![left, spent].spacing(HSpacing::L).height(PSBT_HEIGHT);
+    let content = row![left, spent]
+        .spacing(HSpacing::L)
+        .height(panels::ListEntryHeight::Standard);
 
     card::list_entry_with_padding(content, msg, panels::LIST_ENTRY_PADDING)
 }
@@ -146,10 +146,13 @@ pub fn collapsible_section<'a, M: Clone + 'static>(
         .spacing(VSpacing::S)
         .padding(card::CardPadding::Soft);
 
-    let header = new::h3_semi(title).width(Length::Fill);
-
+    let header = row![new::h3_semi(title)]
+        .height(panels::ListEntryHeight::Standard)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
     card::foldable::FoldableCard::new(None, header, Some(rows.into()))
-        .padding(card::CardPadding::Soft)
+        .list_chevrons()
+        .padding(panels::FOLDABLE_ENTRY_PADDING)
         .into()
 }
 
@@ -350,12 +353,13 @@ pub fn signatures_requirement<'a, M: 'static>(
         .into()
 }
 
-pub fn spend_header<'a, M: 'static>(
+pub fn spend_header<'a, M: 'static, F: Fn(Amount) -> FiatAmount>(
     label: Element<'a, M>,
     is_send_to_self: bool,
     spent: Amount,
     fee: Option<Amount>,
     feerate: Option<u64>,
+    to_fiat: Option<F>,
 ) -> Element<'a, M> {
     let spent: Element<'a, M> = if is_send_to_self {
         new::d2(t!("common-self-transfer")).into()
@@ -364,21 +368,8 @@ pub fn spend_header<'a, M: 'static>(
     };
     let spent = Container::new(spent);
 
-    let missing_inputs = fee
-        .is_none()
-        .then_some(new::caption(t!("psbt-missing-inputs")));
-    let fee = fee.map(|fee| amount_with_font(&fee, new::H1_SPEC));
-    let feerate = feerate.map(|rate| {
-        new::h3(t!("common-approx-feerate-value", rate = rate)).style(theme::text::secondary)
-    });
-    let fees = row![
-        new::h1(t!("transactions-miner-fee")).style(theme::text::secondary),
-        missing_inputs,
-        fee,
-        new::h1(" "),
-        feerate
-    ]
-    .align_y(Alignment::Center);
+    let feerate = feerate.map(|rate| t!("common-approx-feerate-value", rate = rate));
+    let fees = panels::fees_row(fee, feerate, to_fiat);
 
     column![label, column![spent, fees]]
         .spacing(VSpacing::L)
@@ -401,12 +392,7 @@ pub fn spend_overview<'a, M: Clone + 'static>(
     let header = row![new::b5_bold(t!("psbt-title")).width(Length::Fill), buttons]
         .align_y(Alignment::Center);
 
-    let txid = row![
-        new::b5_bold(t!("transactions-txid")).width(Length::Fill),
-        new::small_caption(txid).style(theme::text::secondary),
-        button::btn_copy(Some(copy_txid))
-    ]
-    .align_y(Alignment::Center);
+    let txid = panels::txid_row(txid, copy_txid);
 
     let psbt = column![header, txid].spacing(VSpacing::S);
     let card = card::foldable::FoldableCard::new(Some(psbt.into()), status, details)

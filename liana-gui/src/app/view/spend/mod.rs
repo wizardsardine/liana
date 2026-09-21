@@ -47,6 +47,7 @@ pub fn spend_view<'a>(
     network: Network,
     currently_signing: bool,
     warning: Option<&'a Error>,
+    fiat_converter: Option<FiatAmountConverter>,
 ) -> Element<'a, Message> {
     let is_recovery = tx
         .psbt
@@ -86,7 +87,6 @@ pub fn spend_view<'a>(
         &tx.change_indexes,
         &tx.labels,
         labels_editing,
-        tx.single_payment().is_some(),
         false,
     );
     let inputs_outputs = column![inputs, outputs].spacing(20);
@@ -103,7 +103,7 @@ pub fn spend_view<'a>(
         row![previous, Space::fill_width(), save].width(Length::Fill)
     };
 
-    let header = psbt::spend_header(tx, labels_editing);
+    let header = psbt::spend_header(tx, labels_editing, fiat_converter);
     let content = column![
         title,
         header,
