@@ -21,7 +21,7 @@ pub use message::*;
 use warning::warn;
 
 use iced::{
-    widget::{column, responsive, row, stack, Space},
+    widget::{column, responsive, row, stack, Id, Space},
     Length,
 };
 
@@ -39,6 +39,8 @@ use crate::app::{
     menu::{Menu, MenuWidth},
 };
 use crate::t;
+
+pub const DASHBOARD_SCROLLABLE: Id = Id::new("dashboard");
 
 pub fn sidebar<'a>(
     active: &Menu,
@@ -127,6 +129,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                                     .max_width(1500),
                                 Space::with_width(Length::FillPortion(1)),
                             ))
+                            .id(DASHBOARD_SCROLLABLE)
                             .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),
                         )
                         .center_x(Length::Fill)

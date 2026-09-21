@@ -21,21 +21,21 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
+        menu::Menu,
         message::Message,
-        state::{label::LabelsEdited, State},
+        state::{fiat_converter_for_wallet, label::LabelsEdited, State},
         view,
         wallet::Wallet,
     },
-    daemon::model::{self, LabelsLoader},
+    daemon::{
+        model::{
+            self, CreateSpendResult, HistoryCursor, HistoryPage, HistoryTransaction, LabelItem,
+            Labelled, LabelsLoader,
+        },
+        Daemon,
+    },
     export::{ImportExportMessage, ImportExportType},
     utils::now,
-};
-
-use crate::daemon::{
-    model::{
-        CreateSpendResult, HistoryCursor, HistoryPage, HistoryTransaction, LabelItem, Labelled,
-    },
-    Daemon,
 };
 
 use super::export::ExportModal;
@@ -80,33 +80,48 @@ impl TransactionsPanel {
         self.warning = None;
         self.modal = TransactionsModal::None;
     }
+
+    fn tx_view<'a>(
+        &'a self,
+        cache: &'a Cache,
+        tx: &'a HistoryTransaction,
+    ) -> Element<'a, view::Message> {
+        let content = view::dashboard(
+            &Menu::Transactions,
+            cache,
+            self.warning.as_ref(),
+            view::transaction::tx_view(
+                cache,
+                tx,
+                self.labels_edited.cache(),
+                fiat_converter_for_wallet(&self.wallet, cache),
+            ),
+        );
+        match &self.modal {
+            TransactionsModal::CreateRbf(rbf) => rbf.view(content),
+            _ => content,
+        }
+    }
+
+    fn list_view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        let content = view::dashboard(
+            &Menu::Transactions,
+            cache,
+            self.warning.as_ref(),
+            view::transactions::transactions_view(&self.txs, self.is_last_page, self.processing),
+        );
+        match &self.modal {
+            TransactionsModal::Export(export) => export.view(content),
+            _ => content,
+        }
+    }
 }
 
 impl State for TransactionsPanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        if let Some(tx) = self.selected_tx.as_ref() {
-            let content = view::transaction::tx_view(
-                cache,
-                tx,
-                self.labels_edited.cache(),
-                self.warning.as_ref(),
-            );
-            match &self.modal {
-                TransactionsModal::CreateRbf(rbf) => rbf.view(content),
-                _ => content,
-            }
-        } else {
-            let content = view::transactions::transactions_view(
-                cache,
-                &self.txs,
-                self.warning.as_ref(),
-                self.is_last_page,
-                self.processing,
-            );
-            match &self.modal {
-                TransactionsModal::Export(export) => export.view(content),
-                _ => content,
-            }
+        match &self.selected_tx {
+            Some(tx) => self.tx_view(cache, tx),
+            None => self.list_view(cache),
         }
     }
 
@@ -443,6 +458,7 @@ impl CreateRbfModal {
                 &self.feerate_val,
                 self.replacement_txid,
                 self.warning.as_ref(),
+                self.processing,
             ),
         );
         if self.processing {
