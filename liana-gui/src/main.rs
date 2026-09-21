@@ -10,6 +10,7 @@ use liana::miniscript::bitcoin::Network;
 use liana_ui::theme;
 
 use liana_gui::{
+    app::settings::global::GlobalSettings,
     args::{args_to_config, parse_args},
     dir::LianaDirectory,
     gui::LianaGUI,
@@ -18,6 +19,7 @@ use liana_gui::{
     window::{create_app_settings, create_window_settings, load_initial_size},
     VERSION,
 };
+use liana_i18n as i18n;
 
 fn main() -> Result<(), Box<dyn Error>> {
     use Network::{Bitcoin, Regtest, Signet, Testnet4};
@@ -34,6 +36,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let config = args_to_config(&args, None, "Liana".into())?;
     let log_level = parse_log_level()?;
+    i18n::init(GlobalSettings::load_locale(&GlobalSettings::path(
+        &config.liana_directory,
+    )));
 
     setup_panic_hook(&config.liana_directory);
 

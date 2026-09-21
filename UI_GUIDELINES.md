@@ -49,7 +49,8 @@ Use these; do not build equivalents.
   add a named helper in `component::button` first, then use that helper. Widths: `BtnWidth`, `EntryWidth`.
 - **text::new**: the typography roles above.
 - **card**: `simple`, `modal`, `invalid`, `soft_warning`, `success`, `flat`, `section`, `warning`, `info`,
-  `error`, `list_entry`.
+  `error`, `list_entry`. Card padding comes from the `CardPadding` enum (`Standard` for list entries,
+  `Soft` for modals and banners), never a raw number.
 - **pill**: consumer code uses semantic helpers only: status / key / lifecycle pills, `key_kind`, `path_*`,
   `fingerprint`, `coin_sequence`, feature-specific helpers. `pill`, `pill_with_icon`, `compact_pill`,
   `compact_metric`, and direct `PillWidth` + `theme::pill::*` composition are liana-ui internals. If a
