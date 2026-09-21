@@ -13,6 +13,7 @@ pub mod receive;
 pub mod recovery;
 pub mod settings;
 pub mod spend;
+pub mod transaction;
 pub mod transactions;
 
 pub use fiat::FiatAmountConverter;
