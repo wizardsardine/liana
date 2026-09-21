@@ -17,7 +17,7 @@ use liana::{
         psbt::Psbt,
         secp256k1, Address, Amount, Denomination, Network, OutPoint,
     },
-    spend::{SpendCreationError, DUST_OUTPUT_SATS, MAX_FEERATE},
+    spend::{SpendCreationError, DUST_OUTPUT_SATS, MAX_FEERATE_VB, MIN_FEERATE_VB},
 };
 use lianad::commands::{CreateRecoveryWarning, ListCoinsEntry};
 
@@ -39,7 +39,10 @@ use crate::{
         wallet::Wallet,
     },
     daemon::{
-        model::{coin_is_owned, remaining_sequence, Coin, CreateSpendResult, SpendTx},
+        model::{
+            coin_is_owned, remaining_sequence, spend_status_from_coins, Coin, CreateSpendResult,
+            SpendTx,
+        },
         Daemon,
     },
 };
@@ -677,7 +680,7 @@ impl Step for DefineSpend {
                     view::CreateSpendMessage::FeerateEdited(s) => {
                         if let Ok(value) = s.parse::<u64>() {
                             self.feerate.value = s;
-                            self.feerate.valid = value != 0 && value <= MAX_FEERATE;
+                            self.feerate.valid = (MIN_FEERATE_VB..=MAX_FEERATE_VB).contains(&value);
                         } else if s.is_empty() {
                             self.feerate.value = "".to_string();
                             self.feerate.valid = true;
@@ -808,7 +811,7 @@ impl Step for DefineSpend {
                         FeeLevel::High => est.high,
                     };
                     self.feerate.value = value.to_string();
-                    self.feerate.valid = value != 0 && value <= MAX_FEERATE;
+                    self.feerate.valid = (MIN_FEERATE_VB..=MAX_FEERATE_VB).contains(&value);
                 }
 
                 // Attempt to select coins automatically if:
@@ -1153,12 +1156,19 @@ impl SaveSpend {
 }
 
 impl Step for SaveSpend {
-    fn load(&mut self, _coins: &[Coin], _tip_height: i32, draft: &TransactionDraft) {
+    fn load(&mut self, _coins: &[Coin], tip_height: i32, draft: &TransactionDraft) {
         let (psbt, warnings) = draft.generated.clone().unwrap();
+        let status = spend_status_from_coins(
+            &psbt,
+            &draft.inputs,
+            &self.wallet.main_descriptor,
+            tip_height,
+        );
         let mut tx = SpendTx::new(
             None,
             psbt,
             draft.inputs.clone(),
+            status,
             &self.wallet.main_descriptor,
             &self.curve,
             draft.network,

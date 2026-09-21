@@ -7,6 +7,7 @@ use crate::{font, theme::Theme};
 use iced::advanced::text::Shaping;
 use iced::Font;
 use std::fmt::Display;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Per-helper typography spec: the font and (optionally) size that a text
 /// helper applies. This is useful for the debugger being able to
@@ -85,25 +86,18 @@ pub fn capitalize_first(s: &str) -> String {
     }
 }
 
+/// Shorten a string to at most `len` characters, the last three being an ellipsis when there is
+/// room for one.
 pub fn truncate(str: &str, len: usize) -> String {
-    let str = str.to_string();
-    if str.len() <= len {
-        return str;
+    if str.graphemes(true).count() <= len {
+        return str.to_string();
     }
     if len < 3 {
-        let mut str = str;
-        while str.len() > len {
-            str.pop();
-        }
-        return str;
+        return str.graphemes(true).take(len).collect();
     }
-    let budget = len - 3;
-    let mut str = str;
-    while str.len() > budget {
-        str.pop();
-    }
-    str.push_str("...");
-    str
+    let mut truncated: String = str.graphemes(true).take(len - 3).collect();
+    truncated.push_str("...");
+    truncated
 }
 
 const SHORT_MARKER: &str = "[...]";
@@ -154,4 +148,26 @@ fn shorten_middle(str: &str, len: usize) -> String {
     }
 
     format!("{}{SHORT_MARKER}{}", &str[..head_end], &str[tail_start..])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate() {
+        assert_eq!(truncate("a label", 7), "a label");
+        assert_eq!(truncate("a longer label", 7), "a lo...");
+        assert_eq!(truncate("a label", 2), "a ");
+        // Accented characters are one character each, not two bytes.
+        assert_eq!(truncate("éééé", 4), "éééé");
+        assert_eq!(truncate("ééééé", 4), "é...");
+        // A character made of several code points is kept whole.
+        assert_eq!(
+            truncate("e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}", 4),
+            "e\u{301}..."
+        );
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        assert_eq!(truncate(&family.repeat(2), 1), family);
+    }
 }

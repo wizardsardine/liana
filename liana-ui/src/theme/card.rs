@@ -15,6 +15,12 @@ pub const CARD_SHADOW: Shadow = Shadow {
     blur_radius: 4.0,
 };
 
+pub const CARD_SHADOW_HOVER: Shadow = Shadow {
+    color: crate::color::BLACK_30,
+    offset: Vector { x: 0.0, y: 4.0 },
+    blur_radius: 4.0,
+};
+
 fn card(palette: &ContainerPalette) -> Style {
     Style {
         background: Some(Background::Color(palette.background)),

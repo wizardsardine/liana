@@ -307,10 +307,24 @@ If `txids` is specified, only list transactions whose `txid` is in `txids`(empty
 
 ##### Spend tx entry
 
-| Field          | Type              | Description                                                             |
-| -------------- | ----------------- | ----------------------------------------------------------------------- |
-| `psbt`         | string            | Base64-encoded PSBT of the Spend transaction.                           |
-| `updated_at`   | int or null       | UNIX timestamp of the last time this PSBT was updated.                  |
+| Field          | Type              | Description                                                                  |
+| -------------- | ----------------- | ---------------------------------------------------------------------------- |
+| `psbt`         | string            | Base64-encoded PSBT of the Spend transaction.                                |
+| `updated_at`   | int or null       | UNIX timestamp of the last time this PSBT was updated.                       |
+| `status`       | string            | Lifecycle of the transaction, see below.                                     |
+| `block_height` | int               | Height of the block the transaction was mined in. Absent unless `confirmed`. |
+| `block_time`   | int               | UNIX timestamp of that block. Absent unless `confirmed`.                     |
+
+The `status` is one of:
+
+| Value           | Description                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| `unsigned`      | Not in mempool, no spending path has enough signatures.                                           |
+| `timelocked`    | Not in mempool, signed for a recovery path whose timelock is not expired yet.                     |
+| `broadcastable` | Not in mempool, signed and ready to broadcast.                                                    |
+| `broadcast`     | In the mempool.                                                                                   |
+| `confirmed`     | Confirmed in a block.                                                                             |
+| `deprecated`    | Unspendable. One of its inputs has been spent by another transaction.                             |
 
 
 ### `delspendtx`

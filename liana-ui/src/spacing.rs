@@ -3,9 +3,11 @@
 pub enum VSpacing {
     XS = 4,
     S = 8,
+    SM = 12,
     M = 16,
     L = 20,
     XL = 24,
+    XXL = 30,
 }
 
 impl VSpacing {
@@ -34,6 +36,7 @@ pub enum HSpacing {
     M = 10,
     ML = 12,
     L = 16,
+    XL = 22,
 }
 
 impl HSpacing {

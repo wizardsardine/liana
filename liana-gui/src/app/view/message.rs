@@ -11,6 +11,7 @@ use liana::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Address, OutPoint,
 };
+use liana_i18n::SupportedLocale;
 
 pub trait Close {
     fn close() -> Self;
@@ -29,9 +30,9 @@ pub enum Message {
     NextReceiveAddress,
     NewAddress(NewAddressMessage),
     ToggleShowPreviousAddresses,
+    ToggleHideConfirmedPsbts,
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
-    ImportSpend(ImportSpendMessage),
     Spend(SpendTxMessage),
     Next,
     Previous,
@@ -95,13 +96,6 @@ pub enum CreateSpendMessage {
 }
 
 #[derive(Debug, Clone)]
-pub enum ImportSpendMessage {
-    Import,
-    PsbtEdited(String),
-    Confirm,
-}
-
-#[derive(Debug, Clone)]
 pub enum SpendTxMessage {
     Delete,
     Sign,
@@ -110,9 +104,6 @@ pub enum SpendTxMessage {
     Confirm,
     Cancel,
     SelectHotSigner,
-    EditPsbt,
-    PsbtEdited(String),
-    Next,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -140,6 +131,7 @@ pub enum SettingsMessage {
     Save,
     GeneralSection,
     Fiat(FiatMessage),
+    LanguageEdited(SupportedLocale),
 }
 
 impl From<SettingsMessage> for Message {

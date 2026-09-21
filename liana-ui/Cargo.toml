@@ -12,5 +12,6 @@ iced_core = { workspace = true }
 iced_runtime = { workspace = true }
 unicode-segmentation = { workspace = true }
 bitcoin = { workspace = true }
+liana = { path = "../liana" }
 chrono = { workspace = true }
 liana-i18n = { workspace = true }
