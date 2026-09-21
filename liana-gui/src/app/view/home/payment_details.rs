@@ -77,20 +77,21 @@ pub fn payment_details_view<'a>(
             LabelSize::Title,
         )
     });
-    let fee = tx.wallet_tx.fee().map(|fee_amount| {
-        row![
-            legacy::h3(t!("transactions-miner-fee")).style(theme::text::secondary),
-            amount_with_font(&fee_amount, spec),
-            legacy::text(" ").size(size),
-            legacy::text(t!(
-                "common-feerate-value",
-                rate = fee_amount.to_sat() / tx.tx.vsize() as u64
-            ))
-            .size(legacy::H4_SIZE)
-            .style(theme::text::secondary)
-        ]
-        .align_y(Alignment::Center)
-    });
+    let fee = tx
+        .wallet_tx
+        .fee()
+        .zip(tx.feerate())
+        .map(|(fee_amount, feerate)| {
+            row![
+                legacy::h3(t!("transactions-miner-fee")).style(theme::text::secondary),
+                amount_with_font(&fee_amount, spec),
+                legacy::text(" ").size(size),
+                legacy::text(t!("common-feerate-value", rate = feerate))
+                    .size(legacy::H4_SIZE)
+                    .style(theme::text::secondary)
+            ]
+            .align_y(Alignment::Center)
+        });
     let date = tx.time.map(|t| {
         DateTime::<Utc>::from_timestamp(t as i64, 0)
             .unwrap()

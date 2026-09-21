@@ -346,6 +346,13 @@ impl HistoryTransaction {
         self.owned_outputs.keys().copied().collect()
     }
 
+    /// Feerate in sats/vbyte, `None` if the fee is unknown.
+    pub fn feerate(&self) -> Option<u64> {
+        self.wallet_tx
+            .fee()
+            .map(|fee| fee.to_sat() / self.tx.vsize() as u64)
+    }
+
     pub fn compare(&self, other: &Self) -> Ordering {
         match (&self.time, &other.time) {
             // `None` values come first
@@ -372,6 +379,10 @@ impl HistoryTransaction {
 
     pub fn is_batch(&self) -> bool {
         self.wallet_tx.kind().is_batch()
+    }
+
+    pub fn is_payjoin(&self) -> bool {
+        self.wallet_tx.kind().is_payjoin()
     }
 
     /// The label to display: its own one, else the label of its single payment, else its default

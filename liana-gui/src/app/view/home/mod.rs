@@ -7,11 +7,7 @@ use liana::{miniscript::bitcoin, transaction::PaymentKind};
 use liana_ui::{
     component::{
         self,
-        panels::home::{
-            self,
-            payment::{payment_card, UIPayment},
-            SyncProgress, WalletOrigin,
-        },
+        panels::home::{self, payment, SyncProgress, WalletOrigin},
         text::new,
     },
     widget::{Column, ColumnExt, Element},
@@ -85,14 +81,14 @@ pub fn home_view<'a>(
 
     let history = events.iter().fold(Column::new().spacing(14), |col, event| {
         if event.kind != PaymentKind::SendToSelf {
-            col.push(payment_card(
-                UIPayment {
-                    label: event.label().text(label::prefixed),
-                    kind: event.kind,
-                    time: event.time,
-                    amount: event.amount,
-                    fiat_price: None,
-                },
+            col.push(payment::list_entry(
+                event.label().text(label::prefixed),
+                event.time,
+                event.kind,
+                false,
+                false,
+                event.amount,
+                None,
                 Some(Message::SelectPayment(event.outpoint)),
             ))
         } else {

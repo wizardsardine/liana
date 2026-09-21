@@ -31,8 +31,6 @@ use crate::{
     widget::{Column, Container, Element, Row, SpaceExt, Toggler},
 };
 
-const PSBT_HEIGHT: u32 = 90;
-
 #[derive(Debug, Clone, Copy)]
 pub struct PsbtSigs {
     pub count: usize,
@@ -133,7 +131,9 @@ pub fn list_entry<'a, M: Clone + 'static>(
         .spacing(HSpacing::S)
         .align_y(Alignment::Center);
 
-    let content = row![left, spent].spacing(HSpacing::L).height(PSBT_HEIGHT);
+    let content = row![left, spent]
+        .spacing(HSpacing::L)
+        .height(panels::ListEntryHeight::Standard);
 
     card::list_entry_with_padding(content, msg, panels::LIST_ENTRY_PADDING)
 }
@@ -364,21 +364,8 @@ pub fn spend_header<'a, M: 'static>(
     };
     let spent = Container::new(spent);
 
-    let missing_inputs = fee
-        .is_none()
-        .then_some(new::caption(t!("psbt-missing-inputs")));
-    let fee = fee.map(|fee| amount_with_font(&fee, new::H1_SPEC));
-    let feerate = feerate.map(|rate| {
-        new::h3(t!("common-approx-feerate-value", rate = rate)).style(theme::text::secondary)
-    });
-    let fees = row![
-        new::h1(t!("transactions-miner-fee")).style(theme::text::secondary),
-        missing_inputs,
-        fee,
-        new::h1(" "),
-        feerate
-    ]
-    .align_y(Alignment::Center);
+    let feerate = feerate.map(|rate| t!("common-approx-feerate-value", rate = rate));
+    let fees = panels::fees_row(fee, feerate);
 
     column![label, column![spent, fees]]
         .spacing(VSpacing::L)
@@ -401,12 +388,7 @@ pub fn spend_overview<'a, M: Clone + 'static>(
     let header = row![new::b5_bold(t!("psbt-title")).width(Length::Fill), buttons]
         .align_y(Alignment::Center);
 
-    let txid = row![
-        new::b5_bold(t!("transactions-txid")).width(Length::Fill),
-        new::small_caption(txid).style(theme::text::secondary),
-        button::btn_copy(Some(copy_txid))
-    ]
-    .align_y(Alignment::Center);
+    let txid = panels::txid_row(txid, copy_txid);
 
     let psbt = column![header, txid].spacing(VSpacing::S);
     let card = card::foldable::FoldableCard::new(Some(psbt.into()), status, details)

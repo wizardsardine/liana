@@ -75,6 +75,23 @@ impl TransactionKind {
     pub fn is_batch(&self) -> bool {
         self.outgoing_payments().len() > 1
     }
+
+    pub fn is_payjoin(&self) -> bool {
+        matches!(
+            self,
+            TransactionKind::PayjoinReceive(_) | TransactionKind::PayjoinSend(_)
+        )
+    }
+
+    pub fn payment_kind(&self) -> PaymentKind {
+        match self {
+            TransactionKind::Incoming(_) | TransactionKind::PayjoinReceive(_) => {
+                PaymentKind::Incoming
+            }
+            TransactionKind::SendToSelf => PaymentKind::SendToSelf,
+            TransactionKind::Outgoing(_) | TransactionKind::PayjoinSend(_) => PaymentKind::Outgoing,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
