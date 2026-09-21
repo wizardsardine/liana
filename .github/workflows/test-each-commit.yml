@@ -17,7 +17,7 @@ jobs:
 
       - name: Fetch base branch
         run: |
-          git fetch --no-tags --prune --depth=1 origin \
+          git fetch --no-tags --prune origin \
             "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
 
       - id: list
