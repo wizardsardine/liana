@@ -1,77 +1,66 @@
-use chrono::{DateTime, Local, Utc};
 use iced::{
     widget::{column, row, Space},
     Alignment,
 };
-
 use liana_ui::{
-    component::{button::btn_export_transactions, list, panels::transactions, text::legacy},
-    widget::*,
+    component::{
+        button::{btn_export, btn_see_more},
+        panels::home::payment,
+        text::new,
+    },
+    spacing::{HSpacing, VSpacing},
+    widget::{Column, Element, SpaceExt},
 };
 
 use crate::{
     app::{
-        cache::Cache,
-        error::Error,
         menu::Menu,
-        view::{dashboard, message::Message},
+        view::{label, message::Message},
     },
     daemon::model::HistoryTransaction,
     export::ImportExportMessage,
 };
 
-pub fn transactions_view<'a>(
-    cache: &'a Cache,
-    txs: &'a [HistoryTransaction],
-    warning: Option<&'a Error>,
+pub fn transactions_view(
+    txs: &[HistoryTransaction],
     is_last_page: bool,
     processing: bool,
-) -> Element<'a, Message> {
-    let title = legacy::panel_title(Menu::Transactions.title());
-    let export = btn_export_transactions(Some(ImportExportMessage::Open.into()));
-    let header = row![title, Space::fill_width(), export];
+) -> Element<'_, Message> {
+    let export = btn_export(Some(ImportExportMessage::Open.into()));
+    let header = row![
+        new::d2(Menu::Transactions.title()),
+        Space::fill_width(),
+        export
+    ]
+    .align_y(Alignment::Center)
+    .spacing(HSpacing::M);
 
     let list = txs
         .iter()
         .enumerate()
-        .fold(Column::new().spacing(10), |col, (i, tx)| {
-            col.push(tx_list_view(i, tx))
+        .fold(Column::new().spacing(VSpacing::M), |col, (i, tx)| {
+            col.push(tx_list_entry(i, tx))
         });
 
     let see_more =
-        (!is_last_page && !txs.is_empty()).then(|| list::see_more(processing, Message::Next));
+        (!is_last_page && !txs.is_empty()).then(|| btn_see_more(processing, Message::Next));
 
-    dashboard(
-        &Menu::Transactions,
-        cache,
-        warning,
-        column![header, column![list, see_more].spacing(10)]
-            .align_x(Alignment::Center)
-            .spacing(30),
-    )
+    column![header, list, see_more]
+        .align_x(Alignment::Center)
+        .spacing(VSpacing::XL)
+        .into()
 }
 
-fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
-    let label_key = tx
-        .single_payment()
-        .map(|outpoint| outpoint.to_string())
-        .unwrap_or_else(|| tx.txid.to_string());
-    let label = tx.labels.get(&label_key).map(String::as_str);
-    let date = tx.time.map(|t| {
-        DateTime::<Utc>::from_timestamp(t as i64, 0)
-            .expect("Correct unix timestamp")
-            .with_timezone(&Local)
-            .format("%b. %d, %Y - %T")
-            .to_string()
-    });
-
-    transactions::list_entry(
+fn tx_list_entry(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
+    let label = tx.label().text(label::prefixed);
+    payment::list_entry(
         label,
-        date,
-        tx.is_incoming(),
-        tx.is_send_to_self(),
+        tx.datetime(),
+        tx.wallet_tx.kind().payment_kind(),
         tx.is_batch(),
+        tx.is_payjoin(),
         tx.wallet_tx.amount(),
-        Message::Select(i),
+        None,
+        Some(Message::Select(i)),
     )
 }

@@ -115,6 +115,23 @@ impl<'a, Message: 'a> FoldableCard<'a, Message> {
         self
     }
 
+    pub fn chevrons(
+        mut self,
+        folded: impl Into<Element<'a, Message, Theme, Renderer>>,
+        unfolded: impl Into<Element<'a, Message, Theme, Renderer>>,
+    ) -> Self {
+        self.chevron_folded = folded.into();
+        self.chevron_unfolded = unfolded.into();
+        self
+    }
+
+    pub fn list_chevrons(self) -> Self {
+        self.chevrons(
+            crate::component::list::right_chevron(),
+            crate::component::list::down_chevron(),
+        )
+    }
+
     pub fn style(mut self, style: impl Fn(&Theme, button::Status) -> button::Style + 'a) -> Self {
         self.style = Box::new(style);
         self
