@@ -567,6 +567,8 @@ common-and => "and"
 
 common-approx-feerate-value => "(~{$rate} sats/vbyte)"
 
+common-are-you-sure => "Are you sure?"
+
 common-blocks => "blocks"
 
 common-connecting-ellipsis => "Connecting..."
@@ -1471,6 +1473,11 @@ pill-spent => "Spent"
 
 pill-spent-tooltip => "The transaction was included in the blockchain."
 
+pill-timelocked => "Timelocked"
+
+pill-timelocked-tooltip
+=> "This recovery transaction is signed but can't be broadcast before its timelock expires";;
+
 pill-to-approve => "To approve"
 
 pill-today => "Today"
@@ -1545,8 +1552,6 @@ psbt-missing-inputs => "Missing information about transaction inputs"
 psbt-more-signatures
 => "{ $count ->\n    [0] no more signatures\n    [one] 1 more signature from\n   *[other] {$count} more signatures from\n}";;
 
-psbt-no-payment => "0 payment"
-
 psbt-not-ready => "Not ready"
 
 psbt-payments => "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
@@ -1559,19 +1564,18 @@ psbt-sign-save-before-export => "Sign or save the transaction first to enable ex
 
 psbt-signed-by => "signed by"
 
-psbt-spend-updated => "Spend transaction is updated"
-
 psbt-status => "Status"
+
+psbt-title => "PSBT"
 
 psbt-transaction-broadcast => "Transaction is broadcast"
 
 psbt-transaction-saved => "Transaction is saved"
 
-psbts-base64-warning => "Please enter a base64 encoded PSBT"
+psbts-hide-confirmed => "Hide confirmed transactions"
 
-psbts-imported => "PSBT is imported"
-
-psbts-insert-psbt => "Insert PSBT:"
+psbts-signatures-collected
+=> "{ $count ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}";;
 
 receive-address-label-placeholder => "Enter an address label"
 
@@ -1681,6 +1685,10 @@ settings-import-wallet => "Import wallet"
 settings-import-wallet-description => "Upload a backup file to update wallet info."
 
 settings-invitation-sent => "Invitation was sent"
+
+settings-language => "Language"
+
+settings-language-description => "Choose the language used by the application."
 
 settings-month => "Month:"
 

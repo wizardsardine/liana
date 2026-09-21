@@ -152,7 +152,7 @@ pub fn recovery_hint<'a, M: Clone + 'a>(units_left: String) -> Element<'a, M> {
     .align_y(Alignment::Center)
     .width(Length::Fill);
     Container::new(content)
-        .padding(card::SOFT_CARD_PADDING)
+        .padding(card::CardPadding::Soft)
         .style(theme::card::info)
         .into()
 }

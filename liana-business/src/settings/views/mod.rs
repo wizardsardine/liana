@@ -1,10 +1,10 @@
 //! View functions for business settings UI.
 
 use iced::{
-    widget::{Column, Row, Space, Toggler},
+    widget::{column, row, Column, Row, Space, Toggler},
     Alignment, Length,
 };
-use liana_i18n::t;
+use liana_i18n::{self as i18n, t, SupportedLocale};
 use liana_ui::{
     component::{
         self, badge,
@@ -107,10 +107,30 @@ pub fn general_view(
             ),
     )
     .width(Length::Fill);
+    let language_card = card::simple(
+        column![
+            row![
+                text(t!("settings-language")).bold(),
+                Space::fill_width(),
+                pick_list::pick_list(
+                    &SupportedLocale::ALL[..],
+                    Some(i18n::current_locale()),
+                    Msg::LanguageEdited,
+                )
+                .padding(10),
+            ]
+            .spacing(20)
+            .align_y(Alignment::Center),
+            text(t!("settings-language-description")).style(theme::text::secondary),
+        ]
+        .spacing(10),
+    )
+    .width(Length::Fill);
 
     Column::new()
         .spacing(20)
         .push(header)
+        .push(language_card)
         .push(fiat_card)
         .width(Length::Fill)
         .into()

@@ -7,7 +7,7 @@ use std::{
 use iced::Task;
 use liana::{
     miniscript::bitcoin::{OutPoint, Txid},
-    spend::{SpendCreationError, MAX_FEERATE},
+    spend::{SpendCreationError, BITCOIN_CORE_INCREMENTAL_RELAY_FEERATE_VB, MAX_FEERATE_VB},
 };
 use liana_ui::{
     component::form,
@@ -376,7 +376,9 @@ impl CreateRbfModal {
             .to_sat()
             .checked_div(tx.tx.vsize().try_into().expect("vsize must fit in u64"))
             .expect("transaction vsize must be positive");
-        let min_feerate_vb = prev_feerate_vb.checked_add(1).unwrap();
+        let min_feerate_vb = prev_feerate_vb
+            .checked_add(BITCOIN_CORE_INCREMENTAL_RELAY_FEERATE_VB)
+            .unwrap();
         Self {
             tx,
             is_cancel,
@@ -409,7 +411,8 @@ impl CreateRbfModal {
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::FeerateEdited(s))) => {
                 self.warning = None;
                 if let Ok(value) = s.parse::<u64>() {
-                    self.feerate_val.valid = value >= self.min_feerate_vb && value <= MAX_FEERATE;
+                    self.feerate_val.valid =
+                        value >= self.min_feerate_vb && value <= MAX_FEERATE_VB;
                     if self.feerate_val.valid {
                         self.feerate_vb = Some(value);
                     }

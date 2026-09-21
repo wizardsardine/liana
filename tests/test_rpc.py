@@ -861,8 +861,10 @@ def test_list_spend(lianad, bitcoind):
     assert len(list_res) == 2
     first_psbt = next(entry for entry in list_res if entry["psbt"] == res["psbt"])
     assert time_before_update <= first_psbt["updated_at"] <= int(time.time())
+    assert first_psbt["status"] == "unsigned"
     second_psbt = next(entry for entry in list_res if entry["psbt"] == res_b["psbt"])
     assert time_before_update <= second_psbt["updated_at"] <= int(time.time())
+    assert second_psbt["status"] == "unsigned"
 
     # If we delete the first one, we'll get only the second one.
     first_psbt = PSBT.from_base64(res["psbt"])
@@ -876,6 +878,126 @@ def test_list_spend(lianad, bitcoind):
     lianad.rpc.delspendtx(second_psbt.tx.txid().hex())
     list_res = lianad.rpc.listspendtxs()["spend_txs"]
     assert len(list_res) == 0
+
+
+def test_list_spend_status(lianad, bitcoind):
+    """The status of a stored spend follows the transaction through its lifecycle."""
+
+    def entry(txid):
+        entries = lianad.rpc.listspendtxs(txids=[txid])["spend_txs"]
+        assert len(entries) == 1
+        return entries[0]
+
+    def status(txid):
+        return entry(txid)["status"]
+
+    # Get a single confirmed coin to spend twice.
+    addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 0.01)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 1)
+    outpoints = [c["outpoint"] for c in lianad.rpc.listcoins(["confirmed"])["coins"]]
+
+    # Create both spends of the coin while it is unspent: once one of them is broadcast
+    # the daemon refuses to create another spend of the same coin.
+    first_res = lianad.rpc.createspend(
+        {bitcoind.rpc.getnewaddress(): 500_000}, outpoints, 1
+    )
+    first_psbt = PSBT.from_base64(first_res["psbt"])
+    first_txid = first_psbt.tx.txid().hex()
+    second_res = lianad.rpc.createspend(
+        {bitcoind.rpc.getnewaddress(): 400_000}, outpoints, 5
+    )
+    second_psbt = PSBT.from_base64(second_res["psbt"])
+    second_txid = second_psbt.tx.txid().hex()
+
+    # A stored spend that nothing conflicts with may be broadcast once signed.
+    lianad.rpc.updatespend(first_res["psbt"])
+    assert status(first_txid) == "unsigned"
+    lianad.rpc.updatespend(lianad.signer.sign_psbt(first_psbt).to_base64())
+    assert status(first_txid) == "broadcastable"
+    assert "block_height" not in entry(first_txid)
+    assert "block_time" not in entry(first_txid)
+
+    # Once in the mempool it is broadcast.
+    assert sign_and_broadcast_psbt(lianad, first_psbt) == first_txid
+    assert status(first_txid) == "broadcast"
+    assert "block_height" not in entry(first_txid)
+
+    # The second spend pays a higher feerate, so it may still be broadcast: it can
+    # replace the first one.
+    lianad.rpc.updatespend(lianad.signer.sign_psbt(second_psbt).to_base64())
+    assert status(second_txid) == "broadcastable"
+    assert status(first_txid) == "broadcast"
+
+    # Broadcasting it evicts the first one, which pays too little to get back in.
+    assert sign_and_broadcast_psbt(lianad, second_psbt) == second_txid
+    assert status(second_txid) == "broadcast"
+    assert status(first_txid) == "deprecated"
+
+    # Mining the replacement makes it confirmed, the replaced one stays deprecated.
+    bitcoind.generate_block(1, wait_for_mempool=second_txid)
+    wait_for(lambda: status(second_txid) == "confirmed")
+    tip = bitcoind.rpc.getblockheader(bitcoind.rpc.getbestblockhash())
+    assert entry(second_txid)["block_height"] == tip["height"]
+    assert entry(second_txid)["block_time"] == tip["time"]
+    assert status(first_txid) == "deprecated"
+    assert "block_height" not in entry(first_txid)
+    assert "block_time" not in entry(first_txid)
+
+    # A signed recovery spend can't be broadcast until its coins are old enough to be
+    # spent through the recovery path at the next block.
+    addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 0.01)
+    bitcoind.generate_block(10, wait_for_mempool=txid)
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
+    res = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
+    reco_psbt = PSBT.from_base64(res["psbt"])
+    reco_txid = reco_psbt.tx.txid().hex()
+    lianad.rpc.updatespend(reco_psbt.to_base64())
+    assert status(reco_txid) == "unsigned"
+    lianad.rpc.updatespend(
+        lianad.signer.sign_psbt(reco_psbt, recovery=True).to_base64()
+    )
+    assert status(reco_txid) == "broadcastable"
+
+    # A spend through the recovery path of a coin that just confirmed is signed but
+    # timelocked. Setting the sequence of its inputs to the timelock enables the path.
+    timelock = 10
+    addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 0.01)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
+    outpoints = [
+        c["outpoint"] for c in lianad.rpc.listcoins()["coins"] if txid in c["outpoint"]
+    ]
+    res = lianad.rpc.createspend({bitcoind.rpc.getnewaddress(): 500_000}, outpoints, 1)
+    locked_psbt = PSBT.from_base64(res["psbt"])
+    for txin in locked_psbt.tx.vin:
+        txin.nSequence = timelock
+    locked_psbt.g.map[0] = locked_psbt.tx.serialize()
+    locked_psbt.tx.rehash()
+    locked_txid = locked_psbt.tx.txid().hex()
+    lianad.rpc.updatespend(locked_psbt.to_base64())
+    assert status(locked_txid) == "unsigned"
+    lianad.rpc.updatespend(
+        lianad.signer.sign_psbt(locked_psbt, recovery=True).to_base64()
+    )
+    assert status(locked_txid) == "timelocked"
+
+    # The recovery path is usable at the next block once the coin has one confirmation
+    # less than the timelock.
+    bitcoind.generate_block(timelock - 2)
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
+    assert status(locked_txid) == "timelocked"
+    bitcoind.generate_block(1)
+    wait_for(lambda: status(locked_txid) == "broadcastable")
 
 
 def test_update_spend(lianad, bitcoind):

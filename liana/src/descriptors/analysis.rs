@@ -831,11 +831,22 @@ impl PartialSpendInfo {
     pub fn recovery_paths(&self) -> &BTreeMap<u16, PathSpendInfo> {
         &self.recovery_paths
     }
+
+    /// The first path with enough signatures, if any.
+    pub fn signed_path(&self) -> Option<&PathSpendInfo> {
+        if self.primary_path.sigs_count >= self.primary_path.threshold {
+            return Some(&self.primary_path);
+        }
+        self.recovery_paths
+            .values()
+            .find(|&path| path.sigs_count >= path.threshold)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::spend::SpendStatus;
     use std::str::FromStr;
 
     #[test]
@@ -897,5 +908,74 @@ mod tests {
             checker.check(&key),
             Err(LianaPolicyError::InvalidKey(k)) if k == key.into()
         ));
+    }
+
+    #[test]
+    fn spend_status_from_signatures() {
+        let path = |sigs_count| PathSpendInfo {
+            threshold: 1,
+            sigs_count,
+            signed_pubkeys: HashMap::new(),
+        };
+        let sigs = |primary_sigs, recovery_sigs: &[(u16, usize)]| PartialSpendInfo {
+            primary_path: path(primary_sigs),
+            recovery_paths: recovery_sigs
+                .iter()
+                .map(|&(timelock, sigs_count)| (timelock, path(sigs_count)))
+                .collect(),
+        };
+        let status = |sigs, coins_heights: &[Option<i32>], tip_height| {
+            SpendStatus::from_signatures(&sigs, coins_heights, tip_height)
+        };
+
+        // No path has enough signatures.
+        assert_eq!(
+            status(sigs(0, &[(10, 0), (20, 0)]), &[Some(100)], 200),
+            SpendStatus::Unsigned
+        );
+
+        // The primary path has no timelock, even for an unconfirmed coin.
+        assert_eq!(status(sigs(1, &[]), &[None], 0), SpendStatus::Broadcastable);
+        assert_eq!(
+            status(sigs(1, &[(10, 1)]), &[None], 0),
+            SpendStatus::Broadcastable
+        );
+
+        // A signed recovery path is available once every coin is past the timelock at the next
+        // block.
+        let heights = [Some(100), Some(95)];
+        assert_eq!(
+            status(sigs(0, &[(10, 1)]), &heights, 108),
+            SpendStatus::Timelocked
+        );
+        assert_eq!(
+            status(sigs(0, &[(10, 1)]), &heights, 109),
+            SpendStatus::Broadcastable
+        );
+        assert_eq!(
+            status(sigs(0, &[(10, 0), (20, 1)]), &heights, 118),
+            SpendStatus::Timelocked
+        );
+        assert_eq!(
+            status(sigs(0, &[(10, 0), (20, 1)]), &heights, 119),
+            SpendStatus::Broadcastable
+        );
+
+        // With several recovery paths listed, the timelock enforced is the one of the signed
+        // path, the same path `signed_path()` reports.
+        assert_eq!(
+            status(sigs(0, &[(10, 1), (20, 0)]), &heights, 108),
+            SpendStatus::Timelocked
+        );
+        assert_eq!(
+            status(sigs(0, &[(10, 1), (20, 0)]), &heights, 109),
+            SpendStatus::Broadcastable
+        );
+
+        // An unconfirmed coin is never past the timelock.
+        assert_eq!(
+            status(sigs(0, &[(10, 1), (20, 1)]), &[Some(100), None], 1_000),
+            SpendStatus::Timelocked
+        );
     }
 }
