@@ -81,7 +81,7 @@ impl TransactionsPanel {
 impl State for TransactionsPanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Some(tx) = self.selected_tx.as_ref() {
-            let content = view::transactions::tx_view(
+            let content = view::transaction::tx_view(
                 cache,
                 tx,
                 self.labels_edited.cache(),
@@ -449,7 +449,7 @@ impl CreateRbfModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         let modal = Modal::new(
             content,
-            view::transactions::create_rbf_modal(
+            view::transaction::create_rbf_modal(
                 self.is_cancel,
                 &self.descendant_txids,
                 &self.feerate_val,
