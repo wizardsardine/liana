@@ -1090,7 +1090,7 @@ pub fn btn_bump_fee<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn btn_cancel_transaction<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
-    let button = btn_secondary(None, t!("btn-cancel-transaction"), BtnWidth::Modal, msg);
+    let button = btn_destructive(None, t!("btn-cancel-transaction"), BtnWidth::Modal, msg);
     tooltip::tooltip_custom(
         caption(t!("transactions-cancel-tooltip")),
         button,
@@ -1098,11 +1098,11 @@ pub fn btn_cancel_transaction<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a
     )
 }
 
-pub fn btn_export_transactions<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(
-        Some(icon::backup_icon()),
-        t!("btn-export"),
-        BtnWidth::Auto,
-        msg,
-    )
+pub fn btn_see_more<'a, T: Clone + 'a>(processing: bool, msg: T) -> Button<'a, T> {
+    let label = if processing {
+        t!("common-fetching")
+    } else {
+        t!("common-see-more")
+    };
+    btn_secondary(None, label, BtnWidth::Fill, (!processing).then_some(msg))
 }

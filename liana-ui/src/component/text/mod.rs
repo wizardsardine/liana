@@ -3,9 +3,14 @@ pub mod new;
 
 pub use legacy::*;
 
-use crate::{font, theme::Theme};
-use iced::advanced::text::Shaping;
-use iced::Font;
+use crate::{
+    component::tooltip_custom,
+    font,
+    theme::{self, Theme},
+    widget::Element,
+};
+use chrono::{DateTime, Local, Utc};
+use iced::{advanced::text::Shaping, widget::tooltip::Position, Font};
 use std::fmt::Display;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -98,6 +103,27 @@ pub fn truncate(str: &str, len: usize) -> String {
     let mut truncated: String = str.graphemes(true).take(len - 3).collect();
     truncated.push_str("...");
     truncated
+}
+
+pub fn label_truncated<'a, M: 'a>(label: &str, max_length: usize) -> Element<'a, M> {
+    if label.chars().count() > max_length {
+        let short = new::h2(truncate(label, max_length)).style(theme::text::primary);
+        tooltip_custom(new::h2(label), short, Position::Top).into()
+    } else {
+        new::h2(label).style(theme::text::primary).into()
+    }
+}
+
+/// Format a date in local time as "Mar 12, 2026".
+pub fn format_date(time: DateTime<Utc>) -> String {
+    time.with_timezone(&Local).format("%b %-d, %Y").to_string()
+}
+
+/// Format a date in local time as "Mar 12, 2026 - 17:00:49".
+pub fn format_datetime(time: DateTime<Utc>) -> String {
+    time.with_timezone(&Local)
+        .format("%b %-d, %Y - %H:%M:%S")
+        .to_string()
 }
 
 const SHORT_MARKER: &str = "[...]";

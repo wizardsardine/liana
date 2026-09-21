@@ -1,21 +1,25 @@
 use std::collections::{HashMap, HashSet};
 
-use chrono::{DateTime, Local, Utc};
 use iced::{
     widget::{column, row, Space},
-    Alignment, Length,
+    Alignment,
 };
 
+use liana::{miniscript::bitcoin::Amount, transaction::PaymentKind};
 use liana_ui::{
     component::{
-        amount::amount_with_font,
+        amount::{amount_with_fiat_tooltip, AmountSize, FiatAmount},
         button::{self, btn_bump_fee, btn_cancel_transaction, btn_confirm, btn_go_to_replacement},
-        card, form,
-        modal::ModalWidth,
-        text::legacy,
+        form,
+        modal::{modal_view, ModalWidth},
+        panels::{fees_row, home::payment::kind_icon, transactions},
+        pill,
+        text::new,
     },
-    icon, theme,
-    widget::{Container, Element, SpaceExt},
+    icon,
+    spacing::{HSpacing, VSpacing},
+    theme,
+    widget::{Column, Element, SpaceExt},
 };
 
 use crate::{
@@ -24,10 +28,11 @@ use crate::{
         error::Error,
         menu::Menu,
         view::{
-            self, dashboard,
+            self,
             label::{self, LabelSize},
             message::{CreateRbfMessage, Message},
             warning::warn,
+            FiatAmountConverter,
         },
     },
     daemon::model::{HistoryTransaction, Txid},
@@ -44,6 +49,7 @@ pub fn create_rbf_modal<'a>(
     feerate: &form::Value<String>,
     replacement_txid: Option<Txid>,
     warning: Option<&'a Error>,
+    processing: bool,
 ) -> Element<'a, Message> {
     let confirm_msg =
         (feerate.valid || is_cancel).then_some(Message::CreateRbf(CreateRbfMessage::Confirm));
@@ -53,37 +59,42 @@ pub fn create_rbf_modal<'a>(
     } else {
         t!("transactions-rbf-bump-help")
     };
-
     let descendants = (!descendant_txids.is_empty()).then(|| {
         let invalidates = if descendant_txids.len() > 1 {
             t!("transactions-rbf-invalidates-some")
         } else {
             t!("transactions-rbf-invalidates-one")
         };
-        let explanation = if descendant_txids.len() > 1 {
+        let descendants = if descendant_txids.len() > 1 {
             t!("transactions-rbf-descendants-some")
         } else {
             t!("transactions-rbf-descendants-one")
         };
-        (invalidates, explanation)
+
+        let txids =
+            descendant_txids
+                .iter()
+                .fold(Column::new().spacing(VSpacing::XS), |col, txid| {
+                    col.push(
+                        row![
+                            new::caption(txid.to_string()),
+                            button::btn_copy(Some(Message::Clipboard(txid.to_string())))
+                        ]
+                        .spacing(HSpacing::S)
+                        .align_y(Alignment::Center),
+                    )
+                });
+        (invalidates, descendants, txids)
     });
-    let descendants = descendants.map(|(invalidates, explanation)| {
-        let init = column![
-            row![icon::warning_icon(), legacy::text(invalidates)].spacing(10),
-            row![legacy::text(explanation)].padding([0, 30])
+    let descendants = descendants.map(|(invalidates, descendants, txids)| {
+        column![
+            row![icon::warning_icon(), new::caption(invalidates)].spacing(HSpacing::S),
+            row![
+                Space::with_width(HSpacing::XL),
+                column![new::caption(descendants), txids].spacing(VSpacing::XS)
+            ],
         ]
-        .spacing(5);
-        descendant_txids.iter().fold(init, |col, txid| {
-            col.push(
-                row![
-                    legacy::text(txid.to_string()),
-                    button::btn_copy(Some(Message::Clipboard(txid.to_string())))
-                ]
-                .padding([0, 30])
-                .spacing(5)
-                .align_y(Alignment::Center),
-            )
-        })
+        .spacing(VSpacing::XS)
     });
     let feerate_form = (!is_cancel).then(|| {
         if replacement_txid.is_none() {
@@ -94,92 +105,87 @@ pub fn create_rbf_modal<'a>(
         } else {
             form::Form::new_disabled("", feerate)
         }
-        .size(legacy::P1_SIZE)
-        .padding(10)
     });
     let feerate = feerate_form.map(|form| {
-        row![
-            Container::new(legacy::p1_bold(t!("common-feerate"))).padding(10),
-            form
-        ]
-        .spacing(10)
-        .width(Length::Fill)
+        row![new::caption(t!("common-feerate")), form]
+            .spacing(HSpacing::S)
+            .align_y(Alignment::Center)
     });
     let status = if replacement_txid.is_none() {
         row![confirm_button]
     } else {
         row![
             icon::circle_check_icon().style(theme::text::secondary),
-            legacy::text(t!("transactions-rbf-created")).style(theme::text::success)
+            new::caption(t!("transactions-rbf-created")).style(theme::text::success)
         ]
-        .spacing(10)
+        .spacing(HSpacing::S)
         .align_y(Alignment::Center)
     };
     let replacement = replacement_txid
         .map(|id| btn_go_to_replacement(Some(Message::Menu(Menu::PsbtPreSelected(id)))));
 
-    card::simple(
-        column![
-            legacy::h4_bold(t!("transactions-replacement")),
-            legacy::text(help_text),
-            descendants,
-            feerate,
-            warn(warning),
-            status,
-            replacement,
-        ]
-        .spacing(10),
+    let close = (!processing).then_some(Message::CreateRbf(CreateRbfMessage::Cancel));
+    let content = column![
+        new::caption(help_text),
+        descendants,
+        feerate,
+        warn(warning),
+        status,
+        replacement,
+    ]
+    .spacing(VSpacing::S);
+
+    modal_view(
+        Some(t!("transactions-replacement")),
+        None,
+        close,
+        ModalWidth::XL,
+        content,
     )
-    .width(ModalWidth::XL)
-    .into()
 }
 
 pub fn tx_view<'a>(
     cache: &'a Cache,
     tx: &'a HistoryTransaction,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    warning: Option<&'a Error>,
+    fiat_converter: Option<FiatAmountConverter>,
 ) -> Element<'a, Message> {
     let txid = tx.txid.to_string();
-    let title = if tx.is_send_to_self() {
-        t!("transactions-transaction")
-    } else if tx.is_incoming() {
-        t!("transactions-incoming")
+
+    let confirmed = if tx.time.is_some() {
+        pill::confirmed()
     } else {
-        t!("transactions-outgoing")
+        pill::unconfirmed()
     };
-    let title = legacy::h3(title);
-    // if the payment is a payment of a single payment transaction then
-    // the label of the transaction is attached to the label of the payment outpoint
-    let outpoint = tx.single_payment().map(|outpoint| outpoint.to_string());
-    let label_key = outpoint.clone().unwrap_or_else(|| txid.clone());
-    let (labelled, size) = match outpoint {
-        Some(outpoint) => (vec![outpoint, txid.clone()], LabelSize::Title),
-        None => (vec![txid.clone()], LabelSize::Display),
-    };
-    let tx_label = match labels_editing.get(&label_key) {
-        Some(editing) => label::label_editing(labelled, editing),
-        None => label::label_editable(labelled, tx.labels.get(&label_key), size),
-    };
-    let amount: Element<'a, Message> = if tx.is_send_to_self() {
-        legacy::h1(t!("common-self-transfer")).into()
+    let label = label::label_field(
+        vec![txid.clone()],
+        labels_editing.get(&txid),
+        tx.label(),
+        LabelSize::Display,
+    );
+    let label_row = row![label, confirmed]
+        .spacing(VSpacing::L)
+        .align_y(Alignment::Center);
+    let kind = tx.wallet_tx.kind().payment_kind();
+    let amount: Element<'a, Message> = if kind == PaymentKind::SendToSelf {
+        new::d2(t!("common-self-transfer")).into()
     } else {
-        amount_with_font(&tx.wallet_tx.amount(), legacy::H1_SPEC).into()
+        amount_with_fiat_tooltip(
+            &tx.wallet_tx.amount(),
+            None::<fn(Amount) -> FiatAmount>,
+            AmountSize::L,
+            true,
+            None,
+        )
     };
-    let fee = tx.wallet_tx.fee().map(|fee_amount| {
-        row![
-            legacy::h3(t!("transactions-miner-fee")).style(theme::text::secondary),
-            amount_with_font(&fee_amount, legacy::H3_SPEC),
-            legacy::text(" ").size(legacy::H3_SIZE),
-            legacy::h4_regular(t!(
-                "common-feerate-value",
-                rate = fee_amount.to_sat() / tx.tx.vsize() as u64
-            ))
-            .style(theme::text::secondary)
-        ]
-        .align_y(Alignment::Center)
-    });
-    let header = column![amount, fee];
+    let amount_row = row![kind_icon(kind), amount]
+        .spacing(HSpacing::S)
+        .align_y(Alignment::Center);
+    let feerate = tx
+        .feerate()
+        .map(|rate| t!("common-feerate-value", rate = rate));
+    let to_fiat = fiat_converter.map(|c| move |a| c.convert(a));
+    let miner_fee = fees_row(tx.wallet_tx.fee(), feerate, to_fiat);
     // If unconfirmed, give option to use RBF.
     // Check fee amount is some as otherwise we may be missing coins for this transaction.
     let rbf = (tx.time.is_none() && tx.wallet_tx.fee().is_some()).then(|| {
@@ -187,29 +193,12 @@ pub fn tx_view<'a>(
             btn_bump_fee(Some(Message::CreateRbf(CreateRbfMessage::New(false)))),
             btn_cancel_transaction(Some(Message::CreateRbf(CreateRbfMessage::New(true)))),
         ]
-        .spacing(10)
+        .spacing(HSpacing::M)
     });
-    let date = tx.time.map(|t| {
-        DateTime::<Utc>::from_timestamp(t as i64, 0)
-            .expect("Correct unix timestamp")
-            .with_timezone(&Local)
-            .format("%b. %d, %Y - %T")
-    });
-    let date = date.map(|date| {
-        row![
-            legacy::p1_bold(t!("transactions-date")),
-            Space::fill_width(),
-            legacy::text(format!("{date}"))
-        ]
-    });
-    let txid_row = row![
-        legacy::p1_bold(t!("transactions-txid")),
-        Space::fill_width(),
-        legacy::p1_regular(txid.clone()),
-        button::btn_copy(Some(Message::Clipboard(txid.clone())))
-    ]
-    .align_y(Alignment::Center);
-    let txid_card = card::simple(column![date, txid_row].spacing(5));
+    let summary = column![label_row, amount_row, miner_fee, rbf].spacing(VSpacing::L);
+    let overview = transactions::overview(tx.datetime(), txid.clone(), Message::Clipboard(txid));
+    let transaction = column![summary, overview].spacing(VSpacing::XL);
+
     // We do not need to display inputs for external incoming transactions
     let inputs = (!tx.is_incoming())
         .then(|| view::psbt::inputs_view(&tx.coins, &tx.tx, &tx.labels, labels_editing));
@@ -219,22 +208,13 @@ pub fn tx_view<'a>(
         &tx.owned_output_indexes(),
         &tx.labels,
         labels_editing,
-        tx.single_payment().is_some(),
         tx.is_incoming(),
     );
 
-    dashboard(
-        &Menu::Transactions,
-        cache,
-        warning,
-        column![
-            title,
-            tx_label,
-            header,
-            rbf,
-            txid_card,
-            column![inputs, outputs].spacing(20)
-        ]
-        .spacing(20),
-    )
+    let details = column![
+        column![inputs, outputs].spacing(VSpacing::L),
+        Space::with_height(VSpacing::S)
+    ];
+
+    column![transaction, details].spacing(80).into()
 }

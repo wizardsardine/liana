@@ -258,6 +258,15 @@ impl SpendTx {
     pub fn is_batch(&self) -> bool {
         self.wallet_tx.kind().is_batch()
     }
+
+    pub fn label(&self) -> Label {
+        label::tx_label(
+            self.psbt.unsigned_tx.compute_txid(),
+            &self.wallet_tx.kind(),
+            &self.labels,
+            &Label::None,
+        )
+    }
 }
 
 impl Labelled for SpendTx {
@@ -346,6 +355,13 @@ impl HistoryTransaction {
         self.owned_outputs.keys().copied().collect()
     }
 
+    /// Feerate in sats/vbyte, `None` if the fee is unknown.
+    pub fn feerate(&self) -> Option<u64> {
+        self.wallet_tx
+            .fee()
+            .map(|fee| fee.to_sat() / self.tx.vsize() as u64)
+    }
+
     /// The block time, `None` if unconfirmed.
     pub fn datetime(&self) -> Option<chrono::DateTime<chrono::Utc>> {
         self.time.map(|t| {
@@ -380,6 +396,10 @@ impl HistoryTransaction {
 
     pub fn is_batch(&self) -> bool {
         self.wallet_tx.kind().is_batch()
+    }
+
+    pub fn is_payjoin(&self) -> bool {
+        self.wallet_tx.kind().is_payjoin()
     }
 
     pub fn label(&self) -> Label {
