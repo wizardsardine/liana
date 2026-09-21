@@ -643,6 +643,18 @@ pub fn see_more<'a, M: Clone + 'a>(processing: bool, next: M) -> Element<'a, M> 
         .into()
 }
 
+/// History list entry, the clickable card paired with [`see_more`].
+pub fn entry_history<'a, M: Clone + 'a>(content: Row<'a, M>, msg: M) -> Element<'a, M> {
+    let button = Button::new(content)
+        .padding(10)
+        .on_press(msg)
+        .style(theme::button::transparent_border);
+
+    Container::new(button)
+        .style(theme::card::button_simple)
+        .into()
+}
+
 fn leaf_entry<'a, M: Clone + 'a>(
     tile: Tile,
     title: impl Display,

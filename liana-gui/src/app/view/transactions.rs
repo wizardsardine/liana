@@ -2,13 +2,23 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Local, Utc};
 use iced::{
-    alignment,
-    widget::{tooltip, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
 
 use liana_ui::{
-    component::{amount::*, badge, button, card, form, pill, text::*},
+    component::{
+        amount::{amount, amount_with_font},
+        badge,
+        button::{
+            self, btn_bump_fee, btn_cancel_transaction, btn_confirm, btn_export_transactions,
+            btn_go_to_replacement,
+        },
+        card, form, list,
+        modal::ModalWidth,
+        pill,
+        text::legacy,
+    },
     icon, theme,
     widget::*,
 };
@@ -19,7 +29,7 @@ use crate::{
         error::Error,
         menu::Menu,
         view::{
-            dashboard,
+            self, dashboard,
             label::{self, LabelSize},
             message::{CreateRbfMessage, Message},
             warning::warn,
@@ -37,137 +47,71 @@ pub fn transactions_view<'a>(
     is_last_page: bool,
     processing: bool,
 ) -> Element<'a, Message> {
+    let title = legacy::panel_title(Menu::Transactions.title());
+    let export = btn_export_transactions(Some(ImportExportMessage::Open.into()));
+    let header = row![title, Space::fill_width(), export];
+
+    let list = txs
+        .iter()
+        .enumerate()
+        .fold(Column::new().spacing(10), |col, (i, tx)| {
+            col.push(tx_list_view(i, tx))
+        });
+
+    let see_more =
+        (!is_last_page && !txs.is_empty()).then(|| list::see_more(processing, Message::Next));
+
     dashboard(
         &Menu::Transactions,
         cache,
         warning,
-        Column::new()
-            .push(
-                Row::new()
-                    .push(Container::new(panel_title(Menu::Transactions.title())))
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        button::secondary(Some(icon::backup_icon()), t!("btn-export"))
-                            .on_press(ImportExportMessage::Open.into()),
-                    ),
-            )
-            .push(
-                Column::new()
-                    .spacing(10)
-                    .push(
-                        txs.iter()
-                            .enumerate()
-                            .fold(Column::new().spacing(10), |col, (i, tx)| {
-                                col.push(tx_list_view(i, tx))
-                            }),
-                    )
-                    .push_maybe(if !is_last_page && !txs.is_empty() {
-                        Some(
-                            Container::new(
-                                Button::new(
-                                    text(if processing {
-                                        t!("common-fetching")
-                                    } else {
-                                        t!("common-see-more")
-                                    })
-                                    .width(Length::Fill)
-                                    .align_x(alignment::Horizontal::Center),
-                                )
-                                .width(Length::Fill)
-                                .padding(15)
-                                .style(theme::button::transparent_border)
-                                .on_press_maybe(if !processing {
-                                    Some(Message::Next)
-                                } else {
-                                    None
-                                }),
-                            )
-                            .width(Length::Fill)
-                            .style(theme::card::simple),
-                        )
-                    } else {
-                        None
-                    }),
-            )
+        column![header, column![list, see_more].spacing(10)]
             .align_x(Alignment::Center)
             .spacing(30),
     )
 }
 
 fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(
-                    Row::new()
-                        .push(if tx.is_incoming() {
-                            badge::receive()
-                        } else if tx.is_send_to_self() {
-                            badge::cycle()
-                        } else {
-                            badge::spend()
-                        })
-                        .push(
-                            Column::new()
-                                .push_maybe(if let Some(outpoint) = tx.single_payment() {
-                                    tx.labels.get(&outpoint.to_string()).map(p1_regular)
-                                } else {
-                                    tx.labels
-                                        .get(&tx.tx.compute_txid().to_string())
-                                        .map(p1_regular)
-                                })
-                                .push_maybe(tx.time.map(|t| {
-                                    Container::new(
-                                        text(
-                                            DateTime::<Utc>::from_timestamp(t as i64, 0)
-                                                .expect("Correct unix timestamp")
-                                                .with_timezone(&Local)
-                                                .format("%b. %d, %Y - %T")
-                                                .to_string(),
-                                        )
-                                        .style(theme::text::secondary)
-                                        .small(),
-                                    )
-                                })),
-                        )
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill),
-                )
-                .push_maybe(if tx.time.is_none() {
-                    Some(pill::unconfirmed())
-                } else {
-                    None
-                })
-                .push_maybe(if tx.is_batch() {
-                    Some(pill::batch())
-                } else {
-                    None
-                })
-                .push(if tx.is_incoming() {
-                    Row::new()
-                        .spacing(5)
-                        .push(text("+"))
-                        .push(amount(&tx.wallet_tx.amount()))
-                        .align_y(Alignment::Center)
-                } else if !tx.is_send_to_self() {
-                    Row::new()
-                        .spacing(5)
-                        .push(text("-"))
-                        .push(amount(&tx.wallet_tx.amount()))
-                        .align_y(Alignment::Center)
-                } else {
-                    Row::new().push(text(t!("common-self-transfer")))
-                })
-                .align_y(Alignment::Center)
-                .spacing(20),
-        )
-        .padding(10)
-        .on_press(Message::Select(i))
-        .style(theme::button::transparent_border),
-    )
-    .style(theme::card::button_simple)
-    .into()
+    let badge = if tx.is_incoming() {
+        badge::receive()
+    } else if tx.is_send_to_self() {
+        badge::cycle()
+    } else {
+        badge::spend()
+    };
+    let label_key = tx
+        .single_payment()
+        .map(|outpoint| outpoint.to_string())
+        .unwrap_or_else(|| tx.txid.to_string());
+    let label = tx.labels.get(&label_key).map(legacy::p1_regular);
+    let date = tx.time.map(|t| {
+        DateTime::<Utc>::from_timestamp(t as i64, 0)
+            .expect("Correct unix timestamp")
+            .with_timezone(&Local)
+            .format("%b. %d, %Y - %T")
+            .to_string()
+    });
+    let date = date.map(|date| legacy::text(date).style(theme::text::secondary));
+    let description = row![badge, column![label, date]]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+    let unconfirmed = tx.time.is_none().then_some(pill::unconfirmed());
+    let batch = tx.is_batch().then_some(pill::batch());
+    let amount_row = if tx.is_send_to_self() {
+        row![legacy::text(t!("common-self-transfer"))]
+    } else {
+        let sign = if tx.is_incoming() { "+" } else { "-" };
+        row![legacy::text(sign), amount(&tx.wallet_tx.amount())]
+            .spacing(5)
+            .align_y(Alignment::Center)
+    };
+
+    let content = row![description, unconfirmed, batch, amount_row]
+        .align_y(Alignment::Center)
+        .spacing(20);
+
+    list::entry_history(content, Message::Select(i))
 }
 
 /// Return the modal view for a new RBF transaction.
@@ -181,98 +125,92 @@ pub fn create_rbf_modal<'a>(
     replacement_txid: Option<Txid>,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
-    let mut confirm_button = button::secondary(None, t!("btn-confirm")).width(Length::Fixed(200.0));
-    if feerate.valid || is_cancel {
-        confirm_button =
-            confirm_button.on_press(Message::CreateRbf(super::CreateRbfMessage::Confirm));
-    }
+    let confirm_msg =
+        (feerate.valid || is_cancel).then_some(Message::CreateRbf(CreateRbfMessage::Confirm));
+    let confirm_button = btn_confirm(confirm_msg);
     let help_text = if is_cancel {
         t!("transactions-rbf-cancel-help")
     } else {
         t!("transactions-rbf-bump-help")
     };
+
+    let descendants = (!descendant_txids.is_empty()).then(|| {
+        let invalidates = if descendant_txids.len() > 1 {
+            t!("transactions-rbf-invalidates-some")
+        } else {
+            t!("transactions-rbf-invalidates-one")
+        };
+        let explanation = if descendant_txids.len() > 1 {
+            t!("transactions-rbf-descendants-some")
+        } else {
+            t!("transactions-rbf-descendants-one")
+        };
+        (invalidates, explanation)
+    });
+    let descendants = descendants.map(|(invalidates, explanation)| {
+        let init = column![
+            row![icon::warning_icon(), legacy::text(invalidates)].spacing(10),
+            row![legacy::text(explanation)].padding([0, 30])
+        ]
+        .spacing(5);
+        descendant_txids.iter().fold(init, |col, txid| {
+            col.push(
+                row![
+                    legacy::text(txid.to_string()),
+                    button::btn_copy(Some(Message::Clipboard(txid.to_string())))
+                ]
+                .padding([0, 30])
+                .spacing(5)
+                .align_y(Alignment::Center),
+            )
+        })
+    });
+    let feerate_form = (!is_cancel).then(|| {
+        if replacement_txid.is_none() {
+            form::Form::new_trimmed("", feerate, move |msg| {
+                Message::CreateRbf(CreateRbfMessage::FeerateEdited(msg))
+            })
+            .warning(t!("transactions-rbf-feerate-warning"))
+        } else {
+            form::Form::new_disabled("", feerate)
+        }
+        .size(legacy::P1_SIZE)
+        .padding(10)
+    });
+    let feerate = feerate_form.map(|form| {
+        row![
+            Container::new(legacy::p1_bold(t!("common-feerate"))).padding(10),
+            form
+        ]
+        .spacing(10)
+        .width(Length::Fill)
+    });
+    let status = if replacement_txid.is_none() {
+        row![confirm_button]
+    } else {
+        row![
+            icon::circle_check_icon().style(theme::text::secondary),
+            legacy::text(t!("transactions-rbf-created")).style(theme::text::success)
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center)
+    };
+    let replacement = replacement_txid
+        .map(|id| btn_go_to_replacement(Some(Message::Menu(Menu::PsbtPreSelected(id)))));
+
     card::simple(
-        Column::new()
-            .spacing(10)
-            .push(Container::new(h4_bold(t!("transactions-replacement"))).width(Length::Fill))
-            .push(Row::new().push(text(help_text)))
-            .push_maybe(if descendant_txids.is_empty() {
-                None
-            } else {
-                Some(
-                    descendant_txids.iter().fold(
-                        Column::new()
-                            .spacing(5)
-                            .push(Row::new().spacing(10).push(icon::warning_icon()).push(text(
-                                if descendant_txids.len() > 1 {
-                                    t!("transactions-rbf-invalidates-some")
-                                } else {
-                                    t!("transactions-rbf-invalidates-one")
-                                },
-                            )))
-                            .push(Row::new().padding([0, 30]).push(text(
-                                if descendant_txids.len() > 1 {
-                                    t!("transactions-rbf-descendants-some")
-                                } else {
-                                    t!("transactions-rbf-descendants-one")
-                                },
-                            ))),
-                        |col, txid| {
-                            col.push(
-                                Row::new()
-                                    .padding([0, 30])
-                                    .spacing(5)
-                                    .align_y(Alignment::Center)
-                                    .push(text(txid.to_string()))
-                                    .push(button::btn_copy(Some(Message::Clipboard(
-                                        txid.to_string(),
-                                    )))),
-                            )
-                        },
-                    ),
-                )
-            })
-            .push_maybe(if !is_cancel {
-                Some(
-                    Row::new()
-                        .push(Container::new(p1_bold(t!("common-feerate"))).padding(10))
-                        .spacing(10)
-                        .push(
-                            if replacement_txid.is_none() {
-                                form::Form::new_trimmed("", feerate, move |msg| {
-                                    Message::CreateRbf(CreateRbfMessage::FeerateEdited(msg))
-                                })
-                                .warning(t!("transactions-rbf-feerate-warning"))
-                            } else {
-                                form::Form::new_disabled("", feerate)
-                            }
-                            .size(P1_SIZE)
-                            .padding(10),
-                        )
-                        .width(Length::Fill),
-                )
-            } else {
-                None
-            })
-            .push(warn(warning))
-            .push(Row::new().push(if replacement_txid.is_none() {
-                Row::new().push(confirm_button)
-            } else {
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(icon::circle_check_icon().style(theme::text::secondary))
-                    .push(text(t!("transactions-rbf-created")).style(theme::text::success))
-            }))
-            .push_maybe(replacement_txid.map(|id| {
-                Row::new().push(
-                    button::primary(None, t!("btn-go-to-replacement"))
-                        .width(Length::Fixed(200.0))
-                        .on_press(Message::Menu(Menu::PsbtPreSelected(id))),
-                )
-            })),
+        column![
+            legacy::h4_bold(t!("transactions-replacement")),
+            legacy::text(help_text),
+            descendants,
+            feerate,
+            warn(warning),
+            status,
+            replacement,
+        ]
+        .spacing(10),
     )
-    .width(Length::Fixed(800.0))
+    .width(ModalWidth::XL)
     .into()
 }
 
@@ -282,143 +220,101 @@ pub fn tx_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
-    let txid = tx.tx.compute_txid().to_string();
+    let txid = tx.txid.to_string();
+    let title = if tx.is_send_to_self() {
+        t!("transactions-transaction")
+    } else if tx.is_incoming() {
+        t!("transactions-incoming")
+    } else {
+        t!("transactions-outgoing")
+    };
+    let title = legacy::h3(title);
+    // if the payment is a payment of a single payment transaction then
+    // the label of the transaction is attached to the label of the payment outpoint
+    let outpoint = tx.single_payment().map(|outpoint| outpoint.to_string());
+    let label_key = outpoint.clone().unwrap_or_else(|| txid.clone());
+    let (labelled, size) = match outpoint {
+        Some(outpoint) => (vec![outpoint, txid.clone()], LabelSize::Title),
+        None => (vec![txid.clone()], LabelSize::Display),
+    };
+    let tx_label = match labels_editing.get(&label_key) {
+        Some(editing) => label::label_editing(labelled, editing),
+        None => label::label_editable(labelled, tx.labels.get(&label_key), size),
+    };
+    let amount: Element<'a, Message> = if tx.is_send_to_self() {
+        legacy::h1(t!("common-self-transfer")).into()
+    } else {
+        amount_with_font(&tx.wallet_tx.amount(), legacy::H1_SPEC).into()
+    };
+    let fee = tx.wallet_tx.fee().map(|fee_amount| {
+        row![
+            legacy::h3(t!("transactions-miner-fee")).style(theme::text::secondary),
+            amount_with_font(&fee_amount, legacy::H3_SPEC),
+            legacy::text(" ").size(legacy::H3_SIZE),
+            legacy::h4_regular(t!(
+                "common-feerate-value",
+                rate = fee_amount.to_sat() / tx.tx.vsize() as u64
+            ))
+            .style(theme::text::secondary)
+        ]
+        .align_y(Alignment::Center)
+    });
+    let header = column![amount, fee];
+    // If unconfirmed, give option to use RBF.
+    // Check fee amount is some as otherwise we may be missing coins for this transaction.
+    let rbf = (tx.time.is_none() && tx.wallet_tx.fee().is_some()).then(|| {
+        row![
+            btn_bump_fee(Some(Message::CreateRbf(CreateRbfMessage::New(false)))),
+            btn_cancel_transaction(Some(Message::CreateRbf(CreateRbfMessage::New(true)))),
+        ]
+        .spacing(10)
+    });
+    let date = tx.time.map(|t| {
+        DateTime::<Utc>::from_timestamp(t as i64, 0)
+            .expect("Correct unix timestamp")
+            .with_timezone(&Local)
+            .format("%b. %d, %Y - %T")
+    });
+    let date = date.map(|date| {
+        row![
+            legacy::p1_bold(t!("transactions-date")),
+            Space::fill_width(),
+            legacy::text(format!("{date}"))
+        ]
+    });
+    let txid_row = row![
+        legacy::p1_bold(t!("transactions-txid")),
+        Space::fill_width(),
+        legacy::p1_regular(txid.clone()),
+        button::btn_copy(Some(Message::Clipboard(txid.clone())))
+    ]
+    .align_y(Alignment::Center);
+    let txid_card = card::simple(column![date, txid_row].spacing(5));
+    // We do not need to display inputs for external incoming transactions
+    let inputs = (!tx.is_incoming())
+        .then(|| view::psbt::inputs_view(&tx.coins, &tx.tx, &tx.labels, labels_editing));
+    let outputs = view::psbt::outputs_view(
+        &tx.tx,
+        cache.network,
+        &tx.owned_output_indexes(),
+        &tx.labels,
+        labels_editing,
+        tx.single_payment().is_some(),
+        tx.is_incoming(),
+    );
+
     dashboard(
         &Menu::Transactions,
         cache,
         warning,
-        Column::new()
-            .push(if tx.is_send_to_self() {
-                Container::new(h3(t!("transactions-transaction"))).width(Length::Fill)
-            } else if tx.is_incoming() {
-                Container::new(h3(t!("transactions-incoming"))).width(Length::Fill)
-            } else {
-                Container::new(h3(t!("transactions-outgoing"))).width(Length::Fill)
-            })
-            .push(if let Some(outpoint) = tx.single_payment() {
-                // if the payment is a payment of a single payment transaction then
-                // the label of the transaction is attached to the label of the payment outpoint
-                let outpoint = outpoint.to_string();
-                if let Some(label) = labels_editing.get(&outpoint) {
-                    label::label_editing(vec![outpoint.clone(), txid.clone()], label)
-                } else {
-                    label::label_editable(
-                        vec![outpoint.clone(), txid.clone()],
-                        tx.labels.get(&outpoint),
-                        LabelSize::Title,
-                    )
-                }
-            } else if let Some(label) = labels_editing.get(&txid) {
-                label::label_editing(vec![txid.clone()], label)
-            } else {
-                label::label_editable(vec![txid.clone()], tx.labels.get(&txid), LabelSize::Display)
-            })
-            .push(
-                Column::new().spacing(20).push(
-                    Column::new()
-                        .push(if tx.is_send_to_self() {
-                            Container::new(h1(t!("common-self-transfer")))
-                        } else {
-                            Container::new(amount_with_font(&tx.wallet_tx.amount(), H1_SPEC))
-                        })
-                        .push_maybe(tx.wallet_tx.fee().map(|fee_amount| {
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(
-                                    h3(t!("transactions-miner-fee")).style(theme::text::secondary),
-                                )
-                                .push(amount_with_font(&fee_amount, H3_SPEC))
-                                .push(text(" ").size(H3_SIZE))
-                                .push(
-                                    text(t!(
-                                        "common-feerate-value",
-                                        rate = fee_amount.to_sat() / tx.tx.vsize() as u64
-                                    ))
-                                    .size(H4_SIZE)
-                                    .style(theme::text::secondary),
-                                )
-                        })),
-                ),
-            )
-            // If unconfirmed, give option to use RBF.
-            // Check fee amount is some as otherwise we may be missing coins for this transaction.
-            .push_maybe(if tx.time.is_none() && tx.wallet_tx.fee().is_some() {
-                Some(
-                    Row::new()
-                        .push(
-                            button::secondary(None, t!("btn-bump-fee"))
-                                .width(Length::Fixed(200.0))
-                                .on_press(Message::CreateRbf(super::CreateRbfMessage::New(false))),
-                        )
-                        .push(tooltip::Tooltip::new(
-                            button::secondary(None, t!("btn-cancel-transaction"))
-                                .width(Length::Fixed(200.0))
-                                .on_press(Message::CreateRbf(super::CreateRbfMessage::New(true))),
-                            text(t!("transactions-cancel-tooltip")),
-                            tooltip::Position::Top,
-                        ))
-                        .spacing(10),
-                )
-            } else {
-                None
-            })
-            .push(card::simple(
-                Column::new()
-                    .push_maybe(tx.time.map(|t| {
-                        let date = DateTime::<Utc>::from_timestamp(t as i64, 0)
-                            .expect("Correct unix timestamp")
-                            .with_timezone(&Local)
-                            .format("%b. %d, %Y - %T");
-                        Row::new()
-                            .width(Length::Fill)
-                            .push(
-                                Container::new(text(t!("transactions-date")).bold())
-                                    .width(Length::Fill),
-                            )
-                            .push(Container::new(text(format!("{date}"))).width(Length::Shrink))
-                    }))
-                    .push(
-                        Row::new()
-                            .width(Length::Fill)
-                            .align_y(Alignment::Center)
-                            .push(
-                                Container::new(text(t!("transactions-txid")).bold())
-                                    .width(Length::Fill),
-                            )
-                            .push(
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .push(Container::new(text(txid.clone()).small()))
-                                    .push(button::btn_copy(Some(Message::Clipboard(txid.clone()))))
-                                    .width(Length::Shrink),
-                            ),
-                    )
-                    .spacing(5),
-            ))
-            .push(
-                Column::new()
-                    .spacing(20)
-                    // We do not need to display inputs for external incoming transactions
-                    .push_maybe(if tx.is_incoming() {
-                        None
-                    } else {
-                        Some(super::psbt::inputs_view(
-                            &tx.coins,
-                            &tx.tx,
-                            &tx.labels,
-                            labels_editing,
-                        ))
-                    })
-                    .push(super::psbt::outputs_view(
-                        &tx.tx,
-                        cache.network,
-                        &tx.owned_output_indexes(),
-                        &tx.labels,
-                        labels_editing,
-                        tx.single_payment().is_some(),
-                        tx.is_incoming(),
-                    )),
-            )
-            .spacing(20),
+        column![
+            title,
+            tx_label,
+            header,
+            rbf,
+            txid_card,
+            column![inputs, outputs].spacing(20)
+        ]
+        .spacing(20),
     )
 }
