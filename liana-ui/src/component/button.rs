@@ -392,6 +392,7 @@ pub enum BtnWidth {
     S = 100,
     M = 140,
     L = 180,
+    Modal = 200,
     XL = 230,
     XXL = 330,
     /// Default to Length::Shrink
@@ -1098,4 +1099,34 @@ pub fn btn_chevron<'a, T: Clone + 'a>(unfolded: bool, msg: T) -> Button<'a, T> {
     .padding(0)
     .style(theme::button::transparent)
     .on_press(msg)
+}
+
+pub fn btn_confirm<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, t!("btn-confirm"), BtnWidth::Modal, msg)
+}
+
+pub fn btn_go_to_replacement<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, t!("btn-go-to-replacement"), BtnWidth::Modal, msg)
+}
+
+pub fn btn_bump_fee<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, t!("btn-bump-fee"), BtnWidth::Modal, msg)
+}
+
+pub fn btn_cancel_transaction<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    let button = btn_secondary(None, t!("btn-cancel-transaction"), BtnWidth::Modal, msg);
+    tooltip::tooltip_custom(
+        caption(t!("transactions-cancel-tooltip")),
+        button,
+        Position::Top,
+    )
+}
+
+pub fn btn_export_transactions<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(
+        Some(icon::backup_icon()),
+        t!("btn-export"),
+        BtnWidth::Auto,
+        msg,
+    )
 }
