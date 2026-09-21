@@ -5,7 +5,7 @@ use liana_ui::{component::pill, theme};
 use crate::debug::Sample;
 
 #[rustfmt::skip]
-fn pill_components_a() -> Sample<11> {
+fn pill_components_a() -> Sample<12> {
     [
         (pill::recovery(),                             "liana_ui::component::pill::recovery()"),
         (pill::batch(),                                "liana_ui::component::pill::batch()"),
@@ -13,6 +13,7 @@ fn pill_components_a() -> Sample<11> {
         (pill::spent(),                                "liana_ui::component::pill::spent()"),
         (pill::unsigned(),                             "liana_ui::component::pill::unsigned()"),
         (pill::signed(),                               "liana_ui::component::pill::signed()"),
+        (pill::timelocked(),                           "liana_ui::component::pill::timelocked()"),
         (pill::unconfirmed(),                          "liana_ui::component::pill::unconfirmed()"),
         (pill::confirmed(),                            "liana_ui::component::pill::confirmed()"),
         (pill::register(),                             "liana_ui::component::pill::register()"),

@@ -140,6 +140,7 @@ fn layout_inner<'a>(
                 breadcrumb: breadcrumb.to_vec(),
                 previous_message,
             },
+            on_language_selected: None,
             content_width: CONTENT_WIDTH,
         },
         content,

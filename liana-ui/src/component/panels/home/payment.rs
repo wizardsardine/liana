@@ -158,5 +158,5 @@ pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment, msg: Option<M>) -> El
         .spacing(5)
         .align_y(Alignment::Center);
     let content = row![left, Space::fill_width(), right].height(PAYMENT_HEIGHT);
-    component::card::list_entry_with_padding(content, msg, [5, 10])
+    component::card::list_entry_with_padding(content, msg, component::panels::LIST_ENTRY_PADDING)
 }
