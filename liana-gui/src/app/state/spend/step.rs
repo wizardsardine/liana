@@ -17,7 +17,7 @@ use liana::{
         psbt::Psbt,
         secp256k1, Address, Amount, Denomination, Network, OutPoint,
     },
-    spend::{SpendCreationError, DUST_OUTPUT_SATS, MAX_FEERATE},
+    spend::{SpendCreationError, DUST_OUTPUT_SATS, MAX_FEERATE_VB, MIN_FEERATE_VB},
 };
 use lianad::commands::{CreateRecoveryWarning, ListCoinsEntry};
 
@@ -677,7 +677,7 @@ impl Step for DefineSpend {
                     view::CreateSpendMessage::FeerateEdited(s) => {
                         if let Ok(value) = s.parse::<u64>() {
                             self.feerate.value = s;
-                            self.feerate.valid = value != 0 && value <= MAX_FEERATE;
+                            self.feerate.valid = (MIN_FEERATE_VB..=MAX_FEERATE_VB).contains(&value);
                         } else if s.is_empty() {
                             self.feerate.value = "".to_string();
                             self.feerate.valid = true;
@@ -808,7 +808,7 @@ impl Step for DefineSpend {
                         FeeLevel::High => est.high,
                     };
                     self.feerate.value = value.to_string();
-                    self.feerate.valid = value != 0 && value <= MAX_FEERATE;
+                    self.feerate.valid = (MIN_FEERATE_VB..=MAX_FEERATE_VB).contains(&value);
                 }
 
                 // Attempt to select coins automatically if:

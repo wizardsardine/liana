@@ -10,11 +10,14 @@ use std::iter::FromIterator;
 
 use async_trait::async_trait;
 
-use liana::miniscript::bitcoin::{
-    address,
-    bip32::{ChildNumber, Fingerprint},
-    psbt::Psbt,
-    secp256k1, Address, Network, OutPoint, Txid,
+use liana::{
+    miniscript::bitcoin::{
+        address,
+        bip32::{ChildNumber, Fingerprint},
+        psbt::Psbt,
+        secp256k1, Address, Network, OutPoint, Txid,
+    },
+    spend::MIN_FEERATE_VB,
 };
 use lianad::{
     bip329::Labels,
@@ -87,14 +90,15 @@ pub struct FeerateEstimate {
 
 impl FeerateEstimate {
     /// Build a sanitized estimate from the raw backend values. Each bound is
-    /// floored to 1 sat/vbyte so a preset is always broadcastable, then the
+    /// floored to the minimum feerate so a preset is always broadcastable, then the
     /// presets are forced into non-decreasing order (`low <= medium <= high`).
     /// A noisy estimate near the mempool floor can report medium below low or
     /// high below low; without this a preset would be cheaper than a lower one.
     pub fn new(low: i32, medium: Option<i32>, high: i32) -> Self {
-        let low = low.max(1) as u64;
-        let high = (high.max(1) as u64).max(low);
-        let medium = medium.map(|m| (m.max(1) as u64).clamp(low, high));
+        let min_feerate = MIN_FEERATE_VB as i32;
+        let low = low.max(min_feerate) as u64;
+        let high = (high.max(min_feerate) as u64).max(low);
+        let medium = medium.map(|m| (m.max(min_feerate) as u64).clamp(low, high));
         Self { low, medium, high }
     }
 }

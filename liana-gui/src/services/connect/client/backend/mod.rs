@@ -729,8 +729,11 @@ impl Daemon for BackendWalletClient {
                 .psbts
                 .into_iter()
                 .map(|psbt| ListSpendEntry {
+                    status: psbt.status,
                     psbt: psbt.raw,
                     updated_at: Some(psbt.updated_at as u32),
+                    block_height: psbt.block_height,
+                    block_time: psbt.block_time,
                 })
                 .collect(),
         })

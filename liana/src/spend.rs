@@ -3,7 +3,7 @@
 use crate::descriptors;
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     convert::TryInto,
     fmt,
     time::Duration,
@@ -22,7 +22,208 @@ use miniscript::bitcoin::{
     psbt::{Input as PsbtIn, Output as PsbtOut, Psbt},
     secp256k1,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpendStatus {
+    Unsigned,
+    Timelocked,
+    Broadcastable,
+    Broadcast,
+    Confirmed,
+    Deprecated,
+    #[default]
+    Unknown,
+}
+
+impl<'de> Deserialize<'de> for SpendStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let string = String::deserialize(deserializer)?;
+        Ok(match string.as_str() {
+            "unsigned" => SpendStatus::Unsigned,
+            "timelocked" => SpendStatus::Timelocked,
+            "broadcastable" => SpendStatus::Broadcastable,
+            "broadcast" => SpendStatus::Broadcast,
+            "confirmed" => SpendStatus::Confirmed,
+            "deprecated" => SpendStatus::Deprecated,
+            _ => SpendStatus::Unknown,
+        })
+    }
+}
+
+impl SpendStatus {
+    /// Status of a spend nothing conflicts with, from its signatures and, for a recovery path,
+    /// whether all its coins are past the timelock at the next block.
+    pub fn from_signatures(
+        sigs: &descriptors::PartialSpendInfo,
+        coins_heights: &[Option<i32>],
+        tip_height: i32,
+    ) -> Self {
+        let is_signed = |path: &descriptors::PathSpendInfo| path.sigs_count >= path.threshold;
+        let primary_signed = is_signed(sigs.primary_path());
+        let recovery_signed = sigs.recovery_paths().values().any(is_signed);
+        match (primary_signed, recovery_signed) {
+            (true, _) => SpendStatus::Broadcastable,
+            (false, false) => SpendStatus::Unsigned,
+            (false, true) => {
+                // The status must follow the path `signed_path()` reports, or the two disagree.
+                let timelock = sigs
+                    .recovery_paths()
+                    .iter()
+                    .find(|(_, path)| is_signed(path))
+                    .map(|(timelock, _)| *timelock)
+                    .expect("a signed recovery path exists");
+                let timelock = i32::from(timelock);
+                let available = coins_heights
+                    .iter()
+                    .all(|height| height.is_some_and(|height| tip_height + 1 >= height + timelock));
+                if available {
+                    SpendStatus::Broadcastable
+                } else {
+                    SpendStatus::Timelocked
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpendCoin {
+    pub amount: bitcoin::Amount,
+    pub block_height: Option<i32>,
+    pub spend_txid: Option<bitcoin::Txid>,
+    pub spend_block_height: Option<i32>,
+    pub spend_block_time: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpendState {
+    pub status: SpendStatus,
+    pub block_height: Option<i32>,
+    pub block_time: Option<u32>,
+}
+
+impl From<SpendStatus> for SpendState {
+    fn from(status: SpendStatus) -> Self {
+        Self {
+            status,
+            block_height: None,
+            block_time: None,
+        }
+    }
+}
+
+/// The minimal feerate and absolute fee a transaction must pay to replace the transactions
+/// spending the same coins in the mempool, to satisfy RBF rules #3, #4 and #6 (see
+/// https://github.com/bitcoin/bitcoin/blob/master/doc/policy/mempool-replacements.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplacementRequirements {
+    pub min_feerate_vb: u64,
+    pub descendant_fees: bitcoin::Amount,
+}
+
+pub fn psbt_spend_state(
+    psbt: &Psbt,
+    desc: &descriptors::LianaDescriptor,
+    coins: &[Option<SpendCoin>],
+    tip_height: i32,
+    replacement: impl FnOnce(&BTreeSet<bitcoin::Txid>) -> Option<ReplacementRequirements>,
+) -> SpendState {
+    let psbt_txid = psbt.unsigned_tx.compute_txid();
+    let mut coins_heights = Vec::with_capacity(coins.len());
+    let mut inputs_sum = bitcoin::Amount::from_sat(0);
+    let mut spent_by_us = false;
+    let mut spend_info = None;
+    let mut spenders = BTreeSet::new();
+
+    for coin in coins {
+        let Some(coin_spend_info) = coin else {
+            return SpendStatus::Deprecated.into();
+        };
+        if coin_spend_info.spend_txid == Some(psbt_txid) {
+            // The coin is spent by this (confirmed) tx
+            spent_by_us = true;
+            if coin_spend_info.spend_block_height.is_some() {
+                spend_info = spend_info.or(Some(coin_spend_info));
+            }
+        } else if coin_spend_info.spend_block_height.is_some() {
+            // The coin is spent by another confirmed tx
+            return SpendStatus::Deprecated.into();
+        } else if let Some(spender) = coin_spend_info.spend_txid {
+            // The coin is spent by another unconfirmed tx
+            spenders.insert(spender);
+        }
+        coins_heights.push(coin_spend_info.block_height);
+        inputs_sum += coin_spend_info.amount;
+    }
+
+    if let Some(info) = spend_info {
+        return SpendState {
+            status: SpendStatus::Confirmed,
+            block_height: info.spend_block_height,
+            block_time: info.spend_block_time,
+        };
+    }
+    // Our coins being spent by this transaction, which we just checked isn't in a block, tells
+    // it made it to the mempool.
+    if spent_by_us {
+        return SpendStatus::Broadcast.into();
+    }
+
+    // Neither in the chain nor in the mempool. It may be broadcast once signed, unless another
+    // transaction in the mempool is spending one of its coins and this one doesn't pay enough to
+    // replace it.
+    // Signatures of a PSBT we don't know about can't be counted.
+    let signed_status = desc
+        .partial_spend_info(psbt)
+        .map_or(SpendStatus::Unsigned, |sigs| {
+            SpendStatus::from_signatures(&sigs, &coins_heights, tip_height)
+        });
+
+    if spenders.is_empty() {
+        return signed_status.into();
+    }
+    // Only asked on a conflict, as it may cost a round trip to the backend.
+    let Some(requirements) = replacement(&spenders) else {
+        return signed_status.into();
+    };
+
+    let outputs_sum = psbt
+        .unsigned_tx
+        .output
+        .iter()
+        .fold(bitcoin::Amount::from_sat(0), |acc, txo| acc + txo.value);
+    let fee = match inputs_sum.checked_sub(outputs_sum) {
+        Some(fee) => fee,
+        // outputs_sum > inputs_sum => invalid tx
+        None => return SpendStatus::Deprecated.into(),
+    };
+
+    let use_primary_path = psbt
+        .unsigned_tx
+        .input
+        .iter()
+        .all(|txin| !txin.sequence.is_relative_lock_time());
+    let max_vbytes = desc.unsigned_tx_max_vbytes(&psbt.unsigned_tx, use_primary_path);
+    let feerate_vb = fee.to_sat() / max_vbytes;
+
+    // RBF rule #6 for the feerate, rules #3 and #4 for the absolute fee: it must pay for the
+    // fees of the transactions it evicts and for its own bandwidth at the incremental relay
+    // feerate.
+    if feerate_vb >= requirements.min_feerate_vb
+        && fee
+            >= requirements.descendant_fees
+                + bitcoin::Amount::from_sat(max_vbytes * BITCOIN_CORE_INCREMENTAL_RELAY_FEERATE_VB)
+    {
+        signed_status.into()
+    } else {
+        SpendStatus::Deprecated.into()
+    }
+}
 
 /// We would never create a transaction with an output worth less than this.
 /// That's 0.5$ at 100_000$ per BTC.
@@ -37,8 +238,11 @@ pub const LONG_TERM_FEERATE_VB: f32 = 5.0;
 /// Assume that paying more than 1BTC in fee is a bug.
 pub const MAX_FEE: bitcoin::Amount = bitcoin::Amount::ONE_BTC;
 
+pub const MIN_FEERATE_VB: u64 = 1;
+pub const BITCOIN_CORE_INCREMENTAL_RELAY_FEERATE_VB: u64 = 1;
+
 /// Assume that paying more than 1000sat/vb in feerate is a bug.
-pub const MAX_FEERATE: u64 = 1_000;
+pub const MAX_FEERATE_VB: u64 = 1_000;
 
 /// Do not set locktime if tip age in seconds is older than this.
 // See also https://github.com/bitcoin/bitcoin/blob/ecd23656db174adef61d3bd753d02698c3528192/src/wallet/spend.cpp#L906.
@@ -73,7 +277,7 @@ impl fmt::Display for SpendCreationError {
                 "We assume transactions with a fee larger than {} or a feerate larger than {} sats/vb are a mistake. \
                 The created transaction {}.",
                 MAX_FEE,
-                MAX_FEERATE,
+                MAX_FEERATE_VB,
                 match info {
                     InsaneFeeInfo::NegativeFee => "would have a negative fee".to_string(),
                     InsaneFeeInfo::TooHighFee(f) => format!("{f} sats in fees"),
@@ -154,7 +358,7 @@ fn sanity_check_psbt(
         .ok_or(SpendCreationError::InsaneFees(
             InsaneFeeInfo::InvalidFeerate,
         ))?;
-    if !(1..=MAX_FEERATE).contains(&feerate_sats_vb) {
+    if !(MIN_FEERATE_VB..=MAX_FEERATE_VB).contains(&feerate_sats_vb) {
         return Err(SpendCreationError::InsaneFees(
             InsaneFeeInfo::TooHighFeerate(feerate_sats_vb),
         ));
@@ -588,7 +792,7 @@ pub struct CreateSpendRes {
 /// Create a PSBT for a transaction spending some, or all, of `candidate_coins` to `destinations`.
 /// Important information for signers will be populated. Will refuse to create outputs worth less
 /// than `DUST_OUTPUT_SATS`. Will refuse to create a transaction paying more than `MAX_FEE`
-/// satoshis in fees or whose feerate is larger than `MAX_FEERATE` sats/vb.
+/// satoshis in fees or whose feerate is larger than `MAX_FEERATE_VB` sats/vb.
 ///
 /// More about the parameters:
 /// * `main_descriptor`: the multipath Liana descriptor, used to derive the addresses of the
@@ -640,7 +844,7 @@ pub fn create_spend(
         SpendTxFees::Rbf(feerate, fee) => (feerate, Some(fee)),
     };
     let is_self_send = destinations.is_empty();
-    if feerate_vb < 1 {
+    if feerate_vb < MIN_FEERATE_VB {
         return Err(SpendCreationError::InvalidFeerate(feerate_vb));
     }
 
@@ -814,9 +1018,12 @@ pub fn create_spend(
 mod tests {
     use super::*;
 
-    use std::time::Duration;
+    use std::{str::FromStr, time::Duration};
 
-    use miniscript::bitcoin::absolute::{Height, LockTime};
+    use miniscript::bitcoin::{
+        absolute::{Height, LockTime},
+        hashes::Hash,
+    };
 
     #[test]
     fn test_anti_fee_sniping_locktime() {
@@ -926,5 +1133,266 @@ mod tests {
             ),
             LockTime::from_height(1).unwrap() // subtract 90
         );
+    }
+
+    const INPUT_VALUE: u64 = 100_000;
+    const TIP_HEIGHT: i32 = 800_000;
+
+    fn dummy_desc() -> descriptors::LianaDescriptor {
+        descriptors::LianaDescriptor::from_str("wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr").unwrap()
+    }
+
+    fn txid(byte: u8) -> bitcoin::Txid {
+        bitcoin::Txid::from_byte_array([byte; 32])
+    }
+
+    fn outpoint(byte: u8) -> bitcoin::OutPoint {
+        bitcoin::OutPoint::new(txid(byte), 0)
+    }
+
+    fn psbt_spending(inputs: &[bitcoin::OutPoint], output_value: u64) -> Psbt {
+        let tx = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: inputs
+                .iter()
+                .map(|outpoint| bitcoin::TxIn {
+                    previous_output: *outpoint,
+                    ..Default::default()
+                })
+                .collect(),
+            output: vec![bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(output_value),
+                script_pubkey: bitcoin::ScriptBuf::new(),
+            }],
+        };
+        Psbt::from_unsigned_tx(tx).unwrap()
+    }
+
+    fn coin(
+        spend_txid: Option<bitcoin::Txid>,
+        spend_block_height: Option<i32>,
+        spend_block_time: Option<u32>,
+    ) -> Option<SpendCoin> {
+        Some(SpendCoin {
+            amount: bitcoin::Amount::from_sat(INPUT_VALUE),
+            block_height: Some(700_000),
+            spend_txid,
+            spend_block_height,
+            spend_block_time,
+        })
+    }
+
+    fn state(
+        psbt: &Psbt,
+        coins: &[Option<SpendCoin>],
+        requirements: Option<ReplacementRequirements>,
+    ) -> SpendState {
+        psbt_spend_state(psbt, &dummy_desc(), coins, TIP_HEIGHT, |_| requirements)
+    }
+
+    /// State of a psbt whose status must not depend on the mempool.
+    fn state_without_mempool(psbt: &Psbt, coins: &[Option<SpendCoin>]) -> SpendState {
+        psbt_spend_state(psbt, &dummy_desc(), coins, TIP_HEIGHT, |_| {
+            panic!("the mempool must not be asked")
+        })
+    }
+
+    fn max_vbytes() -> u64 {
+        dummy_desc().unsigned_tx_max_vbytes(
+            &psbt_spending(&[outpoint(1), outpoint(2)], 0).unsigned_tx,
+            true,
+        )
+    }
+
+    /// Status of a psbt spending two coins and paying this fee, one of them spent in the mempool
+    /// by a transaction requiring this feerate and these descendant fees to be replaced.
+    fn replacement_status(min_feerate_vb: u64, descendant_fees: u64, fee: u64) -> SpendStatus {
+        let psbt = psbt_spending(&[outpoint(1), outpoint(2)], 2 * INPUT_VALUE - fee);
+        let coins = [coin(Some(txid(9)), None, None), coin(None, None, None)];
+        let requirements = ReplacementRequirements {
+            min_feerate_vb,
+            descendant_fees: bitcoin::Amount::from_sat(descendant_fees),
+        };
+        state(&psbt, &coins, Some(requirements)).status
+    }
+
+    #[test]
+    fn spend_state_missing_coin() {
+        let psbt = psbt_spending(&[outpoint(1), outpoint(2)], INPUT_VALUE);
+        let coins = [coin(None, None, None), None];
+        assert_eq!(state(&psbt, &coins, None), SpendStatus::Deprecated.into());
+    }
+
+    #[test]
+    fn spend_state_coin_spent_by_other_confirmed_tx() {
+        let psbt = psbt_spending(&[outpoint(1), outpoint(2)], INPUT_VALUE);
+        let ours = psbt.unsigned_tx.compute_txid();
+        let other = coin(Some(txid(9)), Some(TIP_HEIGHT), Some(1_700_000_000));
+        let coins = [other, coin(None, None, None)];
+        assert_eq!(state(&psbt, &coins, None), SpendStatus::Deprecated.into());
+
+        // Even when another coin is spent by this transaction in a block, whichever comes first.
+        let mined = coin(Some(ours), Some(TIP_HEIGHT), Some(1_700_000_000));
+        assert_eq!(
+            state(&psbt, &[other, mined], None),
+            SpendStatus::Deprecated.into()
+        );
+        assert_eq!(
+            state(&psbt, &[mined, other], None),
+            SpendStatus::Deprecated.into()
+        );
+    }
+
+    #[test]
+    fn spend_state_confirmed() {
+        let psbt = psbt_spending(&[outpoint(1), outpoint(2)], INPUT_VALUE);
+        let ours = psbt.unsigned_tx.compute_txid();
+        let coins = [
+            coin(Some(ours), Some(TIP_HEIGHT), Some(1_700_000_000)),
+            coin(Some(ours), Some(TIP_HEIGHT), Some(1_700_000_000)),
+        ];
+        assert_eq!(
+            state(&psbt, &coins, None),
+            SpendState {
+                status: SpendStatus::Confirmed,
+                block_height: Some(TIP_HEIGHT),
+                block_time: Some(1_700_000_000),
+            }
+        );
+
+        // A caller that only knows the height of the block still gets the status.
+        let coins = [
+            coin(Some(ours), Some(TIP_HEIGHT), None),
+            coin(Some(ours), Some(TIP_HEIGHT), None),
+        ];
+        assert_eq!(
+            state(&psbt, &coins, None),
+            SpendState {
+                status: SpendStatus::Confirmed,
+                block_height: Some(TIP_HEIGHT),
+                block_time: None,
+            }
+        );
+    }
+
+    #[test]
+    fn spend_state_broadcast() {
+        let psbt = psbt_spending(&[outpoint(1), outpoint(2)], INPUT_VALUE);
+        let ours = psbt.unsigned_tx.compute_txid();
+        let spending = [coin(Some(ours), None, None), coin(Some(ours), None, None)];
+        assert_eq!(state(&psbt, &spending, None), SpendStatus::Broadcast.into());
+    }
+
+    #[test]
+    fn spend_state_without_conflict() {
+        let inputs = [outpoint(1), outpoint(2)];
+        let unspent = [coin(None, None, None), coin(None, None, None)];
+        assert_eq!(
+            state(&psbt_spending(&inputs, INPUT_VALUE), &unspent, None),
+            SpendStatus::Unsigned.into()
+        );
+
+        // The fee is only checked against a conflicting transaction.
+        assert_eq!(
+            state(&psbt_spending(&inputs, 2 * INPUT_VALUE + 1), &unspent, None),
+            SpendStatus::Unsigned.into()
+        );
+
+        // A coin spent by another unconfirmed transaction which is not in the mempool anymore is no
+        // reason to give up on this one.
+        let coins = [coin(Some(txid(9)), None, None), coin(None, None, None)];
+        assert_eq!(
+            state(&psbt_spending(&inputs, INPUT_VALUE), &coins, None),
+            SpendStatus::Unsigned.into()
+        );
+    }
+
+    #[test]
+    fn spend_state_replacement_negative_fee() {
+        let psbt = psbt_spending(&[outpoint(1), outpoint(2)], 2 * INPUT_VALUE + 1);
+        let coins = [coin(Some(txid(9)), None, None), coin(None, None, None)];
+        let requirements = ReplacementRequirements {
+            min_feerate_vb: MIN_FEERATE_VB,
+            descendant_fees: bitcoin::Amount::from_sat(0),
+        };
+        assert_eq!(
+            state(&psbt, &coins, Some(requirements)),
+            SpendStatus::Deprecated.into()
+        );
+    }
+
+    #[test]
+    fn spend_state_replacement_feerate() {
+        let vbytes = max_vbytes();
+        assert_eq!(
+            replacement_status(11, 1, 11 * vbytes),
+            SpendStatus::Unsigned
+        );
+        assert_eq!(
+            replacement_status(11, 1, 11 * vbytes - 1),
+            SpendStatus::Deprecated
+        );
+    }
+
+    #[test]
+    fn spend_state_replacement_absolute_fee() {
+        let vbytes = max_vbytes();
+        assert_eq!(
+            replacement_status(MIN_FEERATE_VB, 20 * vbytes, 21 * vbytes),
+            SpendStatus::Unsigned
+        );
+        assert_eq!(
+            replacement_status(MIN_FEERATE_VB, 20 * vbytes, 21 * vbytes - 1),
+            SpendStatus::Deprecated
+        );
+    }
+
+    #[test]
+    fn spend_state_mempool_not_asked() {
+        let psbt = psbt_spending(&[outpoint(1), outpoint(2)], INPUT_VALUE);
+        let ours = psbt.unsigned_tx.compute_txid();
+        let unspent = [coin(None, None, None), coin(None, None, None)];
+        assert_eq!(
+            state_without_mempool(&psbt, &unspent),
+            SpendStatus::Unsigned.into()
+        );
+        let mined = [
+            coin(Some(ours), Some(TIP_HEIGHT), None),
+            coin(Some(ours), Some(TIP_HEIGHT), None),
+        ];
+        assert_eq!(
+            state_without_mempool(&psbt, &mined).status,
+            SpendStatus::Confirmed
+        );
+        let deprecated = [
+            coin(Some(txid(8)), None, None),
+            coin(Some(txid(9)), Some(TIP_HEIGHT), None),
+        ];
+        assert_eq!(
+            state_without_mempool(&psbt, &deprecated),
+            SpendStatus::Deprecated.into()
+        );
+        let spending = [coin(Some(ours), None, None), coin(Some(ours), None, None)];
+        assert_eq!(
+            state_without_mempool(&psbt, &spending),
+            SpendStatus::Broadcast.into()
+        );
+    }
+
+    #[test]
+    fn spend_state_mempool_asked_for_spenders() {
+        let psbt = psbt_spending(&[outpoint(1), outpoint(2), outpoint(3)], INPUT_VALUE);
+        let coins = [
+            coin(Some(txid(9)), None, None),
+            coin(Some(txid(9)), None, None),
+            coin(Some(txid(8)), None, None),
+        ];
+        let mut asked = None;
+        psbt_spend_state(&psbt, &dummy_desc(), &coins, TIP_HEIGHT, |spenders| {
+            asked = Some(spenders.clone());
+            None
+        });
+        assert_eq!(asked, Some(BTreeSet::from([txid(8), txid(9)])));
     }
 }

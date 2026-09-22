@@ -6,7 +6,7 @@
 mod utils;
 
 use crate::{
-    bitcoin::BitcoinInterface,
+    bitcoin::{BitcoinInterface, MempoolEntry},
     database::{Coin, DatabaseConnection, DatabaseInterface},
     miniscript::bitcoin::absolute::LockTime,
     poller::PollerMessage,
@@ -18,8 +18,10 @@ pub use crate::database::{CoinStatus, LabelItem};
 use liana::{
     descriptors,
     spend::{
-        self, create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes,
-        SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
+        self, create_spend, psbt_spend_state, AddrInfo, AncestorInfo, CandidateCoin,
+        CreateSpendRes, ReplacementRequirements, SpendCoin, SpendCreationError, SpendOutputAddress,
+        SpendState, SpendStatus, SpendTxFees, TxGetter, BITCOIN_CORE_INCREMENTAL_RELAY_FEERATE_VB,
+        MIN_FEERATE_VB,
     },
 };
 
@@ -29,7 +31,7 @@ use utils::{
 };
 
 use std::{
-    collections::{hash_map, HashMap, HashSet},
+    collections::{hash_map, BTreeSet, HashMap, HashSet},
     convert::TryInto,
     fmt,
     sync::{self, mpsc},
@@ -856,6 +858,84 @@ impl DaemonControl {
         }
     }
 
+    /// What a transaction must pay to replace these mempool transactions.
+    ///
+    /// Returns `None` if there are none.
+    fn replacement_requirements(entries: Vec<MempoolEntry>) -> Option<ReplacementRequirements> {
+        if entries.is_empty() {
+            return None;
+        }
+
+        let (min_feerate_vb, descendant_fees) = entries.into_iter().fold(
+            (MIN_FEERATE_VB, bitcoin::Amount::from_sat(0)),
+            |(min_feerate, descendant_fee), entry| {
+                let entry_feerate = entry
+                    .fees
+                    .base
+                    .checked_div(entry.vsize)
+                    .expect("Can't have a null vsize or tx would be invalid")
+                    .to_sat()
+                    .checked_add(BITCOIN_CORE_INCREMENTAL_RELAY_FEERATE_VB)
+                    .expect("Can't overflow or tx would be invalid");
+                (
+                    std::cmp::max(min_feerate, entry_feerate),
+                    descendant_fee + entry.fees.descendant,
+                )
+            },
+        );
+        Some(ReplacementRequirements {
+            min_feerate_vb,
+            descendant_fees,
+        })
+    }
+
+    /// Where this stored spend transaction is at: in a block, in the mempool, or neither, in which
+    /// case whether it may still be broadcast.
+    ///
+    /// `db_coins` holds at least the coins this psbt spends and `mempool_entries` the mempool
+    /// entries already looked up, so the caller can share them between several psbts.
+    fn spend_state(
+        &self,
+        psbt: &Psbt,
+        db_coins: &HashMap<bitcoin::OutPoint, Coin>,
+        tip_height: i32,
+        mempool_entries: &mut HashMap<bitcoin::Txid, Option<MempoolEntry>>,
+    ) -> SpendState {
+        let coins: Vec<Option<SpendCoin>> = psbt
+            .unsigned_tx
+            .input
+            .iter()
+            .map(|txin| {
+                db_coins.get(&txin.previous_output).map(|coin| SpendCoin {
+                    amount: coin.amount,
+                    block_height: coin.block_info.map(|block| block.height),
+                    spend_txid: coin.spend_txid,
+                    spend_block_height: coin.spend_block.map(|block| block.height),
+                    spend_block_time: coin.spend_block.map(|block| block.time),
+                })
+            })
+            .collect();
+        let replacement = |spenders: &BTreeSet<bitcoin::Txid>| {
+            let entries = spenders
+                .iter()
+                .filter_map(|txid| {
+                    mempool_entries
+                        .entry(*txid)
+                        .or_insert_with(|| self.bitcoin.mempool_entry(txid))
+                        .clone()
+                })
+                .collect();
+            Self::replacement_requirements(entries)
+        };
+        psbt_spend_state(
+            psbt,
+            &self.config.main_descriptor,
+            &coins,
+            tip_height,
+            replacement,
+        )
+    }
+
     pub fn list_spend(
         &self,
         txids: Option<Vec<bitcoin::Txid>>,
@@ -867,18 +947,45 @@ impl DaemonControl {
         }
 
         let mut db_conn = self.db.connection();
-        let spend_psbts = db_conn.list_spend();
-
         let txids_set: Option<HashSet<_>> = txids.as_ref().map(|list| list.iter().collect());
+        let spend_psbts: Vec<(Psbt, Option<u32>)> = db_conn
+            .list_spend()
+            .into_iter()
+            .filter(|(psbt, _)| {
+                txids_set
+                    .as_ref()
+                    .is_none_or(|set| set.contains(&psbt.unsigned_tx.compute_txid()))
+            })
+            .collect();
+
+        // Read what every psbt needs from the database once, then derive each status from it.
+        let outpoints: Vec<bitcoin::OutPoint> = spend_psbts
+            .iter()
+            .flat_map(|(psbt, _)| {
+                psbt.unsigned_tx
+                    .input
+                    .iter()
+                    .map(|txin| txin.previous_output)
+            })
+            .collect();
+        let db_coins = db_conn.coins_by_outpoints(&outpoints);
+        // The poller initializes the tip before the RPC server starts, so it is never NULL
+        // here and this never falls back to 0.
+        let tip_height = db_conn.chain_tip().map_or(0, |tip| tip.height);
+        // Each transaction conflicting with a psbt is looked up once.
+        let mut mempool_entries = HashMap::new();
+
         let spend_txs = spend_psbts
             .into_iter()
-            .filter_map(|(psbt, updated_at)| {
-                if let Some(set) = &txids_set {
-                    if !set.contains(&psbt.unsigned_tx.compute_txid()) {
-                        return None;
-                    }
+            .map(|(psbt, updated_at)| {
+                let state = self.spend_state(&psbt, &db_coins, tip_height, &mut mempool_entries);
+                ListSpendEntry {
+                    psbt,
+                    updated_at,
+                    status: state.status,
+                    block_height: state.block_height,
+                    block_time: state.block_time,
                 }
-                Some(ListSpendEntry { psbt, updated_at })
             })
             .collect();
         Ok(ListSpendResult { spend_txs })
@@ -997,32 +1104,16 @@ impl DaemonControl {
         }) {
             return Err(CommandError::AlreadySpent(op));
         }
-        // Compute the minimal feerate and fee the replacement transaction must have to satisfy RBF
-        // rules #3, #4 and #6 (see
-        // https://github.com/bitcoin/bitcoin/blob/master/doc/policy/mempool-replacements.md). By
-        // default (ie if the transaction we are replacing was dropped from the mempool) there is
+        // By default (ie if the transaction we are replacing was dropped from the mempool) there is
         // no minimum absolute fee and the minimum feerate is 1, the minimum relay feerate.
-        let (min_feerate_vb, descendant_fees) = self
-            .bitcoin
-            .mempool_spenders(&prev_outpoints)
-            .into_iter()
-            .fold(
-                (1, bitcoin::Amount::from_sat(0)),
-                |(min_feerate, descendant_fee), entry| {
-                    let entry_feerate = entry
-                        .fees
-                        .base
-                        .checked_div(entry.vsize)
-                        .expect("Can't have a null vsize or tx would be invalid")
-                        .to_sat()
-                        .checked_add(1)
-                        .expect("Can't overflow or tx would be invalid");
-                    (
-                        std::cmp::max(min_feerate, entry_feerate),
-                        descendant_fee + entry.fees.descendant,
-                    )
-                },
-            );
+        let ReplacementRequirements {
+            min_feerate_vb,
+            descendant_fees,
+        } = Self::replacement_requirements(self.bitcoin.mempool_spenders(&prev_outpoints))
+            .unwrap_or(ReplacementRequirements {
+                min_feerate_vb: MIN_FEERATE_VB,
+                descendant_fees: bitcoin::Amount::from_sat(0),
+            });
         // Check replacement transaction's target feerate, if set, is high enough,
         // and otherwise set it to the min feerate found above.
         let feerate_vb = if is_cancel {
@@ -1510,6 +1601,9 @@ pub struct ListSpendEntry {
     #[serde(serialize_with = "ser_to_string", deserialize_with = "deser_fromstr")]
     pub psbt: Psbt,
     pub updated_at: Option<u32>,
+    pub status: SpendStatus,
+    pub block_height: Option<i32>,
+    pub block_time: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
