@@ -23,7 +23,7 @@ btn-add-payment => "Add payment" => "Aggiungi pagamento"
 
 btn-add-recovery-option => "Add recovery path" => NONE # "Aggiungi opzione di recupero"
 
-btn-add-recovery-path => "Add recovery path" => NONE # "Aggiungi percorso di recupero"
+btn-add-recovery-path => "Add recovery path" => NONE # "Aggiungi opzione di recupero"
 
 btn-add-safety-net => "Add Safety Net" => "Aggiungi Safety Net"
 
@@ -43,7 +43,7 @@ btn-backup-encrypted-descriptor
 
 btn-broadcast => "Broadcast" => "Trasmetti"
 
-btn-bump-fee => "Bump fee" => "Aumenta fee"
+btn-bump-fee => "Bump fee" => "Aumenta commissione"
 
 btn-cancel => "Cancel" => "Annulla"
 
@@ -97,7 +97,7 @@ btn-go-back-to-psbts => "Go back to PSBTs" => "Torna ai PSBT"
 
 btn-go-to-replacement => "Go to replacement" => "Vai alla sostituzione"
 
-btn-go-to-rescan => "Go to rescan" => "Vai alla nuova scansione"
+btn-go-to-rescan => "Go to rescan" => "Vai alla scansione"
 
 btn-ignore => "Ignore" => "Ignora"
 
@@ -131,7 +131,7 @@ btn-previous-arrow => "< Previous" => "< Indietro"
 
 btn-processing => "Processing..." => "Elaborazione..."
 
-btn-register-on-device => "Register on device" => "Registra su portafoglio hardware"
+btn-register-on-device => "Register on device" => "Registra su dispositivo"
 
 btn-reload => "Reload" => "Ricarica"
 
@@ -171,9 +171,9 @@ btn-skip-registration => "Skip registration" => "Salta registrazione"
 
 btn-split-tab => "Split" => "Dividi"
 
-btn-start-rescan => "Start rescan" => "Avvia nuova scansione"
+btn-start-rescan => "Start rescan" => "Avvia scansione"
 
-btn-starting-rescan => "Starting rescan..." => "Avvio nuova scansione..."
+btn-starting-rescan => "Starting rescan..." => "Avvio scansione..."
 
 btn-template-help
 => "Something’s wrong with this template?"
@@ -187,7 +187,7 @@ btn-update => "Update" => "Aggiorna"
 
 btn-updating => "Updating" => "Aggiornamento"
 
-btn-verify-on-device => "Verify on signing device" => NONE # "Verifica su portafoglio hardware"
+btn-verify-on-device => "Verify on signing device" => NONE # "Verifica su dispositivo hardware"
 
 btn-yes => "Yes" => "Sì"
 
@@ -269,7 +269,7 @@ business-contact-create-account
 => "Contact Wizardsardine to create an account."
 => "Contatta Wizardsardine per creare un account.";;
 
-business-create-new-path => "Create new path" => NONE # "Crea nuovo percorso"
+business-create-new-path => "Create new path" => NONE # "Crea nuova opzione"
 
 business-current-xpub => "Current extended public key" => NONE # "Xpub attuale"
 
@@ -297,9 +297,9 @@ business-duplicate-timelock => "Duplicate timelock" => "Timelock duplicato"
 
 business-edit-key => "Edit key" => NONE # "Modifica chiave"
 
-business-edit-primary-path => "Edit primary path" => NONE # "Modifica percorso primario"
+business-edit-primary-path => "Edit primary path" => NONE
 
-business-edit-recovery-path => "Edit recovery path" => NONE # "Modifica percorso di recupero"
+business-edit-recovery-path => "Edit recovery path" => NONE # "Modifica opzione di recupero"
 
 business-edited => "Edited" => "Modificato"
 
@@ -355,7 +355,7 @@ business-from-your-organization
 => "From your organization"
 => "Dalla tua organizzazione";;
 
-business-hardware-wallet-not-found => "Signing device not found" => NONE # "Portafoglio hardware non trovato"
+business-hardware-wallet-not-found => "Signing device not found" => NONE # "Dispositivo hardware non trovato"
 
 business-import-xpub-file
 => "Import extended public key file"
@@ -403,7 +403,7 @@ business-key-removed => "Key removed" => NONE # "Chiave rimossa"
 
 business-key-removed-from-path
 => "\"{$alias}\" was deleted by another user and has been removed from your path selection."
-=> "\"{$alias}\" è stata eliminata da un altro utente ed è stata rimossa dalla selezione del percorso.";;
+=> "\"{$alias}\" è stata eliminata da un altro utente ed è stata rimossa dalla selezione.";;
 
 business-key-type => "Key type" => NONE # "Tipo chiave"
 
@@ -415,7 +415,7 @@ business-keys-awaiting-manager
 => "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet."
 => "In attesa del gestore del portafoglio. Non ha ancora segnato chiavi e firmatari come pronti.";;
 
-business-keys-in-path => "Keys in path:" => NONE # "Chiavi nel percorso:"
+business-keys-in-path => "Keys in path:" => NONE # "Chiavi nell'opzione:"
 
 business-keys-manager-instruction
 => "List the keys that will be part of this wallet and assign a signer to each. The spending policy will be crafted from these keys."
@@ -439,11 +439,11 @@ business-keys-required-to-spend
 
 business-keys-shared-policy-tab
 => "These keys are shared with the Spending policy tab"
-=> "Queste chiavi sono condivise con la scheda policy di spesa";;
+=> "Queste chiavi sono condivise con la scheda \"Policy di spesa\"";;
 
 business-keys-shared-with-policy
 => "These keys are shared with the Spending policy tab, where you arrange them into spending paths."
-=> "Queste chiavi sono condivise con la scheda policy di spesa, dove le organizzi in percorsi di spesa.";;
+=> "Queste chiavi sono condivise con la scheda \"Policy di spesa\", dove le organizzi in opzioni di spesa.";;
 
 business-keys-signers => "Keys & signers" => NONE # "Chiavi e firmatari"
 
@@ -479,7 +479,7 @@ business-no-devices-to-register
 
 business-no-hardware-wallets
 => "No signing device detected. Connect one and unlock it."
-=> NONE;; # "Nessun portafoglio hardware rilevato. Collega un dispositivo e sbloccalo."
+=> NONE;; # "Nessun dispositivo hardware rilevato. Collega un dispositivo e sbloccalo."
 
 business-no-keys-assigned
 => "No keys assigned to you."
@@ -525,33 +525,33 @@ business-participant-set-keys-help
 => "Select a key assigned to you to complete its setup. You can connect a signing device or add an extended public key manually."
 => NONE;; # "Seleziona una chiave assegnata a te per completarne la configurazione. Puoi collegare un dispositivo hardware o aggiungere manualmente una chiave pubblica estesa."
 
-business-path-deleted => "Path deleted" => NONE # "Percorso eliminato"
+business-path-deleted => "Path deleted" => NONE # "Opzione eliminata"
 
 business-path-deleted-message
 => "The path you were editing was deleted by another user."
-=> "Il percorso che stavi modificando è stato eliminato da un altro utente.";;
+=> "l'opzione che stavi modificando è stata eliminata da un altro utente.";;
 
-business-path-modified => "Path modified" => NONE # "Percorso modificato"
+business-path-modified => "Path modified" => NONE # "Opzione modificata"
 
-business-primary-path => "Primary path" => "Percorso primario"
+business-primary-path => "Primary path" => "Opzione primaria"
 
 business-primary-path-modified-message
 => "The primary path was modified by another user. Would you like to reload the server version or keep your changes?"
-=> "Il percorso primario è stato modificato da un altro utente. Vuoi ricaricare la versione del server o mantenere le modifiche?";;
+=> "L'opzione primaria è stata modificata da un altro utente. Vuoi ricaricare la versione del server o mantenere le modifiche?";;
 
 business-professional-service => "Professional service" => "Servizio professionale"
 
 business-provider-name => "Provider · {$provider}" => "Provider · {$provider}"
 
-business-recovery-path => "Recovery path" => "Percorso di recupero"
+business-recovery-path => "Recovery path" => "Opzione di recupero"
 
 business-recovery-path-modified-message
 => "This recovery path was modified by another user. Would you like to reload the server version or keep your changes?"
-=> "Questo percorso di recupero è stato modificato da un altro utente. Vuoi ricaricare la versione del server o mantenere le modifiche?";;
+=> "Questa opzione di recupero è stata modificata da un altro utente. Vuoi ricaricare la versione del server o mantenere le modifiche?";;
 
 business-recovery-path-number
 => "Recovery path {$number}"
-=> "Percorso di recupero {$number}";;
+=> "Opzione di recupero {$number}";;
 
 business-register-devices => "Register devices" => NONE # "Registra dispositivi"
 
@@ -695,7 +695,7 @@ coins-block-height => "Block height:" => "Altezza blocco:"
 
 coins-first-recovery-in-blocks
 => "First recovery path will be available in {$blocks} blocks"
-=> "Il primo percorso di recupero sarà disponibile tra {$blocks} blocchi";;
+=> "La prima opzione di recupero sarà disponibile tra {$blocks} blocchi";;
 
 coins-not-in-block => "Not in a block" => "Non in un blocco"
 
@@ -975,7 +975,7 @@ export-progress => "Progress: {$progress}%" => "Avanzamento: {$progress}%"
 
 export-select-path
 => "Select the path you want to export in the popup window..."
-=> "Seleziona il percorso da esportare nella finestra popup...";;
+=> "Seleziona il percorso in cui esportare nella finestra popup...";;
 
 export-starting => "Starting export..." => "Avvio esportazione..."
 
@@ -1057,11 +1057,11 @@ home-payment-history => "Payment history" => NONE # "Storico pagamenti"
 
 home-recovery-left
 => "≈ {$units} left before first recovery path becomes available."
-=> "≈ {$units} rimanenti prima che il primo percorso di recupero diventi disponibile.";;
+=> "≈ {$units} rimanenti prima che la prima opzione di recupero diventi disponibile.";;
 
 home-recovery-warning
 => "Recovery path is or will soon be available for {$count} coin(s)."
-=> "Il percorso di recupero è o sarà presto disponibile per {$count} monete.";;
+=> "L'opzione di recupero è o sarà presto disponibile per {$count} moneta/e.";;
 
 home-rescan-warning-backup
 => "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions."
@@ -1091,7 +1091,7 @@ hw-no-taproot-miniscript
 
 hw-not-in-spending-path
 => "This signing device is not part of this spending path."
-=> "Questo dispositivo di firma non fa parte di questo percorso di spesa.";;
+=> "Questo dispositivo di firma non fa parte di questa opzione di spesa.";;
 
 hw-taproot-firmware-outdated
 => "Update firmware to {$version} or later to use Taproot."
@@ -1245,7 +1245,7 @@ installer-cookie-path => "Cookie path" => "Percorso cookie"
 
 installer-cosigner-token-disallowed
 => "Cosigner tokens are not allowed for this path"
-=> "I token Cosigner non sono consentiti per questo percorso";;
+=> "I token Cosigner non sono consentiti per questa opzione";;
 
 installer-create-datadir-path-failed
 => "Failed to create datadir path: {$error}"
@@ -1257,7 +1257,7 @@ installer-create-random-key
 
 installer-custom-template-description-1
 => "For this setup you will need to define your primary and recovery spending paths. For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key belonging to them."
-=> NONE;; # "Per questa configurazione dovrai definire le policy di spesa primaria e di recupero. Per motivi di sicurezza, suggeriamo di usare un portafoglio hardware separato per ogni chiave che vi appartiene."
+=> NONE;; # "Per questa configurazione dovrai definire le policy di spesa primaria e di recupero. Per motivi di sicurezza, suggeriamo di usare un dispositivo hardware separato per ogni chiave che vi appartiene."
 
 installer-custom-template-description-2
 => "The keys belonging to your primary path can always spend. Those belonging to the recovery paths will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies."
@@ -1399,7 +1399,7 @@ installer-imported-key-already-used
 
 installer-inheritance-description-1
 => "For this setup you will need 2 keys: your primary key (for yourself) and an inheritance key (for your heir). For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key."
-=> NONE;; # "Per questa configurazione servono 2 chiavi: la tua chiave primaria (per te) e una chiave di eredità (per il tuo erede). Per motivi di sicurezza, suggeriamo di usare un portafoglio hardware separato per ogni chiave."
+=> NONE;; # "Per questa configurazione servono 2 chiavi: la tua chiave primaria (per te) e una chiave di eredità (per il tuo erede). Per motivi di sicurezza, suggeriamo di usare un dispositivo hardware separato per ogni chiave."
 
 installer-inheritance-description-2
 => "You will always be able to spend using your primary key. After a period of inactivity (but not before that) your inheritance key will become able to recover your funds."
@@ -1443,7 +1443,7 @@ installer-key-alias-already-used
 => "This alias is already used for another key"
 => "Questo alias è già usato per un'altra chiave";;
 
-installer-key-alias-placeholder => "E.g. My signing device" => NONE # "Es. Il mio portafoglio hardware"
+installer-key-alias-placeholder => "E.g. My signing device" => NONE # "Es. Il mio dispositivo hardware"
 
 installer-key-already-in-wallet
 => "Fetched key has already been added to the wallet."
@@ -1453,7 +1453,7 @@ installer-key-already-used => "Key already used" => "Chiave già usata"
 
 installer-key-already-used-in-path
 => "Key already used in this path"
-=> "Chiave già usata in questo percorso";;
+=> "Chiave già usata in questa opzione di spesa";;
 
 installer-key-fetch-wrong-network
 => "Failed to fetch key. Switch network on device and retry"
@@ -1467,7 +1467,9 @@ installer-key-name-help
 => "Give this key a friendly name. It will help you identify it later:"
 => "Dai a questa chiave un nome descrittivo. Ti aiuterà a identificarla più tardi:";;
 
-installer-key-path-account => "Key path account:" => "Account del percorso chiave:"
+installer-key-path-account
+=> "Key path account:"
+=> "Account di derivazione della chiave:";;
 
 installer-key-wrong-network
 => "Fetched key does not have the correct network"
@@ -1505,7 +1507,7 @@ installer-mnemonic-recovery-help
 
 installer-multisig-description-1
 => "For this setup you will need 3 keys: two primary keys and a recovery key. For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key."
-=> NONE;; # "Per questa configurazione servono 3 chiavi: due chiavi primarie e una chiave di recupero. Per motivi di sicurezza, suggeriamo di usare un portafoglio hardware separato per ogni chiave."
+=> NONE;; # "Per questa configurazione servono 3 chiavi: due chiavi primarie e una chiave di recupero. Per motivi di sicurezza, suggeriamo di usare un dispositivo hardware separato per ogni chiave."
 
 installer-multisig-description-2
 => "The primary keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the recovery key together with one of your primary keys (2-of-3 multisig):"
@@ -1535,11 +1537,11 @@ installer-path-duplicate-sequence
 
 installer-path-key-source-disallowed
 => "Path contains a key that is disallowed for this kind of path."
-=> "Il percorso contiene una chiave non consentita per questo tipo di percorso.";;
+=> "È presente una chiave non consentita per questo tipo di opzione di spesa.";;
 
 installer-path-only-cosigner-keys
 => "A path cannot contain only cosigner keys."
-=> "Un percorso non può contenere solo chiavi Cosigner.";;
+=> "Un'opzione di spesa non può contenere solo chiavi Cosigner.";;
 
 installer-port-attempts-exhausted => "Exhausted attempts" => "Tentativi esauriti"
 
@@ -1575,7 +1577,7 @@ installer-register-descriptor-title => "Register descriptor" => "Registra descri
 
 installer-registered-descriptor-checkbox
 => "I have registered the descriptor on my device(s)"
-=> "Ho registrato il descriptor sul/i mio/i dispositivo/i";;
+=> "Ho registrato il descriptor sul/i dispositivo/i";;
 
 installer-remote-backend-description
 => "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead."
@@ -1599,7 +1601,7 @@ installer-safety-net-key => "Safety Net key" => "Chiave Safety Net"
 
 installer-safety-net-token-disallowed
 => "Safety Net tokens are not allowed for this path"
-=> NONE;; # "I token SafetyNet non sono consentiti per questo percorso"
+=> NONE;; # "I token SafetyNet non sono consentiti per questa opzione di spesa"
 
 installer-seed-key-not-in-descriptor
 => "The descriptor does not use a key derived from this seed phrase"
@@ -1607,7 +1609,7 @@ installer-seed-key-not-in-descriptor
 
 installer-select-device-register
 => "Select signing device to register descriptor on:"
-=> NONE;; # "Seleziona portafoglio hardware su cui registrare il descriptor:"
+=> NONE;; # "Seleziona dispositivo hardware su cui registrare il descriptor:"
 
 installer-select-device-register-if-needed
 => "If necessary, please select the signing device to register descriptor on:"
@@ -1663,7 +1665,7 @@ installer-store-mnemonic-failed => "Failed to store seed phrase: {$error}" => NO
 
 installer-switch-account-help
 => "Switch account if you already use the same device in other configurations"
-=> NONE;; # "Cambia account se usi già lo stesso hardware in altre configurazioni"
+=> NONE;; # "Cambia account se usi già lo stesso dispositivo hardware in altre configurazioni"
 
 installer-template-custom-primary => "Primary keys" => "Chiavi primarie"
 
@@ -1683,9 +1685,9 @@ installer-template-multisig-primary => "2-of-2 multisig" => "Multisig 2-di-2"
 
 installer-template-multisig-recovery => "2-of-3 multisig" => "Multisig 2-di-3"
 
-installer-template-policy-primary => "Primary spending path" => NONE # "Politica di spesa primaria"
+installer-template-policy-primary => "Primary spending path" => NONE
 
-installer-template-policy-recovery => "Recovery spending path" => NONE # "Politica di spesa di recupero"
+installer-template-policy-recovery => "Recovery spending path" => NONE # "Policy di spesa di recupero"
 
 installer-template-state-locked => "Can't spend" => "Non può spendere"
 
@@ -1703,7 +1705,7 @@ installer-threshold-keys
 
 installer-token-type-disallowed
 => "Token type not allowed in this path"
-=> "Tipo di token non consentito in questo percorso";;
+=> "Tipo di token non consentito in questa opzione di spesa";;
 
 installer-use-liana-connect => "Use Liana Connect" => "Usa Liana Connect"
 
@@ -1911,7 +1913,7 @@ pill-available => "Available" => "Disponibile"
 
 pill-available-compact => "Avail." => "Disp."
 
-pill-batch => "Batch" => "Batch"
+pill-batch => "Batch" => "Gruppo"
 
 pill-batch-tooltip
 => "This transaction contains multiple payments"
@@ -1971,7 +1973,7 @@ pill-recovery-available-tooltip => "Recovery path(s) already available" => NONE 
 
 pill-recovery-tooltip
 => "This transaction is using a recovery path"
-=> "Questa transazione usa un percorso di recupero";;
+=> "Questa transazione usa un'opzione di recupero";;
 
 pill-rescan-progress => "Rescan... {$progress}%" => "Scansione... {$progress}%"
 
@@ -1987,7 +1989,7 @@ pill-spent-tooltip
 => "The transaction was included in the blockchain."
 => "La transazione è stata inclusa nella blockchain.";;
 
-pill-timelocked => "Timelocked" => "In timelock"
+pill-timelocked => "Timelocked" => "Timelocked"
 
 pill-timelocked-tooltip
 => "This recovery transaction is signed but can't be broadcast before its timelock expires"
@@ -2011,7 +2013,7 @@ pill-unsigned-tooltip
 
 pill-used-in-spending-paths
 => "{ $count ->\n    [one] Used in 1 spending path\n   *[other] Used in {$count} spending paths\n}"
-=> "{ $count ->\n    [one] Usata in 1 percorso di spesa\n   *[other] Usata in {$count} percorsi di spesa\n}";;
+=> "{ $count ->\n    [one] Usata in 1 opzione di spesa\n   *[other] Usata in {$count} opzioni di spesa\n}";;
 
 pill-ws-admin => "WS Admin" => "WS Admin"
 
@@ -2027,15 +2029,15 @@ policy-by => "by" => "da"
 
 policy-inactive-for
 => "can spend coins inactive for"
-=> "possono spendere monete inattive per";;
+=> "richiesta/e per spendere monete inattive per";;
 
 policy-out-of-by => "out of {$count} by" => "su {$count} da"
 
-policy-primary-path => "can always spend this wallet's funds (primary path)" => NONE # "possono sempre spendere i fondi di questo portafoglio (percorso primario)"
+policy-primary-path => "can always spend this wallet's funds (primary path)" => NONE
 
-policy-recovery-path => "(recovery path #{$number})" => NONE # "(percorso di recupero n. {$number})"
+policy-recovery-path => "(recovery path #{$number})" => NONE # "(opzione di recupero n. {$number})"
 
-policy-safety-net-path => "(Safety Net path)" => "(percorso Safety Net)"
+policy-safety-net-path => "(Safety Net path)" => "(opzione Safety Net)"
 
 policy-signatures
 => "{ $count ->\n    [one] 1 signature\n   *[other] {$count} signatures\n}"
@@ -2109,7 +2111,7 @@ psbt-transaction-saved => "Transaction is saved" => "Transazione salvata"
 
 psbts-hide-confirmed
 => "Hide confirmed transactions"
-=> "Nascondi le transazioni confermate";;
+=> "Nascondi transazioni confermate";;
 
 psbts-signatures-collected
 => "{ $threshold ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}"
@@ -2149,15 +2151,15 @@ recovery-coins-total
 
 recovery-info
 => "Recover your funds by sending them to another wallet if you have lost access to your primary spending path."
-=> "Recupera i tuoi fondi inviandoli a un altro portafoglio se hai perso l'accesso al percorso di spesa principale.";;
+=> "Recupera i tuoi fondi inviandoli a un altro portafoglio se hai perso l'accesso all'opzione di spesa principale.";;
 
 recovery-none-available
 => "No recovery path is currently available."
-=> "Nessun percorso di recupero è attualmente disponibile.";;
+=> "Nessuna opzione di recupero è attualmente disponibile.";;
 
 recovery-paths-available
 => "{ $count ->\n    [one] 1 recovery path is available\n   *[other] {$count} recovery paths are available\n}"
-=> NONE;; # "{ $count ->\n    [one] 1 percorso di recupero disponibile:\n   *[other] {$count} percorsi di recupero disponibili:\n}"
+=> NONE;; # "{ $count ->\n    [one] 1 opzione di recupero disponibile:\n   *[other] {$count} opzioni di recupero disponibili:\n}"
 
 recovery-signatures-from
 => "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}"
@@ -2281,7 +2283,7 @@ settings-other-formats => "Other formats" => "Altri formati"
 
 settings-rescan-success
 => "Successfully rescanned the blockchain"
-=> "Nuova scansione della blockchain completata";;
+=> "Scansione della blockchain completata";;
 
 settings-rescanning
 => "Rescanning...{$progress}%"
@@ -2349,13 +2351,13 @@ spend-duplicate-addresses
 
 spend-dust-add-funds
 => "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s)."
-=> "L'importo minimo è 0.00 000 500 BTC. Aggiungi fondi al portafoglio per spendere le monete.";;
+=> "L'importo minimo è 0.00 000 500 BTC. Aggiungi fondi al portafoglio per spendere la/e moneta/e.";;
 
 spend-dust-select-more-coins
 => "Minimum amount is 0.00 000 500 BTC. Select more coins to continue."
 => "L'importo minimo è 0.00 000 500 BTC. Seleziona più monete per continuare.";;
 
-spend-fee => "Fee:" => "Fee:"
+spend-fee => "Fee:" => "Commissione:"
 
 spend-fee-manual => "Manual" => "Manuale"
 
@@ -2397,7 +2399,7 @@ spend-max => "MAX" => "MAX"
 
 spend-max-tooltip
 => "Total amount remaining after paying fee and any other recipients"
-=> "Importo totale rimanente dopo fee ed eventuali altri destinatari";;
+=> "Importo totale rimanente dopo commissioni ed eventuali altri destinatari";;
 
 spend-payment-description => "Description of the payment" => NONE
 
@@ -2437,7 +2439,7 @@ spend-tx-label => "Transaction label" => NONE
 
 spend-warning-recovery-own-address
 => "Recovery address belongs to the same wallet. If you can no longer spend with the primary path, use an address from a different wallet instead."
-=> "L'indirizzo di recupero appartiene allo stesso portafoglio. Se non puoi più spendere con il percorso primario, usa invece un indirizzo di un altro portafoglio.";;
+=> "L'indirizzo di recupero appartiene allo stesso portafoglio. Se non puoi più spendere con l'opzione di spesa primaria, usa un indirizzo di un altro portafoglio.";;
 
 tab-installer => "Installer" => "Installazione"
 
@@ -2519,4 +2521,4 @@ transactions-transaction => "Transaction" => "Transazione"
 
 transactions-txid => "Tx ID:" => NONE # "Tx ID"
 
-warning-hardware-wallet-error => "Signing device error" => NONE # "Errore portafoglio hardware"
+warning-hardware-wallet-error => "Signing device error" => NONE # "Errore dispositivo hardware"
