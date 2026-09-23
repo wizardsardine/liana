@@ -28,7 +28,6 @@ pub struct Collapse<'a, Message> {
     padding: Padding,
     width: Length,
     header_style: Box<dyn Fn(&Theme, button::Status) -> button::Style + 'a>,
-    style_bounds: bool,
 }
 
 impl<'a, Message: 'a> Collapse<'a, Message> {
@@ -47,7 +46,6 @@ impl<'a, Message: 'a> Collapse<'a, Message> {
             padding: Padding::ZERO,
             width: Length::Fill,
             header_style: Box::new(crate::theme::button::transparent_border),
-            style_bounds: false,
         }
     }
 
@@ -63,11 +61,6 @@ impl<'a, Message: 'a> Collapse<'a, Message> {
 
     pub fn on_toggle(mut self, on_toggle: impl Fn() -> Message + 'a) -> Self {
         self.on_toggle = Some(Box::new(on_toggle));
-        self
-    }
-
-    pub fn style_bounds(mut self) -> Self {
-        self.style_bounds = true;
         self
     }
 
@@ -251,15 +244,10 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for Collapse<'a, Message>
         let style = (self.header_style)(theme, status);
 
         if let Some(background) = style.background {
-            let bounds = if self.style_bounds {
-                layout.bounds()
-            } else {
-                header_bounds
-            };
             renderer::Renderer::fill_quad(
                 renderer,
                 renderer::Quad {
-                    bounds,
+                    bounds: header_bounds,
                     border: style.border,
                     shadow: style.shadow,
                     snap: style.snap,

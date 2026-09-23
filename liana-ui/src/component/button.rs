@@ -18,7 +18,9 @@ use iced::{
     alignment::{Horizontal, Vertical},
     widget::{
         button::{Status, Style},
-        container, row, Space,
+        container, row,
+        tooltip::Position,
+        Space,
     },
     Background, Border, Color, Length, Padding,
 };
@@ -29,7 +31,7 @@ const MENU_TEXT_SIZE: u32 = 22;
 const MENU_TEXT_COMPACT_SIZE: u32 = 18;
 const MENU_ICON_SIZE: u32 = ICON_SIZE_L as u32;
 const AUXILIARY_PADDING: [u16; 2] = [14 /* Top/Bottom */, 20 /* Left/Right */];
-const LIST_ENTRY_ACCENT_WIDTH: f32 = 4.0;
+pub(crate) const LIST_ENTRY_ACCENT_WIDTH: f32 = 4.0;
 pub const LIST_ENTRY_PADDING: [u16; 2] = [14 /* Top/Bottom */, 20 /* Left/Right */];
 
 const ICON_BTN_SIZE: f32 = 40.0;
@@ -598,6 +600,10 @@ pub fn btn_ignore<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_secondary(None, t!("btn-ignore"), BtnWidth::M, msg)
 }
 
+pub fn btn_go_back_to_psbts<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, t!("btn-go-back-to-psbts"), BtnWidth::L, msg)
+}
+
 pub fn btn_email_wizardsardine<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, t!("btn-email-wizardsardine"), BtnWidth::Auto, msg)
 }
@@ -840,6 +846,18 @@ pub fn btn_export<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
         BtnWidth::M,
         msg,
     )
+}
+
+pub fn btn_export_psbt<'a, T: Clone + 'a>(saved: bool, msg: Option<T>) -> Container<'a, T> {
+    if saved {
+        Container::new(btn_export(msg))
+    } else {
+        tooltip::tooltip_custom(
+            caption(t!("psbt-sign-save-before-export")),
+            btn_export(None),
+            Position::Top,
+        )
+    }
 }
 
 pub fn btn_import<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
