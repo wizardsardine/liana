@@ -1,3 +1,5 @@
+pub mod foldable;
+
 use crate::{
     color,
     component::text::{new, text},
@@ -8,8 +10,25 @@ use iced::{
     widget::{button, row},
     Alignment, Length, Padding,
 };
-const CARD_PADDING: [u16; 2] = [15, 30];
-pub(crate) const SOFT_CARD_PADDING: [u16; 2] = [13, 16];
+
+/// The card paddings of the design system.
+#[derive(Debug, Clone, Copy)]
+pub enum CardPadding {
+    /// List entries.
+    Standard,
+    /// Soft cards: modals, info and warning banners.
+    Soft,
+}
+
+impl From<CardPadding> for Padding {
+    fn from(padding: CardPadding) -> Self {
+        let padding: [u16; 2] = match padding {
+            CardPadding::Standard => [15 /* Top/Bottom */, 30 /* Left/Right */],
+            CardPadding::Soft => [13 /* Top/Bottom */, 16 /* Left/Right */],
+        };
+        padding.into()
+    }
+}
 
 macro_rules! cards {
     ($($entry:tt),* $(,)?) => {
@@ -45,7 +64,7 @@ macro_rules! cards {
     };
     // Bare ident defaults to the soft-card padding.
     (@one $name:ident) => {
-        cards!(@one ($name, SOFT_CARD_PADDING));
+        cards!(@one ($name, CardPadding::Soft));
     };
 }
 
@@ -95,7 +114,7 @@ pub fn list_entry<'a, M>(content: Row<'a, M>, msg: Option<M>) -> Element<'a, M>
 where
     M: Clone + 'a,
 {
-    list_entry_with_padding(content, msg, CARD_PADDING)
+    list_entry_with_padding(content, msg, CardPadding::Standard)
 }
 
 pub fn list_entry_with_padding<'a, M>(
@@ -122,6 +141,6 @@ pub fn info<'a, M: 'a>(body: impl std::fmt::Display + 'a) -> Container<'a, M> {
         .align_y(Alignment::Center),
     )
     .width(Length::Fill)
-    .padding(SOFT_CARD_PADDING)
+    .padding(CardPadding::Soft)
     .style(theme::card::info)
 }
