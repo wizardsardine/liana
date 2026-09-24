@@ -2,7 +2,7 @@ mod context;
 mod decrypt;
 mod descriptor;
 mod message;
-mod step;
+pub(crate) mod step;
 mod view;
 
 pub use context::{CompileInputs, Context, RemoteBackend};

@@ -3,6 +3,17 @@
 # Format: id => "English"
 # Use \n for line breaks
 
+bitcoind-upgrade-hint
+=> "Updating your Liana-managed Bitcoin node.";;
+
+bitcoind-upgrade-title => "Upgrading Bitcoin Core to {$version}"
+
+bitcoind-upgrade-verified
+=> "The downloaded binary is verified before it is installed.";;
+
+bitcoind-upgrade-waiting
+=> "Waiting for another wallet to finish the Bitcoin Core upgrade";;
+
 btn-accept => "Accept"
 
 btn-add-key => "Add a key"
