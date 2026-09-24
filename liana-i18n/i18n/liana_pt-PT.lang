@@ -79,7 +79,7 @@ btn-email-wizardsardine => "Email WS" => "Enviar email à WS"
 
 btn-export => "Export" => "Exportar"
 
-btn-fee-level-high => "High" => "Alta"
+btn-fee-level-high => "High" => "Elevada"
 
 btn-fee-level-low => "Low" => "Baixa"
 
@@ -91,7 +91,7 @@ btn-generate-address => "Generate address" => "Gerar endereço"
 
 btn-go-back => "Go back" => "Voltar"
 
-btn-go-back-to-psbts => "Go back to PSBTs" => "Voltar aos PSBTs"
+btn-go-back-to-psbts => "Go back to PSBTs" => "Voltar para os PSBTs"
 
 btn-go-to-replacement => "Go to replacement" => "Ir para a substituição"
 
@@ -111,7 +111,7 @@ btn-mark-keys-ready => "Mark keys as ready" => "Marcar chaves como prontas"
 
 btn-more-backend-node-info
 => "More information about backend and node options"
-=> "Mais informação sobre opções de backend e nó";;
+=> "Mais informação sobre opções de backend e de nó";;
 
 btn-new => "New" => "Novo"
 
@@ -487,7 +487,7 @@ business-no-members-match => "No members match" => "Nenhum membro corresponde"
 
 business-no-orgs-search
 => "No organizations found matching your search."
-=> "Nenhuma organização encontrada para a sua pesquisa.";;
+=> "Nenhuma organização encontrada na sua pesquisa.";;
 
 business-no-timelock => "No timelock" => "Sem timelock"
 
@@ -611,7 +611,7 @@ business-template-read-only
 
 business-text-files => "Text files" => "Ficheiros de texto"
 
-business-threshold-range => "Threshold (1-{$count}):" => "Limiar (1-{$count}):"
+business-threshold-range => "Threshold (1-{$count}):" => "Threshold (1-{$count}):"
 
 business-timelock => "Timelock:" => "Timelock:"
 
@@ -695,7 +695,7 @@ coins-spend-block-height => "Spend block height:" => "Altura do bloco de gasto:"
 
 coins-spend-txid => "Spend txid:" => "Txid de gasto:"
 
-combobox-already-signer => "already a signer" => "já é signatário"
+combobox-already-signer => "already a signer" => "já é signer"
 
 common-address => "Address" => "Endereço"
 
@@ -859,7 +859,7 @@ decrypt-xpub-cannot-decrypt
 => "Extended public key is valid but cannot decrypt this file"
 => NONE;; # "O Xpub é válido, mas não consegue desencriptar este ficheiro"
 
-device-already-used => "Already used" => "Já usado"
+device-already-used => "Already used" => "Já utilizado"
 
 device-check-device => "Please check your device" => "Verifique o seu dispositivo"
 
@@ -1359,7 +1359,7 @@ installer-generate-mnemonic => "Generate a new seed phrase" => NONE # "Gerar uma
 
 installer-give-wallet-alias
 => "Give your wallet an alias"
-=> "Dê um alias à sua carteira";;
+=> "Dê um nome à sua carteira";;
 
 installer-hot-signer => "Hot signer" => NONE # "Signatário local"
 
@@ -1369,7 +1369,7 @@ installer-import-descriptor => "Import a descriptor" => "Importar descriptor"
 
 installer-import-mnemonic => "Import seed phrase" => NONE # "Importar mnemónica"
 
-installer-import-mnemonic-title => "Import seed phrase" => NONE # "Importar mnemónica"
+installer-import-mnemonic-title => "Import seed phrase" => NONE # "Importar Mnemónica"
 
 installer-import-wallet-rescan-help
 => "If you are using a Bitcoin Core node, you will need to perform a rescan of the blockchain after creating the wallet in order to see your coins and past transactions. This can be done in Settings > Node."
@@ -1425,7 +1425,7 @@ installer-invitation-token-help
 
 installer-key-alias-already-used
 => "This alias is already used for another key"
-=> "Este alias já está usado por outra chave";;
+=> "Este alias/nome já está usado por outra chave";;
 
 installer-key-alias-placeholder => "E.g. My signing device" => NONE # "Ex.: A Minha Carteira de Hardware"
 
@@ -1433,11 +1433,11 @@ installer-key-already-in-wallet
 => "Fetched key has already been added to the wallet."
 => "A chave obtida já foi adicionada à carteira.";;
 
-installer-key-already-used => "Key already used" => "Chave já usada"
+installer-key-already-used => "Key already used" => "Chave já foi utilizada"
 
 installer-key-already-used-in-path
 => "Key already used in this path"
-=> "Chave já usada neste caminho";;
+=> "Chave já foi utilizada neste caminho";;
 
 installer-key-fetch-wrong-network
 => "Failed to fetch key. Switch network on device and retry"
@@ -1695,7 +1695,7 @@ installer-use-own-node => "Use your own node" => "Usar o meu próprio nó"
 
 installer-user => "User" => "Utilizador"
 
-installer-wallet-alias => "Wallet alias" => "Alias da carteira"
+installer-wallet-alias => "Wallet alias" => "Nome da carteira"
 
 installer-wallet-alias-too-long
 => "Wallet alias is too long."
@@ -1803,7 +1803,7 @@ launcher-read-gui-config-failed
 => "Failed to read GUI configuration file in the directory: {$path}"
 => "Falha ao ler o ficheiro de configuração da GUI no diretório: {$path}";;
 
-launcher-unexpected-error => "Unexpected {$error}" => "Inesperado {$error}"
+launcher-unexpected-error => "Unexpected {$error}" => "Erro inesperado: {$error}"
 
 launcher-wallet-deleted
 => "Wallet successfully deleted"
@@ -1925,7 +1925,7 @@ pill-key-cosigner-tooltip
 => "Professional third party co-signing key"
 => "Chave profissional de coassinatura de terceiro";;
 
-pill-key-external => "External" => "External"
+pill-key-external => "External" => "Externo"
 
 pill-key-external-tooltip
 => "Key held by third parties"
@@ -1965,7 +1965,7 @@ pill-signed-tooltip
 => "This transaction is signed & ready to broadcast"
 => "Esta transação está assinada e pronta para difusão";;
 
-pill-spent => "Spent" => "Gasta"
+pill-spent => "Spent" => "Gasto"
 
 pill-spent-tooltip
 => "The transaction was included in the blockchain."
@@ -2115,7 +2115,7 @@ receive-generating-address-title => "Generating address" => "A gerar endereço"
 
 receive-previous-addresses
 => "Previously generated addresses still awaiting deposit"
-=> "Endereços gerados anteriormente ainda à espera de depósito";;
+=> "Endereços gerados anteriormente ainda estão à espera de depósito";;
 
 receive-select-device
 => "Select device to verify address on:"
@@ -2167,7 +2167,7 @@ settings-change-node-or-connect
 
 settings-connect-own-node
 => "I want to connect to my own node"
-=> "Quero ligar-me ao meu próprio nó";;
+=> "Quero conectar-me ao meu próprio nó";;
 
 settings-cookie-file-path => "Cookie file path" => "Caminho do ficheiro cookie"
 
@@ -2235,7 +2235,7 @@ settings-fiat-price-tooltip
 => "Fiat price data is provided by third-party services. Availability and accuracy are not guaranteed."
 => "Os dados de preço em moeda fiduciária são fornecidos por serviços de terceiros. A disponibilidade e a exactidão não são garantidas.";;
 
-settings-fingerprint-aliases => "Fingerprint aliases:" => "Aliases de fingerprint:"
+settings-fingerprint-aliases => "Fingerprint aliases:" => "Nomes das chaves:"
 
 settings-grant-wallet-access
 => "Grant access to wallet to another user"
@@ -2425,7 +2425,7 @@ spend-warning-recovery-own-address
 
 tab-installer => "Installer" => "Instalação"
 
-tab-launcher => "Launcher" => "Iniciador"
+tab-launcher => "Launcher" => "Launcher"
 
 tab-pending => "Pending" => "Pendente"
 
@@ -2501,6 +2501,6 @@ transactions-replacement => "Transaction replacement" => "Substituição de tran
 
 transactions-transaction => "Transaction" => "Transação"
 
-transactions-txid => "Tx ID:" => NONE # "Txid"
+transactions-txid => "Tx ID:" => NONE # "Tx ID:"
 
 warning-hardware-wallet-error => "Signing device error" => NONE # "Erro da carteira de hardware"
