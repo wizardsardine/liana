@@ -35,11 +35,11 @@ btn-approve => "Approve" => "Aprovar"
 
 btn-back => "Back" => "Voltar"
 
-btn-back-up-descriptor => "Back up descriptor" => NONE # "Fazer backup do descriptor"
+btn-back-up-descriptor => "Back up descriptor" => NONE # "Fazer backup do descritor"
 
 btn-backup-encrypted-descriptor
 => "Back up encrypted descriptor"
-=> "Fazer backup do descriptor criptografado";;
+=> "Fazer backup do descritor criptografado";;
 
 btn-broadcast => "Broadcast" => "Transmitir"
 
@@ -363,7 +363,7 @@ business-internal-signer-help
 
 business-invalid-threshold => "Invalid threshold value" => "Valor de limiar inválido"
 
-business-key-alias => "Key alias" => NONE # "Alias da chave"
+business-key-alias => "Key alias" => NONE # "Apelido da chave"
 
 business-key-alias-placeholder
 => "e.g. Alice, Treasury, Lawyer..."
@@ -405,7 +405,7 @@ business-key-type => "Key type" => NONE # "Tipo de chave"
 
 business-key-type-help
 => "Internal: Held by a member of your organization.\nExternal: Held by a trusted third party.\nCosigner: Professional co-signing service.\nSafety Net: Professional recovery service."
-=> NONE;; # "Internal: sob custódia de um membro da sua organização.\nExternal: sob custódia de um terceiro de confiança.\nCosigner: serviço profissional de coassinatura.\nSafetyNet: serviço profissional de recuperação."
+=> NONE;; # "Interna: sob custódia de um membro da sua organização.\nExterna: sob custódia de um terceiro de confiança.\nCossignatário: serviço profissional de coassinatura.\nSafety Net: serviço profissional de recuperação."
 
 business-keys-awaiting-manager
 => "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet."
@@ -467,7 +467,7 @@ business-new-email-address => "New email address" => "Novo endereço de e-mail"
 
 business-no-descriptor-available
 => "No descriptor available"
-=> "Nenhum descriptor disponível";;
+=> "Nenhum descritor disponível";;
 
 business-no-devices-to-register
 => "You have no devices to register."
@@ -551,7 +551,7 @@ business-register-devices => "Register devices" => NONE # "Registrar dispositivo
 
 business-register-wallet-devices-help
 => "Register the wallet descriptor on each device, or skip if unavailable."
-=> "Registre o descriptor da carteira em cada dispositivo ou pule se não estiver disponível.";;
+=> "Registre o descritor da carteira em cada dispositivo ou pule se não estiver disponível.";;
 
 business-registered-on-device
 => "Registered on device"
@@ -691,7 +691,7 @@ coins-first-recovery-in-blocks
 
 coins-not-in-block => "Not in a block" => "Não está em um bloco"
 
-coins-outpoint => "Outpoint:" => "Outpoint:"
+coins-outpoint => "Outpoint:" => "Ponto de saída:"
 
 coins-recovery-active => "Recovery path is active" => NONE
 
@@ -719,9 +719,9 @@ common-connection-failed => "Connection failed" => "Falha na conexão"
 
 common-copy => "Copy" => "Copiar"
 
-common-descriptor => "Descriptor" => "Descriptor"
+common-descriptor => "Descriptor" => "Descritor"
 
-common-descriptor-label => "Descriptor:" => "Descriptor:"
+common-descriptor-label => "Descriptor:" => "Descritor:"
 
 common-email => "Email" => "E-mail"
 
@@ -801,21 +801,21 @@ decrypt-device-failed
 
 decrypt-enter-mnemonic-unsafe
 => "UNSAFE: Enter the seed phrase of one of the keys"
-=> NONE;; # "INSEGURO: digite a mnemônica de uma das chaves"
+=> NONE;;
 
 decrypt-enter-mnemonic-warning
 => "This option is not secure. I understand that entering a seed phrase on a computer may result in theft of my funds."
-=> NONE;; # "Esta opção não é segura. Entendo que digitar uma mnemônica em um computador pode resultar no roubo dos meus fundos."
+=> NONE;; # "Esta opção não é segura. Eu entendo que digitar um mnemônico em um computador pode resultar no roubo dos meus fundos."
 
 decrypt-invalid-descriptor
 => "The file has been decrypted but the descriptor is not a valid Liana descriptor."
-=> "O arquivo foi descriptografado, mas o descriptor não é um descriptor Liana válido.";;
+=> "O arquivo foi descriptografado, mas o descritor não é um descritor Liana válido.";;
 
 decrypt-invalid-encoding
 => "The file cannot be decoded properly, it seems not to be an encrypted backup."
 => "O arquivo não pode ser decodificado corretamente; parece não ser um backup criptografado.";;
 
-decrypt-invalid-mnemonic => "Invalid seed phrase" => NONE # "Mnemônica inválida"
+decrypt-invalid-mnemonic => "Invalid seed phrase" => NONE # "Mnemônico inválido"
 
 decrypt-invalid-type
 => "The file has been decrypted but the content type is not supported."
@@ -825,9 +825,9 @@ decrypt-invalid-xpub => "Invalid extended public key" => NONE # "Xpub inválido"
 
 decrypt-mnemonic-cannot-decrypt
 => "Seed phrase is valid but cannot decrypt the file"
-=> NONE;; # "A mnemônica é válida, mas não consegue descriptografar o arquivo"
+=> NONE;;
 
-decrypt-mnemonic-source => "Seed phrase" => NONE # "Mnemônica"
+decrypt-mnemonic-source => "Seed phrase" => NONE # "Mnemônico"
 
 decrypt-other-paths-confirm-on-device
 => "You will have to accept some of these derivation paths on the device."
@@ -863,7 +863,9 @@ device-already-used => "Already used" => "Já usado"
 
 device-check-device => "Please check your device" => "Verifique seu dispositivo"
 
-device-enter-cosigner-token => "Enter a Cosigner token" => "Digite um token Cosigner"
+device-enter-cosigner-token
+=> "Enter a Cosigner token"
+=> "Digite um token de cossignatário";;
 
 device-enter-safety-net-token
 => "Enter a Safety Net token"
@@ -949,7 +951,7 @@ error-unknown => "Unknown error occurred" => "Ocorreu um erro desconhecido"
 
 export-aliases-conflict
 => "Aliases conflict, what do you want to do?"
-=> "Conflito de aliases, o que você quer fazer?";;
+=> "Conflito de apelidos, o que você quer fazer?";;
 
 export-canceled => "Export canceled" => "Exportação cancelada"
 
@@ -977,9 +979,9 @@ export-timeout => "Export failed: timeout" => "Falha na exportação: tempo esgo
 
 export-title-export-backup => "Export backup" => NONE # "Exportar backup"
 
-export-title-export-descriptor => "Export descriptor" => NONE # "Exportar descriptor"
+export-title-export-descriptor => "Export descriptor" => NONE
 
-export-title-export-encrypted-descriptor => "Export encrypted descriptor" => NONE # "Exportar descriptor criptografado"
+export-title-export-encrypted-descriptor => "Export encrypted descriptor" => NONE # "Exportar descritor criptografado"
 
 export-title-export-labels => "Export labels" => NONE # "Exportar rótulos"
 
@@ -987,7 +989,7 @@ export-title-export-psbt => "Export PSBT" => "Exportar PSBT"
 
 export-title-export-xpub => "Export extended public key (xpub)" => NONE # "Exportar Xpub"
 
-export-title-import-descriptor => "Import descriptor" => NONE # "Importar descriptor"
+export-title-import-descriptor => "Import descriptor" => NONE # "Importar descritor"
 
 export-title-import-psbt => "Import PSBT" => "Importar PSBT"
 
@@ -1061,7 +1063,7 @@ home-rescan-warning-backup
 
 home-rescan-warning-descriptor
 => "As this wallet was imported from a descriptor, you may need to rescan the blockchain to see past transactions."
-=> "Como esta carteira foi importada a partir de um descriptor, talvez você precise reescanear a blockchain para ver as transações passadas.";;
+=> "Como esta carteira foi importada a partir de um descritor, talvez você precise reescanear a blockchain para ver as transações passadas.";;
 
 home-syncing => "Syncing" => "Sincronizando"
 
@@ -1071,7 +1073,7 @@ home-syncing-blockchain
 
 hw-descriptor-not-registered
 => "The wallet descriptor is not registered on the device.\n You can register it in the settings."
-=> "O descriptor da carteira não está registrado no dispositivo.\n Você pode registrá-lo nas configurações.";;
+=> "O descritor da carteira não está registrado no dispositivo.\n Você pode registrá-lo nas configurações.";;
 
 hw-display-address-unavailable
 => "Liana cannot request the device to display the address. \n Verify it with the QR code in the options below."
@@ -1133,39 +1135,39 @@ installer-available-ports-failed
 
 installer-backed-up-descriptor-checkbox
 => "I have backed up my descriptor"
-=> "Fiz backup do meu descriptor";;
+=> "Fiz backup do meu descritor";;
 
-installer-backed-up-mnemonic-checkbox => "I have backed up my seed phrase" => NONE # "Fiz backup da minha mnemônica"
+installer-backed-up-mnemonic-checkbox => "I have backed up my seed phrase" => NONE
 
 installer-backed-up-mnemonic-show-xpub
 => "I have backed up the seed phrase, show the extended public key"
-=> NONE;; # "Fiz backup da mnemônica, mostrar a chave pública estendida"
+=> NONE;;
 
 installer-backup-descriptor-help
 => "In Bitcoin, to spend from a wallet that isn't a standard single-key setup, you need both your private keys (usually stored as seed phrases) to sign transactions, and your wallet descriptor to locate your coins - like a map of your addresses.\nWithout the descriptor, your wallet may not find your coins - even if you still have the keys.\nWhen you click \"Back up descriptor\", Liana creates an encrypted file that can only be decrypted using one of your wallet's extended public keys.\nLiana handles this automatically during the restore of a wallet process by asking you to connect a device or enter a key.\nThis file is safer and more private than copying the descriptor manually."
-=> NONE;; # "Em Bitcoin, para gastar de uma carteira que não é uma configuração padrão de chave única, você precisa das suas chaves privadas (normalmente guardadas como palavras da seed) para assinar transações e do descriptor da sua carteira para localizar suas moedas, como um mapa dos seus endereços.\nSem o descriptor, sua carteira pode não encontrar suas moedas, mesmo que você ainda tenha as chaves.\nQuando você clica em \"Fazer backup do descriptor\", a Liana cria um arquivo criptografado que só pode ser descriptografado usando uma das chaves públicas da sua carteira.\nA Liana faz isso automaticamente durante o processo de restauração de uma carteira, pedindo que você conecte um dispositivo ou digite uma chave.\nEste arquivo é mais seguro e mais privado do que copiar o descriptor manualmente."
+=> NONE;;
 
 installer-backup-descriptor-message
 => "This backup is required to recover your funds.\nClick \"Back up descriptor\" to download an encrypted file of your wallet configuration and store it in safe, accessible places.\nYou can also copy the plain-text descriptor string, but it's less private.\nWARNING: This file does not include your seed phrase(s). Back those up separately."
-=> NONE;; # "Este backup é necessário para recuperar seus fundos.\nClique em \"Fazer backup do descriptor\" para baixar um arquivo criptografado da configuração da sua carteira e guarde-o em locais seguros e acessíveis.\nVocê também pode copiar o descriptor em texto simples, mas é menos privado.\nAVISO: este arquivo não inclui sua(s) frase(s) seed. Faça backup delas separadamente."
+=> NONE;; # "Este backup é necessário para recuperar seus fundos.\nClique em \"Fazer backup do descritor\" para baixar um arquivo criptografado da configuração da sua carteira e guarde-o em locais seguros e acessíveis.\nVocê também pode copiar o descritor em texto simples, mas é menos privado.\nAVISO: este arquivo não inclui sua(s) frase(s) seed. Faça backup delas separadamente."
 
 installer-backup-descriptor-missing
 => "Backup imported but descriptor missing!"
-=> "Backup importado, mas o descriptor está faltando!";;
+=> "Backup importado, mas o descritor está faltando!";;
 
 installer-backup-descriptor-title
 => "Back up your wallet configuration (descriptor)"
-=> NONE;; # "Faça backup da configuração da sua carteira (Descriptor)"
+=> NONE;; # "Faça backup da configuração da sua carteira (Descritor)"
 
 installer-backup-imported
 => "Backup successfully imported!"
 => "Backup importado com sucesso!";;
 
-installer-backup-mnemonic-title => "Back up your seed phrase" => NONE # "Faça backup da sua mnemônica"
+installer-backup-mnemonic-title => "Back up your seed phrase" => NONE
 
 installer-backup-mnemonic-warning
 => "Beware to back up the seed phrase as it will NOT be stored on the computer."
-=> NONE;; # "Atenção: faça backup da mnemônica, pois ela NÃO será armazenada no computador."
+=> NONE;; # "Atenção: faça o backup do mnemônico, pois ele NÃO será armazenado no computador."
 
 installer-backup-network-mismatch
 => "The backup network does not match the selected network."
@@ -1235,7 +1237,7 @@ installer-cookie-path => "Cookie path" => "Caminho do cookie"
 
 installer-cosigner-token-disallowed
 => "Cosigner tokens are not allowed for this path"
-=> "Tokens Cosigner não são permitidos neste caminho";;
+=> "Tokens de cossignatários não são permitidos neste caminho";;
 
 installer-create-datadir-path-failed
 => "Failed to create datadir path: {$error}"
@@ -1255,21 +1257,21 @@ installer-custom-template-description-2
 
 installer-descriptor-generating
 => "Generating and validating your wallet descriptor. This can take a few seconds."
-=> "Gerando e validando o descriptor da sua carteira. Isso pode levar alguns segundos.";;
+=> "Gerando e validando o descritor da sua carteira. Isso pode levar alguns segundos.";;
 
 installer-descriptor-invalid
 => "Either descriptor is invalid or incompatible with network"
-=> "O descriptor é inválido ou incompatível com a rede";;
+=> "O descritor é inválido ou incompatível com a rede";;
 
-installer-descriptor-missing => "Descriptor missing" => "Descriptor faltando"
+installer-descriptor-missing => "Descriptor missing" => "Descritor faltando"
 
 installer-descriptor-read-failed
 => "Failed to read the descriptor"
-=> "Falha ao ler o descriptor";;
+=> "Falha ao ler o descritor";;
 
-installer-descriptor-template => "Descriptor template" => "Modelo de descriptor"
+installer-descriptor-template => "Descriptor template" => "Modelo de descritor"
 
-installer-descriptor-type => "Descriptor type" => "Tipo de descriptor"
+installer-descriptor-type => "Descriptor type" => "Tipo de descritor"
 
 installer-descriptor-type-segwit => "Segwit" => NONE
 
@@ -1281,7 +1283,7 @@ installer-descriptor-type-tooltip
 
 installer-descriptor-wrong-network
 => "The descriptor is for another network"
-=> "O descriptor é de outra rede";;
+=> "O descritor é de outra rede";;
 
 installer-detected-hardware => "Detected devices" => NONE # "Hardware detectado"
 
@@ -1325,15 +1327,15 @@ installer-enter-correct-electrum-address
 
 installer-enter-correct-password
 => "Please enter correct password"
-=> "Digite uma senha correta";;
+=> "Digite a senha correta";;
 
 installer-enter-correct-path
 => "Please enter correct path"
-=> "Digite um caminho correto";;
+=> "Digite o caminho correto";;
 
 installer-enter-correct-user
 => "Please enter correct user"
-=> "Digite um usuário correto";;
+=> "Digite o usuário correto";;
 
 installer-existing-node-description
 => "Select this option if you already have a Bitcoin node running locally or remotely. Liana will connect to it."
@@ -1355,21 +1357,21 @@ installer-export-backup-failed
 
 installer-finalize-installation => "Finalize installation" => "Finalizar instalação"
 
-installer-generate-mnemonic => "Generate a new seed phrase" => NONE # "Gerar uma nova mnemônica"
+installer-generate-mnemonic => "Generate a new seed phrase" => NONE # "Gerar um novo mnemônico"
 
 installer-give-wallet-alias
 => "Give your wallet an alias"
-=> "Dê um alias à sua carteira";;
+=> "Dê um apelido à sua carteira";;
 
 installer-hot-signer => "Hot signer" => NONE # "Signatário local"
 
 installer-import-backup => "Import a backup" => "Importar um backup"
 
-installer-import-descriptor => "Import a descriptor" => "Importar um descriptor"
+installer-import-descriptor => "Import a descriptor" => "Importar um descritor"
 
-installer-import-mnemonic => "Import seed phrase" => NONE # "Importar mnemônica"
+installer-import-mnemonic => "Import seed phrase" => NONE
 
-installer-import-mnemonic-title => "Import seed phrase" => NONE # "Importar mnemônica"
+installer-import-mnemonic-title => "Import seed phrase" => NONE # "Importar mnemônico"
 
 installer-import-wallet-rescan-help
 => "If you are using a Bitcoin Core node, you will need to perform a rescan of the blockchain after creating the wallet in order to see your coins and past transactions. This can be done in Settings > Node."
@@ -1411,7 +1413,7 @@ installer-installing-bitcoind
 
 installer-introduction => "Introduction" => "Introdução"
 
-installer-invalid-descriptor => "Invalid descriptor" => "Descriptor inválido"
+installer-invalid-descriptor => "Invalid descriptor" => "Descritor inválido"
 
 installer-invalid-token => "Invalid token!" => "Token inválido!"
 
@@ -1427,7 +1429,7 @@ installer-invitation-token-help
 
 installer-key-alias-already-used
 => "This alias is already used for another key"
-=> "Este alias já é usado por outra chave";;
+=> "Este apelido já está sendo usado por outra chave";;
 
 installer-key-alias-placeholder => "E.g. My signing device" => NONE # "Ex.: Minha carteira de hardware"
 
@@ -1447,7 +1449,7 @@ installer-key-fetch-wrong-network
 
 installer-key-index => "Key @{$index}:" => "Chave @{$index}:"
 
-installer-key-name-alias => "Key name (alias):" => "Nome da chave (alias):"
+installer-key-name-alias => "Key name (alias):" => "Nome da chave (apelido):"
 
 installer-key-name-help
 => "Give this key a friendly name. It will help you identify it later:"
@@ -1473,11 +1475,11 @@ installer-load-shared-wallet
 
 installer-local-wallet-description
 => "Use your already existing Bitcoin node or automatically install one. The Liana wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet."
-=> "Use o seu nó Bitcoin já existente ou instale um automaticamente. A carteira Liana não vai se conectar a nenhum servidor externo.\n\nEsta é a opção mais privada, mas os dados ficam armazenados apenas localmente neste computador. Você precisa fazer seus próprios backups e compartilhar o descriptor com as outras pessoas que você quer que tenham acesso à carteira.";;
+=> "Use o seu nó Bitcoin já existente ou instale um automaticamente. A carteira Liana não vai se conectar a nenhum servidor externo.\n\nEsta é a opção mais privada, mas os dados ficam armazenados apenas localmente neste computador. Você precisa fazer seus próprios backups e compartilhar o descritor com as outras pessoas que você quer que tenham acesso à carteira.";;
 
 installer-managed-node-description
 => "Liana will install a pruned node on your computer. You won't need to do anything except have some disk space available (~30GB required on mainnet) and wait for the initial synchronization with the network (it can take some days depending on your internet connection speed)."
-=> "A Liana vai instalar um nó pruned no seu computador. Você não vai precisar fazer nada além de ter algum espaço em disco disponível (~30 GB necessários na mainnet) e esperar a sincronização inicial com a rede (pode levar alguns dias, dependendo da velocidade da sua conexão de internet).";;
+=> "A Liana vai instalar um nó prunado no seu computador. Você não vai precisar fazer nada além de ter algum espaço em disco disponível (~30 GB necessários na mainnet) e esperar a sincronização inicial com a rede (pode levar alguns dias, dependendo da velocidade da sua conexão de internet).";;
 
 installer-manual-xpub-taproot-note => "Use with a Taproot-compatible device" => NONE
 
@@ -1487,7 +1489,7 @@ installer-mnemonic-backup-help
 
 installer-mnemonic-recovery-help
 => "If you were using a hot key (a key stored on the computer) in your wallet, you will need to recover it from its seed phrase to be able to sign transactions again. Otherwise you can directly go the next step."
-=> NONE;; # "Se você estava usando uma chave local (uma chave armazenada no computador) na sua carteira, vai precisar recuperá-la a partir das mnemônicas para poder assinar transações novamente. Caso contrário, você pode ir direto para a próxima etapa."
+=> NONE;; # "Se você estava usando uma chave local (uma chave armazenada no computador) na sua carteira, vai precisar recuperá-la a partir dos mnemônicos para poder assinar as transações novamente. Caso contrário, você pode ir direto para a próxima etapa."
 
 installer-multisig-description-1
 => "For this setup you will need 3 keys: two primary keys and a recovery key. For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key."
@@ -1509,11 +1511,11 @@ installer-node-type => "Node type:" => "Tipo de nó:"
 
 installer-password => "Password" => "Senha"
 
-installer-paste-descriptor => "Paste a descriptor" => "Colar um descriptor"
+installer-paste-descriptor => "Paste a descriptor" => "Colar um descritor"
 
 installer-paste-descriptor-description
 => "Creates a new wallet from the pasted descriptor"
-=> "Cria uma nova carteira a partir do descriptor colado";;
+=> "Cria uma nova carteira a partir do descritor colado";;
 
 installer-path-duplicate-sequence
 => "No two recovery paths may become available at the very same date."
@@ -1525,7 +1527,7 @@ installer-path-key-source-disallowed
 
 installer-path-only-cosigner-keys
 => "A path cannot contain only cosigner keys."
-=> "Um caminho não pode conter apenas chaves Cosigner.";;
+=> "Um caminho não pode conter apenas chaves de cossignatários.";;
 
 installer-port-attempts-exhausted => "Exhausted attempts" => "Tentativas esgotadas"
 
@@ -1547,27 +1549,25 @@ installer-recovery-option => "Recovery path #{$number}:" => NONE # "Opção de r
 
 installer-register-descriptor-failed
 => "Failed to register descriptor"
-=> "Falha ao registrar o descriptor";;
+=> "Falha ao registrar o descritor";;
 
 installer-register-descriptor-help
 => "To be used with the wallet, a signing device needs the descriptor. If the descriptor contains one or more keys imported from an external signing device, the descriptor must be registered on it. Registration confirms that the device is able to handle the policy. Registration on a device is not a substitute for backing up the descriptor."
-=> "Para ser usado com a carteira, um dispositivo de assinatura precisa do descriptor. Se o descriptor contiver uma ou mais chaves importadas de um dispositivo de assinatura externo, o descriptor precisa ser registrado nele. O registro confirma que o dispositivo consegue lidar com a política. Registrar em um dispositivo não substitui o backup do descriptor.";;
+=> "Para ser usado com a carteira, um dispositivo de assinatura precisa do descritor. Se o descritor contiver uma ou mais chaves importadas de um dispositivo de assinatura externo, o descritor precisa ser registrado nele. O registro confirma que o dispositivo consegue lidar com a política. Registrar em um dispositivo não substitui o backup do descritor.";;
 
 installer-register-descriptor-optional
 => "This step is only necessary if you are using a signing device."
 => "Esta etapa só é necessária se você estiver usando um dispositivo de assinatura.";;
 
-installer-register-descriptor-title
-=> "Register descriptor"
-=> "Registrar descriptor";;
+installer-register-descriptor-title => "Register descriptor" => "Registrar descritor"
 
 installer-registered-descriptor-checkbox
 => "I have registered the descriptor on my device(s)"
-=> "Registrei o descriptor no(s) meu(s) dispositivo(s)";;
+=> "Registrei o descritor no(s) meu(s) dispositivo(s)";;
 
 installer-remote-backend-description
 => "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead."
-=> "Use o nosso serviço para ficar pronto para transacionar imediatamente. A Wizardsardine opera a infraestrutura, permitindo que vários computadores ou participantes se conectem e sincronizem.\n\nEsta é uma opção mais simples e segura para quem quer que a Wizardsardine mantenha um backup do seu descriptor. Você continua no controle das suas chaves, e a Wizardsardine não tem nenhum controle sobre seus fundos, mas poderá ver as informações da sua carteira, associadas a um endereço de e-mail. Usuários focados em privacidade devem operar a própria infraestrutura.";;
+=> "Use o nosso serviço para ficar pronto para transacionar imediatamente. A Wizardsardine opera a infraestrutura, permitindo que vários computadores ou participantes se conectem e sincronizem.\n\nEsta é uma opção mais simples e segura para quem quer que a Wizardsardine mantenha um backup do seu descritor. Você continua no controle das suas chaves, e a Wizardsardine não tem nenhum controle sobre seus fundos, mas poderá ver as informações da sua carteira, associadas a um endereço de e-mail. Usuários focados em privacidade devem operar a própria infraestrutura.";;
 
 installer-remote-bitcoin-node-warning
 => "Connection to a remote Bitcoin node is not supported. Insert an IP address bound to the same machine running Liana (ignore this warning if that's already the case)"
@@ -1591,15 +1591,15 @@ installer-safety-net-token-disallowed
 
 installer-seed-key-not-in-descriptor
 => "The descriptor does not use a key derived from this seed phrase"
-=> NONE;; # "O descriptor não usa uma chave derivada desta seed"
+=> NONE;;
 
 installer-select-device-register
 => "Select signing device to register descriptor on:"
-=> NONE;; # "Selecione a carteira de hardware onde registrar o descriptor:"
+=> NONE;; # "Selecione a carteira de hardware onde registrar o descritor:"
 
 installer-select-device-register-if-needed
 => "If necessary, please select the signing device to register descriptor on:"
-=> "Se necessário, selecione o dispositivo de assinatura onde registrar o descriptor:";;
+=> "Se necessário, selecione o dispositivo de assinatura onde registrar o descritor:";;
 
 installer-select-key-source => "Select key source" => "Selecionar origem da chave"
 
@@ -1647,7 +1647,7 @@ installer-stop-daemon-failed
 => "Failed to stop Liana daemon: {$error}"
 => "Falha ao parar o daemon da Liana: {$error}";;
 
-installer-store-mnemonic-failed => "Failed to store seed phrase: {$error}" => NONE # "Falha ao armazenar a mnemônica: {$error}"
+installer-store-mnemonic-failed => "Failed to store seed phrase: {$error}" => NONE # "Falha ao armazenar o mnemônico: {$error}"
 
 installer-switch-account-help
 => "Switch account if you already use the same device in other configurations"
@@ -1679,9 +1679,9 @@ installer-template-state-locked => "Can't spend" => "Não pode gastar"
 
 installer-template-state-spend => "Can spend" => "Pode gastar"
 
-installer-the-descriptor => "The descriptor" => "O descriptor"
+installer-the-descriptor => "The descriptor" => "O descritor"
 
-installer-the-descriptor-label => "The descriptor:" => "O descriptor:"
+installer-the-descriptor-label => "The descriptor:" => "O descritor:"
 
 installer-threshold => "Threshold:" => "Limiar:"
 
@@ -1699,11 +1699,11 @@ installer-use-own-node => "Use your own node" => "Usar o seu próprio nó"
 
 installer-user => "User" => "Usuário"
 
-installer-wallet-alias => "Wallet alias" => "Alias da carteira"
+installer-wallet-alias => "Wallet alias" => "Apelido da carteira"
 
 installer-wallet-alias-too-long
 => "Wallet alias is too long."
-=> "O alias da carteira é muito longo.";;
+=> "O apelido da carteira é muito longo.";;
 
 installer-xpub-invalid => "Invalid extended public key" => NONE # "Xpub inválido"
 
@@ -1753,7 +1753,7 @@ launcher-add-existing-wallet
 
 launcher-config-descriptor-origin-error
 => "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more extended public key(s) without origin. Liana v0.2 and later only support extended public keys with origins. Please migrate your funds using Liana v0.1."
-=> NONE;; # "Há um problema com a configuração desta rede. Você provavelmente usa um descriptor que contém uma ou mais chaves públicas sem origem. A Liana v0.2 e posteriores só suportam chaves públicas com origem. Migre seus fundos usando a Liana v0.1."
+=> NONE;; # "Há um problema com a configuração desta rede. Você provavelmente usa um descritor que contém uma ou mais chaves públicas sem origem. A Liana v0.2 e posteriores só suportam chaves públicas com origem. Migre seus fundos usando a Liana v0.1."
 
 launcher-create-new-wallet
 => "Create a new Liana wallet"
@@ -1807,7 +1807,7 @@ launcher-read-gui-config-failed
 => "Failed to read GUI configuration file in the directory: {$path}"
 => "Falha ao ler o arquivo de configuração da GUI no diretório: {$path}";;
 
-launcher-unexpected-error => "Unexpected {$error}" => "Inesperado {$error}"
+launcher-unexpected-error => "Unexpected {$error}" => "Erro inesperado: {$error}"
 
 launcher-wallet-deleted
 => "Wallet successfully deleted"
@@ -1839,7 +1839,7 @@ lianalite-token-invalid => "Token is not valid" => "O token não é válido"
 
 lianalite-wallet-deleted
 => "This wallet was deleted by its creator for all participants and cannot be opened. To access it again, restore it using a backup file or the wallet descriptor."
-=> "Esta carteira foi excluída pelo criador dela para todos os participantes e não pode ser aberta. Para acessá-la de novo, restaure-a usando um arquivo de backup ou o descriptor da carteira.";;
+=> "Esta carteira foi excluída pelo criador dela para todos os participantes e não pode ser aberta. Para acessá-la de novo, restaure-a usando um arquivo de backup ou o descritor da carteira.";;
 
 loader-connecting-daemon => "Connecting to daemon..." => "Conectando ao daemon..."
 
@@ -1923,19 +1923,19 @@ pill-first-recovery-in => "First recovery path available in {$units}" => NONE # 
 
 pill-first-recovery-today => "First recovery path available today" => NONE # "Primeira opção de recuperação disponível hoje"
 
-pill-key-cosigner => "Cosigner" => "Cosigner"
+pill-key-cosigner => "Cosigner" => "Cossignatário"
 
 pill-key-cosigner-tooltip
 => "Professional third party co-signing key"
 => "Chave profissional de coassinatura de terceiro";;
 
-pill-key-external => "External" => "External"
+pill-key-external => "External" => "Externa"
 
 pill-key-external-tooltip
 => "Key held by third parties"
 => "Chave sob custódia de terceiros";;
 
-pill-key-internal => "Internal" => "Internal"
+pill-key-internal => "Internal" => "Interna"
 
 pill-key-internal-tooltip
 => "Key held by your organization"
@@ -1945,7 +1945,7 @@ pill-key-safety-net => "Safety Net" => "Safety Net"
 
 pill-key-safety-net-tooltip
 => "Professional third party recovery key"
-=> "Chave profissional de recuperação de terceiro";;
+=> "Chave de recuperação sob custódia de um terceiro profissional";;
 
 pill-not-in-policy => "Not in policy yet" => "Ainda não está na política"
 
@@ -2153,11 +2153,11 @@ recovery-signatures-from
 => "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}"
 => "{ $count ->\n    [one] 1 assinatura de\n   *[other] {$count} assinaturas de\n}";;
 
-settings-alias => "Alias" => "Alias"
+settings-alias => "Alias" => "Apelido"
 
 settings-alias-too-long
 => "Please enter alias that is not too long"
-=> "Digite um alias que não seja muito longo";;
+=> "Digite um apelido que não seja muito longo";;
 
 settings-backup-encrypted-descriptor-tooltip
 => "An encrypted descriptor file (.bip138) you can store anywhere. To decrypt it, you need one of your signing devices or extended public keys."
@@ -2177,13 +2177,13 @@ settings-connect-own-node
 
 settings-cookie-file-path => "Cookie file path" => "Caminho do arquivo cookie"
 
-settings-correct-alias => "Please enter correct alias" => "Digite um alias correto"
+settings-correct-alias => "Please enter correct alias" => "Digite um apelido correto"
 
 settings-currency => "Currency:" => "Moeda:"
 
 settings-date-before-prune
 => "Provided date earlier than the node prune height"
-=> "A data informada é anterior à altura de prune do nó";;
+=> "A data informada é anterior à altura de poda do nó prunado";;
 
 settings-date-future
 => "Provided date is in the future"
@@ -2201,15 +2201,15 @@ settings-exchange-rate-source
 
 settings-export-descriptor
 => "Descriptor only - plain-text"
-=> "Apenas o descriptor - texto simples";;
+=> "Apenas o descritor - texto simples";;
 
 settings-export-descriptor-description
 => "Plain-text (not encrypted) descriptor file only, to use with other wallets."
-=> "Arquivo de descriptor em texto simples (não criptografado), para usar com outras carteiras.";;
+=> "Arquivo de descritor em texto simples (não criptografado), para usar com outras carteiras.";;
 
 settings-export-encrypted-descriptor
 => "Encrypted descriptor"
-=> "Descriptor criptografado";;
+=> "Descritor criptografado";;
 
 settings-export-encrypted-descriptor-description
 => ".bip138 file, can be decrypted with one of your signing devices or extended public keys."
@@ -2239,7 +2239,7 @@ settings-fiat-price-tooltip
 => "Fiat price data is provided by third-party services. Availability and accuracy are not guaranteed."
 => "Os dados de preço fiat são fornecidos por serviços de terceiros. A disponibilidade e a exatidão não são garantidas.";;
 
-settings-fingerprint-aliases => "Fingerprint aliases:" => "Aliases de fingerprint:"
+settings-fingerprint-aliases => "Fingerprint aliases:" => "Apelidos das fingerprint:"
 
 settings-grant-wallet-access
 => "Grant access to wallet to another user"
@@ -2307,9 +2307,9 @@ settings-valid-user => "Please enter a valid user" => "Digite um usuário válid
 
 settings-version => "Version" => "Versão"
 
-settings-wallet-alias => "Wallet alias:" => "Alias da carteira:"
+settings-wallet-alias => "Wallet alias:" => "Apelido da carteira:"
 
-settings-wallet-descriptor => "Wallet descriptor:" => "Descriptor da carteira:"
+settings-wallet-descriptor => "Wallet descriptor:" => "Descritor da carteira:"
 
 settings-year => "Year:" => "Ano:"
 
@@ -2333,11 +2333,11 @@ spend-duplicate-addresses
 
 spend-dust-add-funds
 => "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s)."
-=> "O valor mínimo é 0.00 000 500 BTC. Adicione fundos à sua carteira para gastar a(s) moeda(s).";;
+=> "O valor mínimo é de 0.00 000 500 BTC. Adicione fundos à sua carteira para gastar a(s) moeda(s).";;
 
 spend-dust-select-more-coins
 => "Minimum amount is 0.00 000 500 BTC. Select more coins to continue."
-=> "O valor mínimo é 0.00 000 500 BTC. Selecione mais moedas para continuar.";;
+=> "O valor mínimo é de 0.00 000 500 BTC. Selecione mais moedas para continuar.";;
 
 spend-fee => "Fee:" => "Taxa:"
 
@@ -2373,7 +2373,7 @@ spend-invalid-address
 
 spend-invalid-amount
 => "Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)"
-=> "Valor inválido. (Observe que valores menores que 0.000005 BTC são inválidos.)";;
+=> "Valor inválido (observe que valores menores que 0.000005 BTC são inválidos).";;
 
 spend-left-to-select => "left to select" => "restante para selecionar"
 
@@ -2457,7 +2457,7 @@ time-weeks-ago
 
 transactions-cancel-tooltip
 => "Best effort attempt at double spending an unconfirmed outgoing transaction"
-=> "Tentativa de melhor esforço de gasto duplo de uma transação enviada ainda não confirmada";;
+=> "Tentativa, sem garantia, de gasto duplo de uma transação de saída ainda não confirmada";;
 
 transactions-date => "Date:" => "Data:"
 
