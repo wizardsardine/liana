@@ -1184,7 +1184,6 @@ pub fn start_internal_bitcoind<'a>(
     download_state: Option<&DownloadState>,
     install_state: Option<&InstallState>,
 ) -> Element<'a, Message> {
-    let version = crate::node::bitcoind::VERSION;
     let msg_next = matches!(started, Some(Ok(_))).then_some(Message::Next);
     let status = |icon: Option<Text<'static>>, label: Text<'static>| {
         match icon {
@@ -1196,25 +1195,7 @@ pub fn start_internal_bitcoind<'a>(
     };
     let empty_status = || row![].spacing(10).align_y(Alignment::Center);
 
-    let download = download_state.map(|state| match state {
-        DownloadState::Idle => empty_status(),
-        DownloadState::Downloading { progress } => status(
-            None,
-            new::caption(t!(
-                "installer-downloading-bitcoin-core-progress",
-                version = version,
-                progress = format!("{progress:.2}")
-            )),
-        ),
-        DownloadState::Finished(_) => status(
-            Some(icon::circle_check_icon().style(theme::text::success)),
-            new::caption(t!("installer-download-complete")).style(theme::text::success),
-        ),
-        DownloadState::Errored(e) => status(
-            Some(icon::circle_cross_icon().style(theme::text::error)),
-            new::caption(t!("installer-download-failed", error = e)).style(theme::text::error),
-        ),
-    });
+    let download = download_state.map(bitcoind_download_status);
 
     let install: Element<'static, Message> = match (install_state, exe_path, download_state) {
         (Some(InstallState::InProgress), _, _) => {
@@ -1235,12 +1216,6 @@ pub fn start_internal_bitcoind<'a>(
             new::caption(t!("installer-bitcoind-already-installed")).style(theme::text::success),
         )
         .into(),
-        (None, None, Some(DownloadState::Downloading { progress })) => {
-            row![progress_bar(0.0..=100.0, *progress)]
-                .spacing(10)
-                .align_y(Alignment::Center)
-                .into()
-        }
         (None, None, _) => empty_status().into(),
     };
 
@@ -1278,6 +1253,32 @@ pub fn start_internal_bitcoind<'a>(
             message::InternalBitcoindMsg::Previous,
         )),
     )
+}
+
+pub fn bitcoind_download_status<'a, M: Clone + 'static>(state: &DownloadState) -> Element<'a, M> {
+    match state {
+        DownloadState::Idle => row![].into(),
+        DownloadState::Downloading { progress } => column![
+            new::caption(t!(
+                "installer-downloading-bitcoin-core-progress",
+                version = crate::node::bitcoind::VERSION,
+                progress = format!("{progress:.2}")
+            )),
+            progress_bar(0.0..=100.0, *progress)
+        ]
+        .spacing(VSpacing::M)
+        .into(),
+        DownloadState::Finished(_) => row![
+            icon::circle_check_icon().style(theme::text::success),
+            new::caption(t!("installer-download-complete")).style(theme::text::success)
+        ]
+        .into(),
+        DownloadState::Errored(e) => row![
+            icon::circle_cross_icon().style(theme::text::error),
+            new::caption(t!("installer-download-failed", error = e)).style(theme::text::error)
+        ]
+        .into(),
+    }
 }
 
 fn start_internal_bitcoind_error(error: &StartInternalBitcoindError) -> String {
