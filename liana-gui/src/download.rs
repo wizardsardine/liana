@@ -24,7 +24,7 @@ pub fn file<I: 'static + Hash + Copy + Send + Sync, T: ToString>(
     )
 }
 
-fn download(url: String) -> impl Stream<Item = Result<Progress, DownloadError>> {
+pub fn download(url: String) -> impl Stream<Item = Result<Progress, DownloadError>> {
     try_channel(
         100,
         move |mut output: iced::futures::channel::mpsc::Sender<Progress>| async move {

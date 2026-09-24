@@ -238,6 +238,7 @@ impl Loader {
     }
 
     fn on_start(&mut self, res: StartedResult) -> Task<Message> {
+        self.waiting_daemon_bitcoind = false;
         match res {
             Ok((daemon, bitcoind, info)) => {
                 // bitcoind may have been already started and given to the loader
@@ -245,7 +246,6 @@ impl Loader {
                 if let Some(bitcoind) = bitcoind {
                     self.internal_bitcoind = Some(bitcoind);
                 }
-                self.waiting_daemon_bitcoind = false;
                 self.maybe_skip_syncing(daemon, info)
             }
             Err(e) => {

@@ -15,6 +15,7 @@ extern crate serde_json;
 use liana::miniscript::bitcoin;
 use liana_ui::widget::{Column, Container, Element};
 
+mod bitcoind_upgrade;
 mod cache;
 pub mod pane;
 pub mod tab;
@@ -476,6 +477,7 @@ where
                                     tab::State::Loader(l) => {
                                         l.wallet_settings.wallet_id() == *wallet_id
                                     }
+                                    tab::State::Upgrade(u) => u.wallet.wallet_id() == *wallet_id,
                                     _ => false,
                                 } {
                                     Some(i)

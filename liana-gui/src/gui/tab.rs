@@ -21,10 +21,12 @@ use crate::{
     },
     dir::LianaDirectory,
     export::import_backup_at_launch,
+    gui::bitcoind_upgrade::{self, Upgrade},
     hw::HardwareWalletConfig,
     installer::{self, Installer},
     launcher::{self, Launcher},
     loader::{self, Loader},
+    node::bitcoind,
     services::connect::{
         client::{
             auth::AuthClient,
@@ -44,6 +46,7 @@ where
     S: SettingsTrait,
 {
     Launcher(Box<Launcher>),
+    Upgrade(Box<Upgrade>),
     Installer(I),
     Loader(Box<Loader>),
     Login(Box<login::LianaLiteLogin>),
@@ -89,6 +92,7 @@ where
     M: Clone + Send + 'static,
 {
     Launch(Box<launcher::Message>),
+    Upgrade(bitcoind_upgrade::Message),
     Install(Box<M>),
     Load(Box<loader::Message>),
     Run(Box<app::Message>),
@@ -161,6 +165,7 @@ where
             State::Installer(_) => t!("tab-installer"),
             State::Loader(_) => t!("common-loading"),
             State::Launcher(_) => t!("tab-launcher"),
+            State::Upgrade(_) => t!("bitcoind-upgrade-title", version = bitcoind::VERSION),
             State::Login(_) => t!("common-login"),
             State::App(a) => a.title().to_string(),
             State::_Phantom(_) => unreachable!(),
@@ -197,25 +202,21 @@ where
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
                 launcher::Message::Run(datadir_path, cfg, network, settings) => {
-                    let wallet_id = settings.wallet_id();
-                    if let Some(auth_cfg) = settings.remote_backend_auth {
-                        let (login, command) = login::LianaLiteLogin::new(
-                            datadir_path,
-                            network,
-                            wallet_id,
-                            auth_cfg,
-                            I::backend_type(),
-                        );
-                        self.state = State::Login(Box::new(login));
-                        command.map(|msg| Message::Login(Box::new(msg)))
-                    } else {
-                        let (loader, command) =
-                            Loader::new(datadir_path, cfg, network, None, None, settings);
-                        self.state = State::Loader(Box::new(loader));
-                        command.map(|msg| Message::Load(Box::new(msg)))
+                    match Upgrade::new(&datadir_path, &cfg, network, &settings) {
+                        Some((upgrade, command)) => {
+                            self.state = State::Upgrade(Box::new(upgrade));
+                            command.map(Message::Upgrade)
+                        }
+                        None => self.open_wallet(datadir_path, cfg, network, settings),
                     }
                 }
                 _ => l.update(*msg).map(|msg| Message::Launch(Box::new(msg))),
+            },
+            (State::Upgrade(upgrade), Message::Upgrade(message)) => match message {
+                bitcoind_upgrade::Message::Continue | bitcoind_upgrade::Message::Skip => {
+                    self.finish_upgrade()
+                }
+                other => upgrade.update(other).map(Message::Upgrade),
             },
             (State::Login(l), Message::Login(msg)) => match *msg {
                 login::Message::View(login::ViewMessage::BackToLauncher(network)) => {
@@ -547,9 +548,48 @@ where
         }
     }
 
+    /// Opens the wallet once the upgrade dialog is done.
+    fn finish_upgrade(&mut self) -> Task<Message<M>> {
+        let State::Upgrade(upgrade) = &self.state else {
+            error!("Bitcoin Core upgrade finished outside of the upgrade screen");
+            return Task::none();
+        };
+        let datadir = upgrade.datadir.clone();
+        let config = upgrade.config.clone();
+        let network = upgrade.network;
+        let settings = upgrade.wallet.clone();
+        self.open_wallet(datadir, config, network, settings)
+    }
+
+    fn open_wallet(
+        &mut self,
+        datadir: LianaDirectory,
+        config: app::Config,
+        network: bitcoin::Network,
+        settings: LianaWalletSettings,
+    ) -> Task<Message<M>> {
+        let wallet_id = settings.wallet_id();
+        if let Some(auth_cfg) = settings.remote_backend_auth {
+            let (login, command) = login::LianaLiteLogin::new(
+                datadir,
+                network,
+                wallet_id,
+                auth_cfg,
+                I::backend_type(),
+            );
+            self.state = State::Login(Box::new(login));
+            command.map(|msg| Message::Login(Box::new(msg)))
+        } else {
+            let (loader, command) = Loader::new(datadir, config, network, None, None, settings);
+            self.state = State::Loader(Box::new(loader));
+            command.map(|msg| Message::Load(Box::new(msg)))
+        }
+    }
+
     pub fn subscription(&self) -> Subscription<Message<M>> {
         Subscription::batch(vec![match &self.state {
             State::Installer(v) => v.subscription().map(|msg| Message::Install(Box::new(msg))),
+            State::Upgrade(v) => v.subscription().map(Message::Upgrade),
             State::Loader(v) => v.subscription().map(|msg| Message::Load(Box::new(msg))),
             State::App(v) => v.subscription().map(|msg| Message::Run(Box::new(msg))),
             State::Launcher(v) => v.subscription().map(|msg| Message::Launch(Box::new(msg))),
@@ -561,6 +601,7 @@ where
     pub fn view(&self) -> Element<'_, Message<M>> {
         match &self.state {
             State::Installer(v) => v.view().map(|msg| Message::Install(Box::new(msg))),
+            State::Upgrade(v) => v.view().map(Message::Upgrade),
             State::App(v) => v.view().map(|msg| Message::Run(Box::new(msg))),
             State::Launcher(v) => v.view().map(|msg| Message::Launch(Box::new(msg))),
             State::Loader(v) => v.view().map(|msg| Message::Load(Box::new(msg))),
@@ -571,6 +612,7 @@ where
 
     pub fn stop(&mut self) {
         match &mut self.state {
+            State::Upgrade(_) => {}
             State::Loader(s) => s.stop(),
             State::Launcher(s) => s.stop(),
             State::Installer(s) => s.stop(),

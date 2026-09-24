@@ -7,6 +7,7 @@ mod node;
 mod share_xpubs;
 mod wallet_alias;
 
+pub(crate) use node::bitcoind::install_bitcoind;
 pub use node::{
     bitcoind::{DownloadState, InstallState, InternalBitcoindStep, SelectBitcoindTypeStep},
     DefineNode,
