@@ -28,22 +28,24 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const DETACHED_PROCESS: u32 = 0x00000008;
 
 /// Current and previous managed bitcoind versions, in order of descending version.
-pub const VERSIONS: [&str; 7] = ["29.0", "28.0", "27.1", "26.1", "26.0", "25.1", "25.0"];
+pub const VERSIONS: [&str; 8] = [
+    "31.1", "29.0", "28.0", "27.1", "26.1", "26.0", "25.1", "25.0",
+];
 
 /// Current managed bitcoind version for new installations.
 pub const VERSION: &str = VERSIONS[0];
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "5bb824fc86a15318d6a83a1b821ff4cd4b3d3d0e1ec3d162b805ccf7cae6fca8";
+pub const SHA256SUM: &str = "bc506958d0f387c1ea770bdc7c7192a505fa645ff62cabcc7761fa7eb89e867e";
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-pub const SHA256SUM: &str = "34431c582a0399dd42e1276d87d25306cbdde0217f6744bd55a2945986645dda";
+pub const SHA256SUM: &str = "16a097c09fbd7eb78b240ce1dae123663ea2e5e377cfd6a951e71e227e23cf2f";
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "a681e4f6ce524c338a105f214613605bac6c33d58c31dc5135bbc02bc458bb6c";
+pub const SHA256SUM: &str = "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e";
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "4c1780532031129fcacfc0e393c8430b3cea414c9f8c5e0c0c87ebe59a5ada1b";
+pub const SHA256SUM: &str = "c99ef173471c58e6766d9eebd12e6c35349082eeed3939bc99eed58ef57db587";
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
 pub fn download_filename() -> String {
