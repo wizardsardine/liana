@@ -86,19 +86,31 @@ pub fn internal_bitcoind_datadir(liana_datadir: &LianaDirectory) -> PathBuf {
     datadir
 }
 
-/// Internal bitcoind executable path.
-pub fn internal_bitcoind_exe_path(
-    liana_datadir: &LianaDirectory,
-    bitcoind_version: &str,
-) -> PathBuf {
-    internal_bitcoind_directory(liana_datadir)
-        .join(format!("bitcoin-{bitcoind_version}"))
+/// Directory of the given bitcoind version installed in `directory`.
+pub fn bitcoind_version_directory(directory: &Path, bitcoind_version: &str) -> PathBuf {
+    directory.join(format!("bitcoin-{bitcoind_version}"))
+}
+
+/// Executable of the given bitcoind version installed in `directory`.
+pub fn bitcoind_exe_path(directory: &Path, bitcoind_version: &str) -> PathBuf {
+    bitcoind_version_directory(directory, bitcoind_version)
         .join("bin")
         .join(if cfg!(target_os = "windows") {
             "bitcoind.exe"
         } else {
             "bitcoind"
         })
+}
+
+/// Internal bitcoind executable path.
+pub fn internal_bitcoind_exe_path(
+    liana_datadir: &LianaDirectory,
+    bitcoind_version: &str,
+) -> PathBuf {
+    bitcoind_exe_path(
+        &internal_bitcoind_directory(liana_datadir),
+        bitcoind_version,
+    )
 }
 
 /// Executable of the most recent installed version among `versions`, which must be in
