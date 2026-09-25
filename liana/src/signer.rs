@@ -500,30 +500,12 @@ impl FromStr for MnemonicFileName {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::descriptors;
+    use crate::{descriptors, temp_dir::TempDir};
     use miniscript::{
         bitcoin::{locktime::absolute, psbt::Input as PsbtIn, Amount},
         descriptor::{DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, Wildcard},
     };
     use std::collections::{BTreeMap, HashSet};
-
-    static mut COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    fn uid() -> usize {
-        #[allow(static_mut_refs)]
-        unsafe {
-            let uid = COUNTER.load(std::sync::atomic::Ordering::Relaxed);
-            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            uid
-        }
-    }
-    fn tmp_dir() -> path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "lianad-{}-{:?}-{}",
-            std::process::id(),
-            std::thread::current().id(),
-            uid(),
-        ))
-    }
 
     #[test]
     fn hot_signer_gen() {
@@ -558,25 +540,22 @@ mod tests {
     #[test]
     fn hot_signer_storage() {
         let secp = secp256k1::Secp256k1::signing_only();
-        let tmp_dir = tmp_dir();
-        fs::create_dir_all(&tmp_dir).unwrap();
+        let tmp_dir = TempDir::new();
         let network = bitcoin::Network::Bitcoin;
 
         let words_set: HashSet<_> = (0..10)
             .map(|_| {
                 let signer = HotSigner::generate(network).unwrap();
-                signer.store(&tmp_dir, network, &secp, None).unwrap();
+                signer.store(tmp_dir.path(), network, &secp, None).unwrap();
                 signer.words()
             })
             .collect();
-        let words_read: HashSet<_> = HotSigner::from_datadir(&tmp_dir, network)
+        let words_read: HashSet<_> = HotSigner::from_datadir(tmp_dir.path(), network)
             .unwrap()
             .into_iter()
             .map(|signer| signer.words())
             .collect();
         assert_eq!(words_set, words_read);
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
