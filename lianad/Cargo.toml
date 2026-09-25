@@ -52,3 +52,6 @@ jsonrpc = { workspace = true, features = ["minreq_http"], default-features = fal
 
 # import/export labels
 bip329 = { workspace = true }
+
+[dev-dependencies]
+liana = { path = "../liana", features = ["test-utils"] }
