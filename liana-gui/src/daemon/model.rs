@@ -477,6 +477,38 @@ impl HistoryTransaction {
     }
 }
 
+/// Position of the last item of a page of confirmed transactions, used to request the
+/// following page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryCursor {
+    pub time: u32,
+    pub txid: Txid,
+}
+
+impl HistoryCursor {
+    /// `None` if the transaction is not confirmed.
+    pub fn from_tx(tx: &HistoryTransaction) -> Option<Self> {
+        tx.time.map(|time| Self {
+            time,
+            txid: tx.txid,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct HistoryPage {
+    pub txs: Vec<HistoryTransaction>,
+    /// `None` if there is no next page.
+    pub next_cursor: Option<HistoryCursor>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PaymentsPage {
+    pub payments: Vec<Payment>,
+    /// `None` if there is no next page.
+    pub next_cursor: Option<HistoryCursor>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Payment {
     pub label: Option<String>,

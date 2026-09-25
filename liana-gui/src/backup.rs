@@ -25,7 +25,10 @@ use crate::{
         wallet::Wallet,
         Config,
     },
-    daemon::{model::HistoryTransaction, Daemon, DaemonBackend, DaemonError},
+    daemon::{
+        model::{HistoryCursor, HistoryTransaction},
+        Daemon, DaemonBackend, DaemonError,
+    },
     dir::LianaDirectory,
     export::Progress,
     services::connect::client::backend::DEFAULT_LIMIT,
@@ -75,7 +78,6 @@ pub enum Error {
     Json,
     SettingsFromFile,
     Daemon(String),
-    TxTimeMissing,
 }
 
 impl Display for Error {
@@ -86,7 +88,6 @@ impl Display for Error {
             Error::Json => write!(f, "Backup: json error"),
             Error::SettingsFromFile => write!(f, "Backup: fail to parse setting from file"),
             Error::Daemon(e) => write!(f, "Backup daemon error: {e}"),
-            Error::TxTimeMissing => write!(f, "Backup: transaction block height missing"),
         }
     }
 }
@@ -281,63 +282,31 @@ impl Backup {
 async fn get_transactions(
     daemon: &Arc<dyn Daemon + Sync + Send>,
 ) -> Result<Vec<HistoryTransaction>, Error> {
-    let max = match daemon.backend() {
+    let limit = match daemon.backend() {
         DaemonBackend::RemoteBackend => DEFAULT_LIMIT as u64,
         _ => u32::MAX as u64,
     };
 
     // look 2 hour forward
     // https://github.com/bitcoin/bitcoin/blob/62bd61de110b057cbfd6e31e4d0b727d93119c72/src/chain.h#L29
-    let mut end = ((Utc::now() + Duration::hours(2)).timestamp()) as u32;
+    let end = ((Utc::now() + Duration::hours(2)).timestamp()) as u32;
 
     // store txs in a map to avoid duplicates
     let mut map = HashMap::<Txid, HistoryTransaction>::new();
-    let mut limit = max;
+    let mut cursor: Option<HistoryCursor> = None;
 
     loop {
-        let history_txs = daemon.list_history_txs(0, end, limit).await?;
-        // all txs have been fetched
-        if history_txs.is_empty() {
-            return Ok(Vec::new());
+        let (before, before_txid) = match cursor {
+            Some(cursor) => (cursor.time, Some(cursor.txid)),
+            None => (end, None),
+        };
+        let page = daemon.list_history_page(before, before_txid, limit).await?;
+        for tx in page.txs {
+            map.insert(tx.txid, tx);
         }
-
-        if history_txs.len() == limit as usize {
-            let first = if let Some(t) = history_txs.first().expect("checked").time {
-                t
-            } else {
-                return Err(Error::TxTimeMissing);
-            };
-
-            let last = if let Some(t) = history_txs.last().expect("checked").time {
-                t
-            } else {
-                return Err(Error::TxTimeMissing);
-            };
-
-            // limit too low, all tx are in the same timestamp
-            // we must increase limit and retry
-            if first == last {
-                limit += DEFAULT_LIMIT as u64;
-                continue;
-            } else {
-                // add txs to map
-                for tx in history_txs {
-                    let txid = tx.txid;
-                    map.insert(txid, tx);
-                }
-                limit = max;
-                end = first.min(last);
-                continue;
-            }
-        } else
-        /* history_txs.len() < limit */
-        {
-            // add txs to map
-            for tx in history_txs {
-                let txid = tx.txid;
-                map.insert(txid, tx);
-            }
-            break;
+        match page.next_cursor {
+            Some(next) => cursor = Some(next),
+            None => break,
         }
     }
     let vec: Vec<_> = map.into_values().collect();

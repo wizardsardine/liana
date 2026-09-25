@@ -42,7 +42,7 @@ use crate::{
     },
     backup::{self, Backup},
     daemon::{
-        model::{HistoryTransaction, Labelled},
+        model::{HistoryCursor, HistoryTransaction, Labelled},
         Daemon, DaemonBackend, DaemonError,
     },
     dir::{LianaDirectory, NetworkDirectory},
@@ -117,7 +117,6 @@ pub enum Error {
     ChannelLost,
     NoParentDir,
     Daemon(String),
-    TxTimeMissing,
     DaemonMissing,
     ParsePsbt,
     ParseDescriptor,
@@ -144,7 +143,6 @@ impl Display for Error {
             Error::ChannelLost => write!(f, "ImportExport: the channel have been closed"),
             Error::NoParentDir => write!(f, "ImportExport: there is no parent dir"),
             Error::Daemon(e) => write!(f, "ImportExport daemon error: {e}"),
-            Error::TxTimeMissing => write!(f, "ImportExport: transaction block height missing"),
             Error::DaemonMissing => write!(f, "ImportExport: the daemon is missing"),
             Error::ParsePsbt => write!(f, "ImportExport: fail to parse PSBT"),
             Error::ParseDescriptor => write!(f, "ImportExport: fail to parse descriptor"),
@@ -450,7 +448,7 @@ pub async fn export_transactions(
 
     // look 2 hour forward
     // https://github.com/bitcoin/bitcoin/blob/62bd61de110b057cbfd6e31e4d0b727d93119c72/src/chain.h#L29
-    let mut end = ((Utc::now() + Duration::hours(2)).timestamp()) as u32;
+    let end = ((Utc::now() + Duration::hours(2)).timestamp()) as u32;
     let total_txs = daemon
         .list_confirmed_txs(0, end, u32::MAX as u64)
         .await?
@@ -463,61 +461,31 @@ pub async fn export_transactions(
         send_progress!(sender, Progress(5.0));
     }
 
-    let max = match daemon.backend() {
+    let limit = match daemon.backend() {
         DaemonBackend::RemoteBackend => DEFAULT_LIMIT as u64,
         _ => u32::MAX as u64,
     };
 
     // store txs in a map to avoid duplicates
     let mut map = HashMap::<Txid, HistoryTransaction>::new();
-    let mut limit = max;
+    let mut cursor: Option<HistoryCursor> = None;
 
     loop {
-        let history_txs = daemon.list_history_txs(0, end, limit).await?;
-        let dl = map.len() + history_txs.len();
-        if dl > 0 {
-            let progress = (dl as f32) / (total_txs as f32) * 80.0;
+        let (before, before_txid) = match cursor {
+            Some(cursor) => (cursor.time, Some(cursor.txid)),
+            None => (end, None),
+        };
+        let page = daemon.list_history_page(before, before_txid, limit).await?;
+        for tx in page.txs {
+            map.insert(tx.txid, tx);
+        }
+        if !map.is_empty() {
+            let progress = (map.len() as f32) / (total_txs as f32) * 80.0;
             send_progress!(sender, Progress(progress));
         }
-        // all txs have been fetched
-        if history_txs.is_empty() {
-            break;
-        }
-        if history_txs.len() == limit as usize {
-            let first = if let Some(t) = history_txs.first().expect("checked").time {
-                t
-            } else {
-                return Err(Error::TxTimeMissing);
-            };
-            let last = if let Some(t) = history_txs.last().expect("checked").time {
-                t
-            } else {
-                return Err(Error::TxTimeMissing);
-            };
-            // limit too low, all tx are in the same timestamp
-            // we must increase limit and retry
-            if first == last {
-                limit += DEFAULT_LIMIT as u64;
-                continue;
-            } else {
-                // add txs to map
-                for tx in history_txs {
-                    let txid = tx.txid;
-                    map.insert(txid, tx);
-                }
-                limit = max;
-                end = first.min(last);
-                continue;
-            }
-        } else
-        /* history_txs.len() < limit */
-        {
-            // add txs to map
-            for tx in history_txs {
-                let txid = tx.txid;
-                map.insert(txid, tx);
-            }
-            break;
+        match page.next_cursor {
+            Some(next) => cursor = Some(next),
+            None => break,
         }
     }
 

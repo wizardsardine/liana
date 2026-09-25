@@ -32,7 +32,9 @@ use crate::{
 };
 
 use crate::daemon::{
-    model::{CreateSpendResult, HistoryTransaction, LabelItem, Labelled},
+    model::{
+        CreateSpendResult, HistoryCursor, HistoryPage, HistoryTransaction, LabelItem, Labelled,
+    },
     Daemon,
 };
 
@@ -54,6 +56,7 @@ pub struct TransactionsPanel {
     warning: Option<Error>,
     modal: TransactionsModal,
     is_last_page: bool,
+    next_cursor: Option<HistoryCursor>,
     processing: bool,
 }
 
@@ -67,6 +70,7 @@ impl TransactionsPanel {
             warning: None,
             modal: TransactionsModal::None,
             is_last_page: false,
+            next_cursor: None,
             processing: false,
         }
     }
@@ -115,18 +119,21 @@ impl State for TransactionsPanel {
         match message {
             Message::HistoryTransactions(res) => match res {
                 Err(e) => self.warning = Some(e),
-                Ok(txs) => {
+                Ok(page) => {
                     self.warning = None;
-                    self.txs = txs;
-                    self.is_last_page = (self.txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.txs = page.txs;
+                    self.next_cursor = page.next_cursor;
+                    self.is_last_page = page.next_cursor.is_none();
                 }
             },
             Message::HistoryTransactionsExtension(res) => match res {
                 Err(e) => self.warning = Some(e),
-                Ok(txs) => {
+                Ok(page) => {
                     self.processing = false;
                     self.warning = None;
-                    self.is_last_page = (txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.next_cursor = page.next_cursor;
+                    self.is_last_page = page.next_cursor.is_none();
+                    let txs = page.txs;
                     if let Some(tx) = txs.first() {
                         if let Some(position) = self.txs.iter().position(|tx2| tx2.txid == tx.txid)
                         {
@@ -228,40 +235,19 @@ impl State for TransactionsPanel {
                 };
             }
             Message::View(view::Message::Next) => {
-                if let Some(last) = self.txs.last() {
+                if let Some(cursor) = self.next_cursor {
                     let daemon = daemon.clone();
-                    let last_tx_date = last.time.unwrap();
                     self.processing = true;
                     return Task::perform(
                         async move {
-                            let mut limit = HISTORY_EVENT_PAGE_SIZE;
-                            let mut txs =
-                                daemon.list_history_txs(0_u32, last_tx_date, limit).await?;
-
-                            // because gethistory cursor is inclusive and use blocktime
-                            // multiple txs can occur in the same block.
-                            // If there are more txs in the same block than the
-                            // HISTORY_EVENT_PAGE_SIZE they cannot be retrieved by changing
-                            // the cursor value (blocktime) but by increasing the limit.
-                            //
-                            // 1. Check if the txs retrieved have all the same blocktime
-                            let blocktime = if let Some(tx) = txs.first() {
-                                tx.time
-                            } else {
-                                return Ok(txs);
-                            };
-
-                            // 2. Retrieve a larger batch of tx with the same cursor but
-                            //    a larger limit.
-                            while !txs.iter().any(|evt| evt.time != blocktime)
-                                && txs.len() as u64 == limit
-                            {
-                                // increments of the equivalent of one page more.
-                                limit += HISTORY_EVENT_PAGE_SIZE;
-                                txs = daemon.list_history_txs(0, last_tx_date, limit).await?;
-                            }
-                            txs.sort_by(|a, b| a.compare(b));
-                            Ok(txs)
+                            let page = daemon
+                                .list_history_page(
+                                    cursor.time,
+                                    Some(cursor.txid),
+                                    HISTORY_EVENT_PAGE_SIZE,
+                                )
+                                .await?;
+                            Ok(page)
                         },
                         Message::HistoryTransactionsExtension,
                     );
@@ -309,14 +295,16 @@ impl State for TransactionsPanel {
         let now: u32 = now().as_secs().try_into().unwrap();
         Task::batch(vec![Task::perform(
             async move {
-                let mut txs = daemon
-                    .list_history_txs(0, now, HISTORY_EVENT_PAGE_SIZE)
+                let page = daemon
+                    .list_history_page(now, None, HISTORY_EVENT_PAGE_SIZE)
                     .await?;
-                txs.sort_by(|a, b| a.compare(b));
 
-                let mut pending_txs = daemon.list_pending_txs().await?;
-                pending_txs.extend(txs);
-                Ok(pending_txs)
+                let mut txs = daemon.list_pending_txs().await?;
+                txs.extend(page.txs);
+                Ok(HistoryPage {
+                    txs,
+                    next_cursor: page.next_cursor,
+                })
             },
             Message::HistoryTransactions,
         )])
