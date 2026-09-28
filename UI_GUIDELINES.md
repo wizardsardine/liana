@@ -62,6 +62,10 @@ Use these; do not build equivalents.
   `breadcrumb_chevron`, `key_count`, `see_more`. Status enums `Entry*`, `DeviceStatus`.
 - **modal**: `modal_view(title, back, close, width, content)` (and `modal_view_with_theme`); width
   `ModalWidth`.
+- **loading**: `layout(content, warning)` is the daemon loading page. `centered(content, footer)`
+  keeps the content at the vertical center whatever the footer holds, and `progress(label, value,
+  footer)` puts a caption and a progress bar in it. Daemon startup and the Bitcoin Core upgrade
+  both use `progress`, so their bars sit at the same place.
 - **badge**: icon badges, `tile(Tile::..)`, `avatar(initials)`, `coin()`.
 - **combobox**: `combobox`, `editable_combobox`, `email_entry`; `State`, `Tag`.
 - **form**: `Form::new / new_disabled / new_trimmed / new_amount_btc`, `.label`, `.padding`; `Value`;
