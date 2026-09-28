@@ -10,6 +10,7 @@ pub mod form;
 pub mod installer;
 pub mod label;
 pub mod list;
+pub mod loading;
 pub mod modal;
 pub mod notification;
 pub mod panels;

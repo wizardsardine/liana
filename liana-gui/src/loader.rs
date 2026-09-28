@@ -5,15 +5,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::futures::{SinkExt, Stream};
-use iced::stream::channel;
-use iced::{Alignment, Length, Subscription, Task};
+use iced::{
+    futures::{SinkExt, Stream},
+    stream::channel,
+    Alignment, Length, Subscription, Task,
+};
 use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
 
 use liana::miniscript::bitcoin;
 use liana_ui::{
-    component::{button, notification, panels::home::WalletOrigin, text::*},
+    component::{button, loading, notification, panels::home::WalletOrigin, text::*},
     icon, theme,
     widget::*,
 };
@@ -51,6 +53,9 @@ type StartedResult = Result<
     ),
     Error,
 >;
+
+/// Progress bar value while connecting to or starting the daemon, the last step before the app.
+pub const DAEMON_START_PROGRESS: f32 = 0.95;
 
 #[derive(Debug)]
 pub struct Loader {
@@ -464,26 +469,17 @@ pub enum ViewMessage {
 
 pub fn view(step: &Step) -> Element<'_, ViewMessage> {
     match &step {
-        Step::StartingDaemon => cover(
-            None,
-            Column::new()
-                .width(Length::Fill)
-                .push(ProgressBar::new(0.0..=1.0, 0.0).length(Length::Fill))
-                .push(text(t!("loader-starting-daemon"))),
-        ),
-        Step::Connecting => cover(
-            None,
-            Column::new()
-                .width(Length::Fill)
-                .push(ProgressBar::new(0.0..=1.0, 0.0).length(Length::Fill))
-                .push(text(t!("loader-connecting-daemon"))),
-        ),
+        Step::StartingDaemon => {
+            loading::progress(t!("loader-starting-daemon"), DAEMON_START_PROGRESS, None)
+        }
+        Step::Connecting => {
+            loading::progress(t!("loader-connecting-daemon"), DAEMON_START_PROGRESS, None)
+        }
         Step::Syncing {
             progress,
             bitcoind_logs,
             ..
-        } => cover(
-            None,
+        } => loading::layout(
             Column::new()
                 .width(Length::Fill)
                 .spacing(5)
@@ -500,9 +496,9 @@ pub fn view(step: &Step) -> Element<'_, ViewMessage> {
                     t!("loader-sync-progress-1")
                 }))
                 .push(p2_regular(bitcoind_logs).style(theme::text::secondary)),
+            None,
         ),
-        Step::Error(error) => cover(
-            Some((t!("loader-internal-daemon-error"), error)),
+        Step::Error(error) => loading::layout(
             Column::new()
                 .spacing(20)
                 .width(Length::Fill)
@@ -532,23 +528,11 @@ pub fn view(step: &Step) -> Element<'_, ViewMessage> {
                                 .on_press(ViewMessage::Retry),
                         ),
                 ),
+            Some(
+                notification::warning(t!("loader-internal-daemon-error"), error.to_string()).into(),
+            ),
         ),
     }
-}
-
-pub fn cover<'a, T: 'a + Clone, C: Into<Element<'a, T>>>(
-    warn: Option<(String, &Error)>,
-    content: C,
-) -> Element<'a, T> {
-    Column::new()
-        .push_maybe(warn.map(|w| notification::warning(w.0, w.1.to_string())))
-        .push(
-            Container::new(content)
-                .center_x(iced::Length::Fill)
-                .center_y(iced::Length::Fill)
-                .padding(50),
-        )
-        .into()
 }
 
 async fn connect(
