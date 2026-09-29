@@ -622,7 +622,7 @@ pub fn electrum_edit<'a>(
         Column::new()
             .push(text(t!("common-address-label")).bold().small())
             .push(
-                form::Form::new_trimmed("127:0.0.1:50001", addr, |value| {
+                form::Form::new_trimmed("127.0.0.1:50001", addr, |value| {
                     SettingsEditMessage::FieldEdited("address", value)
                 })
                 .warning(t!("settings-valid-address"))
