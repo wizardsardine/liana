@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    convert::TryFrom,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -445,6 +446,8 @@ impl BackendWalletClient {
         } else {
             return Ok(api::ListTransactions {
                 transactions: Vec::new(),
+                next_cursor: None,
+                next_cursor_txid: None,
             });
         }
         self.inner
@@ -459,11 +462,15 @@ impl BackendWalletClient {
     async fn list_wallet_txs(
         &self,
         before: Option<u32>,
+        before_txid: Option<Txid>,
         limit: Option<u64>,
     ) -> Result<api::ListTransactions, DaemonError> {
         let mut query = Vec::<(&str, String)>::new();
         if let Some(before) = before {
             query.push(("before", before.to_string()))
+        }
+        if let Some(before_txid) = before_txid {
+            query.push(("before_txid", before_txid.to_string()))
         }
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()))
@@ -742,7 +749,7 @@ impl Daemon for BackendWalletClient {
         end: u32,
         limit: u64,
     ) -> Result<ListTransactionsResult, DaemonError> {
-        let res = self.list_wallet_txs(Some(end), Some(limit)).await?;
+        let res = self.list_wallet_txs(Some(end), None, Some(limit)).await?;
         Ok(ListTransactionsResult {
             transactions: res
                 .transactions
@@ -1022,13 +1029,35 @@ impl Daemon for BackendWalletClient {
         limit: u64,
     ) -> Result<Vec<HistoryTransaction>, DaemonError> {
         let res = self
-            .list_wallet_txs(Some(end), Some(limit))
+            .list_wallet_txs(Some(end), None, Some(limit))
             .await?
             .transactions
             .into_iter()
             .map(|tx| history_tx_from_api(tx, self.inner.network))
             .collect();
         Ok(res)
+    }
+
+    /// Keyset pagination on (block time, txid): the backend returns only the transactions
+    /// strictly before `(before, before_txid)` and the cursor of the next page, `None` if
+    /// the page is not full.
+    async fn list_history_page(
+        &self,
+        before: u32,
+        before_txid: Option<Txid>,
+        limit: u64,
+    ) -> Result<HistoryPage, DaemonError> {
+        let res = self
+            .list_wallet_txs(Some(before), before_txid, Some(limit))
+            .await?;
+        let next_cursor = history_cursor_from_api(res.next_cursor, res.next_cursor_txid)?;
+        let mut txs: Vec<HistoryTransaction> = res
+            .transactions
+            .into_iter()
+            .map(|tx| history_tx_from_api(tx, self.inner.network))
+            .collect();
+        txs.sort_by(|a, b| a.compare(b));
+        Ok(HistoryPage { txs, next_cursor })
     }
 
     async fn get_history_txs(
@@ -1049,7 +1078,7 @@ impl Daemon for BackendWalletClient {
     }
     async fn list_pending_txs(&self) -> Result<Vec<HistoryTransaction>, DaemonError> {
         let res = self
-            .list_wallet_txs(None, None)
+            .list_wallet_txs(None, None, None)
             .await?
             .transactions
             .into_iter()
@@ -1187,6 +1216,27 @@ impl Daemon for BackendWalletClient {
     }
 }
 
+fn history_cursor_from_api(
+    next_cursor: Option<i64>,
+    next_cursor_txid: Option<String>,
+) -> Result<Option<HistoryCursor>, DaemonError> {
+    match (next_cursor, next_cursor_txid) {
+        (Some(time), Some(txid)) => {
+            let time = u32::try_from(time).map_err(|_| {
+                DaemonError::Unexpected(format!("Invalid next_cursor block time: {time}"))
+            })?;
+            let txid = txid.parse().map_err(|e| {
+                DaemonError::Unexpected(format!("Invalid next_cursor_txid '{txid}': {e}"))
+            })?;
+            Ok(Some(HistoryCursor { time, txid }))
+        }
+        (None, None) => Ok(None),
+        (time, txid) => Err(DaemonError::Unexpected(format!(
+            "Incomplete next cursor: next_cursor={time:?}, next_cursor_txid={txid:?}"
+        ))),
+    }
+}
+
 fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTransaction {
     let mut labels = HashMap::<String, Option<String>>::new();
     let mut coins = Vec::new();
@@ -1295,4 +1345,27 @@ fn spend_tx_from_api(
     );
     tx.load_labels(&labels);
     tx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_cursor_from_api_fields() {
+        let txid = "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b";
+
+        let cursor = history_cursor_from_api(Some(1_700_000_000), Some(txid.to_string()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cursor.time, 1_700_000_000);
+        assert_eq!(cursor.txid.to_string(), txid);
+
+        assert!(history_cursor_from_api(None, None).unwrap().is_none());
+
+        assert!(history_cursor_from_api(Some(1_700_000_000), None).is_err());
+        assert!(history_cursor_from_api(None, Some(txid.to_string())).is_err());
+        assert!(history_cursor_from_api(Some(-1), Some(txid.to_string())).is_err());
+        assert!(history_cursor_from_api(Some(1_700_000_000), Some("nope".to_string())).is_err());
+    }
 }
