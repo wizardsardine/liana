@@ -3,6 +3,17 @@
 # Format: id => "English"
 # Use \n for line breaks
 
+bitcoind-upgrade-hint
+=> "Updating the Liana-managed Bitcoin node to the latest version.";;
+
+bitcoind-upgrade-title => "Upgrading Bitcoin Core to {$version}"
+
+bitcoind-upgrade-verified
+=> "The downloaded binary is verified before it is installed.";;
+
+bitcoind-upgrade-waiting
+=> "Waiting for another wallet to finish the Bitcoin Core upgrade";;
+
 btn-accept => "Accept"
 
 btn-add-key => "Add a key"
@@ -714,6 +725,8 @@ device-unrelated-wallet => "This signing device is not related to this Liana wal
 
 device-version-unsupported
 => "Device version not supported, upgrade to version > {$version}";;
+
+download-stalled => "Download failed, check your internet connection"
 
 duration-days => "{ $count ->\n    [one] 1 day\n   *[other] {$count} days\n}"
 
