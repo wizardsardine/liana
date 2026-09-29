@@ -358,8 +358,10 @@ impl LianaInstaller {
                 // deleted the data_dir/network directory in order to start clean again.
                 warn!("Installation failed. Cleaning up the network directory.");
                 if let Err(e) = Handle::current().block_on(delete::delete_failed_install(
+                    self.context.bitcoin_config.network,
                     &network_directory,
                     &wallet_id,
+                    <Self as Installer<Message>>::backend_type(),
                 )) {
                     error!(
                         "Failed to completely clean the network directory (path: '{}'): {}",

@@ -273,19 +273,37 @@ pub async fn update_connect_cache(
     Ok(tokens_to_return)
 }
 
+/// Keep only the accounts referenced by `user_ids` (stamped rows) or
+/// `legacy_emails` (rows without a user_id). Returns the dropped accounts so
+/// the caller can close their sessions on the server.
 pub async fn filter_connect_cache(
     network_dir: &NetworkDirectory,
     user_ids: &HashSet<String>,
     legacy_emails: &HashSet<String>,
-) -> Result<(), ConnectCacheError> {
+) -> Result<Vec<Account>, ConnectCacheError> {
+    let mut dropped = Vec::new();
     with_locked_cache(network_dir, true, |cache| {
-        cache.accounts.retain(|a| match &a.user_id {
+        dropped = filter_in_memory(cache, user_ids, legacy_emails);
+        true
+    })
+    .await?;
+    Ok(dropped)
+}
+
+/// In-memory retain. Returns the dropped accounts.
+fn filter_in_memory(
+    cache: &mut ConnectCache,
+    user_ids: &HashSet<String>,
+    legacy_emails: &HashSet<String>,
+) -> Vec<Account> {
+    let (kept, dropped): (Vec<Account>, Vec<Account>) = std::mem::take(&mut cache.accounts)
+        .into_iter()
+        .partition(|a| match &a.user_id {
             Some(uid) => user_ids.contains(uid),
             None => legacy_emails.contains(&a.email),
         });
-        true
-    })
-    .await
+    cache.accounts = kept;
+    dropped
 }
 
 /// Stamp the authoritative `user_id` and `email` reported by Liana-Connect onto
@@ -410,6 +428,43 @@ mod tests {
             expires_at,
             refresh_token: format!("refresh-{expires_at}"),
         }
+    }
+
+    #[test]
+    fn filter_returns_dropped_accounts() {
+        let mut cache = ConnectCache {
+            accounts: vec![
+                Account {
+                    user_id: Some("uid-1".to_string()),
+                    email: "a@x".to_string(),
+                    tokens: tok(100),
+                },
+                Account {
+                    user_id: Some("uid-2".to_string()),
+                    email: "b@x".to_string(),
+                    tokens: tok(200),
+                },
+                Account {
+                    user_id: None,
+                    email: "legacy@x".to_string(),
+                    tokens: tok(300),
+                },
+                Account {
+                    user_id: None,
+                    email: "gone@x".to_string(),
+                    tokens: tok(400),
+                },
+            ],
+        };
+        let user_ids = HashSet::from(["uid-1".to_string()]);
+        let legacy_emails = HashSet::from(["legacy@x".to_string()]);
+
+        let dropped = filter_in_memory(&mut cache, &user_ids, &legacy_emails);
+
+        let kept: Vec<&str> = cache.accounts.iter().map(|a| a.email.as_str()).collect();
+        assert_eq!(kept, vec!["a@x", "legacy@x"]);
+        let dropped: Vec<&str> = dropped.iter().map(|a| a.email.as_str()).collect();
+        assert_eq!(dropped, vec!["b@x", "gone@x"]);
     }
 
     #[test]

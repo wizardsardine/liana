@@ -177,4 +177,18 @@ impl AuthClient {
             .await?;
         Ok(response.json().await?)
     }
+
+    /// Close the session bound to `access_token` on the server. A 204 is
+    /// returned both when the session was closed and when it was already
+    /// closed; a 401 means the access token is missing, invalid or expired.
+    pub async fn logout(&self, access_token: &str) -> Result<(), AuthError> {
+        self.request(Method::POST, format!("{}/auth/v1/logout", self.url))
+            .bearer_auth(access_token)
+            .send()
+            .await?
+            .check_success()
+            .await?;
+
+        Ok(())
+    }
 }

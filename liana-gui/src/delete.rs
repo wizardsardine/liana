@@ -6,8 +6,8 @@ use crate::{
     dir::NetworkDirectory,
     services::connect::{
         client::{
-            auth::AuthClient,
-            cache::{self, ConnectCacheError},
+            auth::{AccessTokenResponse, AuthClient, AuthError},
+            cache::{self, Account, ConnectCacheError},
             get_service_config, BackendType,
         },
         login::{connect_with_credentials, BackendState},
@@ -47,9 +47,66 @@ fn ignore_not_found<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>>
     }
 }
 
+/// Best effort: close on the server the sessions of accounts whose cached
+/// credentials were just dropped. Failures are logged and never propagated.
+async fn close_connect_sessions(
+    network: Network,
+    backend_type: BackendType,
+    accounts: Vec<Account>,
+) {
+    if accounts.is_empty() {
+        return;
+    }
+    let config = match get_service_config(network, backend_type).await {
+        Ok(config) => config,
+        Err(e) => {
+            tracing::error!(
+                "Failed to fetch Liana-Connect service config, sessions left open: {e}"
+            );
+            return;
+        }
+    };
+    for account in accounts {
+        let client = AuthClient::new(
+            config.auth_api_url.clone(),
+            config.auth_api_public_key.clone(),
+            account.email,
+            backend_type.user_agent(),
+        );
+        match close_connect_session(&client, &account.tokens).await {
+            Ok(()) => tracing::info!("Closed Liana-Connect session of {}", client.email),
+            Err(e) => tracing::error!(
+                "Failed to close Liana-Connect session of {}: {e}",
+                client.email
+            ),
+        }
+    }
+}
+
+/// Log out with the cached access token, refreshing it first when it is
+/// expired locally or rejected by the server.
+async fn close_connect_session(
+    client: &AuthClient,
+    tokens: &AccessTokenResponse,
+) -> Result<(), AuthError> {
+    if tokens.expires_at >= chrono::Utc::now().timestamp() {
+        match client.logout(&tokens.access_token).await {
+            Err(AuthError {
+                http_status: Some(401),
+                ..
+            }) => {}
+            res => return res,
+        }
+    }
+    let fresh = client.refresh_token(&tokens.refresh_token).await?;
+    client.logout(&fresh.access_token).await
+}
+
 pub async fn delete_failed_install(
+    network: Network,
     network_dir: &NetworkDirectory,
     wallet_id: &settings::WalletId,
+    backend_type: BackendType,
 ) -> Result<(), DeleteError> {
     let lianad_directory = network_dir.lianad_data_directory(wallet_id);
 
@@ -89,9 +146,10 @@ pub async fn delete_failed_install(
     .await
     .map_err(DeleteError::Settings)?;
 
-    cache::filter_connect_cache(network_dir, &remaining_user_ids, &legacy_emails)
+    let dropped = cache::filter_connect_cache(network_dir, &remaining_user_ids, &legacy_emails)
         .await
         .map_err(DeleteError::ConnectCache)?;
+    close_connect_sessions(network, backend_type, dropped).await;
 
     signer::delete_wallet_mnemonics(
         network_dir,
@@ -182,9 +240,10 @@ pub async fn delete_wallet(
     .await
     .map_err(DeleteError::Settings)?;
 
-    cache::filter_connect_cache(network_dir, &remaining_user_ids, &legacy_emails)
+    let dropped = cache::filter_connect_cache(network_dir, &remaining_user_ids, &legacy_emails)
         .await
         .map_err(DeleteError::ConnectCache)?;
+    close_connect_sessions(network, backend_type, dropped).await;
 
     signer::delete_wallet_mnemonics(
         network_dir,
