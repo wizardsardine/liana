@@ -715,6 +715,8 @@ device-unrelated-wallet => "This signing device is not related to this Liana wal
 device-version-unsupported
 => "Device version not supported, upgrade to version > {$version}";;
 
+download-stalled => "Download failed, check your internet connection"
+
 duration-days => "{ $count ->\n    [one] 1 day\n   *[other] {$count} days\n}"
 
 duration-days-approx => "~{$count} days"
