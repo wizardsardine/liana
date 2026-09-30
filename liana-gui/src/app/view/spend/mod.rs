@@ -86,7 +86,7 @@ pub fn spend_view<'a>(
         &tx.change_indexes,
         &tx.labels,
         labels_editing,
-        tx.is_single_payment().is_some(),
+        tx.single_payment().is_some(),
         false,
     );
     let inputs_outputs = column![inputs, outputs].spacing(20);

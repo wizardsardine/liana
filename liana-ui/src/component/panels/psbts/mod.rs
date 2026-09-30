@@ -8,6 +8,7 @@ use iced::{
 use liana::{
     descriptors::{PathInfo, PathSpendInfo},
     spend::SpendStatus,
+    transaction::PaymentKind,
 };
 use liana_i18n::t;
 
@@ -18,7 +19,7 @@ use crate::{
         button, card,
         panels::{
             self,
-            home::payment::{FiatPrice, FiatSource, PaymentKind},
+            home::payment::{kind_icon, FiatPrice, FiatSource},
         },
         pill::{self, PillWidth},
         scrollable,
@@ -128,7 +129,7 @@ pub fn list_entry<'a, M: Clone + 'static>(
     let approximate = fiat_price.is_none_or(|fp| fp.source == FiatSource::Timestamp);
     let tooltip = fiat_price.map(|fp| fp.source.infotip());
     let amount = amount_with_fiat_tooltip(&amount, to_fiat, AmountSize::M, approximate, tooltip);
-    let spent = row![kind.icon(), amount]
+    let spent = row![kind_icon(kind), amount]
         .spacing(HSpacing::S)
         .align_y(Alignment::Center);
 

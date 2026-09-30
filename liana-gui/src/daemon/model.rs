@@ -1,7 +1,10 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
-use liana::descriptors::LianaDescriptor;
+use liana::{
+    descriptors::LianaDescriptor,
+    transaction::{PaymentKind, WalletTransaction},
+};
 pub use liana::{
     descriptors::{LianaPolicy, PartialSpendInfo, PathSpendInfo},
     miniscript::bitcoin::{
@@ -10,8 +13,8 @@ pub use liana::{
         secp256k1, Address, Amount, Network, OutPoint, Transaction, Txid,
     },
     spend::SpendStatus,
+    transaction::TransactionKind,
 };
-use liana_ui::component::panels::home::payment::PaymentKind;
 pub use lianad::commands::{
     CreateSpendResult, GetAddressResult, GetInfoResult, GetLabelsResult, LabelItem, ListCoinsEntry,
     ListCoinsResult, ListRevealedAddressesEntry, ListRevealedAddressesResult, ListSpendEntry,
@@ -42,15 +45,13 @@ pub struct SpendTx {
     pub labels: HashMap<String, String>,
     pub psbt: Psbt,
     pub change_indexes: Vec<usize>,
-    pub spend_amount: Amount,
-    pub fee_amount: Option<Amount>,
+    pub wallet_tx: WalletTransaction,
     /// Maximum possible size of the unsigned transaction after satisfaction
     /// (assuming all inputs are for the same descriptor).
     pub max_vbytes: u64,
     pub status: SpendStatus,
     pub sigs: PartialSpendInfo,
     pub updated_at: Option<u32>,
-    pub kind: TransactionKind,
 }
 
 /// Status of a spend transaction as it can be told from the coins it spends and its signatures,
@@ -148,47 +149,35 @@ impl SpendTx {
             .into_iter()
             .map(|c| c.index())
             .collect();
-        let (change_amount, spend_amount) = psbt.unsigned_tx.output.iter().enumerate().fold(
-            (Amount::from_sat(0), Amount::from_sat(0)),
-            |(change, spend), (i, output)| {
-                if change_indexes.contains(&i) {
-                    (change + output.value, spend)
-                } else {
-                    (change, spend + output.value)
-                }
-            },
-        );
 
         let mut coins_map = HashMap::<OutPoint, Coin>::with_capacity(coins.len());
         for coin in coins {
             coins_map.insert(coin.outpoint, coin);
         }
 
-        let inputs_amount = {
-            let mut inputs_amount = Amount::from_sat(0);
-            for (i, input) in psbt.inputs.iter().enumerate() {
-                if let Some(utxo) = &input.witness_utxo {
-                    inputs_amount += utxo.value;
-                // we try to have it from the coin
-                } else if let Some(coin) = psbt
-                    .unsigned_tx
-                    .input
-                    .get(i)
-                    .and_then(|inpt| coins_map.get(&inpt.previous_output))
-                {
-                    inputs_amount += coin.amount;
-                // Information is missing, it is better to set inputs_amount to None.
-                } else {
-                    inputs_amount = Amount::from_sat(0);
-                    break;
-                }
-            }
-            if inputs_amount.to_sat() == 0 {
-                None
-            } else {
-                Some(inputs_amount)
-            }
-        };
+        let owned_inputs: Vec<liana::transaction::Coin> = psbt
+            .unsigned_tx
+            .input
+            .iter()
+            .zip(&psbt.inputs)
+            .filter_map(|(txin, input)| {
+                let amount = input
+                    .witness_utxo
+                    .as_ref()
+                    .map(|utxo| utxo.value)
+                    .or_else(|| coins_map.get(&txin.previous_output).map(|coin| coin.amount))?;
+                Some(liana::transaction::Coin {
+                    outpoint: txin.previous_output,
+                    amount,
+                })
+            })
+            .collect();
+        let txid = psbt.unsigned_tx.compute_txid();
+        let owned_outputs: Vec<OutPoint> = change_indexes
+            .iter()
+            .map(|index| OutPoint::new(txid, *index as u32))
+            .collect();
+        let wallet_tx = WalletTransaction::new(&psbt.unsigned_tx, &owned_inputs, &owned_outputs);
 
         // A PSBT stored without sanity checks can panic here, see https://github.com/wizardsardine/liana/issues/2300
         let sigs = desc
@@ -197,37 +186,11 @@ impl SpendTx {
 
         Self {
             labels: HashMap::new(),
-            kind: if spend_amount == Amount::from_sat(0) {
-                TransactionKind::SendToSelf
-            } else {
-                let outpoints: Vec<OutPoint> = psbt
-                    .unsigned_tx
-                    .output
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, _)| {
-                        if !change_indexes.contains(&i) {
-                            Some(OutPoint {
-                                txid: psbt.unsigned_tx.compute_txid(),
-                                vout: i as u32,
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if outpoints.len() == 1 {
-                    TransactionKind::OutgoingSinglePayment(outpoints[0])
-                } else {
-                    TransactionKind::OutgoingPaymentBatch(outpoints)
-                }
-            },
             updated_at,
             coins: coins_map,
             psbt,
             change_indexes,
-            spend_amount,
-            fee_amount: inputs_amount.and_then(|a| a.checked_sub(spend_amount + change_amount)),
+            wallet_tx,
             max_vbytes,
             status,
             sigs,
@@ -263,7 +226,7 @@ impl SpendTx {
 
     /// Feerate obtained if all transaction inputs have the maximum satisfaction size.
     pub fn min_feerate_vb(&self) -> Option<u64> {
-        self.fee_amount.map(|a| {
+        self.wallet_tx.fee().map(|a| {
             a.to_sat()
                 .checked_div(self.max_vbytes)
                 .expect("a descriptor's satisfaction size is never 0")
@@ -271,14 +234,14 @@ impl SpendTx {
     }
 
     pub fn is_send_to_self(&self) -> bool {
-        matches!(self.kind, TransactionKind::SendToSelf)
+        self.wallet_tx.kind().is_send_to_self()
     }
 
     /// Amount the transaction moves: what it sends out, or the total of its outputs for a
     /// self-transfer, which sends nothing out.
     pub fn moved_amount(&self) -> Amount {
         if !self.is_send_to_self() {
-            return self.spend_amount;
+            return self.wallet_tx.amount();
         }
         let mut moved = Amount::from_sat(0);
         for output in &self.psbt.unsigned_tx.output {
@@ -287,19 +250,12 @@ impl SpendTx {
         moved
     }
 
-    pub fn is_single_payment(&self) -> Option<OutPoint> {
-        match self.kind {
-            TransactionKind::IncomingSinglePayment(outpoint) => Some(outpoint),
-            TransactionKind::OutgoingSinglePayment(outpoint) => Some(outpoint),
-            _ => None,
-        }
+    pub fn single_payment(&self) -> Option<OutPoint> {
+        self.wallet_tx.kind().single_payment()
     }
 
     pub fn is_batch(&self) -> bool {
-        matches!(
-            self.kind,
-            TransactionKind::IncomingPaymentBatch(_) | TransactionKind::OutgoingPaymentBatch(_)
-        )
+        self.wallet_tx.kind().is_batch()
     }
 }
 
@@ -338,12 +294,9 @@ pub struct HistoryTransaction {
     pub change_indexes: Vec<usize>,
     pub tx: Transaction,
     pub txid: Txid,
-    pub outgoing_amount: Amount,
-    pub incoming_amount: Amount,
-    pub fee_amount: Option<Amount>,
+    pub wallet_tx: WalletTransaction,
     pub height: Option<i32>,
     pub time: Option<u32>,
-    pub kind: TransactionKind,
 }
 
 impl HistoryTransaction {
@@ -355,76 +308,29 @@ impl HistoryTransaction {
         change_indexes: Vec<usize>,
         network: Network,
     ) -> Self {
-        let (incoming_amount, outgoing_amount) = tx.output.iter().enumerate().fold(
-            (Amount::from_sat(0), Amount::from_sat(0)),
-            |(change, spend), (i, output)| {
-                if change_indexes.contains(&i) {
-                    (change + output.value, spend)
-                } else {
-                    (change, spend + output.value)
-                }
-            },
-        );
-
-        let kind = if coins.is_empty() {
-            if change_indexes.len() == 1 {
-                TransactionKind::IncomingSinglePayment(OutPoint {
-                    txid: tx.compute_txid(),
-                    vout: change_indexes[0] as u32,
-                })
-            } else {
-                TransactionKind::IncomingPaymentBatch(
-                    change_indexes
-                        .iter()
-                        .map(|i| OutPoint {
-                            txid: tx.compute_txid(),
-                            vout: *i as u32,
-                        })
-                        .collect(),
-                )
-            }
-        } else if outgoing_amount == Amount::from_sat(0) {
-            TransactionKind::SendToSelf
-        } else {
-            let outpoints: Vec<OutPoint> = tx
-                .output
-                .iter()
-                .enumerate()
-                .filter_map(|(i, _)| {
-                    if !change_indexes.contains(&i) {
-                        Some(OutPoint {
-                            txid: tx.compute_txid(),
-                            vout: i as u32,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if outpoints.len() == 1 {
-                TransactionKind::OutgoingSinglePayment(outpoints[0])
-            } else {
-                TransactionKind::OutgoingPaymentBatch(outpoints)
-            }
-        };
-
-        let mut inputs_amount = Amount::from_sat(0);
         let mut coins_map = HashMap::<OutPoint, Coin>::with_capacity(coins.len());
         for coin in coins {
-            inputs_amount += coin.amount;
             coins_map.insert(coin.outpoint, coin);
         }
 
+        let owned_inputs: Vec<liana::transaction::Coin> = coins_map
+            .values()
+            .map(liana::transaction::Coin::from)
+            .collect();
+        let txid = tx.compute_txid();
+        let owned_outpoints: Vec<OutPoint> = change_indexes
+            .iter()
+            .map(|index| OutPoint::new(txid, *index as u32))
+            .collect();
+        let wallet_tx = WalletTransaction::new(&tx, &owned_inputs, &owned_outpoints);
+
         Self {
             labels: HashMap::new(),
-            kind,
-            txid: tx.compute_txid(),
+            txid,
             tx,
             coins: coins_map,
             change_indexes,
-            outgoing_amount,
-            incoming_amount,
-            fee_amount: inputs_amount.checked_sub(outgoing_amount + incoming_amount),
+            wallet_tx,
             height,
             time,
             network,
@@ -443,37 +349,20 @@ impl HistoryTransaction {
         }
     }
 
-    pub fn is_external(&self) -> bool {
-        matches!(
-            self.kind,
-            TransactionKind::IncomingSinglePayment(_) | TransactionKind::IncomingPaymentBatch(_)
-        )
-    }
-
-    pub fn is_outgoing(&self) -> bool {
-        matches!(
-            self.kind,
-            TransactionKind::OutgoingPaymentBatch(_) | TransactionKind::OutgoingSinglePayment(_)
-        )
+    pub fn is_incoming(&self) -> bool {
+        self.wallet_tx.is_incoming()
     }
 
     pub fn is_send_to_self(&self) -> bool {
-        matches!(self.kind, TransactionKind::SendToSelf)
+        self.wallet_tx.kind().is_send_to_self()
     }
 
-    pub fn is_single_payment(&self) -> Option<OutPoint> {
-        match self.kind {
-            TransactionKind::IncomingSinglePayment(outpoint) => Some(outpoint),
-            TransactionKind::OutgoingSinglePayment(outpoint) => Some(outpoint),
-            _ => None,
-        }
+    pub fn single_payment(&self) -> Option<OutPoint> {
+        self.wallet_tx.kind().single_payment()
     }
 
     pub fn is_batch(&self) -> bool {
-        matches!(
-            self.kind,
-            TransactionKind::IncomingPaymentBatch(_) | TransactionKind::OutgoingPaymentBatch(_)
-        )
+        self.wallet_tx.kind().is_batch()
     }
 }
 
@@ -530,12 +419,12 @@ pub fn payments_from_tx(history_tx: HistoryTransaction) -> Vec<Payment> {
         .iter()
         .enumerate()
         .fold(Vec::new(), |mut array, (output_index, output)| {
-            if history_tx.is_external() && !history_tx.change_indexes.contains(&output_index) {
-                return array;
-            }
             let outpoint = OutPoint {
                 txid: history_tx.tx.compute_txid(),
                 vout: output_index as u32,
+            };
+            let Some(kind) = history_tx.wallet_tx.payment_kind(&outpoint) else {
+                return array;
             };
             let label = history_tx.labels.get(&outpoint.to_string()).cloned();
             let address = Address::from_script(&output.script_pubkey, history_tx.network)
@@ -551,28 +440,10 @@ pub fn payments_from_tx(history_tx: HistoryTransaction) -> Vec<Payment> {
                 outpoint,
                 time,
                 amount: output.value,
-                kind: if history_tx.is_send_to_self()
-                    || (history_tx.is_outgoing()
-                        && history_tx.change_indexes.contains(&output_index))
-                {
-                    PaymentKind::SendToSelf
-                } else if history_tx.is_external() {
-                    PaymentKind::Incoming
-                } else {
-                    PaymentKind::Outgoing
-                },
+                kind,
             });
             array
         })
-}
-
-#[derive(Debug, Clone)]
-pub enum TransactionKind {
-    IncomingSinglePayment(OutPoint),
-    IncomingPaymentBatch(Vec<OutPoint>),
-    SendToSelf,
-    OutgoingSinglePayment(OutPoint),
-    OutgoingPaymentBatch(Vec<OutPoint>),
 }
 
 impl Labelled for HistoryTransaction {

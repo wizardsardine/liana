@@ -21,6 +21,7 @@ use liana::{
         self, create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes,
         SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
     },
+    transaction,
 };
 
 use utils::{
@@ -1484,6 +1485,15 @@ pub struct ListCoinsEntry {
     /// this same wallet. If the coin is unconfirmed, it also means that all its
     /// unconfirmed ancestors, if any, are also from self.
     pub is_from_self: bool,
+}
+
+impl From<&ListCoinsEntry> for transaction::Coin {
+    fn from(coin: &ListCoinsEntry) -> Self {
+        Self {
+            outpoint: coin.outpoint,
+            amount: coin.amount,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
