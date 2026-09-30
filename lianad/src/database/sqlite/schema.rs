@@ -1,5 +1,5 @@
 use bip329::Label;
-use liana::descriptors::LianaDescriptor;
+use liana::{descriptors::LianaDescriptor, label};
 
 use std::{convert::TryFrom, str::FromStr};
 
@@ -59,6 +59,10 @@ CREATE TABLE wallets (
  * The `is_from_self` field indicates if the coin is the output of a transaction whose
  * inputs are all from the same wallet as the coin. For an unconfirmed coin, this also
  * means that all unconfirmed ancestors, if any, are from self.
+ *
+ * The `default_label_kind` and `default_label` fields are the default label snapshotted
+ * when the coin is first seen. The kind is none (0), from the funding transactions (1) or
+ * from the receiving address (2). Both are NULL until computed.
  */
 CREATE TABLE coins (
     id INTEGER PRIMARY KEY NOT NULL,
@@ -75,6 +79,8 @@ CREATE TABLE coins (
     spend_block_time INTEGER,
     is_immature BOOLEAN NOT NULL CHECK (is_immature IN (0,1)),
     is_from_self BOOLEAN NOT NULL DEFAULT 0 CHECK (is_from_self IN (0,1)),
+    default_label_kind INTEGER CHECK (default_label_kind IN (0,1,2)),
+    default_label TEXT,
     UNIQUE (txid, vout),
     FOREIGN KEY (wallet_id) REFERENCES wallets (id)
         ON UPDATE RESTRICT
@@ -96,14 +102,20 @@ CREATE TABLE addresses (
     derivation_index INTEGER NOT NULL UNIQUE
 );
 
-/* Transactions for all wallets. */
+/* Transactions for all wallets.
+ *
+ * The `default_label_kind` and `default_label` fields are the default label snapshotted
+ * when the transaction is first seen, encoded as in the coins table.
+ */
 CREATE TABLE transactions (
     id INTEGER PRIMARY KEY NOT NULL,
     txid BLOB UNIQUE NOT NULL,
     tx BLOB UNIQUE NOT NULL,
     num_inputs INTEGER CHECK (num_inputs IS NULL OR num_inputs > 0),
     num_outputs INTEGER CHECK (num_outputs IS NULL OR num_outputs > 0),
-    is_coinbase BOOLEAN NOT NULL DEFAULT 0 CHECK (is_coinbase IN (0,1))
+    is_coinbase BOOLEAN NOT NULL DEFAULT 0 CHECK (is_coinbase IN (0,1)),
+    default_label_kind INTEGER CHECK (default_label_kind IN (0,1,2)),
+    default_label TEXT
 );
 
 /* Transactions we created that spend some of our coins. */
@@ -203,7 +215,46 @@ pub struct DbBlockInfo {
     pub time: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i64)]
+pub enum DbDefaultLabelKind {
+    None = 0,
+    From = 1,
+    Address = 2,
+}
+
+impl From<i64> for DbDefaultLabelKind {
+    fn from(value: i64) -> Self {
+        match value {
+            0 => Self::None,
+            1 => Self::From,
+            2 => Self::Address,
+            _ => panic!("Insane database: invalid default label kind {}", value),
+        }
+    }
+}
+
+pub fn default_label_columns(default_label: &label::Label) -> (DbDefaultLabelKind, Option<&str>) {
+    match default_label {
+        label::Label::None => (DbDefaultLabelKind::None, None),
+        label::Label::From(text) => (DbDefaultLabelKind::From, Some(text)),
+        label::Label::Address(text) => (DbDefaultLabelKind::Address, Some(text)),
+        label::Label::Own(_) => panic!("An own label is never a default label"),
+    }
+}
+
+/// The default label stored in the `default_label_kind` and `default_label` columns, if computed.
+fn default_label_from_columns(kind: Option<i64>, text: Option<String>) -> Option<label::Label> {
+    let default_label = match (DbDefaultLabelKind::from(kind?), text) {
+        (DbDefaultLabelKind::None, None) => label::Label::None,
+        (DbDefaultLabelKind::From, Some(text)) => label::Label::From(text),
+        (DbDefaultLabelKind::Address, Some(text)) => label::Label::Address(text),
+        _ => panic!("Insane database: invalid default label"),
+    };
+    Some(default_label)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DbCoin {
     pub id: i64,
     pub wallet_id: i64,
@@ -222,6 +273,8 @@ pub struct DbCoin {
     /// be from self, as otherwise they will depend on an unconfirmed
     /// external transaction.
     pub is_from_self: bool,
+    /// `None` until computed.
+    pub default_label: Option<label::Label>,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
@@ -262,6 +315,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
 
         let is_immature: bool = row.get(12)?;
         let is_from_self: bool = row.get(13)?;
+        let default_label = default_label_from_columns(row.get(14)?, row.get(15)?);
 
         Ok(DbCoin {
             id,
@@ -275,6 +329,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
             spend_txid,
             spend_block,
             is_from_self,
+            default_label,
         })
     }
 }
@@ -433,6 +488,8 @@ impl TryFrom<&rusqlite::Row<'_>> for DbLabel {
 pub struct DbWalletTransaction {
     pub transaction: bitcoin::Transaction,
     pub block_info: Option<DbBlockInfo>,
+    /// `None` until computed.
+    pub default_label: Option<label::Label>,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbWalletTransaction {
@@ -449,10 +506,12 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWalletTransaction {
             height,
             time: block_time.expect("Must be there if height is"),
         });
+        let default_label = default_label_from_columns(row.get(3)?, row.get(4)?);
 
         Ok(DbWalletTransaction {
             transaction,
             block_info,
+            default_label,
         })
     }
 }

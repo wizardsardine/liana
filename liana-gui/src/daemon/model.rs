@@ -505,8 +505,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use liana::miniscript::bitcoin::{
-        absolute, bip32::ChildNumber, transaction, ScriptBuf, Sequence, TxIn, Witness,
+    use liana::{
+        label::Label,
+        miniscript::bitcoin::{
+            absolute, bip32::ChildNumber, transaction, ScriptBuf, Sequence, TxIn, Witness,
+        },
     };
     use lianad::commands::LCSpendInfo;
     use std::str::FromStr;
@@ -527,6 +530,7 @@ mod tests {
             is_immature: false,
             is_change: false,
             is_from_self: false,
+            default_label: Label::None,
             spend_info,
         }
     }
