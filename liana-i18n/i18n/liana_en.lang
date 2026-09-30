@@ -127,7 +127,7 @@ btn-retry => "Retry"
 
 btn-save => "Save"
 
-btn-see-transaction-details => "See transaction details"
+btn-see-more-details => "See more details"
 
 btn-select => "Select"
 
@@ -1409,12 +1409,6 @@ network-this-is-a => "THIS IS A{ \" \" }"
 network-wallet => "{$network} WALLET"
 
 payment-address-label => "address label: {$label}"
-
-payment-incoming => "Incoming payment"
-
-payment-outgoing => "Outgoing payment"
-
-payment-title => "Payment"
 
 pill-active => "Active"
 
