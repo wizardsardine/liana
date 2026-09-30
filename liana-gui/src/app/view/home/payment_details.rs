@@ -23,9 +23,13 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{dashboard, label, message::Message},
+        view::{
+            dashboard,
+            label::{self, LabelSize},
+            message::Message,
+        },
     },
-    daemon::model::HistoryTransaction,
+    daemon::model::{HistoryTransaction, Payment},
     t,
 };
 
@@ -55,19 +59,23 @@ pub fn payment_details_view<'a>(
     } else {
         vec![outpoint.clone()]
     };
-    let payment_label = if let Some(label) = labels_editing.get(&outpoint) {
-        label::label_editing(labelled, label, size)
-    } else {
-        label::label_editable(labelled, tx.labels.get(&outpoint), size)
-    };
+    let payment_label = label::label_field(
+        labelled,
+        labels_editing.get(&outpoint),
+        Payment::from_tx_output(tx, output_index)
+            .map(|payment| payment.label())
+            .unwrap_or_default(),
+        LabelSize::Title,
+    );
     let amount = amount_with_font(&tx.tx.output[output_index].value, spec);
     let tx_title = legacy::h3(t!("transactions-transaction"));
     let tx_label = tx.is_batch().then(|| {
-        if let Some(label) = labels_editing.get(&txid) {
-            label::label_editing(vec![txid.clone()], label, size)
-        } else {
-            label::label_editable(vec![txid.clone()], tx.labels.get(&txid), size)
-        }
+        label::label_field(
+            vec![txid.clone()],
+            labels_editing.get(&txid),
+            tx.label(),
+            LabelSize::Title,
+        )
     });
     let fee = tx.wallet_tx.fee().map(|fee_amount| {
         row![
