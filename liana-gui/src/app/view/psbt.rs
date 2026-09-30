@@ -34,7 +34,12 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{dashboard, label, message::*, warning::warn},
+        view::{
+            dashboard,
+            label::{self, LabelSize},
+            message::*,
+            warning::warn,
+        },
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
@@ -42,8 +47,6 @@ use crate::{
     view::hw::{device_list_entry, HwRowMode},
 };
 
-const LABEL_TITLE_SIZE: u32 = 24;
-const LABEL_BODY_SIZE: u32 = 16;
 /// Indent of the conflicting transactions listed under the broadcast warning.
 const CONFLICT_INDENT: [u16; 2] = [0 /* Top/Bottom */, 30 /* Left/Right */];
 
@@ -238,14 +241,14 @@ pub fn spend_header<'a>(
         let outpoint = outpoint.to_string();
         let labelled = vec![outpoint.clone(), txid.clone()];
         if let Some(label) = labels_editing.get(&outpoint) {
-            label::label_editing(labelled, label, LABEL_TITLE_SIZE)
+            label::label_editing(labelled, label)
         } else {
-            label::label_editable(labelled, tx.labels.get(&outpoint), LABEL_TITLE_SIZE)
+            label::label_editable(labelled, tx.labels.get(&outpoint), LabelSize::Title)
         }
     } else if let Some(label) = labels_editing.get(&txid) {
-        label::label_editing(vec![txid.clone()], label, LABEL_TITLE_SIZE)
+        label::label_editing(vec![txid.clone()], label)
     } else {
-        label::label_editable(vec![txid.clone()], tx.labels.get(&txid), LABEL_TITLE_SIZE)
+        label::label_editable(vec![txid.clone()], tx.labels.get(&txid), LabelSize::Title)
     };
 
     psbts::spend_header(
@@ -402,12 +405,12 @@ fn input_view<'a>(
     let outpoint = outpoint.to_string();
 
     let label_widget = if let Some(label) = labels_editing.get(&outpoint) {
-        label::label_editing(vec![outpoint.clone()], label, LABEL_BODY_SIZE)
+        label::label_editing(vec![outpoint.clone()], label)
     } else {
         label::label_editable(
             vec![outpoint.clone()],
             labels.get(&outpoint),
-            LABEL_BODY_SIZE,
+            LabelSize::Body,
         )
     };
 
@@ -456,12 +459,12 @@ fn payment_view<'a>(
 
     let label_widget = if is_editable {
         if let Some(label) = labels_editing.get(&outpoint) {
-            label::label_editing(change_labels, label, LABEL_BODY_SIZE)
+            label::label_editing(change_labels, label)
         } else {
-            label::label_editable(change_labels, labels.get(&outpoint), LABEL_BODY_SIZE)
+            label::label_editable(change_labels, labels.get(&outpoint), LabelSize::Body)
         }
     } else {
-        label::label_non_editable(change_labels, None, LABEL_BODY_SIZE)
+        label::label_non_editable(change_labels, None, LabelSize::Body)
     };
 
     let address_label = addr

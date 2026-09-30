@@ -22,6 +22,7 @@ text_roles! {
     h2_semi,                H2_SEMI_SPEC,               font::MANROPE_SEMIBOLD, 22;
     h3,                     H3_SPEC,                    font::MANROPE_MEDIUM,   20;
     h3_semi,                H3_SEMI_SPEC,               font::MANROPE_SEMIBOLD, 20;
+    b0,                     B0_SPEC,                    font::REGULAR,          32;
     b1,                     B1_SPEC,                    font::REGULAR,          24;
     b1_bold,                B1_BOLD_SPEC,               font::BOLD,             24;
     b2,                     B2_SPEC,                    font::REGULAR,          22;
