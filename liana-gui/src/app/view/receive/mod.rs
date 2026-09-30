@@ -14,7 +14,7 @@ use iced::{
 use liana::miniscript::bitcoin;
 
 use liana_ui::{
-    component::{button, form, list, panels::receive, text::new},
+    component::{button, form, panels::receive, text::new},
     widget::*,
 };
 
@@ -72,8 +72,8 @@ pub fn receive<'a>(
         )
     });
 
-    let see_more =
-        (!is_last_page && show_prev_addresses).then_some(list::see_more(processing, Message::Next));
+    let see_more = (!is_last_page && show_prev_addresses)
+        .then(|| button::btn_see_more(processing, Message::Next));
 
     let top = column![header, description].spacing(20);
     let body = column![prev_header, cards, see_more].spacing(20);
