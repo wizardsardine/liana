@@ -76,7 +76,7 @@ pub fn psbt_view<'a>(
         &tx.change_indexes,
         &tx.labels,
         labels_editing,
-        tx.is_single_payment().is_some(),
+        tx.single_payment().is_some(),
         false,
     );
 
@@ -234,7 +234,7 @@ pub fn spend_header<'a>(
 ) -> Element<'a, Message> {
     let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
 
-    let label = if let Some(outpoint) = tx.is_single_payment() {
+    let label = if let Some(outpoint) = tx.single_payment() {
         let outpoint = outpoint.to_string();
         let labelled = vec![outpoint.clone(), txid.clone()];
         if let Some(label) = labels_editing.get(&outpoint) {
@@ -251,8 +251,8 @@ pub fn spend_header<'a>(
     psbts::spend_header(
         label,
         tx.is_send_to_self(),
-        tx.spend_amount,
-        tx.fee_amount,
+        tx.wallet_tx.amount(),
+        tx.wallet_tx.fee(),
         tx.min_feerate_vb(),
     )
 }
