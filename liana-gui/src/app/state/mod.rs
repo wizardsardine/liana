@@ -202,6 +202,7 @@ impl State for Home {
                 *output_index,
                 self.labels_edited.cache(),
                 self.warning.as_ref(),
+                converter,
             )
         } else {
             view::dashboard(
