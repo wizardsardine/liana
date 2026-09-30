@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     convert::TryFrom,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -1236,7 +1236,7 @@ fn transaction_info_from_api(value: api::Transaction) -> TransactionInfo {
         tx: value.raw,
         height: value.block_height,
         time: value.confirmed_at.map(|t| t as u32),
-        default_label: Label::None,
+        default_label: value.default_label,
     }
 }
 
@@ -1254,7 +1254,7 @@ fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTran
             }
         }
     }
-    let mut changes_indexes = Vec::new();
+    let mut owned_outputs = BTreeMap::new();
     let txid = value.raw.compute_txid().to_string();
     for (index, output) in value.outputs.iter().enumerate() {
         labels.insert(format!("{txid}:{index}"), output.label.clone());
@@ -1262,7 +1262,7 @@ fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTran
             labels.insert(address.to_string(), output.address_label.clone());
         }
         if output.kind == UTXOKind::Deposit || output.kind == UTXOKind::Change {
-            changes_indexes.push(index);
+            owned_outputs.insert(index, output.default_label.clone());
         }
     }
     labels.insert(txid, value.label);
@@ -1271,8 +1271,9 @@ fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTran
         value.block_height,
         value.confirmed_at.map(|t| t as u32),
         coins,
-        changes_indexes,
+        owned_outputs,
         network,
+        value.default_label,
     );
     tx.load_labels(&labels);
     tx
