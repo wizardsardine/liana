@@ -82,7 +82,6 @@ pub struct FiatPrice {
 #[derive(Debug, Clone)]
 pub struct UIPayment {
     pub label: Option<String>,
-    pub address_label: Option<String>,
     pub kind: PaymentKind,
     pub time: Option<chrono::DateTime<chrono::Utc>>,
     pub amount: bitcoin::Amount,
@@ -97,33 +96,22 @@ pub fn format_date(time: chrono::DateTime<chrono::Utc>) -> String {
 pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment, msg: Option<M>) -> Element<'a, M> {
     let UIPayment {
         label,
-        address_label,
         kind,
         time,
         amount,
         fiat_price,
     } = payment;
-    let label: Element<'a, M> = match (label, address_label) {
-        (None, None) => h2(t!("common-no-label-parenthesized"))
+    let label: Element<'a, M> = match label {
+        None => h2(t!("common-no-label-parenthesized"))
             .style(theme::text::primary)
             .into(),
-        (Some(label), _) => {
+        Some(label) => {
             if label.chars().count() > MAX_LABEL_LENGTH {
                 let short = truncate(&label, MAX_LABEL_LENGTH);
                 let short = h2(short).style(theme::text::primary);
                 tooltip_custom(h2(label), short, Position::Top).into()
             } else {
                 h2(label).style(theme::text::primary).into()
-            }
-        }
-        (None, Some(label)) => {
-            let inherited = t!("payment-address-label", label = label);
-            if inherited.chars().count() > MAX_LABEL_LENGTH {
-                let short = truncate(&inherited, MAX_LABEL_LENGTH);
-                let short = h2(short).style(theme::text::primary);
-                tooltip_custom(h2(label), short, Position::Top).into()
-            } else {
-                h2(inherited).style(theme::text::primary).into()
             }
         }
     };

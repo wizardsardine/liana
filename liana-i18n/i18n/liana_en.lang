@@ -61,8 +61,6 @@ btn-edit => "Edit"
 
 btn-edit-keys => "Edit keys"
 
-btn-edit-label => "Edit label"
-
 btn-email-wizardsardine => "Email WS"
 
 btn-export => "Export"
@@ -1295,9 +1293,13 @@ label-edit => "Edit label"
 
 label-external-output => "(External Output)"
 
+label-from => "from: {$label}"
+
 label-invalid-length => "Invalid label length, must be 80 bytes or less"
 
 label-label => "Label"
+
+label-to => "to: {$label}"
 
 launcher-add-existing-wallet => "Add an existing Liana wallet"
 

@@ -20,7 +20,7 @@ use liana_ui::{
 use crate::{
     app::{
         menu::{self, Menu},
-        view::{coins, message::Message, FiatAmountConverter},
+        view::{coins, label, message::Message, FiatAmountConverter},
         wallet::SyncStatus,
     },
     daemon::model::Payment,
@@ -87,8 +87,7 @@ pub fn home_view<'a>(
         if event.kind != PaymentKind::SendToSelf {
             col.push(payment_card(
                 UIPayment {
-                    label: event.label.clone(),
-                    address_label: event.address_label.clone(),
+                    label: event.label().text(label::prefixed),
                     kind: event.kind,
                     time: event.time,
                     amount: event.amount,
