@@ -1,5 +1,5 @@
 use bip329::Label;
-use liana::descriptors::LianaDescriptor;
+use liana::{descriptors::LianaDescriptor, label};
 
 use std::{convert::TryFrom, str::FromStr};
 
@@ -122,6 +122,19 @@ CREATE TABLE labels (
     item TEXT UNIQUE NOT NULL,
     value TEXT NOT NULL
 );
+
+/* Default labels of coins (vout set) and transactions (vout NULL), snapshotted when first seen.
+ * The kind is none (0), from its transaction (1), from the receiving address (2), from the
+ * funding transactions (3) or from the payment (4). The value is NULL for none.
+ */
+CREATE TABLE default_labels (
+    id INTEGER PRIMARY KEY NOT NULL,
+    txid BLOB NOT NULL,
+    vout INTEGER,
+    kind INTEGER NOT NULL CHECK (kind IN (0,1,2,3,4)),
+    value TEXT
+);
+CREATE UNIQUE INDEX default_labels_item ON default_labels (txid, IFNULL(vout, -1));
 ";
 
 /// A row in the "tip" table.
@@ -203,7 +216,57 @@ pub struct DbBlockInfo {
     pub time: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i64)]
+pub enum DbDefaultLabelKind {
+    None = 0,
+    Transaction = 1,
+    Address = 2,
+    Funding = 3,
+    Payment = 4,
+}
+
+impl From<i64> for DbDefaultLabelKind {
+    fn from(value: i64) -> Self {
+        match value {
+            0 => Self::None,
+            1 => Self::Transaction,
+            2 => Self::Address,
+            3 => Self::Funding,
+            4 => Self::Payment,
+            _ => panic!("Insane database: invalid default label kind {}", value),
+        }
+    }
+}
+
+/// The `default_labels` kind and value storing `default_label`, `None` if it is not a default label.
+pub fn default_label_columns(
+    default_label: &label::Label,
+) -> Option<(DbDefaultLabelKind, Option<&str>)> {
+    match default_label {
+        label::Label::None => Some((DbDefaultLabelKind::None, None)),
+        label::Label::Transaction(text) => Some((DbDefaultLabelKind::Transaction, Some(text))),
+        label::Label::Address(text) => Some((DbDefaultLabelKind::Address, Some(text))),
+        label::Label::Funding(text) => Some((DbDefaultLabelKind::Funding, Some(text))),
+        label::Label::Payment(text) => Some((DbDefaultLabelKind::Payment, Some(text))),
+        label::Label::Own(_) => None,
+    }
+}
+
+/// The default label stored as a `default_labels` kind and value, if computed.
+fn default_label_from_columns(kind: Option<i64>, text: Option<String>) -> Option<label::Label> {
+    let default_label = match (DbDefaultLabelKind::from(kind?), text) {
+        (DbDefaultLabelKind::None, None) => label::Label::None,
+        (DbDefaultLabelKind::Transaction, Some(text)) => label::Label::Transaction(text),
+        (DbDefaultLabelKind::Address, Some(text)) => label::Label::Address(text),
+        (DbDefaultLabelKind::Funding, Some(text)) => label::Label::Funding(text),
+        (DbDefaultLabelKind::Payment, Some(text)) => label::Label::Payment(text),
+        _ => panic!("Insane database: invalid default label"),
+    };
+    Some(default_label)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DbCoin {
     pub id: i64,
     pub wallet_id: i64,
@@ -222,6 +285,8 @@ pub struct DbCoin {
     /// be from self, as otherwise they will depend on an unconfirmed
     /// external transaction.
     pub is_from_self: bool,
+    /// `None` until computed.
+    pub default_label: Option<label::Label>,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
@@ -262,6 +327,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
 
         let is_immature: bool = row.get(12)?;
         let is_from_self: bool = row.get(13)?;
+        let default_label = default_label_from_columns(row.get(14)?, row.get(15)?);
 
         Ok(DbCoin {
             id,
@@ -275,6 +341,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
             spend_txid,
             spend_block,
             is_from_self,
+            default_label,
         })
     }
 }
@@ -433,6 +500,8 @@ impl TryFrom<&rusqlite::Row<'_>> for DbLabel {
 pub struct DbWalletTransaction {
     pub transaction: bitcoin::Transaction,
     pub block_info: Option<DbBlockInfo>,
+    /// `None` until computed.
+    pub default_label: Option<label::Label>,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbWalletTransaction {
@@ -449,10 +518,12 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWalletTransaction {
             height,
             time: block_time.expect("Must be there if height is"),
         });
+        let default_label = default_label_from_columns(row.get(3)?, row.get(4)?);
 
         Ok(DbWalletTransaction {
             transaction,
             block_info,
+            default_label,
         })
     }
 }

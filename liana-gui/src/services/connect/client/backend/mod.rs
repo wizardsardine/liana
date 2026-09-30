@@ -10,6 +10,7 @@ use std::{
 use async_trait::async_trait;
 use liana::{
     descriptors::LianaDescriptor,
+    label::Label,
     miniscript::bitcoin::{
         address, bip32::ChildNumber, psbt::Psbt, Address, Network, OutPoint, Txid,
     },
@@ -708,23 +709,7 @@ impl Daemon for BackendWalletClient {
             self.list_wallet_coins(statuses, outpoints).await?.coins
         };
         Ok(ListCoinsResult {
-            coins: coins
-                .into_iter()
-                .map(|c| ListCoinsEntry {
-                    address: c.address,
-                    amount: c.amount,
-                    derivation_index: c.derivation_index,
-                    outpoint: c.outpoint,
-                    block_height: c.block_height,
-                    is_immature: c.is_immature,
-                    is_change: c.is_change_address,
-                    spend_info: c.spend_info.map(|info| LCSpendInfo {
-                        txid: info.txid,
-                        height: info.height,
-                    }),
-                    is_from_self: c.is_from_self,
-                })
-                .collect(),
+            coins: coins.into_iter().map(coin_from_api).collect(),
         })
     }
 
@@ -753,11 +738,7 @@ impl Daemon for BackendWalletClient {
             transactions: res
                 .transactions
                 .into_iter()
-                .map(|tx| TransactionInfo {
-                    tx: tx.raw,
-                    height: tx.block_height,
-                    time: tx.confirmed_at.map(|t| t as u32),
-                })
+                .map(transaction_info_from_api)
                 .collect(),
         })
     }
@@ -772,11 +753,7 @@ impl Daemon for BackendWalletClient {
         Ok(ListTransactionsResult {
             transactions: transactions
                 .into_iter()
-                .map(|tx| TransactionInfo {
-                    tx: tx.raw,
-                    height: tx.block_height,
-                    time: tx.confirmed_at.map(|t| t as u32),
-                })
+                .map(transaction_info_from_api)
                 .collect(),
         })
     }
@@ -1236,6 +1213,33 @@ fn history_cursor_from_api(
     }
 }
 
+fn coin_from_api(value: api::Coin) -> ListCoinsEntry {
+    ListCoinsEntry {
+        address: value.address,
+        amount: value.amount,
+        derivation_index: value.derivation_index,
+        outpoint: value.outpoint,
+        block_height: value.block_height,
+        is_immature: value.is_immature,
+        is_change: value.is_change_address,
+        spend_info: value.spend_info.map(|info| LCSpendInfo {
+            txid: info.txid,
+            height: info.height,
+        }),
+        is_from_self: value.is_from_self,
+        default_label: Label::None,
+    }
+}
+
+fn transaction_info_from_api(value: api::Transaction) -> TransactionInfo {
+    TransactionInfo {
+        tx: value.raw,
+        height: value.block_height,
+        time: value.confirmed_at.map(|t| t as u32),
+        default_label: Label::None,
+    }
+}
+
 fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTransaction {
     let mut labels = HashMap::<String, Option<String>>::new();
     let mut coins = Vec::new();
@@ -1246,20 +1250,7 @@ fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTran
         );
         if input.kind == UTXOKind::Deposit || input.kind == UTXOKind::Change {
             if let Some(c) = &input.coin {
-                coins.push(ListCoinsEntry {
-                    address: c.address.clone(),
-                    amount: c.amount,
-                    derivation_index: c.derivation_index,
-                    outpoint: c.outpoint,
-                    block_height: c.block_height,
-                    is_immature: c.is_immature,
-                    is_change: c.is_change_address,
-                    spend_info: c.spend_info.clone().map(|info| LCSpendInfo {
-                        txid: info.txid,
-                        height: info.height,
-                    }),
-                    is_from_self: c.is_from_self,
-                });
+                coins.push(coin_from_api(c.clone()));
             }
         }
     }
@@ -1303,20 +1294,7 @@ fn spend_tx_from_api(
         );
         if input.kind == UTXOKind::Deposit || input.kind == UTXOKind::Change {
             if let Some(c) = &input.coin {
-                coins.push(ListCoinsEntry {
-                    address: c.address.clone(),
-                    amount: c.amount,
-                    derivation_index: c.derivation_index,
-                    outpoint: c.outpoint,
-                    block_height: c.block_height,
-                    is_immature: c.is_immature,
-                    is_change: c.is_change_address,
-                    spend_info: c.spend_info.clone().map(|info| LCSpendInfo {
-                        txid: info.txid,
-                        height: info.height,
-                    }),
-                    is_from_self: c.is_from_self,
-                });
+                coins.push(coin_from_api(c.clone()));
             }
         }
     }

@@ -452,7 +452,7 @@ impl From<Home> for Box<dyn State> {
 mod tests {
     use super::*;
     use crate::daemon::model::Coin;
-    use liana::miniscript::bitcoin;
+    use liana::{label::Label, miniscript::bitcoin};
     use lianad::commands::LCSpendInfo;
     use std::str::FromStr;
     #[tokio::test]
@@ -486,6 +486,7 @@ mod tests {
             is_immature: false,
             is_change: false,
             is_from_self: false,
+            default_label: Label::None,
             spend_info: Some(LCSpendInfo {
                 txid: dummy_txid,
                 height: None,
@@ -506,6 +507,7 @@ mod tests {
             is_immature: false,
             is_change: true,
             is_from_self: false,
+            default_label: Label::None,
             spend_info: None,
         });
         // Included in unconfirmed balance. Other values remain the same.
@@ -523,6 +525,7 @@ mod tests {
             is_immature: false,
             is_change: false,
             is_from_self: true,
+            default_label: Label::None,
             spend_info: None,
         });
         // Included in confirmed balance. Other values remain the same.
@@ -545,6 +548,7 @@ mod tests {
             is_immature: false,
             is_change: false,
             is_from_self: false,
+            default_label: Label::None,
             spend_info: None,
         });
         // Coin is added to confirmed balance. Not expiring, but remaining seq is set.
@@ -580,6 +584,7 @@ mod tests {
             is_immature: false,
             is_change: false,
             is_from_self: false,
+            default_label: Label::None,
             spend_info: None,
         });
         // Only confirmed balance has changed.
@@ -602,6 +607,7 @@ mod tests {
             is_immature: false,
             is_change: false,
             is_from_self: false,
+            default_label: Label::None,
             spend_info: None,
         });
         // Confirmed balance updated, as well as expiring coins and the remaining seq.

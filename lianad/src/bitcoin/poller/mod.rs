@@ -1,4 +1,4 @@
-mod looper;
+pub mod looper;
 
 use crate::{bitcoin::BitcoinInterface, database::DatabaseInterface};
 use liana::descriptors;

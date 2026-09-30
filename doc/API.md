@@ -205,6 +205,7 @@ A coin may have one of the following four statuses:
 | `is_immature`      | bool          | Whether this coin was created by a coinbase transaction that is still immature.                                    |
 | `is_change`        | bool          | Whether the coin deposit address was derived from the change descriptor.                                           |
 | `is_from_self`     | bool          | Whether the coin and all its unconfirmed ancestors, if any, are outputs of transactions from this wallet.          |
+| `default_label`    | str or object | Fallback label of the coin, set when first seen. See [Default label](#default-label).                              |
 
 
 ##### Spending transaction info
@@ -213,6 +214,17 @@ A coin may have one of the following four statuses:
 | ---------- | ----------- | -------------------------------------------------------------- |
 | `txid`     | str         | Spending transaction's id.                                     |
 | `height`   | int or null | Block height the spending tx was included at, if confirmed.    |
+
+##### Default label
+
+The label a coin or a transaction falls back to, computed once when it is first seen. Later label
+updates do not change it.
+
+| Value                 | Description                                                         |
+| --------------------- | ------------------------------------------------------------------- |
+| `"none"`              | No default label.                                                   |
+| `{"from": "..."}`     | Label passed on by the transactions funding it.                     |
+| `{"address": "..."}`  | Label of the address receiving it.                                  |
 
 
 ### `createspend`
@@ -416,11 +428,12 @@ Confirmation time is based on the timestamp of blocks.
 
 ##### Transaction Resource
 
-| Field    | Type          | Description                                                               |
-| -------- | ------------- | ------------------------------------------------------------------------- |
-| `height` | int or `null` | Block height of the transaction, `null` if the transaction is unconfirmed |
-| `time`   | int or `null` | Block time of the transaction, `null` if the transaction is unconfirmed   |
-| `tx`     | string        | hex encoded bitcoin transaction                                           |
+| Field           | Type          | Description                                                                                  |
+| --------------- | ------------- | -------------------------------------------------------------------------------------------- |
+| `height`        | int or `null` | Block height of the transaction, `null` if the transaction is unconfirmed                    |
+| `time`          | int or `null` | Block time of the transaction, `null` if the transaction is unconfirmed                      |
+| `tx`            | string        | hex encoded bitcoin transaction                                                              |
+| `default_label` | str or object | Fallback label of the transaction, set when first seen. See [Default label](#default-label). |
 
 ### `listtransactions`
 
