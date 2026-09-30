@@ -19,7 +19,8 @@ use crate::{
         error::Error,
         menu::Menu,
         view::{
-            dashboard, label,
+            dashboard,
+            label::{self, LabelSize},
             message::{CreateRbfMessage, Message},
             warning::warn,
         },
@@ -299,18 +300,18 @@ pub fn tx_view<'a>(
                 // the label of the transaction is attached to the label of the payment outpoint
                 let outpoint = outpoint.to_string();
                 if let Some(label) = labels_editing.get(&outpoint) {
-                    label::label_editing(vec![outpoint.clone(), txid.clone()], label, H3_SIZE)
+                    label::label_editing(vec![outpoint.clone(), txid.clone()], label)
                 } else {
                     label::label_editable(
                         vec![outpoint.clone(), txid.clone()],
                         tx.labels.get(&outpoint),
-                        H3_SIZE,
+                        LabelSize::Title,
                     )
                 }
             } else if let Some(label) = labels_editing.get(&txid) {
-                label::label_editing(vec![txid.clone()], label, H3_SIZE)
+                label::label_editing(vec![txid.clone()], label)
             } else {
-                label::label_editable(vec![txid.clone()], tx.labels.get(&txid), H1_SIZE)
+                label::label_editable(vec![txid.clone()], tx.labels.get(&txid), LabelSize::Display)
             })
             .push(
                 Column::new().spacing(20).push(

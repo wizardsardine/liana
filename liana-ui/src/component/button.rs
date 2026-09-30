@@ -1026,15 +1026,6 @@ pub fn btn_add_payment<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     )
 }
 
-pub fn btn_add_label<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(
-        Some(icon::edit_icon()),
-        t!("btn-edit-label"),
-        BtnWidth::L,
-        msg,
-    )
-}
-
 pub fn btn_delete_wallet<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     destructive(None, t!("btn-delete-wallet"))
         .width(Length::Fixed(200.0))
