@@ -1,21 +1,21 @@
-use chrono::{DateTime, Local, Utc};
 use std::{collections::HashMap, vec};
 
 use iced::{
-    widget::{column, row, Container, Space},
-    Alignment, Length,
+    widget::{column, row},
+    Alignment,
 };
 
-use liana::miniscript::bitcoin;
+use liana::miniscript::bitcoin::{self, Amount};
 use liana_ui::{
     component::{
-        amount::amount_with_font,
-        button::{self, btn_see_transaction_details},
-        card, form,
-        text::{legacy, Text},
+        amount::{amount_with_fiat_tooltip, AmountSize, FiatAmount},
+        button::btn_see_transaction_details,
+        form,
+        panels::{fees_row, home::payment::kind_icon, transactions},
+        section,
     },
-    theme,
-    widget::{Element, SpaceExt},
+    spacing::{HSpacing, VSpacing},
+    widget::Element,
 };
 
 use crate::{
@@ -42,8 +42,6 @@ pub fn payment_details_view<'a>(
 ) -> Element<'a, Message> {
     let txid = tx.txid.to_string();
     let outpoint = bitcoin::OutPoint::new(tx.txid, output_index as u32).to_string();
-    let size = legacy::H3_SIZE;
-    let spec = legacy::H3_SPEC;
     let title = if tx.wallet_tx.is_outgoing() {
         t!("payment-outgoing")
     } else if tx.wallet_tx.is_incoming() {
@@ -51,90 +49,47 @@ pub fn payment_details_view<'a>(
     } else {
         t!("payment-title")
     };
-    let title = Container::new(legacy::h3(title)).width(Length::Fill);
-    // if the payment is a payment of a single payment transaction then
-    // the label of the transaction is attached to the label of the payment outpoint
-    let labelled = if tx.single_payment().is_some() {
-        vec![outpoint.clone(), txid.clone()]
-    } else {
-        vec![outpoint.clone()]
-    };
+    let title = transactions::title(title, tx.time.is_some());
+    let payment = Payment::from_tx_output(tx, output_index);
     let payment_label = label::label_field(
-        labelled,
+        vec![outpoint.clone()],
         labels_editing.get(&outpoint),
-        Payment::from_tx_output(tx, output_index)
+        payment
+            .as_ref()
             .map(|payment| payment.label())
             .unwrap_or_default(),
         LabelSize::Title,
     );
-    let amount = amount_with_font(&tx.tx.output[output_index].value, spec);
-    let tx_title = Container::new(legacy::h3(t!("transactions-transaction"))).width(Length::Fill);
-    let tx_label = tx.is_batch().then(|| {
-        label::label_field(
-            vec![txid.clone()],
-            labels_editing.get(&txid),
-            tx.label(),
-            LabelSize::Title,
-        )
-    });
-    let fee = tx
-        .wallet_tx
-        .fee()
-        .zip(tx.feerate())
-        .map(|(fee_amount, feerate)| {
-            row![
-                legacy::h3(t!("transactions-miner-fee")).style(theme::text::secondary),
-                amount_with_font(&fee_amount, spec),
-                legacy::text(" ").size(size),
-                legacy::text(t!("common-feerate-value", rate = feerate))
-                    .size(legacy::H4_SIZE)
-                    .style(theme::text::secondary)
-            ]
-            .align_y(Alignment::Center)
-        });
-    let date = tx.time.map(|t| {
-        DateTime::<Utc>::from_timestamp(t as i64, 0)
-            .unwrap()
-            .with_timezone(&Local)
-            .format("%b. %d, %Y - %T")
-    });
-    let date = date.map(|date| {
-        row![
-            Container::new(legacy::text(t!("transactions-date")).bold()).width(Length::Fill),
-            Container::new(legacy::text(format!("{date}"))).width(Length::Shrink)
-        ]
-        .width(Length::Fill)
-    });
-    let txid_row = row![
-        Container::new(legacy::text(t!("transactions-txid")).bold()).width(Length::Fill),
-        row![
-            Container::new(legacy::text(txid.clone()).small()),
-            button::btn_copy(Some(Message::Clipboard(txid.clone())))
-        ]
-        .align_y(Alignment::Center)
-        .width(Length::Shrink)
-    ]
-    .width(Length::Fill)
-    .align_y(Alignment::Center);
-    let overview = card::simple(column![date, txid_row].spacing(5));
+    let amount = tx.tx.output[output_index].value;
+    let amount = amount_with_fiat_tooltip(
+        &amount,
+        None::<fn(Amount) -> FiatAmount>,
+        AmountSize::L,
+        true,
+        None,
+    );
+    let kind = payment.map(|payment| kind_icon(payment.kind));
+    let amount = row![kind, amount]
+        .spacing(HSpacing::S)
+        .align_y(Alignment::Center);
+    let tx_section = section(t!("transactions-transaction"));
+    let feerate = tx
+        .feerate()
+        .map(|rate| t!("common-feerate-value", rate = rate));
+    let fee = tx.wallet_tx.fee().map(|fee| fees_row(Some(fee), feerate));
     let see_details =
         btn_see_transaction_details(Message::Menu(Menu::TransactionPreSelected(tx.txid)));
+    let overview = transactions::overview(
+        tx.time,
+        txid.clone(),
+        Message::Clipboard(txid),
+        Some(see_details.into()),
+    );
 
     dashboard(
         &Menu::Home,
         cache,
         warning,
-        column![
-            title,
-            payment_label,
-            amount,
-            Space::with_height(size),
-            tx_title,
-            tx_label,
-            fee,
-            overview,
-            see_details
-        ]
-        .spacing(20),
+        column![title, payment_label, amount, tx_section, fee, overview].spacing(VSpacing::L),
     )
 }
