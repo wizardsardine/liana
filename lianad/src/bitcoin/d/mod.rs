@@ -229,6 +229,10 @@ macro_rules! params {
     };
 }
 
+fn encode_rpc_path(path: &str) -> String {
+    path.replace(' ', "%20")
+}
+
 impl BitcoinD {
     /// Create a new bitcoind interface. This tests the connection to bitcoind and disables retries
     /// on failure to send a request.
@@ -237,7 +241,11 @@ impl BitcoinD {
         watchonly_wallet_path: String,
     ) -> Result<BitcoinD, BitcoindError> {
         let node_url = format!("http://{}", config.addr);
-        let watchonly_url = format!("http://{}/wallet/{}", config.addr, watchonly_wallet_path);
+        let watchonly_url = format!(
+            "http://{}/wallet/{}",
+            config.addr,
+            encode_rpc_path(&watchonly_wallet_path)
+        );
 
         let builder = match &config.rpc_auth {
             config::BitcoindRpcAuth::CookieFile(cookie_path) => {
@@ -1611,6 +1619,16 @@ mod tests {
         assert_eq!(
             SyncProgress::new(1.0, 999998, 999999).rounded_up_progress(),
             0.9999
+        );
+    }
+
+    #[test]
+    fn test_encode_rpc_path_spaces() {
+        assert_eq!(
+            encode_rpc_path(
+                "/Users/satoshi/Library/Application Support/Liana/bitcoin/data/42/lianad_wallet"
+            ),
+            "/Users/satoshi/Library/Application%20Support/Liana/bitcoin/data/42/lianad_wallet"
         );
     }
 
