@@ -550,12 +550,18 @@ pub async fn export_transactions(
             label = format!("\"{label}\"");
         }
         let txid = tx.txid.to_string();
-        let fee = tx.fee_amount.unwrap_or(Amount::ZERO).to_sat() as i128;
+        let fee = tx.wallet_tx.fee().unwrap_or(Amount::ZERO).to_sat() as i128;
         let mut inputs_amount = 0;
         tx.coins.iter().for_each(|(_, coin)| {
             inputs_amount += coin.amount.to_sat() as i128;
         });
-        let value = tx.incoming_amount.to_sat() as i128 - inputs_amount;
+        let incoming_amount: Amount = tx
+            .wallet_tx
+            .owned_outputs
+            .iter()
+            .map(|coin| coin.amount)
+            .sum();
+        let value = incoming_amount.to_sat() as i128 - inputs_amount;
         let value = value as f64 / 100_000_000.0;
         let fee = fee as f64 / 100_000_000.0;
         let block = tx.height.map(|h| h.to_string()).unwrap_or("".to_string());

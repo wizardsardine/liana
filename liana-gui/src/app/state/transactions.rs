@@ -176,7 +176,7 @@ impl State for TransactionsPanel {
             }
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::New(is_cancel))) => {
                 if let Some(tx) = &self.selected_tx {
-                    if tx.fee_amount.is_some() {
+                    if tx.wallet_tx.fee().is_some() {
                         let tx = tx.clone();
                         let outpoints: Vec<_> = (0..tx.tx.output.len())
                             .map(|vout| {
@@ -371,7 +371,8 @@ impl CreateRbfModal {
         descendant_txids: HashSet<Txid>,
     ) -> Self {
         let prev_feerate_vb = tx
-            .fee_amount
+            .wallet_tx
+            .fee()
             .expect("rbf should only be used on a transaction with fee amount set")
             .to_sat()
             .checked_div(tx.tx.vsize().try_into().expect("vsize must fit in u64"))

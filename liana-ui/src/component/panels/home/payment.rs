@@ -2,6 +2,7 @@ use iced::{
     widget::{column, row, tooltip::Position, Space},
     Alignment,
 };
+use liana::transaction::PaymentKind;
 use liana_i18n::t;
 
 use crate::{
@@ -25,22 +26,11 @@ const ICON_SIZE: u32 = 16;
 const PAYMENT_HEIGHT: u32 = 90;
 const MAX_LABEL_LENGTH: usize = 30;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PaymentKind {
-    Outgoing,
-    Incoming,
-    /// A payment to self, which could be either from a self-transfer
-    /// or a change output from an outgoing transaction.
-    SendToSelf,
-}
-
-impl PaymentKind {
-    pub fn icon<'a, M: 'a>(&self) -> Element<'a, M> {
-        match self {
-            PaymentKind::Outgoing => minus(),
-            PaymentKind::Incoming => plus(),
-            PaymentKind::SendToSelf => refresh(),
-        }
+pub fn kind_icon<'a, M: 'a>(kind: PaymentKind) -> Element<'a, M> {
+    match kind {
+        PaymentKind::Outgoing => minus(),
+        PaymentKind::Incoming => plus(),
+        PaymentKind::SendToSelf => refresh(),
     }
 }
 
@@ -146,7 +136,7 @@ pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment, msg: Option<M>) -> El
         pill::unconfirmed_compact().into()
     };
 
-    let icon = kind.icon();
+    let icon = kind_icon(kind);
     let to_fiat = fiat_price.map(|fp| move |_: bitcoin::Amount| fp.amount);
     let approximate = fiat_price.is_none_or(|fp| fp.source == FiatSource::Timestamp);
     let tooltip = fiat_price.map(|fp| fp.source.infotip());
