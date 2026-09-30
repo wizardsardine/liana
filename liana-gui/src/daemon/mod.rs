@@ -2,7 +2,7 @@ pub mod client;
 pub mod embedded;
 pub mod model;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::TryInto;
 use std::fmt::Debug;
 use std::io::ErrorKind;
@@ -313,30 +313,7 @@ pub trait Daemon: Debug {
         let coins = self.list_coins(&[], &outpoints).await?.coins;
         let mut txs = txs
             .into_iter()
-            .map(|tx| {
-                let mut tx_coins = Vec::new();
-                let mut change_indexes = Vec::new();
-                for coin in &coins {
-                    if coin.outpoint.txid == tx.tx.compute_txid() {
-                        change_indexes.push(coin.outpoint.vout as usize)
-                    } else if tx
-                        .tx
-                        .input
-                        .iter()
-                        .any(|input| input.previous_output == coin.outpoint)
-                    {
-                        tx_coins.push(coin.clone());
-                    }
-                }
-                model::HistoryTransaction::new(
-                    tx.tx,
-                    tx.height,
-                    tx.time,
-                    tx_coins,
-                    change_indexes,
-                    info.network,
-                )
-            })
+            .map(|tx| history_tx(tx, &coins, info.network))
             .collect();
         load_labels(self, &mut txs).await?;
         Ok(txs)
@@ -391,30 +368,7 @@ pub trait Daemon: Debug {
         let txs = self.list_txs(&txids).await?.transactions;
         let mut txs = txs
             .into_iter()
-            .map(|tx| {
-                let mut tx_coins = Vec::new();
-                let mut change_indexes = Vec::new();
-                for coin in &coins {
-                    if coin.outpoint.txid == tx.tx.compute_txid() {
-                        change_indexes.push(coin.outpoint.vout as usize)
-                    } else if tx
-                        .tx
-                        .input
-                        .iter()
-                        .any(|input| input.previous_output == coin.outpoint)
-                    {
-                        tx_coins.push(coin.clone());
-                    }
-                }
-                model::HistoryTransaction::new(
-                    tx.tx,
-                    tx.height,
-                    tx.time,
-                    tx_coins,
-                    change_indexes,
-                    info.network,
-                )
-            })
+            .map(|tx| history_tx(tx, &coins, info.network))
             .collect();
 
         load_labels(self, &mut txs).await?;
@@ -460,6 +414,37 @@ pub trait Daemon: Debug {
     ) -> Result<(), DaemonError> {
         Ok(())
     }
+}
+
+fn history_tx(
+    tx: TransactionInfo,
+    coins: &[model::Coin],
+    network: Network,
+) -> model::HistoryTransaction {
+    let txid = tx.tx.compute_txid();
+    let mut tx_coins = Vec::new();
+    let mut owned_outputs = BTreeMap::new();
+    for coin in coins {
+        if coin.outpoint.txid == txid {
+            owned_outputs.insert(coin.outpoint.vout as usize, coin.default_label.clone());
+        } else if tx
+            .tx
+            .input
+            .iter()
+            .any(|input| input.previous_output == coin.outpoint)
+        {
+            tx_coins.push(coin.clone());
+        }
+    }
+    model::HistoryTransaction::new(
+        tx.tx,
+        tx.height,
+        tx.time,
+        tx_coins,
+        owned_outputs,
+        network,
+        tx.default_label,
+    )
 }
 
 async fn load_labels<T: model::Labelled + model::LabelsLoader, D: Daemon + ?Sized>(
