@@ -3217,6 +3217,7 @@ name = "liana"
 version = "15.0.0"
 dependencies = [
  "bdk_coin_select",
+ "bip329",
  "bip39",
  "getrandom 0.3.1",
  "log",
