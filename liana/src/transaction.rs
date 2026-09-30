@@ -226,7 +226,7 @@ fn outpoints(coins: &[Coin]) -> Vec<OutPoint> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::str::FromStr;
 
     use super::*;
@@ -236,19 +236,19 @@ mod tests {
         Transaction, TxIn, TxOut, Txid, Witness,
     };
 
-    const OUTPUT_AMOUNT: Amount = Amount::from_sat(10_000);
+    pub const OUTPUT_AMOUNT: Amount = Amount::from_sat(10_000);
 
-    fn address(index: u8) -> Address {
+    pub fn address(index: u8) -> Address {
         Address::p2wsh(&ScriptBuf::from_bytes(vec![index]), Network::Bitcoin)
     }
 
-    fn foreign_outpoint(index: u8) -> OutPoint {
+    pub fn foreign_outpoint(index: u8) -> OutPoint {
         let txid = Txid::from_str(&format!("{index:0>64x}")).unwrap();
         OutPoint::new(txid, 0)
     }
 
     /// A transaction spending `inputs` to one output of `OUTPUT_AMOUNT` per address index.
-    fn transaction(inputs: &[OutPoint], outputs: &[u8]) -> Transaction {
+    pub fn transaction(inputs: &[OutPoint], outputs: &[u8]) -> Transaction {
         Transaction {
             version: Version::TWO,
             lock_time: absolute::LockTime::ZERO,
