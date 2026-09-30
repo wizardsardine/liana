@@ -55,12 +55,12 @@ impl ImportDescriptorModal {
 
     pub fn update(&mut self, msg: installer::Message) -> Task<installer::Message> {
         match msg {
-            installer::Message::ImportExport(ImportExportMessage::Progress(Progress::Xpub(
-                xpub,
+            installer::Message::ImportExport(ImportExportMessage::Progress(Progress::Xpubs(
+                xpubs,
             ))) => {
                 if let ImportDescriptorModal::Decrypt(modal) = self {
                     let _ = modal.update(Decrypt::CloseModal);
-                    return modal.update(Decrypt::Xpub(xpub));
+                    return modal.update(Decrypt::Xpubs(xpubs));
                 }
             }
             installer::Message::ImportExport(m) => {
@@ -79,6 +79,7 @@ impl ImportDescriptorModal {
                     match msg {
                         Decrypt::Fetched(_, _)
                         | Decrypt::Xpub(_)
+                        | Decrypt::Xpubs(_)
                         | Decrypt::XpubError(_)
                         | Decrypt::Mnemonic(_)
                         | Decrypt::MnemonicStatus(_, _)

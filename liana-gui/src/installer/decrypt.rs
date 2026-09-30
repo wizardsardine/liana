@@ -104,6 +104,7 @@ pub enum Decrypt {
     Fetched(Fingerprint, String /* name */),
     Backup(Backup),
     Xpub(String),
+    Xpubs(Vec<bip32::Xpub>),
     PasteXpub,
     SelectXpub,
     XpubError(DecryptWarning),
@@ -270,6 +271,7 @@ impl DecryptModal {
                 Task::none()
             }
             Decrypt::Xpub(value) => self.update_xpub(value),
+            Decrypt::Xpubs(xpubs) => self.update_xpubs(xpubs),
             Decrypt::SelectXpub => {
                 self.focus = Focus::Xpub;
                 self.import_xpub_error = None;
@@ -300,7 +302,7 @@ impl DecryptModal {
             Decrypt::SelectImportXpub => {
                 self.focus = Focus::ImportXpub;
                 self.import_xpub_error = None;
-                let modal = ExportModal::new(None, ImportExportType::ImportXpub(self.network));
+                let modal = ExportModal::new(None, ImportExportType::ImportXpubs(self.network));
                 let launch = modal.launch(false);
                 self.modal = Some(modal);
                 launch
@@ -450,6 +452,18 @@ impl DecryptModal {
             self.xpub.valid = false;
             Task::none()
         }
+    }
+    fn update_xpubs(&self, xpubs: Vec<bip32::Xpub>) -> Task<installer::Message> {
+        let bytes = self.bytes.clone();
+        Task::perform(
+            async move {
+                xpubs
+                    .iter()
+                    .find_map(|xpub| decrypt_descriptor_with_pk(&bytes, xpub.public_key))
+                    .unwrap_or(Decrypt::XpubError(DecryptWarning::XpubCannotDecrypt))
+            },
+            |m| m.into(),
+        )
     }
     fn update_xpub_error(&mut self, error: DecryptWarning) {
         self.xpub.warning = Some(error.message());
