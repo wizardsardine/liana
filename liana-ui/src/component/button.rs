@@ -831,13 +831,8 @@ pub fn btn_register_on_device<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     )
 }
 
-pub fn btn_see_transaction_details<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
-    btn_tertiary(
-        None,
-        t!("btn-see-transaction-details"),
-        BtnWidth::XL,
-        Some(msg),
-    )
+pub fn btn_see_more_details<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
+    btn_tertiary(None, t!("btn-see-more-details"), BtnWidth::XL, Some(msg))
 }
 
 pub fn btn_export<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
