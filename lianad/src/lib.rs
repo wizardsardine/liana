@@ -294,7 +294,7 @@ fn setup_electrum(
     let txs: Vec<_> = db_conn
         .list_wallet_transactions(&txids)
         .into_iter()
-        .map(|(tx, _, _)| tx)
+        .map(|wtx| wtx.tx)
         .collect();
     let (receive_index, change_index) = (db_conn.receive_index(), db_conn.change_index());
     let genesis_hash = {
