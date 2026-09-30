@@ -20,13 +20,14 @@ use crate::{
     app::{
         cache::Cache,
         menu::Menu,
-        view::{label, message::Message},
+        view::{
+            label::{self, LabelSize},
+            message::Message,
+        },
     },
     daemon::model::{remaining_sequence, Coin},
     t,
 };
-
-const LABEL_BODY_SIZE: u32 = 16;
 
 pub fn coins_view<'a>(
     cache: &Cache,
@@ -107,12 +108,12 @@ fn coin_list_view<'a>(
 
     let details = {
         let label_editor = if let Some(label) = labels_editing.get(&outpoint) {
-            label::label_editing(vec![outpoint.clone()], label, LABEL_BODY_SIZE)
+            label::label_editing(vec![outpoint.clone()], label)
         } else {
             label::label_editable(
                 vec![outpoint.clone()],
                 labels.get(&outpoint),
-                LABEL_BODY_SIZE,
+                LabelSize::Body,
             )
         };
         let label_editor = Container::new(label_editor).width(Length::Fill);
