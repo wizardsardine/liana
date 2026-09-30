@@ -7,7 +7,7 @@ pub mod sqlite;
 use crate::{
     bitcoin::BlockChainTip,
     database::sqlite::{
-        schema::{DbBlockInfo, DbCoin, DbTip},
+        schema::{DbBlockInfo, DbCoin, DbTip, DbWalletTransaction},
         SqliteConn, SqliteDb,
     },
 };
@@ -19,6 +19,7 @@ use std::{
 };
 
 use bip329::Labels;
+use liana::label::Label;
 pub use liana::label::LabelItem;
 use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1};
 
@@ -122,6 +123,13 @@ pub trait DatabaseConnection {
         outpoints: &[bitcoin::OutPoint],
     ) -> HashMap<bitcoin::OutPoint, Coin>;
 
+    /// Get our coins as [`DatabaseConnection::coins`] does, along with their default label.
+    fn coins_with_default_label(
+        &mut self,
+        statuses: &[CoinStatus],
+        outpoints: &[bitcoin::OutPoint],
+    ) -> HashMap<bitcoin::OutPoint, CoinWithDefaultLabel>;
+
     /// List coins that are being spent and whose spending transaction is still unconfirmed.
     fn list_spending_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
 
@@ -185,11 +193,20 @@ pub trait DatabaseConnection {
     /// update whether the coin is from self or not.
     fn update_coins_from_self(&mut self, prev_tip_height: i32);
 
-    /// Retrieve a list of transactions and their corresponding block heights and times.
-    fn list_wallet_transactions(
+    /// Retrieve a list of transactions and their corresponding block heights, times and default
+    /// labels.
+    fn list_wallet_transactions(&mut self, txids: &[bitcoin::Txid]) -> Vec<WalletTransaction>;
+
+    fn list_txs_without_default_label(&mut self) -> Vec<bitcoin::Transaction>;
+
+    fn list_coins_without_default_label(&mut self) -> Vec<bitcoin::OutPoint>;
+
+    /// Store the default label of transactions and coins, keeping the ones already stored.
+    fn store_default_labels(
         &mut self,
-        txids: &[bitcoin::Txid],
-    ) -> Vec<(bitcoin::Transaction, Option<i32>, Option<u32>)>;
+        txs: &HashMap<bitcoin::Txid, Label>,
+        coins: &HashMap<bitcoin::OutPoint, Label>,
+    );
 
     /// Dump all labels
     fn get_labels_bip329(&mut self, offset: u32, limit: u32) -> Labels;
@@ -283,6 +300,20 @@ impl DatabaseConnection for SqliteConn {
         self.coins(statuses, outpoints)
             .into_iter()
             .map(|db_coin| (db_coin.outpoint, db_coin.into()))
+            .collect()
+    }
+
+    fn coins_with_default_label(
+        &mut self,
+        statuses: &[CoinStatus],
+        outpoints: &[bitcoin::OutPoint],
+    ) -> HashMap<bitcoin::OutPoint, CoinWithDefaultLabel> {
+        self.coins(statuses, outpoints)
+            .into_iter()
+            .map(|db_coin| {
+                let coin = CoinWithDefaultLabel::from(db_coin);
+                (coin.coin.outpoint, coin)
+            })
             .collect()
     }
 
@@ -400,20 +431,27 @@ impl DatabaseConnection for SqliteConn {
             .expect("must not fail")
     }
 
-    fn list_wallet_transactions(
-        &mut self,
-        txids: &[bitcoin::Txid],
-    ) -> Vec<(bitcoin::Transaction, Option<i32>, Option<u32>)> {
+    fn list_wallet_transactions(&mut self, txids: &[bitcoin::Txid]) -> Vec<WalletTransaction> {
         self.list_wallet_transactions(txids)
             .into_iter()
-            .map(|wtx| {
-                (
-                    wtx.transaction,
-                    wtx.block_info.map(|b| b.height),
-                    wtx.block_info.map(|b| b.time),
-                )
-            })
+            .map(WalletTransaction::from)
             .collect()
+    }
+
+    fn list_txs_without_default_label(&mut self) -> Vec<bitcoin::Transaction> {
+        self.list_txs_without_default_label()
+    }
+
+    fn list_coins_without_default_label(&mut self) -> Vec<bitcoin::OutPoint> {
+        self.list_coins_without_default_label()
+    }
+
+    fn store_default_labels(
+        &mut self,
+        txs: &HashMap<bitcoin::Txid, Label>,
+        coins: &HashMap<bitcoin::OutPoint, Label>,
+    ) {
+        self.store_default_labels(txs, coins)
     }
 }
 
@@ -480,6 +518,41 @@ impl Coin {
 
     pub fn is_spent(&self) -> bool {
         self.spend_txid.is_some()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoinWithDefaultLabel {
+    pub coin: Coin,
+    pub default_label: Label,
+}
+
+impl From<DbCoin> for CoinWithDefaultLabel {
+    fn from(db_coin: DbCoin) -> Self {
+        let default_label = db_coin.default_label.clone().unwrap_or_default();
+        Self {
+            coin: db_coin.into(),
+            default_label,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalletTransaction {
+    pub tx: bitcoin::Transaction,
+    pub block_height: Option<i32>,
+    pub block_time: Option<u32>,
+    pub default_label: Label,
+}
+
+impl From<DbWalletTransaction> for WalletTransaction {
+    fn from(wtx: DbWalletTransaction) -> Self {
+        Self {
+            tx: wtx.transaction,
+            block_height: wtx.block_info.map(|b| b.height),
+            block_time: wtx.block_info.map(|b| b.time),
+            default_label: wtx.default_label.unwrap_or_default(),
+        }
     }
 }
 

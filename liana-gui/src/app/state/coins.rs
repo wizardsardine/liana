@@ -202,7 +202,7 @@ impl From<CoinsPanel> for Box<dyn State> {
 mod tests {
     use super::*;
     use crate::daemon::model::Coin;
-    use liana::miniscript::bitcoin;
+    use liana::{label::Label, miniscript::bitcoin};
     use std::str::FromStr;
 
     #[test]
@@ -228,6 +228,7 @@ mod tests {
                 derivation_index: 0.into(),
                 is_change: false,
                 is_from_self: false,
+                default_label: Label::None,
             },
             Coin {
                 outpoint: bitcoin::OutPoint { txid, vout: 3 },
@@ -239,6 +240,7 @@ mod tests {
                 derivation_index: 1.into(),
                 is_change: false,
                 is_from_self: false,
+                default_label: Label::None,
             },
             Coin {
                 outpoint: bitcoin::OutPoint { txid, vout: 0 },
@@ -250,6 +252,7 @@ mod tests {
                 derivation_index: 2.into(),
                 is_change: false,
                 is_from_self: false,
+                default_label: Label::None,
             },
             Coin {
                 outpoint: bitcoin::OutPoint { txid, vout: 1 },
@@ -261,6 +264,7 @@ mod tests {
                 derivation_index: 3.into(),
                 is_change: false,
                 is_from_self: false,
+                default_label: Label::None,
             },
         ]);
 

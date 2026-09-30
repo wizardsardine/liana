@@ -15,8 +15,8 @@ use crate::{
     database::{
         sqlite::{
             schema::{
-                DbAddress, DbCoin, DbLabel, DbLabelledKind, DbSpendTransaction, DbTip, DbWallet,
-                DbWalletTransaction, SCHEMA,
+                default_label_columns, DbAddress, DbCoin, DbLabel, DbLabelledKind,
+                DbSpendTransaction, DbTip, DbWallet, DbWalletTransaction, SCHEMA,
             },
             utils::{
                 create_fresh_db, curr_timestamp, db_exec, db_query, db_tx_query, db_version,
@@ -26,7 +26,7 @@ use crate::{
         Coin, CoinStatus, LabelItem,
     },
 };
-use liana::descriptors::LianaDescriptor;
+use liana::{descriptors::LianaDescriptor, label::Label};
 
 use std::{
     cmp,
@@ -43,7 +43,7 @@ use miniscript::bitcoin::{
     secp256k1,
 };
 
-const DB_VERSION: i64 = 8;
+const DB_VERSION: i64 = 9;
 
 /// Last database version for which Bitcoin transactions were not stored in database. In practice
 /// this meant we relied on the bitcoind watchonly wallet to store them for us.
@@ -877,7 +877,7 @@ impl SqliteConn {
         // We assume that a transaction's block info is the same in every coins row
         // it appears in.
         let query = format!(
-            "SELECT t.tx, c.blockheight, c.blocktime \
+            "SELECT t.tx, c.blockheight, c.blocktime, t.default_label_kind, t.default_label \
             FROM transactions t \
             INNER JOIN ( \
                 SELECT txid, blockheight, blocktime \
@@ -911,6 +911,69 @@ impl SqliteConn {
             "database must not contain inconsistent block info for the same txid"
         );
         w_txs
+    }
+
+    pub fn list_txs_without_default_label(&mut self) -> Vec<bitcoin::Transaction> {
+        db_query(
+            &mut self.conn,
+            "SELECT tx FROM transactions WHERE default_label_kind IS NULL",
+            rusqlite::params![],
+            |row| {
+                let tx: Vec<u8> = row.get(0)?;
+                let tx: bitcoin::Transaction =
+                    encode::deserialize(&tx).expect("We only store valid txs");
+                Ok(tx)
+            },
+        )
+        .expect("Db must not fail")
+    }
+
+    pub fn list_coins_without_default_label(&mut self) -> Vec<bitcoin::OutPoint> {
+        db_query(
+            &mut self.conn,
+            "SELECT txid, vout FROM coins WHERE default_label_kind IS NULL",
+            rusqlite::params![],
+            |row| {
+                let txid: Vec<u8> = row.get(0)?;
+                let txid: bitcoin::Txid =
+                    encode::deserialize(&txid).expect("We only store valid txids");
+                let vout: u32 = row.get(1)?;
+                Ok(bitcoin::OutPoint::new(txid, vout))
+            },
+        )
+        .expect("Db must not fail")
+    }
+
+    /// Store the default label of transactions and coins, keeping the ones already stored.
+    pub fn store_default_labels(
+        &mut self,
+        txs: &HashMap<bitcoin::Txid, Label>,
+        coins: &HashMap<bitcoin::OutPoint, Label>,
+    ) {
+        db_exec(&mut self.conn, |db_tx| {
+            for (txid, label) in txs {
+                let Some((kind, text)) = default_label_columns(label) else {
+                    continue;
+                };
+                db_tx.execute(
+                    "UPDATE transactions SET default_label_kind = ?1, default_label = ?2 \
+                     WHERE txid = ?3 AND default_label_kind IS NULL",
+                    rusqlite::params![kind as i64, text, txid[..].to_vec()],
+                )?;
+            }
+            for (outpoint, label) in coins {
+                let Some((kind, text)) = default_label_columns(label) else {
+                    continue;
+                };
+                db_tx.execute(
+                    "UPDATE coins SET default_label_kind = ?1, default_label = ?2 \
+                     WHERE txid = ?3 AND vout = ?4 AND default_label_kind IS NULL",
+                    rusqlite::params![kind as i64, text, outpoint.txid[..].to_vec(), outpoint.vout],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("Db must not fail")
     }
 
     pub fn delete_spend(&mut self, txid: &bitcoin::Txid) {
@@ -968,8 +1031,11 @@ impl SqliteConn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::{BlockInfo, DbBlockInfo};
-    use crate::testutils::*;
+    use crate::{
+        bitcoin::poller::looper::update_default_labels,
+        database::{BlockInfo, DatabaseInterface, DbBlockInfo},
+        testutils::*,
+    };
     use std::{
         collections::{HashMap, HashSet},
         fs, path,
@@ -2697,6 +2763,7 @@ CREATE TABLE labels (
                                 height: info.height,
                                 time: info.time,
                             }),
+                            default_label: None,
                         },
                     )
                 })
@@ -2742,6 +2809,66 @@ CREATE TABLE labels (
                 });
                 assert_eq!(&db_txs[..], &expected_txs[..],);
             }
+        }
+
+        fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_default_labels() {
+        let (tmp_dir, _, _, db) = dummy_db();
+
+        {
+            let mut conn = db.connection().unwrap();
+
+            let tx = bitcoin::Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::absolute::LockTime::ZERO,
+                input: vec![bitcoin::TxIn::default()],
+                output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())],
+            };
+            let txid = tx.compute_txid();
+            let outpoint = bitcoin::OutPoint { txid, vout: 0 };
+            conn.new_txs(&[tx.clone()]);
+            conn.new_unspent_coins(&[Coin {
+                outpoint,
+                is_immature: false,
+                block_info: None,
+                amount: bitcoin::Amount::from_sat(10_000),
+                derivation_index: bip32::ChildNumber::from_normal_idx(0).unwrap(),
+                is_change: false,
+                spend_txid: None,
+                spend_block: None,
+                is_from_self: false,
+            }]);
+            assert_eq!(conn.list_txs_without_default_label(), vec![tx.clone()]);
+            assert_eq!(conn.list_coins_without_default_label(), vec![outpoint]);
+
+            let rent = Label::Address("rent".to_string());
+            let salary = Label::Transaction("salary".to_string());
+            conn.store_default_labels(
+                &HashMap::from([(txid, salary.clone())]),
+                &HashMap::from([(outpoint, rent.clone())]),
+            );
+            assert!(conn.list_txs_without_default_label().is_empty());
+            assert!(conn.list_coins_without_default_label().is_empty());
+            let coins = conn.coins(&[], &[outpoint]);
+            assert_eq!(coins.len(), 1);
+            assert_eq!(coins[0].default_label, Some(rent.clone()));
+            let txs = conn.list_wallet_transactions(&[txid]);
+            assert_eq!(txs.len(), 1);
+            assert_eq!(txs[0].default_label, Some(salary.clone()));
+
+            // Storing again keeps the first labels.
+            conn.store_default_labels(
+                &HashMap::from([(txid, Label::None)]),
+                &HashMap::from([(outpoint, Label::Transaction("gift".to_string()))]),
+            );
+            assert_eq!(conn.coins(&[], &[outpoint])[0].default_label, Some(rent));
+            assert_eq!(
+                conn.list_wallet_transactions(&[txid])[0].default_label,
+                Some(salary)
+            );
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
@@ -3079,7 +3206,7 @@ CREATE TABLE labels (
     }
 
     #[test]
-    fn v0_to_v8_migration() {
+    fn v0_to_v9_migration() {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 0, using the old schema.
@@ -3185,7 +3312,19 @@ CREATE TABLE labels (
         {
             let mut conn = db.connection().unwrap();
             let version = conn.db_version();
-            assert_eq!(version, 8);
+            assert_eq!(version, 9);
+        }
+
+        // The default labels are not computed yet.
+        {
+            let mut conn = db.connection().unwrap();
+            let coins = conn.coins(&[], &[]);
+            assert_eq!(coins.len(), 2);
+            assert!(coins.iter().all(|c| c.default_label.is_none()));
+            let txids: Vec<_> = bitcoin_txs.iter().map(|tx| tx.compute_txid()).collect();
+            let txs = conn.list_wallet_transactions(&txids);
+            assert_eq!(txs.len(), 2);
+            assert!(txs.iter().all(|tx| tx.default_label.is_none()));
         }
         // We should now be able to insert another PSBT, to query both, and the first PSBT must
         // have no associated timestamp.
@@ -3260,7 +3399,7 @@ CREATE TABLE labels (
     }
 
     #[test]
-    fn v3_to_v8_migration() {
+    fn v3_to_v9_migration() {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 3, using the old schema.
@@ -3412,10 +3551,10 @@ CREATE TABLE labels (
 
             // Migrate the DB.
             maybe_apply_migration(&db_path, &bitcoin_txs).unwrap();
-            assert_eq!(conn.db_version(), 8);
+            assert_eq!(conn.db_version(), 9);
             // Migrating twice will be a no-op. No need to pass `bitcoin_txs` second time.
             maybe_apply_migration(&db_path, &[]).unwrap();
-            assert!(conn.db_version() == 8);
+            assert!(conn.db_version() == 9);
 
             // Compare the `DbCoin`s with the expected values.
             let coins_post = conn.coins(&[], &[]);
@@ -3439,7 +3578,78 @@ CREATE TABLE labels (
                     c_post.is_from_self,
                     [coin_d_outpoint, coin_e_outpoint].contains(&c_pre.outpoint)
                 );
+                assert!(c_post.default_label.is_none());
             }
+
+            let txids: Vec<_> = bitcoin_txs.iter().map(|tx| tx.compute_txid()).collect();
+            let txs = conn.list_wallet_transactions(&txids);
+            assert!(!txs.is_empty());
+            assert!(txs.iter().all(|tx| tx.default_label.is_none()));
+
+            // The fixture outputs pay no address and fund none of our coins, so pay us on an
+            // address and move it to another one to get default labels.
+            let address = |index: u8| {
+                bitcoin::Address::p2wsh(
+                    &ScriptBuf::from_bytes(vec![index]),
+                    bitcoin::Network::Bitcoin,
+                )
+            };
+            let tx = |input: TxIn, index: u8| bitcoin::Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::absolute::LockTime::ZERO,
+                input: vec![input],
+                output: vec![bitcoin::TxOut {
+                    value: bitcoin::Amount::from_sat(10_000),
+                    script_pubkey: address(index).script_pubkey(),
+                }],
+            };
+            let coin = |outpoint: bitcoin::OutPoint| Coin {
+                outpoint,
+                is_immature: false,
+                block_info: None,
+                amount: bitcoin::Amount::from_sat(10_000),
+                derivation_index: bip32::ChildNumber::from_normal_idx(0).unwrap(),
+                is_change: false,
+                spend_txid: None,
+                spend_block: None,
+                is_from_self: false,
+            };
+            let incoming = tx(TxIn::default(), 1);
+            let received = bitcoin::OutPoint::new(incoming.compute_txid(), 0);
+            let to_self = tx(
+                TxIn {
+                    previous_output: received,
+                    ..TxIn::default()
+                },
+                2,
+            );
+            let moved = bitcoin::OutPoint::new(to_self.compute_txid(), 0);
+            conn.new_txs(&[incoming.clone(), to_self.clone()]);
+            conn.new_unspent_coins(&[coin(received), coin(moved)]);
+            conn.spend_coins(&[(received, to_self.compute_txid())]);
+            conn.update_labels(&HashMap::from([
+                (LabelItem::from(address(1)), Some("salary".to_string())),
+                (
+                    LabelItem::from(incoming.compute_txid()),
+                    Some("rent".to_string()),
+                ),
+            ]));
+
+            let mut db_conn = DatabaseInterface::connection(&db);
+            update_default_labels(&mut db_conn);
+
+            assert_eq!(
+                conn.coins(&[], &[received])[0].default_label,
+                Some(Label::Address("salary".to_string()))
+            );
+            assert_eq!(
+                conn.list_wallet_transactions(&[to_self.compute_txid()])[0].default_label,
+                Some(Label::Funding("rent".to_string()))
+            );
+            assert_eq!(
+                conn.list_wallet_transactions(&[coin_c.outpoint.txid])[0].default_label,
+                Some(Label::None)
+            );
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
