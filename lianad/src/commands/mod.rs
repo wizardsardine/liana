@@ -7,7 +7,9 @@ mod utils;
 
 use crate::{
     bitcoin::BitcoinInterface,
-    database::{Coin, DatabaseConnection, DatabaseInterface},
+    database::{
+        Coin, CoinWithDefaultLabel, DatabaseConnection, DatabaseInterface, WalletTransaction,
+    },
     miniscript::bitcoin::absolute::LockTime,
     poller::PollerMessage,
     DaemonControl, VERSION,
@@ -17,6 +19,7 @@ pub use crate::database::{CoinStatus, LabelItem};
 
 use liana::{
     descriptors,
+    label::Label,
     spend::{
         self, create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes,
         SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
@@ -192,7 +195,7 @@ impl TxGetter for DbTxGetter<'_> {
                 .connection()
                 .list_wallet_transactions(&[*txid])
                 .pop()
-                .map(|(tx, _, _)| tx);
+                .map(|wtx| wtx.tx);
             entry.insert(tx);
         }
         self.cache.get(txid).cloned().flatten()
@@ -577,41 +580,47 @@ impl DaemonControl {
     ) -> ListCoinsResult {
         let mut db_conn = self.db.connection();
         let coins: Vec<ListCoinsEntry> = db_conn
-            .coins(statuses, outpoints)
+            .coins_with_default_label(statuses, outpoints)
             .into_values()
-            .map(|coin| {
-                let Coin {
-                    amount,
-                    outpoint,
-                    block_info,
-                    spend_txid,
-                    spend_block,
-                    is_immature,
-                    is_change,
-                    is_from_self,
-                    derivation_index,
-                    ..
-                } = coin;
-                let spend_info = spend_txid.map(|txid| LCSpendInfo {
-                    txid,
-                    height: spend_block.map(|b| b.height),
-                });
-                let block_height = block_info.map(|b| b.height);
-                let address = self
-                    .derived_desc(&coin)
-                    .address(self.config.bitcoin_config.network);
-                ListCoinsEntry {
-                    address,
-                    amount,
-                    derivation_index,
-                    outpoint,
-                    block_height,
-                    spend_info,
-                    is_immature,
-                    is_change,
-                    is_from_self,
-                }
-            })
+            .map(
+                |CoinWithDefaultLabel {
+                     coin,
+                     default_label,
+                 }| {
+                    let Coin {
+                        amount,
+                        outpoint,
+                        block_info,
+                        spend_txid,
+                        spend_block,
+                        is_immature,
+                        is_change,
+                        is_from_self,
+                        derivation_index,
+                        ..
+                    } = coin;
+                    let spend_info = spend_txid.map(|txid| LCSpendInfo {
+                        txid,
+                        height: spend_block.map(|b| b.height),
+                    });
+                    let block_height = block_info.map(|b| b.height);
+                    let address = self
+                        .derived_desc(&coin)
+                        .address(self.config.bitcoin_config.network);
+                    ListCoinsEntry {
+                        address,
+                        amount,
+                        derivation_index,
+                        outpoint,
+                        block_height,
+                        spend_info,
+                        is_immature,
+                        is_change,
+                        is_from_self,
+                        default_label,
+                    }
+                },
+            )
             .collect();
         ListCoinsResult { coins }
     }
@@ -1235,7 +1244,7 @@ impl DaemonControl {
             .connection()
             .list_wallet_transactions(txids)
             .into_iter()
-            .map(|(tx, height, time)| TransactionInfo { tx, height, time })
+            .map(TransactionInfo::from)
             .collect();
         ListTransactionsResult { transactions }
     }
@@ -1485,6 +1494,9 @@ pub struct ListCoinsEntry {
     /// this same wallet. If the coin is unconfirmed, it also means that all its
     /// unconfirmed ancestors, if any, are also from self.
     pub is_from_self: bool,
+    /// Default label snapshotted when the coin was first seen.
+    #[serde(default)]
+    pub default_label: Label,
 }
 
 impl From<&ListCoinsEntry> for transaction::Coin {
@@ -1538,6 +1550,20 @@ pub struct TransactionInfo {
     pub tx: bitcoin::Transaction,
     pub height: Option<i32>,
     pub time: Option<u32>,
+    /// Default label snapshotted when the transaction was first seen.
+    #[serde(default)]
+    pub default_label: Label,
+}
+
+impl From<WalletTransaction> for TransactionInfo {
+    fn from(wtx: WalletTransaction) -> Self {
+        Self {
+            tx: wtx.tx,
+            height: wtx.block_height,
+            time: wtx.block_time,
+            default_label: wtx.default_label,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -3418,5 +3444,38 @@ mod tests {
         );
 
         ms.shutdown();
+    }
+
+    #[test]
+    fn default_label_json() {
+        let json = |label: Label| serde_json::to_string(&label).unwrap();
+        assert_eq!(json(Label::None), r#""none""#);
+        assert_eq!(json(Label::Own("x".to_string())), r#"{"own":"x"}"#);
+        assert_eq!(
+            json(Label::Transaction("x".to_string())),
+            r#"{"transaction":"x"}"#
+        );
+        assert_eq!(json(Label::Address("x".to_string())), r#"{"address":"x"}"#);
+        assert_eq!(json(Label::Funding("x".to_string())), r#"{"funding":"x"}"#);
+        assert_eq!(json(Label::Payment("x".to_string())), r#"{"payment":"x"}"#);
+    }
+
+    #[test]
+    fn list_coins_entry_without_default_label() {
+        let entry: ListCoinsEntry = serde_json::from_str(
+            r#"{
+                "amount": 10000,
+                "outpoint": "0000000000000000000000000000000000000000000000000000000000000001:0",
+                "address": "bc1qnsexk3gnuyayu92fc3tczvc7k62u22a22ua2kv",
+                "block_height": null,
+                "derivation_index": 0,
+                "spend_info": null,
+                "is_immature": false,
+                "is_change": false,
+                "is_from_self": false
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(entry.default_label, Label::None);
     }
 }
