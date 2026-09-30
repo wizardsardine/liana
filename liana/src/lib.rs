@@ -1,4 +1,5 @@
 pub mod descriptors;
+pub mod label;
 pub mod random;
 pub mod signer;
 pub mod spend;

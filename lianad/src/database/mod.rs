@@ -14,14 +14,13 @@ use crate::{
 
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Display,
     iter::FromIterator,
-    str::FromStr,
     sync,
 };
 
 use bip329::Labels;
-use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1, Address, Network, OutPoint, Txid};
+pub use liana::label::LabelItem;
+use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1};
 
 /// Information about the wallet.
 ///
@@ -516,100 +515,6 @@ impl CoinStatus {
             CoinStatus::Confirmed => "confirmed",
             CoinStatus::Spending => "spending",
             CoinStatus::Spent => "spent",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum LabelItem {
-    Address(bitcoin::Address),
-    Txid(bitcoin::Txid),
-    OutPoint(bitcoin::OutPoint),
-}
-
-impl From<bitcoin::Address> for LabelItem {
-    fn from(value: bitcoin::Address) -> Self {
-        Self::Address(value)
-    }
-}
-
-impl From<bitcoin::Txid> for LabelItem {
-    fn from(value: bitcoin::Txid) -> Self {
-        Self::Txid(value)
-    }
-}
-
-impl From<bitcoin::OutPoint> for LabelItem {
-    fn from(value: bitcoin::OutPoint) -> Self {
-        Self::OutPoint(value)
-    }
-}
-
-impl Display for LabelItem {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            LabelItem::Address(a) => write!(f, "{a}"),
-            LabelItem::Txid(a) => write!(f, "{a}"),
-            LabelItem::OutPoint(a) => write!(f, "{a}"),
-        }
-    }
-}
-
-impl LabelItem {
-    pub fn from_str(s: &str, network: bitcoin::Network) -> Option<LabelItem> {
-        if let Ok(addr) = bitcoin::Address::from_str(s) {
-            if !addr.is_valid_for_network(network) {
-                None
-            } else {
-                Some(LabelItem::Address(addr.assume_checked()))
-            }
-        } else if let Ok(txid) = bitcoin::Txid::from_str(s) {
-            Some(LabelItem::Txid(txid))
-        } else if let Ok(outpoint) = bitcoin::OutPoint::from_str(s) {
-            Some(LabelItem::OutPoint(outpoint))
-        } else {
-            None
-        }
-    }
-
-    pub fn from_bip329(label: &bip329::Label, network: Network) -> Option<(Self, String)> {
-        match label {
-            bip329::Label::Transaction(tx_record) => {
-                if let (Some(txid), Some(label)) = (
-                    Txid::from_str(&tx_record.ref_.to_string()).ok(),
-                    tx_record.label.clone(),
-                ) {
-                    Some((Self::Txid(txid), label))
-                } else {
-                    None
-                }
-            }
-            bip329::Label::Address(address_record) => {
-                if let (Some(addr), Some(label)) = (
-                    Address::from_str(&address_record.ref_.clone().assume_checked().to_string())
-                        .ok(),
-                    address_record.label.clone(),
-                ) {
-                    if addr.is_valid_for_network(network) {
-                        Some((Self::Address(addr.assume_checked()), label))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-            bip329::Label::Output(output_record) => {
-                if let (Some(outpoint), Some(label)) = (
-                    OutPoint::from_str(&output_record.ref_.to_string()).ok(),
-                    output_record.label.clone(),
-                ) {
-                    Some((Self::OutPoint(outpoint), label))
-                } else {
-                    None
-                }
-            }
-            _ => None,
         }
     }
 }
