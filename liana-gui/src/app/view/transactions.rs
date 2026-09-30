@@ -411,7 +411,7 @@ pub fn tx_view<'a>(
                     .push(super::psbt::outputs_view(
                         &tx.tx,
                         cache.network,
-                        &tx.change_indexes,
+                        &tx.owned_output_indexes(),
                         &tx.labels,
                         labels_editing,
                         tx.single_payment().is_some(),
