@@ -391,7 +391,6 @@ impl HistoryTransaction {
 pub struct Payment {
     pub label: Option<String>,
     pub address: Option<String>,
-    pub address_label: Option<String>,
     pub default_label: Label,
     pub amount: Amount,
     pub outpoint: OutPoint,
@@ -417,9 +416,6 @@ impl Payment {
         let address = Address::from_script(&output.script_pubkey, history_tx.network)
             .ok()
             .map(|addr| addr.to_string());
-        let address_label = address
-            .as_ref()
-            .and_then(|addr| history_tx.labels.get(addr).cloned());
         let default_label = history_tx
             .owned_outputs
             .get(&output_index)
@@ -428,7 +424,6 @@ impl Payment {
         Some(Payment {
             label,
             address,
-            address_label,
             default_label,
             outpoint,
             time: history_tx
@@ -461,9 +456,6 @@ impl Payment {
 
 impl LabelsLoader for Payment {
     fn load_labels(&mut self, new_labels: &HashMap<String, Option<String>>) {
-        if let Some(label) = self.address.as_ref().and_then(|addr| new_labels.get(addr)) {
-            self.address_label = label.clone();
-        }
         if let Some(label) = new_labels.get(&self.outpoint.to_string()) {
             self.label = label.clone();
         }
@@ -757,7 +749,6 @@ mod tests {
         Payment {
             label: label.map(str::to_string),
             address: None,
-            address_label: None,
             default_label,
             amount: Amount::from_sat(10_000),
             outpoint: outpoint(1),

@@ -1295,6 +1295,8 @@ label-edit => "Edit label"
 
 label-external-output => "(External Output)"
 
+label-from => "from: {$label}"
+
 label-invalid-length => "Invalid label length, must be 80 bytes or less"
 
 label-label => "Label"
