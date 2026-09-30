@@ -6,7 +6,7 @@ pub use payment_details::payment_details_view;
 use liana::{miniscript::bitcoin, transaction::PaymentKind};
 use liana_ui::{
     component::{
-        self,
+        button::btn_see_more,
         panels::home::{self, payment, SyncProgress, WalletOrigin},
         text::new,
     },
@@ -96,8 +96,8 @@ pub fn home_view<'a>(
         }
     });
 
-    let see_more = (!is_last_page && !events.is_empty())
-        .then_some(component::list::see_more(processing, Message::Next));
+    let see_more =
+        (!is_last_page && !events.is_empty()).then(|| btn_see_more(processing, Message::Next));
 
     #[rustfmt::skip]
     let payment_list = column![
