@@ -47,18 +47,16 @@ pub fn payment_details_view<'a>(
         cache,
         warning,
         Column::new()
-            .push(match tx.kind {
-                TransactionKind::OutgoingSinglePayment(_)
-                | TransactionKind::OutgoingPaymentBatch(_) => {
+            .push(match tx.wallet_tx.kind() {
+                TransactionKind::Outgoing(_) | TransactionKind::PayjoinSend(_) => {
                     Container::new(legacy::h3(t!("payment-outgoing"))).width(Length::Fill)
                 }
-                TransactionKind::IncomingSinglePayment(_)
-                | TransactionKind::IncomingPaymentBatch(_) => {
+                TransactionKind::Incoming(_) | TransactionKind::PayjoinReceive(_) => {
                     Container::new(legacy::h3(t!("payment-incoming"))).width(Length::Fill)
                 }
                 _ => Container::new(legacy::h3(t!("payment-title"))).width(Length::Fill),
             })
-            .push(if tx.is_single_payment().is_some() {
+            .push(if tx.single_payment().is_some() {
                 // if the payment is a payment of a single payment transaction then
                 // the label of the transaction is attached to the label of the payment outpoint
                 if let Some(label) = labels_editing.get(&outpoint) {
@@ -106,7 +104,7 @@ pub fn payment_details_view<'a>(
             } else {
                 None
             })
-            .push_maybe(tx.fee_amount.map(|fee_amount| {
+            .push_maybe(tx.wallet_tx.fee().map(|fee_amount| {
                 Row::new()
                     .align_y(Alignment::Center)
                     .push(legacy::h3(t!("transactions-miner-fee")).style(theme::text::secondary))

@@ -3,13 +3,13 @@ pub mod payment_details;
 use iced::widget::column;
 pub use payment_details::payment_details_view;
 
-use liana::miniscript::bitcoin;
+use liana::{miniscript::bitcoin, transaction::PaymentKind};
 use liana_ui::{
     component::{
         self,
         panels::home::{
             self,
-            payment::{payment_card, PaymentKind, UIPayment},
+            payment::{payment_card, UIPayment},
             SyncProgress, WalletOrigin,
         },
         text::new,

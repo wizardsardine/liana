@@ -99,7 +99,7 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
             Row::new()
                 .push(
                     Row::new()
-                        .push(if tx.is_external() {
+                        .push(if tx.is_incoming() {
                             badge::receive()
                         } else if tx.is_send_to_self() {
                             badge::cycle()
@@ -108,7 +108,7 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                         })
                         .push(
                             Column::new()
-                                .push_maybe(if let Some(outpoint) = tx.is_single_payment() {
+                                .push_maybe(if let Some(outpoint) = tx.single_payment() {
                                     tx.labels.get(&outpoint.to_string()).map(p1_regular)
                                 } else {
                                     tx.labels
@@ -143,17 +143,17 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                 } else {
                     None
                 })
-                .push(if tx.is_external() {
+                .push(if tx.is_incoming() {
                     Row::new()
                         .spacing(5)
                         .push(text("+"))
-                        .push(amount(&tx.incoming_amount))
+                        .push(amount(&tx.wallet_tx.amount()))
                         .align_y(Alignment::Center)
-                } else if tx.outgoing_amount != Amount::from_sat(0) {
+                } else if !tx.is_send_to_self() {
                     Row::new()
                         .spacing(5)
                         .push(text("-"))
-                        .push(amount(&tx.outgoing_amount))
+                        .push(amount(&tx.wallet_tx.amount()))
                         .align_y(Alignment::Center)
                 } else {
                     Row::new().push(text(t!("common-self-transfer")))
@@ -289,12 +289,12 @@ pub fn tx_view<'a>(
         Column::new()
             .push(if tx.is_send_to_self() {
                 Container::new(h3(t!("transactions-transaction"))).width(Length::Fill)
-            } else if tx.is_external() {
+            } else if tx.is_incoming() {
                 Container::new(h3(t!("transactions-incoming"))).width(Length::Fill)
             } else {
                 Container::new(h3(t!("transactions-outgoing"))).width(Length::Fill)
             })
-            .push(if let Some(outpoint) = tx.is_single_payment() {
+            .push(if let Some(outpoint) = tx.single_payment() {
                 // if the payment is a payment of a single payment transaction then
                 // the label of the transaction is attached to the label of the payment outpoint
                 let outpoint = outpoint.to_string();
@@ -317,12 +317,10 @@ pub fn tx_view<'a>(
                     Column::new()
                         .push(if tx.is_send_to_self() {
                             Container::new(h1(t!("common-self-transfer")))
-                        } else if tx.is_external() {
-                            Container::new(amount_with_font(&tx.incoming_amount, H1_SPEC))
                         } else {
-                            Container::new(amount_with_font(&tx.outgoing_amount, H1_SPEC))
+                            Container::new(amount_with_font(&tx.wallet_tx.amount(), H1_SPEC))
                         })
-                        .push_maybe(tx.fee_amount.map(|fee_amount| {
+                        .push_maybe(tx.wallet_tx.fee().map(|fee_amount| {
                             Row::new()
                                 .align_y(Alignment::Center)
                                 .push(
@@ -343,7 +341,7 @@ pub fn tx_view<'a>(
             )
             // If unconfirmed, give option to use RBF.
             // Check fee amount is some as otherwise we may be missing coins for this transaction.
-            .push_maybe(if tx.time.is_none() && tx.fee_amount.is_some() {
+            .push_maybe(if tx.time.is_none() && tx.wallet_tx.fee().is_some() {
                 Some(
                     Row::new()
                         .push(
@@ -400,7 +398,7 @@ pub fn tx_view<'a>(
                 Column::new()
                     .spacing(20)
                     // We do not need to display inputs for external incoming transactions
-                    .push_maybe(if tx.is_external() {
+                    .push_maybe(if tx.is_incoming() {
                         None
                     } else {
                         Some(super::psbt::inputs_view(
@@ -416,8 +414,8 @@ pub fn tx_view<'a>(
                         &tx.change_indexes,
                         &tx.labels,
                         labels_editing,
-                        tx.is_single_payment().is_some(),
-                        tx.is_external(),
+                        tx.single_payment().is_some(),
+                        tx.is_incoming(),
                     )),
             )
             .spacing(20),
