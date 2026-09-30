@@ -340,7 +340,7 @@ pub fn inputs_view<'a>(
 pub fn outputs_view<'a>(
     tx: &'a Transaction,
     network: Network,
-    change_indexes: &'a [usize],
+    change_indexes: &[usize],
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
     is_single_payment: bool,
