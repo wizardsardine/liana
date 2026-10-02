@@ -48,6 +48,7 @@ pub enum Message {
     UseHotSigner,
     Installed(settings::WalletId, Result<settings::WalletSettings, Error>),
     CreateTaprootDescriptor(bool),
+    ShowDescriptorTypeOptions(bool),
     SelectDescriptorTemplate(context::DescriptorTemplate),
     SelectBackend(SelectBackend),
     ImportRemoteWallet(ImportRemoteWallet),

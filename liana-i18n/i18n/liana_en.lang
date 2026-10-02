@@ -834,9 +834,12 @@ hw-display-address-unavailable
 => "Liana cannot request the device to display the address. \n Verify it with the QR code in the options below.";;
 
 hw-no-taproot-miniscript
-=> "Device firmware version does not support taproot miniscript";;
+=> "This device doesn't support Taproot. Switch to Segwit or use another device.";;
 
 hw-not-in-spending-path => "This signing device is not part of this spending path."
+
+hw-taproot-firmware-outdated
+=> "Update firmware to {$version} or later to use Taproot.";;
 
 import-success => "Import successful"
 
@@ -849,8 +852,6 @@ installer-accepted-wallet-not-found => "Wallet of accepted invitation not found"
 installer-add-key => "Add key"
 
 installer-add-safety-net-key => "Add Safety Net key"
-
-installer-advanced-settings => "Advanced settings"
 
 installer-already-have-node => "I already have a node"
 
@@ -967,13 +968,18 @@ installer-descriptor-template => "Descriptor template"
 
 installer-descriptor-type => "Descriptor type"
 
+installer-descriptor-type-segwit => "Segwit"
+
+installer-descriptor-type-taproot => "Taproot (recommended)"
+
+installer-descriptor-type-tooltip
+=> "The type of addresses your wallet uses. Taproot lowers fees and improves privacy when spending.";;
+
 installer-descriptor-wrong-network => "The descriptor is for another network"
 
 installer-detected-hardware => "Detected hardware"
 
 installer-device-method-unsupported => "Device not supported, method: {$method}"
-
-installer-device-no-taproot => "This device does not support Taproot"
 
 installer-device-wrong-network => "The device is configured on the wrong network"
 
@@ -1235,9 +1241,6 @@ installer-store-mnemonic-failed => "Failed to store mnemonic: {$error}"
 
 installer-switch-account-help
 => "Switch account if you already use the same hardware in other configurations";;
-
-installer-taproot-supported-version
-=> "Taproot is only supported by Liana version 5.0 and above";;
 
 installer-template-custom-primary => "Primary keys"
 
