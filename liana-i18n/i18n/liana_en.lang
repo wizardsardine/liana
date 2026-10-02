@@ -35,6 +35,8 @@ btn-cancel => "Cancel"
 
 btn-cancel-transaction => "Cancel transaction"
 
+btn-change => "Change"
+
 btn-change-email => "Change Email"
 
 btn-check-connection => "Check connection"
@@ -56,6 +58,8 @@ btn-delete => "Delete"
 btn-delete-wallet => "Delete wallet"
 
 btn-dismiss => "Dismiss"
+
+btn-done => "Done"
 
 btn-edit => "Edit"
 
@@ -850,8 +854,6 @@ installer-add-key => "Add key"
 
 installer-add-safety-net-key => "Add Safety Net key"
 
-installer-advanced-settings => "Advanced settings"
-
 installer-already-have-node => "I already have a node"
 
 installer-already-used-sources => "Already used sources"
@@ -965,7 +967,14 @@ installer-descriptor-read-failed => "Failed to read the descriptor"
 
 installer-descriptor-template => "Descriptor template"
 
-installer-descriptor-type => "Descriptor type"
+installer-descriptor-type => "Descriptor type:"
+
+installer-descriptor-type-segwit => "Segwit"
+
+installer-descriptor-type-taproot => "Taproot (recommended)"
+
+installer-descriptor-type-tooltip
+=> "The type of addresses your wallet uses. Taproot lowers fees and improves privacy when spending.";;
 
 installer-descriptor-wrong-network => "The descriptor is for another network"
 
@@ -1235,9 +1244,6 @@ installer-store-mnemonic-failed => "Failed to store mnemonic: {$error}"
 
 installer-switch-account-help
 => "Switch account if you already use the same hardware in other configurations";;
-
-installer-taproot-supported-version
-=> "Taproot is only supported by Liana version 5.0 and above";;
 
 installer-template-custom-primary => "Primary keys"
 
