@@ -2,12 +2,13 @@ use crate::{
     bitcoin::{BitcoinInterface, Block, BlockChainTip, MempoolEntry, SyncProgress, UTxO},
     config::{BitcoinConfig, Config},
     database::{
-        BlockInfo, Coin, CoinStatus, DatabaseConnection, DatabaseInterface, LabelItem, Wallet,
+        BlockInfo, Coin, CoinStatus, CoinWithDefaultLabel, DatabaseConnection, DatabaseInterface,
+        LabelItem, Wallet, WalletTransaction,
     },
     datadir::DataDirectory,
     DaemonControl, DaemonHandle,
 };
-use liana::descriptors;
+use liana::{descriptors, label::Label};
 
 use std::convert::TryInto;
 use std::{
@@ -155,6 +156,8 @@ struct DummyDbState {
     curr_tip: Option<BlockChainTip>,
     coins: HashMap<bitcoin::OutPoint, Coin>,
     txs: HashMap<bitcoin::Txid, bitcoin::Transaction>,
+    tx_default_labels: HashMap<bitcoin::Txid, Label>,
+    coin_default_labels: HashMap<bitcoin::OutPoint, Label>,
     spend_txs: HashMap<bitcoin::Txid, (Psbt, Option<u32>)>,
     labels: HashMap<LabelItem, String>,
     timestamp: u32,
@@ -191,6 +194,8 @@ impl DummyDatabase {
                 curr_tip: None,
                 coins: HashMap::new(),
                 txs: HashMap::new(),
+                tx_default_labels: HashMap::new(),
+                coin_default_labels: HashMap::new(),
                 spend_txs: HashMap::new(),
                 labels: HashMap::new(),
                 timestamp: now,
@@ -295,6 +300,28 @@ impl DatabaseConnection for DummyDatabase {
                 } else {
                     None
                 }
+            })
+            .collect()
+    }
+
+    fn coins_with_default_label(
+        &mut self,
+        statuses: &[CoinStatus],
+        outpoints: &[bitcoin::OutPoint],
+    ) -> HashMap<bitcoin::OutPoint, CoinWithDefaultLabel> {
+        let coins = self.coins(statuses, outpoints);
+        let db = self.db.read().unwrap();
+        coins
+            .into_iter()
+            .map(|(op, coin)| {
+                let default_label = db.coin_default_labels.get(&op).cloned().unwrap_or_default();
+                (
+                    op,
+                    CoinWithDefaultLabel {
+                        coin,
+                        default_label,
+                    },
+                )
             })
             .collect()
     }
@@ -542,10 +569,7 @@ impl DatabaseConnection for DummyDatabase {
         // noop
     }
 
-    fn list_wallet_transactions(
-        &mut self,
-        txids: &[bitcoin::Txid],
-    ) -> Vec<(bitcoin::Transaction, Option<i32>, Option<u32>)> {
+    fn list_wallet_transactions(&mut self, txids: &[bitcoin::Txid]) -> Vec<WalletTransaction> {
         let txs: HashMap<_, _> = self
             .db
             .read()
@@ -556,6 +580,7 @@ impl DatabaseConnection for DummyDatabase {
             .filter(|(txid, _tx)| txids.contains(txid))
             .collect();
         let coins = self.coins(&[], &[]);
+        let default_labels = self.db.read().unwrap().tx_default_labels.clone();
         let mut wallet_txs = Vec::with_capacity(txs.len());
         for (txid, tx) in txs {
             let first_block_info = coins.values().find_map(|c| {
@@ -568,10 +593,52 @@ impl DatabaseConnection for DummyDatabase {
                 }
             });
             if let Some(block_info) = first_block_info {
-                wallet_txs.push((tx, block_info.map(|b| b.height), block_info.map(|b| b.time)));
+                let default_label = default_labels.get(&txid).cloned().unwrap_or_default();
+                wallet_txs.push(WalletTransaction {
+                    tx,
+                    block_height: block_info.map(|b| b.height),
+                    block_time: block_info.map(|b| b.time),
+                    default_label,
+                });
             }
         }
         wallet_txs
+    }
+
+    fn list_txs_without_default_label(&mut self) -> Vec<bitcoin::Transaction> {
+        let db = self.db.read().unwrap();
+        db.txs
+            .iter()
+            .filter(|(txid, _)| !db.tx_default_labels.contains_key(*txid))
+            .map(|(_, tx)| tx.clone())
+            .collect()
+    }
+
+    fn list_coins_without_default_label(&mut self) -> Vec<bitcoin::OutPoint> {
+        let db = self.db.read().unwrap();
+        db.coins
+            .keys()
+            .filter(|outpoint| !db.coin_default_labels.contains_key(*outpoint))
+            .copied()
+            .collect()
+    }
+
+    fn store_default_labels(
+        &mut self,
+        txs: &HashMap<bitcoin::Txid, Label>,
+        coins: &HashMap<bitcoin::OutPoint, Label>,
+    ) {
+        let mut db = self.db.write().unwrap();
+        for (txid, label) in txs {
+            db.tx_default_labels
+                .entry(*txid)
+                .or_insert_with(|| label.clone());
+        }
+        for (outpoint, label) in coins {
+            db.coin_default_labels
+                .entry(*outpoint)
+                .or_insert_with(|| label.clone());
+        }
     }
 
     fn get_labels_bip329(&mut self, _offset: u32, _limit: u32) -> bip329::Labels {

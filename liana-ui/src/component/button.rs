@@ -392,6 +392,7 @@ pub enum BtnWidth {
     S = 100,
     M = 140,
     L = 180,
+    Modal = 200,
     XL = 230,
     XXL = 330,
     /// Default to Length::Shrink
@@ -1083,4 +1084,29 @@ pub fn btn_modal_previous<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
 
 pub fn btn_mnemonic_word<'a, T: Clone + 'a>(word: impl Display, msg: T) -> Button<'a, T> {
     button_compact(word, theme::button::tertiary, Some(msg)).width(BtnWidth::S)
+}
+
+pub fn btn_confirm<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, t!("btn-confirm"), BtnWidth::Modal, msg)
+}
+
+pub fn btn_go_to_replacement<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, t!("btn-go-to-replacement"), BtnWidth::Modal, msg)
+}
+
+pub fn btn_bump_fee<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, t!("btn-bump-fee"), BtnWidth::Modal, msg)
+}
+
+pub fn btn_cancel_transaction<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_destructive(None, t!("btn-cancel-transaction"), BtnWidth::Modal, msg)
+}
+
+pub fn btn_see_more<'a, T: Clone + 'a>(processing: bool, msg: T) -> Button<'a, T> {
+    let label = if processing {
+        t!("common-fetching")
+    } else {
+        t!("common-see-more")
+    };
+    btn_secondary(None, label, BtnWidth::Fill, (!processing).then_some(msg))
 }

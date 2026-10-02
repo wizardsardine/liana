@@ -76,7 +76,6 @@ pub fn psbt_view<'a>(
         &tx.change_indexes,
         &tx.labels,
         labels_editing,
-        tx.is_single_payment().is_some(),
         false,
     );
 
@@ -234,15 +233,7 @@ pub fn spend_header<'a>(
 ) -> Element<'a, Message> {
     let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
 
-    let label = if let Some(outpoint) = tx.is_single_payment() {
-        let outpoint = outpoint.to_string();
-        let labelled = vec![outpoint.clone(), txid.clone()];
-        if let Some(label) = labels_editing.get(&outpoint) {
-            label::label_editing(labelled, label, LABEL_TITLE_SIZE)
-        } else {
-            label::label_editable(labelled, tx.labels.get(&outpoint), LABEL_TITLE_SIZE)
-        }
-    } else if let Some(label) = labels_editing.get(&txid) {
+    let label = if let Some(label) = labels_editing.get(&txid) {
         label::label_editing(vec![txid.clone()], label, LABEL_TITLE_SIZE)
     } else {
         label::label_editable(vec![txid.clone()], tx.labels.get(&txid), LABEL_TITLE_SIZE)
@@ -251,8 +242,8 @@ pub fn spend_header<'a>(
     psbts::spend_header(
         label,
         tx.is_send_to_self(),
-        tx.spend_amount,
-        tx.fee_amount,
+        tx.wallet_tx.amount(),
+        tx.wallet_tx.fee(),
         tx.min_feerate_vb(),
     )
 }
@@ -340,10 +331,9 @@ pub fn inputs_view<'a>(
 pub fn outputs_view<'a>(
     tx: &'a Transaction,
     network: Network,
-    change_indexes: &'a [usize],
+    change_indexes: &[usize],
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    is_single_payment: bool,
     is_external: bool,
 ) -> Element<'a, Message> {
     let is_payment = |i: &usize| is_external || !change_indexes.contains(i);
@@ -369,7 +359,6 @@ pub fn outputs_view<'a>(
                     network,
                     labels,
                     labels_editing,
-                    is_single_payment,
                     !is_external || change_indexes.contains(&i),
                 )
             })
@@ -435,7 +424,6 @@ fn payment_view<'a>(
     network: Network,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    is_single: bool,
     is_editable: bool,
 ) -> Element<'a, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
@@ -446,22 +434,18 @@ fn payment_view<'a>(
         vout: i as u32,
     }
     .to_string();
-    // if the payment is single in the transaction, then the label of the txid
-    // is attached to the label of the payment.
-    let change_labels = if is_single {
-        vec![outpoint.clone(), txid.to_string()]
-    } else {
-        vec![outpoint.clone()]
-    };
-
     let label_widget = if is_editable {
         if let Some(label) = labels_editing.get(&outpoint) {
-            label::label_editing(change_labels, label, LABEL_BODY_SIZE)
+            label::label_editing(vec![outpoint.clone()], label, LABEL_BODY_SIZE)
         } else {
-            label::label_editable(change_labels, labels.get(&outpoint), LABEL_BODY_SIZE)
+            label::label_editable(
+                vec![outpoint.clone()],
+                labels.get(&outpoint),
+                LABEL_BODY_SIZE,
+            )
         }
     } else {
-        label::label_non_editable(change_labels, None, LABEL_BODY_SIZE)
+        label::label_non_editable(vec![outpoint], None, LABEL_BODY_SIZE)
     };
 
     let address_label = addr

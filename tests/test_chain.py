@@ -79,8 +79,9 @@ def test_reorg_exclusion(lianad, bitcoind):
     assert coin_a["is_from_self"] is False
     assert coin_b["is_from_self"] is False
 
-    # A confirmed and spent coin
+    # A confirmed and spent coin, received on a labelled address
     addr = lianad.rpc.getnewaddress()["address"]
+    lianad.rpc.updatelabels({addr: "salary"})
     txid_c = bitcoind.rpc.sendtoaddress(addr, 3)
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 3)
     # Now refresh this coin while it is unconfirmed.
@@ -95,6 +96,17 @@ def test_reorg_exclusion(lianad, bitcoind):
     # Even though coin_d is from a self-send, coin_c is still unconfirmed
     # and is not from self. Therefore, coin_d is not from self either.
     assert coin_d["is_from_self"] is False
+
+    # The receiving address label is the default label of coin_c and its transaction,
+    # and the self-send passes it on to coin_d and its transaction.
+    wait_for(lambda: get_coin(lianad, txid_d)["default_label"] == {"from": "salary"})
+    assert get_coin(lianad, txid_c)["default_label"] == {"address": "salary"}
+    txs = lianad.rpc.listtransactions([txid_c, txid_d])["transactions"]
+    default_labels = {get_txid(tx["tx"]): tx["default_label"] for tx in txs}
+    assert default_labels == {
+        txid_c: {"address": "salary"},
+        txid_d: {"from": "salary"},
+    }
 
     bitcoind.generate_block(1)
     # Wait for confirmation to be detected.

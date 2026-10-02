@@ -1,7 +1,11 @@
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-use liana::descriptors::LianaDescriptor;
+use liana::{
+    descriptors::LianaDescriptor,
+    label::{self, Label},
+    transaction::{PaymentKind, WalletTransaction},
+};
 pub use liana::{
     descriptors::{LianaPolicy, PartialSpendInfo, PathSpendInfo},
     miniscript::bitcoin::{
@@ -10,8 +14,8 @@ pub use liana::{
         secp256k1, Address, Amount, Network, OutPoint, Transaction, Txid,
     },
     spend::SpendStatus,
+    transaction::TransactionKind,
 };
-use liana_ui::component::panels::home::payment::PaymentKind;
 pub use lianad::commands::{
     CreateSpendResult, GetAddressResult, GetInfoResult, GetLabelsResult, LabelItem, ListCoinsEntry,
     ListCoinsResult, ListRevealedAddressesEntry, ListRevealedAddressesResult, ListSpendEntry,
@@ -42,15 +46,13 @@ pub struct SpendTx {
     pub labels: HashMap<String, String>,
     pub psbt: Psbt,
     pub change_indexes: Vec<usize>,
-    pub spend_amount: Amount,
-    pub fee_amount: Option<Amount>,
+    pub wallet_tx: WalletTransaction,
     /// Maximum possible size of the unsigned transaction after satisfaction
     /// (assuming all inputs are for the same descriptor).
     pub max_vbytes: u64,
     pub status: SpendStatus,
     pub sigs: PartialSpendInfo,
     pub updated_at: Option<u32>,
-    pub kind: TransactionKind,
 }
 
 /// Status of a spend transaction as it can be told from the coins it spends and its signatures,
@@ -148,47 +150,35 @@ impl SpendTx {
             .into_iter()
             .map(|c| c.index())
             .collect();
-        let (change_amount, spend_amount) = psbt.unsigned_tx.output.iter().enumerate().fold(
-            (Amount::from_sat(0), Amount::from_sat(0)),
-            |(change, spend), (i, output)| {
-                if change_indexes.contains(&i) {
-                    (change + output.value, spend)
-                } else {
-                    (change, spend + output.value)
-                }
-            },
-        );
 
         let mut coins_map = HashMap::<OutPoint, Coin>::with_capacity(coins.len());
         for coin in coins {
             coins_map.insert(coin.outpoint, coin);
         }
 
-        let inputs_amount = {
-            let mut inputs_amount = Amount::from_sat(0);
-            for (i, input) in psbt.inputs.iter().enumerate() {
-                if let Some(utxo) = &input.witness_utxo {
-                    inputs_amount += utxo.value;
-                // we try to have it from the coin
-                } else if let Some(coin) = psbt
-                    .unsigned_tx
-                    .input
-                    .get(i)
-                    .and_then(|inpt| coins_map.get(&inpt.previous_output))
-                {
-                    inputs_amount += coin.amount;
-                // Information is missing, it is better to set inputs_amount to None.
-                } else {
-                    inputs_amount = Amount::from_sat(0);
-                    break;
-                }
-            }
-            if inputs_amount.to_sat() == 0 {
-                None
-            } else {
-                Some(inputs_amount)
-            }
-        };
+        let owned_inputs: Vec<liana::transaction::Coin> = psbt
+            .unsigned_tx
+            .input
+            .iter()
+            .zip(&psbt.inputs)
+            .filter_map(|(txin, input)| {
+                let amount = input
+                    .witness_utxo
+                    .as_ref()
+                    .map(|utxo| utxo.value)
+                    .or_else(|| coins_map.get(&txin.previous_output).map(|coin| coin.amount))?;
+                Some(liana::transaction::Coin {
+                    outpoint: txin.previous_output,
+                    amount,
+                })
+            })
+            .collect();
+        let txid = psbt.unsigned_tx.compute_txid();
+        let owned_outputs: Vec<OutPoint> = change_indexes
+            .iter()
+            .map(|index| OutPoint::new(txid, *index as u32))
+            .collect();
+        let wallet_tx = WalletTransaction::new(&psbt.unsigned_tx, &owned_inputs, &owned_outputs);
 
         // A PSBT stored without sanity checks can panic here, see https://github.com/wizardsardine/liana/issues/2300
         let sigs = desc
@@ -197,37 +187,11 @@ impl SpendTx {
 
         Self {
             labels: HashMap::new(),
-            kind: if spend_amount == Amount::from_sat(0) {
-                TransactionKind::SendToSelf
-            } else {
-                let outpoints: Vec<OutPoint> = psbt
-                    .unsigned_tx
-                    .output
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, _)| {
-                        if !change_indexes.contains(&i) {
-                            Some(OutPoint {
-                                txid: psbt.unsigned_tx.compute_txid(),
-                                vout: i as u32,
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if outpoints.len() == 1 {
-                    TransactionKind::OutgoingSinglePayment(outpoints[0])
-                } else {
-                    TransactionKind::OutgoingPaymentBatch(outpoints)
-                }
-            },
             updated_at,
             coins: coins_map,
             psbt,
             change_indexes,
-            spend_amount,
-            fee_amount: inputs_amount.and_then(|a| a.checked_sub(spend_amount + change_amount)),
+            wallet_tx,
             max_vbytes,
             status,
             sigs,
@@ -263,7 +227,7 @@ impl SpendTx {
 
     /// Feerate obtained if all transaction inputs have the maximum satisfaction size.
     pub fn min_feerate_vb(&self) -> Option<u64> {
-        self.fee_amount.map(|a| {
+        self.wallet_tx.fee().map(|a| {
             a.to_sat()
                 .checked_div(self.max_vbytes)
                 .expect("a descriptor's satisfaction size is never 0")
@@ -271,14 +235,14 @@ impl SpendTx {
     }
 
     pub fn is_send_to_self(&self) -> bool {
-        matches!(self.kind, TransactionKind::SendToSelf)
+        self.wallet_tx.kind().is_send_to_self()
     }
 
     /// Amount the transaction moves: what it sends out, or the total of its outputs for a
     /// self-transfer, which sends nothing out.
     pub fn moved_amount(&self) -> Amount {
         if !self.is_send_to_self() {
-            return self.spend_amount;
+            return self.wallet_tx.amount();
         }
         let mut moved = Amount::from_sat(0);
         for output in &self.psbt.unsigned_tx.output {
@@ -287,19 +251,12 @@ impl SpendTx {
         moved
     }
 
-    pub fn is_single_payment(&self) -> Option<OutPoint> {
-        match self.kind {
-            TransactionKind::IncomingSinglePayment(outpoint) => Some(outpoint),
-            TransactionKind::OutgoingSinglePayment(outpoint) => Some(outpoint),
-            _ => None,
-        }
+    pub fn single_payment(&self) -> Option<OutPoint> {
+        self.wallet_tx.kind().single_payment()
     }
 
     pub fn is_batch(&self) -> bool {
-        matches!(
-            self.kind,
-            TransactionKind::IncomingPaymentBatch(_) | TransactionKind::OutgoingPaymentBatch(_)
-        )
+        self.wallet_tx.kind().is_batch()
     }
 }
 
@@ -335,15 +292,13 @@ pub struct HistoryTransaction {
     pub network: Network,
     pub labels: HashMap<String, String>,
     pub coins: HashMap<OutPoint, Coin>,
-    pub change_indexes: Vec<usize>,
+    pub owned_outputs: BTreeMap<usize, Label>,
     pub tx: Transaction,
     pub txid: Txid,
-    pub outgoing_amount: Amount,
-    pub incoming_amount: Amount,
-    pub fee_amount: Option<Amount>,
+    pub wallet_tx: WalletTransaction,
     pub height: Option<i32>,
     pub time: Option<u32>,
-    pub kind: TransactionKind,
+    pub default_label: Label,
 }
 
 impl HistoryTransaction {
@@ -352,83 +307,50 @@ impl HistoryTransaction {
         height: Option<i32>,
         time: Option<u32>,
         coins: Vec<Coin>,
-        change_indexes: Vec<usize>,
+        owned_outputs: BTreeMap<usize, Label>,
         network: Network,
+        default_label: Label,
     ) -> Self {
-        let (incoming_amount, outgoing_amount) = tx.output.iter().enumerate().fold(
-            (Amount::from_sat(0), Amount::from_sat(0)),
-            |(change, spend), (i, output)| {
-                if change_indexes.contains(&i) {
-                    (change + output.value, spend)
-                } else {
-                    (change, spend + output.value)
-                }
-            },
-        );
-
-        let kind = if coins.is_empty() {
-            if change_indexes.len() == 1 {
-                TransactionKind::IncomingSinglePayment(OutPoint {
-                    txid: tx.compute_txid(),
-                    vout: change_indexes[0] as u32,
-                })
-            } else {
-                TransactionKind::IncomingPaymentBatch(
-                    change_indexes
-                        .iter()
-                        .map(|i| OutPoint {
-                            txid: tx.compute_txid(),
-                            vout: *i as u32,
-                        })
-                        .collect(),
-                )
-            }
-        } else if outgoing_amount == Amount::from_sat(0) {
-            TransactionKind::SendToSelf
-        } else {
-            let outpoints: Vec<OutPoint> = tx
-                .output
-                .iter()
-                .enumerate()
-                .filter_map(|(i, _)| {
-                    if !change_indexes.contains(&i) {
-                        Some(OutPoint {
-                            txid: tx.compute_txid(),
-                            vout: i as u32,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if outpoints.len() == 1 {
-                TransactionKind::OutgoingSinglePayment(outpoints[0])
-            } else {
-                TransactionKind::OutgoingPaymentBatch(outpoints)
-            }
-        };
-
-        let mut inputs_amount = Amount::from_sat(0);
         let mut coins_map = HashMap::<OutPoint, Coin>::with_capacity(coins.len());
         for coin in coins {
-            inputs_amount += coin.amount;
             coins_map.insert(coin.outpoint, coin);
         }
 
+        let owned_inputs: Vec<liana::transaction::Coin> = coins_map
+            .values()
+            .map(liana::transaction::Coin::from)
+            .collect();
+        let txid = tx.compute_txid();
+        let owned_outpoints: Vec<OutPoint> = owned_outputs
+            .keys()
+            .map(|index| OutPoint::new(txid, *index as u32))
+            .collect();
+        let wallet_tx = WalletTransaction::new(&tx, &owned_inputs, &owned_outpoints);
+
         Self {
             labels: HashMap::new(),
-            kind,
-            txid: tx.compute_txid(),
+            txid,
             tx,
             coins: coins_map,
-            change_indexes,
-            outgoing_amount,
-            incoming_amount,
-            fee_amount: inputs_amount.checked_sub(outgoing_amount + incoming_amount),
+            owned_outputs,
+            wallet_tx,
             height,
             time,
             network,
+            default_label,
         }
+    }
+
+    /// Positions in `tx.output` of the outputs that are ours, not derivation indexes.
+    pub fn owned_output_indexes(&self) -> Vec<usize> {
+        self.owned_outputs.keys().copied().collect()
+    }
+
+    /// Feerate in sats/vbyte, `None` if the fee is unknown.
+    pub fn feerate(&self) -> Option<u64> {
+        self.wallet_tx
+            .fee()
+            .map(|fee| fee.to_sat() / self.tx.vsize() as u64)
     }
 
     pub fn compare(&self, other: &Self) -> Ordering {
@@ -443,37 +365,36 @@ impl HistoryTransaction {
         }
     }
 
-    pub fn is_external(&self) -> bool {
-        matches!(
-            self.kind,
-            TransactionKind::IncomingSinglePayment(_) | TransactionKind::IncomingPaymentBatch(_)
-        )
-    }
-
-    pub fn is_outgoing(&self) -> bool {
-        matches!(
-            self.kind,
-            TransactionKind::OutgoingPaymentBatch(_) | TransactionKind::OutgoingSinglePayment(_)
-        )
+    pub fn is_incoming(&self) -> bool {
+        self.wallet_tx.is_incoming()
     }
 
     pub fn is_send_to_self(&self) -> bool {
-        matches!(self.kind, TransactionKind::SendToSelf)
+        self.wallet_tx.kind().is_send_to_self()
     }
 
-    pub fn is_single_payment(&self) -> Option<OutPoint> {
-        match self.kind {
-            TransactionKind::IncomingSinglePayment(outpoint) => Some(outpoint),
-            TransactionKind::OutgoingSinglePayment(outpoint) => Some(outpoint),
-            _ => None,
-        }
+    pub fn single_payment(&self) -> Option<OutPoint> {
+        self.wallet_tx.kind().single_payment()
     }
 
     pub fn is_batch(&self) -> bool {
-        matches!(
-            self.kind,
-            TransactionKind::IncomingPaymentBatch(_) | TransactionKind::OutgoingPaymentBatch(_)
-        )
+        self.wallet_tx.kind().is_batch()
+    }
+
+    pub fn is_payjoin(&self) -> bool {
+        self.wallet_tx.kind().is_payjoin()
+    }
+
+    /// The label to display: its own one, else the label of its single payment, else its default
+    /// label.
+    pub fn label(&self) -> Label {
+        label::get(&self.labels, self.txid)
+            .or_else(|| {
+                self.single_payment()
+                    .and_then(|outpoint| label::get(&self.labels, outpoint))
+            })
+            .map(|label| Label::Own(label.to_string()))
+            .unwrap_or_else(|| self.default_label.clone())
     }
 }
 
@@ -481,7 +402,7 @@ impl HistoryTransaction {
 pub struct Payment {
     pub label: Option<String>,
     pub address: Option<String>,
-    pub address_label: Option<String>,
+    pub default_label: Label,
     pub amount: Amount,
     pub outpoint: OutPoint,
     pub time: Option<chrono::DateTime<chrono::Utc>>,
@@ -489,6 +410,41 @@ pub struct Payment {
 }
 
 impl Payment {
+    /// The label to display: its own one, else its default label.
+    pub fn label(&self) -> Label {
+        self.label
+            .as_deref()
+            .filter(|label| !label.is_empty())
+            .map(|label| Label::Own(label.to_string()))
+            .unwrap_or_else(|| self.default_label.clone())
+    }
+
+    pub fn from_tx_output(history_tx: &HistoryTransaction, output_index: usize) -> Option<Self> {
+        let output = history_tx.tx.output.get(output_index)?;
+        let outpoint = OutPoint::new(history_tx.txid, output_index as u32);
+        let kind = history_tx.wallet_tx.payment_kind(&outpoint)?;
+        let label = history_tx.labels.get(&outpoint.to_string()).cloned();
+        let address = Address::from_script(&output.script_pubkey, history_tx.network)
+            .ok()
+            .map(|addr| addr.to_string());
+        let default_label = history_tx
+            .owned_outputs
+            .get(&output_index)
+            .cloned()
+            .unwrap_or_default();
+        Some(Payment {
+            label,
+            address,
+            default_label,
+            outpoint,
+            time: history_tx
+                .time
+                .map(|t| chrono::DateTime::<chrono::Utc>::from_timestamp(t as i64, 0).unwrap()),
+            amount: output.value,
+            kind,
+        })
+    }
+
     pub fn compare(&self, other: &Self) -> Ordering {
         match (&self.time, &other.time) {
             // `None` values come first
@@ -511,9 +467,6 @@ impl Payment {
 
 impl LabelsLoader for Payment {
     fn load_labels(&mut self, new_labels: &HashMap<String, Option<String>>) {
-        if let Some(label) = self.address.as_ref().and_then(|addr| new_labels.get(addr)) {
-            self.address_label = label.clone();
-        }
         if let Some(label) = new_labels.get(&self.outpoint.to_string()) {
             self.label = label.clone();
         }
@@ -521,58 +474,9 @@ impl LabelsLoader for Payment {
 }
 
 pub fn payments_from_tx(history_tx: HistoryTransaction) -> Vec<Payment> {
-    let time = history_tx
-        .time
-        .map(|t| chrono::DateTime::<chrono::Utc>::from_timestamp(t as i64, 0).unwrap());
-    history_tx
-        .tx
-        .output
-        .iter()
-        .enumerate()
-        .fold(Vec::new(), |mut array, (output_index, output)| {
-            if history_tx.is_external() && !history_tx.change_indexes.contains(&output_index) {
-                return array;
-            }
-            let outpoint = OutPoint {
-                txid: history_tx.tx.compute_txid(),
-                vout: output_index as u32,
-            };
-            let label = history_tx.labels.get(&outpoint.to_string()).cloned();
-            let address = Address::from_script(&output.script_pubkey, history_tx.network)
-                .ok()
-                .map(|addr| addr.to_string());
-            let address_label = address
-                .as_ref()
-                .and_then(|addr| history_tx.labels.get(addr).cloned());
-            array.push(Payment {
-                label,
-                address,
-                address_label,
-                outpoint,
-                time,
-                amount: output.value,
-                kind: if history_tx.is_send_to_self()
-                    || (history_tx.is_outgoing()
-                        && history_tx.change_indexes.contains(&output_index))
-                {
-                    PaymentKind::SendToSelf
-                } else if history_tx.is_external() {
-                    PaymentKind::Incoming
-                } else {
-                    PaymentKind::Outgoing
-                },
-            });
-            array
-        })
-}
-
-#[derive(Debug, Clone)]
-pub enum TransactionKind {
-    IncomingSinglePayment(OutPoint),
-    IncomingPaymentBatch(Vec<OutPoint>),
-    SendToSelf,
-    OutgoingSinglePayment(OutPoint),
-    OutgoingPaymentBatch(Vec<OutPoint>),
+    (0..history_tx.tx.output.len())
+        .filter_map(|output_index| Payment::from_tx_output(&history_tx, output_index))
+        .collect()
 }
 
 impl Labelled for HistoryTransaction {
@@ -634,8 +538,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use liana::miniscript::bitcoin::{
-        absolute, bip32::ChildNumber, transaction, ScriptBuf, Sequence, TxIn, Witness,
+    use liana::{
+        label::Label,
+        miniscript::bitcoin::{
+            absolute, bip32::ChildNumber, transaction, ScriptBuf, Sequence, TxIn, TxOut, Witness,
+        },
     };
     use lianad::commands::LCSpendInfo;
     use std::str::FromStr;
@@ -656,6 +563,7 @@ mod tests {
             is_immature: false,
             is_change: false,
             is_from_self: false,
+            default_label: Label::None,
             spend_info,
         }
     }
@@ -729,5 +637,268 @@ mod tests {
             spend_status_from_coins(&psbt, &coins, &dummy_desc(), 1),
             SpendStatus::Broadcast
         );
+    }
+
+    const SALARY: &str = "salary";
+    const RENT: &str = "rent";
+
+    fn address(index: u8) -> Address {
+        Address::p2wsh(&ScriptBuf::from_bytes(vec![index]), Network::Bitcoin)
+    }
+
+    fn outpoint(index: u8) -> OutPoint {
+        OutPoint::new(Txid::from_str(&format!("{index:0>64x}")).unwrap(), 0)
+    }
+
+    /// A history transaction spending `inputs`, of which `owned_inputs` are ours, to one output
+    /// per address index, of which the ones in `owned_outputs` are ours.
+    fn history_tx(
+        inputs: &[OutPoint],
+        owned_inputs: &[OutPoint],
+        outputs: &[u8],
+        owned_outputs: BTreeMap<usize, Label>,
+        default_label: Label,
+    ) -> HistoryTransaction {
+        let tx = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: inputs
+                .iter()
+                .map(|outpoint| TxIn {
+                    previous_output: *outpoint,
+                    script_sig: ScriptBuf::new(),
+                    sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    witness: Witness::new(),
+                })
+                .collect(),
+            output: outputs
+                .iter()
+                .map(|index| TxOut {
+                    value: Amount::from_sat(10_000),
+                    script_pubkey: address(*index).script_pubkey(),
+                })
+                .collect(),
+        };
+        HistoryTransaction::new(
+            tx,
+            Some(1),
+            Some(1),
+            owned_inputs
+                .iter()
+                .map(|outpoint| dummy_coin(*outpoint, None))
+                .collect(),
+            owned_outputs,
+            Network::Bitcoin,
+            default_label,
+        )
+    }
+
+    /// Paying us on address 1, and a stranger on address 9.
+    fn incoming_single(default_label: Label) -> HistoryTransaction {
+        let owned_outputs = BTreeMap::from([(0, Label::None)]);
+        history_tx(&[outpoint(1)], &[], &[1, 9], owned_outputs, default_label)
+    }
+
+    /// Paying us on addresses 1 and 2.
+    fn incoming_batch() -> HistoryTransaction {
+        let owned_outputs = BTreeMap::from([(0, Label::None), (1, Label::None)]);
+        history_tx(&[outpoint(1)], &[], &[1, 2], owned_outputs, Label::None)
+    }
+
+    /// Spending our coin to a stranger on address 9, with change on address 3.
+    fn outgoing_single(change_label: Label) -> HistoryTransaction {
+        let owned_outputs = BTreeMap::from([(1, change_label)]);
+        history_tx(
+            &[outpoint(1)],
+            &[outpoint(1)],
+            &[9, 3],
+            owned_outputs,
+            Label::None,
+        )
+    }
+
+    /// Spending our coin to strangers on addresses 8 and 9.
+    fn outgoing_batch() -> HistoryTransaction {
+        history_tx(
+            &[outpoint(1)],
+            &[outpoint(1)],
+            &[8, 9],
+            BTreeMap::new(),
+            Label::None,
+        )
+    }
+
+    /// Moving our coin to address 4.
+    fn send_to_self(default_label: Label) -> HistoryTransaction {
+        let owned_outputs = BTreeMap::from([(0, Label::None)]);
+        history_tx(
+            &[outpoint(1)],
+            &[outpoint(1)],
+            &[4],
+            owned_outputs,
+            default_label,
+        )
+    }
+
+    /// Spending our coin and the receiver's coin to the receiver on address 9, with change on
+    /// address 3.
+    fn payjoin_send() -> HistoryTransaction {
+        let owned_outputs = BTreeMap::from([(1, Label::None)]);
+        let inputs = [outpoint(1), outpoint(2)];
+        history_tx(&inputs, &[outpoint(1)], &[9, 3], owned_outputs, Label::None)
+    }
+
+    fn labelled(mut tx: HistoryTransaction, labels: &[(String, &str)]) -> HistoryTransaction {
+        tx.labels = labels
+            .iter()
+            .map(|(item, label)| (item.clone(), label.to_string()))
+            .collect();
+        tx
+    }
+
+    fn payment(label: Option<&str>, default_label: Label) -> Payment {
+        Payment {
+            label: label.map(str::to_string),
+            address: None,
+            default_label,
+            amount: Amount::from_sat(10_000),
+            outpoint: outpoint(1),
+            time: None,
+            kind: PaymentKind::Incoming,
+        }
+    }
+
+    /// Labels edited by the user, as received after an update.
+    fn edited(key: String, label: Option<&str>) -> HashMap<String, Option<String>> {
+        HashMap::from([(key, label.map(str::to_string))])
+    }
+
+    #[test]
+    fn tx_label_falls_back_to_its_default() {
+        assert_eq!(incoming_single(Label::None).label(), Label::None);
+        assert_eq!(
+            incoming_single(Label::Address(SALARY.to_string())).label(),
+            Label::Address(SALARY.to_string())
+        );
+        assert_eq!(
+            send_to_self(Label::From(SALARY.to_string())).label(),
+            Label::From(SALARY.to_string())
+        );
+    }
+
+    #[test]
+    fn tx_own_label_wins_over_the_default() {
+        let tx = incoming_single(Label::Address(RENT.to_string()));
+        let tx = labelled(tx.clone(), &[(tx.txid.to_string(), SALARY)]);
+        assert_eq!(tx.label(), Label::Own(SALARY.to_string()));
+    }
+
+    #[test]
+    fn tx_empty_own_label_is_ignored() {
+        let tx = incoming_single(Label::None);
+        let tx = labelled(tx.clone(), &[(tx.txid.to_string(), "")]);
+        assert_eq!(tx.label(), Label::None);
+
+        let tx = incoming_single(Label::Address(SALARY.to_string()));
+        let tx = labelled(tx.clone(), &[(tx.txid.to_string(), "")]);
+        assert_eq!(tx.label(), Label::Address(SALARY.to_string()));
+    }
+
+    #[test]
+    fn tx_ignores_the_address_and_foreign_output_labels() {
+        let tx = incoming_single(Label::None);
+        // The receiving address only counts through the default.
+        let foreign_output = OutPoint::new(tx.txid, 1);
+        let tx = labelled(
+            tx,
+            &[
+                (address(1).to_string(), SALARY),
+                (foreign_output.to_string(), SALARY),
+            ],
+        );
+        assert_eq!(tx.label(), Label::None);
+    }
+
+    #[test]
+    fn tx_outgoing_single_shows_the_payment_label() {
+        let tx = outgoing_single(Label::None);
+        let tx = labelled(tx.clone(), &[(OutPoint::new(tx.txid, 0).to_string(), RENT)]);
+        assert_eq!(tx.label(), Label::Own(RENT.to_string()));
+    }
+
+    #[test]
+    fn tx_outgoing_single_ignores_the_change_label() {
+        let tx = outgoing_single(Label::None);
+        let tx = labelled(tx.clone(), &[(OutPoint::new(tx.txid, 1).to_string(), RENT)]);
+        assert_eq!(tx.label(), Label::None);
+    }
+
+    #[test]
+    fn tx_payjoin_send_shows_the_payment_label() {
+        let tx = payjoin_send();
+        let tx = labelled(tx.clone(), &[(OutPoint::new(tx.txid, 0).to_string(), RENT)]);
+        assert_eq!(tx.label(), Label::Own(RENT.to_string()));
+    }
+
+    #[test]
+    fn tx_batches_show_no_payment_label() {
+        for tx in [incoming_batch(), outgoing_batch()] {
+            let labels = [
+                (OutPoint::new(tx.txid, 0).to_string(), SALARY),
+                (OutPoint::new(tx.txid, 1).to_string(), RENT),
+            ];
+            assert_eq!(labelled(tx, &labels).label(), Label::None);
+        }
+    }
+
+    #[test]
+    fn tx_own_label_edit_takes_over_the_default() {
+        let mut tx = send_to_self(Label::From(SALARY.to_string()));
+        let txid = tx.txid.to_string();
+        tx.load_labels(&edited(txid.clone(), Some(RENT)));
+        assert_eq!(tx.label(), Label::Own(RENT.to_string()));
+        tx.load_labels(&edited(txid, None));
+        assert_eq!(tx.label(), Label::From(SALARY.to_string()));
+    }
+
+    #[test]
+    fn payment_label_falls_back_to_its_default() {
+        assert_eq!(payment(None, Label::None).label(), Label::None);
+        assert_eq!(
+            payment(None, Label::Address(SALARY.to_string())).label(),
+            Label::Address(SALARY.to_string())
+        );
+        assert_eq!(
+            payment(None, Label::From(RENT.to_string())).label(),
+            Label::From(RENT.to_string())
+        );
+    }
+
+    #[test]
+    fn payment_own_label_wins_over_the_default() {
+        assert_eq!(
+            payment(Some(SALARY), Label::Address(RENT.to_string())).label(),
+            Label::Own(SALARY.to_string())
+        );
+    }
+
+    #[test]
+    fn payment_empty_own_label_is_ignored() {
+        assert_eq!(payment(Some(""), Label::None).label(), Label::None);
+        assert_eq!(
+            payment(Some(""), Label::Address(SALARY.to_string())).label(),
+            Label::Address(SALARY.to_string())
+        );
+    }
+
+    #[test]
+    fn payment_own_label_edit_takes_over_the_default() {
+        let tx = outgoing_single(Label::From(RENT.to_string()));
+        let mut change = Payment::from_tx_output(&tx, 1).unwrap();
+        let outpoint = change.outpoint.to_string();
+        change.load_labels(&edited(outpoint.clone(), Some(SALARY)));
+        assert_eq!(change.label(), Label::Own(SALARY.to_string()));
+        change.load_labels(&edited(outpoint, None));
+        assert_eq!(change.label(), Label::From(RENT.to_string()));
     }
 }

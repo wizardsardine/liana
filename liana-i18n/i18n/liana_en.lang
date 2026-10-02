@@ -1295,6 +1295,8 @@ label-edit => "Edit label"
 
 label-external-output => "(External Output)"
 
+label-from => "from: {$label}"
+
 label-invalid-length => "Invalid label length, must be 80 bytes or less"
 
 label-label => "Label"
@@ -1458,6 +1460,10 @@ pill-key-safety-net => "Safety Net"
 pill-key-safety-net-tooltip => "Professional third party recovery key"
 
 pill-not-in-policy => "Not in policy yet"
+
+pill-payjoin => "Payjoin"
+
+pill-payjoin-tooltip => "This transaction also spends coins that are not ours"
 
 pill-recovery-available-tooltip => "Recovery option(s) already available"
 

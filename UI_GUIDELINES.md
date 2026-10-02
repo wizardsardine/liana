@@ -59,7 +59,7 @@ Use these; do not build equivalents.
   `list_entry_chevron`, and the `entry_*` constructors
   (`entry_wallet/key/path/set_key/organization/register/device_list/action/collapsible/action_accent/no_devices`,
   `account_entry`, `account_select_entry`, `entry_paste_xpub`); helpers `right_chevron`,
-  `breadcrumb_chevron`, `key_count`, `see_more`. Status enums `Entry*`, `DeviceStatus`.
+  `breadcrumb_chevron`, `key_count`. Status enums `Entry*`, `DeviceStatus`.
 - **modal**: `modal_view(title, back, close, width, content)` (and `modal_view_with_theme`); width
   `ModalWidth`.
 - **badge**: icon badges, `tile(Tile::..)`, `avatar(initials)`, `coin()`.

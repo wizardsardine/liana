@@ -233,6 +233,7 @@ macro_rules! pills {
 pills! {
     recovery,       "common-recovery",     "pill-recovery-tooltip",     M, simple;
     batch,          "pill-batch",        "pill-batch-tooltip",        M, simple;
+    payjoin,        "pill-payjoin",      "pill-payjoin-tooltip",      M, simple;
     deprecated,     "pill-deprecated",   "pill-deprecated-tooltip",   M, simple;
     spent,          "pill-spent",        "pill-spent-tooltip",        M, simple;
     unsigned,       "pill-unsigned",     "pill-unsigned-tooltip",     M, soft_warning;
