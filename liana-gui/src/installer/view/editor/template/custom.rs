@@ -20,7 +20,7 @@ use crate::installer::{
     message::{self, Message},
     view::{
         editor::{
-            defined_key, path,
+            defined_key, descriptor_type, path,
             template::{
                 caption_block, row_next, BOTTOM_PADDING, DESCRIPTION_BOTTOM_PADDING, FOOTER_SPACING,
             },
@@ -69,6 +69,7 @@ pub fn custom_template<'a>(
     progress: (usize, usize),
     network: Network,
     use_taproot: bool,
+    editing_descriptor_type: bool,
     primary_path: &'a Path,
     recovery_paths: &mut dyn Iterator<Item = (usize, &'a Path)>,
     safety_net_path: Option<(usize, &'a Path)>,
@@ -78,7 +79,7 @@ pub fn custom_template<'a>(
 ) -> Element<'a, Message> {
     let prim_keys_fixed = primary_path.keys.len() < 2; // can only delete a primary key if there are 2 or more
 
-    let advanced_settings = super::advanced_settings_collapse(use_taproot);
+    let descriptor_type = descriptor_type(use_taproot, editing_descriptor_type);
 
     let primary = path(
         color::GREEN,
@@ -233,7 +234,7 @@ pub fn custom_template<'a>(
     let last_btn_row = super::template_footer(valid, processing, false);
 
     let content = column![
-        advanced_settings,
+        descriptor_type,
         primary,
         recovery_paths,
         btn_row,

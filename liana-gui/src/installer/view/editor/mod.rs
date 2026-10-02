@@ -2,7 +2,7 @@
 
 pub mod template;
 
-use iced::widget::{container, slider, Space};
+use iced::widget::{slider, Space};
 use iced::{alignment, Alignment, Length};
 
 use liana_ui::component::button::{btn_edit, btn_remove, btn_set};
@@ -13,8 +13,11 @@ use std::str::FromStr;
 
 use liana_ui::{
     component::{
-        button, card, form, pick_list, separation,
-        text::{p1_regular, text, Text},
+        button, card,
+        checkbox::labelled_radio,
+        form,
+        text::{new, p1_regular, text, Text},
+        tooltip,
     },
     icon, theme,
     widget::*,
@@ -29,57 +32,56 @@ use crate::t;
 
 use super::defined_threshold;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DescriptorKind {
-    P2WSH,
-    Taproot,
-}
-
-const DESCRIPTOR_KINDS: [DescriptorKind; 2] = [DescriptorKind::P2WSH, DescriptorKind::Taproot];
-
-impl std::fmt::Display for DescriptorKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::P2WSH => write!(f, "P2WSH"),
-            Self::Taproot => write!(f, "Taproot"),
-        }
+fn descriptor_type_label(use_taproot: bool) -> String {
+    if use_taproot {
+        t!("installer-descriptor-type-taproot")
+    } else {
+        t!("installer-descriptor-type-segwit")
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a, Message> {
-    let col_wallet = Column::new()
-        .spacing(10)
-        .push(text(t!("installer-descriptor-type")).bold())
-        .push(container(
-            pick_list::pick_list(
-                &DESCRIPTOR_KINDS[..],
-                Some(if use_taproot {
-                    DescriptorKind::Taproot
-                } else {
-                    DescriptorKind::P2WSH
-                }),
-                |kind| Message::CreateTaprootDescriptor(kind == DescriptorKind::Taproot),
-            )
-            .padding(10),
+/// The descriptor type as a status line: the current choice with a tooltip, and
+/// a link opening the two options.
+pub fn descriptor_type<'a>(use_taproot: bool, editing: bool) -> Element<'a, Message> {
+    let status = Row::new()
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .push(new::caption(t!("installer-descriptor-type")).style(theme::text::secondary))
+        .push(new::b5_bold(descriptor_type_label(use_taproot)))
+        .push(tooltip::tooltip_with_style(
+            t!("installer-descriptor-type-tooltip"),
+            theme::text::secondary,
+        ))
+        .push(Space::with_width(4))
+        .push(button::subtle_link(
+            if editing {
+                t!("btn-done")
+            } else {
+                t!("btn-change")
+            },
+            Some(Message::ShowDescriptorTypeOptions(!editing)),
         ));
 
-    container(
+    let options = editing.then(|| {
         Column::new()
-            .spacing(20)
-            .push(Space::with_height(0))
-            .push(separation().width(500))
-            .push(Row::new().push(col_wallet))
-            .push_maybe(if use_taproot {
-                Some(
-                    p1_regular(t!("installer-taproot-supported-version"))
-                        .style(theme::text::secondary),
-                )
-            } else {
-                None
-            }),
-    )
-    .into()
+            .spacing(10)
+            .push(labelled_radio(
+                descriptor_type_label(true),
+                use_taproot,
+                Message::CreateTaprootDescriptor(true),
+            ))
+            .push(labelled_radio(
+                descriptor_type_label(false),
+                !use_taproot,
+                Message::CreateTaprootDescriptor(false),
+            ))
+    });
+
+    Column::new()
+        .spacing(12)
+        .push(status)
+        .push_maybe(options)
+        .into()
 }
 
 pub fn path(
