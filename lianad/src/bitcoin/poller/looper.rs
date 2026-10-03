@@ -230,11 +230,15 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
         );
         TipUpdate::Reorged(common_ancestor)
     } else {
-        log::error!(
-            "Failed to get common ancestor for tip '{}'. Starting over.",
-            current_tip
+        // Our tip is unknown to the backend, so we can't tell where our chain forked off: forget
+        // it all and resync from genesis.
+        let genesis = bit.genesis_block();
+        log::warn!(
+            "Our tip '{}' is unknown to the Bitcoin backend (tip '{}'). Rolling back to genesis.",
+            current_tip,
+            bitcoin_tip
         );
-        new_tip(bit, current_tip)
+        TipUpdate::Reorged(genesis)
     }
 }
 
@@ -411,4 +415,33 @@ pub fn poll(
         .try_into()
         .expect("system clock year is earlier than 2106");
     db_conn.set_last_poll(now);
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        bitcoin::{
+            poller::looper::{new_tip, TipUpdate},
+            BitcoinInterface, BlockChainTip,
+        },
+        testutils::DummyBitcoind,
+    };
+
+    use std::str::FromStr;
+
+    use miniscript::bitcoin::BlockHash;
+
+    #[test]
+    fn unknown_tip_rolls_back_to_genesis() {
+        // Above the dummy backend tip, and not known by it.
+        let tip = BlockChainTip {
+            hash: BlockHash::from_str(&format!("{:0>64x}", 1)).unwrap(),
+            height: 200,
+        };
+        let bit = DummyBitcoind::new();
+        assert!(matches!(
+            new_tip(&bit, &tip),
+            TipUpdate::Reorged(t) if t == bit.genesis_block()
+        ));
+    }
 }
