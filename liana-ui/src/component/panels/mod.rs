@@ -1,6 +1,7 @@
 pub mod home;
 pub mod psbts;
 pub mod receive;
+pub mod recovery;
 pub mod setting;
 pub mod spend;
 pub mod transactions;
