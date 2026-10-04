@@ -741,7 +741,7 @@ fn body<'a, M: 'a>(
     Container::new(content).width(Length::Fill).into()
 }
 
-fn entry_accent(status: EntryAccent) -> ListEntryAccent {
+pub fn entry_accent(status: EntryAccent) -> ListEntryAccent {
     match status {
         EntryAccent::Simple => |theme| {
             theme
