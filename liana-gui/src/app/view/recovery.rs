@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use iced::{
     widget::{column, row, Space},
-    Alignment, Length,
+    Length,
 };
 
 use liana::miniscript::bitcoin::{
@@ -11,7 +11,8 @@ use liana::miniscript::bitcoin::{
 };
 
 use liana_ui::{
-    component::{button, panels::recovery, text::legacy},
+    component::{button, panels::recovery, text::new},
+    spacing::VSpacing,
     theme,
     widget::*,
 };
@@ -36,30 +37,31 @@ pub fn recovery<'a>(
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     let no_recovery_paths = recovery_paths.is_empty();
-    let title = legacy::panel_title(Menu::Recovery.title());
-    let info = legacy::text(t!("recovery-info"));
-    let header = column![title, info].spacing(20);
-    let paths_title = legacy::text(if no_recovery_paths {
+    let title = new::d2(Menu::Recovery.title());
+    let info = new::b2(t!("recovery-info")).style(theme::text::secondary);
+    let header = column![title, info].spacing(VSpacing::L);
+
+    let paths_title = new::d3(if no_recovery_paths {
         t!("recovery-none-available")
     } else {
         t!("recovery-paths-available", count = recovery_paths.len())
     })
     .width(Length::Fill);
-    let paths_spacer = (!no_recovery_paths).then_some(Space::with_height(20));
-    let paths = Column::with_children(recovery_paths).spacing(20);
-    let paths = Container::new(column![paths_title, paths_spacer, paths])
-        .style(theme::card::simple)
-        .padding(20);
-    let next = (!no_recovery_paths).then_some(
-        row![
-            Space::fill_width(),
-            button::btn_next(selected_path.map(|_| Message::Next))
-        ]
-        .spacing(20)
-        .align_y(Alignment::Center),
-    );
+    let paths_spacer = (!no_recovery_paths).then_some(Space::with_height(VSpacing::M));
+    let paths = Column::with_children(recovery_paths).spacing(VSpacing::M);
+    let paths = column![paths_title, paths_spacer, paths];
+    let next = (!no_recovery_paths).then_some(row![
+        Space::fill_width(),
+        button::btn_next(selected_path.map(|_| Message::Next))
+    ]);
 
-    let content = column![header, Space::with_height(20), paths, next].spacing(20);
+    let content = column![
+        header,
+        Space::with_height(VSpacing::XXXL),
+        paths,
+        Space::with_height(VSpacing::L),
+        next
+    ];
 
     dashboard(&Menu::Recovery, cache, warning, content)
 }
