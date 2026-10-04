@@ -67,6 +67,7 @@ Use these; do not build equivalents.
   footer)` puts a caption and a progress bar in it. Daemon startup and the Bitcoin Core upgrade
   both use `progress`, so their bars sit at the same place.
 - **badge**: icon badges, `tile(Tile::..)`, `avatar(initials)`, `coin()`.
+- **checkbox**: `checkbox_button`, `radio_button`, `labelled_checkbox`, `labelled_radio`.
 - **combobox**: `combobox`, `editable_combobox`, `email_entry`; `State`, `Tag`.
 - **form**: `Form::new / new_disabled / new_trimmed / new_amount_btc`, `.label`, `.padding`; `Value`;
   `FormSize`.

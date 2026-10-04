@@ -7,7 +7,7 @@ use iced::{
 
 use crate::{
     component::text::new,
-    widget::{Element, Radio, Row},
+    widget::{CheckBox, Element, Radio, Row},
 };
 
 const LABEL_SPACING: u32 = 10;
@@ -37,12 +37,16 @@ pub fn labelled_checkbox<'a, M: Clone + 'a>(
     checked: bool,
     on_toggle: impl Fn(bool) -> M + 'a,
 ) -> Row<'a, M> {
-    let control: Element<'a, M> = checkbox(checked)
-        .size(CHECKBOX_SIZE)
-        .on_toggle(on_toggle)
-        .into();
+    let control: Element<'a, M> = checkbox_button(checked, on_toggle).into();
     let label: Element<'a, M> = label.into();
     row![control, label]
         .spacing(LABEL_SPACING)
         .align_y(Alignment::Center)
+}
+
+pub fn checkbox_button<'a, M: Clone + 'a>(
+    checked: bool,
+    on_toggle: impl Fn(bool) -> M + 'a,
+) -> CheckBox<'a, M> {
+    checkbox(checked).size(CHECKBOX_SIZE).on_toggle(on_toggle)
 }
