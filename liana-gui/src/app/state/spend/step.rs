@@ -1299,7 +1299,7 @@ impl Step for SelectRecoveryPath {
                 .enumerate()
                 .filter_map(|(i, path)| {
                     if path.number_of_coins > 0 {
-                        Some(view::recovery::recovery_path_view(
+                        Some(view::recovery::recovery_path_entry(
                             i,
                             path.threshold,
                             &path.origins,
