@@ -1595,7 +1595,7 @@ receive-specter-diy-tooltip => "For Specter DIY devices"
 receive-verify-address => "Verify address"
 
 recovery-coins-total
-=> "{ $count ->\n    [one] can recover 1 coin totalling\n   *[other] can recover {$count} coins totalling\n}";;
+=> "{ $count ->\n    [one] Can recover 1 coin totalling\n   *[other] Can recover {$count} coins totalling\n}";;
 
 recovery-info
 => "Recover your funds by sending them to another wallet if you have lost access to your primary spending path.";;
@@ -1603,7 +1603,7 @@ recovery-info
 recovery-none-available => "No recovery path is currently available."
 
 recovery-paths-available
-=> "{ $count ->\n    [one] 1 recovery path is available:\n   *[other] {$count} recovery paths are available:\n}";;
+=> "{ $count ->\n    [one] 1 recovery path is available\n   *[other] {$count} recovery paths are available\n}";;
 
 recovery-signatures-from
 => "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}";;
