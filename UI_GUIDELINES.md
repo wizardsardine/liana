@@ -63,6 +63,7 @@ Use these; do not build equivalents.
 - **modal**: `modal_view(title, back, close, width, content)` (and `modal_view_with_theme`); width
   `ModalWidth`.
 - **badge**: icon badges, `tile(Tile::..)`, `avatar(initials)`, `coin()`.
+- **checkbox**: `checkbox_button`, `radio_button`, `labelled_checkbox`, `labelled_radio`.
 - **combobox**: `combobox`, `editable_combobox`, `email_entry`; `State`, `Tag`.
 - **form**: `Form::new / new_disabled / new_trimmed / new_amount_btc`, `.label`, `.padding`; `Value`;
   `FormSize`.

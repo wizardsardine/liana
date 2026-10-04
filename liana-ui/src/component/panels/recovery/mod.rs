@@ -5,17 +5,22 @@ use bitcoin::{
     Amount,
 };
 use iced::{
-    widget::{checkbox, column, row},
-    Alignment, Length,
+    widget::{column, row},
+    Alignment,
 };
 use liana_i18n::t;
 
 use crate::{
     component::{
         amount::amount,
-        pill,
-        text::{legacy, Text},
+        button::EntryWidth,
+        checkbox::checkbox_button,
+        list::{self, EntryAccent},
+        pill, scrollable,
+        text::new,
     },
+    spacing::{HSpacing, VSpacing},
+    theme,
     widget::{Element, Row},
 };
 
@@ -28,9 +33,10 @@ pub fn path_entry<'a, M: Clone + 'static>(
     selected: bool,
     on_select: M,
 ) -> Element<'a, M> {
-    let select = checkbox(selected).on_toggle(move |_| on_select.clone());
+    let toggle = on_select.clone();
+    let select = checkbox_button(selected, move |_| toggle.clone());
     let keys = origins.iter().fold(
-        Row::new().align_y(Alignment::Center).spacing(5),
+        Row::new().align_y(Alignment::Center).spacing(HSpacing::S),
         |row, (fg, _)| {
             row.push(pill::fingerprint(
                 fg.to_string(),
@@ -38,22 +44,30 @@ pub fn path_entry<'a, M: Clone + 'static>(
             ))
         },
     );
-    let signatures = row![
-        legacy::text(t!("recovery-signatures-from", count = threshold)).bold(),
-        keys
-    ]
-    .align_y(Alignment::Center)
-    .spacing(10);
+    let signatures = scrollable::horizontal_thin(
+        row![
+            new::h2(t!("recovery-signatures-from", count = threshold)),
+            keys
+        ]
+        .align_y(Alignment::Center)
+        .spacing(HSpacing::M),
+    );
     let coins = row![
-        legacy::text(t!("recovery-coins-total", count = number_of_coins)),
+        new::b4(t!("recovery-coins-total", count = number_of_coins)).style(theme::text::secondary),
         amount(&total_amount)
     ]
-    .spacing(5);
-    let description = column![signatures, coins].spacing(5);
+    .align_y(Alignment::Center)
+    .spacing(HSpacing::S);
+    let description = column![signatures, coins].spacing(VSpacing::M);
 
-    row![select, description]
-        .width(Length::Fill)
-        .align_y(Alignment::Center)
-        .spacing(20)
-        .into()
+    let accent = selected.then_some(list::entry_accent(EntryAccent::Success));
+
+    list::list_entry_row(
+        None,
+        description,
+        Some(select.into()),
+        accent,
+        EntryWidth::Fill,
+        Some(on_select),
+    )
 }
