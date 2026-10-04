@@ -17,7 +17,7 @@ use liana_ui::{
     component::text::{
         self,
         new::{
-            B1_SPEC, B2_MEDIUM_SPEC, B2_SPEC, B3_SPEC, B4_BOLD_SPEC, B4_MEDIUM_SPEC,
+            B1_SPEC, B2_MEDIUM_SPEC, B2_SPEC, B3_SPEC, B4_BOLD_SPEC, B4_MEDIUM_SPEC, B4_SPEC,
             B5_MEDIUM_SPEC, D2_SPEC, D3_SPEC, D4_SPEC, H2_SEMI_SPEC, H3_SEMI_SPEC,
             SMALL_CAPTION_SPEC,
         },
@@ -154,6 +154,7 @@ fn new_view() -> Element<'static, DebugMessage> {
         ("text::new::b2",            B2_SPEC),
         ("text::new::b2_medium",     B2_MEDIUM_SPEC),
         ("text::new::b3",            B3_SPEC),
+        ("text::new::b4",            B4_SPEC),
         ("text::new::b4_medium",     B4_MEDIUM_SPEC),
         ("text::new::b4_bold",       B4_BOLD_SPEC),
         ("text::new::b5_medium",     B5_MEDIUM_SPEC),
