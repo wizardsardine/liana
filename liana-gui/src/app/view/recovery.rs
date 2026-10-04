@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{
-    widget::{checkbox, column, row, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
 
@@ -11,11 +11,7 @@ use liana::miniscript::bitcoin::{
 };
 
 use liana_ui::{
-    component::{
-        amount::*,
-        button, pill,
-        text::{legacy, Text},
-    },
+    component::{button, panels::recovery, text::legacy},
     theme,
     widget::*,
 };
@@ -77,33 +73,13 @@ pub fn recovery_path_entry<'a>(
     key_aliases: &'a HashMap<Fingerprint, String>,
     selected: bool,
 ) -> Element<'a, Message> {
-    let select = checkbox(selected)
-        .on_toggle(move |_| Message::CreateSpend(CreateSpendMessage::SelectPath(index)));
-    let keys = origins.iter().fold(
-        Row::new().align_y(Alignment::Center).spacing(5),
-        |row, (fg, _)| {
-            row.push(pill::fingerprint(
-                fg.to_string(),
-                key_aliases.get(fg).map(String::as_str),
-            ))
-        },
-    );
-    let signatures = row![
-        legacy::text(t!("recovery-signatures-from", count = threshold)).bold(),
-        keys
-    ]
-    .align_y(Alignment::Center)
-    .spacing(10);
-    let coins = row![
-        legacy::text(t!("recovery-coins-total", count = number_of_coins)),
-        amount(&total_amount)
-    ]
-    .spacing(5);
-    let description = column![signatures, coins].spacing(5);
-
-    row![select, description]
-        .width(Length::Fill)
-        .align_y(Alignment::Center)
-        .spacing(20)
-        .into()
+    recovery::path_entry(
+        threshold,
+        origins,
+        total_amount,
+        number_of_coins,
+        key_aliases,
+        selected,
+        Message::CreateSpend(CreateSpendMessage::SelectPath(index)),
+    )
 }
