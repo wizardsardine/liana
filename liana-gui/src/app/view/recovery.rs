@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{
-    widget::{checkbox, Space},
+    widget::{checkbox, column, row, Space},
     Alignment, Length,
 };
 
@@ -11,7 +11,11 @@ use liana::miniscript::bitcoin::{
 };
 
 use liana_ui::{
-    component::{amount::*, button, pill, text::*},
+    component::{
+        amount::*,
+        button, pill,
+        text::{legacy, Text},
+    },
     theme,
     widget::*,
 };
@@ -29,7 +33,6 @@ use crate::{
     t,
 };
 
-#[allow(clippy::too_many_arguments)]
 pub fn recovery<'a>(
     cache: &'a Cache,
     recovery_paths: Vec<Element<'a, Message>>,
@@ -37,47 +40,35 @@ pub fn recovery<'a>(
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     let no_recovery_paths = recovery_paths.is_empty();
-    dashboard(
-        &Menu::Recovery,
-        cache,
-        warning,
-        Column::new()
-            .push(Container::new(panel_title(Menu::Recovery.title())).width(Length::Fill))
-            .push(Container::new(text(t!("recovery-info"))))
-            .push(Space::with_height(Length::Fixed(20.0)))
-            .push(
-                Container::new(
-                    Column::new()
-                        .push(
-                            text(if no_recovery_paths {
-                                t!("recovery-none-available")
-                            } else {
-                                t!("recovery-paths-available", count = recovery_paths.len())
-                            })
-                            .width(Length::Fill),
-                        )
-                        .push_maybe((!no_recovery_paths).then_some(Space::with_height(20)))
-                        .push(Column::with_children(recovery_paths).spacing(20)),
-                )
-                .style(theme::card::simple)
-                .padding(20),
-            )
-            .push_maybe(if no_recovery_paths {
-                None
-            } else {
-                Some(
-                    Row::new()
-                        .push(Space::with_width(Length::Fill))
-                        .push(button::btn_next(selected_path.map(|_| Message::Next)))
-                        .spacing(20)
-                        .align_y(Alignment::Center),
-                )
-            })
-            .spacing(20),
-    )
+    let title = legacy::panel_title(Menu::Recovery.title());
+    let info = legacy::text(t!("recovery-info"));
+    let header = column![title, info].spacing(20);
+    let paths_title = legacy::text(if no_recovery_paths {
+        t!("recovery-none-available")
+    } else {
+        t!("recovery-paths-available", count = recovery_paths.len())
+    })
+    .width(Length::Fill);
+    let paths_spacer = (!no_recovery_paths).then_some(Space::with_height(20));
+    let paths = Column::with_children(recovery_paths).spacing(20);
+    let paths = Container::new(column![paths_title, paths_spacer, paths])
+        .style(theme::card::simple)
+        .padding(20);
+    let next = (!no_recovery_paths).then_some(
+        row![
+            Space::fill_width(),
+            button::btn_next(selected_path.map(|_| Message::Next))
+        ]
+        .spacing(20)
+        .align_y(Alignment::Center),
+    );
+
+    let content = column![header, Space::with_height(20), paths, next].spacing(20);
+
+    dashboard(&Menu::Recovery, cache, warning, content)
 }
 
-pub fn recovery_path_view<'a>(
+pub fn recovery_path_entry<'a>(
     index: usize,
     threshold: usize,
     origins: &'a [(Fingerprint, HashSet<DerivationPath>)],
@@ -86,36 +77,31 @@ pub fn recovery_path_view<'a>(
     key_aliases: &'a HashMap<Fingerprint, String>,
     selected: bool,
 ) -> Element<'a, Message> {
-    Row::new()
-        .push(
-            checkbox(selected)
-                .on_toggle(move |_| Message::CreateSpend(CreateSpendMessage::SelectPath(index))),
-        )
-        .push(
-            Column::new()
-                .push(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(10)
-                        .push(text(t!("recovery-signatures-from", count = threshold)).bold())
-                        .push(origins.iter().fold(
-                            Row::new().align_y(Alignment::Center).spacing(5),
-                            |row, (fg, _)| {
-                                row.push(pill::fingerprint(
-                                    fg.to_string(),
-                                    key_aliases.get(fg).map(String::as_str),
-                                ))
-                            },
-                        )),
-                )
-                .push(
-                    Row::new()
-                        .spacing(5)
-                        .push(text(t!("recovery-coins-total", count = number_of_coins)))
-                        .push(amount(&total_amount)),
-                )
-                .spacing(5),
-        )
+    let select = checkbox(selected)
+        .on_toggle(move |_| Message::CreateSpend(CreateSpendMessage::SelectPath(index)));
+    let keys = origins.iter().fold(
+        Row::new().align_y(Alignment::Center).spacing(5),
+        |row, (fg, _)| {
+            row.push(pill::fingerprint(
+                fg.to_string(),
+                key_aliases.get(fg).map(String::as_str),
+            ))
+        },
+    );
+    let signatures = row![
+        legacy::text(t!("recovery-signatures-from", count = threshold)).bold(),
+        keys
+    ]
+    .align_y(Alignment::Center)
+    .spacing(10);
+    let coins = row![
+        legacy::text(t!("recovery-coins-total", count = number_of_coins)),
+        amount(&total_amount)
+    ]
+    .spacing(5);
+    let description = column![signatures, coins].spacing(5);
+
+    row![select, description]
         .width(Length::Fill)
         .align_y(Alignment::Center)
         .spacing(20)
