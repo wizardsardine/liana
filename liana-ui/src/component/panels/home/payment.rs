@@ -8,7 +8,7 @@ use liana_i18n::t;
 use crate::{
     component::{
         self,
-        amount::{amount_with_fiat_tooltip, AmountSize, FiatAmount},
+        amount::{amount_column_width, amount_with_fiat_tooltip, AmountSize, FiatAmount},
         pill,
         text::{
             format_date, label_truncated,
@@ -96,9 +96,12 @@ pub fn list_entry<'a, M: 'a + Clone>(
     let unconfirmed = time.is_none().then_some(pill::unconfirmed());
 
     let amount: Element<'a, M> = if kind == PaymentKind::SendToSelf {
-        new::h2(t!("common-self-transfer"))
-            .style(theme::text::primary)
-            .into()
+        row![
+            Space::fill_width(),
+            new::h2(t!("common-self-transfer")).style(theme::text::primary),
+            Space::fill_width()
+        ]
+        .into()
     } else {
         let to_fiat = fiat_price.map(|fp| move |_: bitcoin::Amount| fp.amount);
         let approximate = fiat_price.is_none_or(|fp| fp.source == FiatSource::Timestamp);
@@ -109,7 +112,12 @@ pub fn list_entry<'a, M: 'a + Clone>(
     let payjoin = is_payjoin.then_some(pill::payjoin());
 
     let left = column![label, time].spacing(2);
-    let right = row![unconfirmed, payjoin, batch, kind_icon(kind), amount]
+    let amount_width = ICON_SIZE as f32 + 5.0 + amount_column_width(AmountSize::M);
+    let amount = row![kind_icon(kind), amount]
+        .spacing(5)
+        .align_y(Alignment::Center);
+    let amount = Container::new(amount).align_right(amount_width);
+    let right = row![unconfirmed, payjoin, batch, amount]
         .spacing(5)
         .align_y(Alignment::Center);
     let content =
