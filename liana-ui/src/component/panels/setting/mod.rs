@@ -1,25 +1,26 @@
 use std::fmt::Display;
 
 use iced::{
-    widget::{column, row},
+    widget::{column, row, Space},
     Alignment, Length,
 };
 use liana_i18n::t;
 
 use crate::{
     component::{
-        badge, button,
-        text::{legacy, Text},
+        badge::{self, Tile},
+        button::{self, EntryWidth},
+        card, list, separation,
+        text::new,
     },
     icon,
-    widget::{Button, Column, Container, Element, Row},
+    spacing::{HSpacing, VSpacing},
+    theme,
+    widget::{Button, Column, Container, Element, Row, SpaceExt},
 };
 
-const PADDING: u16 = 10;
-const SPACING: u32 = 20;
-
 fn breadcrumb_btn<M: Clone + 'static>(label: impl Display, msg: Option<M>) -> Button<'static, M> {
-    button::breadcrumb(None, label).on_press_maybe(msg)
+    button::breadcrumb(label).on_press_maybe(msg)
 }
 
 pub fn header<M: Clone + 'static>(
@@ -35,6 +36,7 @@ pub fn header<M: Clone + 'static>(
     } else {
         row![setting_btn]
     }
+    .spacing(HSpacing::M)
     .align_y(Alignment::Center)
     .into()
 }
@@ -60,12 +62,12 @@ impl SectionKind {
         }
     }
 
-    pub fn icon<M>(&self) -> Container<'static, M> {
+    pub fn tile(&self) -> Tile {
         match self {
-            SectionKind::General => badge::setting(),
-            SectionKind::Node | SectionKind::Backend => badge::bitcoin(),
-            SectionKind::Wallet | SectionKind::ImportExport => badge::wallet(),
-            SectionKind::About => badge::tooltip(),
+            SectionKind::General => Tile::Setting,
+            SectionKind::Node | SectionKind::Backend => Tile::Bitcoin,
+            SectionKind::Wallet | SectionKind::ImportExport => Tile::Wallet,
+            SectionKind::About => Tile::About,
         }
     }
 }
@@ -110,32 +112,33 @@ impl ImportExportKind {
         }
     }
 
-    pub fn badge<M>(&self) -> Container<'static, M> {
+    pub fn tile(&self) -> Tile {
         match self {
-            ImportExportKind::ImportWallet => badge::restore(),
-            _ => badge::backup(),
+            ImportExportKind::ImportWallet => Tile::Import,
+            _ => Tile::Backup,
         }
     }
 }
 
-pub fn content_box<'a, M>(content: Row<'a, M>) -> Row<'a, M> {
-    content
-        .padding(PADDING)
-        .spacing(SPACING)
-        .align_y(Alignment::Center)
-        .width(Length::Fill)
-}
-
 pub fn settings_section<M: Clone + 'static>(kind: SectionKind, msg: M) -> Element<'static, M> {
-    let content = content_box(row![kind.icon(), legacy::text(kind.title()).bold()]);
-    button::clickable_section(content, Some(msg)).into()
+    list::entry_section(
+        kind.tile(),
+        kind.title(),
+        None::<String>,
+        EntryWidth::Fill,
+        Some(msg),
+    )
 }
 
 pub fn export_section<M: Clone + 'static>(kind: ImportExportKind, msg: M) -> Element<'static, M> {
     let (title, description) = kind.title_descr();
-    let texts = column![legacy::text(title).bold(), legacy::caption(description)];
-    let content = content_box(row![kind.badge(), texts,]);
-    button::clickable_section(content, Some(msg)).into()
+    list::entry_section(
+        kind.tile(),
+        title,
+        Some(description),
+        EntryWidth::Fill,
+        Some(msg),
+    )
 }
 
 pub fn section_list<M: 'static + Clone>(children: Vec<Element<'static, M>>) -> Element<'static, M> {
@@ -144,7 +147,43 @@ pub fn section_list<M: 'static + Clone>(children: Vec<Element<'static, M>>) -> E
     header.extend(children);
 
     Column::from_vec(header)
-        .spacing(20)
+        .spacing(VSpacing::L)
         .width(Length::Fill)
         .into()
+}
+
+pub fn setting_row<'a, M: 'a>(
+    label: impl Display,
+    info: Option<Element<'a, M>>,
+    control: impl Into<Element<'a, M>>,
+) -> Row<'a, M> {
+    row![
+        new::b4_medium(label),
+        info,
+        Space::fill_width(),
+        control.into()
+    ]
+    .spacing(HSpacing::M)
+    .align_y(Alignment::Center)
+}
+
+pub fn version_card<'a, M: 'a>(versions: Vec<String>) -> Container<'a, M> {
+    let title = row![
+        badge::tile(Tile::About),
+        new::h3_semi(t!("settings-version"))
+    ]
+    .spacing(HSpacing::L)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+    let versions = Column::with_children(
+        versions
+            .into_iter()
+            .map(|version| new::caption(version).style(theme::text::secondary).into()),
+    );
+    card::simple(column![
+        title,
+        separation().width(Length::Fill),
+        Space::with_height(VSpacing::S),
+        row![Space::fill_width(), versions]
+    ])
 }

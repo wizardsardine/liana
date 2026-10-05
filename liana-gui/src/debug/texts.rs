@@ -23,7 +23,7 @@ use liana_ui::{
         },
         TextSpec, BUTTON_TEXT_SPEC, CAPTION_SPEC, H1_SPEC, H2_SPEC, H3_SPEC, H4_BOLD_SPEC,
         H4_REGULAR_SPEC, H5_MEDIUM_SPEC, H5_REGULAR_SPEC, P1_BOLD_SPEC, P1_MEDIUM_SPEC,
-        P1_REGULAR_SPEC, P2_MEDIUM_SPEC, P2_REGULAR_SPEC, PANEL_TITLE_SPEC,
+        P1_REGULAR_SPEC, P2_MEDIUM_SPEC, P2_REGULAR_SPEC,
     },
     theme,
     widget::*,
@@ -118,7 +118,6 @@ fn legacy_view() -> Element<'static, DebugMessage> {
     let entries: Vec<(&'static str, TextSpec)> = vec![
         ("liana_ui::component::text::h1",                         H1_SPEC),
         ("liana_ui::component::text::h2",                         H2_SPEC),
-        ("liana_ui::component::text::panel_title",                PANEL_TITLE_SPEC),
         ("liana_ui::component::text::h3",                         H3_SPEC),
         ("liana_ui::component::text::h4_bold",                    H4_BOLD_SPEC),
         ("liana_ui::component::text::h4_regular",                 H4_REGULAR_SPEC),

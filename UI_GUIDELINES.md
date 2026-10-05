@@ -57,13 +57,14 @@ Use these; do not build equivalents.
   consumer needs a new pill, add a named helper in `component::pill` first, then use that helper.
 - **list**: `list_entry_row(tile, body, trailing, accent, width, msg)`, `list_entry_row_static`,
   `list_entry_chevron`, and the `entry_*` constructors
-  (`entry_wallet/key/path/set_key/organization/register/device_list/action/collapsible/action_accent/no_devices`,
+  (`entry_wallet/key/path/set_key/organization/section/register/device_list/action/collapsible/action_accent/no_devices`,
   `account_entry`, `account_select_entry`, `entry_paste_xpub`); helpers `right_chevron`,
   `breadcrumb_chevron`, `key_count`, `entry_accent`. Status enums `Entry*`, `DeviceStatus`.
 - **modal**: `modal_view(title, back, close, width, content)` (and `modal_view_with_theme`); width
   `ModalWidth`.
 - **badge**: icon badges, `tile(Tile::..)`, `avatar(initials)`, `coin()`.
-- **checkbox**: `checkbox_button`, `radio_button`, `labelled_checkbox`, `labelled_radio`.
+- **checkbox**: `checkbox_button`, `radio_button`, `labelled_checkbox`, `labelled_radio`,
+  `toggler_button` (sized by `TogglerSize`).
 - **combobox**: `combobox`, `editable_combobox`, `email_entry`; `State`, `Tag`.
 - **form**: `Form::new / new_disabled / new_trimmed / new_amount_btc`, `.label`, `.padding`; `Value`;
   `FormSize`.

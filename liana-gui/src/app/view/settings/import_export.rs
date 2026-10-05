@@ -1,15 +1,17 @@
 use iced::{
     alignment::Vertical,
-    widget::{column, row, rule, Space},
+    widget::{column, row, rule},
     Length,
 };
 
 use liana_ui::{
     component::{
         panels::setting::{export_section, header, ImportExportKind, SectionKind},
-        text::legacy,
+        text::new,
     },
-    widget::{Element, SpaceExt},
+    spacing::{HSpacing, VSpacing},
+    theme,
+    widget::Element,
 };
 
 use crate::{
@@ -33,11 +35,8 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Elemen
         Some(SettingsMessage::ImportExportSection.into()),
     );
 
-    let description = row![
-        Space::with_width(15),
-        legacy::text(t!("settings-import-export-description")),
-        Space::fill_width()
-    ];
+    let description =
+        new::b2(t!("settings-import-export-description")).style(theme::text::secondary);
 
     let export_encrypted_descriptor = export_section(
         ImportExportKind::ExportEncryptedDescriptor,
@@ -70,12 +69,10 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Elemen
     );
 
     let separator = row![
-        Space::with_width(30),
-        legacy::text(t!("settings-other-formats")),
-        Space::with_width(15),
-        rule::horizontal(2),
-        Space::with_width(30)
+        new::b4_medium(t!("settings-other-formats")).style(theme::text::secondary),
+        rule::horizontal(1)
     ]
+    .spacing(HSpacing::L)
     .align_y(Vertical::Center);
 
     let content = column![
@@ -89,7 +86,7 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Elemen
         export_transactions,
         export_descriptor
     ]
-    .spacing(20)
+    .spacing(VSpacing::L)
     .width(Length::Fill);
 
     dashboard(&Menu::Settings, cache, warning, content)
