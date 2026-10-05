@@ -26,7 +26,7 @@ use liana_ui::{
             export_section, header, settings_section, ImportExportKind, SectionKind,
         },
         scrollable, separation,
-        text::*,
+        text::{legacy, Text},
     },
     icon,
     theme::{self},
@@ -97,15 +97,13 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<'_, Message> {
 }
 
 pub fn link<'a>(url: &str, link_text: impl std::fmt::Display) -> Element<'a, Message> {
-    iced_tooltip::Tooltip::new(
-        button::link(Some(icon::link_icon()), link_text)
-            .on_press(Message::OpenUrl(url.to_string())),
-        Container::new(text(url))
-            .style(theme::card::simple)
-            .padding(10),
-        iced_tooltip::Position::Bottom,
-    )
-    .into()
+    let link_btn = button::link(Some(icon::link_icon()), link_text)
+        .on_press(Message::OpenUrl(url.to_string()));
+    let url_tooltip = Container::new(legacy::text(url))
+        .style(theme::card::simple)
+        .padding(10);
+
+    iced_tooltip::Tooltip::new(link_btn, url_tooltip, iced_tooltip::Position::Bottom).into()
 }
 
 pub fn bitcoind_settings<'a>(
@@ -118,16 +116,11 @@ pub fn bitcoind_settings<'a>(
         Some(SectionKind::Node.title()),
         Some(SettingsMessage::EditBitcoindSettings.into()),
     );
+    let settings = Column::with_children(settings).spacing(20);
 
-    dashboard(
-        &Menu::Settings,
-        cache,
-        warning,
-        Column::new()
-            .spacing(20)
-            .push(header)
-            .push(Column::with_children(settings).spacing(20)),
-    )
+    let content = column![header, settings].spacing(20);
+
+    dashboard(&Menu::Settings, cache, warning, content)
 }
 
 pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Element<'a, Message> {
@@ -137,10 +130,11 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Elemen
         Some(SettingsMessage::ImportExportSection.into()),
     );
 
-    let description = Row::new()
-        .push(Space::with_width(15))
-        .push(text(t!("settings-import-export-description")))
-        .push(Space::with_width(Length::Fill));
+    let description = row![
+        Space::with_width(15),
+        legacy::text(t!("settings-import-export-description")),
+        Space::fill_width()
+    ];
 
     let export_encrypted_descriptor = export_section(
         ImportExportKind::ExportEncryptedDescriptor,
@@ -172,31 +166,30 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Elemen
         Message::Settings(SettingsMessage::ImportWallet),
     );
 
-    let separator = Row::new()
-        .push(Space::with_width(30))
-        .push(text(t!("settings-other-formats")))
-        .push(Space::with_width(15))
-        .push(rule::horizontal(2))
-        .push(Space::with_width(30))
-        .align_y(Vertical::Center);
+    let separator = row![
+        Space::with_width(30),
+        legacy::text(t!("settings-other-formats")),
+        Space::with_width(15),
+        rule::horizontal(2),
+        Space::with_width(30)
+    ]
+    .align_y(Vertical::Center);
 
-    dashboard(
-        &Menu::Settings,
-        cache,
-        warning,
-        Column::new()
-            .spacing(20)
-            .push(header)
-            .push(description)
-            .push(export_encrypted_descriptor)
-            .push(export_wallet)
-            .push(import_wallet)
-            .push(separator)
-            .push(export_labels)
-            .push(export_transactions)
-            .push(export_descriptor)
-            .width(Length::Fill),
-    )
+    let content = column![
+        header,
+        description,
+        export_encrypted_descriptor,
+        export_wallet,
+        import_wallet,
+        separator,
+        export_labels,
+        export_transactions,
+        export_descriptor
+    ]
+    .spacing(20)
+    .width(Length::Fill);
+
+    dashboard(&Menu::Settings, cache, warning, content)
 }
 
 pub fn about_section<'a>(
@@ -210,40 +203,29 @@ pub fn about_section<'a>(
         Some(SettingsMessage::AboutSection.into()),
     );
 
-    let content = card::simple(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(badge::tooltip())
-                    .push(text(t!("settings-version")).bold())
-                    .padding(10)
-                    .spacing(20)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill),
-            )
-            .push(separation().width(Length::Fill))
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(
-                Row::new().push(Space::with_width(Length::Fill)).push(
-                    Column::new()
-                        .push(text(format!("liana-gui v{}", crate::VERSION)))
-                        .push_maybe(
-                            lianad_version.map(|version| text(format!("lianad v{version}"))),
-                        ),
-                ),
-            ),
-    );
+    let version_title = row![
+        badge::tooltip(),
+        legacy::text(t!("settings-version")).bold()
+    ]
+    .padding(10)
+    .spacing(20)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+    let gui_version = legacy::text(format!("liana-gui v{}", crate::VERSION));
+    let daemon_version = lianad_version.map(|version| legacy::text(format!("lianad v{version}")));
+    let versions = row![Space::fill_width(), column![gui_version, daemon_version]];
+    let version_card = card::simple(column![
+        version_title,
+        separation().width(Length::Fill),
+        Space::with_height(10),
+        versions
+    ]);
 
-    dashboard(
-        &Menu::Settings,
-        cache,
-        warning,
-        Column::new()
-            .spacing(20)
-            .push(header)
-            .push(content)
-            .width(Length::Fill),
-    )
+    let content = column![header, version_card]
+        .spacing(20)
+        .width(Length::Fill);
+
+    dashboard(&Menu::Settings, cache, warning, content)
 }
 
 pub fn remote_backend_section<'a>(
@@ -259,56 +241,32 @@ pub fn remote_backend_section<'a>(
         Some(SettingsMessage::EditRemoteBackendSettings.into()),
     );
 
-    let content = card::simple(
-        Column::new()
-            .spacing(20)
-            .push(text(t!("settings-grant-wallet-access")))
-            .push(
-                form::Form::new_trimmed(&t!("settings-user-email"), email_form, |email| {
-                    Message::Settings(SettingsMessage::RemoteBackendSettings(
-                        RemoteBackendSettingsMessage::EditInvitationEmail(email),
-                    ))
-                })
-                .warning(t!("settings-email-invalid"))
-                .size(P1_SIZE)
-                .padding(10),
-            )
-            .push(
-                Row::new()
-                    .push_maybe(if success {
-                        Some(text(t!("settings-invitation-sent")).style(theme::text::success))
-                    } else {
-                        None
-                    })
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        button::secondary(None, t!("btn-send-invitation")).on_press_maybe(
-                            if !processing && email_form.valid {
-                                Some(Message::Settings(SettingsMessage::RemoteBackendSettings(
-                                    RemoteBackendSettingsMessage::SendInvitation,
-                                )))
-                            } else {
-                                None
-                            },
-                        ),
-                    ),
-            ),
-    )
-    .width(Length::Fill);
+    let description = legacy::text(t!("settings-grant-wallet-access"));
+    let email = form::Form::new_trimmed(&t!("settings-user-email"), email_form, |email| {
+        Message::Settings(SettingsMessage::RemoteBackendSettings(
+            RemoteBackendSettingsMessage::EditInvitationEmail(email),
+        ))
+    })
+    .warning(t!("settings-email-invalid"))
+    .size(legacy::P1_SIZE)
+    .padding(10);
+    let invitation_sent =
+        success.then_some(legacy::text(t!("settings-invitation-sent")).style(theme::text::success));
+    let send_msg = (!processing && email_form.valid).then_some(Message::Settings(
+        SettingsMessage::RemoteBackendSettings(RemoteBackendSettingsMessage::SendInvitation),
+    ));
+    let send = button::secondary(None, t!("btn-send-invitation")).on_press_maybe(send_msg);
+    let actions = row![invitation_sent, Space::fill_width(), send];
+    let invitation_card =
+        card::simple(column![description, email, actions].spacing(20)).width(Length::Fill);
+    let help_link = link(
+        help::CHANGE_BACKEND_OR_NODE_URL,
+        t!("settings-connect-own-node"),
+    );
 
-    dashboard(
-        &Menu::Settings,
-        cache,
-        warning,
-        Column::new()
-            .spacing(20)
-            .push(header)
-            .push(content)
-            .push(link(
-                help::CHANGE_BACKEND_OR_NODE_URL,
-                t!("settings-connect-own-node"),
-            )),
-    )
+    let content = column![header, invitation_card, help_link].spacing(20);
+
+    dashboard(&Menu::Settings, cache, warning, content)
 }
 
 pub fn bitcoind_edit<'a>(
@@ -320,146 +278,74 @@ pub fn bitcoind_edit<'a>(
     selected_auth_type: &RpcAuthType,
     processing: bool,
 ) -> Element<'a, SettingsEditMessage> {
-    let mut col = Column::new().spacing(20);
-    if is_configured_node_type && blockheight != 0 {
-        col = col
-            .push(
-                Row::new()
-                    .push(
-                        Row::new()
-                            .push(badge::network())
-                            .push(
-                                Column::new()
-                                    .push(text(t!("settings-network")))
-                                    .push(text(network.to_string()).bold()),
-                            )
-                            .spacing(10)
-                            .width(Length::FillPortion(1)),
-                    )
-                    .push(
-                        Row::new()
-                            .push(badge::block())
-                            .push(
-                                Column::new()
-                                    .push(text(t!("settings-block-height")))
-                                    .push(text(blockheight.to_string()).bold()),
-                            )
-                            .spacing(10)
-                            .width(Length::FillPortion(1)),
-                    ),
-            )
-            .push(separation().width(Length::Fill));
-    }
+    let node_info = node_info(is_configured_node_type, network, blockheight);
 
-    col = col
-        .push(
-            [RpcAuthType::CookieFile, RpcAuthType::UserPass]
-                .iter()
-                .fold(
-                    Row::new()
-                        .push(text(t!("installer-rpc-auth")).small().bold())
-                        .spacing(10),
-                    |row, auth_type| {
-                        row.push(radio(
-                            format!("{auth_type}"),
-                            *auth_type,
-                            Some(*selected_auth_type),
-                            SettingsEditMessage::BitcoindRpcAuthTypeSelected,
-                        ))
-                        .spacing(30)
-                        .align_y(Alignment::Center)
-                    },
-                ),
-        )
-        .push(match selected_auth_type {
-            RpcAuthType::CookieFile => Column::new()
-                .push(
-                    form::Form::new_trimmed(
-                        &t!("settings-cookie-file-path"),
-                        &rpc_auth_vals.cookie_path,
-                        |value| SettingsEditMessage::FieldEdited("cookie_file_path", value),
-                    )
-                    .warning(t!("settings-valid-filesystem-path"))
-                    .size(P1_SIZE)
-                    .padding(5),
-                )
-                .spacing(5),
-            RpcAuthType::UserPass => Column::new()
-                .push(
-                    Row::new()
-                        .push(
-                            form::Form::new_trimmed(
-                                &t!("installer-user"),
-                                &rpc_auth_vals.user,
-                                |value| SettingsEditMessage::FieldEdited("user", value),
-                            )
-                            .warning(t!("settings-valid-user"))
-                            .size(P1_SIZE)
-                            .padding(5),
-                        )
-                        .push(
-                            form::Form::new_trimmed(
-                                &t!("installer-password"),
-                                &rpc_auth_vals.password,
-                                |value| SettingsEditMessage::FieldEdited("password", value),
-                            )
-                            .warning(t!("settings-valid-password"))
-                            .size(P1_SIZE)
-                            .padding(5),
-                        )
-                        .spacing(10),
-                )
-                .spacing(5),
-        })
-        .push(
-            Column::new()
-                .push(text(t!("settings-socket-address")).bold().small())
-                .push(
-                    form::Form::new_trimmed(&t!("settings-socket-address"), addr, |value| {
-                        SettingsEditMessage::FieldEdited("socket_address", value)
-                    })
-                    .warning(t!("settings-valid-address"))
-                    .size(P1_SIZE)
-                    .padding(5),
-                )
-                .spacing(5),
+    let auth_type = [RpcAuthType::CookieFile, RpcAuthType::UserPass]
+        .iter()
+        .fold(
+            row![legacy::text(t!("installer-rpc-auth")).small().bold()].spacing(10),
+            |row, auth_type| {
+                row.push(radio(
+                    format!("{auth_type}"),
+                    *auth_type,
+                    Some(*selected_auth_type),
+                    SettingsEditMessage::BitcoindRpcAuthTypeSelected,
+                ))
+                .spacing(30)
+                .align_y(Alignment::Center)
+            },
         );
-
-    let mut cancel_button = button::transparent(None, t!("btn-cancel")).padding(5);
-    let mut confirm_button = button::secondary(None, t!("btn-save")).padding(5);
-    if !processing {
-        cancel_button = cancel_button.on_press(SettingsEditMessage::Cancel);
-        confirm_button = confirm_button.on_press(SettingsEditMessage::Confirm);
-    }
-
-    card::simple(Container::new(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(badge::bitcoin())
-                    .push(text("Bitcoin Core").bold())
-                    .padding(10)
-                    .spacing(20)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill),
+    let auth_fields = match selected_auth_type {
+        RpcAuthType::CookieFile => {
+            let cookie_path = form::Form::new_trimmed(
+                &t!("settings-cookie-file-path"),
+                &rpc_auth_vals.cookie_path,
+                |value| SettingsEditMessage::FieldEdited("cookie_file_path", value),
             )
-            .push(separation().width(Length::Fill))
-            .push(col)
-            .push(
-                Container::new(
-                    Row::new()
-                        .push(cancel_button)
-                        .push(confirm_button)
-                        .spacing(10)
-                        .align_y(Alignment::Center),
-                )
-                .width(Length::Fill)
-                .align_x(alignment::Horizontal::Right),
+            .warning(t!("settings-valid-filesystem-path"))
+            .size(legacy::P1_SIZE)
+            .padding(5);
+            column![cookie_path].spacing(5)
+        }
+        RpcAuthType::UserPass => {
+            let user =
+                form::Form::new_trimmed(&t!("installer-user"), &rpc_auth_vals.user, |value| {
+                    SettingsEditMessage::FieldEdited("user", value)
+                })
+                .warning(t!("settings-valid-user"))
+                .size(legacy::P1_SIZE)
+                .padding(5);
+            let password = form::Form::new_trimmed(
+                &t!("installer-password"),
+                &rpc_auth_vals.password,
+                |value| SettingsEditMessage::FieldEdited("password", value),
             )
-            .spacing(20),
-    ))
-    .width(Length::Fill)
-    .into()
+            .warning(t!("settings-valid-password"))
+            .size(legacy::P1_SIZE)
+            .padding(5);
+            column![row![user, password].spacing(10)].spacing(5)
+        }
+    };
+    let address_label = legacy::text(t!("settings-socket-address")).bold().small();
+    let address_input = form::Form::new_trimmed(&t!("settings-socket-address"), addr, |value| {
+        SettingsEditMessage::FieldEdited("socket_address", value)
+    })
+    .warning(t!("settings-valid-address"))
+    .size(legacy::P1_SIZE)
+    .padding(5);
+    let address = column![address_label, address_input].spacing(5);
+    let fields = column![node_info, auth_type, auth_fields, address].spacing(20);
+
+    let title = row![badge::bitcoin(), legacy::text("Bitcoin Core").bold()]
+        .padding(10)
+        .spacing(20)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+    let actions = edit_actions(processing);
+
+    let content = column![title, separation().width(Length::Fill), fields, actions].spacing(20);
+
+    card::simple(content).width(Length::Fill).into()
 }
 
 pub fn bitcoind<'a>(
@@ -470,36 +356,7 @@ pub fn bitcoind<'a>(
     is_running: Option<bool>,
     can_edit: bool,
 ) -> Element<'a, SettingsEditMessage> {
-    let mut col = Column::new().spacing(20);
-    if is_configured_node_type && blockheight != 0 {
-        col = col
-            .push(
-                Row::new()
-                    .push(
-                        Row::new()
-                            .push(badge::network())
-                            .push(
-                                Column::new()
-                                    .push(text(t!("settings-network")))
-                                    .push(text(network.to_string()).bold()),
-                            )
-                            .spacing(10)
-                            .width(Length::FillPortion(1)),
-                    )
-                    .push(
-                        Row::new()
-                            .push(badge::block())
-                            .push(
-                                Column::new()
-                                    .push(text(t!("settings-block-height")))
-                                    .push(text(blockheight.to_string()).bold()),
-                            )
-                            .spacing(10)
-                            .width(Length::FillPortion(1)),
-                    ),
-            )
-            .push(separation().width(Length::Fill));
-    }
+    let node_info = node_info(is_configured_node_type, network, blockheight);
 
     let mut rows = vec![];
     if is_configured_node_type {
@@ -520,60 +377,42 @@ pub fn bitcoind<'a>(
 
     let mut col_fields = Column::new();
     for (k, v) in rows {
-        col_fields = col_fields.push({
-            let t = if k == t!("installer-password") {
-                "*".to_string().repeat(v.len())
-            } else {
-                v.clone()
-            };
-            Row::new()
-                .push(Container::new(text(k).bold().small()).width(Length::FillPortion(1)))
-                .push(
-                    Container::new(scrollable::horizontal_thin(
-                        Column::new()
-                            .push(Space::with_height(Length::Fixed(10.0)))
-                            .push(text(t).small()),
-                    ))
-                    .align_x(alignment::Horizontal::Right)
-                    .padding(10)
-                    .width(Length::FillPortion(3)),
-                )
-                .push(Space::with_width(10))
-                .push(button::btn_copy(Some(SettingsEditMessage::Clipboard(
-                    v.to_string(),
-                ))))
-                .align_y(Alignment::Center)
-        });
+        let t = if k == t!("installer-password") {
+            "*".to_string().repeat(v.len())
+        } else {
+            v.clone()
+        };
+        let label = legacy::text(k).bold().small().width(Length::FillPortion(1));
+        let value = Container::new(scrollable::horizontal_thin(column![
+            Space::with_height(10),
+            legacy::text(t).small()
+        ]))
+        .align_x(alignment::Horizontal::Right)
+        .padding(10)
+        .width(Length::FillPortion(3));
+        let copy = button::btn_copy(Some(SettingsEditMessage::Clipboard(v.to_string())));
+        col_fields = col_fields
+            .push(row![label, value, Space::with_width(10), copy].align_y(Alignment::Center));
     }
+    let fields = column![node_info, col_fields].spacing(20);
 
-    card::simple(Container::new(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(
-                        Row::new()
-                            .push(badge::bitcoin())
-                            .push(text("Bitcoin Core").bold())
-                            .push_maybe(if is_configured_node_type {
-                                Some(is_running_label(is_running))
-                            } else {
-                                None
-                            })
-                            .spacing(20)
-                            .align_y(Alignment::Center)
-                            .width(Length::Fill),
-                    )
-                    .push(btn_icon_edit(
-                        can_edit.then_some(SettingsEditMessage::Select),
-                    ))
-                    .align_y(Alignment::Center),
-            )
-            .push(separation().width(Length::Fill))
-            .push(col.push(col_fields))
-            .spacing(20),
-    ))
-    .width(Length::Fill)
-    .into()
+    let running = is_running
+        .filter(|_| is_configured_node_type)
+        .map(is_running_label);
+    let title = row![
+        badge::bitcoin(),
+        legacy::text("Bitcoin Core").bold(),
+        running
+    ]
+    .spacing(20)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+    let edit = btn_icon_edit(can_edit.then_some(SettingsEditMessage::Select));
+    let header = row![title, edit].align_y(Alignment::Center);
+
+    let content = column![header, separation().width(Length::Fill), fields].spacing(20);
+
+    card::simple(content).width(Length::Fill).into()
 }
 
 pub fn electrum_edit<'a>(
@@ -584,91 +423,32 @@ pub fn electrum_edit<'a>(
     processing: bool,
     validate_domain: bool,
 ) -> Element<'a, SettingsEditMessage> {
-    let mut col = Column::new().spacing(20);
-    if is_configured_node_type && blockheight != 0 {
-        col = col
-            .push(
-                Row::new()
-                    .push(
-                        Row::new()
-                            .push(badge::network())
-                            .push(
-                                Column::new()
-                                    .push(text(t!("settings-network")))
-                                    .push(text(network.to_string()).bold()),
-                            )
-                            .spacing(10)
-                            .width(Length::FillPortion(1)),
-                    )
-                    .push(
-                        Row::new()
-                            .push(badge::block())
-                            .push(
-                                Column::new()
-                                    .push(text(t!("settings-block-height")))
-                                    .push(text(blockheight.to_string()).bold()),
-                            )
-                            .spacing(10)
-                            .width(Length::FillPortion(1)),
-                    ),
-            )
-            .push(separation().width(Length::Fill));
-    }
+    let node_info = node_info(is_configured_node_type, network, blockheight);
 
     let checkbox = validate_domain_checkbox(addr, validate_domain, |b| {
         SettingsEditMessage::ValidateDomainEdited(b)
     });
-    col = col.push(
-        Column::new()
-            .push(text(t!("common-address-label")).bold().small())
-            .push(
-                form::Form::new_trimmed("127.0.0.1:50001", addr, |value| {
-                    SettingsEditMessage::FieldEdited("address", value)
-                })
-                .warning(t!("settings-valid-address"))
-                .size(P1_SIZE)
-                .padding(5),
-            )
-            .push_maybe(checkbox)
-            .push(text(electrum::ADDRESS_NOTES).size(P2_SIZE))
-            .spacing(5),
-    );
+    let address_label = legacy::text(t!("common-address-label")).bold().small();
+    let address_input = form::Form::new_trimmed("127.0.0.1:50001", addr, |value| {
+        SettingsEditMessage::FieldEdited("address", value)
+    })
+    .warning(t!("settings-valid-address"))
+    .size(legacy::P1_SIZE)
+    .padding(5);
+    let address_notes = legacy::text(electrum::ADDRESS_NOTES).size(legacy::P2_SIZE);
+    let address = column![address_label, address_input, checkbox, address_notes].spacing(5);
+    let fields = column![node_info, address].spacing(20);
 
-    let mut cancel_button = button::transparent(None, t!("btn-cancel")).padding(5);
-    let mut confirm_button = button::secondary(None, t!("btn-save")).padding(5);
-    if !processing {
-        cancel_button = cancel_button.on_press(SettingsEditMessage::Cancel);
-        confirm_button = confirm_button.on_press(SettingsEditMessage::Confirm);
-    }
+    let title = row![badge::bitcoin(), legacy::text("Electrum").bold()]
+        .padding(10)
+        .spacing(20)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+    let actions = edit_actions(processing);
 
-    card::simple(Container::new(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(badge::bitcoin())
-                    .push(text("Electrum").bold())
-                    .padding(10)
-                    .spacing(20)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill),
-            )
-            .push(separation().width(Length::Fill))
-            .push(col)
-            .push(
-                Container::new(
-                    Row::new()
-                        .push(cancel_button)
-                        .push(confirm_button)
-                        .spacing(10)
-                        .align_y(Alignment::Center),
-                )
-                .width(Length::Fill)
-                .align_x(alignment::Horizontal::Right),
-            )
-            .spacing(20),
-    ))
-    .width(Length::Fill)
-    .into()
+    let content = column![title, separation().width(Length::Fill), fields, actions].spacing(20);
+
+    card::simple(content).width(Length::Fill).into()
 }
 
 pub fn electrum<'a>(
@@ -679,36 +459,7 @@ pub fn electrum<'a>(
     is_running: Option<bool>,
     can_edit: bool,
 ) -> Element<'a, SettingsEditMessage> {
-    let mut col = Column::new().spacing(20);
-    if is_configured_node_type && blockheight != 0 {
-        col = col
-            .push(
-                Row::new()
-                    .push(
-                        Row::new()
-                            .push(badge::network())
-                            .push(
-                                Column::new()
-                                    .push(text(t!("settings-network")))
-                                    .push(text(network.to_string()).bold()),
-                            )
-                            .spacing(10)
-                            .width(Length::FillPortion(1)),
-                    )
-                    .push(
-                        Row::new()
-                            .push(badge::block())
-                            .push(
-                                Column::new()
-                                    .push(text(t!("settings-block-height")))
-                                    .push(text(blockheight.to_string()).bold()),
-                            )
-                            .spacing(10)
-                            .width(Length::FillPortion(1)),
-                    ),
-            )
-            .push(separation().width(Length::Fill));
-    }
+    let node_info = node_info(is_configured_node_type, network, blockheight);
 
     let rows = if is_configured_node_type {
         vec![(t!("common-address-label"), config.addr.to_string())]
@@ -718,75 +469,87 @@ pub fn electrum<'a>(
 
     let mut col_fields = Column::new();
     for (k, v) in rows {
-        col_fields = col_fields.push(
-            Row::new()
-                .push(Container::new(text(k).bold().small()).width(Length::Fill))
-                .push(text(v.clone()).small())
-                .push(Space::with_width(10))
-                .push(button::btn_copy(Some(SettingsEditMessage::Clipboard(
-                    v.to_string(),
-                ))))
-                .align_y(Alignment::Center),
-        );
+        let label = legacy::text(k).bold().small().width(Length::Fill);
+        let value = legacy::text(v.clone()).small();
+        let copy = button::btn_copy(Some(SettingsEditMessage::Clipboard(v.to_string())));
+        col_fields = col_fields
+            .push(row![label, value, Space::with_width(10), copy].align_y(Alignment::Center));
     }
+    let fields = column![node_info, col_fields].spacing(20);
 
-    card::simple(Container::new(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(
-                        Row::new()
-                            .push(badge::bitcoin())
-                            .push(text("Electrum").bold())
-                            .push_maybe(if is_configured_node_type {
-                                Some(is_running_label(is_running))
-                            } else {
-                                None
-                            })
-                            .spacing(20)
-                            .align_y(Alignment::Center)
-                            .width(Length::Fill),
-                    )
-                    .push(btn_icon_edit(
-                        can_edit.then_some(SettingsEditMessage::Select),
-                    ))
-                    .align_y(Alignment::Center),
-            )
-            .push(separation().width(Length::Fill))
-            .push(col.push(col_fields))
-            .spacing(20),
-    ))
-    .width(Length::Fill)
-    .into()
+    let running = is_running
+        .filter(|_| is_configured_node_type)
+        .map(is_running_label);
+    let title = row![badge::bitcoin(), legacy::text("Electrum").bold(), running]
+        .spacing(20)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+    let edit = btn_icon_edit(can_edit.then_some(SettingsEditMessage::Select));
+    let header = row![title, edit].align_y(Alignment::Center);
+
+    let content = column![header, separation().width(Length::Fill), fields].spacing(20);
+
+    card::simple(content).width(Length::Fill).into()
 }
 
-pub fn is_running_label<'a, T: 'a>(is_running: Option<bool>) -> Container<'a, T> {
-    if let Some(running) = is_running {
-        if running {
-            Container::new(
-                Row::new()
-                    .push(icon::dot_icon().size(5).style(theme::text::success))
-                    .push(
-                        text(t!("settings-running"))
-                            .small()
-                            .style(theme::text::success),
-                    )
-                    .align_y(Alignment::Center),
-            )
-        } else {
-            Container::new(
-                Row::new()
-                    .push(icon::dot_icon().size(5).style(theme::text::error))
-                    .push(
-                        text(t!("settings-not-running"))
-                            .small()
-                            .style(theme::text::error),
-                    )
-                    .align_y(Alignment::Center),
-            )
-        }
+fn node_info<'a>(
+    is_configured_node_type: bool,
+    network: Network,
+    blockheight: i32,
+) -> Option<Element<'a, SettingsEditMessage>> {
+    (is_configured_node_type && blockheight != 0).then(|| {
+        let network_info = row![
+            badge::network(),
+            column![
+                legacy::text(t!("settings-network")),
+                legacy::text(network.to_string()).bold()
+            ]
+        ]
+        .spacing(10)
+        .width(Length::FillPortion(1));
+        let blockheight_info = row![
+            badge::block(),
+            column![
+                legacy::text(t!("settings-block-height")),
+                legacy::text(blockheight.to_string()).bold()
+            ]
+        ]
+        .spacing(10)
+        .width(Length::FillPortion(1));
+        column![
+            row![network_info, blockheight_info],
+            separation().width(Length::Fill)
+        ]
+        .spacing(20)
+        .into()
+    })
+}
+
+fn edit_actions<'a>(processing: bool) -> Row<'a, SettingsEditMessage> {
+    let cancel_button = button::transparent(None, t!("btn-cancel"))
+        .padding(5)
+        .on_press_maybe((!processing).then_some(SettingsEditMessage::Cancel));
+    let confirm_button = button::secondary(None, t!("btn-save"))
+        .padding(5)
+        .on_press_maybe((!processing).then_some(SettingsEditMessage::Confirm));
+    row![Space::fill_width(), cancel_button, confirm_button]
+        .spacing(10)
+        .align_y(Alignment::Center)
+}
+
+pub fn is_running_label<'a, T: 'a>(running: bool) -> Row<'a, T> {
+    if running {
+        let dot = icon::dot_icon().size(5).style(theme::text::success);
+        let label = legacy::text(t!("settings-running"))
+            .small()
+            .style(theme::text::success);
+        row![dot, label].align_y(Alignment::Center)
     } else {
-        Container::new(Column::new())
+        let dot = icon::dot_icon().size(5).style(theme::text::error);
+        let label = legacy::text(t!("settings-not-running"))
+            .small()
+            .style(theme::text::error);
+        row![dot, label].align_y(Alignment::Center)
     }
 }
 
@@ -803,120 +566,88 @@ pub fn rescan<'a>(
     past_possible_height: bool,
     future_date: bool,
 ) -> Element<'a, SettingsEditMessage> {
-    card::simple(Container::new(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(badge::block())
-                    .push(
-                        text(t!("settings-blockchain-rescan"))
-                            .bold()
-                            .width(Length::Fill),
-                    )
-                    .push_maybe(if success {
-                        Some(text(t!("settings-rescan-success")).style(theme::text::success))
-                    } else {
-                        None
-                    })
-                    .spacing(20)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill),
-            )
-            .push(separation().width(Length::Fill))
-            .push(if let Some(p) = scan_progress {
-                Container::new(
-                    Column::new()
-                        .width(Length::Fill)
-                        .push(ProgressBar::new(0.0..=1.0, p as f32).length(Length::Fill))
-                        .push(text(t!(
-                            "settings-rescanning",
-                            progress = format!("{:.2}", p * 100.0)
-                        ))),
-                )
-            } else {
-                Container::new(
-                    Column::new()
-                        .spacing(10)
-                        .push(
-                            Row::new()
-                                .push(text(t!("settings-year")).bold().small())
-                                .push(
-                                    form::Form::new_trimmed("2022", year, |value| {
-                                        SettingsEditMessage::FieldEdited("rescan_year", value)
-                                    })
-                                    .size(P1_SIZE)
-                                    .padding(5),
-                                )
-                                .push(text(t!("settings-month")).bold().small())
-                                .push(
-                                    form::Form::new_trimmed("12", month, |value| {
-                                        SettingsEditMessage::FieldEdited("rescan_month", value)
-                                    })
-                                    .size(P1_SIZE)
-                                    .padding(5),
-                                )
-                                .push(text(t!("settings-day")).bold().small())
-                                .push(
-                                    form::Form::new_trimmed("31", day, |value| {
-                                        SettingsEditMessage::FieldEdited("rescan_day", value)
-                                    })
-                                    .size(P1_SIZE)
-                                    .padding(5),
-                                )
-                                .align_y(Alignment::Center)
-                                .spacing(10),
-                        )
-                        .push_maybe(if invalid_date {
-                            Some(p1_regular(t!("settings-date-invalid")).style(theme::text::error))
-                        } else {
-                            None
-                        })
-                        .push_maybe(if past_possible_height {
-                            Some(
-                                p1_regular(t!("settings-date-before-prune"))
-                                    .style(theme::text::error),
-                            )
-                        } else {
-                            None
-                        })
-                        .push_maybe(if future_date {
-                            Some(p1_regular(t!("settings-date-future")).style(theme::text::error))
-                        } else {
-                            None
-                        })
-                        .push(
-                            if can_edit
-                                && !invalid_date
-                                && !processing
-                                && (is_ok_and(&u32::from_str(&year.value), |&v| v > 0)
-                                    && is_ok_and(&u32::from_str(&month.value), |&v| {
-                                        v > 0 && v <= 12
-                                    })
-                                    && is_ok_and(&u32::from_str(&day.value), |&v| v > 0 && v <= 31))
-                            {
-                                Row::new().push(Column::new().width(Length::Fill)).push(
-                                    button::primary(None, t!("btn-start-rescan"))
-                                        .on_press(SettingsEditMessage::Confirm)
-                                        .width(Length::Shrink),
-                                )
-                            } else if processing {
-                                Row::new().push(Column::new().width(Length::Fill)).push(
-                                    button::secondary(None, t!("btn-starting-rescan"))
-                                        .width(Length::Shrink),
-                                )
-                            } else {
-                                Row::new().push(Column::new().width(Length::Fill)).push(
-                                    button::secondary(None, t!("btn-start-rescan"))
-                                        .width(Length::Shrink),
-                                )
-                            },
-                        ),
-                )
-            })
-            .spacing(20),
-    ))
-    .width(Length::Fill)
-    .into()
+    let title = legacy::text(t!("settings-blockchain-rescan"))
+        .bold()
+        .width(Length::Fill);
+    let success_msg =
+        success.then_some(legacy::text(t!("settings-rescan-success")).style(theme::text::success));
+    let header = row![badge::block(), title, success_msg]
+        .spacing(20)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+
+    let body = if let Some(p) = scan_progress {
+        let progress_bar = ProgressBar::new(0.0..=1.0, p as f32).length(Length::Fill);
+        let progress = legacy::text(t!(
+            "settings-rescanning",
+            progress = format!("{:.2}", p * 100.0)
+        ));
+        column![progress_bar, progress].width(Length::Fill)
+    } else {
+        let year_label = legacy::text(t!("settings-year")).bold().small();
+        let year_input = form::Form::new_trimmed("2022", year, |value| {
+            SettingsEditMessage::FieldEdited("rescan_year", value)
+        })
+        .size(legacy::P1_SIZE)
+        .padding(5);
+        let month_label = legacy::text(t!("settings-month")).bold().small();
+        let month_input = form::Form::new_trimmed("12", month, |value| {
+            SettingsEditMessage::FieldEdited("rescan_month", value)
+        })
+        .size(legacy::P1_SIZE)
+        .padding(5);
+        let day_label = legacy::text(t!("settings-day")).bold().small();
+        let day_input = form::Form::new_trimmed("31", day, |value| {
+            SettingsEditMessage::FieldEdited("rescan_day", value)
+        })
+        .size(legacy::P1_SIZE)
+        .padding(5);
+        let date = row![
+            year_label,
+            year_input,
+            month_label,
+            month_input,
+            day_label,
+            day_input
+        ]
+        .align_y(Alignment::Center)
+        .spacing(10);
+        let invalid_date_error = invalid_date
+            .then_some(legacy::p1_regular(t!("settings-date-invalid")).style(theme::text::error));
+        let past_possible_height_error = past_possible_height.then_some(
+            legacy::p1_regular(t!("settings-date-before-prune")).style(theme::text::error),
+        );
+        let future_date_error = future_date
+            .then_some(legacy::p1_regular(t!("settings-date-future")).style(theme::text::error));
+        let can_start = can_edit
+            && !invalid_date
+            && !processing
+            && (is_ok_and(&u32::from_str(&year.value), |&v| v > 0)
+                && is_ok_and(&u32::from_str(&month.value), |&v| v > 0 && v <= 12)
+                && is_ok_and(&u32::from_str(&day.value), |&v| v > 0 && v <= 31));
+        let start = if can_start {
+            button::primary(None, t!("btn-start-rescan"))
+                .on_press(SettingsEditMessage::Confirm)
+                .width(Length::Shrink)
+        } else if processing {
+            button::secondary(None, t!("btn-starting-rescan")).width(Length::Shrink)
+        } else {
+            button::secondary(None, t!("btn-start-rescan")).width(Length::Shrink)
+        };
+        let start = row![Space::fill_width(), start];
+        column![
+            date,
+            invalid_date_error,
+            past_possible_height_error,
+            future_date_error,
+            start
+        ]
+        .spacing(10)
+    };
+
+    let content = column![header, separation().width(Length::Fill), body].spacing(20);
+
+    card::simple(content).width(Length::Fill).into()
 }
 
 fn is_ok_and<T, E>(res: &Result<T, E>, f: impl FnOnce(&T) -> bool) -> bool {
@@ -945,10 +676,9 @@ pub fn wallet_settings<'a>(
     );
 
     // ------------------------- Descriptor card -------------------------
-    let title = text(t!("settings-wallet-descriptor")).bold();
-    let descriptor_s =
-        scrollable::horizontal_thin(Column::new().push(text(descriptor.to_string()).small()))
-            .width(Length::Fill);
+    let title = legacy::text(t!("settings-wallet-descriptor")).bold();
+    let descriptor_s = scrollable::horizontal_thin(legacy::text(descriptor.to_string()).small())
+        .width(Length::Fill);
 
     let backup_msg = Message::Settings(SettingsMessage::ExportEncryptedDescriptor);
     let btn_backup = btn_backup_encrypt_descriptor(backup_msg);
@@ -980,34 +710,34 @@ pub fn wallet_settings<'a>(
     .width(Length::Fill);
 
     // -------------------------- Aliases card ---------------------------
-    let w_alias_title = text(t!("settings-wallet-alias")).bold().into();
+    let w_alias_title = legacy::text(t!("settings-wallet-alias")).bold().into();
     let w_alias_input = form::Form::new(&t!("settings-alias"), wallet_alias, move |msg| {
         Message::Settings(SettingsMessage::WalletAliasEdited(msg))
     })
     .warning(t!("settings-alias-too-long"))
-    .size(P1_SIZE)
+    .size(legacy::P1_SIZE)
     .padding(10)
     .into();
 
-    let k_alias_title = text(t!("settings-fingerprint-aliases")).bold().into();
+    let k_alias_title = legacy::text(t!("settings-fingerprint-aliases"))
+        .bold()
+        .into();
 
     fn key_alias_entry<'a>(
         fg: &'a Fingerprint,
         name: &'a form::Value<String>,
     ) -> Element<'a, Message> {
         let fg = *fg;
-        Row::new()
+        let fingerprint = legacy::text(fg.to_string()).bold().width(100);
+        let alias = form::Form::new(&t!("settings-alias"), name, move |msg| {
+            Message::Settings(SettingsMessage::FingerprintAliasEdited(fg, msg))
+        })
+        .warning(t!("settings-correct-alias"))
+        .size(legacy::P1_SIZE)
+        .padding(10);
+        row![fingerprint, alias]
             .spacing(10)
             .align_y(Alignment::Center)
-            .push(text(fg.to_string()).bold().width(Length::Fixed(100.0)))
-            .push(
-                form::Form::new(&t!("settings-alias"), name, move |msg| {
-                    Message::Settings(SettingsMessage::FingerprintAliasEdited(fg, msg))
-                })
-                .warning(t!("settings-correct-alias"))
-                .size(P1_SIZE)
-                .padding(10),
-            )
             .width(Length::Fill)
             .into()
     }
@@ -1021,20 +751,15 @@ pub fn wallet_settings<'a>(
 
     let update_msg =
         (!processing && wallet_alias.valid).then_some(Message::Settings(SettingsMessage::Save));
-    let last_row = Row::new()
-        .align_y(Alignment::Center)
-        .push(Space::with_width(Length::Fill))
-        .push_maybe(if updated {
-            Some(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .push(icon::circle_check_icon().style(theme::text::success))
-                    .push(text(t!("settings-updated")).style(theme::text::success)),
-            )
-        } else {
-            None
-        })
-        .push(btn_update(update_msg));
+    let updated_label = updated.then_some(
+        row![
+            icon::circle_check_icon().style(theme::text::success),
+            legacy::text(t!("settings-updated")).style(theme::text::success)
+        ]
+        .align_y(Alignment::Center),
+    );
+    let last_row =
+        row![Space::fill_width(), updated_label, btn_update(update_msg)].align_y(Alignment::Center);
 
     col_content.push(last_row.into());
 
@@ -1045,17 +770,9 @@ pub fn wallet_settings<'a>(
     )
     .width(Length::Fill);
 
-    dashboard(
-        &Menu::Settings,
-        cache,
-        warning,
-        Column::new()
-            .spacing(20)
-            .push(header)
-            .push(descriptor_card)
-            .push(policy_card)
-            .push(alias_card),
-    )
+    let content = column![header, descriptor_card, policy_card, alias_card].spacing(20);
+
+    dashboard(&Menu::Settings, cache, warning, content)
 }
 
 fn display_policy<'a>(
@@ -1070,47 +787,23 @@ fn display_policy<'a>(
     let mut primary_keys: Vec<Fingerprint> = primary_keys.into_keys().collect();
     primary_keys.sort();
 
-    let mut col = Column::new().push(
-        Row::new()
-            .spacing(5)
-            .push(text(t!("policy-signatures", count = primary_threshold)).bold())
-            .push(if primary_keys.len() > 1 {
-                text(t!("policy-out-of-by", count = primary_keys.len()))
-            } else {
-                text(t!("policy-by"))
-            })
-            .push(
-                primary_keys
-                    .iter()
-                    .enumerate()
-                    .fold(Row::new().spacing(5), |row, (i, k)| {
-                        let content = if let Some(alias) = keys_aliases
-                            .iter()
-                            .find(|(fg, a)| fg == k && !a.value.is_empty())
-                            .map(|(_, f)| &f.value)
-                        {
-                            Container::new(
-                                iced_tooltip::Tooltip::new(
-                                    text(alias).bold(),
-                                    text(k.to_string()),
-                                    iced_tooltip::Position::Bottom,
-                                )
-                                .style(theme::card::simple),
-                            )
-                        } else {
-                            Container::new(text(format!("[{k}]")).bold())
-                        };
-                        if primary_keys.len() == 1 || i == primary_keys.len() - 1 {
-                            row.push(content)
-                        } else if i <= primary_keys.len() - 2 {
-                            row.push(content).push(text(t!("common-and")))
-                        } else {
-                            row.push(content).push(text(","))
-                        }
-                    }),
-            )
-            .push(text(t!("policy-primary-path"))),
-    );
+    let primary_signatures =
+        legacy::text(t!("policy-signatures", count = primary_threshold)).bold();
+    let primary_by = if primary_keys.len() > 1 {
+        legacy::text(t!("policy-out-of-by", count = primary_keys.len()))
+    } else {
+        legacy::text(t!("policy-by"))
+    };
+    let primary_signers = signers_row(&primary_keys, keys_aliases);
+    let primary_path = row![
+        primary_signatures,
+        primary_by,
+        primary_signers,
+        legacy::text(t!("policy-primary-path"))
+    ]
+    .spacing(5);
+
+    let mut paths = column![primary_path];
     for (i, (sequence, recovery_path)) in recovery_paths.iter().enumerate() {
         let (threshold, recovery_keys) = recovery_path.thresh_origins();
 
@@ -1118,71 +811,80 @@ fn display_policy<'a>(
         let mut recovery_keys: Vec<Fingerprint> = recovery_keys.into_keys().collect();
         recovery_keys.sort();
 
-        col = col.push(
-            Row::new()
-                .spacing(5)
-                .push(text(t!("policy-signatures", count = threshold)).bold())
-                .push(if recovery_keys.len() > 1 {
-                    text(t!("policy-out-of-by", count = recovery_keys.len()))
-                } else {
-                    text(t!("policy-by"))
-                })
-                .push(recovery_keys.iter().enumerate().fold(
-                    Row::new().spacing(5),
-                    |row, (i, k)| {
-                        let content = if let Some(alias) = keys_aliases
-                            .iter()
-                            .find(|(fg, a)| fg == k && !a.value.is_empty())
-                            .map(|(_, f)| &f.value)
-                        {
-                            Container::new(
-                                iced_tooltip::Tooltip::new(
-                                    text(alias).bold(),
-                                    text(k.to_string()),
-                                    iced_tooltip::Position::Bottom,
-                                )
-                                .style(theme::card::simple),
-                            )
-                        } else {
-                            Container::new(text(format!("[{k}]")).bold())
-                        };
-                        if recovery_keys.len() == 1 || i == recovery_keys.len() - 1 {
-                            row.push(content)
-                        } else if i <= recovery_keys.len() - 2 {
-                            row.push(content).push(text(t!("common-and")))
-                        } else {
-                            row.push(content).push(text(","))
-                        }
-                    },
-                ))
-                .push(text(t!("policy-inactive-for")))
-                .push(
-                    text(t!(
-                        "policy-block-duration",
-                        blocks = sequence,
-                        duration = expire_message_units(*sequence as u32).join(",")
-                    ))
-                    .bold(),
-                )
-                .push(text(
-                    // If max timelock and all keys are from provider, then it's a safety net path.
-                    if *sequence == u16::MAX
-                        && recovery_keys
-                            .iter()
-                            .all(|fg| provider_keys.contains_key(fg))
-                    {
-                        t!("policy-safety-net-path")
-                    } else {
-                        t!("policy-recovery-path", number = i + 1)
-                    },
-                )),
+        let signatures = legacy::text(t!("policy-signatures", count = threshold)).bold();
+        let by = if recovery_keys.len() > 1 {
+            legacy::text(t!("policy-out-of-by", count = recovery_keys.len()))
+        } else {
+            legacy::text(t!("policy-by"))
+        };
+        let signers = signers_row(&recovery_keys, keys_aliases);
+        let duration = legacy::text(t!(
+            "policy-block-duration",
+            blocks = sequence,
+            duration = expire_message_units(*sequence as u32).join(",")
+        ))
+        .bold();
+        let path_name = legacy::text(
+            // If max timelock and all keys are from provider, then it's a safety net path.
+            if *sequence == u16::MAX
+                && recovery_keys
+                    .iter()
+                    .all(|fg| provider_keys.contains_key(fg))
+            {
+                t!("policy-safety-net-path")
+            } else {
+                t!("policy-recovery-path", number = i + 1)
+            },
+        );
+
+        paths = paths.push(
+            row![
+                signatures,
+                by,
+                signers,
+                legacy::text(t!("policy-inactive-for")),
+                duration,
+                path_name
+            ]
+            .spacing(5),
         );
     }
-    Column::new()
+
+    let title = legacy::text(t!("policy-wallet-policy")).bold();
+
+    column![title, scrollable::horizontal_thin(paths)]
         .spacing(10)
-        .push(text(t!("policy-wallet-policy")).bold())
-        .push(scrollable::horizontal_thin(col))
         .into()
+}
+
+fn signers_row<'a>(
+    keys: &[Fingerprint],
+    keys_aliases: &'a [(Fingerprint, form::Value<String>)],
+) -> Row<'a, Message> {
+    keys.iter()
+        .enumerate()
+        .fold(Row::new().spacing(5), |row, (i, k)| {
+            let content: Element<'a, Message> = if let Some(alias) = keys_aliases
+                .iter()
+                .find(|(fg, a)| fg == k && !a.value.is_empty())
+                .map(|(_, f)| &f.value)
+            {
+                iced_tooltip::Tooltip::new(
+                    legacy::text(alias).bold(),
+                    legacy::text(k.to_string()),
+                    iced_tooltip::Position::Bottom,
+                )
+                .style(theme::card::simple)
+                .into()
+            } else {
+                legacy::text(format!("[{k}]")).bold().into()
+            };
+            if i + 1 < keys.len() {
+                row.push(content).push(legacy::text(t!("common-and")))
+            } else {
+                row.push(content)
+            }
+        })
 }
 
 /// returns y,m,d
@@ -1254,25 +956,11 @@ pub fn register_wallet_modal<'a>(
             ))
         });
 
-    let card_content = Column::new()
-        .push(
-            Column::new()
-                .push(
-                    text(t!("settings-select-device"))
-                        .bold()
-                        .width(Length::Fill),
-                )
-                .spacing(10)
-                .push(signers)
-                .width(Length::Fill),
-        )
-        .spacing(20)
-        .width(Length::Fill)
-        .align_x(Alignment::Center);
+    let title = legacy::text(t!("settings-select-device"))
+        .bold()
+        .width(Length::Fill);
+    let devices = column![title, signers].spacing(10).width(Length::Fill);
+    let warning = warning.map(|w| warn(Some(w)));
 
-    Column::new()
-        .push_maybe(warning.map(|w| warn(Some(w))))
-        .push(card::simple(card_content))
-        .width(Length::Fixed(500.0))
-        .into()
+    column![warning, card::simple(devices)].width(500).into()
 }
