@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{
-    widget::{column, row, tooltip as iced_tooltip, Column, Space},
+    widget::{column, row, tooltip::Position, Column, Space},
     Alignment, Length,
 };
 
@@ -15,9 +15,12 @@ use liana_ui::{
         card, form,
         panels::setting::{header, SectionKind},
         scrollable,
-        text::{legacy, Text},
+        text::new,
+        tooltip_custom,
     },
-    icon, theme,
+    icon,
+    spacing::{HSpacing, VSpacing},
+    theme,
     widget::{Element, Row, SpaceExt},
 };
 
@@ -57,9 +60,9 @@ pub fn wallet_settings<'a>(
     );
 
     // ------------------------- Descriptor card -------------------------
-    let title = legacy::text(t!("settings-wallet-descriptor")).bold();
-    let descriptor_s = scrollable::horizontal_thin(legacy::text(descriptor.to_string()).small())
-        .width(Length::Fill);
+    let title = new::h3_semi(t!("settings-wallet-descriptor"));
+    let descriptor_s =
+        scrollable::horizontal_thin(new::caption(descriptor.to_string())).width(Length::Fill);
 
     let backup_msg = Message::Settings(SettingsMessage::ExportEncryptedDescriptor);
     let btn_backup = btn_backup_encrypt_descriptor(backup_msg);
@@ -68,16 +71,16 @@ pub fn wallet_settings<'a>(
     let btn_register = btn_register_on_device(Message::Settings(SettingsMessage::RegisterWallet));
 
     let descriptor_row = row![descriptor_s, btn_copy]
-        .spacing(10)
+        .spacing(HSpacing::M)
         .align_y(Alignment::Center)
         .width(Length::Fill);
     let btn_row = row![Space::fill_width(), btn_backup, btn_register]
-        .spacing(10)
+        .spacing(HSpacing::M)
         .width(Length::Fill)
         .wrap();
     let descriptor_card = card::simple(
         column![title, descriptor_row, btn_row]
-            .spacing(10)
+            .spacing(VSpacing::S)
             .width(Length::Fill),
     )
     .width(Length::Fill);
@@ -91,33 +94,27 @@ pub fn wallet_settings<'a>(
     .width(Length::Fill);
 
     // -------------------------- Aliases card ---------------------------
-    let w_alias_title = legacy::text(t!("settings-wallet-alias")).bold().into();
+    let w_alias_title = new::h3_semi(t!("settings-wallet-alias")).into();
     let w_alias_input = form::Form::new(&t!("settings-alias"), wallet_alias, move |msg| {
         Message::Settings(SettingsMessage::WalletAliasEdited(msg))
     })
     .warning(t!("settings-alias-too-long"))
-    .size(legacy::P1_SIZE)
-    .padding(10)
     .into();
 
-    let k_alias_title = legacy::text(t!("settings-fingerprint-aliases"))
-        .bold()
-        .into();
+    let k_alias_title = new::h3_semi(t!("settings-fingerprint-aliases")).into();
 
     fn key_alias_entry<'a>(
         fg: &'a Fingerprint,
         name: &'a form::Value<String>,
     ) -> Element<'a, Message> {
         let fg = *fg;
-        let fingerprint = legacy::text(fg.to_string()).bold().width(100);
+        let fingerprint = new::b5_bold(fg.to_string()).width(100);
         let alias = form::Form::new(&t!("settings-alias"), name, move |msg| {
             Message::Settings(SettingsMessage::FingerprintAliasEdited(fg, msg))
         })
-        .warning(t!("settings-correct-alias"))
-        .size(legacy::P1_SIZE)
-        .padding(10);
+        .warning(t!("settings-correct-alias"));
         row![fingerprint, alias]
-            .spacing(10)
+            .spacing(HSpacing::M)
             .align_y(Alignment::Center)
             .width(Length::Fill)
             .into()
@@ -135,7 +132,7 @@ pub fn wallet_settings<'a>(
     let updated_label = updated.then_some(
         row![
             icon::circle_check_icon().style(theme::text::success),
-            legacy::text(t!("settings-updated")).style(theme::text::success)
+            new::caption(t!("settings-updated")).style(theme::text::success)
         ]
         .align_y(Alignment::Center),
     );
@@ -146,12 +143,12 @@ pub fn wallet_settings<'a>(
 
     let alias_card = card::simple(
         Column::from_vec(col_content)
-            .spacing(10)
+            .spacing(VSpacing::S)
             .width(Length::Fill),
     )
     .width(Length::Fill);
 
-    let content = column![header, descriptor_card, policy_card, alias_card].spacing(20);
+    let content = column![header, descriptor_card, policy_card, alias_card].spacing(VSpacing::L);
 
     dashboard(&Menu::Settings, cache, warning, content)
 }
@@ -168,21 +165,20 @@ fn display_policy<'a>(
     let mut primary_keys: Vec<Fingerprint> = primary_keys.into_keys().collect();
     primary_keys.sort();
 
-    let primary_signatures =
-        legacy::text(t!("policy-signatures", count = primary_threshold)).bold();
+    let primary_signatures = new::b5_bold(t!("policy-signatures", count = primary_threshold));
     let primary_by = if primary_keys.len() > 1 {
-        legacy::text(t!("policy-out-of-by", count = primary_keys.len()))
+        new::caption(t!("policy-out-of-by", count = primary_keys.len()))
     } else {
-        legacy::text(t!("policy-by"))
+        new::caption(t!("policy-by"))
     };
     let primary_signers = signers_row(&primary_keys, keys_aliases);
     let primary_path = row![
         primary_signatures,
         primary_by,
         primary_signers,
-        legacy::text(t!("policy-primary-path"))
+        new::caption(t!("policy-primary-path"))
     ]
-    .spacing(5);
+    .spacing(HSpacing::S);
 
     let mut paths = column![primary_path];
     for (i, (sequence, recovery_path)) in recovery_paths.iter().enumerate() {
@@ -192,20 +188,19 @@ fn display_policy<'a>(
         let mut recovery_keys: Vec<Fingerprint> = recovery_keys.into_keys().collect();
         recovery_keys.sort();
 
-        let signatures = legacy::text(t!("policy-signatures", count = threshold)).bold();
+        let signatures = new::b5_bold(t!("policy-signatures", count = threshold));
         let by = if recovery_keys.len() > 1 {
-            legacy::text(t!("policy-out-of-by", count = recovery_keys.len()))
+            new::caption(t!("policy-out-of-by", count = recovery_keys.len()))
         } else {
-            legacy::text(t!("policy-by"))
+            new::caption(t!("policy-by"))
         };
         let signers = signers_row(&recovery_keys, keys_aliases);
-        let duration = legacy::text(t!(
+        let duration = new::b5_bold(t!(
             "policy-block-duration",
             blocks = sequence,
             duration = expire_message_units(*sequence as u32).join(",")
-        ))
-        .bold();
-        let path_name = legacy::text(
+        ));
+        let path_name = new::caption(
             // If max timelock and all keys are from provider, then it's a safety net path.
             if *sequence == u16::MAX
                 && recovery_keys
@@ -223,18 +218,18 @@ fn display_policy<'a>(
                 signatures,
                 by,
                 signers,
-                legacy::text(t!("policy-inactive-for")),
+                new::caption(t!("policy-inactive-for")),
                 duration,
                 path_name
             ]
-            .spacing(5),
+            .spacing(HSpacing::S),
         );
     }
 
-    let title = legacy::text(t!("policy-wallet-policy")).bold();
+    let title = new::h3_semi(t!("policy-wallet-policy"));
 
     column![title, scrollable::horizontal_thin(paths)]
-        .spacing(10)
+        .spacing(VSpacing::S)
         .into()
 }
 
@@ -244,24 +239,23 @@ fn signers_row<'a>(
 ) -> Row<'a, Message> {
     keys.iter()
         .enumerate()
-        .fold(Row::new().spacing(5), |row, (i, k)| {
+        .fold(Row::new().spacing(HSpacing::S), |row, (i, k)| {
             let content: Element<'a, Message> = if let Some(alias) = keys_aliases
                 .iter()
                 .find(|(fg, a)| fg == k && !a.value.is_empty())
                 .map(|(_, f)| &f.value)
             {
-                iced_tooltip::Tooltip::new(
-                    legacy::text(alias).bold(),
-                    legacy::text(k.to_string()),
-                    iced_tooltip::Position::Bottom,
+                tooltip_custom(
+                    new::caption(k.to_string()),
+                    new::b5_bold(alias),
+                    Position::Bottom,
                 )
-                .style(theme::card::simple)
                 .into()
             } else {
-                legacy::text(format!("[{k}]")).bold().into()
+                new::b5_bold(format!("[{k}]")).into()
             };
             if i + 1 < keys.len() {
-                row.push(content).push(legacy::text(t!("common-and")))
+                row.push(content).push(new::caption(t!("common-and")))
             } else {
                 row.push(content)
             }
@@ -312,35 +306,35 @@ pub fn register_wallet_modal<'a>(
     chosen_hw: Option<usize>,
     registered: &HashSet<Fingerprint>,
 ) -> Element<'a, Message> {
-    let signers = hws
-        .iter()
-        .enumerate()
-        .fold(Column::new().spacing(10), |col, (i, hw)| {
-            col.push(device_list_entry(
-                hw,
-                HwRowMode::Registration {
-                    chosen: Some(i) == chosen_hw,
-                    processing,
-                    complete: hw
-                        .fingerprint()
-                        .map(|f| registered.contains(&f))
-                        .unwrap_or(false)
-                        || if let HardwareWallet::Supported { registered, .. } = hw {
-                            registered == &Some(true)
-                        } else {
-                            false
-                        },
-                    descriptor: None,
-                    device_must_support_taproot: false,
-                },
-                move || Message::SelectHardwareWallet(i),
-            ))
-        });
+    let signers =
+        hws.iter()
+            .enumerate()
+            .fold(Column::new().spacing(VSpacing::S), |col, (i, hw)| {
+                col.push(device_list_entry(
+                    hw,
+                    HwRowMode::Registration {
+                        chosen: Some(i) == chosen_hw,
+                        processing,
+                        complete: hw
+                            .fingerprint()
+                            .map(|f| registered.contains(&f))
+                            .unwrap_or(false)
+                            || if let HardwareWallet::Supported { registered, .. } = hw {
+                                registered == &Some(true)
+                            } else {
+                                false
+                            },
+                        descriptor: None,
+                        device_must_support_taproot: false,
+                    },
+                    move || Message::SelectHardwareWallet(i),
+                ))
+            });
 
-    let title = legacy::text(t!("settings-select-device"))
-        .bold()
+    let title = new::h3_semi(t!("settings-select-device")).width(Length::Fill);
+    let devices = column![title, signers]
+        .spacing(VSpacing::S)
         .width(Length::Fill);
-    let devices = column![title, signers].spacing(10).width(Length::Fill);
     let warning = warning.map(|w| warn(Some(w)));
 
     column![warning, card::simple(devices)].width(500).into()
