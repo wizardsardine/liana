@@ -412,6 +412,16 @@ impl HistoryTransaction {
     }
 }
 
+pub fn outpoint_label(
+    labels: &HashMap<String, String>,
+    outpoint: OutPoint,
+    default_label: &Label,
+) -> Label {
+    label::get(labels, outpoint)
+        .map(|label| Label::Own(label.to_string()))
+        .unwrap_or_else(|| default_label.clone())
+}
+
 #[derive(Debug, Clone)]
 pub struct Payment {
     pub label: Option<String>,
@@ -900,6 +910,30 @@ mod tests {
         assert_eq!(
             payment(Some(""), Label::Address(SALARY.to_string())).label(),
             Label::Address(SALARY.to_string())
+        );
+    }
+
+    #[test]
+    fn outpoint_label_falls_back_to_its_default() {
+        let default_label = Label::Address(SALARY.to_string());
+        let labels = HashMap::new();
+        assert_eq!(
+            outpoint_label(&labels, outpoint(1), &default_label),
+            default_label
+        );
+        let labels = HashMap::from([(outpoint(1).to_string(), String::new())]);
+        assert_eq!(
+            outpoint_label(&labels, outpoint(1), &default_label),
+            default_label
+        );
+    }
+
+    #[test]
+    fn outpoint_own_label_wins_over_the_default() {
+        let labels = HashMap::from([(outpoint(1).to_string(), RENT.to_string())]);
+        assert_eq!(
+            outpoint_label(&labels, outpoint(1), &Label::Address(SALARY.to_string())),
+            Label::Own(RENT.to_string())
         );
     }
 

@@ -177,13 +177,17 @@ fn address_label_row<'a, M: 'a>(label: &'a str) -> Row<'a, M> {
 }
 
 pub fn change_row<'a, M: Clone + 'static>(
+    label: Option<Element<'a, M>>,
     value: Amount,
     address: String,
     copy: M,
 ) -> Element<'a, M> {
-    let value = row![Space::fill_width(), amount(&value)];
+    let label = label.unwrap_or_else(|| Space::fill_width().into());
+    let header = row![Container::new(label).width(Length::Fill), amount(&value)]
+        .spacing(HSpacing::S)
+        .align_y(Alignment::Center);
 
-    column![value, address_row(address, copy)]
+    column![header, address_row(address, copy)]
         .width(Length::Fill)
         .spacing(VSpacing::XS)
         .into()

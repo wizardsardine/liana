@@ -26,14 +26,6 @@ use crate::{
 const COIN_LIST_MAX_HEIGHT: f32 = 300.0;
 const FEERATE_INPUT_WIDTH: f32 = 150.0;
 
-pub enum CoinLabel {
-    /// Label set on this coin.
-    Outpoint(String),
-    /// Label inherited from the parent transaction.
-    Transaction(String),
-    None,
-}
-
 pub enum CoinStatus {
     Spent,
     Unconfirmed,
@@ -405,7 +397,7 @@ fn label_len(available_width: f32) -> usize {
 }
 
 pub fn coin_row<'a, M: Clone + 'static>(
-    label: CoinLabel,
+    label: Option<String>,
     amount: &Amount,
     status: CoinStatus,
     selected: bool,
@@ -426,16 +418,7 @@ pub fn coin_row<'a, M: Clone + 'static>(
             s
         }
     };
-    let coin_label: Element<M> = match label {
-        CoinLabel::Outpoint(label) => font(short(label)).style(label_style).into(),
-        CoinLabel::Transaction(label) => {
-            let from = font(t!("common-from")).style(|t| theme::amount::zeroes(t, false));
-            row![from, font(short(label)).style(label_style)]
-                .spacing(5)
-                .into()
-        }
-        CoinLabel::None => font("").style(label_style).into(),
-    };
+    let coin_label = font(short(label.unwrap_or_default())).style(label_style);
 
     let timelock_pill: Container<M> = match status {
         CoinStatus::Spent => pill::spent(),

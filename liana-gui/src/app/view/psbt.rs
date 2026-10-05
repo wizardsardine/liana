@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use iced::{
     widget::{column, row, Space},
@@ -7,6 +7,7 @@ use iced::{
 
 use liana::{
     descriptors::{LianaDescriptor, LianaPolicy},
+    label::Label,
     miniscript::bitcoin::{
         bip32::Fingerprint, blockdata::transaction::TxOut, Address, Network, OutPoint, Transaction,
         Txid,
@@ -42,7 +43,7 @@ use crate::{
             FiatAmountConverter,
         },
     },
-    daemon::model::{Coin, SpendStatus, SpendTx},
+    daemon::model::{outpoint_label, Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
     t,
     view::hw::{device_list_entry, HwRowMode},
@@ -82,6 +83,7 @@ pub fn psbt_view<'a>(
         &tx.labels,
         labels_editing,
         false,
+        None,
     );
 
     let action = if saved {
@@ -347,7 +349,23 @@ pub fn outputs_view<'a>(
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
     is_external: bool,
+    owned_default_labels: Option<&BTreeMap<usize, Label>>,
 ) -> Element<'a, Message> {
+    let txid = tx.compute_txid();
+    let label_field = |i: usize| {
+        let outpoint = OutPoint::new(txid, i as u32);
+        let default_label = owned_default_labels
+            .and_then(|default_labels| default_labels.get(&i))
+            .unwrap_or(&Label::None);
+        let label = outpoint_label(labels, outpoint, default_label);
+        let outpoint = outpoint.to_string();
+        label::label_field(
+            vec![outpoint.clone()],
+            labels_editing.get(&outpoint),
+            label,
+            LabelSize::Body,
+        )
+    };
     let is_payment = |i: &usize| is_external || !change_indexes.contains(i);
     let count = tx
         .output
@@ -364,15 +382,13 @@ pub fn outputs_view<'a>(
             .enumerate()
             .filter(|(i, _)| is_payment(i))
             .map(|(i, output)| {
-                payment_view(
-                    i,
-                    tx.compute_txid(),
-                    output,
-                    network,
-                    labels,
-                    labels_editing,
-                    !is_external || change_indexes.contains(&i),
-                )
+                let label = if !is_external || change_indexes.contains(&i) {
+                    label_field(i)
+                } else {
+                    let outpoint = OutPoint::new(txid, i as u32).to_string();
+                    label::label_non_editable(vec![outpoint], None, LabelSize::Body)
+                };
+                payment_view(label, output, network, labels)
             })
             .collect();
 
@@ -385,7 +401,10 @@ pub fn outputs_view<'a>(
             .iter()
             .enumerate()
             .filter(|(i, _)| change_indexes.contains(i))
-            .map(|(_, output)| change_view(output, network))
+            .map(|(i, output)| {
+                let label = owned_default_labels.is_some().then(|| label_field(i));
+                change_view(label, output, network)
+            })
             .collect();
 
         psbts::collapsible_section(t!("psbt-change"), rows)
@@ -428,37 +447,15 @@ fn input_view<'a>(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn payment_view<'a>(
-    i: usize,
-    txid: Txid,
+    label: Element<'a, Message>,
     output: &'a TxOut,
     network: Network,
     labels: &'a HashMap<String, String>,
-    labels_editing: &'a HashMap<String, form::Value<String>>,
-    is_editable: bool,
 ) -> Element<'a, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .ok()
         .map(|a| a.to_string());
-    let outpoint = OutPoint {
-        txid,
-        vout: i as u32,
-    }
-    .to_string();
-    let label_widget = if is_editable {
-        if let Some(label) = labels_editing.get(&outpoint) {
-            label::label_editing(vec![outpoint.clone()], label)
-        } else {
-            label::label_editable(
-                vec![outpoint.clone()],
-                labels.get(&outpoint),
-                LabelSize::Body,
-            )
-        }
-    } else {
-        label::label_non_editable(vec![outpoint], None, LabelSize::Body)
-    };
 
     let address_label = addr
         .as_ref()
@@ -466,7 +463,7 @@ fn payment_view<'a>(
         .map(String::as_str);
 
     psbts::payment_row(
-        label_widget,
+        label,
         output.value,
         addr.clone(),
         address_label,
@@ -474,12 +471,16 @@ fn payment_view<'a>(
     )
 }
 
-fn change_view(output: &TxOut, network: Network) -> Element<'_, Message> {
+fn change_view<'a>(
+    label: Option<Element<'a, Message>>,
+    output: &TxOut,
+    network: Network,
+) -> Element<'a, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .unwrap()
         .to_string();
 
-    psbts::change_row(output.value, addr.clone(), Message::Clipboard(addr))
+    psbts::change_row(label, output.value, addr.clone(), Message::Clipboard(addr))
 }
 
 #[allow(clippy::too_many_arguments)]
