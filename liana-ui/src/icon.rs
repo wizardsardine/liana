@@ -85,11 +85,11 @@ pub fn wallet_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F615}')
 }
 
-pub fn bitcoin_icon() -> Text<'static> {
+pub fn bitcoin_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F635}')
 }
 
-pub fn block_icon() -> Text<'static> {
+pub fn block_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F1C8}')
 }
 
@@ -153,7 +153,7 @@ pub fn up_icon() -> Text<'static> {
     bootstrap_icon('\u{F27C}')
 }
 
-pub fn network_icon() -> Text<'static> {
+pub fn network_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F40D}')
 }
 

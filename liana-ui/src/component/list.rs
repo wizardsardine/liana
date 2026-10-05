@@ -303,12 +303,22 @@ pub fn entry_organization<'a, M: Clone + 'a>(
     subtitle: Option<impl Display>,
     msg: Option<M>,
 ) -> Element<'a, M> {
+    entry_section(Tile::Org, title, subtitle, EntryWidth::Standard, msg)
+}
+
+pub fn entry_section<'a, M: Clone + 'a>(
+    tile: Tile,
+    title: impl Display,
+    subtitle: Option<impl Display>,
+    width: EntryWidth,
+    msg: Option<M>,
+) -> Element<'a, M> {
     list_entry_chevron(
-        Some(badge::tile(Tile::Org).into()),
+        Some(badge::tile(tile).into()),
         section_body(title, subtitle),
         None,
         None,
-        EntryWidth::Standard,
+        width,
         msg,
     )
 }
