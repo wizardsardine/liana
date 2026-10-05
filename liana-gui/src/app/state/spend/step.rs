@@ -54,7 +54,7 @@ pub struct TransactionDraft {
     inputs: Vec<Coin>,
     recipients: Vec<Recipient>,
     generated: Option<(Psbt, Vec<CreateRecoveryWarning>)>,
-    batch_label: Option<String>,
+    tx_label: Option<String>,
     labels: HashMap<String, String>,
     /// The timelock of the recovery path to use for spending.
     ///
@@ -71,7 +71,7 @@ impl TransactionDraft {
             inputs: Vec::new(),
             recipients: Vec::new(),
             generated: None,
-            batch_label: None,
+            tx_label: None,
             labels: HashMap::new(),
             recovery_timelock,
         }
@@ -173,7 +173,7 @@ pub struct DefineSpend {
     tip_height: u32,
     coins: Vec<(Coin, bool)>,
     coins_labels: HashMap<String, String>,
-    batch_label: form::Value<String>,
+    tx_label: form::Value<String>,
     amount_left_to_select: Option<Amount>,
     feerate: form::Value<String>,
     fee_mode: FeeMode,
@@ -210,7 +210,7 @@ impl DefineSpend {
             generated: None,
             coins,
             coins_labels: HashMap::new(),
-            batch_label: form::Value::default(),
+            tx_label: form::Value::default(),
             recipients: vec![Recipient::new(recovery_timelock.is_some())],
             // For recovery, send max to the (single) recipient.
             send_max_to_recipient: recovery_timelock.map(|_| 0),
@@ -276,7 +276,7 @@ impl DefineSpend {
     fn form_values_are_valid(&self, is_redraft: bool) -> bool {
         self.feerate.valid
             && !self.feerate.value.is_empty()
-            && (self.batch_label.valid || self.recipients.len() < 2)
+            && (self.tx_label.valid || self.recipients.len() < 2)
             // Recipients will be empty for self-send.
             && self.recipients.iter().enumerate().all(|(i, r)|
             r.valid() || (is_redraft && self.send_max_to_recipient == Some(i) && r.address_valid()))
@@ -621,9 +621,10 @@ impl Step for DefineSpend {
         match message {
             Message::View(view::Message::CreateSpend(msg)) => {
                 match msg {
-                    view::CreateSpendMessage::BatchLabelEdited(label) => {
-                        self.batch_label.valid = super::super::label::is_valid_label_value(&label);
-                        self.batch_label.value = label;
+                    view::CreateSpendMessage::TxLabelEdited(label) => {
+                        self.tx_label.valid =
+                            crate::app::state::label::is_valid_label_value(&label);
+                        self.tx_label.value = label;
                     }
                     view::CreateSpendMessage::Clear => {
                         *self = Self::new(
@@ -646,8 +647,8 @@ impl Step for DefineSpend {
                     view::CreateSpendMessage::DeleteRecipient(i) => {
                         self.recipients.remove(i);
                         if self.recipients.len() < 2 {
-                            self.batch_label.valid = true;
-                            self.batch_label.value = "".to_string();
+                            self.tx_label.valid = true;
+                            self.tx_label.value = "".to_string();
                         }
                         if let Some(j) = self.send_max_to_recipient {
                             match j.cmp(&i) {
@@ -667,8 +668,8 @@ impl Step for DefineSpend {
                     view::CreateSpendMessage::SelfTransfer => {
                         self.recipients.clear();
                         self.send_max_to_recipient = None;
-                        self.batch_label.valid = true;
-                        self.batch_label.value = String::new();
+                        self.tx_label.valid = true;
+                        self.tx_label.value = String::new();
                     }
                     view::CreateSpendMessage::RecipientEdited(i, _, _)
                     | view::CreateSpendMessage::RecipientFiatAmountEdited(i, _, _) => {
@@ -901,7 +902,7 @@ impl Step for DefineSpend {
         }
         draft.recipients.clone_from(&self.recipients);
         if self.recipients.len() > 1 {
-            draft.batch_label = Some(self.batch_label.value.clone());
+            draft.tx_label = Some(self.tx_label.value.clone());
         }
         draft.generated.clone_from(&self.generated);
     }
@@ -922,7 +923,7 @@ impl Step for DefineSpend {
             self.recovery_timelock,
             &self.coins,
             &self.coins_labels,
-            &self.batch_label,
+            &self.tx_label,
             self.amount_left_to_select.as_ref(),
             &self.feerate,
             self.fee_mode,
@@ -1176,7 +1177,7 @@ impl Step for SaveSpend {
         tx.labels.clone_from(&draft.labels);
 
         if tx.is_batch() {
-            if let Some(label) = &draft.batch_label {
+            if let Some(label) = &draft.tx_label {
                 tx.labels.insert(
                     tx.psbt.unsigned_tx.compute_txid().to_string(),
                     label.clone(),
