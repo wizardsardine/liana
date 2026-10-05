@@ -9,7 +9,7 @@ use liana_i18n::t;
 use crate::{
     component::{
         badge, button,
-        text::{caption, text, Text},
+        text::{legacy, Text},
     },
     icon,
     widget::{Button, Column, Container, Element, Row},
@@ -127,13 +127,13 @@ pub fn content_box<'a, M>(content: Row<'a, M>) -> Row<'a, M> {
 }
 
 pub fn settings_section<M: Clone + 'static>(kind: SectionKind, msg: M) -> Element<'static, M> {
-    let content = content_box(row![kind.icon(), text(kind.title()).bold()]);
+    let content = content_box(row![kind.icon(), legacy::text(kind.title()).bold()]);
     button::clickable_section(content, Some(msg)).into()
 }
 
 pub fn export_section<M: Clone + 'static>(kind: ImportExportKind, msg: M) -> Element<'static, M> {
     let (title, description) = kind.title_descr();
-    let texts = column![text(title).bold(), caption(description)];
+    let texts = column![legacy::text(title).bold(), legacy::caption(description)];
     let content = content_box(row![kind.badge(), texts,]);
     button::clickable_section(content, Some(msg)).into()
 }
