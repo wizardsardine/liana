@@ -25,7 +25,7 @@ use crate::{
             message::Message,
         },
     },
-    daemon::model::{remaining_sequence, Coin},
+    daemon::model::{outpoint_label, remaining_sequence, Coin},
     t,
 };
 
@@ -75,18 +75,15 @@ fn coin_list_view<'a>(
     let txid = coin.outpoint.txid.to_string();
     let seq = remaining_sequence(coin, blockheight, timelock);
 
+    let coin_label = outpoint_label(labels, coin.outpoint, &coin.default_label);
+
     // The label is edited in the details, so the header only shows it while folded.
     let label: Option<Element<'a, Message>> = if expanded {
         None
-    } else if let Some(label) = labels.get(&outpoint).filter(|label| !label.is_empty()) {
-        Some(new::caption(label).into())
     } else {
-        labels.get(&txid).map(|label| {
-            // It is not possible to know if a coin is a change coin or not so for now, From is
-            // enough
-            let from = new::caption(t!("common-from")).style(theme::text::secondary);
-            row![from, new::caption(label)].spacing(HSpacing::S).into()
-        })
+        coin_label
+            .text(label::prefixed)
+            .map(|label| new::caption(label).into())
     };
     let label =
         Container::new(label.unwrap_or_else(|| Space::fill_width().into())).width(Length::Fill);
@@ -107,15 +104,12 @@ fn coin_list_view<'a>(
         .spacing(HSpacing::XL);
 
     let details = {
-        let label_editor = if let Some(label) = labels_editing.get(&outpoint) {
-            label::label_editing(vec![outpoint.clone()], label)
-        } else {
-            label::label_editable(
-                vec![outpoint.clone()],
-                labels.get(&outpoint),
-                LabelSize::Body,
-            )
-        };
+        let label_editor = label::label_field(
+            vec![outpoint.clone()],
+            labels_editing.get(&outpoint),
+            coin_label,
+            LabelSize::Body,
+        );
         let label_editor = Container::new(label_editor).width(Length::Fill);
 
         let recovery = match (coin.spend_info, coin.block_height) {
