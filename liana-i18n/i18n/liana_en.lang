@@ -591,8 +591,6 @@ common-feerate-value => "({$rate} sats/vbyte)"
 
 common-fetching => "Fetching ..."
 
-common-from => "From"
-
 common-learn-more => "Learn more"
 
 common-loading => "Loading..."
