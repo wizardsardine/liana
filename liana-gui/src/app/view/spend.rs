@@ -19,6 +19,7 @@ use liana_ui::{
         panels::spend::{self, DustWarning},
         text::new,
     },
+    spacing::VSpacing,
     theme,
     widget::*,
 };
@@ -103,7 +104,7 @@ pub fn create_spend_tx<'a>(
     recovery_timelock: Option<u16>,
     coins: &[(Coin, bool)],
     coins_labels: &'a HashMap<String, String>,
-    tx_label: &form::Value<String>,
+    tx_label: Option<&form::Value<String>>,
     amount_left: Option<&Amount>,
     feerate: &form::Value<String>,
     fee_mode: FeeMode,
@@ -128,16 +129,19 @@ pub fn create_spend_tx<'a>(
             button::BtnWidth::Auto,
             Some(Message::CreateSpend(CreateSpendMessage::SelfTransfer)),
         ));
-    let title = row![title_text, Space::fill_width(), self_transfer_btn].align_y(Alignment::Center);
+    let title_row =
+        row![title_text, Space::fill_width(), self_transfer_btn].align_y(Alignment::Center);
+    let subtitle = is_self_send
+        .then_some(new::b2(t!("spend-self-transfer-info")).style(theme::text::secondary));
+    let title = column![title_row, subtitle].spacing(VSpacing::L);
 
-    let tx_label_input = (recipients.len() > 1).then_some(
-        form::Form::new(&t!("spend-batch-label"), tx_label, |s| {
+    let tx_label_input = tx_label.map(|tx_label| {
+        form::Form::new(t!("spend-tx-label"), tx_label, |s| {
             Message::CreateSpend(CreateSpendMessage::TxLabelEdited(s))
         })
+        .label(t!("spend-description"))
         .warning(t!("label-invalid-length"))
-        .size(30)
-        .padding(10),
-    );
+    });
 
     let recipient_views = recipients.iter().enumerate().map(|(i, recipient)| {
         recipient
@@ -202,7 +206,7 @@ pub fn create_spend_tx<'a>(
             )
         })
         .collect();
-    let coin_selection = spend::coin_selection(coin_rows);
+    let coin_selection = spend::coin_selection(coin_rows, is_self_send);
 
     let previous = (!is_first_step).then_some(button::btn_previous(Some(Message::Previous)));
     let clear = button::btn_clear(Some(Message::CreateSpend(CreateSpendMessage::Clear)));
@@ -291,7 +295,7 @@ enum NextBlocker {
 #[allow(clippy::too_many_arguments)]
 fn next_disabled_reason(
     recipients: &[Recipient],
-    tx_label: &form::Value<String>,
+    tx_label: Option<&form::Value<String>>,
     feerate: &form::Value<String>,
     amount_left: Option<&Amount>,
     any_coin_selected: bool,
@@ -303,7 +307,7 @@ fn next_disabled_reason(
     if recipients.iter().any(|r| empty_or_invalid(&r.address)) {
         Some(NextBlocker::RecipientAddress)
     } else if recipients.iter().any(|r| empty_or_invalid(&r.label))
-        || (recipients.len() >= 2 && !tx_label.valid)
+        || tx_label.is_some_and(|tx_label| !tx_label.valid)
     {
         Some(NextBlocker::PaymentDescription)
     } else if recipients.iter().any(|r| empty_or_invalid(&r.amount)) {
