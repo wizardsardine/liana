@@ -26,6 +26,7 @@ use crate::{
 };
 
 const COIN_LIST_MAX_HEIGHT: f32 = 300.0;
+const COIN_LIST_MAX_HEIGHT_TALL: f32 = 450.0;
 const FEERATE_INPUT_WIDTH: f32 = 150.0;
 
 pub enum CoinStatus {
@@ -368,8 +369,14 @@ pub fn fee_rate_row<'a, M: Clone + 'static, F: Fn(Amount) -> FiatAmount>(
     card::flat(content, [12, 42]).width(Length::Fill).into()
 }
 
-pub fn coin_selection<'a, M: 'a>(rows: Vec<Element<'a, M>>) -> Element<'a, M> {
+pub fn coin_selection<'a, M: 'a>(rows: Vec<Element<'a, M>>, tall: bool) -> Element<'a, M> {
     let header = section(t!("spend-coins-selection"));
+
+    let max_height = if tall {
+        COIN_LIST_MAX_HEIGHT_TALL
+    } else {
+        COIN_LIST_MAX_HEIGHT
+    };
 
     let coin_cards: Vec<Element<'a, M>> = rows
         .into_iter()
@@ -378,7 +385,7 @@ pub fn coin_selection<'a, M: 'a>(rows: Vec<Element<'a, M>>) -> Element<'a, M> {
     let list = Container::new(
         scrollable::vertical(Column::with_children(coin_cards).spacing(10)).spacing(5),
     )
-    .max_height(COIN_LIST_MAX_HEIGHT)
+    .max_height(max_height)
     .width(Length::Fill);
 
     column![header, list].spacing(10).into()
