@@ -15,6 +15,7 @@ use liana::miniscript::bitcoin;
 
 use liana_ui::{
     component::{button, form, panels::receive, text::new},
+    theme,
     widget::*,
 };
 
@@ -57,7 +58,8 @@ pub fn receive<'a>(
     let generate = button::btn_generate_address(Some(Message::NextReceiveAddress));
     let header = row![title, generate].align_y(Alignment::Center);
 
-    let description = new::b1(t!("receive-generate-new-address-help"));
+    let description =
+        new::b2(t!("receive-generate-new-address-help")).style(theme::text::secondary);
 
     let prev_header = (!prev_addresses.is_empty()).then_some(receive::previous_addresses_header(
         show_prev_addresses,
