@@ -65,8 +65,9 @@ def directory(request, test_base_dir, test_name):
     global ATTEMPTS
     # Auto set value if it isn't in the dict yet
     ATTEMPTS[test_name] = ATTEMPTS.get(test_name, 0) + 1
+    directory_name = getattr(request, "param", test_name)
     directory = os.path.join(
-        test_base_dir, "{}_{}".format(test_name, ATTEMPTS[test_name])
+        test_base_dir, "{}_{}".format(directory_name, ATTEMPTS[test_name])
     )
 
     if not os.path.exists(directory):

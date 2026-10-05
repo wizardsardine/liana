@@ -1,4 +1,5 @@
 import logging
+import os
 import pytest
 import shutil
 import time
@@ -306,6 +307,23 @@ def test_migration(lianad_multisig_legacy_datadir, bitcoind):
     receive_and_send(lianad, bitcoind)
     spend_txs = lianad.rpc.listspendtxs()["spend_txs"]
     assert len(spend_txs) == 2 and all(s["updated_at"] is not None for s in spend_txs)
+
+
+@pytest.mark.parametrize("directory", ["lianad path with spaces"], indirect=True)
+@pytest.mark.skipif(
+    BITCOIN_BACKEND_TYPE is not BitcoinBackendType.Bitcoind,
+    reason="Tests the wallet RPC path used by the bitcoind backend.",
+)
+def test_bitcoind_wallet_path_with_spaces(lianad, bitcoind):
+    wallet_path = os.path.join(
+        lianad.datadir, "regtest", "lianad_watchonly_wallet"
+    )
+    assert wallet_path in bitcoind.node_rpc.listwallets()
+
+    lianad.stop()
+    lianad.start()
+
+    assert wallet_path in bitcoind.node_rpc.listwallets()
 
 
 @pytest.mark.skipif(
