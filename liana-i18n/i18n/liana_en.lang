@@ -1736,8 +1736,6 @@ spend-amount-btc => "Amount (BTC)"
 
 spend-amount-truncated => "Amount has been truncated to 8 decimal places"
 
-spend-batch-label => "Batch label"
-
 spend-btc-placeholder => "0.001 (in BTC)"
 
 spend-coins-selection => "Coins selection"
@@ -1801,6 +1799,11 @@ spend-select-coins-to-cover-amount => "Select coins to cover the amount"
 spend-select-one-coin => "Select at least one coin."
 
 spend-select-or-add-funds => "Select or add more funds."
+
+spend-self-transfer-info
+=> "Send funds to another address of this wallet, to refresh timelocks or consolidate coins. The selected coins are merged into a single new coin.";;
+
+spend-tx-label => "Transaction label"
 
 spend-warning-recovery-own-address
 => "Recovery address belongs to the same wallet. If you can no longer spend with the primary path, use an address from a different wallet instead.";;
