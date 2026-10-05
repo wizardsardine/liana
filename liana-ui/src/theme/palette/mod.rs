@@ -78,8 +78,6 @@ pub struct Buttons {
     pub list_entry: Button,
     pub list_entry_radius: Option<f32>,
     pub list_entry_hover_border_width: Option<f32>,
-    // previously theme::button::transparent_border wrapped into theme::card::simple
-    pub clickable_section: Button,
     pub primary: Button,
     pub secondary: Button,
     pub auxiliary: Button,

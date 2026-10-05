@@ -42,7 +42,6 @@ button_styles!(
     transparent,
     remove,
     transparent_border,
-    clickable_section,
     link,
     link_subtle,
     signing_devices,

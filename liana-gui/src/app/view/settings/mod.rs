@@ -5,16 +5,16 @@ pub mod import_export;
 pub mod node;
 pub mod wallet;
 
-use iced::widget::tooltip as iced_tooltip;
+use iced::widget::tooltip::Position;
 
 use liana_ui::{
     component::{
-        self, button,
+        self,
+        button::btn_help_link,
         panels::setting::{header, settings_section, SectionKind},
-        text::legacy,
+        text::new,
+        tooltip_custom,
     },
-    icon,
-    theme::{self},
     widget::*,
 };
 
@@ -71,11 +71,8 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<'_, Message> {
 }
 
 pub fn link<'a>(url: &str, link_text: impl std::fmt::Display) -> Element<'a, Message> {
-    let link_btn = button::link(Some(icon::link_icon()), link_text)
-        .on_press(Message::OpenUrl(url.to_string()));
-    let url_tooltip = Container::new(legacy::text(url))
-        .style(theme::card::simple)
-        .padding(10);
+    let link_btn = btn_help_link(link_text, Some(Message::OpenUrl(url.to_string())));
+    let url_tooltip = new::caption(url);
 
-    iced_tooltip::Tooltip::new(link_btn, url_tooltip, iced_tooltip::Position::Bottom).into()
+    tooltip_custom(url_tooltip, link_btn, Position::Bottom).into()
 }

@@ -10,6 +10,8 @@ use iced::{
     mouse, Event, Length, Padding, Pixels, Point, Rectangle, Size, Vector,
 };
 
+pub const PICK_LIST_PADDING: u16 = 10;
+
 const FIELD_PADDING: Padding = Padding {
     top: 12.0,
     right: 16.0,

@@ -34,6 +34,10 @@ pub enum Tile {
     Paste,
     EnterToken,
     Mnemonic,
+    Bitcoin,
+    Network,
+    Block,
+    Backup,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -100,13 +104,6 @@ icon_badge!(cycle, arrow_repeat, simple);
 icon_badge!(spend, send_icon, simple);
 icon_badge!(success, check_icon, success);
 icon_badge!(tooltip, tooltip_icon, simple);
-icon_badge!(network, network_icon, simple);
-icon_badge!(block, block_icon, simple);
-icon_badge!(bitcoin, bitcoin_icon, simple);
-icon_badge!(setting, wrench_icon, simple);
-icon_badge!(wallet, wallet_icon, simple);
-icon_badge!(backup, backup_icon, simple);
-icon_badge!(restore, restore_icon, simple);
 
 pub fn tile<'a, M>(tile: Tile) -> Container<'a, M> {
     let tone = tile_spec(tile).tone;
@@ -204,6 +201,10 @@ tile_specs! {
     (Paste, paste_icon, Neutral, DEFAULT),
     (EnterToken, enter_box_icon, Neutral, DEFAULT),
     (Mnemonic, edit_icon, Neutral, DEFAULT),
+    (Bitcoin, bitcoin_icon, Accent, DEFAULT),
+    (Network, network_icon, Neutral, DEFAULT),
+    (Block, block_icon, Neutral, DEFAULT),
+    (Backup, backup_icon, Neutral, DEFAULT),
 }
 
 fn tile_tone(theme: &theme::Theme, tone: TileStyle) -> theme::palette::Tile {

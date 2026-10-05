@@ -1,20 +1,22 @@
 use iced::{
-    widget::{column, row, tooltip, Space, Toggler},
+    widget::{column, row, tooltip, Space},
     Alignment, Length,
 };
 
 use super::{header, SETTING_MSG};
 
 use liana_ui::{
-    color,
     component::{
         card,
-        panels::setting::SectionKind,
+        checkbox::{toggler_button, TogglerSize},
+        panels::setting::{setting_row, SectionKind},
         pick_list,
-        text::{legacy, Text},
+        text::new,
         tooltip_custom,
     },
-    icon, theme,
+    icon,
+    spacing::VSpacing,
+    theme,
     widget::*,
 };
 
@@ -42,7 +44,7 @@ pub fn general_section<'a>(
 
     let fiat_price = fiat_price(new_price_setting, currencies_list);
 
-    let content = column![header, fiat_price].spacing(20);
+    let content = column![header, fiat_price].spacing(VSpacing::L);
 
     dashboard(&Menu::Settings, cache, warning, content)
 }
@@ -52,61 +54,54 @@ pub fn fiat_price<'a>(
     currencies_list: &'a [Currency],
 ) -> Element<'a, Message> {
     let fiat_tooltip = tooltip_custom(
-        legacy::text(t!("settings-fiat-price-tooltip")),
-        icon::warning_icon().color(color::ORANGE),
+        new::caption(t!("settings-fiat-price-tooltip")),
+        icon::warning_icon().style(theme::text::warning),
         tooltip::Position::Bottom,
     );
-    let toggler = Toggler::new(new_price_setting.is_enabled)
-        .on_toggle(|new_selection| FiatMessage::Enable(new_selection).into())
-        .style(theme::toggler::primary);
-    let fiat = row![
-        legacy::text(t!("settings-fiat-price")).bold(),
-        fiat_tooltip,
-        Space::fill_width(),
-        toggler
-    ]
-    .spacing(10)
-    .align_y(Alignment::Center);
+    let toggler = toggler_button(
+        new_price_setting.is_enabled,
+        TogglerSize::Normal,
+        |enabled| FiatMessage::Enable(enabled).into(),
+    );
+    let fiat = setting_row(
+        t!("settings-fiat-price"),
+        Some(fiat_tooltip.into()),
+        toggler,
+    );
 
     let source_picker = pick_list::pick_list(
         &ALL_PRICE_SOURCES[..],
         Some(new_price_setting.source),
         |source| FiatMessage::SourceEdited(source).into(),
     )
-    .padding(10);
-    let source = new_price_setting.is_enabled.then_some(
-        row![
-            legacy::text(t!("settings-exchange-rate-source")).bold(),
-            Space::fill_width(),
-            source_picker
-        ]
-        .spacing(20)
-        .align_y(Alignment::Center),
-    );
+    .padding(pick_list::PICK_LIST_PADDING);
+    let source = new_price_setting
+        .is_enabled
+        .then(|| setting_row(t!("settings-exchange-rate-source"), None, source_picker));
 
     let currency_picker = pick_list::pick_list(
         currencies_list,
         Some(new_price_setting.currency),
         |currency| FiatMessage::CurrencyEdited(currency).into(),
     )
-    .padding(10);
-    let currency = new_price_setting.is_enabled.then_some(
-        row![
-            legacy::text(t!("settings-currency")).bold(),
-            Space::fill_width(),
-            currency_picker
-        ]
-        .spacing(20)
-        .align_y(Alignment::Center),
-    );
+    .padding(pick_list::PICK_LIST_PADDING);
+    let currency = new_price_setting
+        .is_enabled
+        .then(|| setting_row(t!("settings-currency"), None, currency_picker));
 
     let attribution = new_price_setting
         .source
         .attribution()
         .filter(|_| new_price_setting.is_enabled)
-        .map(|s| row![Space::fill_width(), legacy::text(s)].align_y(Alignment::Center));
+        .map(|s| {
+            row![
+                Space::fill_width(),
+                new::caption(s).style(theme::text::secondary)
+            ]
+            .align_y(Alignment::Center)
+        });
 
-    let content = column![fiat, source, currency, attribution].spacing(20);
+    let content = column![fiat, source, currency, attribution].spacing(VSpacing::L);
 
     card::simple(content).width(Length::Fill).into()
 }

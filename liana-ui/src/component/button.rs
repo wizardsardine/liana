@@ -3,8 +3,8 @@ use std::fmt::Display;
 use super::{
     modal::BTN_W,
     text::{
-        new::{button_text, button_text_compact, caption, BUTTON_TEXT_COMPACT_SPEC},
-        panel_title, text,
+        new::{button_text, button_text_compact, caption, d2, BUTTON_TEXT_COMPACT_SPEC},
+        text,
     },
     tooltip,
 };
@@ -181,8 +181,8 @@ pub fn auxiliary<'a, T: 'a + Clone>(
         .padding(0)
 }
 
-pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: impl Display) -> Button<'a, T> {
-    Button::new(content(icon, panel_title(t), false))
+pub fn breadcrumb<'a, T: 'a>(t: impl Display) -> Button<'a, T> {
+    Button::new(d2(t))
         .style(theme::button::breadcrumb)
         .padding(0)
 }
@@ -300,16 +300,6 @@ pub fn list_entry_card<'a, M: 'a>(
     };
 
     container(entry).width(width).into()
-}
-
-pub fn clickable_section<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
-    content: T,
-    msg: Option<M>,
-) -> Button<'a, M> {
-    Button::new(content.into())
-        .style(theme::button::clickable_section)
-        .on_press_maybe(msg)
-        .width(Length::Fill)
 }
 
 fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>, compact: bool) -> Container<'a, T> {
@@ -1057,7 +1047,7 @@ pub fn btn_check_connection<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) ->
 }
 
 pub fn btn_backend_options_help<T: Clone + 'static>(msg: T) -> Button<'static, T> {
-    link(Some(icon::link_icon()), t!("btn-more-backend-node-info")).on_press(msg)
+    btn_help_link(t!("btn-more-backend-node-info"), Some(msg))
 }
 
 pub fn btn_accept<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -1100,4 +1090,28 @@ pub fn btn_see_more<'a, T: Clone + 'a>(processing: bool, msg: T) -> Button<'a, T
         t!("common-see-more")
     };
     btn_secondary(None, label, BtnWidth::Fill, (!processing).then_some(msg))
+}
+
+pub fn btn_send_invitation<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_tertiary(None, t!("btn-send-invitation"), BtnWidth::L, msg)
+}
+
+pub fn btn_start_rescan<'a, T: Clone + 'a>(processing: bool, msg: Option<T>) -> Button<'a, T> {
+    let label = if processing {
+        t!("btn-starting-rescan")
+    } else {
+        t!("btn-start-rescan")
+    };
+    if msg.is_some() {
+        btn_primary(None, label, BtnWidth::XL, msg)
+    } else {
+        btn_secondary(None, label, BtnWidth::XL, msg)
+    }
+}
+
+pub fn btn_help_link<T: Clone + 'static>(
+    label: impl Display,
+    msg: Option<T>,
+) -> Button<'static, T> {
+    link(Some(icon::link_icon()), label).on_press_maybe(msg)
 }
