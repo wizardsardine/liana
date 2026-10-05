@@ -29,9 +29,9 @@ use crate::{
         error::Error,
         menu::Menu,
         state::{FeeMode, Recipient},
-        view::{dashboard, message::*, psbt, FiatAmountConverter},
+        view::{dashboard, label, message::*, psbt, FiatAmountConverter},
     },
-    daemon::model::{remaining_sequence, Coin, SpendTx},
+    daemon::model::{outpoint_label, remaining_sequence, Coin, SpendTx},
     t,
 };
 
@@ -88,6 +88,7 @@ pub fn spend_view<'a>(
         &tx.labels,
         labels_editing,
         false,
+        None,
     );
     let inputs_outputs = column![inputs, outputs].spacing(20);
 
@@ -429,13 +430,8 @@ fn coin_list_view<'a>(
     selected: bool,
     available_width: f32,
 ) -> Element<'a, Message> {
-    let label = if let Some(label) = coins_labels.get(&coin.outpoint.to_string()) {
-        spend::CoinLabel::Outpoint(label.clone())
-    } else if let Some(label) = coins_labels.get(&coin.outpoint.txid.to_string()) {
-        spend::CoinLabel::Transaction(label.clone())
-    } else {
-        spend::CoinLabel::None
-    };
+    let label =
+        outpoint_label(coins_labels, coin.outpoint, &coin.default_label).text(label::prefixed);
 
     let status = if coin.spend_info.is_some() {
         spend::CoinStatus::Spent
