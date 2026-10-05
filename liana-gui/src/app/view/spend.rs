@@ -108,7 +108,7 @@ pub fn create_spend_tx<'a>(
     recovery_timelock: Option<u16>,
     coins: &[(Coin, bool)],
     coins_labels: &'a HashMap<String, String>,
-    batch_label: &form::Value<String>,
+    tx_label: &form::Value<String>,
     amount_left: Option<&Amount>,
     feerate: &form::Value<String>,
     fee_mode: FeeMode,
@@ -135,9 +135,9 @@ pub fn create_spend_tx<'a>(
         ));
     let title = row![title_text, Space::fill_width(), self_transfer_btn].align_y(Alignment::Center);
 
-    let batch_label_input = (recipients.len() > 1).then_some(
-        form::Form::new(&t!("spend-batch-label"), batch_label, |s| {
-            Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(s))
+    let tx_label_input = (recipients.len() > 1).then_some(
+        form::Form::new(&t!("spend-batch-label"), tx_label, |s| {
+            Message::CreateSpend(CreateSpendMessage::TxLabelEdited(s))
         })
         .warning(t!("label-invalid-length"))
         .size(30)
@@ -216,7 +216,7 @@ pub fn create_spend_tx<'a>(
     // and `error` have their own UI feedback, so they only gate the button.
     let next_blocker = next_disabled_reason(
         recipients,
-        batch_label,
+        tx_label,
         feerate,
         amount_left,
         coins.iter().any(|(_, selected)| *selected),
@@ -233,37 +233,24 @@ pub fn create_spend_tx<'a>(
         .align_y(Alignment::Center);
 
     let next_reason = next_blocker.map(|blocker| {
-        let content: Element<Message> = match blocker {
-            NextBlocker::RecipientAddress => new::caption(t!("spend-recipient-address-invalid"))
-                .style(theme::text::card_secondary)
-                .into(),
-            NextBlocker::PaymentDescription => {
-                new::caption(t!("spend-payment-description-invalid"))
-                    .style(theme::text::card_secondary)
-                    .into()
-            }
-            NextBlocker::Funds => new::caption(t!("spend-select-or-add-funds"))
-                .style(theme::text::card_secondary)
-                .into(),
-            NextBlocker::RecipientAmount => new::caption(t!("spend-recipient-amount-invalid"))
-                .style(theme::text::card_secondary)
-                .into(),
-            NextBlocker::Feerate => new::caption(t!("spend-feerate-missing-invalid"))
-                .style(theme::text::card_secondary)
-                .into(),
-            NextBlocker::Coin => new::caption(t!("spend-select-one-coin"))
-                .style(theme::text::card_secondary)
-                .into(),
+        let reason = |text: String| -> Element<Message> {
+            new::caption(text).style(theme::text::card_secondary).into()
+        };
+        let content = match blocker {
+            NextBlocker::RecipientAddress => reason(t!("spend-recipient-address-invalid")),
+            NextBlocker::PaymentDescription => reason(t!("spend-payment-description-invalid")),
+            NextBlocker::Funds => reason(t!("spend-select-or-add-funds")),
+            NextBlocker::RecipientAmount => reason(t!("spend-recipient-amount-invalid")),
+            NextBlocker::Feerate => reason(t!("spend-feerate-missing-invalid")),
+            NextBlocker::Coin => reason(t!("spend-select-one-coin")),
             NextBlocker::CoinsLeft => match amount_left {
                 Some(left) if left.to_sat() > 0 => row![
                     amount_with_font(left, new::CAPTION_SPEC),
-                    new::caption(t!("spend-left-to-select")).style(theme::text::card_secondary),
+                    reason(t!("spend-left-to-select")),
                 ]
                 .spacing(5)
                 .into(),
-                _ => new::caption(t!("spend-select-coins-to-cover-amount"))
-                    .style(theme::text::card_secondary)
-                    .into(),
+                _ => reason(t!("spend-select-coins-to-cover-amount")),
             },
         };
         Container::new(content)
@@ -273,14 +260,14 @@ pub fn create_spend_tx<'a>(
 
     let content = column![
         title,
-        batch_label_input,
+        tx_label_input,
         recipients_cards,
         add_payment_row,
         fee_rate_row,
         coin_selection,
         bottom_row,
         next_reason,
-        Space::with_height(Length::Fixed(20.0)),
+        Space::with_height(20),
     ]
     .spacing(20);
 
@@ -309,7 +296,7 @@ enum NextBlocker {
 #[allow(clippy::too_many_arguments)]
 fn next_disabled_reason(
     recipients: &[Recipient],
-    batch_label: &form::Value<String>,
+    tx_label: &form::Value<String>,
     feerate: &form::Value<String>,
     amount_left: Option<&Amount>,
     any_coin_selected: bool,
@@ -321,7 +308,7 @@ fn next_disabled_reason(
     if recipients.iter().any(|r| empty_or_invalid(&r.address)) {
         Some(NextBlocker::RecipientAddress)
     } else if recipients.iter().any(|r| empty_or_invalid(&r.label))
-        || (recipients.len() >= 2 && !batch_label.valid)
+        || (recipients.len() >= 2 && !tx_label.valid)
     {
         Some(NextBlocker::PaymentDescription)
     } else if recipients.iter().any(|r| empty_or_invalid(&r.amount)) {
