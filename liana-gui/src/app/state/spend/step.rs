@@ -276,10 +276,16 @@ impl DefineSpend {
     fn form_values_are_valid(&self, is_redraft: bool) -> bool {
         self.feerate.valid
             && !self.feerate.value.is_empty()
-            && (self.tx_label.valid || self.recipients.len() < 2)
+            && (self.tx_label.valid || !self.needs_tx_label())
             // Recipients will be empty for self-send.
             && self.recipients.iter().enumerate().all(|(i, r)|
             r.valid() || (is_redraft && self.send_max_to_recipient == Some(i) && r.address_valid()))
+    }
+
+    fn needs_tx_label(&self) -> bool {
+        let is_consolidation = self.recipients.is_empty()
+            && self.coins.iter().filter(|(_, selected)| *selected).count() > 1;
+        self.recipients.len() > 1 || is_consolidation
     }
 
     fn exists_duplicate(&self) -> bool {
@@ -901,9 +907,7 @@ impl Step for DefineSpend {
             }
         }
         draft.recipients.clone_from(&self.recipients);
-        if self.recipients.len() > 1 {
-            draft.tx_label = Some(self.tx_label.value.clone());
-        }
+        draft.tx_label = self.needs_tx_label().then(|| self.tx_label.value.clone());
         draft.generated.clone_from(&self.generated);
     }
 
@@ -923,7 +927,7 @@ impl Step for DefineSpend {
             self.recovery_timelock,
             &self.coins,
             &self.coins_labels,
-            &self.tx_label,
+            self.needs_tx_label().then_some(&self.tx_label),
             self.amount_left_to_select.as_ref(),
             &self.feerate,
             self.fee_mode,
@@ -1176,13 +1180,11 @@ impl Step for SaveSpend {
         );
         tx.labels.clone_from(&draft.labels);
 
-        if tx.is_batch() {
-            if let Some(label) = &draft.tx_label {
-                tx.labels.insert(
-                    tx.psbt.unsigned_tx.compute_txid().to_string(),
-                    label.clone(),
-                );
-            }
+        if let Some(label) = &draft.tx_label {
+            tx.labels.insert(
+                tx.psbt.unsigned_tx.compute_txid().to_string(),
+                label.clone(),
+            );
         }
 
         self.spend = Some((
