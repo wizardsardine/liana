@@ -18,6 +18,7 @@ use crate::{
         address::address as address_view,
         amount::{amount, amount_with_fiat_tooltip, AmountSize},
         button, card,
+        checkbox::{self, TogglerSize},
         label::display_label,
         panels::{
             self,
@@ -29,7 +30,7 @@ use crate::{
     },
     spacing::{HSpacing, VSpacing},
     theme::{self, Theme},
-    widget::{Column, Container, Element, Row, SpaceExt, Toggler},
+    widget::{Column, Container, Element, Row, SpaceExt},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -52,10 +53,7 @@ pub fn status_pill<'a, M: 'a>(status: SpendStatus) -> Option<Container<'a, M>> {
 
 pub fn hide_confirmed_row<'a, M: Clone + 'static>(hidden: bool, toggle: M) -> Element<'a, M> {
     let label = new::b4_medium(t!("psbts-hide-confirmed"));
-    let toggler = Toggler::new(hidden)
-        .on_toggle(move |_| toggle.clone())
-        .size(28)
-        .style(theme::toggler::primary);
+    let toggler = checkbox::toggler_button(hidden, TogglerSize::Large, move |_| toggle.clone());
 
     row![label, toggler, Space::fill_width()]
         .spacing(HSpacing::M)
