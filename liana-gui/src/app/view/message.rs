@@ -78,7 +78,7 @@ pub enum NewAddressMessage {
 #[derive(Debug, Clone)]
 pub enum CreateSpendMessage {
     AddRecipient,
-    BatchLabelEdited(String),
+    TxLabelEdited(String),
     DeleteRecipient(usize),
     SelfTransfer,
     SelectCoin(usize),
