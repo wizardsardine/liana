@@ -271,7 +271,7 @@ macro_rules! launch {
 
 impl State for ImportExportSettingsState {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = view::settings::import_export(cache, self.warning.as_ref());
+        let content = view::settings::import_export::import_export(cache, self.warning.as_ref());
         if let Some(modal) = &self.modal {
             modal.view(content)
         } else {
@@ -409,7 +409,11 @@ pub struct AboutSettingsState {
 
 impl State for AboutSettingsState {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::settings::about_section(cache, self.warning.as_ref(), self.daemon_version.as_ref())
+        view::settings::about::about_section(
+            cache,
+            self.warning.as_ref(),
+            self.daemon_version.as_ref(),
+        )
     }
 
     fn update(
@@ -473,7 +477,7 @@ impl BackendSettingsState {
 
 impl State for BackendSettingsState {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::settings::remote_backend_section(
+        view::settings::backend::remote_backend_section(
             cache,
             &self.email_form,
             self.processing,

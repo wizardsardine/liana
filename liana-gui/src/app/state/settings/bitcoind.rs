@@ -178,7 +178,7 @@ impl State for BitcoindSettingsState {
                 .map(|settings| settings.edit)
                 == Some(true);
         let can_do_rescan = !self.rescan_settings.processing && !settings_edit;
-        view::settings::bitcoind_settings(
+        view::settings::node::bitcoind_settings(
             cache,
             self.warning.as_ref(),
             if self.bitcoind_settings.is_some() || self.electrum_settings.is_some() {
@@ -382,7 +382,7 @@ impl BitcoindSettings {
     fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage> {
         let is_configured_node_type = self.configured_node_type == Some(NodeType::Bitcoind);
         if self.edit {
-            view::settings::bitcoind_edit(
+            view::settings::node::bitcoind_edit(
                 is_configured_node_type,
                 self.bitcoin_config.network,
                 cache.blockheight(),
@@ -392,7 +392,7 @@ impl BitcoindSettings {
                 self.processing,
             )
         } else {
-            view::settings::bitcoind(
+            view::settings::node::bitcoind(
                 is_configured_node_type,
                 self.bitcoin_config.network,
                 &self.bitcoind_config,
@@ -498,7 +498,7 @@ impl ElectrumSettings {
     fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage> {
         let is_configured_node_type = self.configured_node_type == Some(NodeType::Electrum);
         if self.edit {
-            view::settings::electrum_edit(
+            view::settings::node::electrum_edit(
                 is_configured_node_type,
                 self.bitcoin_config.network,
                 cache.blockheight(),
@@ -507,7 +507,7 @@ impl ElectrumSettings {
                 self.electrum_config.validate_domain,
             )
         } else {
-            view::settings::electrum(
+            view::settings::node::electrum(
                 is_configured_node_type,
                 self.bitcoin_config.network,
                 &self.electrum_config,
@@ -650,7 +650,7 @@ impl RescanSetting {
     }
 
     fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage> {
-        view::settings::rescan(
+        view::settings::node::rescan(
             &self.year,
             &self.month,
             &self.day,
