@@ -209,6 +209,7 @@ pub fn tx_view<'a>(
         &tx.labels,
         labels_editing,
         tx.is_incoming(),
+        &tx.owned_outputs,
     );
 
     let details = column![
