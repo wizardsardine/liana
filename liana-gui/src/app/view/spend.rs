@@ -30,13 +30,13 @@ use crate::{
         menu::Menu,
         state::{FeeMode, Recipient},
         view::{
-            dashboard, label,
+            dashboard,
             message::*,
             transaction::{tx_view, TxDetail},
             FiatAmountConverter,
         },
     },
-    daemon::model::{outpoint_label, remaining_sequence, Coin, SpendTx},
+    daemon::model::{remaining_sequence, Coin, SpendTx},
     t,
 };
 
@@ -400,9 +400,6 @@ fn coin_list_view<'a>(
     selected: bool,
     available_width: f32,
 ) -> Element<'a, Message> {
-    let label =
-        outpoint_label(coins_labels, coin.outpoint, &coin.default_label).text(label::prefixed);
-
     let status = if coin.spend_info.is_some() {
         spend::CoinStatus::Spent
     } else if coin.block_height.is_none() {
@@ -411,8 +408,12 @@ fn coin_list_view<'a>(
         spend::CoinStatus::Sequence(remaining_sequence(coin, blockheight, timelock))
     };
 
+    let own_label = coins_labels
+        .get(&coin.outpoint.to_string())
+        .map(String::as_str);
+    let label = liana::label::resolve(own_label, &coin.default_label);
     spend::coin_row(
-        label,
+        &label,
         &coin.amount,
         status,
         selected,

@@ -13,10 +13,7 @@ use liana_ui::{
 };
 
 use crate::{
-    app::{
-        menu::Menu,
-        view::{label, message::Message},
-    },
+    app::{menu::Menu, view::message::Message},
     daemon::model::HistoryTransaction,
     export::ImportExportMessage,
 };
@@ -52,9 +49,8 @@ pub fn transactions_view(
 }
 
 fn tx_list_entry(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
-    let label = tx.label().text(label::prefixed);
     payment::list_entry(
-        label,
+        &tx.label(),
         tx.datetime(),
         tx.wallet_tx.kind().payment_kind(),
         tx.is_batch(),

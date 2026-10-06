@@ -14,10 +14,7 @@ use liana_ui::{
 };
 
 use crate::{
-    app::{
-        menu::Menu,
-        view::{label, Message},
-    },
+    app::{menu::Menu, view::Message},
     daemon::model::{SpendStatus, SpendTx},
 };
 
@@ -68,10 +65,8 @@ fn psbt_list_entry(i: usize, tx: &SpendTx, available_width: f32) -> Element<'_, 
         threshold: info.threshold,
     };
 
-    let label = tx.label().text(label::prefixed);
-
     psbts::list_entry(
-        label,
+        &tx.label(),
         tx.is_send_to_self(),
         tx.is_batch(),
         !tx.sigs.recovery_paths().is_empty(),
