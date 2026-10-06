@@ -1,14 +1,13 @@
 use iced::{widget::row, Alignment};
 
-use liana::label::{Label, LabelPrefix};
+use liana::label::Label;
 use liana_ui::{
     color,
     component::{
-        button::{self, btn_icon_edit},
-        form,
+        button, form,
+        label::editable_label,
         text::{apply, new, TextSpec},
     },
-    spacing::VSpacing,
     widget::*,
 };
 
@@ -29,57 +28,26 @@ impl LabelSize {
     }
 }
 
-pub fn label_editable(
-    labelled: Vec<String>,
-    label: Option<&String>,
-    size: LabelSize,
-) -> Element<'_, view::Message> {
-    label_view(
-        labelled,
-        label.cloned().map(Label::Own).unwrap_or_default(),
-        size,
-    )
-}
-
-pub fn prefixed(prefix: LabelPrefix, label: &str) -> String {
-    match prefix {
-        LabelPrefix::Payment => t!("label-to", label = label),
-        LabelPrefix::Transaction | LabelPrefix::Funding => t!("label-from", label = label),
-        LabelPrefix::Address => t!("payment-address-label", label = label),
-    }
-}
-
-/// Editable label showing an inherited label until the item gets its own.
-fn label_view<'a>(
-    labelled: Vec<String>,
-    label: Label,
-    size: LabelSize,
-) -> Element<'a, view::Message> {
-    let value = label.own().unwrap_or_default().to_string();
-    let edit_msg = view::message::LabelMessage::Edited(value);
-    let edit_msg = view::Message::Label(labelled, edit_msg);
-    let label_txt = label
-        .text(prefixed)
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| t!("common-no-label-parenthesized"));
-
-    let label = apply(label_txt, size.spec());
-    let btn = btn_icon_edit(Some(edit_msg));
-    row![label, btn]
-        .spacing(VSpacing::L)
-        .align_y(Alignment::Center)
-        .into()
-}
-
 pub fn label_field<'a>(
     labelled: Vec<String>,
     editing: Option<&'a form::Value<String>>,
-    label: Label,
+    label: &Label,
     size: LabelSize,
 ) -> Element<'a, view::Message> {
     match editing {
         Some(editing) => label_editing(labelled, editing),
-        None => label_view(labelled, label, size),
+        None => {
+            let value = match label {
+                Label::Own(label) => label.clone(),
+                Label::None
+                | Label::Payment(_)
+                | Label::Transaction(_)
+                | Label::Address(_)
+                | Label::Funding(_) => String::new(),
+            };
+            let edit = view::Message::Label(labelled, view::message::LabelMessage::Edited(value));
+            editable_label(label, size.spec(), edit)
+        }
     }
 }
 

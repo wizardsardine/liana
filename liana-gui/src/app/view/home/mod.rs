@@ -16,7 +16,7 @@ use liana_ui::{
 use crate::{
     app::{
         menu::{self, Menu},
-        view::{coins, label, message::Message, FiatAmountConverter},
+        view::{coins, message::Message, FiatAmountConverter},
         wallet::SyncStatus,
     },
     daemon::model::Payment,
@@ -82,7 +82,7 @@ pub fn home_view<'a>(
     let history = events.iter().fold(Column::new().spacing(14), |col, event| {
         if event.kind != PaymentKind::SendToSelf {
             col.push(payment::list_entry(
-                event.label().text(label::prefixed),
+                &event.label(),
                 event.time,
                 event.kind,
                 false,

@@ -1,8 +1,9 @@
 use iced::{
     alignment::Horizontal,
-    widget::{column, row, text::Style, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
+use liana::label::Label;
 use liana_i18n::t;
 use std::fmt::{self, Display};
 
@@ -14,12 +15,13 @@ use crate::{
         amount::{self, amount_with_fiat, AmountSize, Currency, DisplayAmount, FiatAmount},
         button, card,
         checkbox::{labelled_checkbox, labelled_radio},
-        form, pill, scrollable, section,
+        form,
+        label::display_label,
+        pill, scrollable, section,
         text::{caption, new, P1_SIZE},
         tooltip,
     },
-    icon,
-    theme::{self, Theme},
+    icon, theme,
     widget::{Column, Container, Element, SpaceExt, Stack},
 };
 
@@ -397,28 +399,14 @@ fn label_len(available_width: f32) -> usize {
 }
 
 pub fn coin_row<'a, M: Clone + 'static>(
-    label: Option<String>,
+    label: &Label,
     amount: &Amount,
     status: CoinStatus,
     selected: bool,
     toggle: M,
     available_width: f32,
 ) -> Element<'a, M> {
-    fn font<'a>(txt: impl Display) -> iced::widget::Text<'a, Theme> {
-        new::b3_medium(txt)
-    }
-    fn label_style(theme: &Theme) -> Style {
-        theme::amount::sats(theme, false)
-    }
-    let max_len = label_len(available_width);
-    let short = |s: String| -> String {
-        if s.chars().count() > max_len {
-            format!("{}…", s.chars().take(max_len).collect::<String>())
-        } else {
-            s
-        }
-    };
-    let coin_label = font(short(label.unwrap_or_default())).style(label_style);
+    let coin_label = display_label(label, new::B3_MEDIUM_SPEC, Some(label_len(available_width)));
 
     let timelock_pill: Container<M> = match status {
         CoinStatus::Spent => pill::spent(),

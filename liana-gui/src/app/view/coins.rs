@@ -7,8 +7,8 @@ use iced::{
 
 use liana_ui::{
     component::{
-        address::address as address_view, amount::amount, badge, button, card, form, pill,
-        text::new,
+        address::address as address_view, amount::amount, badge, button, card, form,
+        label::display_label, pill, text::new,
     },
     icon,
     spacing::{HSpacing, VSpacing},
@@ -25,7 +25,7 @@ use crate::{
             message::Message,
         },
     },
-    daemon::model::{outpoint_label, remaining_sequence, Coin},
+    daemon::model::{remaining_sequence, Coin},
     t,
 };
 
@@ -75,15 +75,16 @@ fn coin_list_view<'a>(
     let txid = coin.outpoint.txid.to_string();
     let seq = remaining_sequence(coin, blockheight, timelock);
 
-    let coin_label = outpoint_label(labels, coin.outpoint, &coin.default_label);
+    let coin_label = liana::label::resolve(
+        labels.get(&outpoint).map(String::as_str),
+        &coin.default_label,
+    );
 
     // The label is edited in the details, so the header only shows it while folded.
     let label: Option<Element<'a, Message>> = if expanded {
         None
     } else {
-        coin_label
-            .text(label::prefixed)
-            .map(|label| new::caption(label).into())
+        Some(display_label(&coin_label, new::CAPTION_SPEC, None))
     };
     let label =
         Container::new(label.unwrap_or_else(|| Space::fill_width().into())).width(Length::Fill);
@@ -107,7 +108,7 @@ fn coin_list_view<'a>(
         let label_editor = label::label_field(
             vec![outpoint.clone()],
             labels_editing.get(&outpoint),
-            coin_label,
+            &coin_label,
             LabelSize::Body,
         );
         let label_editor = Container::new(label_editor).width(Length::Fill);

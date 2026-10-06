@@ -7,6 +7,7 @@ use iced::{
 };
 use liana::{
     descriptors::{PathInfo, PathSpendInfo},
+    label::Label,
     spend::SpendStatus,
     transaction::PaymentKind,
 };
@@ -17,13 +18,14 @@ use crate::{
         address::address as address_view,
         amount::{amount, amount_with_fiat_tooltip, AmountSize},
         button, card,
+        label::display_label,
         panels::{
             self,
             home::payment::{kind_icon, FiatPrice, FiatSource},
         },
         pill::{self, PillWidth},
         scrollable,
-        text::{self, new, truncate},
+        text::{self, new},
     },
     spacing::{HSpacing, VSpacing},
     theme::{self, Theme},
@@ -63,7 +65,7 @@ pub fn hide_confirmed_row<'a, M: Clone + 'static>(hidden: bool, toggle: M) -> El
 
 #[allow(clippy::too_many_arguments)]
 pub fn list_entry<'a, M: Clone + 'static>(
-    label: Option<String>,
+    label: &Label,
     is_send_to_self: bool,
     is_batch: bool,
     is_recovery: bool,
@@ -110,16 +112,13 @@ pub fn list_entry<'a, M: Clone + 'static>(
     let status_pill = status_pill(status);
 
     let max_lbl_chars = (available_width - 500.0) as usize / 22;
-    let mut label = label.map(|l| truncate(&l, max_lbl_chars));
-
-    let kind = if is_send_to_self {
-        label = Some(t!("common-self-transfer"));
-        PaymentKind::SendToSelf
+    let (kind, label) = if is_send_to_self {
+        let label = new::h2(t!("common-self-transfer")).style(theme::text::primary);
+        (PaymentKind::SendToSelf, label.into())
     } else {
-        PaymentKind::Outgoing
+        let label = display_label(label, new::H2_SPEC, Some(max_lbl_chars));
+        (PaymentKind::Outgoing, label)
     };
-
-    let label = label.map(|l| new::h2(l).style(theme::text::primary));
 
     let sigs = row![
         sigs,
