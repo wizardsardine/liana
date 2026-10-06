@@ -187,7 +187,7 @@ pub fn tx_view<'a>(
     let label = label::label_field(
         vec![txid.clone()],
         labels_editing.get(&txid),
-        label,
+        &label,
         LabelSize::Display,
     );
     let pills = match &detail {
