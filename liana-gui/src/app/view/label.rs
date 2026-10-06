@@ -17,7 +17,6 @@ use crate::{app::view, t};
 #[derive(Debug, Clone, Copy)]
 pub enum LabelSize {
     Body,
-    Title,
     Display,
 }
 
@@ -25,7 +24,6 @@ impl LabelSize {
     fn spec(self) -> TextSpec {
         match self {
             LabelSize::Body => new::CAPTION_SPEC,
-            LabelSize::Title => new::B1_SPEC,
             LabelSize::Display => new::B0_SPEC,
         }
     }
