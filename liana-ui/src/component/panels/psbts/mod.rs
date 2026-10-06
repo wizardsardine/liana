@@ -23,7 +23,7 @@ use crate::{
         },
         pill::{self, PillWidth},
         scrollable,
-        text::{new, truncate},
+        text::{self, new, truncate},
     },
     spacing::{HSpacing, VSpacing},
     theme::{self, Theme},
@@ -78,21 +78,31 @@ pub fn list_entry<'a, M: Clone + 'static>(
     let signed = count >= threshold;
     let count = count.min(threshold);
 
-    let sigs_text = if available_width >= 1460.0 {
-        t!(
-            "psbts-signatures-collected",
-            count = count,
-            threshold = threshold
-        )
-    } else {
-        format!("{count}/{threshold}")
+    let sigs_text = |count: usize, threshold: usize| {
+        if available_width >= 1460.0 {
+            t!(
+                "psbts-signatures-collected",
+                count = count,
+                threshold = threshold
+            )
+        } else {
+            format!("{count}/{threshold}")
+        }
     };
     let sig_style: fn(&Theme) -> Style = if !signed {
         theme::text::warning
     } else {
         theme::text::success
     };
-    let sigs = new::b4_medium(sigs_text).style(sig_style);
+    // Sized to the widest text, so the pills after it line up from one entry to another.
+    let sigs_width = text::width(
+        &sigs_text(9, 9),
+        new::B4_MEDIUM_SPEC.font,
+        new::B4_MEDIUM_SPEC.size.expect("size"),
+    );
+    let sigs = new::b4_medium(sigs_text(count, threshold))
+        .style(sig_style)
+        .width(sigs_width);
 
     let recovery_pill = is_recovery.then_some(pill::recovery().width(PillWidth::WalletStatus));
     let batch_pill = is_batch.then_some(pill::batch().width(PillWidth::WalletStatus));
