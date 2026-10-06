@@ -174,6 +174,12 @@ pub fn get(labels: &HashMap<String, String>, item: impl Into<LabelItem>) -> Opti
         .filter(|label| !label.is_empty())
 }
 
+pub fn resolve(own: Option<&str>, inherited: &Label) -> Label {
+    own.filter(|label| !label.is_empty())
+        .map(|label| Label::Own(label.to_string()))
+        .unwrap_or_else(|| inherited.clone())
+}
+
 /// The label to display for a transaction: its own one, else the label of its single payment,
 /// else its default label.
 pub fn tx_label(
@@ -429,8 +435,8 @@ mod tests {
 
     use crate::{
         label::{
-            default_labels, payment_default_label, payment_inherited_label, sort_parents_first,
-            tx_label, wallet_transaction, Label,
+            default_labels, payment_default_label, payment_inherited_label, resolve,
+            sort_parents_first, tx_label, wallet_transaction, Label,
         },
         transaction::{
             tests::{address, foreign_outpoint, transaction, OUTPUT_AMOUNT},
@@ -630,6 +636,23 @@ mod tests {
         assert_eq!(Label::Payment(SALARY.to_string()).value(), Some(SALARY));
         assert_eq!(Label::Transaction(SALARY.to_string()).value(), Some(SALARY));
         assert_eq!(Label::Address(SALARY.to_string()).value(), Some(SALARY));
+    }
+
+    #[test]
+    fn own_label_wins_over_the_inherited_one() {
+        let inherited = Label::Address(RENT.to_string());
+        assert_eq!(
+            resolve(Some(SALARY), &inherited),
+            Label::Own(SALARY.to_string())
+        );
+    }
+
+    #[test]
+    fn empty_own_label_is_ignored() {
+        let inherited = Label::Address(RENT.to_string());
+        assert_eq!(resolve(Some(""), &inherited), inherited);
+        assert_eq!(resolve(None, &inherited), inherited);
+        assert_eq!(resolve(None, &Label::None), Label::None);
     }
 
     #[test]

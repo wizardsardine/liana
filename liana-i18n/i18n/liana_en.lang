@@ -1293,6 +1293,18 @@ label-external-output => "(External Output)"
 
 label-from => "from: {$label}"
 
+label-inherited-address
+=> "This label was inherited from the one assigned to its address. You can change it anytime";;
+
+label-inherited-funding
+=> "This label was inherited from the one assigned to the coins funding it. You can change it anytime";;
+
+label-inherited-payment
+=> "This label was inherited from the one assigned to its payment. You can change it anytime";;
+
+label-inherited-transaction
+=> "This label was inherited from the one assigned to its transaction. You can change it anytime";;
+
 label-invalid-length => "Invalid label length, must be 80 bytes or less"
 
 label-label => "Label"
