@@ -10,7 +10,11 @@ use crate::{
     widget::Element,
 };
 use chrono::{DateTime, Local, Utc};
-use iced::{advanced::text::Shaping, widget::tooltip::Position, Font};
+use iced::{
+    advanced::text::{self as advanced_text, Paragraph as _, Shaping},
+    widget::tooltip::Position,
+    Font, Pixels, Renderer, Size,
+};
 use std::fmt::Display;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -32,6 +36,23 @@ pub fn apply<'a>(content: impl Display, spec: TextSpec) -> iced::widget::Text<'a
         t = t.size(s);
     }
     t
+}
+
+pub fn width(content: &str, font: Font, size: impl Into<Pixels>) -> f32 {
+    type Layout = <Renderer as advanced_text::Renderer>::Paragraph;
+    Layout::with_text(advanced_text::Text {
+        content,
+        bounds: Size::INFINITE,
+        size: size.into(),
+        line_height: advanced_text::LineHeight::default(),
+        font,
+        align_x: advanced_text::Alignment::Default,
+        align_y: iced::alignment::Vertical::Top,
+        shaping: Shaping::Advanced,
+        wrapping: advanced_text::Wrapping::None,
+    })
+    .min_bounds()
+    .width
 }
 
 /// Declare a batch of typography roles. For each `name, SPEC, font [, size]`
