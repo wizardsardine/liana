@@ -2,16 +2,17 @@ use iced::{
     widget::{column, row, Space},
     Alignment,
 };
-use liana::transaction::PaymentKind;
+use liana::{label::Label, transaction::PaymentKind};
 use liana_i18n::t;
 
 use crate::{
     component::{
         self,
         amount::{amount_with_fiat_tooltip, AmountSize, FiatAmount},
+        label::display_label,
         pill,
         text::{
-            format_date, label_truncated,
+            format_date,
             new::{self, caption},
         },
         tooltip::tooltip_with_style,
@@ -80,7 +81,7 @@ pub struct FiatPrice {
 /// Payment or transaction list entry.
 #[allow(clippy::too_many_arguments)]
 pub fn list_entry<'a, M: 'a + Clone>(
-    label: Option<String>,
+    label: &Label,
     time: Option<chrono::DateTime<chrono::Utc>>,
     kind: PaymentKind,
     is_batch: bool,
@@ -89,8 +90,7 @@ pub fn list_entry<'a, M: 'a + Clone>(
     fiat_price: Option<FiatPrice>,
     msg: Option<M>,
 ) -> Element<'a, M> {
-    let label = label.unwrap_or_else(|| t!("common-no-label-parenthesized"));
-    let label = label_truncated(&label, MAX_LABEL_LENGTH);
+    let label = display_label(label, new::H2_SPEC, Some(MAX_LABEL_LENGTH));
 
     let time = time.map(|time| caption(format_date(time)).style(theme::text::card_secondary));
     let unconfirmed = time.is_none().then_some(pill::unconfirmed());

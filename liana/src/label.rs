@@ -120,28 +120,7 @@ pub enum Label {
     Funding(String),
 }
 
-/// The kind of an inherited label, telling how to display it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LabelPrefix {
-    Payment,
-    Transaction,
-    Address,
-    Funding,
-}
-
 impl Label {
-    /// The text to display, `prefixed` giving the one of an inherited label.
-    pub fn text(&self, prefixed: impl Fn(LabelPrefix, &str) -> String) -> Option<String> {
-        match self {
-            Label::None => None,
-            Label::Own(label) => Some(label.clone()),
-            Label::Payment(label) => Some(prefixed(LabelPrefix::Payment, label)),
-            Label::Transaction(label) => Some(prefixed(LabelPrefix::Transaction, label)),
-            Label::Address(label) => Some(prefixed(LabelPrefix::Address, label)),
-            Label::Funding(label) => Some(prefixed(LabelPrefix::Funding, label)),
-        }
-    }
-
     pub fn value(&self) -> Option<&str> {
         match self {
             Label::None => None,
@@ -150,18 +129,6 @@ impl Label {
             | Label::Transaction(label)
             | Label::Address(label)
             | Label::Funding(label) => Some(label),
-        }
-    }
-
-    /// The item's own label, the one editing it starts from.
-    pub fn own(&self) -> Option<&str> {
-        match self {
-            Label::Own(label) => Some(label),
-            Label::None
-            | Label::Payment(_)
-            | Label::Transaction(_)
-            | Label::Address(_)
-            | Label::Funding(_) => None,
         }
     }
 }
@@ -180,21 +147,15 @@ pub fn resolve(own: Option<&str>, inherited: &Label) -> Label {
         .unwrap_or_else(|| inherited.clone())
 }
 
-/// The label to display for a transaction: its own one, else the label of its single payment,
-/// else its default label.
-pub fn tx_label(
-    txid: Txid,
+pub fn tx_inherited_label(
     kind: &TransactionKind,
     labels: &HashMap<String, String>,
     default_label: &Label,
 ) -> Label {
-    if let Some(label) = get(labels, txid) {
-        Label::Own(label.to_string())
-    } else if let Some(pm) = kind.single_payment().and_then(|op| get(labels, op)) {
-        Label::Payment(pm.to_string())
-    } else {
-        default_label.clone()
-    }
+    kind.single_payment()
+        .and_then(|outpoint| get(labels, outpoint))
+        .map(|label| Label::Payment(label.to_string()))
+        .unwrap_or_else(|| default_label.clone())
 }
 
 /// The label a payment shows until it gets its own: the label of its transaction if it is
@@ -450,7 +411,7 @@ mod tests {
     use crate::{
         label::{
             coin_default_labels, default_labels, payment_default_label, payment_inherited_label,
-            resolve, sort_parents_first, tx_label, tx_origin, wallet_transaction, Label,
+            resolve, sort_parents_first, tx_inherited_label, tx_origin, wallet_transaction, Label,
         },
         transaction::{
             tests::{address, foreign_outpoint, transaction, OUTPUT_AMOUNT},
@@ -664,30 +625,7 @@ mod tests {
     }
 
     #[test]
-    fn label_own_values() {
-        assert_eq!(Label::None.own(), None);
-        assert_eq!(Label::Own(SALARY.to_string()).own(), Some(SALARY));
-        assert_eq!(Label::Payment(SALARY.to_string()).own(), None);
-        assert_eq!(Label::Transaction(SALARY.to_string()).own(), None);
-        assert_eq!(Label::Address(SALARY.to_string()).own(), None);
-    }
-
-    #[test]
-    fn tx_label_prefers_its_own_label() {
-        let tx = incoming_single();
-        let default_label = Label::Address(RENT.to_string());
-        let labels = labels(&[
-            (tx.txid().to_string(), SALARY),
-            (tx.outpoint(0).to_string(), RENT),
-        ]);
-        assert_eq!(
-            tx_label(tx.txid(), &tx.kind(), &labels, &default_label),
-            Label::Own(SALARY.to_string())
-        );
-    }
-
-    #[test]
-    fn tx_label_falls_back_to_its_single_payment_label() {
+    fn tx_inherits_its_single_payment_label() {
         let funding = labelled_incoming(1, SALARY);
         let tx = outgoing_single(&funding);
         let labels = labels(&[
@@ -695,13 +633,13 @@ mod tests {
             (tx.outpoint(0).to_string(), RENT),
         ]);
         assert_eq!(
-            tx_label(tx.txid(), &tx.kind(), &labels, &Label::None),
+            tx_inherited_label(&tx.kind(), &labels, &Label::None),
             Label::Payment(RENT.to_string())
         );
     }
 
     #[test]
-    fn tx_label_falls_back_to_its_default_label() {
+    fn tx_inherits_its_default_label() {
         let tx = incoming_batch();
         let default_label = Label::Address(SALARY.to_string());
         let labels = labels(&[
@@ -709,11 +647,11 @@ mod tests {
             (tx.outpoint(1).to_string(), RENT),
         ]);
         assert_eq!(
-            tx_label(tx.txid(), &tx.kind(), &labels, &default_label),
+            tx_inherited_label(&tx.kind(), &labels, &default_label),
             default_label
         );
         assert_eq!(
-            tx_label(tx.txid(), &tx.kind(), &HashMap::new(), &Label::None),
+            tx_inherited_label(&tx.kind(), &HashMap::new(), &Label::None),
             Label::None
         );
     }

@@ -43,7 +43,7 @@ use crate::{
             FiatAmountConverter,
         },
     },
-    daemon::model::{outpoint_label, Coin, SpendTx},
+    daemon::model::{Coin, SpendTx},
     hw::HardwareWallet,
     t,
     view::hw::{device_list_entry, HwRowMode},
@@ -238,16 +238,15 @@ pub fn outputs_view<'a>(
 ) -> Element<'a, Message> {
     let txid = tx.compute_txid();
     let label_field = |i: usize| {
-        let outpoint = OutPoint::new(txid, i as u32);
+        let outpoint = OutPoint::new(txid, i as u32).to_string();
         let default_label = owned_default_labels
             .and_then(|default_labels| default_labels.get(&i))
             .unwrap_or(&Label::None);
-        let label = outpoint_label(labels, outpoint, default_label);
-        let outpoint = outpoint.to_string();
+        let label = liana::label::resolve(labels.get(&outpoint).map(String::as_str), default_label);
         label::label_field(
             vec![outpoint.clone()],
             labels_editing.get(&outpoint),
-            label,
+            &label,
             LabelSize::Body,
         )
     };
@@ -306,15 +305,14 @@ fn input_view<'a>(
 ) -> Element<'a, Message> {
     let outpoint = outpoint.to_string();
 
-    let label_widget = if let Some(label) = labels_editing.get(&outpoint) {
-        label::label_editing(vec![outpoint.clone()], label)
-    } else {
-        label::label_editable(
-            vec![outpoint.clone()],
-            labels.get(&outpoint),
-            LabelSize::Body,
-        )
-    };
+    let default_label = coin.map_or(&Label::None, |c| &c.default_label);
+    let label = liana::label::resolve(labels.get(&outpoint).map(String::as_str), default_label);
+    let label_widget = label::label_field(
+        vec![outpoint.clone()],
+        labels_editing.get(&outpoint),
+        &label,
+        LabelSize::Body,
+    );
 
     let address = coin.map(|c| c.address.to_string());
     let address_label = coin

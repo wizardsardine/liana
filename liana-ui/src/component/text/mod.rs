@@ -3,16 +3,10 @@ pub mod new;
 
 pub use legacy::*;
 
-use crate::{
-    component::tooltip_custom,
-    font,
-    theme::{self, Theme},
-    widget::Element,
-};
+use crate::{font, theme::Theme};
 use chrono::{DateTime, Local, Utc};
 use iced::{
     advanced::text::{self as advanced_text, Paragraph as _, Shaping},
-    widget::tooltip::Position,
     Font, Pixels, Renderer, Size,
 };
 use std::fmt::Display;
@@ -124,15 +118,6 @@ pub fn truncate(str: &str, len: usize) -> String {
     let mut truncated: String = str.graphemes(true).take(len - 3).collect();
     truncated.push_str("...");
     truncated
-}
-
-pub fn label_truncated<'a, M: 'a>(label: &str, max_length: usize) -> Element<'a, M> {
-    if label.chars().count() > max_length {
-        let short = new::h2(truncate(label, max_length)).style(theme::text::primary);
-        tooltip_custom(new::h2(label), short, Position::Top).into()
-    } else {
-        new::h2(label).style(theme::text::primary).into()
-    }
 }
 
 /// Format a date in local time as "Mar 12, 2026".
