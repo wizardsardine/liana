@@ -2,17 +2,19 @@ use std::collections::{HashMap, HashSet};
 
 use iced::{
     widget::{column, row, Space},
-    Alignment,
+    Alignment, Length, Pixels,
 };
 
-use liana::{miniscript::bitcoin::Amount, transaction::PaymentKind};
+use liana::descriptors::LianaPolicy;
 use liana_ui::{
     component::{
-        amount::{amount_with_fiat_tooltip, AmountSize, FiatAmount},
-        button::{self, btn_bump_fee, btn_cancel_transaction, btn_confirm, btn_go_to_replacement},
+        button::{
+            self, btn_bump_fee, btn_cancel_transaction, btn_confirm, btn_delete,
+            btn_go_to_replacement, btn_previous, btn_save,
+        },
         form,
         modal::{modal_view, ModalWidth},
-        panels::{fees_row, home::payment::kind_icon, transactions},
+        panels::{self, fees_row, psbts, transactions},
         pill,
         text::new,
     },
@@ -30,12 +32,12 @@ use crate::{
         view::{
             self,
             label::{self, LabelSize},
-            message::{CreateRbfMessage, Message},
+            message::{CreateRbfMessage, Message, SpendTxMessage},
             warning::warn,
             FiatAmountConverter,
         },
     },
-    daemon::model::{HistoryTransaction, Txid},
+    daemon::model::{Fingerprint, HistoryTransaction, SpendStatus, SpendTx, Txid},
     t,
 };
 
@@ -144,78 +146,195 @@ pub fn create_rbf_modal<'a>(
     )
 }
 
+pub enum TxDetail<'a> {
+    Transaction(&'a HistoryTransaction),
+    Psbt {
+        tx: &'a SpendTx,
+        desc_info: &'a LianaPolicy,
+        key_aliases: &'a HashMap<Fingerprint, String>,
+        saved: bool,
+        currently_signing: bool,
+        previous: bool,
+    },
+}
+
 pub fn tx_view<'a>(
     cache: &'a Cache,
-    tx: &'a HistoryTransaction,
+    detail: TxDetail<'a>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
     fiat_converter: Option<FiatAmountConverter>,
 ) -> Element<'a, Message> {
-    let txid = tx.txid.to_string();
-
-    let confirmed = if tx.time.is_some() {
-        pill::confirmed()
-    } else {
-        pill::unconfirmed()
+    let (txid, unsigned_tx, wallet_tx, labels, coins, label) = match &detail {
+        TxDetail::Transaction(tx) => (
+            tx.txid,
+            &tx.tx,
+            &tx.wallet_tx,
+            &tx.labels,
+            &tx.coins,
+            tx.label(),
+        ),
+        TxDetail::Psbt { tx, .. } => (
+            tx.psbt.unsigned_tx.compute_txid(),
+            &tx.psbt.unsigned_tx,
+            &tx.wallet_tx,
+            &tx.labels,
+            &tx.coins,
+            tx.label(),
+        ),
     };
+    let txid = txid.to_string();
+
     let label = label::label_field(
         vec![txid.clone()],
         labels_editing.get(&txid),
-        tx.label(),
+        label,
         LabelSize::Display,
     );
-    let label_row = row![label, confirmed]
+    let pills = match &detail {
+        TxDetail::Transaction(tx) if tx.time.is_some() => row![pill::confirmed()],
+        TxDetail::Transaction(_) => row![pill::unconfirmed()],
+        TxDetail::Psbt { tx, .. } => {
+            let recovery = (!tx.sigs.recovery_paths().is_empty()).then_some(pill::recovery());
+            row![recovery, psbts::status_pill(tx.status)]
+        }
+    };
+    let label_row = row![label, pills.spacing(VSpacing::L).align_y(Alignment::Center)]
         .spacing(VSpacing::L)
         .align_y(Alignment::Center);
-    let kind = tx.wallet_tx.kind().payment_kind();
-    let amount: Element<'a, Message> = if kind == PaymentKind::SendToSelf {
-        new::d2(t!("common-self-transfer")).into()
-    } else {
-        amount_with_fiat_tooltip(
-            &tx.wallet_tx.amount(),
-            None::<fn(Amount) -> FiatAmount>,
-            AmountSize::L,
-            true,
-            None,
-        )
+    let amount_row = transactions::amount_row(wallet_tx.kind().payment_kind(), wallet_tx.amount());
+    let feerate = match &detail {
+        TxDetail::Transaction(tx) => tx
+            .feerate()
+            .map(|rate| t!("common-feerate-value", rate = rate)),
+        TxDetail::Psbt { tx, .. } => tx
+            .min_feerate_vb()
+            .map(|rate| t!("common-approx-feerate-value", rate = rate)),
     };
-    let amount_row = row![kind_icon(kind), amount]
-        .spacing(HSpacing::S)
-        .align_y(Alignment::Center);
-    let feerate = tx
-        .feerate()
-        .map(|rate| t!("common-feerate-value", rate = rate));
+    if matches!(detail, TxDetail::Psbt { .. }) && wallet_tx.fee().is_none() {
+        log::error!("Spend {} has an unknown fee", txid);
+    }
     let to_fiat = fiat_converter.map(|c| move |a| c.convert(a));
-    let miner_fee = fees_row(tx.wallet_tx.fee(), feerate, to_fiat);
+    let miner_fee = fees_row(wallet_tx.fee(), feerate, to_fiat);
     // If unconfirmed, give option to use RBF.
     // Check fee amount is some as otherwise we may be missing coins for this transaction.
-    let rbf = (tx.time.is_none() && tx.wallet_tx.fee().is_some()).then(|| {
-        row![
-            btn_bump_fee(Some(Message::CreateRbf(CreateRbfMessage::New(false)))),
-            btn_cancel_transaction(Some(Message::CreateRbf(CreateRbfMessage::New(true)))),
-        ]
-        .spacing(HSpacing::M)
-    });
+    let rbf = match &detail {
+        TxDetail::Transaction(tx) => {
+            (tx.time.is_none() && tx.wallet_tx.fee().is_some()).then(|| {
+                row![
+                    btn_bump_fee(Some(Message::CreateRbf(CreateRbfMessage::New(false)))),
+                    btn_cancel_transaction(Some(Message::CreateRbf(CreateRbfMessage::New(true)))),
+                ]
+                .spacing(HSpacing::M)
+            })
+        }
+        TxDetail::Psbt { .. } => None,
+    };
     let summary = column![label_row, amount_row, miner_fee, rbf].spacing(VSpacing::L);
-    let overview = transactions::overview(tx.datetime(), txid.clone(), Message::Clipboard(txid));
+
+    let overview = overview(&detail, txid);
     let transaction = column![summary, overview].spacing(VSpacing::XL);
 
+    let (is_incoming, owned_indexes, owned_default_labels) = match &detail {
+        TxDetail::Transaction(tx) => (
+            tx.is_incoming(),
+            tx.owned_output_indexes(),
+            Some(&tx.owned_outputs),
+        ),
+        TxDetail::Psbt { tx, .. } => (false, tx.change_indexes.clone(), None),
+    };
     // We do not need to display inputs for external incoming transactions
-    let inputs = (!tx.is_incoming())
-        .then(|| view::psbt::inputs_view(&tx.coins, &tx.tx, &tx.labels, labels_editing));
+    let inputs =
+        (!is_incoming).then(|| view::psbt::inputs_view(coins, unsigned_tx, labels, labels_editing));
     let outputs = view::psbt::outputs_view(
-        &tx.tx,
+        unsigned_tx,
         cache.network,
-        &tx.owned_output_indexes(),
-        &tx.labels,
+        &owned_indexes,
+        labels,
         labels_editing,
-        tx.is_incoming(),
-        Some(&tx.owned_outputs),
+        is_incoming,
+        owned_default_labels,
     );
-
+    let footer = match detail {
+        TxDetail::Transaction(_) => None,
+        TxDetail::Psbt {
+            saved,
+            currently_signing,
+            previous,
+            ..
+        } => {
+            let msg = |msg| (!currently_signing).then_some(msg);
+            Some(
+                if saved {
+                    row![btn_delete(msg(Message::Spend(SpendTxMessage::Delete)))]
+                } else {
+                    let previous = previous.then(|| btn_previous(msg(Message::Previous)));
+                    let save = btn_save(msg(Message::Spend(SpendTxMessage::Save)), false);
+                    row![previous, Space::fill_width(), save]
+                }
+                .width(Length::Fill),
+            )
+        }
+    };
     let details = column![
-        column![inputs, outputs].spacing(VSpacing::L),
+        column![inputs, outputs, footer].spacing(VSpacing::L),
         Space::with_height(VSpacing::S)
     ];
 
-    column![transaction, details].spacing(80).into()
+    let spacing: Pixels = match detail {
+        TxDetail::Transaction(_) => 80.into(),
+        TxDetail::Psbt { .. } => VSpacing::XXL.into(),
+    };
+
+    column![transaction, details].spacing(spacing).into()
+}
+
+fn overview<'a>(detail: &TxDetail<'a>, txid: String) -> Element<'a, Message> {
+    let date = match detail {
+        TxDetail::Transaction(tx) => Some(transactions::date_row(tx.datetime())),
+        TxDetail::Psbt { .. } => None,
+    };
+    let ids = column![
+        date,
+        panels::txid_row(txid.clone(), Message::Clipboard(txid))
+    ]
+    .spacing(VSpacing::SM);
+    let signatures = match detail {
+        TxDetail::Transaction(_) => None,
+        TxDetail::Psbt {
+            tx,
+            desc_info,
+            key_aliases,
+            saved,
+            currently_signing,
+            ..
+        } => {
+            let signatures = match tx.sigs.signed_path() {
+                Some(sigs) => psbts::Signatures::Ready(sigs),
+                None if tx.sigs.recovery_paths().is_empty() => {
+                    psbts::Signatures::Missing(desc_info.primary_path(), tx.sigs.primary_path())
+                }
+                None => {
+                    let (seq, sigs) = tx
+                        .sigs
+                        .recovery_paths()
+                        .last_key_value()
+                        .expect("not empty");
+                    psbts::Signatures::Missing(&desc_info.recovery_paths()[seq], sigs)
+                }
+            };
+            let enabled = *saved && !currently_signing;
+            Some(psbts::signatures_card(
+                signatures,
+                key_aliases,
+                *saved,
+                enabled.then_some(Message::ExportPsbt),
+                enabled.then_some(Message::ImportPsbt),
+                (tx.status == SpendStatus::Unsigned)
+                    .then_some(Message::Spend(SpendTxMessage::Sign)),
+                (tx.status == SpendStatus::Broadcastable)
+                    .then_some(Message::Spend(SpendTxMessage::Broadcast)),
+            ))
+        }
+    };
+    column![ids, signatures].spacing(VSpacing::L).into()
 }
