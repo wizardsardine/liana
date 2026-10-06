@@ -156,6 +156,88 @@ pub fn collapsible_section<'a, M: Clone + 'static>(
         .into()
 }
 
+pub enum Signatures<'a> {
+    Ready(&'a PathSpendInfo),
+    Missing(&'a PathInfo, &'a PathSpendInfo),
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn signatures_card<'a, M: Clone + 'static>(
+    signatures: Signatures<'a>,
+    key_aliases: &'a HashMap<Fingerprint, String>,
+    saved: bool,
+    export: Option<M>,
+    import: Option<M>,
+    sign: Option<M>,
+    broadcast: Option<M>,
+) -> Element<'a, M> {
+    let pills = |fingerprints: Vec<Fingerprint>| {
+        fingerprints
+            .into_iter()
+            .fold(Row::new().spacing(HSpacing::S), |row, fg| {
+                row.push(pill::fingerprint(
+                    fg.to_string(),
+                    key_aliases.get(&fg).map(String::as_str),
+                ))
+            })
+    };
+    let caption = |text: String| new::caption(text).style(theme::text::secondary);
+
+    let sigs = match signatures {
+        Signatures::Ready(sigs) | Signatures::Missing(_, sigs) => sigs,
+    };
+    let mut signed: Vec<Fingerprint> = sigs.signed_pubkeys.keys().copied().collect();
+    signed.sort();
+    let required = match signatures {
+        Signatures::Ready(_) => row![caption(t!("psbt-fully-signed-by")), pills(signed)],
+        Signatures::Missing(path, sigs) => {
+            let mut unsigned: Vec<Fingerprint> = path
+                .thresh_origins()
+                .1
+                .into_keys()
+                .filter(|fg| !sigs.signed_pubkeys.contains_key(fg))
+                .collect();
+            unsigned.sort();
+            let missing = sigs.threshold.saturating_sub(sigs.sigs_count);
+            let already_signed = (!signed.is_empty()).then(|| {
+                row![caption(t!("psbt-already-signed-by")), pills(signed)]
+                    .spacing(HSpacing::S)
+                    .align_y(Alignment::Center)
+            });
+            row![
+                caption(t!("psbt-requires-signatures", count = missing)),
+                pills(unsigned),
+                already_signed
+            ]
+        }
+    }
+    .spacing(HSpacing::S)
+    .align_y(Alignment::Center);
+
+    let count = t!(
+        "psbt-signatures-count",
+        count = sigs.sigs_count.min(sigs.threshold),
+        threshold = sigs.threshold
+    );
+    let header = row![
+        new::b2_medium(t!("psbt-signatures")).style(theme::text::primary),
+        new::b2(count).style(theme::text::secondary),
+        Space::fill_width(),
+        button::btn_export_psbt(saved, export),
+        button::btn_import(import),
+        sign.map(|msg| button::btn_sign(Some(msg))),
+        broadcast.map(|msg| button::btn_broadcast(Some(msg))),
+    ]
+    .spacing(HSpacing::S)
+    .align_y(Alignment::Center);
+
+    let content = column![header, scrollable::horizontal_thin(required)].spacing(VSpacing::S);
+    Container::new(content)
+        .padding(card::CardPadding::Soft)
+        .style(theme::card::button_simple)
+        .into()
+}
+
 fn address_row<'a, M: Clone + 'static>(address: String, copy: M) -> Row<'a, M> {
     let title = new::b5_bold(t!("common-address-label")).style(theme::text::secondary);
     let copy = button::btn_copy(Some(copy));

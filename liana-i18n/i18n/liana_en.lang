@@ -1545,6 +1545,8 @@ psbt-device-sign-failed => "Device failed to sign"
 
 psbt-finalizing-requires => "Finalizing this transaction requires:"
 
+psbt-fully-signed-by => "Signed by"
+
 psbt-more-signatures
 => "{ $count ->\n    [0] no more signatures\n    [one] 1 more signature from\n   *[other] {$count} more signatures from\n}";;
 
@@ -1552,11 +1554,18 @@ psbt-not-ready => "Not ready"
 
 psbt-payments => "{ $count ->\n    [one] 1 Payment\n   *[other] {$count} Payments\n}"
 
+psbt-requires-signatures
+=> "{ $count ->\n    [one] Requires 1 more signature from\n   *[other] Requires {$count} more signatures from\n}";;
+
 psbt-save-transaction => "Save this transaction"
 
 psbt-select-signing-device => "Select signing device to sign with:"
 
 psbt-sign-save-before-export => "Sign or save the transaction first to enable export"
+
+psbt-signatures => "Signatures"
+
+psbt-signatures-count => "{$count} of {$threshold}"
 
 psbt-signed-by => "signed by"
 
