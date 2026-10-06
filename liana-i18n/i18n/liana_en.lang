@@ -1567,7 +1567,7 @@ psbt-transaction-saved => "Transaction is saved"
 psbts-hide-confirmed => "Hide confirmed transactions"
 
 psbts-signatures-collected
-=> "{ $count ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}";;
+=> "{ $threshold ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}";;
 
 receive-address-label-placeholder => "Enter an address label"
 
