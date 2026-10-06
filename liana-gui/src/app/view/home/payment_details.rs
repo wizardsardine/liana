@@ -51,13 +51,14 @@ pub fn payment_details_view<'a>(
         pill::unconfirmed()
     };
     let payment = Payment::from_tx_output(tx, output_index);
+    let label = payment
+        .as_ref()
+        .map(|payment| payment.label())
+        .unwrap_or_default();
     let payment_label = label::label_field(
         vec![outpoint.clone()],
         labels_editing.get(&outpoint),
-        payment
-            .as_ref()
-            .map(|payment| payment.label())
-            .unwrap_or_default(),
+        &label,
         LabelSize::Display,
     );
     let label_row = row![payment_label, confirmed]
