@@ -6,9 +6,9 @@ use crate::{
     dir::NetworkDirectory,
     services::connect::{
         client::{
-            auth::{AccessTokenResponse, AuthClient, AuthError},
-            cache::{self, Account, ConnectCacheError},
-            get_service_config, BackendType,
+            auth::AuthClient,
+            cache::{self, ConnectCacheError},
+            close_sessions, get_service_config, BackendType, ServiceConfig,
         },
         login::{connect_with_credentials, BackendState},
     },
@@ -47,59 +47,44 @@ fn ignore_not_found<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>>
     }
 }
 
-/// Best effort: close on the server the sessions of accounts whose cached
-/// credentials were just dropped. Failures are logged and never propagated.
-async fn close_connect_sessions(
+/// Prune from the connect cache every account no longer referenced by the
+/// remaining wallets, closing their server-side session first so a failure
+/// never leaves a reachable session without the credentials to close it.
+///
+/// `service_config` is the one the caller already fetched, if any; it is only
+/// requested when some session actually needs closing.
+async fn drop_unused_connect_accounts(
     network: Network,
+    network_dir: &NetworkDirectory,
     backend_type: BackendType,
-    accounts: Vec<Account>,
-) {
-    if accounts.is_empty() {
-        return;
-    }
-    let config = match get_service_config(network, backend_type).await {
-        Ok(config) => config,
-        Err(e) => {
-            tracing::error!(
-                "Failed to fetch Liana-Connect service config, sessions left open: {e}"
-            );
-            return;
-        }
-    };
-    for account in accounts {
-        let client = AuthClient::new(
-            config.auth_api_url.clone(),
-            config.auth_api_public_key.clone(),
-            account.email,
-            backend_type.user_agent(),
-        );
-        match close_connect_session(&client, &account.tokens).await {
-            Ok(()) => tracing::info!("Closed Liana-Connect session of {}", client.email),
-            Err(e) => tracing::error!(
-                "Failed to close Liana-Connect session of {}: {e}",
-                client.email
-            ),
-        }
-    }
-}
+    service_config: Option<ServiceConfig>,
+    user_ids: &HashSet<String>,
+    legacy_emails: &HashSet<String>,
+) -> Result<(), DeleteError> {
+    let to_drop = cache::connect_cache_dropped_accounts(network_dir, user_ids, legacy_emails)
+        .map_err(DeleteError::ConnectCache)?;
 
-/// Log out with the cached access token, refreshing it first when it is
-/// expired locally or rejected by the server.
-async fn close_connect_session(
-    client: &AuthClient,
-    tokens: &AccessTokenResponse,
-) -> Result<(), AuthError> {
-    if tokens.expires_at >= chrono::Utc::now().timestamp() {
-        match client.logout(&tokens.access_token).await {
-            Err(AuthError {
-                http_status: Some(401),
-                ..
-            }) => {}
-            res => return res,
+    if !to_drop.is_empty() {
+        let config = match service_config {
+            Some(config) => Some(config),
+            None => match get_service_config(network, backend_type).await {
+                Ok(config) => Some(config),
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to fetch Liana-Connect service config, sessions left open: {e}"
+                    );
+                    None
+                }
+            },
+        };
+        if let Some(config) = config {
+            close_sessions(&config, backend_type, to_drop).await;
         }
     }
-    let fresh = client.refresh_token(&tokens.refresh_token).await?;
-    client.logout(&fresh.access_token).await
+
+    cache::filter_connect_cache(network_dir, user_ids, legacy_emails)
+        .await
+        .map_err(DeleteError::ConnectCache)
 }
 
 pub async fn delete_failed_install(
@@ -146,10 +131,15 @@ pub async fn delete_failed_install(
     .await
     .map_err(DeleteError::Settings)?;
 
-    let dropped = cache::filter_connect_cache(network_dir, &remaining_user_ids, &legacy_emails)
-        .await
-        .map_err(DeleteError::ConnectCache)?;
-    close_connect_sessions(network, backend_type, dropped).await;
+    drop_unused_connect_accounts(
+        network,
+        network_dir,
+        backend_type,
+        None,
+        &remaining_user_ids,
+        &legacy_emails,
+    )
+    .await?;
 
     signer::delete_wallet_mnemonics(
         network_dir,
@@ -184,22 +174,23 @@ pub async fn delete_wallet(
         )?;
     }
 
+    let mut service_config = None;
     if delete_liana_connect {
         if let Some(auth) = &wallet.remote_backend_auth {
-            let service_config = get_service_config(network, backend_type)
+            let config = get_service_config(network, backend_type)
                 .await
                 .map_err(|e| DeleteError::Connect(e.to_string()))?;
 
             let client = AuthClient::new(
-                service_config.auth_api_url,
-                service_config.auth_api_public_key,
+                config.auth_api_url.clone(),
+                config.auth_api_public_key.clone(),
                 auth.email.to_string(),
                 backend_type.user_agent(),
             );
             if let BackendState::WalletExists(client, _, _, _) = connect_with_credentials(
                 client,
                 auth.clone(),
-                service_config.backend_api_url,
+                config.backend_api_url.clone(),
                 network,
                 network_dir,
             )
@@ -214,6 +205,7 @@ pub async fn delete_wallet(
             } else {
                 tracing::warn!("Wallet not found on the platform");
             }
+            service_config = Some(config);
         }
     }
 
@@ -240,10 +232,15 @@ pub async fn delete_wallet(
     .await
     .map_err(DeleteError::Settings)?;
 
-    let dropped = cache::filter_connect_cache(network_dir, &remaining_user_ids, &legacy_emails)
-        .await
-        .map_err(DeleteError::ConnectCache)?;
-    close_connect_sessions(network, backend_type, dropped).await;
+    drop_unused_connect_accounts(
+        network,
+        network_dir,
+        backend_type,
+        service_config,
+        &remaining_user_ids,
+        &legacy_emails,
+    )
+    .await?;
 
     signer::delete_wallet_mnemonics(
         network_dir,

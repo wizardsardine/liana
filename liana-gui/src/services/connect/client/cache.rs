@@ -274,20 +274,58 @@ pub async fn update_connect_cache(
 }
 
 /// Keep only the accounts referenced by `user_ids` (stamped rows) or
-/// `legacy_emails` (rows without a user_id). Returns the dropped accounts so
-/// the caller can close their sessions on the server.
+/// `legacy_emails` (rows without a user_id).
 pub async fn filter_connect_cache(
     network_dir: &NetworkDirectory,
     user_ids: &HashSet<String>,
     legacy_emails: &HashSet<String>,
-) -> Result<Vec<Account>, ConnectCacheError> {
-    let mut dropped = Vec::new();
+) -> Result<(), ConnectCacheError> {
     with_locked_cache(network_dir, true, |cache| {
-        dropped = filter_in_memory(cache, user_ids, legacy_emails);
+        filter_in_memory(cache, user_ids, legacy_emails);
         true
     })
-    .await?;
-    Ok(dropped)
+    .await
+}
+
+/// The accounts [`filter_connect_cache`] would drop, without touching the
+/// cache. Callers close those sessions on the server *before* pruning the
+/// credentials, so a failure in between leaves the session reachable rather
+/// than orphaned. A missing cache file yields an empty list.
+pub fn connect_cache_dropped_accounts(
+    network_dir: &NetworkDirectory,
+    user_ids: &HashSet<String>,
+    legacy_emails: &HashSet<String>,
+) -> Result<Vec<Account>, ConnectCacheError> {
+    match ConnectCache::from_file(network_dir) {
+        Ok(cache) => Ok(dropped_in_memory(&cache, user_ids, legacy_emails)),
+        Err(ConnectCacheError::NotFound) => Ok(Vec::new()),
+        Err(e) => Err(e),
+    }
+}
+
+/// In-memory counterpart of [`connect_cache_dropped_accounts`].
+fn dropped_in_memory(
+    cache: &ConnectCache,
+    user_ids: &HashSet<String>,
+    legacy_emails: &HashSet<String>,
+) -> Vec<Account> {
+    cache
+        .accounts
+        .iter()
+        .filter(|a| is_dropped(a, user_ids, legacy_emails))
+        .cloned()
+        .collect()
+}
+
+fn is_dropped(
+    account: &Account,
+    user_ids: &HashSet<String>,
+    legacy_emails: &HashSet<String>,
+) -> bool {
+    match &account.user_id {
+        Some(uid) => !user_ids.contains(uid),
+        None => !legacy_emails.contains(&account.email),
+    }
 }
 
 /// In-memory retain. Returns the dropped accounts.
@@ -296,14 +334,10 @@ fn filter_in_memory(
     user_ids: &HashSet<String>,
     legacy_emails: &HashSet<String>,
 ) -> Vec<Account> {
-    let (kept, dropped): (Vec<Account>, Vec<Account>) = std::mem::take(&mut cache.accounts)
-        .into_iter()
-        .partition(|a| match &a.user_id {
-            Some(uid) => user_ids.contains(uid),
-            None => legacy_emails.contains(&a.email),
-        });
-    cache.accounts = kept;
-    dropped
+    cache
+        .accounts
+        .extract_if(.., |a| is_dropped(a, user_ids, legacy_emails))
+        .collect()
 }
 
 /// Stamp the authoritative `user_id` and `email` reported by Liana-Connect onto
@@ -459,12 +493,18 @@ mod tests {
         let user_ids = HashSet::from(["uid-1".to_string()]);
         let legacy_emails = HashSet::from(["legacy@x".to_string()]);
 
+        // The read-only peek must predict exactly what the filter drops,
+        // otherwise a session is closed without its row being pruned, or a
+        // row is pruned without its session being closed.
+        let peeked = dropped_in_memory(&cache, &user_ids, &legacy_emails);
         let dropped = filter_in_memory(&mut cache, &user_ids, &legacy_emails);
 
         let kept: Vec<&str> = cache.accounts.iter().map(|a| a.email.as_str()).collect();
         assert_eq!(kept, vec!["a@x", "legacy@x"]);
         let dropped: Vec<&str> = dropped.iter().map(|a| a.email.as_str()).collect();
         assert_eq!(dropped, vec!["b@x", "gone@x"]);
+        let peeked: Vec<&str> = peeked.iter().map(|a| a.email.as_str()).collect();
+        assert_eq!(peeked, dropped);
     }
 
     #[test]

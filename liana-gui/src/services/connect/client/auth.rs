@@ -29,11 +29,24 @@ pub struct RefreshToken<'a> {
     refresh_token: &'a str,
 }
 
+/// Margin applied when checking an access token expiry, so a token that is
+/// about to lapse is refreshed instead of being used for a request that would
+/// outlive it.
+pub const TOKEN_EXPIRY_MARGIN_SECS: i64 = 60;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessTokenResponse {
     pub access_token: String,
     pub expires_at: i64,
     pub refresh_token: String,
+}
+
+impl AccessTokenResponse {
+    /// Whether the access token has expired or is about to, within
+    /// [`TOKEN_EXPIRY_MARGIN_SECS`].
+    pub fn is_expired(&self) -> bool {
+        self.expires_at < chrono::Utc::now().timestamp() + TOKEN_EXPIRY_MARGIN_SECS
+    }
 }
 
 #[derive(Debug, Clone)]

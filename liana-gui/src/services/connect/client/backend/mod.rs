@@ -7,7 +7,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use chrono::Utc;
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{
@@ -566,7 +565,7 @@ impl Daemon for BackendWalletClient {
                 serde_json::Value::String("unauthenticated".to_string()),
             ));
         }
-        if auth.expires_at < Utc::now().timestamp() + 60 {
+        if auth.is_expired() {
             match self.inner.auth.try_write() {
                 Err(_) => {
                     // something is using the lock, we will try next time.

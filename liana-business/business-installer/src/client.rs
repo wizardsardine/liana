@@ -12,8 +12,8 @@ use liana_gui::{
     services::connect::client::{
         auth::AuthClient,
         cache::{filter_connect_cache, update_connect_cache, Account, ConnectCache},
-        BackendType, ServiceConfig, ServiceConfigResource, BUSINESS_MAINNET_API_URL,
-        BUSINESS_SIGNET_API_URL,
+        close_sessions, BackendType, ServiceConfig, ServiceConfigResource,
+        BUSINESS_MAINNET_API_URL, BUSINESS_SIGNET_API_URL,
     },
 };
 use miniscript::bitcoin::Network;
@@ -370,9 +370,7 @@ impl Client {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             for account in cache.accounts {
-                let now = chrono::Utc::now().timestamp();
-
-                if account.tokens.expires_at > now + 60 {
+                if !account.tokens.is_expired() {
                     // Token still valid
                     tracing::debug!(
                         "validate_all_cached_tokens: token valid for email={}",
@@ -477,10 +475,12 @@ impl Client {
 
         // Compute the two retain sets from the current cache, excluding the
         // emails marked for removal. Accounts with `user_id` are keyed by it;
-        // legacy accounts (no user_id) keep using email.
-        let (valid_user_ids, valid_legacy_emails): (
+        // legacy accounts (no user_id) keep using email. The excluded accounts
+        // are kept aside so their server-side session can be closed.
+        let (valid_user_ids, valid_legacy_emails, to_drop): (
             std::collections::HashSet<String>,
             std::collections::HashSet<String>,
+            Vec<Account>,
         ) = {
             let cache = match ConnectCache::from_file(&network_dir) {
                 Ok(cache) => cache,
@@ -491,8 +491,10 @@ impl Client {
             };
             let mut user_ids = std::collections::HashSet::new();
             let mut legacy = std::collections::HashSet::new();
+            let mut to_drop = Vec::new();
             for a in cache.accounts {
                 if emails_to_remove.contains(&a.email) {
+                    to_drop.push(a);
                     continue;
                 }
                 match a.user_id {
@@ -504,7 +506,7 @@ impl Client {
                     }
                 }
             }
-            (user_ids, legacy)
+            (user_ids, legacy, to_drop)
         };
 
         tracing::debug!(
@@ -513,8 +515,32 @@ impl Client {
             valid_legacy_emails.len()
         );
 
+        // Fetch config BEFORE entering async context
+        // (reqwest::blocking cannot be used inside tokio runtime)
+        let network = self.network.unwrap_or(Network::Signet);
+        let config = if to_drop.is_empty() {
+            None
+        } else {
+            get_service_config_blocking(network).ok()
+        };
+
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
+            // Close the sessions before the credentials leave the cache: the
+            // reverse order would strand a reachable session with no way left
+            // to close it.
+            if !to_drop.is_empty() {
+                match &config {
+                    Some(config) => {
+                        close_sessions(config, BackendType::LianaBusiness(crate::VERSION), to_drop)
+                            .await
+                    }
+                    None => tracing::error!(
+                        "clear_invalid_tokens: no service config, {} session(s) left open",
+                        to_drop.len()
+                    ),
+                }
+            }
             let _ = filter_connect_cache(&network_dir, &valid_user_ids, &valid_legacy_emails).await;
         });
 
@@ -631,7 +657,7 @@ fn try_get_cached_token(data: &TokenRetrievalData) -> Option<String> {
                 let now = chrono::Utc::now().timestamp();
 
                 // Check if token is expired (with some buffer time)
-                if tokens.expires_at > now + 60 {
+                if !tokens.is_expired() {
                     // Token is still valid
                     tracing::debug!(
                         "try_get_cached_token: token valid, expires in {} seconds",
