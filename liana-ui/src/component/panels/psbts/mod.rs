@@ -15,7 +15,7 @@ use liana_i18n::t;
 use crate::{
     component::{
         address::address as address_view,
-        amount::{amount, amount_with_fiat_tooltip, amount_with_font, AmountSize, FiatAmount},
+        amount::{amount, amount_with_fiat_tooltip, AmountSize},
         button, card,
         panels::{
             self,
@@ -25,7 +25,6 @@ use crate::{
         scrollable,
         text::{new, truncate},
     },
-    icon,
     spacing::{HSpacing, VSpacing},
     theme::{self, Theme},
     widget::{Column, Container, Element, Row, SpaceExt, Toggler},
@@ -334,161 +333,4 @@ pub fn payment_row<'a, M: Clone + 'static>(
         .width(Length::Fill)
         .spacing(VSpacing::XS)
         .into()
-}
-
-pub fn path_row<'a, M: 'static>(
-    path: &'a PathInfo,
-    sigs: &'a PathSpendInfo,
-    key_aliases: &'a HashMap<Fingerprint, String>,
-) -> Element<'a, M> {
-    // We get a sorted list of all the fingerprints (which correspond to a signer) from this
-    // spending path, and from it get an iterator on those of these fingerprints for which a
-    // signature was provided in the PSBT, and those for which there isn't any.
-    let mut all_fgs: Vec<Fingerprint> = path.thresh_origins().1.into_keys().collect();
-    all_fgs.sort();
-    let signed_fgs = sigs.signed_pubkeys.keys();
-    let non_signed_fgs = all_fgs
-        .into_iter()
-        .filter(|fg| !sigs.signed_pubkeys.contains_key(fg));
-    let missing_signatures = sigs.threshold.saturating_sub(sigs.sigs_count);
-
-    // From these iterators, create the appropriate rows to be displayed.
-    let row_unsigned =
-        non_signed_fgs
-            .into_iter()
-            .fold(Row::new().spacing(HSpacing::S), |row, fg| {
-                row.push(pill::fingerprint(
-                    fg.to_string(),
-                    key_aliases.get(&fg).map(String::as_str),
-                ))
-            });
-    let row_signed = signed_fgs
-        .into_iter()
-        .fold(Row::new().spacing(HSpacing::S), |row, fg| {
-            row.push(pill::fingerprint(
-                fg.to_string(),
-                key_aliases.get(fg).map(String::as_str),
-            ))
-        });
-
-    let status = if missing_signatures == 0 {
-        icon::circle_check_icon().style(theme::text::success)
-    } else {
-        icon::circle_cross_icon().style(theme::text::secondary)
-    };
-    let status = row![status, Space::with_width(HSpacing::XL)];
-
-    let missing = new::caption(t!("psbt-more-signatures", count = missing_signatures))
-        .style(theme::text::secondary);
-    let already_signed = (!sigs.signed_pubkeys.is_empty())
-        .then_some(new::caption(t!("psbt-already-signed-by")).style(theme::text::secondary));
-
-    let content =
-        row![status, missing, row_unsigned, already_signed, row_signed].align_y(Alignment::Center);
-
-    scrollable::horizontal_thin(content).into()
-}
-
-pub fn signatures_ready<'a, M: 'static>(
-    sigs: &'a PathSpendInfo,
-    key_aliases: &'a HashMap<Fingerprint, String>,
-) -> Element<'a, M> {
-    let signers = sigs
-        .signed_pubkeys
-        .keys()
-        .fold(Row::new().spacing(HSpacing::S), |row, fg| {
-            row.push(pill::fingerprint(
-                fg.to_string(),
-                key_aliases.get(fg).map(String::as_str),
-            ))
-        });
-
-    let ready = row![
-        new::b5_bold(t!("psbt-status")),
-        icon::circle_check_icon().style(theme::text::success),
-        new::b5_bold(t!("common-ready")).style(theme::text::success),
-        new::caption(t!("psbt-signed-by")),
-        signers
-    ]
-    .align_y(Alignment::Center)
-    .spacing(HSpacing::M);
-
-    scrollable::horizontal_thin(ready).into()
-}
-
-pub fn signatures_missing<'a, M: 'static>() -> Element<'a, M> {
-    let status = row![
-        icon::circle_cross_icon().style(theme::text::error),
-        new::caption(t!("psbt-not-ready")).style(theme::text::error)
-    ]
-    .spacing(HSpacing::S)
-    .align_y(Alignment::Center)
-    .width(Length::Fill);
-    row![new::b5_bold(t!("psbt-status")), status]
-        .align_y(Alignment::Center)
-        .spacing(HSpacing::XL)
-        .into()
-}
-
-pub fn signatures_requirement<'a, M: 'static>(
-    requirement: Option<Element<'a, M>>,
-) -> Element<'a, M> {
-    column![new::caption(t!("psbt-finalizing-requires")), requirement]
-        .padding(15)
-        .spacing(VSpacing::S)
-        .into()
-}
-
-pub fn spend_header<'a, M: 'static, F: Fn(Amount) -> FiatAmount>(
-    label: Element<'a, M>,
-    is_send_to_self: bool,
-    spent: Amount,
-    fee: Option<Amount>,
-    feerate: Option<u64>,
-    to_fiat: Option<F>,
-) -> Element<'a, M> {
-    let spent: Element<'a, M> = if is_send_to_self {
-        new::d2(t!("common-self-transfer")).into()
-    } else {
-        amount_with_font(&spent, new::D2_SPEC).into()
-    };
-    let spent = Container::new(spent);
-
-    let feerate = feerate.map(|rate| t!("common-approx-feerate-value", rate = rate));
-    let fees = panels::fees_row(fee, feerate, to_fiat);
-
-    column![label, column![spent, fees]]
-        .spacing(VSpacing::L)
-        .into()
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn spend_overview<'a, M: Clone + 'static>(
-    saved: bool,
-    export: Option<M>,
-    import: Option<M>,
-    txid: String,
-    copy_txid: M,
-    status: Element<'a, M>,
-    details: Option<Element<'a, M>>,
-    action: Option<Element<'a, M>>,
-) -> Element<'a, M> {
-    let export_button = button::btn_export_psbt(saved, export);
-    let buttons = row![export_button, button::btn_import(import)].spacing(HSpacing::S);
-    let header = row![new::b5_bold(t!("psbt-title")).width(Length::Fill), buttons]
-        .align_y(Alignment::Center);
-
-    let txid = panels::txid_row(txid, copy_txid);
-
-    let psbt = column![header, txid].spacing(VSpacing::S);
-    let card = card::foldable::FoldableCard::new(Some(psbt.into()), status, details)
-        .padding(card::CardPadding::Soft);
-
-    let action = action.map(|action| {
-        row![Space::fill_width(), action]
-            .align_y(Alignment::Center)
-            .spacing(HSpacing::XL)
-    });
-
-    column![card, action].spacing(VSpacing::L).into()
 }

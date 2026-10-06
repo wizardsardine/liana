@@ -16,13 +16,12 @@ use liana::{
 
 use liana_ui::{
     component::{
-        button::{self, btn_broadcast, btn_delete, btn_save, btn_sign},
+        button::{self, btn_broadcast},
         form,
         list::DeviceStatus,
         modal::{self, modal_view, ModalWidth},
         notification,
         panels::psbts,
-        pill,
         text::new,
     },
     icon,
@@ -39,11 +38,12 @@ use crate::{
             dashboard,
             label::{self, LabelSize},
             message::*,
+            transaction::{tx_view, TxDetail},
             warning::warn,
             FiatAmountConverter,
         },
     },
-    daemon::model::{outpoint_label, Coin, SpendStatus, SpendTx},
+    daemon::model::{outpoint_label, Coin, SpendTx},
     hw::HardwareWallet,
     t,
     view::hw::{device_list_entry, HwRowMode},
@@ -60,50 +60,19 @@ pub fn psbt_view<'a>(
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    network: Network,
     currently_signing: bool,
     warning: Option<&'a Error>,
     fiat_converter: Option<FiatAmountConverter>,
 ) -> Element<'a, Message> {
-    let recovery = (!tx.sigs.recovery_paths().is_empty()).then_some(pill::recovery());
-    let status = psbts::status_pill(tx.status);
-    let header = row![
-        Container::new(new::h1(t!("psbt-title"))).width(Length::Fill),
-        recovery,
-        status
-    ]
-    .align_y(Alignment::Center)
-    .spacing(HSpacing::M);
-
-    let inputs = inputs_view(&tx.coins, &tx.psbt.unsigned_tx, &tx.labels, labels_editing);
-    let outputs = outputs_view(
-        &tx.psbt.unsigned_tx,
-        network,
-        &tx.change_indexes,
-        &tx.labels,
-        labels_editing,
-        false,
-        None,
-    );
-
-    let action = if saved {
-        let delete_msg = (!currently_signing).then_some(Message::Spend(SpendTxMessage::Delete));
-        row![btn_delete(delete_msg)].width(Length::Fill)
-    } else {
-        let save_msg = (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save));
-        row![Space::fill_width(), btn_save(save_msg, false)].width(Length::Fill)
+    let detail = TxDetail::Psbt {
+        tx,
+        desc_info,
+        key_aliases,
+        saved,
+        currently_signing,
+        previous: false,
     };
-
-    let content = column![
-        header,
-        spend_header(tx, labels_editing, fiat_converter),
-        spend_overview_view(tx, desc_info, key_aliases, currently_signing, saved),
-        column![inputs, outputs].spacing(VSpacing::L),
-        action,
-        Space::with_height(VSpacing::S)
-    ]
-    .spacing(VSpacing::L);
-
+    let content = tx_view(cache, detail, labels_editing, fiat_converter);
     dashboard(&Menu::PSBTs, cache, warning, content)
 }
 
@@ -231,90 +200,6 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
         None,
         ModalWidth::S,
         content,
-    )
-}
-
-pub fn spend_header<'a>(
-    tx: &'a SpendTx,
-    labels_editing: &'a HashMap<String, form::Value<String>>,
-    fiat_converter: Option<FiatAmountConverter>,
-) -> Element<'a, Message> {
-    let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
-
-    let label = label::label_field(
-        vec![txid.clone()],
-        labels_editing.get(&txid),
-        tx.label(),
-        LabelSize::Title,
-    );
-    let fee = tx.wallet_tx.fee();
-    if fee.is_none() {
-        log::error!("Spend {} has an unknown fee", txid);
-    }
-
-    psbts::spend_header(
-        label,
-        tx.is_send_to_self(),
-        tx.wallet_tx.amount(),
-        fee,
-        tx.min_feerate_vb(),
-        fiat_converter.map(|c| move |a| c.convert(a)),
-    )
-}
-
-pub fn spend_overview_view<'a>(
-    tx: &'a SpendTx,
-    desc_info: &'a LianaPolicy,
-    key_aliases: &'a HashMap<Fingerprint, String>,
-    currently_signing: bool,
-    saved: bool,
-) -> Element<'a, Message> {
-    let enabled = saved && !currently_signing;
-    let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
-
-    let action = match tx.status {
-        SpendStatus::Unsigned => Some(btn_sign(Some(Message::Spend(SpendTxMessage::Sign))).into()),
-        SpendStatus::Broadcastable => {
-            Some(btn_broadcast(Some(Message::Spend(SpendTxMessage::Broadcast))).into())
-        }
-        SpendStatus::Timelocked
-        | SpendStatus::Broadcast
-        | SpendStatus::Confirmed
-        | SpendStatus::Deprecated
-        | SpendStatus::Unknown => None,
-    };
-
-    let (status, details) = match tx.sigs.signed_path() {
-        Some(sigs) => (psbts::signatures_ready(sigs, key_aliases), None),
-        None => {
-            let requirement = if tx.sigs.recovery_paths().is_empty() {
-                Some(psbts::path_row(
-                    desc_info.primary_path(),
-                    tx.sigs.primary_path(),
-                    key_aliases,
-                ))
-            } else {
-                tx.sigs.recovery_paths().iter().last().map(|(seq, path)| {
-                    let keys = &desc_info.recovery_paths()[seq];
-                    psbts::path_row(keys, path, key_aliases)
-                })
-            };
-            (
-                psbts::signatures_missing(),
-                Some(psbts::signatures_requirement(requirement)),
-            )
-        }
-    };
-
-    psbts::spend_overview(
-        saved,
-        enabled.then_some(Message::ExportPsbt),
-        enabled.then_some(Message::ImportPsbt),
-        txid.clone(),
-        Message::Clipboard(txid),
-        status,
-        details,
-        action,
     )
 }
 

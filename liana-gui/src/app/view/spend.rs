@@ -7,7 +7,7 @@ use iced::{
 
 use liana::{
     descriptors::LianaPolicy,
-    miniscript::bitcoin::{bip32::Fingerprint, Amount, Network},
+    miniscript::bitcoin::{bip32::Fingerprint, Amount},
 };
 
 use lianad::commands::CreateRecoveryWarning;
@@ -29,7 +29,12 @@ use crate::{
         error::Error,
         menu::Menu,
         state::{FeeMode, Recipient},
-        view::{dashboard, label, message::*, psbt, FiatAmountConverter},
+        view::{
+            dashboard, label,
+            message::*,
+            transaction::{tx_view, TxDetail},
+            FiatAmountConverter,
+        },
     },
     daemon::model::{outpoint_label, remaining_sequence, Coin, SpendTx},
     t,
@@ -44,7 +49,6 @@ pub fn spend_view<'a>(
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    network: Network,
     currently_signing: bool,
     warning: Option<&'a Error>,
     fiat_converter: Option<FiatAmountConverter>,
@@ -55,13 +59,6 @@ pub fn spend_view<'a>(
         .input
         .iter()
         .any(|txin| txin.sequence.is_relative_lock_time());
-
-    let title = Container::new(new::d2(if is_recovery {
-        Menu::Recovery.title()
-    } else {
-        Menu::CreateSpendTx.title()
-    }))
-    .width(Length::Fill);
 
     let warnings = (!(spend_warnings.is_empty() || saved)).then_some({
         let rows = spend_warnings.iter().map(|warning| {
@@ -77,43 +74,16 @@ pub fn spend_view<'a>(
         Column::with_children(rows).padding(15).spacing(5)
     });
 
-    let spend_overview =
-        psbt::spend_overview_view(tx, desc_info, key_aliases, currently_signing, saved);
-
-    let inputs = psbt::inputs_view(&tx.coins, &tx.psbt.unsigned_tx, &tx.labels, labels_editing);
-    let outputs = psbt::outputs_view(
-        &tx.psbt.unsigned_tx,
-        network,
-        &tx.change_indexes,
-        &tx.labels,
-        labels_editing,
-        false,
-        None,
-    );
-    let inputs_outputs = column![inputs, outputs].spacing(20);
-
-    let bottom_row = if saved {
-        let delete = button::btn_delete(
-            (!currently_signing).then_some(Message::Spend(SpendTxMessage::Delete)),
-        );
-        row![delete].width(Length::Fill)
-    } else {
-        let previous = button::btn_previous((!currently_signing).then_some(Message::Previous));
-        let save_msg = (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save));
-        let save = button::btn_save(save_msg, false);
-        row![previous, Space::fill_width(), save].width(Length::Fill)
+    let detail = TxDetail::Psbt {
+        tx,
+        desc_info,
+        key_aliases,
+        saved,
+        currently_signing,
+        previous: true,
     };
-
-    let header = psbt::spend_header(tx, labels_editing, fiat_converter);
-    let content = column![
-        title,
-        header,
-        warnings,
-        spend_overview,
-        inputs_outputs,
-        bottom_row,
-    ]
-    .spacing(20);
+    let detail = tx_view(cache, detail, labels_editing, fiat_converter);
+    let content = column![warnings, detail].spacing(80);
 
     dashboard(
         if is_recovery {

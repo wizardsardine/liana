@@ -297,7 +297,6 @@ impl PsbtState {
             &self.desc_policy,
             &self.wallet.keys_aliases,
             self.labels_edited.cache(),
-            cache.network,
             if let Some(PsbtModal::Sign(m)) = &self.modal {
                 m.is_signing()
             } else {

@@ -1543,14 +1543,7 @@ psbt-delete-this => "Delete this PSBT"
 
 psbt-device-sign-failed => "Device failed to sign"
 
-psbt-finalizing-requires => "Finalizing this transaction requires:"
-
 psbt-fully-signed-by => "Signed by"
-
-psbt-more-signatures
-=> "{ $count ->\n    [0] no more signatures\n    [one] 1 more signature from\n   *[other] {$count} more signatures from\n}";;
-
-psbt-not-ready => "Not ready"
 
 psbt-payments => "{ $count ->\n    [one] 1 Payment\n   *[other] {$count} Payments\n}"
 
@@ -1566,12 +1559,6 @@ psbt-sign-save-before-export => "Sign or save the transaction first to enable ex
 psbt-signatures => "Signatures"
 
 psbt-signatures-count => "{$count} of {$threshold}"
-
-psbt-signed-by => "signed by"
-
-psbt-status => "Status"
-
-psbt-title => "PSBT"
 
 psbt-transaction-broadcast => "Transaction is broadcast"
 
