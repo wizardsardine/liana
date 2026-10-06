@@ -87,7 +87,7 @@ impl TransactionsPanel {
             self.warning.as_ref(),
             view::transaction::tx_view(
                 cache,
-                tx,
+                view::transaction::TxDetail::Transaction(tx),
                 self.labels_edited.cache(),
                 fiat_converter_for_wallet(&self.wallet, cache),
             ),
