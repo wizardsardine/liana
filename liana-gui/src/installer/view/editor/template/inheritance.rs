@@ -103,6 +103,7 @@ pub fn inheritance_template<'a>(
                 color::GREEN,
                 t!("installer-primary-key"),
                 use_taproot.then(|| key.source.taproot_warning()).flatten(),
+                use_taproot.then(|| key.source.taproot_note()).flatten(),
                 true,
             )
         } else {
@@ -125,6 +126,7 @@ pub fn inheritance_template<'a>(
                 color::WHITE,
                 t!("installer-inheritance-key"),
                 use_taproot.then(|| key.source.taproot_warning()).flatten(),
+                use_taproot.then(|| key.source.taproot_note()).flatten(),
                 true,
             )
         } else {

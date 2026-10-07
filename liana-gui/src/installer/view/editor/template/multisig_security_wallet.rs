@@ -109,6 +109,7 @@ pub fn multisig_security_template<'a>(
                         color::GREEN,
                         t!("installer-primary-key-number", number = i + 1),
                         use_taproot.then(|| key.source.taproot_warning()).flatten(),
+                        use_taproot.then(|| key.source.taproot_note()).flatten(),
                         true,
                     )
                 } else {
@@ -153,6 +154,7 @@ pub fn multisig_security_template<'a>(
                             color::GREEN,
                             t!("installer-primary-key-number", number = j + 1),
                             use_taproot.then(|| key.source.taproot_warning()).flatten(),
+                            use_taproot.then(|| key.source.taproot_note()).flatten(),
                         )
                     } else {
                         defined_key(
@@ -160,6 +162,7 @@ pub fn multisig_security_template<'a>(
                             color::ORANGE,
                             t!("installer-recovery-key"),
                             use_taproot.then(|| key.source.taproot_warning()).flatten(),
+                            use_taproot.then(|| key.source.taproot_note()).flatten(),
                             true,
                         )
                     }

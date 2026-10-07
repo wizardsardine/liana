@@ -138,11 +138,21 @@ pub fn path(
     .into()
 }
 
+/// An info icon next to a key name, revealing on hover a note linking to the
+/// help page behind it.
+fn key_note<'a>(text: String, url: String) -> Element<'a, message::DefineKey> {
+    tooltip::tooltip_interactive(
+        button::subtle_link(text, Some(message::DefineKey::OpenUrl(url))),
+        icon::tooltip_icon().style(theme::text::secondary),
+    )
+}
+
 pub fn uneditable_defined_key<'a>(
     alias: &'a str,
     color: iced::Color,
     title: impl Into<Cow<'a, str>> + std::fmt::Display,
     warning: Option<String>,
+    note: Option<(String /* text */, String /* url */)>,
 ) -> Element<'a, message::DefineKey> {
     let valid = warning.is_none();
     card::simple(
@@ -159,7 +169,8 @@ pub fn uneditable_defined_key<'a>(
                         Row::new()
                             .spacing(10)
                             .push(p1_regular(title).style(theme::text::secondary))
-                            .push(p1_bold(alias)),
+                            .push(p1_bold(alias))
+                            .push_maybe(note.map(|(text, url)| key_note(text, url))),
                     )
                     .push_maybe(warning.map(|w| p2_regular(w).style(theme::text::error))),
             )
@@ -177,6 +188,7 @@ pub fn defined_key<'a>(
     color: iced::Color,
     title: impl Display,
     warning: Option<String>,
+    note: Option<(String /* text */, String /* url */)>,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {
     let valid = warning.is_none();
@@ -196,7 +208,8 @@ pub fn defined_key<'a>(
                         Row::new()
                             .spacing(10)
                             .push(p1_regular(format!("{title}")).style(theme::text::secondary))
-                            .push(p1_bold(alias)),
+                            .push(p1_bold(alias))
+                            .push_maybe(note.map(|(text, url)| key_note(text, url))),
                     )
                     .push_maybe(warning.map(|w| p2_regular(w).style(theme::text::error))),
             )

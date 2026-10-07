@@ -392,6 +392,9 @@ impl Step for DefineDescriptor {
                             message::DefineKey::Clipboard(key) => {
                                 return Task::perform(async move { key }, Message::Clipboard);
                             }
+                            message::DefineKey::OpenUrl(url) => {
+                                return Task::perform(async move { url }, Message::OpenUrl);
+                            }
 
                             message::DefineKey::EditAlias => {
                                 let coordinates = vec![(i, j)];

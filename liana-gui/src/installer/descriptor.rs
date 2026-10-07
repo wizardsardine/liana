@@ -70,6 +70,17 @@ impl KeySource {
         })
     }
 
+    /// For a key whose device we cannot inspect, the taproot support we have to
+    /// take on trust, as a note and the help page backing it.
+    pub fn taproot_note(&self) -> Option<(String, String)> {
+        matches!(self, KeySource::Manual).then(|| {
+            (
+                t!("installer-manual-xpub-taproot-note"),
+                crate::help::TAPROOT_COMPATIBLE_DEVICES_URL.to_string(),
+            )
+        })
+    }
+
     pub fn is_manual(&self) -> bool {
         matches!(self, KeySource::Manual)
     }

@@ -215,6 +215,7 @@ pub enum DefineKey {
     Edit,
     EditAlias,
     Clipboard(String),
+    OpenUrl(String),
 }
 
 #[derive(Debug, Clone)]

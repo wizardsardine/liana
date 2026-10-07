@@ -98,6 +98,7 @@ pub fn custom_template<'a>(
                         color::GREEN,
                         t!("installer-primary-key"),
                         use_taproot.then(|| key.source.taproot_warning()).flatten(),
+                        use_taproot.then(|| key.source.taproot_note()).flatten(),
                         prim_keys_fixed,
                     )
                 } else {
@@ -139,6 +140,7 @@ pub fn custom_template<'a>(
                                     color::ORANGE,
                                     t!("installer-recovery-key"),
                                     use_taproot.then(|| key.source.taproot_warning()).flatten(),
+                                    use_taproot.then(|| key.source.taproot_note()).flatten(),
                                     fixed,
                                 )
                             } else {
@@ -198,6 +200,7 @@ pub fn custom_template<'a>(
                             color::WHITE,
                             t!("installer-safety-net-key"),
                             use_taproot.then(|| key.source.taproot_warning()).flatten(),
+                            use_taproot.then(|| key.source.taproot_note()).flatten(),
                             fixed,
                         )
                     } else {
