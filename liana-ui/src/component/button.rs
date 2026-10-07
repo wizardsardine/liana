@@ -1115,3 +1115,13 @@ pub fn btn_help_link<T: Clone + 'static>(
 ) -> Button<'static, T> {
     link(Some(icon::link_icon()), label).on_press_maybe(msg)
 }
+
+pub fn btn_refresh_coin<T: Clone + 'static>(msg: Option<T>, primary: bool) -> Button<'static, T> {
+    let icon = Some(icon::arrow_repeat());
+    let label = t!("coins-refresh-coin");
+    if primary {
+        btn_primary(icon, label, BtnWidth::M, msg)
+    } else {
+        btn_secondary(icon, label, BtnWidth::M, msg)
+    }
+}
