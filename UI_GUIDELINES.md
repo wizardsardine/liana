@@ -62,7 +62,7 @@ Use these; do not build equivalents.
   `breadcrumb_chevron`, `key_count`, `entry_accent`. Status enums `Entry*`, `DeviceStatus`.
 - **modal**: `modal_view(title, back, close, width, content)` (and `modal_view_with_theme`); width
   `ModalWidth`.
-- **badge**: icon badges, `tile(Tile::..)`, `avatar(initials)`, `coin()`.
+- **badge**: icon badges, `tile(Tile::..)`, `avatar(initials)`.
 - **checkbox**: `checkbox_button`, `radio_button`, `labelled_checkbox`, `labelled_radio`,
   `toggler_button` (sized by `TogglerSize`).
 - **combobox**: `combobox`, `editable_combobox`, `email_entry`; `State`, `Tag`.
