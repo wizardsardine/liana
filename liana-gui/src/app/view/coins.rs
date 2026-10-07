@@ -3,7 +3,12 @@ use std::collections::HashMap;
 use iced::{widget::column, Alignment, Length};
 
 use liana_ui::{
-    component::{form, panels::coins, text::new},
+    component::{
+        form,
+        label::{display_label, LABEL_DISPLAY_MAX_CHARS},
+        panels::coins,
+        text::new,
+    },
     spacing::VSpacing,
     widget::{Column, Container, Element},
 };
@@ -35,7 +40,7 @@ pub fn coins_view<'a>(
         coins
             .iter()
             .enumerate()
-            .fold(Column::new().spacing(VSpacing::S), |col, (i, coin)| {
+            .fold(Column::new().spacing(VSpacing::M), |col, (i, coin)| {
                 col.push(coin_list_view(
                     coin,
                     timelock,
@@ -49,7 +54,7 @@ pub fn coins_view<'a>(
 
     column![title, list]
         .align_x(Alignment::Center)
-        .spacing(VSpacing::XXL)
+        .spacing(VSpacing::XL)
         .into()
 }
 
@@ -64,36 +69,39 @@ fn coin_list_view<'a>(
 ) -> Element<'a, Message> {
     let outpoint = coin.outpoint.to_string();
     let address = coin.address.to_string();
-    let txid = coin.outpoint.txid.to_string();
     let seq = remaining_sequence(coin, blockheight, timelock);
 
     let coin_label = liana::label::resolve(
         labels.get(&outpoint).map(String::as_str),
         &coin.default_label,
     );
-    let label_editor = label::label_field(
-        vec![outpoint.clone()],
-        labels_editing.get(&outpoint),
-        &coin_label,
-        LabelSize::Body,
-    );
+    let label = if expanded {
+        label::label_field(
+            vec![outpoint.clone()],
+            labels_editing.get(&outpoint),
+            &coin_label,
+            LabelSize::Entry,
+        )
+    } else {
+        display_label(
+            &coin_label,
+            LabelSize::Entry.spec(),
+            Some(LABEL_DISPLAY_MAX_CHARS),
+        )
+    };
 
     coins::coin_entry(
         coin.amount,
         coin.outpoint,
         &coin.address,
         labels.get(&address).map(String::as_str),
-        labels.get(&txid).map(String::as_str),
         coin.block_height,
         coin.spend_info.map(|info| coins::CoinSpend {
             txid: info.txid,
             height: info.height,
         }),
-        blockheight,
-        timelock,
         seq,
-        coin_label,
-        label_editor,
+        label,
         Message::Clipboard(address),
         Message::Clipboard(outpoint),
         Message::Menu(Menu::RefreshCoins(vec![coin.outpoint])),
