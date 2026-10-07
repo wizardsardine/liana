@@ -542,7 +542,7 @@ pub async fn connect_with_existing_account(
         ))?
         .tokens;
 
-    if tokens.expires_at < chrono::Utc::now().timestamp() {
+    if tokens.is_expired() {
         // BackendClient::connect runs right after this, so we don't yet know
         // the user_id from the JWT. `upsert_credential` preserves whatever
         // user_id the existing row already carries.
