@@ -1,3 +1,4 @@
+pub mod coins;
 pub mod home;
 pub mod psbts;
 pub mod receive;
