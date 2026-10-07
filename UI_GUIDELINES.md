@@ -66,7 +66,7 @@ Use these; do not build equivalents.
   keeps the content at the vertical center whatever the footer holds, and `progress(label, value,
   footer)` puts a caption and a progress bar in it. Daemon startup and the Bitcoin Core upgrade
   both use `progress`, so their bars sit at the same place.
-- **badge**: icon badges, `tile(Tile::..)`, `avatar(initials)`, `coin()`.
+- **badge**: icon badges, `tile(Tile::..)`, `avatar(initials)`.
 - **checkbox**: `checkbox_button`, `radio_button`, `labelled_checkbox`, `labelled_radio`,
   `toggler_button` (sized by `TogglerSize`).
 - **combobox**: `combobox`, `editable_combobox`, `email_entry`; `State`, `Tag`.
