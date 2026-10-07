@@ -103,7 +103,6 @@ icon_badge!(receive, receive_icon, simple);
 icon_badge!(cycle, arrow_repeat, simple);
 icon_badge!(spend, send_icon, simple);
 icon_badge!(success, check_icon, success);
-icon_badge!(tooltip, tooltip_icon, simple);
 
 pub fn tile<'a, M>(tile: Tile) -> Container<'a, M> {
     let tone = tile_spec(tile).tone;
