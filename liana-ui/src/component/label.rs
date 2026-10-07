@@ -22,6 +22,8 @@ use super::{
     modal::modal_view,
 };
 
+pub const LABEL_DISPLAY_MAX_CHARS: usize = 30;
+
 pub fn display_label<'a, M: 'a>(
     label: &Label,
     spec: TextSpec,

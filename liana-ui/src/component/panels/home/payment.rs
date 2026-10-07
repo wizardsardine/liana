@@ -9,7 +9,7 @@ use crate::{
     component::{
         self,
         amount::{amount_with_fiat_tooltip, AmountSize, FiatAmount},
-        label::display_label,
+        label::{display_label, LABEL_DISPLAY_MAX_CHARS},
         pill,
         text::{
             format_date,
@@ -23,7 +23,6 @@ use crate::{
 };
 
 const ICON_SIZE: u32 = 16;
-const MAX_LABEL_LENGTH: usize = 30;
 
 pub fn kind_icon<'a, M: 'a>(kind: PaymentKind) -> Element<'a, M> {
     match kind {
@@ -90,7 +89,7 @@ pub fn list_entry<'a, M: 'a + Clone>(
     fiat_price: Option<FiatPrice>,
     msg: Option<M>,
 ) -> Element<'a, M> {
-    let label = display_label(label, new::H2_SPEC, Some(MAX_LABEL_LENGTH));
+    let label = display_label(label, new::H2_SPEC, Some(LABEL_DISPLAY_MAX_CHARS));
 
     let time = time.map(|time| caption(format_date(time)).style(theme::text::card_secondary));
     let unconfirmed = time.is_none().then_some(pill::unconfirmed());
