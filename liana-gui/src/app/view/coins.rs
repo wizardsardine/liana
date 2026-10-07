@@ -10,10 +10,9 @@ use liana_ui::{
         address::address as address_view, amount::amount, badge, button, card, form,
         label::display_label, pill, text::new,
     },
-    icon,
     spacing::{HSpacing, VSpacing},
     theme,
-    widget::{Column, Container, Element, SpaceExt},
+    widget::{Column, Container, Element, Row, SpaceExt},
 };
 
 use crate::{
@@ -81,13 +80,7 @@ fn coin_list_view<'a>(
     );
 
     // The label is edited in the details, so the header only shows it while folded.
-    let label: Option<Element<'a, Message>> = if expanded {
-        None
-    } else {
-        Some(display_label(&coin_label, new::CAPTION_SPEC, None))
-    };
-    let label =
-        Container::new(label.unwrap_or_else(|| Space::fill_width().into())).width(Length::Fill);
+    let label = (!expanded).then(|| display_label(&coin_label, new::CAPTION_SPEC, None));
 
     let status = if coin.spend_info.is_some() {
         pill::spent()
@@ -96,7 +89,7 @@ fn coin_list_view<'a>(
     } else {
         pill::coin_sequence(seq)
     };
-    let summary = row![badge::coin(), label, status]
+    let summary = row![badge::coin(), label, Space::fill_width(), status]
         .spacing(HSpacing::M)
         .align_y(Alignment::Center)
         .width(Length::Fill);
@@ -104,119 +97,112 @@ fn coin_list_view<'a>(
         .align_y(Alignment::Center)
         .spacing(HSpacing::XL);
 
-    let details = {
-        let label_editor = label::label_field(
-            vec![outpoint.clone()],
-            labels_editing.get(&outpoint),
-            &coin_label,
-            LabelSize::Body,
-        );
-        let label_editor = Container::new(label_editor).width(Length::Fill);
-
-        let recovery = match (coin.spend_info, coin.block_height) {
-            (None, Some(b)) if blockheight > b as u32 + timelock as u32 => {
-                Some(new::b5_bold(t!("coins-recovery-available")).style(theme::text::error))
-            }
-            (None, Some(b)) => Some(new::b5_bold(t!(
-                "coins-first-recovery-in-blocks",
-                blocks = b as u32 + timelock as u32 - blockheight
-            ))),
-            _ => None,
-        };
-
-        let address_label = row![
-            new::b5_bold(t!("coins-address-label")).style(theme::text::secondary),
-            new::small_caption(
-                labels
-                    .get(&address)
-                    .cloned()
-                    .unwrap_or_else(|| t!("common-no-label"))
-            )
-            .style(theme::text::secondary)
-        ]
-        .align_y(Alignment::Center)
-        .spacing(HSpacing::S);
-        let copy_address = button::btn_copy(Some(Message::Clipboard(address.clone())));
-        let address = row![
-            new::b5_bold(t!("common-address-label")).style(theme::text::secondary),
-            row![address_view(address), copy_address].align_y(Alignment::Center)
-        ]
-        .align_y(Alignment::Center)
-        .spacing(HSpacing::S);
-        let deposit = row![
-            new::b5_bold(t!("coins-deposit-transaction-label")).style(theme::text::secondary),
-            new::small_caption(
-                labels
-                    .get(&txid)
-                    .cloned()
-                    .unwrap_or_else(|| t!("common-no-label"))
-            )
-            .style(theme::text::secondary)
-        ]
-        .align_y(Alignment::Center)
-        .spacing(HSpacing::S);
-        let copy_outpoint = button::btn_copy(Some(Message::Clipboard(outpoint.clone())));
-        let outpoint_row = row![
-            new::b5_bold(t!("coins-outpoint")).style(theme::text::secondary),
-            row![
-                new::small_caption(outpoint).style(theme::text::secondary),
-                copy_outpoint
-            ]
-            .align_y(Alignment::Center)
-        ]
-        .align_y(Alignment::Center)
-        .spacing(HSpacing::S);
-        let block_height = coin.block_height.map(|b| {
-            row![
-                new::b5_bold(t!("coins-block-height")).style(theme::text::secondary),
-                new::small_caption(b.to_string()).style(theme::text::secondary)
-            ]
-            .spacing(HSpacing::S)
-        });
-        let coin_info = column![address_label, address, deposit, outpoint_row, block_height];
-
-        let spend = match coin.spend_info {
-            Some(info) => {
-                let spend_txid = row![
-                    new::b5_bold(t!("coins-spend-txid")).style(theme::text::secondary),
-                    new::small_caption(info.txid.to_string())
-                ]
-                .spacing(HSpacing::S);
-                let spend_height = match info.height {
-                    Some(height) => row![
-                        new::b5_bold(t!("coins-spend-block-height")).style(theme::text::secondary),
-                        new::small_caption(height.to_string())
-                    ]
-                    .spacing(HSpacing::S),
-                    None => {
-                        row![new::b5_bold(t!("coins-not-in-block")).style(theme::text::secondary)]
-                    }
-                };
-                column![spend_txid, spend_height].spacing(VSpacing::XS)
-            }
-            None => {
-                let icon = Some(icon::arrow_repeat());
-                let label = t!("coins-refresh-coin");
-                let message = Some(Message::Menu(Menu::RefreshCoins(vec![coin.outpoint])));
-                let refresh = if seq == 0 {
-                    button::btn_primary(icon, label, button::BtnWidth::M, message)
-                } else {
-                    button::btn_secondary(icon, label, button::BtnWidth::M, message)
-                };
-                column![row![Space::fill_width(), refresh]]
-            }
-        };
-
-        column![label_editor, recovery, coin_info, spend]
-            .padding(10)
-            .spacing(VSpacing::XS)
+    let label_editor = label::label_field(
+        vec![outpoint.clone()],
+        labels_editing.get(&outpoint),
+        &coin_label,
+        LabelSize::Body,
+    );
+    let recovery = match (coin.spend_info, coin.block_height) {
+        (None, Some(b)) if blockheight > b as u32 + timelock as u32 => {
+            Some(new::b5_bold(t!("coins-recovery-available")).style(theme::text::error))
+        }
+        (None, Some(b)) => Some(new::b5_bold(t!(
+            "coins-first-recovery-in-blocks",
+            blocks = b as u32 + timelock as u32 - blockheight
+        ))),
+        _ => None,
     };
+
+    let address_label = info_row(
+        t!("coins-address-label"),
+        new::small_caption(
+            labels
+                .get(&address)
+                .cloned()
+                .unwrap_or_else(|| t!("common-no-label")),
+        )
+        .style(theme::text::secondary),
+    )
+    .align_y(Alignment::Center);
+    let copy_address = button::btn_copy(Some(Message::Clipboard(address.clone())));
+    let address = info_row(
+        t!("common-address-label"),
+        row![address_view(address), copy_address].align_y(Alignment::Center),
+    )
+    .align_y(Alignment::Center);
+    let deposit = info_row(
+        t!("coins-deposit-transaction-label"),
+        new::small_caption(
+            labels
+                .get(&txid)
+                .cloned()
+                .unwrap_or_else(|| t!("common-no-label")),
+        )
+        .style(theme::text::secondary),
+    )
+    .align_y(Alignment::Center);
+    let copy_outpoint = button::btn_copy(Some(Message::Clipboard(outpoint.clone())));
+    let outpoint_row = info_row(
+        t!("coins-outpoint"),
+        row![
+            new::small_caption(outpoint).style(theme::text::secondary),
+            copy_outpoint
+        ]
+        .align_y(Alignment::Center),
+    )
+    .align_y(Alignment::Center);
+    let block_height = coin.block_height.map(|b| {
+        info_row(
+            t!("coins-block-height"),
+            new::small_caption(b.to_string()).style(theme::text::secondary),
+        )
+    });
+    let coin_info = column![address_label, address, deposit, outpoint_row, block_height];
+
+    let spend: Element<'a, Message> = match coin.spend_info {
+        Some(info) => {
+            let spend_txid = info_row(
+                t!("coins-spend-txid"),
+                new::small_caption(info.txid.to_string()),
+            );
+            let spend_height = match info.height {
+                Some(height) => info_row(
+                    t!("coins-spend-block-height"),
+                    new::small_caption(height.to_string()),
+                ),
+                None => {
+                    row![new::b5_bold(t!("coins-not-in-block")).style(theme::text::secondary)]
+                }
+            };
+            column![spend_txid, spend_height]
+                .spacing(VSpacing::XS)
+                .into()
+        }
+        None => {
+            let message = Some(Message::Menu(Menu::RefreshCoins(vec![coin.outpoint])));
+            let refresh = button::btn_refresh_coin(message, seq == 0);
+            column![row![Space::fill_width(), refresh]].into()
+        }
+    };
+
+    let details = column![label_editor, recovery, coin_info, spend]
+        .padding(10)
+        .spacing(VSpacing::XS);
 
     card::foldable::FoldableCard::new(None, header, Some(details.into()))
         .expanded(expanded)
         .on_toggle(move || Message::Select(index))
         .padding(card::CardPadding::Soft)
         .into()
+}
+
+fn info_row<'a>(key: String, value: impl Into<Element<'a, Message>>) -> Row<'a, Message> {
+    row![
+        new::b5_bold(key).style(theme::text::secondary),
+        value.into()
+    ]
+    .spacing(HSpacing::S)
 }
 
 /// returns y,m,d
