@@ -157,7 +157,6 @@ pub fn collapsible_section<'a, M: Clone + 'static>(
         .align_y(Alignment::Center)
         .width(Length::Fill);
     card::foldable::FoldableCard::new(None, header, Some(rows.into()))
-        .list_chevrons()
         .padding(panels::FOLDABLE_ENTRY_PADDING)
         .into()
 }
