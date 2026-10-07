@@ -741,7 +741,7 @@ async fn connect_for_business(
     let mut tokens = cached.tokens;
 
     // Refresh if expired
-    if tokens.expires_at < chrono::Utc::now().timestamp() {
+    if tokens.is_expired() {
         tokens = connect_cache::update_connect_cache(
             &network_dir,
             &tokens,

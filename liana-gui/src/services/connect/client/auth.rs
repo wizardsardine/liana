@@ -29,11 +29,24 @@ pub struct RefreshToken<'a> {
     refresh_token: &'a str,
 }
 
+/// Margin applied when checking an access token expiry, so a token that is
+/// about to lapse is refreshed instead of being used for a request that would
+/// outlive it.
+pub const TOKEN_EXPIRY_MARGIN_SECS: i64 = 60;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessTokenResponse {
     pub access_token: String,
     pub expires_at: i64,
     pub refresh_token: String,
+}
+
+impl AccessTokenResponse {
+    /// Whether the access token has expired or is about to, within
+    /// [`TOKEN_EXPIRY_MARGIN_SECS`].
+    pub fn is_expired(&self) -> bool {
+        self.expires_at < chrono::Utc::now().timestamp() + TOKEN_EXPIRY_MARGIN_SECS
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -176,5 +189,19 @@ impl AuthClient {
             .check_success()
             .await?;
         Ok(response.json().await?)
+    }
+
+    /// Close the session bound to `access_token` on the server. A 204 is
+    /// returned both when the session was closed and when it was already
+    /// closed; a 401 means the access token is missing, invalid or expired.
+    pub async fn logout(&self, access_token: &str) -> Result<(), AuthError> {
+        self.request(Method::POST, format!("{}/auth/v1/logout", self.url))
+            .bearer_auth(access_token)
+            .send()
+            .await?
+            .check_success()
+            .await?;
+
+        Ok(())
     }
 }

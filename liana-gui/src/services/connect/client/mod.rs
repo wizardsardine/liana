@@ -6,6 +6,9 @@ use liana::miniscript::bitcoin::{self, Network};
 
 use serde::Deserialize;
 
+use auth::{AccessTokenResponse, AuthClient, AuthError};
+use cache::Account;
+
 const DEFAULT_CONNECT_SIGNET_URL: &str = "https://api.connect.signet.lianawallet.com";
 const DEFAULT_CONNECT_MAINNET_URL: &str = "https://api.connect.lianawallet.com";
 
@@ -65,4 +68,45 @@ pub async fn get_service_config(
         auth_api_public_key: res.auth_api_public_key,
         backend_api_url,
     })
+}
+
+/// Best effort: close on the server the sessions backing `accounts`, whose
+/// cached credentials are about to be dropped. Failures are logged and never
+/// propagated.
+pub async fn close_sessions(
+    service_config: &ServiceConfig,
+    backend_type: BackendType,
+    accounts: Vec<Account>,
+) {
+    for account in accounts {
+        let client = AuthClient::new(
+            service_config.auth_api_url.clone(),
+            service_config.auth_api_public_key.clone(),
+            account.email,
+            backend_type.user_agent(),
+        );
+        match close_session(&client, &account.tokens).await {
+            Ok(()) => tracing::info!("Closed Liana-Connect session of {}", client.email),
+            Err(e) => tracing::error!(
+                "Failed to close Liana-Connect session of {}: {e}",
+                client.email
+            ),
+        }
+    }
+}
+
+/// Log out with the cached access token, refreshing it first when it is
+/// expired locally or rejected by the server.
+async fn close_session(client: &AuthClient, tokens: &AccessTokenResponse) -> Result<(), AuthError> {
+    if !tokens.is_expired() {
+        match client.logout(&tokens.access_token).await {
+            Err(AuthError {
+                http_status: Some(401),
+                ..
+            }) => {}
+            res => return res,
+        }
+    }
+    let fresh = client.refresh_token(&tokens.refresh_token).await?;
+    client.logout(&fresh.access_token).await
 }
